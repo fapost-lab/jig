@@ -1,0 +1,5 @@
+# Profile manifest. Flat YAML subset, same reader as .ai/config.yaml.
+name: laravel
+description: Laravel applications (extends the php profile).
+detect: [artisan]
+requires: [php]

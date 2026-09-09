@@ -6,8 +6,9 @@ date: 2026-09-08
 domains: [knowledge, context]
 paths:
   - "schemas/**"
-  - "scripts/context*"
-  - "scripts/knowledge*"
+  - "scripts/lib/context.sh"
+  - "scripts/lib/frontmatter.sh"
+  - "scripts/lib/knowledge.sh"
   - "templates/knowledge/**"
 ---
 # ADR-0004: Knowledge documents carry frontmatter so context resolution is deterministic
@@ -35,8 +36,8 @@ paths: ["src/Flow/**", "app/Services/Trigger*"]
 
 `GLOSSARY.md`, `ARCHITECTURE.md`, `RULES.md` are global and carry no frontmatter.
 
-`sdlc context` matches changed/affected files against `paths` (and task tags against
-`domains`) and prints the list of relevant documents. `sdlc knowledge check` validates
+`jig context` matches changed/affected files against `paths` (and task tags against
+`domains`) and prints the list of relevant documents. `jig knowledge check` validates
 required fields, unique ids, and reports documents whose `paths` match nothing in the
 repository (stale-knowledge signal). Frontmatter is limited to flat scalars and
 one-level lists (see ADR-0002).
@@ -50,6 +51,9 @@ one-level lists (see ADR-0002).
 
 ## Consequences
 
-- Consolidation must maintain `paths` when it edits a document.
-- Stale knowledge becomes detectable mechanically.
+- Consolidation must maintain `paths` when it edits a document. Delivered as
+  `jig knowledge paths` (report and `add`/`remove`).
+- Stale knowledge becomes detectable mechanically. `knowledge check`'s "glob matches
+  nothing" warning is the structural half; drift between a document and the code it
+  describes needed a freshness record and is settled by ADR-0010.
 - Documents without frontmatter are reported by `knowledge check`, not silently ignored.

@@ -1,0 +1,70 @@
+---
+id: convention-shell
+type: convention
+status: active
+domains: [scripts, tests]
+paths:
+  - "scripts/**"
+  - "adapters/**"
+  - "profiles/**"
+  - "tests/**"
+reviewed_at: 2026-09-09
+---
+# Shell conventions
+
+Practices for every script in the framework. They exist because each one caught a real
+bug during Phase 1; the rationale column says which.
+
+## Practice
+
+| Rule | Rationale |
+|---|---|
+| Every executable starts with `set -eu` and `set -o pipefail`; libraries are sourced and start with `# shellcheck shell=bash`. | `pipefail` is the only way a failing `find` in a pipeline is noticed under `set -e`. |
+| Validate before `shift`: `[ $# -ge 2 ] \|\| jig_die "cmd: --flag requires a value"`. | A bare `shift 2` with one argument left kills the process under `set -e` with no message. |
+| Never pipe into `while read`; use `while read ...; done < <(cmd)`. | A piped loop runs in a subshell and every counter or accumulator set inside it is lost. |
+| Variables referenced from an `EXIT` trap are script-global, never `local`. | The trap runs after the function returned and `set -u` reports an unbound variable. |
+| Compare directories with `pwd -P` output, not raw strings. | `git rev-parse --show-toplevel` resolves symlinks and macOS maps `/var` to `/private/var`. |
+| Write files atomically: write `file.tmp.$$`, then `mv`. | A crash mid-write must not leave a half-written manifest or config. |
+| Untrusted names (task ids, profile and adapter names, from flags *and* from config) are validated at the one function that builds the path, before any filesystem access or `sed`. | Validating at call sites leaves gaps: `jig verify --profile ../../x` executed a foreign script, `jig init --profiles ..` copied a whole tree into `.ai/`, and `--profiles ../x` reached a `sed` substitution and broke it. |
+| Any `rm -rf` or `mv` on a computed path is preceded by a validation that the path is inside `.ai/` and shaped as expected. | RULES.md invariant; ADR-0006. |
+| No bash 4 features: no associative arrays, `${var,,}`, `mapfile`, `readlink -f`, `cp --parents`, `sort -V`, `grep -P`. | macOS ships bash 3.2 (ADR-0002). |
+| Glob matching against the tree uses `find -path` with `**` collapsed to `*`. | BSD and GNU `find -path` both match `*` across `/`, so one substitution covers any-depth and single-segment globs without `globstar`. |
+| A listing hides finished or superseded entries by default and counts them in a trailing line; `--all` shows everything. | Applies to `jig task list` and `jig context` alike. On a long-lived branch, done work outnumbers live work and crowds it out, and a listing nobody reads is worse than no listing. |
+| Under `set -e`, a loop body must not end in `cmd && cmd`: the loop takes that status, so one failing final iteration aborts the function before its own `return 0`. Use `if cmd; then ...; fi`. | Cost a silent `exit 1` with no output in `profiles/shell/verify.sh`. Note a probe that calls the function as `f && ...` cannot reproduce it — a condition context suspends `errexit` inside the callee. |
+| Commands that produce human output use plain `printf`; `jig_info`/`jig_warn`/`jig_die` go to stderr. A command's `--quiet` flag is local to that command. | Tests capture stdout per test, so there is no need for a global quiet switch. |
+
+## Example
+
+```sh
+cmd_example() {
+  local from=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from) [ $# -ge 2 ] || jig_die "example: --from requires a value"; from="$2"; shift 2 ;;
+      *) jig_die "example: unknown argument: $1" ;;
+    esac
+  done
+  _EXAMPLE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-example.XXXXXX")
+  trap '[ -n "${_EXAMPLE_TMP:-}" ] && rm -rf "$_EXAMPLE_TMP"' EXIT INT TERM
+  local count=0
+  while IFS= read -r line; do count=$((count + 1)); done < <(find "$from" -type f)
+  printf '%d files\n' "$count"
+}
+```
+
+## Testing
+
+- One `tests/<command>.t.sh` per command; functions `test_*`; each runs in a fresh temp
+  directory with `HOME` isolated and a deterministic git identity (see `tests/run.sh`).
+- Assert behaviour, not only exit codes: file presence, symlink targets, manifest lines,
+  output substrings via `run cmd; assert_contains "$OUT" ...`.
+- Every negative path that ends in `jig_die` has a test asserting the message.
+- During edits, use `tests/run.sh <name-filter>` for the affected behavior; reuse valid
+  results across stages and avoid simultaneous duplicate full runs. Wait on the run's own
+  handle — `tests/run.sh >run.log 2>&1 & wait $!` — and read that exit code; a `pgrep -f`
+  poll matches its own command line and never returns.
+- Tests of commands that only need a default Jig installation may use `fixture_jig_repo`.
+  It installs once per sequential runner invocation and copies the complete fixture into
+  each isolated test directory, including independent Git state. The cache is temporary
+  and never preserves test results. Tests of init, upgrade, or non-default installation
+  options must perform their own real setup.

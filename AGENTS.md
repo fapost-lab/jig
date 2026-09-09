@@ -1,4 +1,4 @@
-# Agent SDLC Framework — agent instructions
+# Jig (Agent SDLC Framework) — agent instructions
 
 This repository *is* the framework and also uses it (dogfooding). Follow the process
 described in `docs/SPEC.md` and the durable knowledge in `.ai/knowledge/`.
@@ -11,6 +11,24 @@ described in `docs/SPEC.md` and the durable knowledge in `.ai/knowledge/`.
   contradicting one.
 - `docs/SPEC.md` — the product specification (human-facing).
 
+## Workflow
+
+Start work with the `jig-task` skill; it classifies the task by risk and names the route.
+Stage skills can also be used directly: `jig-analyze`, `jig-implement`, `jig-review`,
+`jig-verify`, `jig-consolidate`, `jig-architecture-review`.
+
+| Class | Route |
+|---|---|
+| T0 trivial | implement, verify |
+| T1 local | analyze, implement, verify |
+| T2 structural | analyze, plan, implement, review, verify |
+| T3 architectural | discover, design, human gate, implement, architecture review, verify, consolidate |
+| T4 critical | discover, specify, alternatives, design, human gate, implement, independent review, verify, consolidate |
+
+Risk sets the floor: a one-line change to authentication is not trivial. When a task
+turns out bigger, re-classify with `jig task set <id> class Tn` and run the stages the
+new class requires.
+
 ## Working rules
 
 - All documents, skills, scripts and comments are written in English (`CLAUDE.local.md`).
@@ -21,4 +39,5 @@ described in `docs/SPEC.md` and the durable knowledge in `.ai/knowledge/`.
 - Skills are short; mechanics go to scripts (ADR-0001).
 - Task-specific notes live in `.ai/workspace/tasks/<id>/` (gitignored), never in the repo.
 - Before finishing a task, ask: what here should survive the task? Update
-  `.ai/knowledge/` accordingly, or state `NO_DURABLE_KNOWLEDGE`.
+  `.ai/knowledge/` accordingly, or state `NO_DURABLE_KNOWLEDGE`. Knowledge frontmatter is
+  maintained by `jig knowledge new|paths|reviewed`, never by hand.

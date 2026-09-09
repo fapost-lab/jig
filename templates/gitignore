@@ -1,0 +1,3 @@
+# jig: transient workspace and runtime state are local-only
+.ai/workspace/
+.ai/runtime/

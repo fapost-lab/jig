@@ -5,9 +5,9 @@ status: accepted
 date: 2026-09-08
 domains: [workspace, lifecycle, housekeeping]
 paths:
-  - "scripts/task*"
-  - "scripts/housekeeping*"
-  - "templates/state*"
+  - "scripts/lib/task.sh"
+  - "scripts/lib/housekeeping.sh"
+  - "schemas/state.md"
 ---
 # ADR-0005: Task `status` is local-only; merge state is derived, never stored as truth
 
@@ -22,7 +22,7 @@ The spec also had no path for a PR closed without merge.
 ## Decision
 
 - `status` ∈ `active | ready | consolidated | abandoned` describes only local progress
-  and is written by skills via `sdlc task set`.
+  and is written by skills via `jig task set`.
 - `knowledge_consolidated` stays as an explicit boolean because consolidation may
   legitimately produce `NO_DURABLE_KNOWLEDGE` yet still be complete.
 - Remote state ∈ `merged | open | closed | unknown` is computed by housekeeping on every

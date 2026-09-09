@@ -1,11 +1,11 @@
 # Glossary
 
-Canonical terms for the Agent SDLC Framework. Use the canonical term in source,
+Canonical terms for Jig, the Agent SDLC Framework. Use the canonical term in source,
 scripts, skills, documentation and commit messages.
 
 ## Framework
 
-Canonical term for the whole product (`agent-sdlc`).
+Canonical term for the whole product. A jig guides the tool without cutting; Jig guides the agent without executing (ADR-0007).
 Informal synonyms: tool, harness, SDLC layer.
 
 ## Runtime
@@ -21,12 +21,12 @@ Performs every semantic operation (analysis, classification, review, consolidati
 ## Skill
 
 A vendor-neutral markdown procedure (`SKILL.md`) executed by the Agent.
-Installed per Runtime by an Adapter. Named `sdlc-<stage>`.
+Installed per Runtime by an Adapter. Named `jig-<stage>`.
 Informal synonyms: command, slash command, workflow.
 
 ## Script
 
-A deterministic shell program under `.ai/scripts/`, invoked as `sdlc <command>`.
+A deterministic shell program under `.ai/scripts/`, invoked as `jig <command>`.
 Never calls an LLM. Informal synonyms: CLI (deprecated in spec 0.4), tool.
 
 ## Adapter

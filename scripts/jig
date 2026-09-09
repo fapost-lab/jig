@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# jig — deterministic mechanics for the Jig agent SDLC framework.
+#
+# Dispatcher: resolves its own location, loads shared libraries and sources
+# scripts/lib/<command>.sh which must define cmd_<command>.
+# Scripts never invoke an LLM (ADR-0001). bash 3.2 compatible (ADR-0002).
+set -eu
+set -o pipefail
+
+# Resolve symlinks without readlink -f (absent on older macOS).
+jig_resolve_path() {
+  local p="$1" dir
+  while [ -L "$p" ]; do
+    dir=$(cd "$(dirname "$p")" && pwd)
+    p=$(readlink "$p")
+    case "$p" in /*) ;; *) p="$dir/$p" ;; esac
+  done
+  dir=$(cd "$(dirname "$p")" && pwd)
+  printf '%s/%s\n' "$dir" "$(basename "$p")"
+}
+
+JIG_SELF=$(jig_resolve_path "${BASH_SOURCE[0]}")
+JIG_LIB=$(cd "$(dirname "$JIG_SELF")/lib" && pwd)
+export JIG_SELF JIG_LIB
+
+# shellcheck source=lib/version.sh
+. "$JIG_LIB/version.sh"
+# shellcheck source=lib/common.sh
+. "$JIG_LIB/common.sh"
+# shellcheck source=lib/config.sh
+. "$JIG_LIB/config.sh"
+
+jig_usage() {
+  cat <<EOF
+jig $JIG_VERSION — deterministic mechanics for agent-driven SDLC
+
+Usage: jig <command> [args]
+
+  init [--from <dir>] [--link]   bootstrap .ai/ in the current repository
+  upgrade [--from <dir>]         update framework-owned files (manifest-aware)
+  status                         active tasks, housekeeping flags, drift
+  task new|set|abandon ...       task workspace and state
+  context [...]                  relevant knowledge for a task
+  verify                         run active profiles' checks
+  knowledge check                validate .ai/knowledge
+  knowledge new <type> <slug>    create a feature, adr or convention document
+  knowledge paths [...]          report or maintain documents' paths coverage
+  knowledge stale [--strict]     documents that drifted away from the code
+  knowledge reviewed <id>        stamp a document as reconciled with the code
+  housekeeping [--dry-run]       reconcile workspaces with remote state
+  version                        print version
+EOF
+}
+
+main() {
+  local cmd="${1:-help}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    help|-h|--help) jig_usage ;;
+    version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
+    init|upgrade|status|task|context|verify|knowledge|housekeeping)
+      if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
+        jig_die "command '$cmd' is not available in jig $JIG_VERSION"
+      fi
+      # shellcheck disable=SC1090
+      . "$JIG_LIB/$cmd.sh"
+      "cmd_$cmd" "$@"
+      ;;
+    *)
+      jig_usage >&2
+      jig_die "unknown command: $cmd"
+      ;;
+  esac
+}
+
+main "$@"

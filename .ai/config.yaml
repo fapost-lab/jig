@@ -1,0 +1,18 @@
+# Jig project configuration.
+# Flat YAML subset: `section.key: value`, inline lists only, no nesting.
+# Paths are NOT configurable: .ai/knowledge, .ai/workspace, .ai/runtime are fixed.
+# Any key that is absent takes the default built into the scripts.
+
+profiles: [generic, shell]                   # generic is always active
+adapters: [claude, codex]
+
+git.base_branch: main                 # merge target for ancestry checks
+forge: auto                           # auto | github | gitlab | none
+
+housekeeping.cadence: 1d              # session hook runs housekeeping if last run is older
+housekeeping.fetch: true              # allow `git fetch` during housekeeping
+housekeeping.trash_ttl: 7d            # trash entries older than this are deleted
+housekeeping.abandoned_ttl: 14d       # abandoned workspaces are purged after this
+housekeeping.stale_after: 60d         # older active tasks are reported as STALE_CANDIDATE
+
+knowledge.require_frontmatter: true   # `jig knowledge check` fails on missing frontmatter

@@ -6,8 +6,9 @@ date: 2026-09-08
 domains: [adapters, distribution]
 paths:
   - "adapters/**"
-  - "scripts/init*"
-  - "scripts/upgrade*"
+  - "scripts/lib/init.sh"
+  - "scripts/lib/manifest.sh"
+  - "scripts/lib/upgrade.sh"
 ---
 # ADR-0003: Framework files are copied into the project and tracked by git
 
@@ -20,11 +21,11 @@ belongs to the project.
 
 ## Decision
 
-- `sdlc init` copies scripts to `.ai/scripts/`, profiles to `.ai/profiles/`, and
-  skills to each selected adapter's directory (`.claude/skills/sdlc-*`,
-  `.codex/skills/sdlc-*`). All of it is committed.
+- `jig init` copies scripts to `.ai/scripts/`, profiles to `.ai/profiles/`, and
+  skills to each selected adapter's directory (`.claude/skills/jig-*`,
+  `.codex/skills/jig-*`). All of it is committed.
 - `.ai/manifest` records the framework version and a hash of every installed file.
-  `sdlc upgrade` replaces only files whose hash still matches the manifest; locally
+  `jig upgrade` replaces only files whose hash still matches the manifest; locally
   modified files are kept and reported.
 - The same copy model is used for every adapter, keeping them symmetric.
 

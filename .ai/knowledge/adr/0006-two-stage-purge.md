@@ -5,7 +5,7 @@ status: accepted
 date: 2026-09-08
 domains: [housekeeping, safety]
 paths:
-  - "scripts/housekeeping*"
+  - "scripts/lib/housekeeping.sh"
 ---
 # ADR-0006: Housekeeping purges in two stages via a local trash directory
 

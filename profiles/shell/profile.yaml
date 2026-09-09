@@ -1,0 +1,5 @@
+# Profile manifest. Flat YAML subset, same reader as .ai/config.yaml.
+name: shell
+description: Shell scripts and libraries (shellcheck + tests/run.sh).
+detect: [scripts/**/*.sh, **/*.sh, scripts/jig]
+scope: [changed]

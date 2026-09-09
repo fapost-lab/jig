@@ -1,0 +1,4 @@
+# shellcheck configuration for the Jig framework.
+# SC1091: libraries are sourced through $JIG_LIB at runtime; shellcheck cannot
+# follow them and every library is linted directly instead.
+disable=SC1091

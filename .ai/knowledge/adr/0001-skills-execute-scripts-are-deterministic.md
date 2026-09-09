@@ -42,6 +42,6 @@ files; every workflow step is a skill executed by the agent.
 
 ## Consequences
 
-- Skills stay short and delegate mechanics to `sdlc <command>`.
+- Skills stay short and delegate mechanics to `jig <command>`.
 - Scripts are fully testable without inference.
-- Classification is recorded by `sdlc task set <id> class T2`, never computed by scripts.
+- Classification is recorded by `jig task set <id> class T2`, never computed by scripts.
