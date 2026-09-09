@@ -5,6 +5,7 @@
 
 KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge new <feature|adr|convention> <slug> [--domains a,b] [--paths g,g]
+       jig knowledge new <domain|glossary|rule> <domain> [--paths g,g]
        jig knowledge paths [--task <id>] [--files <list>|-]
        jig knowledge paths add|remove <id> <glob>
        jig knowledge stale [--strict]
@@ -37,14 +38,6 @@ cmd_knowledge() {
 }
 
 # --- helpers -----------------------------------------------------------------
-
-# Names of documents directly under .ai/knowledge/ that carry no frontmatter.
-km_is_global() {
-  case "$1" in
-    GLOSSARY.md | ARCHITECTURE.md | RULES.md) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 # km_glob_matches <glob> — exit 0 when the glob matches at least one path in
 # the repository (excluding .git/).
@@ -119,10 +112,9 @@ km_check_links() {
 # km_check_doc <file> <relpath> <require_fm> <ids_file> <ids_all_file> <adr_nums_file>
 km_check_doc() {
   local file="$1" relpath="$2" require_fm="$3" ids_file="$4" ids_all_file="$5" adr_nums_file="$6"
-  local base is_global has_fm
-  base=$(basename "$file")
+  local is_global has_fm
   is_global=0
-  km_is_global "$base" && is_global=1
+  jig_knowledge_is_global "$file" && is_global=1
 
   has_fm=1
   fm_has "$file" || has_fm=0
@@ -164,12 +156,12 @@ km_check_doc_frontmatter() {
   esac
 
   case "$type" in
-    feature | adr | convention) ;;
+    feature | adr | convention | domain | glossary | rule) ;;
     *) km_fail "$relpath" "missing or invalid type" ;;
   esac
 
   case "$type" in
-    feature | convention)
+    feature | convention | domain | glossary | rule)
       case "$status" in
         active | deprecated | superseded) ;;
         *) km_fail "$relpath" "missing or invalid status" ;;
@@ -260,6 +252,150 @@ km_check_doc_frontmatter() {
       km_glob_matches "$glob" || km_warn "$relpath" "paths glob matches no file: $glob"
     done < <(printf '%s\n' "$paths_out")
   fi
+
+  km_check_load "$file" "$relpath"
+  km_check_topics "$file" "$relpath"
+  km_check_domain_placement "$file" "$relpath" "$domains"
+}
+
+# km_check_load <file> <relpath> — `load` is optional and defaults to
+# `matched`; an unknown value is a failure rather than a silent fallback,
+# because falling back would quietly downgrade a document the author meant to
+# be always required.
+km_check_load() {
+  local file="$1" relpath="$2" load
+  load=$(fm_get "$file" load)
+  [ -n "$load" ] || return 0
+  case "$load" in
+    always | domain | matched) ;;
+    *) km_fail "$relpath" "invalid load: $load (expected always, domain or matched)" ;;
+  esac
+}
+
+# km_check_topics <file> <relpath> — topics are tags, same shape as domains.
+km_check_topics() {
+  local file="$1" relpath="$2" topic
+  while IFS= read -r topic; do
+    [ -n "$topic" ] || continue
+    case "$topic" in
+      -* | *- | *[!a-z0-9-]*)
+        km_fail "$relpath" "invalid topic: $topic (expected [a-z0-9-], no leading or trailing '-')" ;;
+    esac
+  done < <(fm_list "$file" topics)
+}
+
+# km_check_domain_placement <file> <relpath> <domains> — a document filed under
+# domains/<d>/ must claim <d> in its `domains` list. The directory is for human
+# navigation and never implies applicability (ADR-0004), so the two must agree
+# explicitly or the document would be findable by eye and unreachable by
+# resolution.
+km_check_domain_placement() {
+  local file="$1" relpath="$2" domains="$3" prefix rest dir
+  prefix="$JIG_AI_DIR/knowledge/domains/"
+  case "$relpath" in
+    "$prefix"*) rest="${relpath#"$prefix"}" ;;
+    *) return 0 ;;
+  esac
+  dir="${rest%%/*}"
+  [ "$dir" = "$rest" ] && return 0
+  printf '%s\n' "$domains" | grep -qxF -- "$dir" \
+    || km_fail "$relpath" "filed under domains/$dir/ but does not declare domain: $dir"
+}
+
+# --- requires graph ------------------------------------------------------------
+# Lines of the meta file collected by pass 1:
+#   <id><TAB><relpath><TAB><status><TAB><req,req,...>
+
+# km_meta_field <meta-file> <id> <n> — field <n> of the meta line for <id>,
+# empty when no document declares that id.
+km_meta_field() {
+  awk -F '\t' -v want="$2" -v n="$3" '$1 == want { print $n; exit }' "$1"
+}
+
+# km_status_is_active <status> — a document that may be pulled in as a
+# requirement. `accepted` is the ADR spelling of `active`; deprecated,
+# superseded and rejected all mean "do not build on this".
+km_status_is_active() {
+  case "$1" in
+    active | accepted) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# km_check_requires <meta-file> — validate the `requires` graph as a whole:
+# every target exists, every target is active, and no cycle exists. No single
+# document can check this, because a requirement may be declared anywhere and
+# a cycle is a property of the graph.
+#
+# Cycles are found by topological peel rather than recursion: bash 3.2 has no
+# associative arrays, and repeatedly settling the documents whose requirements
+# are all settled needs no stack. Whatever cannot be peeled sits on a cycle.
+km_check_requires() {
+  local meta="$1" t id relpath status reqs req target_status
+  [ -s "$meta" ] || return 0
+  t=$(printf '\t')
+
+  local settled unsettled next progress all_settled
+  settled="${TMPDIR:-/tmp}/jig-knowledge-settled.$$"
+  unsettled="${TMPDIR:-/tmp}/jig-knowledge-unsettled.$$"
+  next="${TMPDIR:-/tmp}/jig-knowledge-next.$$"
+  : > "$settled"
+  : > "$unsettled"
+
+  # Existence and lifecycle, one document at a time. The meta file is streamed
+  # and queried at once; SC2094 reads that as a read/write overlap, but both
+  # accesses are reads (km_meta_field only prints).
+  # shellcheck disable=SC2094
+  while IFS="$t" read -r id relpath status reqs; do
+    [ -n "$id" ] || continue
+    if [ -z "$reqs" ]; then
+      printf '%s\n' "$id" >> "$settled"
+      continue
+    fi
+    printf '%s%s%s%s%s\n' "$id" "$t" "$relpath" "$t" "$reqs" >> "$unsettled"
+    while IFS= read -r req; do
+      [ -n "$req" ] || continue
+      target_status=$(km_meta_field "$meta" "$req" 3)
+      if [ -z "$target_status" ]; then
+        km_fail "$relpath" "requires unknown id: $req"
+        # Already reported, and unresolvable: settling it keeps the peel below
+        # from reporting the same document a second time as a cycle.
+        printf '%s\n' "$req" >> "$settled"
+      elif ! km_status_is_active "$target_status"; then
+        km_fail "$relpath" "requires inactive document: $req (status: $target_status)"
+      fi
+    done < <(printf '%s\n' "$reqs" | tr ',' '\n')
+  done < "$meta"
+
+  # The peel. Reading from a file (not a pipe) keeps km_fail's counter in this
+  # shell.
+  progress=1
+  while [ "$progress" -eq 1 ]; do
+    progress=0
+    : > "$next"
+    while IFS="$t" read -r id relpath reqs; do
+      [ -n "$id" ] || continue
+      all_settled=1
+      while IFS= read -r req; do
+        [ -n "$req" ] || continue
+        grep -qxF -- "$req" "$settled" || all_settled=0
+      done < <(printf '%s\n' "$reqs" | tr ',' '\n')
+      if [ "$all_settled" -eq 1 ]; then
+        printf '%s\n' "$id" >> "$settled"
+        progress=1
+      else
+        printf '%s%s%s%s%s\n' "$id" "$t" "$relpath" "$t" "$reqs" >> "$next"
+      fi
+    done < "$unsettled"
+    cp "$next" "$unsettled"
+  done
+
+  while IFS="$t" read -r id relpath reqs; do
+    [ -n "$id" ] || continue
+    km_fail "$relpath" "requires cycle through: $id"
+  done < "$unsettled"
+
+  rm -f "$settled" "$unsettled" "$next"
 }
 
 # --- entry point -----------------------------------------------------------------
@@ -282,7 +418,7 @@ km_check() {
   cfg_bool knowledge.require_frontmatter true && require_fm=1
 
   local kdir="$KM_DIR"
-  local file base id relpath
+  local file id relpath
 
   # NOTE: these hold mktemp paths and must stay script-global (not `local`):
   # the EXIT trap below fires after km_check has already returned, once its
@@ -291,21 +427,30 @@ km_check() {
   KM_IDS_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-ids.XXXXXX")
   KM_IDS_ALL_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-ids-all.XXXXXX")
   KM_ADR_NUMS_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-adr-nums.XXXXXX")
-  trap 'rm -f "$KM_LIST_FILE" "$KM_IDS_FILE" "$KM_IDS_ALL_FILE" "$KM_ADR_NUMS_FILE"' EXIT INT TERM
+  KM_META_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-meta.XXXXXX")
+  trap 'rm -f "$KM_LIST_FILE" "$KM_IDS_FILE" "$KM_IDS_ALL_FILE" "$KM_ADR_NUMS_FILE" "$KM_META_FILE"' EXIT INT TERM
 
   if [ -d "$kdir" ]; then
     find "$kdir" -type f -name '*.md' | sort > "$KM_LIST_FILE"
   fi
 
   # Pass 1: collect all declared ids up front, so `supersedes` can reference an
-  # id defined in a document that sorts after the one referencing it.
+  # id defined in a document that sorts after the one referencing it, and the
+  # `requires` graph can be walked in either direction.
+  local t meta_status meta_reqs
+  t=$(printf '\t')
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    base=$(basename "$file")
-    km_is_global "$base" && continue
+    jig_knowledge_is_global "$file" && continue
     fm_has "$file" || continue
     id=$(fm_get "$file" id)
-    [ -n "$id" ] && printf '%s\n' "$id" >> "$KM_IDS_ALL_FILE"
+    [ -n "$id" ] || continue
+    printf '%s\n' "$id" >> "$KM_IDS_ALL_FILE"
+    relpath=$(jig_relpath "$file" "$JIG_PROJECT")
+    meta_status=$(fm_get "$file" status)
+    meta_reqs=$(fm_list "$file" requires | sed '/^$/d' | tr '\n' ',' | sed 's/,$//')
+    printf '%s%s%s%s%s%s%s\n' \
+      "$id" "$t" "$relpath" "$t" "$meta_status" "$t" "$meta_reqs" >> "$KM_META_FILE"
   done < "$KM_LIST_FILE"
 
   # Pass 2: full validation.
@@ -315,6 +460,9 @@ km_check() {
     relpath=$(jig_relpath "$file" "$JIG_PROJECT")
     km_check_doc "$file" "$relpath" "$require_fm" "$KM_IDS_FILE" "$KM_IDS_ALL_FILE" "$KM_ADR_NUMS_FILE"
   done < "$KM_LIST_FILE"
+
+  # Pass 3: the `requires` graph, which no single document can validate alone.
+  km_check_requires "$KM_META_FILE"
 
   [ "$KM_QUIET" -eq 1 ] \
     || printf 'knowledge check: %d documents, %d failures, %d warnings\n' \
@@ -326,16 +474,9 @@ km_check() {
 # --- document lookup -----------------------------------------------------------
 
 # km_docs — every knowledge document that can carry frontmatter, sorted.
-# The three global documents are excluded: they have none by design.
-km_docs() {
-  local f
-  [ -d "$KM_DIR" ] || return 0
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    km_is_global "$(basename "$f")" && continue
-    printf '%s\n' "$f"
-  done < <(find "$KM_DIR" -type f -name '*.md' | sort)
-}
+# One enumeration, shared with `context` (common.sh): the three global
+# documents are excluded, everything else counts wherever it sits.
+km_docs() { jig_knowledge_docs; }
 
 # km_type_dir <type> — the subdirectory a document type lives in.
 km_type_dir() {
@@ -362,6 +503,34 @@ km_doc_file() {
       jig_die "knowledge: invalid name '$name': expected [a-z0-9-], no leading or trailing '-'" ;;
   esac
   printf '%s/%s/%s.md\n' "$KM_DIR" "$dir" "$name"
+}
+
+# km_domain_dir <domain> — directory of a domain pack. The second place (with
+# km_doc_file) where a knowledge path is built from a caller-supplied name, so
+# the name is validated here, before any read, write or `sed` that embeds it
+# (RULES.md invariant, ADR-0008).
+km_domain_dir() {
+  local domain="$1"
+  case "$domain" in
+    '' | -* | *- | *[!a-z0-9-]*)
+      jig_die "knowledge: invalid domain '$domain': expected [a-z0-9-], no leading or trailing '-'" ;;
+  esac
+  printf '%s/domains/%s\n' "$KM_DIR" "$domain"
+}
+
+# km_domain_file <type> <domain> — path of one document of a domain pack. The
+# file name is fixed by type, so a pack always has the same shape and a reader
+# can find the rules of a domain without consulting an index.
+km_domain_file() {
+  local type="$1" domain="$2" base dir
+  case "$type" in
+    domain) base="OVERVIEW.md" ;;
+    glossary) base="GLOSSARY.md" ;;
+    rule) base="RULES.md" ;;
+    *) jig_die "knowledge: type '$type' is not a domain document" ;;
+  esac
+  dir=$(km_domain_dir "$domain") || exit 1
+  printf '%s/%s\n' "$dir" "$base"
 }
 
 # km_doc_by_id <id> — path of the document declaring <id>. Duplicate ids are
@@ -409,19 +578,35 @@ km_next_adr() {
   printf '%04d\n' $((max + 1))
 }
 
+# km_template_rel <type> — the template's path under templates/knowledge/.
+#
+# The three domain-pack templates live in a `domain/` subdirectory shaped like
+# the pack itself, and not as `glossary.md` beside the global `GLOSSARY.md`:
+# on a case-insensitive filesystem (macOS by default) those are one file, and
+# writing one silently destroys the other.
+km_template_rel() {
+  case "$1" in
+    domain) printf 'domain/OVERVIEW.md\n' ;;
+    glossary) printf 'domain/GLOSSARY.md\n' ;;
+    rule) printf 'domain/RULES.md\n' ;;
+    *) printf '%s.md\n' "$1" ;;
+  esac
+}
+
 # km_template <type> — the template to instantiate: the copy installed under
 # .ai/templates/knowledge/ first, the framework checkout as a fallback for a
 # project initialised before templates were installed.
 km_template() {
-  local type="$1" installed src
-  installed="$JIG_PROJECT/$JIG_AI_DIR/templates/knowledge/$type.md"
+  local type="$1" rel installed src
+  rel=$(km_template_rel "$type")
+  installed="$JIG_PROJECT/$JIG_AI_DIR/templates/knowledge/$rel"
   if [ -f "$installed" ]; then
     printf '%s\n' "$installed"
     return 0
   fi
   src=$(jig_source_root)
-  if [ -n "$src" ] && [ -f "$src/templates/knowledge/$type.md" ]; then
-    printf '%s\n' "$src/templates/knowledge/$type.md"
+  if [ -n "$src" ] && [ -f "$src/templates/knowledge/$rel" ]; then
+    printf '%s\n' "$src/templates/knowledge/$rel"
     return 0
   fi
   jig_die "knowledge: no template for type '$type'; run: jig upgrade"
@@ -448,18 +633,34 @@ km_new() {
     esac
   done
 
+  # The type is resolved to a path before the template is looked up, so an
+  # unknown type is reported as an unknown type rather than as a missing
+  # template.
   local dir template file id number rel tmp
-  dir=$(km_type_dir "$type")
+  case "$type" in
+    domain | glossary | rule)
+      # For a domain document the slug *is* the domain: the pack lives under
+      # domains/<domain>/ and the file name is fixed by type.
+      file=$(km_domain_file "$type" "$slug") || exit 1
+      id="$type-$slug"
+      # A pack file that did not claim its own domain would fail
+      # `knowledge check` immediately (km_check_domain_placement), so the
+      # default is the only sensible one.
+      [ -n "$domains" ] || domains="$slug"
+      ;;
+    adr)
+      dir=$(km_type_dir "$type")
+      number=$(km_next_adr)
+      file=$(km_doc_file "$dir" "$number-$slug")
+      id="adr-$number-$slug"
+      ;;
+    *)
+      dir=$(km_type_dir "$type")
+      file=$(km_doc_file "$dir" "$slug")
+      id="$type-$slug"
+      ;;
+  esac
   template=$(km_template "$type")
-
-  if [ "$type" = adr ]; then
-    number=$(km_next_adr)
-    file=$(km_doc_file "$dir" "$number-$slug")
-    id="adr-$number-$slug"
-  else
-    file=$(km_doc_file "$dir" "$slug")
-    id="$type-$slug"
-  fi
 
   [ -e "$file" ] && jig_die "knowledge: document already exists: $(km_rel "$file")"
 

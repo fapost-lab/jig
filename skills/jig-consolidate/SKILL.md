@@ -29,6 +29,7 @@ turned out wrong, a rule the codebase now depends on.
 | Something that must always hold | `RULES.md` invariants |
 | A practice the project now follows | `jig knowledge new convention <slug>` |
 | A term used for a core concept | `GLOSSARY.md` |
+| Orientation, terms or rules that bind one domain only | `jig knowledge new domain\|glossary\|rule <domain>` |
 | Process notes, task history, what you tried | nothing; it dies with the workspace |
 
 Never copy `plan.md`, `review.md` or `verification.md` into knowledge because they exist.

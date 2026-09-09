@@ -8,12 +8,18 @@ description: Review a Jig task's diff against the project's knowledge, rules and
 ## 1. Load what the change must satisfy
 
 ```
-.ai/scripts/jig context --task <id>
+git diff --name-only | .ai/scripts/jig context resolve --task <id> --files -
+.ai/scripts/jig context guard --task <id> --files "$(git diff --name-only | paste -sd, -)"
 git diff
 ```
 
 The context lists the ADRs, invariants and feature knowledge that bind these files.
 Review against those, plus correctness. Style opinions with no rule behind them are noise.
+
+Resolve against the *actual* diff, not the task's original file list — the change reaches
+files nobody planned. If the guard reports pending documents, read and acknowledge them
+before reviewing: a review that has not read the rules it is reviewing against is a
+formality.
 
 For T4 the review is independent: run it in a fresh context, or delegate it to a
 subagent that has not seen the implementation being defended.

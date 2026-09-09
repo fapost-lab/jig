@@ -11,12 +11,18 @@ radius in a few sentences.
 ## 1. Context first, repository second
 
 ```
-.ai/scripts/jig context --task <id>
+.ai/scripts/jig context resolve --task <id> --catalog
 ```
 
-Read what it lists. It already tells you which decisions and constraints apply, so you do
-not have to rediscover them from the code. Only then read code, starting from the
-entry points the knowledge names.
+Read every `required:` document; treat `catalog:` lines as a menu, and pull one in with
+`--ids <id>` when it looks relevant. Re-run `resolve` whenever the investigation reaches
+a file or a domain the first call did not cover — that is what makes the resolution
+progressive rather than a single guess at the start. Add `--topics <a,b>` to reach
+conceptual knowledge that owns no path.
+
+The resolved set already tells you which decisions and constraints apply, so you do not
+have to rediscover them from the code. Only then read code, starting from the entry
+points the knowledge names.
 
 ## 2. Answer four questions
 

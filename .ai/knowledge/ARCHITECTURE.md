@@ -25,6 +25,10 @@ sources `lib/version.sh`, `lib/common.sh`, `lib/config.sh`, then sources
 `lib/<command>.sh` and calls `cmd_<command>`. One library file per command, one test
 file per command (`tests/<command>.t.sh`). Shared parsers live in their own libraries
 (`lib/frontmatter.sh`, `lib/manifest.sh`) and are sourced by the commands that need them.
+A helper that two commands must never disagree about lives in `lib/common.sh` instead —
+`jig_git_touched_files` ("what did this task touch"), `jig_knowledge_docs` and
+`jig_knowledge_is_global` ("which files are knowledge documents"). One command library
+never sources another: `context` and `knowledge` share code only through `common.sh`.
 
 Why a dispatcher and not one executable per command: every command needs the same
 repository detection, config reader and error helpers; sourcing them once in the

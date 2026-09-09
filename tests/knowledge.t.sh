@@ -635,7 +635,7 @@ test_new_rejects_invalid_type() {
   km_setup
   run jig knowledge new bogus slug
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "knowledge: unknown type 'bogus' (expected one of: feature adr convention)"
+  assert_contains "$OUT" "knowledge: unknown type 'bogus' (expected one of: feature adr convention domain glossary rule)"
 }
 
 test_new_rejects_path_traversal_slug() {
@@ -1031,4 +1031,313 @@ test_real_repository_knowledge_passes_with_no_failures() {
   run jig knowledge check
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "FAIL "
+}
+
+# --- knowledge new: domain packs -----------------------------------------------
+
+test_new_domain_creates_overview_with_default_domains() {
+  km_setup
+  run jig knowledge new domain payments
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/domains/payments/OVERVIEW.md" "$OUT"
+  assert_file_contains .ai/knowledge/domains/payments/OVERVIEW.md "id: domain-payments"
+  local content
+  content=$(cat .ai/knowledge/domains/payments/OVERVIEW.md)
+  assert_contains "$content" "  - payments"
+}
+
+test_new_rule_creates_rules_with_default_domains() {
+  km_setup
+  run jig knowledge new rule payments
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/domains/payments/RULES.md" "$OUT"
+  assert_file_contains .ai/knowledge/domains/payments/RULES.md "id: rule-payments"
+  local content
+  content=$(cat .ai/knowledge/domains/payments/RULES.md)
+  assert_contains "$content" "  - payments"
+}
+
+test_new_glossary_creates_glossary_with_default_domains() {
+  km_setup
+  run jig knowledge new glossary payments
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/domains/payments/GLOSSARY.md" "$OUT"
+  assert_file_contains .ai/knowledge/domains/payments/GLOSSARY.md "id: glossary-payments"
+  local content
+  content=$(cat .ai/knowledge/domains/payments/GLOSSARY.md)
+  assert_contains "$content" "  - payments"
+}
+
+test_new_domain_rejects_invalid_domain_name() {
+  km_setup
+  run jig knowledge new domain "Bad Name"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: invalid domain"
+  assert_no_file ".ai/knowledge/domains/Bad Name/OVERVIEW.md"
+}
+
+test_new_rule_rejects_path_traversal_domain_name() {
+  km_setup
+  run jig knowledge new rule "../escape"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: invalid domain"
+}
+
+# --- domain pack files are not exempt as global (regression) -------------------
+
+test_domain_pack_rules_file_is_not_exempt_as_global() {
+  km_setup
+  mkdir -p .ai/knowledge/domains/payments
+  cat > .ai/knowledge/domains/payments/RULES.md <<'EOF'
+---
+type: rule
+status: active
+domains: [payments]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/domains/payments/RULES.md: missing or invalid id"
+}
+
+test_domain_pack_glossary_file_is_not_exempt_as_global() {
+  km_setup
+  mkdir -p .ai/knowledge/domains/payments
+  cat > .ai/knowledge/domains/payments/GLOSSARY.md <<'EOF'
+---
+type: glossary
+status: active
+domains: [payments]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/domains/payments/GLOSSARY.md: missing or invalid id"
+}
+
+test_real_global_rules_file_still_exempt_from_frontmatter_checks() {
+  km_setup
+  cat > .ai/knowledge/RULES.md <<'EOF'
+# Rules
+No frontmatter here, and this must not be flagged.
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "RULES.md"
+}
+
+# --- domain pack placement must agree with its own domains ---------------------
+
+test_domain_pack_file_not_declaring_its_own_domain_fails() {
+  km_setup
+  mkdir -p .ai/knowledge/domains/payments
+  cat > .ai/knowledge/domains/payments/OVERVIEW.md <<'EOF'
+---
+id: domain-payments
+type: domain
+status: active
+domains: [other]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/domains/payments/OVERVIEW.md: filed under domains/payments/ but does not declare domain: payments"
+}
+
+# --- load validation -------------------------------------------------------------
+
+test_load_invalid_value_fails() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+load: sometimes
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/features/a.md: invalid load: sometimes (expected always, domain or matched)"
+}
+
+test_load_valid_values_pass() {
+  km_setup
+  cat > .ai/knowledge/features/always.md <<'EOF'
+---
+id: feature-always
+type: feature
+status: active
+domains: [core]
+load: always
+---
+EOF
+  cat > .ai/knowledge/features/domain.md <<'EOF'
+---
+id: feature-domain
+type: feature
+status: active
+domains: [core]
+load: domain
+---
+EOF
+  cat > .ai/knowledge/features/matched.md <<'EOF'
+---
+id: feature-matched
+type: feature
+status: active
+domains: [core]
+load: matched
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+test_load_absent_passes() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+# --- topics validation -----------------------------------------------------------
+
+test_topics_invalid_value_fails() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+topics: [Bad_Topic]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/features/a.md: invalid topic: Bad_Topic"
+}
+
+test_topics_valid_values_pass() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+topics: [refunds, order-flow]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+# --- requires validation -----------------------------------------------------------
+
+test_requires_unknown_id_fails() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+requires: [feature-ghost]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires unknown id: feature-ghost"
+}
+
+test_requires_inactive_document_fails() {
+  km_setup
+  cat > .ai/knowledge/features/old.md <<'EOF'
+---
+id: feature-old
+type: feature
+status: deprecated
+domains: [core]
+---
+EOF
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+requires: [feature-old]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires inactive document: feature-old (status: deprecated)"
+}
+
+test_requires_two_node_cycle_fails_both() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+requires: [feature-b]
+---
+EOF
+  cat > .ai/knowledge/features/b.md <<'EOF'
+---
+id: feature-b
+type: feature
+status: active
+domains: [core]
+requires: [feature-a]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires cycle through: feature-a"
+  assert_contains "$OUT" "requires cycle through: feature-b"
+}
+
+test_requires_valid_chain_passes_clean() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+requires: [feature-b]
+---
+EOF
+  cat > .ai/knowledge/features/b.md <<'EOF'
+---
+id: feature-b
+type: feature
+status: active
+domains: [core]
+requires: [feature-c]
+---
+EOF
+  cat > .ai/knowledge/features/c.md <<'EOF'
+---
+id: feature-c
+type: feature
+status: active
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
 }

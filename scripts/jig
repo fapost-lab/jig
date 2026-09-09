@@ -41,9 +41,12 @@ Usage: jig <command> [args]
   status                         active tasks, housekeeping flags, drift
   task new|set|abandon ...       task workspace and state
   context [...]                  relevant knowledge for a task
+  context resolve [...]          required documents, plus --catalog metadata
+  context pending|guard [...]    knowledge required but not yet acknowledged
+  context acknowledge [...]      record documents as read
   verify                         run active profiles' checks
   knowledge check                validate .ai/knowledge
-  knowledge new <type> <slug>    create a feature, adr or convention document
+  knowledge new <type> <slug>    create a knowledge document (jig knowledge for types)
   knowledge paths [...]          report or maintain documents' paths coverage
   knowledge stale [--strict]     documents that drifted away from the code
   knowledge reviewed <id>        stamp a document as reconciled with the code

@@ -10,6 +10,7 @@ paths:
   - "scripts/lib/frontmatter.sh"
   - "scripts/lib/knowledge.sh"
   - "templates/knowledge/**"
+reviewed_at: 2026-09-09
 ---
 # ADR-0004: Knowledge documents carry frontmatter so context resolution is deterministic
 
@@ -57,3 +58,7 @@ one-level lists (see ADR-0002).
   nothing" warning is the structural half; drift between a document and the code it
   describes needed a freshness record and is settled by ADR-0010.
 - Documents without frontmatter are reported by `knowledge check`, not silently ignored.
+- Extended, not replaced, by ADR-0014: `load`, `topics`, `requires` and `summary` say
+  *how* a document applies, and domain directories were added without giving directories
+  any authority. The rejection of "directory-per-domain layout instead of metadata"
+  above still stands and is what ADR-0014 enforces.

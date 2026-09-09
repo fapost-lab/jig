@@ -10,9 +10,12 @@
 - `init` and `upgrade` never overwrite existing knowledge or user-modified files. (ADR-0003)
 - Remote merge state is never written into a task `state` file. (ADR-0005)
 - No filesystem path is built from a name that has not been validated first: task ids,
-  profile names and adapter names are checked at the single function that builds the path
-  (`task_dir`, `profiles_dir`, `adapters_dir`), before any read, write or `sed` expression
-  that embeds them. (ADR-0008, convention-shell)
+  profile names, adapter names and knowledge domain names are checked at the single
+  function that builds the path (`task_dir`, `profiles_dir`, `adapters_dir`,
+  `km_domain_dir`), before any read, write or `sed` expression that embeds them. A path
+  supplied by a caller rather than derived from a name is validated the same way at the
+  point it is joined to the project root (`_ctx_check_knowledge_path`).
+  (ADR-0008, convention-shell)
 
 ## Rules
 

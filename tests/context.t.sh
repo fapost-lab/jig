@@ -574,3 +574,411 @@ MD
   assert_eq 0 "$RC"
   assert_contains "$OUT" ".ai/knowledge/features/flow.md"
 }
+
+# --- resolve: load policy --------------------------------------------------------------
+
+test_context_resolve_load_always_required_with_no_selectors() {
+  ctx_setup
+  cat > .ai/knowledge/features/always.md <<'EOF'
+---
+id: feature-always
+type: feature
+status: active
+load: always
+---
+EOF
+  run jig context resolve
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/always.md  (load: always)"
+}
+
+test_context_resolve_load_domain_matches_domains_selector() {
+  ctx_setup
+  mkdir -p .ai/knowledge/domains/payments
+  cat > .ai/knowledge/domains/payments/RULES.md <<'EOF'
+---
+id: rule-payments
+type: rule
+status: active
+domains: [payments]
+load: domain
+---
+EOF
+  run jig context resolve --domains payments
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/domains/payments/RULES.md  (domains: payments)"
+
+  run jig context resolve
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "domains/payments/RULES.md"
+}
+
+test_context_resolve_matched_by_paths_glob() {
+  ctx_setup
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+paths:
+  - "src/Checkout/**"
+---
+EOF
+  run jig context resolve --files src/Checkout/Order.php
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/checkout.md  (paths: src/Checkout/**)"
+}
+
+test_context_resolve_matched_by_topics() {
+  ctx_setup
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+topics: [refunds]
+---
+EOF
+  run jig context resolve --topics refunds
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/checkout.md  (topics: refunds)"
+}
+
+# --- resolve: catalog (domain-only match is not required) -----------------------------
+
+test_context_resolve_domain_only_match_goes_to_catalog_not_required() {
+  ctx_setup
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+domains: [payments]
+summary: "How checkout builds an order."
+---
+EOF
+  run jig context resolve --domains payments
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "required:  .ai/knowledge/features/checkout.md"
+
+  run jig context resolve --domains payments --catalog
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   .ai/knowledge/features/checkout.md  [feature-checkout] How checkout builds an order."
+}
+
+test_context_resolve_catalog_no_summary_shows_placeholder() {
+  ctx_setup
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+domains: [payments]
+---
+EOF
+  run jig context resolve --domains payments --catalog
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   .ai/knowledge/features/checkout.md  [feature-checkout] (no summary)"
+}
+
+test_context_resolve_without_catalog_flag_prints_no_catalog_line() {
+  ctx_setup
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+domains: [payments]
+---
+EOF
+  run jig context resolve --domains payments
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "catalog:"
+}
+
+# --- resolve: globals, required and workspace labels together -------------------------
+
+test_context_resolve_prints_global_required_and_workspace_labels() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/knowledge/domains/payments
+  cat > .ai/knowledge/domains/payments/RULES.md <<'EOF'
+---
+id: rule-payments
+type: rule
+status: active
+domains: [payments]
+load: always
+---
+EOF
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "global:    .ai/knowledge/GLOSSARY.md"
+  assert_contains "$OUT" "required:  .ai/knowledge/domains/payments/RULES.md  (load: always)"
+  assert_contains "$OUT" "workspace: .ai/workspace/tasks/T-1/task.md"
+}
+
+# --- resolve: transitive requires -------------------------------------------------------
+
+test_context_resolve_transitive_requires_two_step_chain() {
+  ctx_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+load: always
+requires: [feature-b]
+---
+EOF
+  cat > .ai/knowledge/features/b.md <<'EOF'
+---
+id: feature-b
+type: feature
+status: active
+requires: [feature-c]
+---
+EOF
+  cat > .ai/knowledge/features/c.md <<'EOF'
+---
+id: feature-c
+type: feature
+status: active
+---
+EOF
+  run jig context resolve
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/a.md  (load: always)"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/b.md  (requires: feature-a)"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/c.md  (requires: feature-b)"
+}
+
+test_context_resolve_requires_unknown_document_is_fatal() {
+  ctx_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+load: always
+requires: [feature-ghost]
+---
+EOF
+  run jig context resolve
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires unknown or inactive document:"
+  assert_contains "$OUT" "run: jig knowledge check"
+}
+
+test_context_resolve_requires_inactive_document_is_fatal() {
+  ctx_setup
+  cat > .ai/knowledge/features/old.md <<'EOF'
+---
+id: feature-old
+type: feature
+status: deprecated
+---
+EOF
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+load: always
+requires: [feature-old]
+---
+EOF
+  run jig context resolve
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires unknown or inactive document: feature-old"
+  assert_contains "$OUT" "run: jig knowledge check"
+}
+
+# --- resolve: --ids ----------------------------------------------------------------------
+
+test_context_resolve_ids_promotes_catalog_document_to_required() {
+  ctx_setup
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+domains: [payments]
+---
+EOF
+  run jig context resolve --ids feature-checkout
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/checkout.md  (id: feature-checkout)"
+}
+
+test_context_resolve_unknown_id_dies() {
+  ctx_setup
+  run jig context resolve --ids no-such-id
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: context: no active document with id: no-such-id"
+}
+
+# --- context ledger: guard / pending / acknowledge --------------------------------------
+
+test_context_guard_ledger_round_trip() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+load: always
+---
+EOF
+  run jig context guard --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context guard: 4 of 4 document(s) not acknowledged:"
+  assert_contains "$OUT" "  .ai/knowledge/features/checkout.md"
+  assert_contains "$OUT" "read them, then: jig context acknowledge --task T-1 --files <list>"
+
+  run bash -c '"$JIG_BIN" context pending --task T-1 | "$JIG_BIN" context acknowledge --task T-1 --files -'
+  assert_eq 0 "$RC"
+
+  run jig context guard --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "context guard: ok (4 document(s) acknowledged)"
+}
+
+test_context_guard_reacknowledges_after_document_changes() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+load: always
+---
+EOF
+  run bash -c '"$JIG_BIN" context pending --task T-1 | "$JIG_BIN" context acknowledge --task T-1 --files -'
+  assert_eq 0 "$RC"
+  run jig context guard --task T-1
+  assert_eq 0 "$RC"
+
+  printf 'extra line\n' >> .ai/knowledge/features/checkout.md
+
+  run jig context guard --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context guard: 1 of 4 document(s) not acknowledged:"
+  assert_contains "$OUT" "  .ai/knowledge/features/checkout.md"
+  assert_not_contains "$OUT" "GLOSSARY.md"
+}
+
+test_context_ledger_file_format_and_location() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+load: always
+---
+EOF
+  run bash -c '"$JIG_BIN" context pending --task T-1 | "$JIG_BIN" context acknowledge --task T-1 --files -'
+  assert_eq 0 "$RC"
+
+  assert_file .ai/workspace/tasks/T-1/context
+  local expected_hash line
+  expected_hash=$(git hash-object .ai/knowledge/features/checkout.md)
+  line=$(grep "features/checkout.md" .ai/workspace/tasks/T-1/context)
+  assert_eq "$(printf '%s\t%s' "$expected_hash" ".ai/knowledge/features/checkout.md")" "$line"
+
+  local sorted
+  sorted=$(sort .ai/workspace/tasks/T-1/context)
+  assert_eq "$sorted" "$(cat .ai/workspace/tasks/T-1/context)"
+}
+
+test_context_workspace_artifacts_never_tracked_by_ledger() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  printf '# discovery\n' > .ai/workspace/tasks/T-1/discovery.md
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "workspace: .ai/workspace/tasks/T-1/task.md"
+  assert_contains "$OUT" "workspace: .ai/workspace/tasks/T-1/discovery.md"
+
+  run jig context pending --task T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "task.md"
+  assert_not_contains "$OUT" "discovery.md"
+}
+
+test_context_guard_and_pending_with_no_live_task() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  jig task pause T-1 --reason "testing" >/dev/null
+
+  run jig context guard
+  assert_eq 0 "$RC"
+  assert_eq "context guard: no task workspace; nothing tracked" "$OUT"
+
+  run jig context pending
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+# --- acknowledge: path validation --------------------------------------------------------
+
+test_context_acknowledge_rejects_absolute_path() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1 --files /etc/passwd
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context acknowledge: path must be repository-relative:"
+}
+
+test_context_acknowledge_rejects_dotdot_path() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1 --files "../escape.md"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "path may not contain '..'"
+}
+
+test_context_acknowledge_rejects_path_outside_knowledge_dir() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1 --files "README.md"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a knowledge document:"
+}
+
+test_context_acknowledge_rejects_nonexistent_document() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1 --files ".ai/knowledge/features/ghost.md"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no such document:"
+}
+
+test_context_acknowledge_requires_task() {
+  ctx_setup
+  run jig context acknowledge --files x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context acknowledge: --task is required"
+}
+
+test_context_acknowledge_requires_files() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context acknowledge: --files is required"
+}
+
+# --- CLI plumbing: subcommands ------------------------------------------------------------
+
+test_context_unknown_subcommand_dies_with_usage() {
+  ctx_setup
+  run jig context bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig context"
+}

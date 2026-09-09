@@ -259,21 +259,24 @@ If not, the artifact should not become permanent documentation.
 
 ## 8. Knowledge Document Frontmatter
 
-Every document in `.ai/knowledge/` (except `GLOSSARY.md`, `ARCHITECTURE.md`, `RULES.md`, which are considered global) starts with YAML frontmatter:
+Every document in `.ai/knowledge/` (except the three global documents `.ai/knowledge/GLOSSARY.md`, `ARCHITECTURE.md` and `RULES.md`, recognised by path) starts with YAML frontmatter:
 
 ```yaml
 ---
-id: feature-trigger-resolution
-type: feature            # feature | adr | convention
+id: rule-payments
+type: rule               # feature | adr | convention | domain | glossary | rule
 status: active           # active | deprecated | superseded (adr: accepted | superseded | deprecated | rejected)
-domains: [flow, triggers]
+summary: Mandatory constraints for changes to payment processing.
+domains: [payments]
+topics: [money, gateway, ledger]
+load: domain             # always | domain | matched (default matched)
+requires: [adr-0012-money-representation]
 paths:
-  - "src/Flow/**"
-  - "app/Services/Trigger*"
+  - "src/Payments/**"
 ---
 ```
 
-Required fields: `id`, `type`, `status`. `domains` and `paths` drive context resolution (§25): a document is considered relevant to a task if at least one of the affected files matches `paths`, or the task is explicitly tagged with one of the `domains`.
+Required fields: `id`, `type`, `status`. `domains`, `topics` and `paths` drive context resolution (§26): a document is considered relevant to a task if at least one of the affected files matches `paths`, or the task is tagged with one of the `domains` or `topics`. `load` decides how strong that relevance is, and `requires` names documents that must come with it. The full schema, including the domain pack layout under `.ai/knowledge/domains/<domain>/`, is `schemas/frontmatter.md`.
 
 Frontmatter is limited to flat scalars and single-level lists, so it can be parsed without a YAML parser. Keeping `paths` up to date is the responsibility of the consolidate skill.
 
@@ -496,6 +499,31 @@ Inputs:
 - **Domains**: `--domains`, otherwise the task's `domains` state key.
 
 A document matches when any of its `paths` globs matches any file, or any of its `domains` equals a requested domain; the reason is printed. Documents with status `superseded`, `deprecated` or `rejected` are skipped unless `--all`. `--format paths` prints bare paths for piping. The agent reads only the returned list. If nothing matched, only global + workspace are returned.
+
+Enumeration walks `.ai/knowledge/` recursively, so a document is resolved wherever it is filed; applicability lives in frontmatter, never in the directory (ADR-0004).
+
+## 26.1 Progressive Resolution
+
+The stateless form answers "what matches this diff". A working agent has a second question — what must I have read before I change these files, and what have I not read yet — and four subcommands answer it:
+
+```
+jig context resolve [selectors] [--catalog]
+jig context pending [selectors]
+jig context guard   [selectors]
+jig context acknowledge --task <id> --files <list>|-
+```
+
+Selectors are `--task`, `--files`, `--domains`, `--topics`, `--ids` and `--all`.
+
+`resolve` prints two things. **Required** documents, whose full body the agent must read: the globals, `load: always` documents, `load: domain` documents of an entered domain, `load: matched` documents hit by a path or topic, ids named with `--ids`, and the transitive `requires` closure of all of those. And, with `--catalog`, **catalog** entries: id, path and `summary` of the remaining active documents of the entered domains. A catalog entry is metadata only; the agent decides whether it is relevant and pulls it in with `--ids`. A body is never loaded merely because it shares a domain.
+
+A `requires` that resolves to no active document is fatal: returning a partial context that looks complete is the failure this exists to prevent.
+
+`acknowledge` records that a document has been read, in a ledger at `.ai/workspace/tasks/<id>/context` — one `<git-hash><TAB><path>` line per document, in the gitignored workspace. `pending` prints tracked documents with no acknowledgement or whose content changed since one; a document that changes becomes pending again, which is why the ledger stores hashes rather than a list. `guard` prints the pending set and exits 1 while any remain. Workspace artifacts are returned by `resolve` but never tracked: they are the task's own output.
+
+T0 and T1 have no workspace (§17), so they have no ledger. `guard` then prints `no task workspace; nothing tracked` and exits 0 — a skill can call it unconditionally, and the report never implies a check that did not happen.
+
+What the ledger proves is deliberately narrow: the agent stated it read the document. It is not evidence of comprehension, and a passing guard is not evidence that the knowledge was applied.
 
 ## 27. Knowledge Authority
 

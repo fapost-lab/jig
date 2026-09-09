@@ -82,9 +82,46 @@ $(git -C "$JIG_PROJECT" ls-files --others --exclude-standard 2>/dev/null)"
 # --- knowledge documents ---------------------------------------------------
 
 # Document types that carry frontmatter and ship a template under
-# templates/knowledge/ (schemas/frontmatter.md, ADR-0004).
-JIG_DOC_TYPES="feature adr convention"
+# templates/knowledge/ (schemas/frontmatter.md, ADR-0004). `domain`,
+# `glossary` and `rule` are the three files of a domain pack.
+JIG_DOC_TYPES="feature adr convention domain glossary rule"
 export JIG_DOC_TYPES
+
+# The three documents directly under .ai/knowledge/ that carry no frontmatter
+# by design. Takes an absolute path and matches on the repository-relative
+# path, never on the basename: a domain pack is `domains/<d>/RULES.md`, and a
+# basename test would exempt that file from validation and hide it from every
+# consumer of jig_knowledge_docs — silently, which is the worst way to lose a
+# document (design.md, "Global documents are recognised by path").
+jig_knowledge_is_global() {
+  local rel
+  rel=$(jig_relpath "$1" "$JIG_PROJECT")
+  case "$rel" in
+    "$JIG_AI_DIR/knowledge/GLOSSARY.md" | \
+      "$JIG_AI_DIR/knowledge/ARCHITECTURE.md" | \
+      "$JIG_AI_DIR/knowledge/RULES.md") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Every knowledge document that can carry frontmatter, absolute paths, sorted.
+# Walks .ai/knowledge recursively: applicability lives in frontmatter, not in
+# the directory (ADR-0004), so a document counts wherever it sits — including
+# under domains/<d>/.
+#
+# Lives here, with the other shared knowledge helpers, because `context` and
+# `knowledge` must never disagree about which files exist: one walking
+# recursively while the other read three fixed directories is how a domain
+# document ended up validated but never resolved.
+jig_knowledge_docs() {
+  local dir="$JIG_PROJECT/$JIG_AI_DIR/knowledge" f
+  [ -d "$dir" ] || return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    jig_knowledge_is_global "$f" && continue
+    printf '%s\n' "$f"
+  done < <(find "$dir" -type f -name '*.md' | sort)
+}
 
 # Translate a frontmatter `paths` glob into a pattern usable both with
 # `find -path` and with a bash `case`: `**` (any depth, including zero

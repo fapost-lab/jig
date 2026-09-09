@@ -8,11 +8,25 @@ description: Implement a Jig task — write the change against the project's rul
 ## 1. Know what binds you
 
 ```
-.ai/scripts/jig context --task <id>
+.ai/scripts/jig context resolve --task <id> --catalog
 ```
 
-Read the listed documents before writing code. Conventions and invariants are not
-suggestions: a change that violates one is wrong even when it works.
+Read every `required:` document before writing code. Conventions and invariants are not
+suggestions: a change that violates one is wrong even when it works. A `catalog:` line is
+metadata only — decide whether it matters, and pull it in with `--ids <id>` when it does.
+
+Then say what you read:
+
+```
+.ai/scripts/jig context acknowledge --task <id> --files <list>|-
+.ai/scripts/jig context guard --task <id>
+```
+
+Run the guard before the first edit and again whenever the planned file list grows.
+Acknowledge only what you actually read — the ledger records your claim, not your
+comprehension, so a guard you satisfied without reading buys nothing and reports a
+check that did not happen. When the task has no workspace the guard says so and exits 0;
+that line is the honest result, not a pass to quote as one.
 
 For T3 and T4, check that the human approved the design. If no approval was given in this
 conversation, go back to the gate.

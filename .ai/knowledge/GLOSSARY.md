@@ -64,6 +64,31 @@ The SDLC stage that decides what from a task becomes Durable Knowledge.
 Scheduled, LLM-free reconciliation of Workspaces against remote merge state,
 ending in a two-stage purge. Informal synonyms: cleanup, GC.
 
+## Domain Pack
+
+The three documents a domain may keep under `.ai/knowledge/domains/<domain>/`:
+`OVERVIEW.md` (type `domain`), `GLOSSARY.md` (`glossary`) and `RULES.md` (`rule`).
+The directory is navigation only; applicability stays in frontmatter (ADR-0004, ADR-0014).
+
+## Load Policy
+
+A knowledge document's `load` field — `always`, `domain` or `matched` — stating how
+strongly it applies. Decides whether `jig context resolve` requires its body or lists it
+in the Catalog.
+
+## Catalog (Context Catalog)
+
+The compact `id`, path and `summary` listing of active documents in an entered domain
+that are not required. Metadata only: the Agent pulls one in explicitly with `--ids`.
+Informal synonyms: index, listing.
+
+## Context Ledger
+
+The per-task record of documents the Agent stated it has read:
+`.ai/workspace/tasks/<id>/context`, one `<git-hash><TAB><path>` line each. Transient and
+never committed. It records a claim of reading, not comprehension (ADR-0015).
+Informal synonyms: acknowledgements, read tracking.
+
 ## Task Class
 
 Risk/complexity class `T0`–`T4` assigned by the Agent that selects the workflow.
