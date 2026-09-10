@@ -356,7 +356,8 @@ Fields:
 | Field | Who writes it | Values |
 |---|---|---|
 | `task_id` | script `task new` | arbitrary id without spaces or `/` |
-| `branch` | script `task new` | current branch |
+| `branch` | script `task new` | the branch `task new` created, or the current branch with `--no-branch` (ADR-0026) |
+| `base_commit` | script `task new` | commit the task's branch forked from; absent when no branch was created |
 | `class` | skill `task` via `task set` | `T0`–`T4` |
 | `status` | skills via `task set` | `active` → `ready` → `consolidated`; `abandoned` |
 | `knowledge_consolidated` | skill `consolidate` | `true` / `false` |
@@ -632,7 +633,7 @@ Requirements for a skill:
 init                      idempotent project bootstrap
 upgrade                   update scripts/skills/profiles from the framework, without touching files changed by the user
 status                    summary: active tasks, housekeeping flags, version
-task new <id> [--class T?] [--from <file>]  create workspace + state + task.md
+task new <id> [--class T?] [--from <file>] [--no-branch] [--force]  create workspace + state + task.md, and a branch off the base (ADR-0026)
 task set <id> <k> <v>     write a state field (class, status, knowledge_consolidated, domains)
 task abandon <id>         status → abandoned
 task pause <id> [--reason <t>] [--stash]   dormant; --stash records the stash SHA

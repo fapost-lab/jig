@@ -7,7 +7,8 @@ Reference: SPEC §15, ADR-0005, ADR-0008. Written only through `jig task`, atomi
 | Key | Writer | Values |
 |---|---|---|
 | `task_id` | `jig task new` | `^[A-Za-z0-9][A-Za-z0-9._-]*$` (no leading dot, so `.`, `..` and hidden names are impossible); every `jig task` subcommand validates the id before touching the filesystem |
-| `branch` | `jig task new` | branch name at creation |
+| `branch` | `jig task new` | branch name at creation, or the branch it created |
+| `base_commit` | `jig task new` | 40-hex commit the task's branch forked from; absent when no branch was created (`--no-branch`, `git.branch_per_task: false`, or a workspace predating the field). Housekeeping treats an absent fork point as "ask the old question", so a task without one is also without the protection the field provides |
 | `class` | skill via `jig task set` | `T0` … `T4` |
 | `status` | skills via `jig task set` | `active`, `ready`, `consolidated`, `abandoned` |
 | `knowledge_consolidated` | `jig-consolidate` skill via `jig task set` | `true`, `false` |

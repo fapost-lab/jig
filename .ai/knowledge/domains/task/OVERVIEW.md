@@ -46,9 +46,15 @@ It has its own domain — see `domains/housekeeping/` — and the split is worth
 because the two are easy to confuse: **`status` is local progress, owned here; remote
 merge state is derived there, every run, and stored nowhere.**
 
-One consequence lands squarely on this domain. Housekeeping can only establish that work
-landed when the task had a branch of its own: a task whose `branch` is the base branch
-resolves to `unknown` forever (ADR-0025), so on a trunk-based project no workspace is
-ever purged automatically. `branch` is written once by `task new` from the current
-checkout and is never a branch this domain created — which is exactly the deferred
-`task-branch-lifecycle` work.
+One consequence lands squarely on this domain, and ADR-0026 is the answer to it.
+Housekeeping can only establish that work landed when the task had a branch of its own: a
+task whose `branch` is the base branch resolves to `unknown` forever (ADR-0025). So
+`task new` now **creates** that branch and records the commit it forked from in
+`base_commit`. Two things follow for anyone changing this domain:
+
+- `branch` is no longer merely observed. It is written from the branch `task new` created,
+  unless `--no-branch` or `git.branch_per_task: false` puts the task back on whatever the
+  checkout was using.
+- `base_commit` is script-owned and write-once, like `task_id` and `branch`. It exists so
+  another domain can ask "has this branch done anything", and a task without it — legacy
+  or `--no-branch` — is a task housekeeping must judge the old, weaker way.

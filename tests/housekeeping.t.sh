@@ -589,3 +589,77 @@ test_housekeeping_dry_run_writes_no_run_marker() {
   run jig housekeeping --dry-run
   assert_no_file .ai/runtime/housekeeping.log
 }
+
+# --- the fork point (ADR-0008; a branch that did nothing has landed nothing) --
+
+test_housekeeping_branch_with_no_commits_since_the_fork_is_unknown() {
+  # THE regression this field exists for. A branch created and not committed
+  # to has a tip identical to the base's, so `merge-base --is-ancestor` is
+  # trivially true and ancestry answers `merged`. A consolidated task would
+  # then be purged while all of its work sits uncommitted in the tree.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  git branch task/fresh
+  fixture_task fresh "task/fresh" consolidated "base_commit:$fork"
+
+  run jig housekeeping
+  assert_contains "$OUT" "fresh status=consolidated remote=unknown via=none action=preserve"
+  assert_dir .ai/workspace/tasks/fresh
+}
+
+test_housekeeping_branch_with_landed_commits_is_merged() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  git checkout -q -b task/landed
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/landed" task/landed
+  fixture_task landed "task/landed" consolidated "base_commit:$fork"
+
+  run jig housekeeping
+  assert_contains "$OUT" "landed status=consolidated remote=merged via=ancestry action=purge"
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/landed/state"
+}
+
+test_housekeeping_branch_with_unlanded_commits_is_preserved() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  git checkout -q -b task/open
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  git checkout -q main
+  fixture_task op "task/open" consolidated "base_commit:$fork"
+
+  run jig housekeeping
+  assert_contains "$OUT" "op status=consolidated remote=unknown"
+  assert_dir .ai/workspace/tasks/op
+}
+
+test_housekeeping_task_without_a_fork_point_behaves_as_before() {
+  # Every workspace created before this field existed has no base_commit.
+  # Absence is a valid state, not a defect, and must not change any verdict.
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+
+  run jig housekeeping
+  assert_contains "$OUT" "ff status=consolidated remote=merged via=ancestry action=purge"
+}
+
+test_housekeeping_ignores_a_fork_point_that_no_longer_exists() {
+  # A rewritten history can leave base_commit pointing at nothing. That must
+  # fall back to the old check rather than abort the run.
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated "base_commit:0000000000000000000000000000000000000000"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ff status=consolidated remote=merged"
+}
