@@ -46,11 +46,17 @@ new class requires.
 
 - Code explains what; knowledge explains why. Put intent, constraints, trade-offs and
   rejected alternatives into `.ai/knowledge/`, not into task notes.
-- State here which natural language durable artifacts are written in — knowledge
-  documents, ADRs, task artifacts, code comments — if the project cares. This file is
-  committed and every runtime reads it, so it is the one place where the answer is the
-  same for every contributor. The language an agent *speaks* in a session is a personal
-  preference, not a project one: set that in your own runtime's local instruction file.
+- State here which natural language the project's **durable** artifacts are written in —
+  knowledge documents, ADRs, code comments — if the project cares. This file is committed
+  and every runtime reads it, so it is the one place where the answer is the same for
+  every contributor.
+
+  Two things are deliberately outside that answer. The language an agent *speaks* in a
+  session is a personal preference: set it in your own runtime's local instruction file.
+  And **task artifacts under `.ai/workspace/tasks/` follow the same personal preference**,
+  not this rule — they are gitignored, they never leave the machine, and their reader is
+  the person at the human gate. A design nobody else will read is worth writing in the
+  language its reader thinks in.
 - Task-specific notes belong in `.ai/workspace/tasks/<id>/` (gitignored). They never
   become repository documentation by themselves.
 - Completion is proven by evidence: run `.ai/scripts/jig verify` before declaring done.

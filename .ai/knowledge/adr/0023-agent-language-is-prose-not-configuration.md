@@ -10,6 +10,7 @@ paths:
   - templates/AGENTS.md
   - .ai/config.yaml
 summary: Why the agent's language is stated in AGENTS.md rather than configured, and why interaction language is personal, not project-level.
+reviewed_at: 2026-09-11
 ---
 # ADR-0023: Agent language is prose in AGENTS.md, not configuration
 
@@ -46,6 +47,24 @@ convention that the `codex` adapter would not see.
 **Interaction language is out of scope, because it is not a project property.** Two people
 on one repository may want different session languages and neither is wrong. It belongs in
 the individual's own runtime-local instruction file, where it already works.
+
+> **Extension (2026-09-11).** The ownership test above — is the answer the same for every
+> contributor? — was stated but not applied to `.ai/workspace/tasks/`. It should have been.
+> That directory is gitignored (RULES.md: nothing under it is ever committed), so it has no
+> other contributors, and by this ADR's own test its language is personal, not a project
+> property. **Task artifacts therefore follow the reader's preference, not the project's
+> documentation language.**
+>
+> The counter-argument was raised and lost: that `design.md` text migrates into ADRs, so a
+> shared language preserves continuity. It fails on cost asymmetry. Translating at
+> consolidation falls on the agent and is cheap; reading a second language falls on the
+> human and is expensive — and those documents exist to be read and approved at the human
+> gate, which is the whole point of the gate. An ADR is rewritten from a design, not copied
+> from it, so the continuity being protected was smaller than claimed.
+>
+> `templates/AGENTS.md` previously listed "task artifacts" among the durable artifacts
+> whose language must be uniform, two lines above saying those same notes are gitignored
+> and never become repository documentation. Both could not be true.
 
 ## Alternatives
 

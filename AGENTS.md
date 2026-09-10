@@ -37,7 +37,11 @@ new class requires.
 
 ## Working rules
 
-- All documents, skills, scripts and comments are written in English (`CLAUDE.local.md`).
+- Durable artifacts are written in English: `.ai/knowledge/`, `README.md`, this file,
+  skills, scripts, code comments and commit messages — everything that leaves the machine.
+- Task artifacts under `.ai/workspace/tasks/` are written in the language their reader
+  thinks in. They are gitignored and read by the person at the human gate, so English buys
+  nothing there and costs them time.
 - Any decision that changes architecture, distribution, lifecycle semantics or safety
   of destructive operations gets an ADR (`adr/NNNN-<slug>.md`, frontmatter per ADR-0004).
 - Scripts: POSIX sh / bash 3.2, no mandatory dependencies besides `git` (ADR-0002).
