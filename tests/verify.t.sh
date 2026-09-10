@@ -7,9 +7,67 @@
 # installed (composer/go/npm/php/shellcheck) on the machine running the
 # tests. git and bash themselves live under /usr/bin and /bin, so the
 # dispatcher and every verify.sh shebang still resolve.
+# The tools jig and its profiles actually invoke. Anything not on this list
+# is invisible to a command run through run_no_tools, which is the point.
+_NO_TOOLS_LIST="bash sh git sed awk grep find mktemp cat cp mv rm mkdir sort
+tr head tail wc chmod ls date dirname basename cmp paste stat readlink diff env"
+
+# A directory of symlinks to exactly those tools, built once per runner
+# invocation under $JIG_TEST_CACHE so the runner's own EXIT trap removes it.
+# Reuse is decided by the directory being on disk, not by an exported
+# variable: every test runs in its own forked subshell, so a variable set by
+# one can never be seen by the next, and the first draft's env-var check
+# could not fire even once.
+#
+# Resolution goes through `env -i /bin/sh -c`, not a bare `command -v`,
+# because the latter answers from the *developer's* shell: on a machine where
+# grep is aliased to ugrep it returns the string `grep` rather than a path,
+# which produced a self-referential symlink and a `grep: command not found`
+# in the middle of a run. A helper built to remove environment dependence
+# must not inherit any.
+# Script-global, never `local`: the EXIT trap below runs after the function
+# has returned, and a `local` would be out of scope by then — leaving the
+# trap to `rm -rf ""` and the directory to leak, which is exactly what the
+# first attempt at this cleanup did (conventions/shell.md).
+_NO_TOOLS_TMP=""
+
+_no_tools_bin() {
+  local dir t p
+  if [ -n "${JIG_TEST_CACHE:-}" ]; then
+    dir="$JIG_TEST_CACHE/no-tools-bin"
+  else
+    # No runner cache to live in, and therefore no runner trap to clean up
+    # after: this branch owns its directory and removes it itself.
+    dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-no-tools.XXXXXX")
+    _NO_TOOLS_TMP="$dir"
+    trap 'rm -rf "$_NO_TOOLS_TMP"' EXIT INT TERM
+  fi
+  if [ -x "$dir/git" ]; then
+    printf '%s\n' "$dir"
+    return 0
+  fi
+  mkdir -p "$dir"
+  for t in $_NO_TOOLS_LIST; do
+    p=$(env -i /bin/sh -c "command -v $t" 2>/dev/null) || continue
+    case "$p" in
+      /*) ln -sf "$p" "$dir/$t" ;;
+    esac
+  done
+  printf '%s\n' "$dir"
+}
+
+# Run a command with no development toolchain reachable at all.
+#
+# The previous form set PATH to the system directories and called that "no
+# tools". That is only true where development tools live somewhere else: on
+# macOS php and go come from /opt/homebrew/bin and fall away, while on a
+# Linux CI runner they sit in /usr/bin and stayed perfectly visible — so
+# every "skips without toolchain" test passed locally and failed in CI.
 run_no_tools() {
+  local bin
+  bin=$(_no_tools_bin)
   set +e
-  OUT=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$@" 2>&1)
+  OUT=$(PATH="$bin" "$@" 2>&1)
   RC=$?
   set -e
   export OUT RC
@@ -51,6 +109,10 @@ EOF
 test_verify_shell_profile_passes_on_clean_scripts() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  # A linter the test supplies, not one the machine happens to have: without
+  # this the shell profile skips the lint, reports `skip` rather than `pass`,
+  # and this test fails on any runner where shellcheck is not installed.
+  sc_stub 1.0.0 0
 
   run jig verify
   assert_eq 0 "$RC"
@@ -65,6 +127,11 @@ test_verify_shell_profile_fails_on_bad_script() {
   # shellcheck disable=SC2016
   printf '#!/usr/bin/env bash\necho $1\n' > bad.sh
   chmod +x bad.sh
+  # A linter that rejects what it is given. What is under test is the
+  # profile's plumbing — a failing lint becomes `RESULT shell: fail` and a
+  # non-zero verify — not shellcheck's own rules, which are shellcheck's to
+  # keep and which jig's real `verify` exercises on its own source anyway.
+  sc_stub 1.0.0 1
 
   run jig verify
   assert_eq 1 "$RC"
@@ -87,6 +154,7 @@ test_verify_shell_profile_fails_on_bad_script() {
 test_verify_hint_resolved_by_upgrade_copy_mode() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  sc_stub 1.0.0 0
   cat > .ai/config.yaml <<'EOF'
 profiles: [generic, shell]
 adapters: [claude, codex]
@@ -141,6 +209,7 @@ EOF
 test_verify_fails_before_running_any_profile_when_framework_pending() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  sc_stub 1.0.0 0
   _fixture_probe_profile probe ""
   cat > .ai/config.yaml <<'EOF'
 profiles: [generic, probe, shell]
@@ -279,6 +348,7 @@ EOF
 test_verify_profile_filter_accepts_comma_list() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  sc_stub 1.0.0 0
 
   run jig verify --profile generic,shell
   assert_eq 0 "$RC"
@@ -290,6 +360,7 @@ test_verify_profile_filter_accepts_comma_list() {
 test_verify_profile_filter_accepts_repeated_flag() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  sc_stub 1.0.0 0
 
   run jig verify --profile generic --profile shell
   assert_eq 0 "$RC"

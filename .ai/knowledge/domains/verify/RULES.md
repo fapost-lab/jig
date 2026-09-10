@@ -48,6 +48,11 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   visible cause. Refusing an unexpected version is the opposite mistake; it fails the
   gate for shipping an ordinary distribution rather than for anything about the code,
   and the tool is optional in the first place (ADR-0002).
+- **A test decides its own environment; it never inherits one.** A check that needs a
+  tool supplies it as a stub on `PATH`; a check that needs a tool *gone* builds a `PATH`
+  from an explicit tool list. The suite gave three different verdicts for one commit —
+  564/564 on the maintainer's Mac, 542/548 on a macOS runner, 545/548 on Linux — entirely
+  because tests read the machine instead of stating what they needed.
 - **A version probe must never be able to fail the thing it annotates.** Under `set -e`
   with `pipefail`, `x=$(tool --version | sed ...)` takes the pipeline's status, so a tool
   that is installed but cannot answer `--version` aborts the profile before it prints
