@@ -68,10 +68,15 @@ jobs:
       - name: Install into a scratch project and verify it
         run: |
           set -eu
-          git config --global user.name jig
-          git config --global user.email jig@example.com
           work=$(mktemp -d)
           git -C "$work" init -q .
+          # Identity is set on the scratch repository only. `git config
+          # --global` would be harmless on an ephemeral runner but this block
+          # is also run by hand when someone debugs CI, and there it silently
+          # rewrites the developer's own git identity for every repository on
+          # the machine. It did exactly that once.
+          git -C "$work" config user.name jig
+          git -C "$work" config user.email jig@example.com
           git -C "$work" symbolic-ref HEAD refs/heads/main
           printf '# ci\n' > "$work/README.md"
           git -C "$work" add README.md
