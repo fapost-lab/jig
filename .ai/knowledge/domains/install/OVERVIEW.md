@@ -12,6 +12,7 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/manifest.sh
   - "adapters/**"
+reviewed_at: 2026-09-10
 ---
 # Install
 

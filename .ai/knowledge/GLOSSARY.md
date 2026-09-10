@@ -64,6 +64,40 @@ The SDLC stage that decides what from a task becomes Durable Knowledge.
 Scheduled, LLM-free reconciliation of Workspaces against remote merge state,
 ending in a two-stage purge. Informal synonyms: cleanup, GC.
 
+## Remote State
+
+The derived answer to "did this task's work land": `merged | open | closed | unknown`.
+Computed by Housekeeping on every run and **never stored** in a task's State (ADR-0005).
+Only a Forge can produce `open` or `closed`; git ancestry produces `merged` or `unknown`
+(ADR-0025). Informal synonyms: merge state, PR state.
+
+## Forge
+
+The hosting service that owns pull/merge requests — GitHub via `gh`, GitLab via `glab`.
+Optional (ADR-0002): when absent, unauthenticated or configured `forge: none`,
+Housekeeping falls through to git ancestry. Informal synonyms: host, remote, provider.
+
+## Trash
+
+`.ai/runtime/trash/<date>/<task-id>/`, where a purged Workspace is moved rather than
+deleted. Recovery is a plain `mv` back for `trash_ttl` days (ADR-0006). Never committed.
+
+## Purge
+
+Ending a Workspace's life, in two stages: move to Trash, then permanent deletion once
+`trash_ttl` expires. "Purged" is not a State — the directory is simply gone (ADR-0005).
+
+## STALE_CANDIDATE
+
+A report-only flag on a Workspace older than `stale_after`. It never triggers deletion:
+semantic lifecycle has priority over TTL (SPEC §23). Informal synonyms: stale, old.
+
+## Session Hook
+
+`.ai/scripts/jig-session-hook`: the cheap Housekeeping trigger a Runtime runs at session
+start. The framework owns the script and only *offers* the line that enables it; it never
+edits the Runtime's own config file (ADR-0024). Codex has no equivalent.
+
 ## Domain Pack
 
 The three documents a domain may keep under `.ai/knowledge/domains/<domain>/`:

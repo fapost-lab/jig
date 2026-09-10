@@ -80,6 +80,35 @@ _init_source_version() {
   sed -n 's/^JIG_VERSION="\(.*\)"/\1/p' "$1/scripts/lib/version.sh" | head -n 1
 }
 
+# Ensure the directory that will hold <file-path> exists, cheaply.
+#
+# Takes the file path rather than its directory so the caller needs no
+# `$(dirname ...)`: a command substitution forks even when it runs a shell
+# function, and this is called once per installed file. The directory is cut
+# with parameter expansion, and `mkdir -p` runs only when it differs from the
+# previous call's — placement walks a depth-first `find` listing, so files of
+# one directory arrive together and nearly every repeat collapses.
+#
+# An install places ~72 files and a spawn costs ~3 ms here, so this is a
+# measurable share of `jig init`, not a micro-optimisation.
+#
+# The memo assumes nothing removes a destination directory during a run.
+# Nothing does today; a future step that prunes stale directories would have
+# to reset _INIT_LAST_DIR, or this silently skips the mkdir the next write
+# needs.
+_INIT_LAST_DIR=""
+_init_mkdir_for() {
+  local dir
+  case "$1" in
+    */*) dir="${1%/*}" ;;
+    *) return 0 ;;
+  esac
+  if [ "$dir" != "$_INIT_LAST_DIR" ]; then
+    mkdir -p "$dir"
+    _INIT_LAST_DIR="$dir"
+  fi
+}
+
 # Place a project-owned file (config.yaml, knowledge templates, AGENTS.md)
 # only if it does not already exist. Never compares content: these files are
 # owned by the project after creation (SPEC §6.2) and are never touched
@@ -89,7 +118,7 @@ _init_place_if_absent() {
   if [ -f "$dest" ]; then
     kept_count=$((kept_count + 1))
   else
-    mkdir -p "$(dirname "$dest")"
+    _init_mkdir_for "$dest"
     cp "$src" "$dest"
     created_count=$((created_count + 1))
   fi
@@ -104,7 +133,11 @@ _init_copy_framework_file() {
   local src="$1" dest="$2" rel
   rel=$(jig_relpath "$dest" "$JIG_PROJECT")
   if [ -f "$dest" ]; then
-    if [ "$(jig_hash "$src")" = "$(jig_hash "$dest")" ]; then
+    # `cmp -s` rather than comparing two `jig_hash` calls: the question is
+    # "are these bytes identical", which needs no hash, and `git hash-object`
+    # costs ~13 ms per call here — two of them per file, on every re-run of
+    # `init` over ~72 files.
+    if cmp -s "$src" "$dest"; then
       kept_count=$((kept_count + 1))
       framework_paths="$framework_paths
 $rel"
@@ -114,7 +147,7 @@ $rel"
 $rel"
     fi
   else
-    mkdir -p "$(dirname "$dest")"
+    _init_mkdir_for "$dest"
     cp -p "$src" "$dest"
     created_count=$((created_count + 1))
     framework_paths="$framework_paths
@@ -140,6 +173,10 @@ _init_copy_tree() {
 # this helper once per skill per adapter, and each call owns the variable
 # only for its own duration, resetting it to empty before returning.
 _INIT_STAGE=""
+
+# Scratch directory for the batched manifest hashing (see step 8). Script-
+# global for the same reason as _INIT_STAGE: the EXIT trap must still see it.
+_INIT_HASH_TMP=""
 
 # Install one skill through one adapter, staged first so the same
 # conflict-aware placement helper can be used (adapters only know how to
@@ -183,7 +220,7 @@ $rel"
 $rel"
   else
     if [ "$dry_run" != 1 ]; then
-      mkdir -p "$(dirname "$link_abs")"
+      _init_mkdir_for "$link_abs"
       ln -s "$target_rel" "$link_abs"
     fi
     created_count=$((created_count + 1))
@@ -216,7 +253,7 @@ $old_rel"
 
 cmd_init() {
   local from="" link=0 link_given=0 adapters_csv="" profiles_csv="" quiet=0
-  local adapters_given=0 profiles_given=0
+  local adapters_given=0 profiles_given=0 session_hook=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -225,6 +262,7 @@ cmd_init() {
       --adapters) [ $# -ge 2 ] || jig_die "init: --adapters requires a value"; adapters_csv="$2"; adapters_given=1; shift 2 ;;
       --profiles) [ $# -ge 2 ] || jig_die "init: --profiles requires a value"; profiles_csv="$2"; profiles_given=1; shift 2 ;;
       --quiet) quiet=1; shift ;;
+      --session-hook) session_hook=1; shift ;;
       *) jig_die "init: unknown argument: $1" ;;
     esac
   done
@@ -234,7 +272,7 @@ cmd_init() {
 
   # Cleanup net for _init_install_skill_staged's staging directory: fires on
   # a mid-install jig_die (e.g. a conflicting write) as well as on interrupt.
-  trap '[ -n "$_INIT_STAGE" ] && rm -rf "$_INIT_STAGE"' EXIT INT TERM
+  trap '[ -n "$_INIT_STAGE" ] && rm -rf "$_INIT_STAGE"; [ -n "$_INIT_HASH_TMP" ] && rm -rf "$_INIT_HASH_TMP"' EXIT INT TERM
 
   local source
   if [ -n "$from" ]; then
@@ -395,6 +433,8 @@ cmd_init() {
     _init_place_symlink "$(cd "$source/scripts" && pwd)" "$JIG_PROJECT/.ai/scripts"
     _init_place_symlink "$(cd "$source/templates/knowledge" && pwd)" \
       "$JIG_PROJECT/.ai/templates/knowledge"
+    _init_place_symlink "$(cd "$source/templates/scheduler" && pwd)" \
+      "$JIG_PROJECT/.ai/templates/scheduler"
     for p in $profiles_words; do
       pdir=$(profiles_dir "$source/profiles" "$p")
       [ -d "$pdir" ] \
@@ -426,6 +466,11 @@ cmd_init() {
     # project-owned the moment they are written (ADR-0003).
     _init_copy_tree "$source/templates/knowledge" \
       "$JIG_PROJECT/.ai/templates/knowledge"
+    # Scheduler examples are framework-owned too: they are copied so a project
+    # without the source checkout can still read them, and never activated —
+    # the framework does not implement a scheduler (SPEC §34).
+    _init_copy_tree "$source/templates/scheduler" \
+      "$JIG_PROJECT/.ai/templates/scheduler"
     for p in $profiles_words; do
       pdir=$(profiles_dir "$source/profiles" "$p")
       [ -d "$pdir" ] \
@@ -463,16 +508,106 @@ cmd_init() {
     # gets a freshly computed hash. Uses manifest_write_entries, which
     # writes precomputed hash/path pairs verbatim instead of recomputing
     # them from disk.
+    # Paths whose hash the manifest already knows are reused; the rest are
+    # hashed in ONE `git hash-object --stdin-paths` call rather than one call
+    # per file. On a first install that is every path — ~72 git startups at
+    # ~13 ms each, which measured as the single largest cost of `jig init`.
+    # Batch output is byte-identical to per-file hashing (verified), and
+    # `paste` re-pairs it with the paths in the order they were sent.
+    # Absolute paths are built by plain concatenation, never by `sed`: the
+    # project root comes from `git rev-parse --show-toplevel`, so it is an
+    # arbitrary user path, and an `&` in a sed replacement means "the text
+    # that matched". A project under `R&D/` silently lost that segment from
+    # every path, and the run then died inside git with a raw error, having
+    # already copied the framework in and written a manifest with an empty
+    # body — an install no `upgrade` could recognise.
+    #
+    # Every entry is assembled in a file first and handed to
+    # manifest_write_entries only once it is complete, so a failure anywhere
+    # in the batch leaves the previous manifest untouched instead of
+    # replacing it with a truncated one.
     local rel hash
-    {
-      while IFS= read -r rel; do
-        [ -z "$rel" ] && continue
-        hash=$(manifest_hash_of "$rel")
-        [ -n "$hash" ] || hash=$(jig_hash "$JIG_PROJECT/$rel")
-        printf '%s %s\n' "$hash" "$rel"
-      done < <(printf '%s\n' "$framework_paths" | sed '/^$/d' | sort -u)
-    } | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy"
+    _INIT_HASH_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-init-hash.XXXXXX")
+    local need_file="$_INIT_HASH_TMP/rel" abs_file="$_INIT_HASH_TMP/abs"
+    local hash_file="$_INIT_HASH_TMP/hash" entries="$_INIT_HASH_TMP/entries"
+    : > "$need_file"; : > "$abs_file"; : > "$entries"
+
+    while IFS= read -r rel; do
+      [ -z "$rel" ] && continue
+      hash=$(manifest_hash_of "$rel")
+      if [ -n "$hash" ]; then
+        printf '%s %s\n' "$hash" "$rel" >> "$entries"
+      else
+        printf '%s\n' "$rel" >> "$need_file"
+        printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$abs_file"
+      fi
+    done < <(printf '%s\n' "$framework_paths" | sed '/^$/d' | sort -u)
+
+    if [ -s "$need_file" ]; then
+      # One git startup for the whole install instead of one per path.
+      # `--stdin-paths` reads one path per line and prints hashes in the same
+      # order, so `paste` re-pairs them; a path containing a newline would
+      # desync that, which the newline-delimited framework_paths accumulator
+      # already rules out.
+      git hash-object --stdin-paths < "$abs_file" > "$hash_file" \
+        || jig_die "init: could not hash installed files"
+      paste -d' ' "$hash_file" "$need_file" >> "$entries"
+    fi
+
+    manifest_write_entries "$version" "$source" "$adapters_manifest" "copy" \
+      < "$entries"
+    rm -rf "$_INIT_HASH_TMP"
+    _INIT_HASH_TMP=''
   fi
+
+  # 8a. session hook, on explicit request only --------------------------------
+  # Opt-in because the hook starts a background process at every session start,
+  # which is more than placing a file. The adapter decides whether it can do it
+  # safely and declines with exit 2 otherwise — an existing config file, or a
+  # runtime with no session hook at all. The created file is project-owned: it
+  # is not recorded in the manifest and `upgrade` never touches it, so removing
+  # the hook makes it stay removed (ADR-0024).
+  local hook_path hook_rc
+  if [ "$session_hook" = 1 ]; then
+    for a in $adapters_words; do
+      if ! command -v "adapter_${a}_install_session_hook" >/dev/null 2>&1; then
+        continue
+      fi
+      hook_rc=0
+      hook_path=$("adapter_${a}_install_session_hook" "$JIG_PROJECT") || hook_rc=$?
+      if [ "$hook_rc" = 0 ] && [ -n "$hook_path" ]; then
+        created_count=$((created_count + 1))
+        _init_out "created $hook_path"
+      fi
+    done
+  fi
+
+  # 8b. scheduling advisory --------------------------------------------------
+  # SPEC §32 step 8 said init should "offer to configure scheduled
+  # housekeeping". It advises instead, for the same reason as the suggested
+  # profiles above: a prompt would give init its first stdin dependency and
+  # break it in CI and in an agent session. Adopting a trigger is the user's
+  # action (ADR-0024, SPEC §34).
+  local hint hint_rc
+  for a in $adapters_words; do
+    if ! command -v "adapter_${a}_session_hook_hint" >/dev/null 2>&1; then
+      continue
+    fi
+    hint_rc=0
+    # Exit 2 ("this runtime has no session hook") still carries text worth
+    # printing once here, unlike in `status` — it tells the reader why they
+    # will never see a hook line for that runtime.
+    hint=$("adapter_${a}_session_hook_hint" "$JIG_PROJECT") || hint_rc=$?
+    if [ "$hint_rc" != 0 ] && [ "$hint_rc" != 2 ]; then
+      hint=""
+    fi
+    if [ -n "$hint" ]; then
+      _init_out ""
+      if [ "${quiet:-0}" != 1 ]; then
+        printf '%s\n' "$hint"
+      fi
+    fi
+  done
 
   # 9. summary --------------------------------------------------------------
   _init_out ""

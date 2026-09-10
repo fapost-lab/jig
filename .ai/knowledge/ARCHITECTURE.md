@@ -37,16 +37,36 @@ and version.
 
 ## Adapter contract
 
-`adapters/<name>/adapter.sh` is sourced by `init` and `upgrade` and defines:
+`adapters/<name>/adapter.sh` is sourced by `init`, `upgrade` and `status`, and defines:
 
 - `adapter_<name>_skills_dir` — project-relative directory for skills.
 - `adapter_<name>_install_skill <src-skill-dir> <project-root>` — copies and transforms
   a skill, printing every written path so the caller can record it in the manifest.
 - `adapter_<name>_install_instructions <project-root> <templates-dir>` — runtime
   instruction files (`CLAUDE.md` for Claude; nothing for Codex, which reads `AGENTS.md`).
+- `adapter_<name>_session_hook_hint <project-root>` — advisory only, writes nothing:
+  prints how to enable the housekeeping trigger, prints nothing when it is already
+  enabled, and **exits 2 when the runtime has no session hook at all** (ADR-0024).
+- `adapter_<name>_install_session_hook <project-root>` — called only by
+  `init --session-hook`. Creates the runtime's config file with the hook entry **when
+  that file is absent**, printing the created path; exits 2, touching nothing, when a
+  file already exists there or the runtime has no hook. It never edits an existing file:
+  creating one parses nothing, editing one would need a JSON parser the framework does
+  not have (ADR-0024, ADR-0002).
 
 Adapters contain no SDLC logic; the only transform today is Codex's invocation syntax
 (`/jig-x` → `$jig-x`).
+
+Two notes on the fourth function, because it is the odd one out. It is the reason
+`status` sources adapters at all — vendor knowledge (which config file, what shape,
+how to detect the entry) belongs here, and `status` only prints a generic line from the
+answer. And its exit 2 means *"not applicable to this runtime"* — a capability marker.
+That is **not** the same as a profile's `verify.sh` exit 2, which means "this check did
+not run"; the two share a number, not a meaning.
+
+A command calls a capability function only when the adapter defines it (`command -v`),
+so an adapter written before a capability existed keeps working — the same "granted,
+never assumed" rule the profile contract below states.
 
 ## Profile contract
 
@@ -71,8 +91,8 @@ that has it.
 
 ## Install modes
 
-Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/knowledge/`
-and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/config.yaml`, `AGENTS.md`.
+Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/knowledge/`,
+`.ai/templates/scheduler/` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/config.yaml`, `AGENTS.md`.
 The split matters to `upgrade`, which carries framework-owned files forward and never
 touches the rest (ADR-0011).
 

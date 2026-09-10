@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Refuse a commit made directly on the base branch.
+#
+# Jig's own lifecycle assumes a task lives on its own branch (ADR-0008), and
+# housekeeping can only tell that work landed when it landed from somewhere
+# (ADR-0025). Committing straight to main defeats both.
+#
+# Escape hatch: `git commit --no-verify`. It exists on purpose — a hook that
+# cannot be bypassed becomes a hook people disable permanently.
+#
+# Enabled by `git config core.hooksPath hooks`. Tracked in the repository so
+# every clone can opt in with that one command.
+set -eu
+
+base=$(sed -n 's/^git.base_branch:[[:space:]]*//p' .ai/config.yaml 2>/dev/null \
+  | sed 's/[[:space:]]*#.*//' | head -n 1)
+[ -n "$base" ] || base=main
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null || printf '')
+[ "$branch" = "$base" ] || exit 0
+
+printf 'refusing to commit directly on %s.\n\n' "$base" >&2
+printf 'Start a branch for this work:\n' >&2
+printf '  git switch -c task/<id>\n\n' >&2
+printf 'or, if this really belongs on %s:\n' "$base" >&2
+printf '  git commit --no-verify\n' >&2
+exit 1

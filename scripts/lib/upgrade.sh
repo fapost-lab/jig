@@ -21,7 +21,8 @@ _upgrade_out() { [ "${quiet:-0}" = 1 ] || printf '%s\n' "$*"; }
 _upgrade_build_staged() {
   local source="$1" stage="$2" profiles="$3" adapters="$4" f p a skill_dir
   local src_pdir stage_pdir adir
-  mkdir -p "$stage/.ai/scripts" "$stage/.ai/profiles" "$stage/.ai/templates/knowledge"
+  mkdir -p "$stage/.ai/scripts" "$stage/.ai/profiles" \
+    "$stage/.ai/templates/knowledge" "$stage/.ai/templates/scheduler"
 
   while IFS= read -r f; do
     [ -z "$f" ] && continue
@@ -34,6 +35,12 @@ _upgrade_build_staged() {
     mkdir -p "$(dirname "$stage/.ai/templates/knowledge/$f")"
     cp -p "$source/templates/knowledge/$f" "$stage/.ai/templates/knowledge/$f"
   done < <(cd "$source/templates/knowledge" && find . -type f | sed 's|^\./||')
+
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    mkdir -p "$(dirname "$stage/.ai/templates/scheduler/$f")"
+    cp -p "$source/templates/scheduler/$f" "$stage/.ai/templates/scheduler/$f"
+  done < <(cd "$source/templates/scheduler" && find . -type f | sed 's|^\./||')
 
   for p in $profiles; do
     src_pdir=$(profiles_dir "$source/profiles" "$p")
@@ -219,6 +226,8 @@ _upgrade_link() {
   _upgrade_link_one "$(cd "$source/scripts" && pwd)" "$JIG_PROJECT/.ai/scripts" "$dry_run"
   _upgrade_link_one "$(cd "$source/templates/knowledge" && pwd)" \
     "$JIG_PROJECT/.ai/templates/knowledge" "$dry_run"
+  _upgrade_link_one "$(cd "$source/templates/scheduler" && pwd)" \
+    "$JIG_PROJECT/.ai/templates/scheduler" "$dry_run"
 
   for p in $active_profiles; do
     pdir=$(profiles_dir "$source/profiles" "$p")

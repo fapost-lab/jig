@@ -227,7 +227,13 @@ test_init_conflict_is_kept_and_not_tracked() {
   assert_contains "$OUT" "conflict"
   assert_contains "$OUT" ".ai/scripts/jig"
   assert_file_contains .ai/scripts/jig "hacked"
-  assert_not_contains "$(cat .ai/manifest)" ".ai/scripts/jig"
+  # Match a whole manifest path, not a substring: a manifest line is
+  # "<hash> <path>", and `.ai/scripts/jig` is a prefix of its own siblings
+  # (`.ai/scripts/jig-session-hook`), which a substring test cannot tell
+  # apart from the entry this asserts is absent.
+  if grep -q ' \.ai/scripts/jig$' .ai/manifest; then
+    fail "conflicted path .ai/scripts/jig is listed in the manifest"
+  fi
 }
 
 # Reproduces the bug: a re-run of `jig init` used to rewrite the manifest
@@ -458,4 +464,142 @@ EOF
   assert_not_contains "$codex_content" '/jig-demo'
 
   rm -rf "$src"
+}
+
+test_init_installs_scheduler_templates_in_copy_mode() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_file .ai/templates/scheduler/README.md
+  assert_file .ai/templates/scheduler/cron.txt
+  assert_file .ai/templates/scheduler/launchd.plist
+  assert_file .ai/templates/scheduler/systemd.timer
+  assert_file .ai/scripts/jig-session-hook
+  assert_file_contains .ai/manifest ".ai/templates/scheduler/cron.txt"
+}
+
+test_init_link_mode_symlinks_templates_scheduler_directory() {
+  fixture_repo
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 0 "$RC"
+  assert_symlink .ai/templates/scheduler
+  assert_file .ai/templates/scheduler/README.md
+}
+
+test_init_prints_the_session_hook_advisory_without_installing_it() {
+  # SPEC §25 / ADR-0024: the adapter offers the entry, the user installs it.
+  # init must stay non-interactive and must not touch .claude/settings.json.
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/scripts/jig-session-hook"
+  assert_contains "$OUT" "Codex has no session-start hook"
+  assert_no_file .claude/settings.json
+}
+
+test_init_leaves_an_existing_settings_json_untouched() {
+  fixture_repo
+  mkdir -p .claude
+  printf '{ "mine": true }\n' > .claude/settings.json
+  local before
+  before=$(cat .claude/settings.json)
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "$before" "$(cat .claude/settings.json)" "init modified a project-owned file"
+}
+
+test_init_session_hook_flag_installs_the_hook() {
+  fixture_repo
+  run jig init --from "$JIG_HOME" --session-hook
+  assert_eq 0 "$RC"
+  assert_file_contains .claude/settings.json "jig-session-hook"
+  assert_contains "$OUT" "created .claude/settings.json"
+
+  # Installed means the advisory goes quiet and status agrees.
+  assert_not_contains "$OUT" "not triggered automatically"
+  run jig status
+  assert_contains "$OUT" "session hook (claude): installed"
+}
+
+test_init_without_the_flag_installs_nothing() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_no_file .claude/settings.json
+  assert_contains "$OUT" "not triggered automatically"
+}
+
+test_init_session_hook_never_touches_an_existing_settings_file() {
+  fixture_repo
+  mkdir -p .claude
+  printf '{\n  "mine": true\n}\n' > .claude/settings.json
+  local before
+  before=$(cat .claude/settings.json)
+
+  run jig init --from "$JIG_HOME" --session-hook
+  assert_eq 0 "$RC"
+  assert_eq "$before" "$(cat .claude/settings.json)" "init edited a project-owned file"
+  # Declining is not a failure, and the user still gets told what to add.
+  assert_contains "$OUT" "not triggered automatically"
+}
+
+test_init_session_hook_is_idempotent() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --session-hook >/dev/null
+  local before
+  before=$(cat .claude/settings.json)
+
+  run jig init --from "$JIG_HOME" --session-hook
+  assert_eq 0 "$RC"
+  assert_eq "$before" "$(cat .claude/settings.json)"
+}
+
+test_init_session_hook_file_is_project_owned() {
+  # Not in the manifest, so `upgrade` never replaces or restores it: a user
+  # who deletes the hook stays without it (ADR-0024).
+  fixture_repo
+  jig init --from "$JIG_HOME" --session-hook >/dev/null
+  assert_not_contains "$(cat .ai/manifest)" "settings.json"
+
+  rm .claude/settings.json
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_no_file .claude/settings.json
+}
+
+test_init_rejects_session_hook_with_a_value() {
+  fixture_repo
+  run jig init --from "$JIG_HOME" --session-hook=yes
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown argument"
+}
+
+test_init_works_under_a_project_path_with_shell_metacharacters() {
+  # The project root comes from `git rev-parse --show-toplevel`, so it is an
+  # arbitrary user path. Prefixing it onto relative paths with `sed` once
+  # corrupted every entry — `&` in a sed replacement means "the text that
+  # matched" — and left a manifest with an empty body next to a fully copied
+  # framework, an install `upgrade` could no longer recognise. Real paths hit
+  # this: R&D, AT&T, "Smith & Co".
+  mkdir -p 'R&D & Co'
+  cd 'R&D & Co' || fail 'cannot enter the fixture directory'
+  fixture_repo
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_file .ai/manifest
+
+  # Every recorded hash must match the file it names, and the body must not
+  # be empty — the corruption showed up as both.
+  local entries bad=0 line h p
+  entries=$(sed -n '/^---$/,$p' .ai/manifest | tail -n +2 | grep -c .)
+  [ "$entries" -gt 10 ] || fail "manifest body has only $entries entries"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    h="${line%% *}"
+    p="${line#* }"
+    [ "$(git hash-object "$p")" = "$h" ] || bad=$((bad + 1))
+  done < <(sed -n '/^---$/,$p' .ai/manifest | tail -n +2)
+  assert_eq 0 "$bad" "manifest entries whose hash does not match the file"
 }

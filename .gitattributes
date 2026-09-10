@@ -1,0 +1,8 @@
+# The deliverables here are shell scripts executed on Unix. A CRLF checkout
+# breaks a shebang line silently and in a way that is hard to see in a diff,
+# so line endings are normalised in the repository and in the working tree
+# rather than left to each machine's core.autocrlf.
+* text=auto eol=lf
+
+# Keep the plist an ordinary text file; it is an example users edit.
+*.plist text eol=lf

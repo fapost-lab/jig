@@ -566,3 +566,86 @@ test_verify_without_changed_flag_has_no_scope_text() {
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "scope"
 }
+
+# --- reproducibility: the verdict names the linter that produced it ----------
+
+# Put a fake `shellcheck` on PATH, the way hk_stub_gh does for the forge tier.
+# Two reasons over asserting against the real binary: the tests then run on a
+# machine that has no shellcheck at all — an early `return 0` would be logged
+# `ok` by this harness, which has no skip, making the test a silent pass — and
+# the asserted version is fixed instead of whatever the runner happens to ship.
+#
+# Usage: sc_stub <version> <lint-exit-code>
+sc_stub() {
+  mkdir -p stub-bin
+  cat > stub-bin/shellcheck <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then
+  printf 'ShellCheck - shell script analysis tool\n'
+  printf 'version: $1\n'
+  printf 'license: GNU General Public License, version 3\n'
+  exit 0
+fi
+exit $2
+STUB
+  chmod +x stub-bin/shellcheck
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+test_verify_shellcheck_verdict_names_its_version() {
+  # A pass means different things under different shellcheck releases (SC2015
+  # fires in 0.10.0, not in 0.11.0), so a verdict that does not say which
+  # version produced it cannot be compared across machines.
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  sc_stub 1.2.3 0
+
+  run jig verify
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: shellcheck: pass (shellcheck 1.2.3)"
+}
+
+test_verify_shellcheck_failure_also_names_its_version() {
+  # The failing verdict is the one people actually need to compare: "it fails
+  # here and passes there" is unanswerable without the version.
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  sc_stub 4.5.6 1
+
+  run jig verify
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "shell: shellcheck: fail (shellcheck 4.5.6)"
+}
+
+test_verify_shellcheck_scoped_verdict_keeps_both_facts() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  printf '#!/usr/bin/env bash\necho ok\n' > extra.sh
+  chmod +x extra.sh
+  sc_stub 7.8.9 0
+
+  run jig verify --changed
+  assert_contains "$OUT" "shell: shellcheck: pass (shellcheck 7.8.9"
+  assert_contains "$OUT" "scope: "
+}
+
+test_verify_survives_a_shellcheck_that_cannot_report_its_version() {
+  # A version probe annotates a verdict; it must never be able to fail the
+  # thing it annotates. Under `set -e` with `pipefail` an unguarded
+  # `x=$(cmd | ...)` would abort the profile here and print nothing at all —
+  # for the shellcheck check AND for the tests that run after it.
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  mkdir -p stub-bin
+  printf '#!/usr/bin/env bash\nexit 1\n' > stub-bin/shellcheck
+  chmod +x stub-bin/shellcheck
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+
+  run jig verify
+  # The lint itself fails (the stub fails everything), but the profile must
+  # still report both of its checks rather than dying silently.
+  assert_contains "$OUT" "shell: shellcheck: fail (shellcheck unknown)"
+  assert_contains "$OUT" "shell: tests/run.sh:"
+}

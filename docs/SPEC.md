@@ -504,10 +504,12 @@ Merge commits, squash merges, rebase merges, and deleted remote branches are all
 
 ## 25. Scheduling
 
-Two triggers, both optional:
+Two triggers, both optional, neither installed automatically:
 
-1. **Session hook** (installed by the adapter): at the start of an agent session, the age of `.ai/runtime/last-housekeeping` is checked; if older than `cadence` (default 1d), housekeeping runs in the background. The cost of the check is a single `stat`; the network is not touched.
-2. **External scheduler** — cron, launchd, systemd timer, Claude scheduled routine, CI runner. `init` offers to configure this, but does not require it.
+1. **Session hook** — `.ai/scripts/jig-session-hook`, a framework-owned script. At the start of an agent session it checks the age of `.ai/runtime/last-housekeeping`; if older than `cadence` (default 1d), housekeeping runs detached in the background. The cost of the check is a single `stat`; the network is not touched. The hook always exits 0, including when the project is not initialised, so it can never break the session it is attached to.
+
+   Wiring it up is the user's action: the adapter *offers* the entry, and jig never edits the runtime's own config file (ADR-0024). `jig init --session-hook` will create that file for you when it does not exist yet — creating is safe, editing is not — and declines silently when it does. For Claude Code that entry goes in `.claude/settings.json`; `jig status` reports whether it is there. **Codex has no SessionStart equivalent**, so Codex users get lifecycle parity but not this trigger, and must use a scheduler.
+2. **External scheduler** — cron, launchd, systemd timer, Claude scheduled routine, CI runner. `init` prints where the examples live (`.ai/templates/scheduler/`); it never prompts and never installs one.
 
 The framework does not implement its own scheduler.
 
@@ -687,7 +689,7 @@ MVP: Claude Code, Codex.
 An adapter is responsible only for integration:
 
 - where to copy skills (`.claude/skills/`, `.codex/skills/`) and how to transform them (frontmatter, call syntax `/jig-task` ↔ `$jig-task`);
-- installing the session hook for housekeeping (where the runtime supports it);
+- *offering* the session hook for housekeeping — printing the entry the user adds themselves, and reporting whether it is present. The adapter never writes the runtime's own config file (ADR-0024), and says so plainly when its runtime has no session hook at all;
 - generating runtime instructions (`CLAUDE.md` = `@AGENTS.md`; for Codex, `AGENTS.md` is read directly).
 
 SDLC logic stays in skills and scripts. Installed files are committed — the whole team works in a single environment.
@@ -703,7 +705,7 @@ SDLC logic stays in skills and scripts. Installed files are committed — the wh
 5. create `AGENTS.md`, `CLAUDE.md`;
 6. configure `.gitignore`;
 7. write `.ai/manifest` (framework version + hashes of installed files);
-8. offer to configure scheduled housekeeping;
+8. print where the scheduling examples live — advisory only: `init` never prompts, so it stays usable in CI and in an agent session;
 9. **do not overwrite existing knowledge**.
 
 `jig upgrade` compares three things for every framework-owned path: whether the file exists in the new framework version, whether it is listed in `.ai/manifest`, and whether the local hash still equals the manifest hash.
@@ -734,7 +736,7 @@ Unresolved; do not block Phase 1–2.
 - **Git worktrees** and **concurrency**: resolved in Phase 2 by ADR-0008. A workspace belongs to the checkout it was created in; `state` is written atomically with last-write-wins semantics and no lock.
 - **Metrics §40 (0.3).** Require telemetry that does not exist. Deferred to Phase 6; MVP has only qualitative assessment.
 - **External artifact storage** for regulated environments — optional backend, not in MVP.
-- **Session hook installation.** The Claude Code hook lives in `.claude/settings.json`, a project-owned file the adapter must merge into, not copy, so the manifest model of §6.2 does not apply. Proposal: the adapter adds one `hooks.SessionStart` entry tagged `"_jig": true`, and `upgrade` locates and replaces only that entry. Decide in Phase 1 with a real `settings.json` at hand.
+- **Session hook installation** — resolved in Phase 5 by ADR-0024, and not as this question proposed. Merging a tagged entry into `.claude/settings.json` would mean editing arbitrary project-owned JSON with no JSON parser available (ADR-0002 allows only `git`), risking a file jig cannot rebuild. Instead the hook logic lives in a framework-owned script, the adapter prints the one line that names it, and a human pastes it. `jig status` reports whether it is installed by a read-only substring test.
 
 ## 34. Non-Goals
 

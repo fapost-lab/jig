@@ -36,7 +36,8 @@ jig $JIG_VERSION — deterministic mechanics for agent-driven SDLC
 
 Usage: jig <command> [args]
 
-  init [--from <dir>] [--link]   bootstrap .ai/ in the current repository
+  init [--from <dir>] [--link] [--session-hook]
+                                 bootstrap .ai/ in the current repository
   upgrade [--from <dir>]         update framework-owned files (manifest-aware)
   status                         active tasks, housekeeping flags, drift
   task new|set|abandon ...       task workspace and state

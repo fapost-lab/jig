@@ -12,6 +12,7 @@ paths:
   - scripts/lib/verify.sh
   - scripts/lib/profiles.sh
   - "profiles/**"
+reviewed_at: 2026-09-10
 ---
 # Verify rules
 
@@ -39,3 +40,16 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   mapping from root manifest to stack.
 - A profile's `verify.sh` prints one line per check it ran, because a profile runs
   several and a single profile-level result hides which of them fired.
+- **A check that depends on an external tool names that tool's version in its verdict,
+  and never refuses because of it.** Linters disagree with themselves across releases —
+  shellcheck reports SC2015 in 0.10.0 and not in 0.11.0 — so the same tree honestly
+  passes on one machine and fails on another. That is a fact to make legible, not a
+  failure to suppress: without the version in the line, "green here, red there" has no
+  visible cause. Refusing an unexpected version is the opposite mistake; it fails the
+  gate for shipping an ordinary distribution rather than for anything about the code,
+  and the tool is optional in the first place (ADR-0002).
+- **A version probe must never be able to fail the thing it annotates.** Under `set -e`
+  with `pipefail`, `x=$(tool --version | sed ...)` takes the pipeline's status, so a tool
+  that is installed but cannot answer `--version` aborts the profile before it prints
+  anything — for that check and every check after it. Guard the assignment and fall back
+  to `unknown`.

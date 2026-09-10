@@ -322,3 +322,57 @@ test_status_omits_pending_when_source_root_unknown() {
   assert_contains "$OUT" "drift: 0 modified, 0 missing"
   assert_not_contains "$OUT" "pending"
 }
+
+# --- session hook and housekeeping flags (SPEC §25, §29) ---------------------
+
+test_status_session_hook_not_installed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "session hook (claude): not installed"
+}
+
+test_status_session_hook_installed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .claude
+  printf '{ "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": ".ai/scripts/jig-session-hook" } ] } ] } }\n' \
+    > .claude/settings.json
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "session hook (claude): installed"
+}
+
+test_status_omits_runtimes_that_have_no_session_hook() {
+  # Codex has none, so there is nothing to install and nothing to report: a
+  # permanent "not installed" line would be noise nobody can clear.
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  run jig status
+  assert_not_contains "$OUT" "session hook (codex)"
+}
+
+test_status_reports_tasks_needing_consolidation() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/runtime
+  printf '2026-09-10T00:00:00Z task=t1 status=active remote=merged via=ancestry action=preserve flags=needs-consolidation\n' \
+    > .ai/runtime/housekeeping.log
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "needs consolidation: 1 task(s)"
+}
+
+test_status_silent_about_consolidation_when_nothing_is_flagged() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/runtime
+  printf '2026-09-10T00:00:00Z task=t1 status=consolidated remote=merged via=ancestry action=purge\n' \
+    > .ai/runtime/housekeeping.log
+
+  run jig status
+  assert_not_contains "$OUT" "needs consolidation"
+}

@@ -88,6 +88,9 @@ _shell_test_filters() {
           return 0
         fi
         ;;
+      # The session hook is not a command library, so it has no test file of
+      # its own; its tests live with the command it triggers.
+      scripts/jig-session-hook) printf 'housekeeping::\n' ;;
       adapters/*) printf 'adapters::\n' ;;
       profiles/*) printf 'profiles::\n'; printf 'verify::\n' ;;
       *) printf 'ALL\n'; return 0 ;;
@@ -99,6 +102,26 @@ _shell_test_filters() {
 # --- shellcheck --------------------------------------------------------------
 
 if command -v shellcheck >/dev/null 2>&1; then
+  # Every shellcheck verdict names the version that produced it. Rule sets
+  # move between releases — SC2015 fires in 0.10.0 and not in 0.11.0 — so the
+  # same tree honestly passes on one machine and fails on another. That is
+  # not a bug to hide; what was missing is any way to see it from the report.
+  # Measured: Debian stable (0.10.0) 440/446 against macOS (0.11.0) 446/446,
+  # on one line of source, with nothing in the output pointing at the linter.
+  #
+  # Reported, never enforced: refusing an unexpected version would fail the
+  # gate for shipping an ordinary distro rather than for anything about the
+  # code, and shellcheck is an optional dependency (ADR-0002).
+  # Guarded assignment: under `set -e` with `pipefail` a bare
+  # `x=$(cmd | ...)` takes the pipeline's status, so a shellcheck that is
+  # installed but cannot answer `--version` (a broken build, a shim, a
+  # wrapper) would abort this profile here — printing nothing at all, for
+  # either check, and taking the tests down with it. A version probe must
+  # never be able to fail the thing it only annotates.
+  sc_version=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p' | head -n 1) \
+    || sc_version=""
+  [ -n "$sc_version" ] || sc_version="unknown"
+
   list=$(mktemp "${TMPDIR:-/tmp}/jig-shell-verify.XXXXXX")
   trap 'rm -f "$list"' EXIT INT TERM
 
@@ -132,13 +155,13 @@ if command -v shellcheck >/dev/null 2>&1; then
   else
     ran_any=1
     if [ "$sc_failed" -eq 1 ]; then
-      echo "shell: shellcheck: fail"
+      echo "shell: shellcheck: fail (shellcheck $sc_version)"
       status=1
     else
       if [ "$scoped" = 1 ]; then
-        echo "shell: shellcheck: pass (scope: $sc_checked files)"
+        echo "shell: shellcheck: pass (shellcheck $sc_version, scope: $sc_checked files)"
       else
-        echo "shell: shellcheck: pass"
+        echo "shell: shellcheck: pass (shellcheck $sc_version)"
       fi
     fi
   fi

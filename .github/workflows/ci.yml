@@ -1,0 +1,83 @@
+# Runs the suite on Linux as well as macOS.
+#
+# The reason this file exists: every portability helper in the scripts has two
+# branches, and only one of them ever executes on the maintainer's machine.
+# `stat -f %m` / `date -j` are the BSD halves used on macOS; `stat -c %Y` and
+# `date -d` are the GNU halves that no local run has ever entered. The same
+# applies to the linter — shellcheck's rule set moves between releases, so the
+# version a distribution ships decides the verdict.
+#
+# Both are things a human is supposed to remember to check, which is exactly
+# the kind of discipline this framework exists to remove.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: the suite only reads the checkout. A public repository's
+# workflow token defaults to more than this job needs.
+permissions:
+  contents: read
+
+# A new push to the same branch makes the previous run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both platforms always report. A failure on one is information about
+      # that platform, not a reason to cancel the other and lose the answer.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Printed, not asserted. The point is that a disagreement between
+      # platforms is legible in the log rather than being a mystery — pinning
+      # a version is impossible anyway, since jig has no dependency manager
+      # (ADR-0002) and takes whatever the machine provides.
+      - name: Toolchain versions
+        run: |
+          bash --version | head -n 1
+          git --version
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version | sed -n 's/^version: /shellcheck /p'
+          else
+            echo "shellcheck: not installed"
+          fi
+
+      # The suite needs only the source checkout, git and bash — no install
+      # step, because tests/run.sh resolves the framework from its own path.
+      - name: Tests
+        run: tests/run.sh
+
+      # A smoke test of the *installed* copy, which is a different artefact
+      # from the source tree the suite exercises: `init` into a scratch
+      # project, then run the project's own gate there. On Linux this is also
+      # the first time the GNU branches of the portability helpers
+      # (`stat -c %Y`, `date -d`) actually execute.
+      - name: Install into a scratch project and verify it
+        run: |
+          set -eu
+          git config --global user.name jig
+          git config --global user.email jig@example.com
+          work=$(mktemp -d)
+          git -C "$work" init -q .
+          git -C "$work" symbolic-ref HEAD refs/heads/main
+          printf '# ci\n' > "$work/README.md"
+          git -C "$work" add README.md
+          git -C "$work" commit -q -m init
+          cd "$work"
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          .ai/scripts/jig status
+          .ai/scripts/jig verify
+          .ai/scripts/jig housekeeping

@@ -36,6 +36,109 @@ fixture_jig_repo() {
   cp -R "$seed/." .
 }
 
+# Build the merge topologies housekeeping has to tell apart, on top of the
+# current repository (call after fixture_jig_repo). Every branch below is
+# created off main and left behind so ancestry detection can be asserted
+# against a known answer:
+#
+#   ff-merged       fast-forwarded into main          -> merged
+#   commit-merged   merged with a real merge commit   -> merged
+#   squash-merged   squashed into one commit on main  -> merged
+#   rebase-merged   replayed commit-by-commit on main -> merged
+#   still-open      never merged                      -> unknown
+#   gone-merged     squash-merged, then branch deleted-> unknown (no local ref)
+#
+# `gone-merged` is the case only a forge can answer: with the branch deleted
+# there is no tip to compare, which is why the ancestry tier must say
+# `unknown` rather than guess.
+fixture_merge_repo() {
+  git checkout -q -b ff-merged
+  printf 'ff\n' > ff.txt
+  git add ff.txt
+  git commit -q -m "ff work"
+  git checkout -q main
+  git merge -q --ff-only ff-merged
+
+  git checkout -q -b commit-merged
+  printf 'mc\n' > mc.txt
+  git add mc.txt
+  git commit -q -m "merge-commit work"
+  git checkout -q main
+  git merge -q --no-ff -m "merge commit-merged" commit-merged
+
+  # Two commits, so a per-commit patch-id comparison would miss this and only
+  # the combined diff matches (design.md §2 step 2).
+  git checkout -q -b squash-merged
+  printf 'sq1\n' > sq.txt
+  git add sq.txt
+  git commit -q -m "squash work 1"
+  printf 'sq2\n' >> sq.txt
+  git add sq.txt
+  git commit -q -m "squash work 2"
+  git checkout -q main
+  # `--squash` always says "Squash commit -- not updating HEAD" on stdout and
+  # `cherry-pick` has no --quiet at all, so both are silenced here rather than
+  # leaking into the output a test asserts on.
+  git merge --squash squash-merged >/dev/null
+  git commit -q -m "squashed squash-merged"
+
+  git checkout -q -b rebase-merged
+  printf 'rb\n' > rb.txt
+  git add rb.txt
+  git commit -q -m "rebase work"
+  git checkout -q main
+  git cherry-pick rebase-merged >/dev/null
+
+  git checkout -q -b still-open
+  printf 'open\n' > open.txt
+  git add open.txt
+  git commit -q -m "open work"
+  git checkout -q main
+
+  git checkout -q -b gone-merged
+  printf 'gone\n' > gone.txt
+  git add gone.txt
+  git commit -q -m "gone work"
+  git checkout -q main
+  git merge --squash gone-merged >/dev/null
+  git commit -q -m "squashed gone-merged"
+  git branch -q -D gone-merged
+}
+
+# Create a task workspace directly, bypassing `jig task new`'s dirty-tree and
+# branch checks: housekeeping tests need workspaces whose `branch` and
+# `updated_at` are set to values the current checkout does not have.
+# Usage: fixture_task <id> <branch> <status> [key:value ...]
+fixture_task() {
+  local id="$1" branch="$2" status="$3" kv key value today file
+  shift 3
+  today=$(date +%Y-%m-%d)
+  file=".ai/workspace/tasks/$id/state"
+  mkdir -p ".ai/workspace/tasks/$id"
+  {
+    printf 'task_id: %s\n' "$id"
+    printf 'branch: %s\n' "$branch"
+    printf 'status: %s\n' "$status"
+    printf 'knowledge_consolidated: false\n'
+    printf 'created_at: %s\n' "$today"
+    printf 'updated_at: %s\n' "$today"
+  } > "$file"
+  # An override replaces its key rather than appending a second copy:
+  # task_state_get reads the first match, so a duplicate `updated_at` would
+  # silently defeat every ageing test.
+  for kv in "$@"; do
+    key="${kv%%:*}"
+    value="${kv#*:}"
+    if grep -q "^$key:" "$file"; then
+      sed "s|^$key:.*|$key: $value|" "$file" > "$file.tmp"
+      mv "$file.tmp" "$file"
+    else
+      printf '%s: %s\n' "$key" "$value" >> "$file"
+    fi
+  done
+  printf '# %s\n' "$id" > ".ai/workspace/tasks/$id/task.md"
+}
+
 # Run jig from the framework source checkout.
 jig() { "$JIG_BIN" "$@"; }
 

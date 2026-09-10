@@ -39,10 +39,16 @@ reports fixed-route information dependencies without assessing approval or compl
 the agent establishes task/hunk ownership and reads patches (ADR-0022). Neither command
 changes task state or decides the next stage.
 
-## Not built yet
+## Where this domain ends
 
-`jig housekeeping` is declared in the dispatcher and exits "not available in jig 0.1.0";
-`scripts/lib/housekeeping.sh` does not exist. ADR-0005 and ADR-0006 are accepted and point
-their `paths` at that file, which is why `jig knowledge paths` reports two unmatched globs.
-Reconciling workspaces against remote state, and the two-stage purge, join this domain when
-they land — until then, two of its four governing ADRs describe code nobody can read.
+`jig housekeeping` reads this domain's `state` files and never writes them (ADR-0005).
+It has its own domain — see `domains/housekeeping/` — and the split is worth stating,
+because the two are easy to confuse: **`status` is local progress, owned here; remote
+merge state is derived there, every run, and stored nowhere.**
+
+One consequence lands squarely on this domain. Housekeeping can only establish that work
+landed when the task had a branch of its own: a task whose `branch` is the base branch
+resolves to `unknown` forever (ADR-0025), so on a trunk-based project no workspace is
+ever purged automatically. `branch` is written once by `task new` from the current
+checkout and is never a branch this domain created — which is exactly the deferred
+`task-branch-lifecycle` work.

@@ -145,4 +145,68 @@ $rel"
   else
     printf '%s\n' "housekeeping: never"
   fi
+
+  # Tasks the last housekeeping run flagged. Housekeeping exits 3 for these,
+  # but nothing keeps that exit code around, and a flag nobody sees is the
+  # manual discipline the framework exists to remove (SPEC §3.8).
+  #
+  # Counted from the last `--- run` marker onwards, and by distinct task id.
+  # Both halves matter: the log is append-only, so scanning all of it reports
+  # a task flagged on three consecutive days as three tasks, and keeps
+  # reporting one that was consolidated months ago.
+  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log" nc
+  if [ -f "$hk_log" ]; then
+    nc=$(awk '
+      # split("", seen) clears the array portably; `delete seen` is an
+      # extension not every awk on a supported machine has.
+      /^--- run /            { split("", seen); n = 0; next }
+      /flags=[^ ]*needs-consolidation/ {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^task=/ && !($i in seen)) { seen[$i] = 1; n++ }
+        }
+      }
+      END { print n + 0 }
+    ' "$hk_log")
+    if [ "$nc" != "0" ]; then
+      printf '%s\n' "needs consolidation: $nc task(s) (see .ai/runtime/housekeeping.log)"
+    fi
+  fi
+
+  _status_session_hook
+}
+
+# Whether the housekeeping trigger is wired up for the installed runtimes.
+#
+# Each adapter answers for its own runtime (the hint is empty when the trigger
+# is in place), so no vendor-specific path or file format appears here —
+# ARCHITECTURE.md keeps that knowledge in adapters. Like the `pending` line
+# above, the whole line is omitted rather than guessed when the source
+# checkout that holds the adapters is gone: "could not check" and "checked and
+# found nothing" are different states.
+_status_session_hook() {
+  local source a adir hint
+  source=$(manifest_source 2>/dev/null) || return 0
+  [ -n "$source" ] || return 0
+  [ -d "$source/adapters" ] || return 0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+
+  local rc
+  for a in $(cfg_list adapters "claude codex"); do
+    adir=$(adapters_dir "$source/adapters" "$a") || continue
+    [ -f "$adir/adapter.sh" ] || continue
+    # shellcheck disable=SC1090
+    . "$adir/adapter.sh"
+    command -v "adapter_${a}_session_hook_hint" >/dev/null 2>&1 || continue
+    rc=0
+    hint=$("adapter_${a}_session_hook_hint" "$JIG_PROJECT") || rc=$?
+    # 2 is the skip code: this runtime has no session hook, so there is
+    # nothing for the reader to install and nothing worth a line here.
+    [ "$rc" = 2 ] && continue
+    if [ -n "$hint" ]; then
+      printf 'session hook (%s): not installed\n' "$a"
+    else
+      printf 'session hook (%s): installed\n' "$a"
+    fi
+  done
 }
