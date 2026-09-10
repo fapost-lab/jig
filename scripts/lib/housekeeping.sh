@@ -56,7 +56,7 @@ cmd_housekeeping() {
   fi
 
   local needs_consolidation=0 found=0
-  local state_file tid st paused age branch base_commit remote remote_pair decision action flags dest
+  local state_file tid st paused age branch base_commit remote remote_pair decision action flags dest facts
 
   if [ -d "$tasks_dir" ]; then
     while IFS= read -r state_file; do
@@ -91,7 +91,12 @@ cmd_housekeeping() {
       esac
 
       dest=""
+      facts=""
       if [ "$action" = "purge" ]; then
+        # Read the facts a measurement needs *before* the workspace moves:
+        # after `_hk_purge` the state file is in trash and this task's class
+        # and age exist nowhere else (jig measure, ADR-0006).
+        facts=$(_hk_task_facts "$tid")
         if [ "$dry" = 1 ]; then
           dest=$(_hk_trash_dest "$tid")
         else
@@ -99,7 +104,7 @@ cmd_housekeeping() {
         fi
       fi
 
-      _hk_report "$dry" "$tid" "$st" "$remote" "$action" "$flags" "$dest"
+      _hk_report "$dry" "$tid" "$st" "$remote" "$action" "$flags" "$dest" "$facts"
     done < <(find "$tasks_dir" -mindepth 2 -maxdepth 2 -name state -type f 2>/dev/null | LC_ALL=C sort)
   fi
 
@@ -533,12 +538,18 @@ _hk_trash_expire() {
 
 # --- reporting ---------------------------------------------------------------
 
-# _hk_report <dry> <task> <status> <remote> <action> <flags> <dest>
+# _hk_report <dry> <task> <status> <remote> <action> <flags> <dest> [facts]
 # One stdout line for a human, one log line for the audit trail. The log
 # records `via=` — the tier that decided — because "why was this deleted" has
 # to be answerable from the log alone, months later.
+#
+# `facts` carries the purged task's own attributes and is logged, not printed:
+# a purge is the last moment they exist anywhere, and the log is the only thing
+# that outlives the workspace. It is empty for every non-purge decision, so a
+# preserve line keeps repeating the same short shape on every run.
 _hk_report() {
   local dry="$1" tid="$2" st="$3" remote="$4" action="$5" flags="$6" dest="$7"
+  local facts="${8:-}"
   local shown="$action" rel=""
 
   if [ "$action" = "purge" ]; then
@@ -552,13 +563,33 @@ _hk_report() {
   printf '%s\n' "$line"
 
   [ "$dry" = 1 ] && return 0
-  _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid status=$st remote=$remote via=$_HK_VIA action=$shown${rel:+ dest=$rel}${flags:+ flags=$flags}"
+  _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid status=$st remote=$remote via=$_HK_VIA action=$shown${rel:+ dest=$rel}${flags:+ flags=$flags}${facts:+ $facts}"
 }
 
 _hk_log() {
   local runtime="$JIG_PROJECT/$JIG_AI_DIR/runtime"
   mkdir -p "$runtime"
   printf '%s\n' "$1" >> "$runtime/housekeeping.log"
+}
+
+# _hk_task_facts <id> — the attributes a purged task takes with it, as log
+# fields: `class=`, `created=`, `consolidated=`. A value the state file does not
+# carry is omitted entirely rather than defaulted, so a reader can tell "this
+# task had no class" from "this line predates the field" — neither of which is
+# a T0 (jig measure).
+#
+# Recording them here rather than in a series of its own is the whole storage
+# decision: measurement is derived from evidence that already exists, and the
+# purge is the one gate every workspace passes through on its way out.
+_hk_task_facts() {
+  local id="$1" class created consolidated out=""
+  class=$(task_state_get "$id" class)
+  created=$(task_state_get "$id" created_at)
+  consolidated=$(task_state_get "$id" knowledge_consolidated)
+  [ -z "$class" ] || out="class=$class"
+  [ -z "$created" ] || out="${out:+$out }created=$created"
+  [ -z "$consolidated" ] || out="${out:+$out }consolidated=$consolidated"
+  printf '%s\n' "$out"
 }
 
 # --- age ---------------------------------------------------------------------

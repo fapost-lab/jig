@@ -128,8 +128,11 @@ For a larger project, invoke `jig-map` next to propose domain knowledge, then
   topics and stage; a catalog makes additional documents discoverable.
 - **Verification and consolidation:** checks provide evidence, and the agent decides
   what engineering intent should survive the task.
-- **Lifecycle automation (Phase 5, in progress):** reconcile workspaces with remote
-  merge state and clean up eligible workspaces without an LLM.
+- **Lifecycle automation:** reconcile workspaces with remote merge state and clean up
+  eligible workspaces without an LLM.
+- **Measurement:** `jig measure` derives knowledge quality, the spread of task classes
+  and the size of the change each class produced — on demand, from evidence that
+  already exists, with no stored series and no telemetry.
 
 Jig is not a coding runtime, issue tracker or agent orchestrator. Skills guide an
 agent; the command line records state and performs deterministic operations. Running
@@ -174,9 +177,10 @@ feature-completeness benchmark.
 Jig is a good fit when a team wants the same process committed with the repository,
 cheap handling for routine changes, explicit human gates for costly mistakes,
 reviewable knowledge acceptance and shell-level mechanics that can be tested without
-an LLM. Its narrower scope is deliberate, but its maturity is also narrower: Phase 5
-is still in progress, Phase 6 measurement is planned, and Claude Code and Codex are
-the only supported runtimes in the current MVP.
+an LLM. Its narrower scope is deliberate, but its maturity is also narrower: Claude Code and
+Codex are the only supported runtimes in the current MVP, and its measurement stops
+where telemetry would begin — the framework can say how much process a change asked
+for, never what the agent's work cost.
 
 ## Skills and responsibilities
 
@@ -413,9 +417,10 @@ that project. The global command is convenient for installation and upgrades.
 
 ## Phase 5: lifecycle automation
 
-**Status: in progress.** Housekeeping, the session helper and scheduler templates are
-under development in this checkout. The following describes the current Phase 5
-direction; it is not a claim that the phase has completed verification or shipped.
+**Status: implemented.** Housekeeping, the session helper and scheduler templates
+exist and are covered by tests. Two limits are permanent rather than pending: only a
+forge can distinguish an open pull request from a closed one, and a task whose branch
+was deleted after merging resolves to `unknown` — which keeps its workspace.
 
 ```text
 implementation → review → verification → consolidation → commit / PR → remote merge
@@ -436,7 +441,7 @@ The command surface is:
 
 ```sh
 jig housekeeping --dry-run
-# After reviewing the report and enabling Phase 5 in your installed version:
+# After reviewing the report:
 jig housekeeping
 ```
 
@@ -502,13 +507,28 @@ broader than the currently completed implementation.
 | 2 — Workspace & Context | Local task state, context selection, profiles and verification | Implemented foundation |
 | 3 — Adaptive SDLC | Risk classification, stage skills and human gates | Implemented foundation |
 | 4 — Consolidation | Durable intent, ADRs, coverage and stale knowledge | Implemented foundation |
-| 5 — Lifecycle Automation | Remote merge evidence, housekeeping, trash and triggers | In progress |
-| 6 — Measurement & Evolution | Benchmarking, cost measurement and knowledge quality | Planned |
+| 5 — Lifecycle Automation | Remote merge evidence, housekeeping, trash and triggers | Implemented foundation |
+| 6 — Measurement & Evolution | Process weight, change size and knowledge quality | Implemented foundation |
 
-Phase 6 will evaluate how well the framework works. There is no measurement command
-or automatic telemetry setup documented as available today. Exact metrics, storage
-and collection mechanisms remain future design work. Do not treat roadmap items as
-installed features.
+Phase 6 evaluates how well the framework works, through one read-only command:
+
+```sh
+jig measure
+```
+
+It reports knowledge quality, the distribution of task classes and their outcomes,
+and the size of the change each class produced. Every number is derived when you ask
+for it — from knowledge frontmatter, task state, git history and the purge lines of
+`.ai/runtime/housekeeping.log`. Nothing is stored, nothing is committed, and there is
+still no telemetry of any kind.
+
+Two limits are part of the design rather than gaps to be closed later. The report
+cannot price the work: tokens, turns and wall-clock effort are not recorded and cannot
+be, so Phase 6 delivers *process weight against change size* instead of the "cost
+measurement" the roadmap originally promised. And stage timing, session count and
+whether a human gate was passed are visible only to the agent, so they are recorded
+nowhere; `jig measure` prints that limitation in its own output rather than leaving a
+reader to assume the numbers are complete.
 
 ## Troubleshooting and framework development
 

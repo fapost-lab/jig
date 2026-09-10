@@ -663,3 +663,60 @@ test_housekeeping_ignores_a_fork_point_that_no_longer_exists() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ff status=consolidated remote=merged"
 }
+
+# --- what a purged task leaves behind ----------------------------------------
+# The purge is the last moment a task's own attributes exist anywhere: the
+# workspace is about to move to trash and be erased (ADR-0006). Recording them
+# on the line that removes it is what lets `jig measure` count a task nobody
+# can open any more.
+
+test_housekeeping_purge_line_records_the_task_facts() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated class:T2 knowledge_consolidated:true
+
+  run jig housekeeping
+  assert_file_contains .ai/runtime/housekeeping.log "task=ff"
+  assert_file_contains .ai/runtime/housekeeping.log "class=T2"
+  assert_file_contains .ai/runtime/housekeeping.log "consolidated=true"
+  assert_file_contains .ai/runtime/housekeeping.log "created="
+}
+
+test_housekeeping_purge_line_omits_a_fact_the_state_does_not_carry() {
+  # An absent value is left out rather than defaulted, so a reader can tell
+  # "this task had no class" from "this line predates the field".
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+
+  run jig housekeeping
+  assert_file_contains .ai/runtime/housekeeping.log "action=purge"
+  if grep -q "class=" .ai/runtime/housekeeping.log; then
+    fail "a task with no class must not produce a class= field"
+  fi
+}
+
+test_housekeeping_preserve_line_carries_no_facts() {
+  # Only the purge line needs them: a preserved task is re-reported on every
+  # run, and repeating its attributes daily would bloat the log for nothing.
+  hk_setup
+  fixture_task live "no-such-branch" active class:T3
+
+  run jig housekeeping
+  assert_file_contains .ai/runtime/housekeeping.log "action=preserve"
+  if grep -q "class=T3" .ai/runtime/housekeeping.log; then
+    fail "a preserve line must not carry task facts"
+  fi
+}
+
+test_housekeeping_facts_are_logged_not_printed() {
+  # stdout is for a human reading one run; the facts are for a reader counting
+  # tasks months later.
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated class:T2
+
+  run jig housekeeping
+  assert_contains "$OUT" "action=purge"
+  assert_not_contains "$OUT" "class=T2"
+}
