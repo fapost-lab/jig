@@ -5,7 +5,7 @@ Applies to every file under `.ai/knowledge/` except the three global documents.
 `.ai/knowledge/RULES.md` are global and carry no frontmatter — recognised by their
 repository-relative path, so `domains/payments/RULES.md` is an ordinary document that
 must carry frontmatter like any other.
-Reference: SPEC §8, ADR-0004. Parsed by `scripts/lib/frontmatter.sh` without a YAML
+Reference: ADR-0004. Parsed by `scripts/lib/frontmatter.sh` without a YAML
 library, so the subset below is the whole grammar.
 
 ## Grammar

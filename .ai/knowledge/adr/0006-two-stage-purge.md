@@ -39,7 +39,8 @@ framework.
 
 - **Direct deletion** — rejected: a wrong merge inference destroys the only copy of
   in-progress task context.
-- **Never delete, only report** — rejected: reintroduces manual discipline (spec §3.8).
+- **Never delete, only report** — rejected: reintroduces manual discipline, which
+  `RULES.md` rules out as a scope invariant.
 
 ## Consequences
 

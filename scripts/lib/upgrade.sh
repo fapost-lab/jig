@@ -1,5 +1,5 @@
 # cmd_upgrade — update framework-owned files from a source checkout without
-# touching files the user changed (SPEC §32 decision table, ADR-0003).
+# touching files the user changed (domains/install decision table, ADR-0003).
 # Sourced by scripts/jig; defines cmd_upgrade.
 # shellcheck shell=bash
 
@@ -88,7 +88,7 @@ _upgrade_csv() {
   printf '%s\n' "$out"
 }
 
-# --- decision table (SPEC §32) ---------------------------------------------
+# --- decision table (domains/install) ---------------------------------------------
 
 # _upgrade_process_path <rel> <stage-dir> <dry-run>
 # Applies one row of the upgrade decision table to a single framework-owned
@@ -206,7 +206,7 @@ _upgrade_link_one() {
 # Link mode's "upgrade": rather than the no-op it used to be, ensure every
 # framework-owned item for the *current* config is linked — .ai/scripts,
 # each active profile, each active adapter's skills — exactly the way
-# `jig init --link` places them (SPEC §32). Sources init.sh for
+# `jig init --link` places them (domains/install). Sources init.sh for
 # _init_place_symlink/_init_relpath so the two relative-symlink code paths
 # never diverge; sourcing a command library only defines its functions, it
 # does not run cmd_init.
@@ -374,7 +374,7 @@ cmd_upgrade() {
 #      the expected outcome whenever the underlying dry run cannot complete
 #      at all — most notably when the framework source root cannot be
 #      determined (e.g. a copy-mode install whose source checkout was since
-#      deleted, SPEC §32). Any other cmd_upgrade failure (a corrupt
+#      deleted, domains/install). Any other cmd_upgrade failure (a corrupt
 #      .ai/config.yaml, say) also lands here rather than aborting the
 #      caller: a best-effort staleness check must never itself turn into a
 #      hard failure for status/verify — the caller's own subsequent logic

@@ -51,7 +51,7 @@ jig_source_root() {
 
 # Files this checkout has touched: the union of the diff against the merge-base
 # with the configured base branch, the staged and unstaged diffs, and untracked
-# files — all repo-relative (SPEC §26). `-C "$JIG_PROJECT"` matters: `git diff`
+# files — all repo-relative (ARCHITECTURE.md, Scripts layout). `-C "$JIG_PROJECT"` matters: `git diff`
 # reports paths relative to the repository root regardless of cwd, but
 # `git ls-files` reports them relative to cwd unless it is the root, so without
 # -C the two halves of the union could disagree on the path of the same file.
@@ -160,7 +160,7 @@ jig_glob_pattern() {
 
 jig_today() { date +%Y-%m-%d; }
 
-# Content hash used by the manifest (ADR-0003, SPEC §6.2). git is mandatory,
+# Content hash used by the manifest (ADR-0003, domains/install). git is mandatory,
 # shasum/sha256sum are not portable.
 jig_hash() { git hash-object "$1"; }
 

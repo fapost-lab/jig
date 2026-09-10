@@ -1,5 +1,5 @@
 # Profile discovery, activation, detection and the requires closure
-# (SPEC §30). Sourced by scripts/lib/verify.sh; scripts/lib/init.sh also
+# (domains/verify). Sourced by scripts/lib/verify.sh; scripts/lib/init.sh also
 # sources it directly to compute the profile suggestion at init time.
 # Depends on scripts/lib/common.sh (JIG_AI_DIR, jig_source_root, jig_warn)
 # and scripts/lib/config.sh (cfg_list), both already sourced by the

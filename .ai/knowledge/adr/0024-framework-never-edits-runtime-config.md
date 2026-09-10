@@ -17,12 +17,12 @@ reviewed_at: 2026-09-10
 
 ## Context
 
-Housekeeping needs a cheap trigger, and SPEC §25 specifies one: a `SessionStart` hook
+Housekeeping needs a cheap trigger, and `domains/housekeeping` specifies one: a `SessionStart` hook
 that checks a timestamp and starts housekeeping only when it is due. For Claude Code that
 hook lives in `.claude/settings.json`.
 
-SPEC §33 proposed that the adapter merge one entry tagged `"_jig": true` into that file,
-and that `upgrade` later locate and replace only that entry. The question was deferred
+An earlier proposal had the adapter merge one entry tagged `"_jig": true` into that file,
+and had `upgrade` later locate and replace only that entry. The question was deferred
 twice ("decide in Phase 1 with a real `settings.json` at hand"), and was still open when
 Phase 5 implemented the rest of the lifecycle.
 
@@ -65,12 +65,12 @@ for "the framework owns four lines inside a file the project owns".
   the create-if-absent install of the amendment above, declining with exit 2 in every
   case it cannot handle safely.
 - `init` advises and never prompts, so it keeps working in CI and in an agent session
-  (this also settles SPEC §32 step 8, which said init should "offer to configure"
+  (this also settles the earlier requirement that init should "offer to configure"
   scheduling).
 
 ## Alternatives
 
-- **Merge a tagged entry with shell text processing** (the §33 proposal). Rejected: a
+- **Merge a tagged entry with shell text processing** (the merged-entry proposal above). Rejected: a
   JSON editor in bash 3.2, correct against an arbitrary hand-formatted file, is not a
   small job, and every bug in it damages a file the user owns and the framework cannot
   rebuild. Unlike a purged workspace (ADR-0006) there is no trash to recover from.
@@ -81,7 +81,7 @@ for "the framework owns four lines inside a file the project owns".
 - **Extend the manifest with a "merged entry" record type.** Rejected: a second ownership
   model, and a second upgrade decision table, to serve exactly one file.
 - **Ship no hook at all, scheduler only.** Rejected: the in-session trigger is what makes
-  "no manual discipline" (SPEC §3.8) true for people who never set up cron.
+  "no manual discipline" (RULES.md, Scope invariants) true for people who never set up cron.
 
 ## Consequences
 

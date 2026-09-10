@@ -1,4 +1,4 @@
-# Codex adapter (SPEC §31, ADR-0003, ADR-0007).
+# Codex adapter (ARCHITECTURE.md, Adapter contract; ADR-0003, ADR-0007).
 #
 # Sourced by scripts/lib/init.sh and scripts/lib/upgrade.sh; must not be
 # executed directly. Defines where Codex-facing files live in a project and
@@ -70,7 +70,7 @@ adapter_codex_install_instructions() {
 # in-session trigger to offer. Saying so plainly is the honest answer: the two
 # runtimes get the same lifecycle semantics, but not the same cheap trigger,
 # and pretending otherwise would leave Codex users assuming housekeeping runs
-# when it never does (SPEC §25).
+# when it never does (domains/housekeeping).
 # Exit 2 means "not applicable to this runtime", the same skip convention a
 # profile's verify.sh uses. `init` prints the text once; `status` stays quiet
 # about it, because a line saying "not installed" that no one can ever act on

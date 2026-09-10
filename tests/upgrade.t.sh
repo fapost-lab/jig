@@ -1,4 +1,4 @@
-# Tests for `jig upgrade` (SPEC §32 decision table, ADR-0003).
+# Tests for `jig upgrade` (domains/install decision table, ADR-0003).
 # shellcheck shell=bash
 
 # _mk_source_v2 <dest> — a modified copy of $JIG_HOME: a changed profile
@@ -49,7 +49,7 @@ test_upgrade_link_mode_is_noop_when_everything_already_linked() {
 
 # Reproduces the gap: activating a profile in config.yaml after `init --link`
 # left `jig upgrade` a pure no-op, so `jig verify`'s "run jig upgrade" hint
-# was a dead end (SPEC §32).
+# was a dead end (domains/install).
 test_upgrade_link_mode_creates_missing_profile_symlink() {
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
@@ -114,7 +114,7 @@ test_upgrade_dry_run_makes_no_changes() {
   rm -rf "$src"
 }
 
-# Exercises every row of the SPEC §32 decision table in one pass:
+# Exercises every row of the domains/install decision table in one pass:
 # replace, keep-modified, install, keep-conflict, delete, keep-orphaned-modified.
 test_upgrade_decision_table_full() {
   fixture_repo
@@ -183,7 +183,7 @@ test_upgrade_decision_table_full() {
 # The staged tree cmd_upgrade builds is derived from the *current*
 # .ai/config.yaml, so activating a profile after init and re-running
 # `jig upgrade` (copy mode) must install it — not just pick up drift in
-# already-tracked files (SPEC §32).
+# already-tracked files (domains/install).
 test_upgrade_copy_mode_installs_newly_activated_profile() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null

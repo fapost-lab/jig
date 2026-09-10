@@ -1,4 +1,4 @@
-# Tests for `jig status` (SPEC §29).
+# Tests for `jig status` (ARCHITECTURE.md, Scripts layout).
 # shellcheck shell=bash
 
 test_status_not_initialised() {
@@ -41,7 +41,7 @@ test_status_reports_drift() {
 # --- proposals: knowledge awaiting a decision --------------------------------
 # (ADR-0016) A `proposed` document is invisible to every agent until a human
 # accepts it, so `jig status` is the only place its existence surfaces. The
-# line sits between drift and the task lines (SPEC §29).
+# line sits between drift and the task lines (ARCHITECTURE.md, Scripts layout).
 
 test_status_reports_no_proposals_by_default() {
   fixture_repo
@@ -306,7 +306,7 @@ EOF
 }
 
 # A copy-mode install whose source checkout no longer exists on this
-# machine is a normal state (SPEC §32), not an error: the pending count is
+# machine is a normal state (domains/install), not an error: the pending count is
 # unknown, so it is omitted from the line entirely rather than misreported
 # as "0 pending" (which would read as "checked, nothing pending").
 test_status_omits_pending_when_source_root_unknown() {
@@ -324,7 +324,7 @@ test_status_omits_pending_when_source_root_unknown() {
   assert_not_contains "$OUT" "pending"
 }
 
-# --- session hook and housekeeping flags (SPEC §25, §29) ---------------------
+# --- session hook and housekeeping flags (domains/housekeeping; ARCHITECTURE.md, Scripts layout) ---------------------
 
 test_status_session_hook_not_installed() {
   fixture_repo

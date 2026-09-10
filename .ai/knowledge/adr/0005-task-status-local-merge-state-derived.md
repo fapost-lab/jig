@@ -40,5 +40,6 @@ The spec also had no path for a PR closed without merge.
 
 ## Consequences
 
-- The cleanup policy is a two-axis table (spec §23) that is easy to test exhaustively.
+- The cleanup policy is a two-axis table (`domains/housekeeping`) that is easy to test
+  exhaustively.
 - Abandoned work no longer lives forever under "not merged → preserve".

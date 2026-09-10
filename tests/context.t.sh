@@ -1,4 +1,4 @@
-# Tests for `jig context` (SPEC §26; ADR-0004; ADR-0008).
+# Tests for `jig context` (ADR-0014; ADR-0004; ADR-0008).
 # shellcheck shell=bash
 
 ctx_setup() {
@@ -73,10 +73,10 @@ id: feature-exact
 type: feature
 status: active
 paths:
-  - "docs/SPEC.md"
+  - "docs/EXAMPLE.md"
 ---
 EOF
-  run jig context --files docs/SPEC.md
+  run jig context --files docs/EXAMPLE.md
   assert_eq 0 "$RC"
   assert_contains "$OUT" "matched:   .ai/knowledge/features/exact.md"
 

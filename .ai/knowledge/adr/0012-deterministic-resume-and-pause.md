@@ -68,6 +68,6 @@ session, and nothing stopped a new task from starting on another task's dirty tr
 
 - Ambiguity becomes visible and cheap to resolve: pausing one of two live tasks restores
   unambiguous resume.
-- The cleanup policy (SPEC §23) gains explicit rows for paused tasks, so pause exempts a
+- The cleanup policy (domains/housekeeping) gains explicit rows for paused tasks, so pause exempts a
   task from auto-resume but never from being reported stale.
 - ADR-0008 stands; this decision fills in what it left implicit about tie-breaking.

@@ -1,4 +1,4 @@
-# Reader/writer for .ai/manifest (SPEC §6.2, ADR-0003). Sourced by
+# Reader/writer for .ai/manifest (domains/install, ADR-0003). Sourced by
 # scripts/lib/init.sh, scripts/lib/upgrade.sh and scripts/lib/status.sh.
 # Assumes JIG_PROJECT and JIG_AI_DIR are already set (jig_require_repo).
 # shellcheck shell=bash

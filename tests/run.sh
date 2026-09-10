@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Minimal test runner (SPEC §29, decision "A + 1").
+# Minimal test runner (ARCHITECTURE.md, Scripts layout; decision "A + 1").
 #
 # Discovers tests/*.t.sh, sources each file and runs every function named
 # test_* in its own subshell inside a fresh temporary directory with an

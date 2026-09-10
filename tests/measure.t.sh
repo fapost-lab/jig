@@ -1,4 +1,4 @@
-# Tests for `jig measure` (SPEC §36, Phase 6).
+# Tests for `jig measure` (Phase 6, ADR-0027).
 #
 # The whole report is a pure function of the repository, so every number below
 # is asserted exactly — that is the property that lets a measurement command

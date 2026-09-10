@@ -1,4 +1,5 @@
-# Tests for `jig task` (SPEC §14, §15, §29; ADR-0005; ADR-0008).
+# Tests for `jig task` (domains/task; schemas/state.md; ARCHITECTURE.md,
+# Scripts layout; ADR-0005; ADR-0008).
 # shellcheck shell=bash
 
 task_setup() {

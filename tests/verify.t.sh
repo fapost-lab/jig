@@ -1,4 +1,4 @@
-# Tests for `jig verify` (SPEC §29, §30).
+# Tests for `jig verify` (ARCHITECTURE.md, Scripts layout; domains/verify).
 # shellcheck shell=bash
 
 # run_no_tools <cmd...> — like `run`, but with PATH stripped down to the
@@ -139,7 +139,7 @@ test_verify_shell_profile_fails_on_bad_script() {
   assert_contains "$OUT" "verify: 2 profiles, 1 pass, 1 fail, 0 skip"
 }
 
-# --- the "not installed (run jig upgrade)" hint stays actionable (SPEC §32) -
+# --- the "not installed (run jig upgrade)" hint stays actionable (domains/install) -
 # Activating a profile in config.yaml after init used to leave the hint a
 # dead end: copy mode's own decision table already installed the profile,
 # but link mode's `jig upgrade` was a pure no-op. Covers both modes.
@@ -235,7 +235,7 @@ EOF
 }
 
 # A copy-mode install whose source checkout no longer exists on this
-# machine must not turn into a verify failure (SPEC §32): pending state is
+# machine must not turn into a verify failure (domains/install): pending state is
 # simply unknown, so verify falls back to running the profiles normally.
 test_verify_runs_profiles_when_source_root_unknown() {
   fixture_repo
