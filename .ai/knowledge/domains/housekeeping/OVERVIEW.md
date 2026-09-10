@@ -11,6 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
+reviewed_at: 2026-09-11
 ---
 # Housekeeping
 
@@ -26,7 +27,10 @@ evidence it inferred itself.
   `paused` and age, which is why the whole table is testable without a repository.
 - The two-stage **Purge**: move to **Trash**, delete only after `trash_ttl` (ADR-0006).
 - The audit trail: `.ai/runtime/housekeeping.log`, one line per decision including
-  `via=` (the deciding tier), and the `.ai/runtime/last-housekeeping` stamp.
+  `via=` (the deciding tier), and the `.ai/runtime/last-housekeeping` stamp. A **purge**
+  line additionally carries the task's own `class=`, `created=` and `consolidated=`
+  (`_hk_task_facts`), read before the workspace moves: the purge is the last moment those
+  facts exist anywhere (ADR-0027).
 - The **Session Hook** and the scheduler examples — triggers, both optional, neither
   installed automatically (ADR-0024).
 
@@ -47,7 +51,13 @@ Read these before changing anything here; each is a rule someone paid for.
 ## Boundaries
 
 Outside: what a `status` value *means* and who may write it — that is the `task` domain
-(ADR-0005, ADR-0012). Housekeeping only reads `state`, and writes nothing into it.
+(ADR-0005, ADR-0012). Housekeeping only reads `state`, and writes nothing into it. That
+still holds now that the purge line copies three of its fields: they are copied into this
+domain's log, never back into the task's file.
+
+**The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
+block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
+(ADR-0027). Its line shape is an interface with two consumers now, and nothing rotates it.
 
 Outside: which config file a runtime keeps its hooks in and what shape it has — that
 belongs to the adapter (ADR-0024). This domain owns the hook *script*, not the runtime's
@@ -62,7 +72,7 @@ an LLM (ADR-0001).
 ## Entry points
 
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
-  `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`.
+  `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six
   merge topologies (fast-forward, merge commit, squash, rebase, open, deleted branch).

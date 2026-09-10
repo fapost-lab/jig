@@ -30,9 +30,7 @@ cmd_knowledge() {
   esac
 
   jig_require_init
-  # shellcheck source=lib/frontmatter.sh
-  . "$JIG_LIB/frontmatter.sh"
-  KM_DIR="$JIG_PROJECT/$JIG_AI_DIR/knowledge"
+  km_init
 
   case "$sub" in
     check) km_check "$@" ;;
@@ -79,6 +77,19 @@ KM_ADR_NUMS_FILE=""
 # Held by km_paths_report's EXIT trap, which fires after the function has
 # returned — so it must not be `local` (convention-shell).
 KM_UNCOVERED_FILE=""
+
+# km_init — everything a km_* function needs before it can read a document: the
+# frontmatter parser it delegates to, and the root it resolves paths against.
+#
+# A function rather than two lines inside `cmd_knowledge`, because `jig measure`
+# consumes these reports too. Setup transcribed at a second call site is setup
+# that silently misses the next step this one gains, and the failure would be a
+# report computed against a half-initialised library rather than an error.
+km_init() {
+  # shellcheck source=lib/frontmatter.sh
+  . "$JIG_LIB/frontmatter.sh"
+  KM_DIR="$JIG_PROJECT/$JIG_AI_DIR/knowledge"
+}
 
 km_fail() {
   KM_FAILURES=$((KM_FAILURES + 1))

@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-10
+reviewed_at: 2026-09-11
 ---
 # Task
 
@@ -42,6 +42,10 @@ changes task state or decides the next stage.
 ## Where this domain ends
 
 `jig housekeeping` reads this domain's `state` files and never writes them (ADR-0005).
+It now also copies `class`, `created_at` and `knowledge_consolidated` onto its purge line,
+so `jig measure` can count a task whose workspace no longer exists (ADR-0027). Renaming a
+field here therefore empties a column in a report two domains away, silently — the
+copy is by key, and an absent key is read as unknown rather than as an error.
 It has its own domain — see `domains/housekeeping/` — and the split is worth stating,
 because the two are easy to confuse: **`status` is local progress, owned here; remote
 merge state is derived there, every run, and stored nowhere.**

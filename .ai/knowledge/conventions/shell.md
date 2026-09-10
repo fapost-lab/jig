@@ -8,7 +8,7 @@ paths:
   - "adapters/**"
   - "profiles/**"
   - "tests/**"
-reviewed_at: 2026-09-10
+reviewed_at: 2026-09-11
 summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
@@ -42,6 +42,9 @@ bug during Phase 1; the rationale column says which.
 | Two files in one directory may not differ only by case. | macOS is case-insensitive by default, so `glossary.md` and `GLOSSARY.md` are one file: creating the type template silently overwrote the global knowledge template. The domain-pack templates live in `templates/knowledge/domain/` for this reason (ADR-0014). |
 | A command's primary output is plain `printf`, never `jig_log`. | `jig_log` obeys the global `JIG_QUIET`, so `JIG_QUIET=1` erased exactly the line `context guard` prints to say a check did not run — the property ADR-0015 depends on. See `_init_out` in `init.sh`. |
 | Commands that produce human output use plain `printf`; `jig_info`/`jig_warn`/`jig_die` go to stderr. A command's `--quiet` flag is local to that command. | Tests capture stdout per test, so there is no need for a global quiet switch. |
+| An awk two-file join on `NR == FNR` handles the empty-first-file case explicitly. | `NR == FNR` identifies the first file only while that file has lines. With an empty first file the condition is true for every line of the **second** file too, so the join silently keeps nothing. In `measure.sh` the first file is the live task workspaces and the second is the purge records: on a machine with no live tasks — the ordinary state after housekeeping — every historical task was discarded as if it were live, and the report said "no task workspaces and no purge records" while the log held plenty. |
+| A `git` read whose result becomes a number pins the options that change it, rather than inheriting the user's config. | `git diff --numstat` obeys `diff.renames`, which is on by default and which some developers switch off globally. A renamed file is then either one file and one line, or two files and all their lines. `jig measure` would report a different change size for the same history depending on whose machine printed it — the same "do not inherit the environment" failure as `run_no_tools`, but in arithmetic rather than in `PATH`. `jig_git_change_rows` already pins `--no-renames`; new readers must too. |
+| Shell division truncates towards zero, so floor explicitly wherever the numerator can be negative. | `$(( (tip - fork) / 86400 ))` on a branch tip older than its own fork point — a rebased base, a stale `base_commit` — gives `0` for any gap under a day instead of a negative number. The anomaly a reader needed to see is printed as "finished the same day", which is the most plausible reading and the wrong one. |
 
 ## Example
 
