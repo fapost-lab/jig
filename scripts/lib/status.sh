@@ -1,5 +1,5 @@
 # cmd_status — version, init/manifest state, drift, pending knowledge
-# proposals, active tasks, housekeeping age (SPEC §29). Sourced by
+# proposals, active tasks, housekeeping age (ARCHITECTURE.md, Scripts layout). Sourced by
 # scripts/jig; defines cmd_status.
 # Read-only: never writes anything.
 # shellcheck shell=bash
@@ -53,7 +53,7 @@ $rel"
   # from drift above, which only covers paths already recorded in the
   # manifest. Omitted from the line entirely (rather than printed as "0
   # pending") when it cannot be determined, most commonly because this
-  # install's source checkout no longer exists on this machine (SPEC §32):
+  # install's source checkout no longer exists on this machine (domains/install):
   # that is a different, unknown state from "checked and found nothing
   # pending", and collapsing the two would misreport it as clean.
   local pending pending_rc=0 pcount
@@ -148,7 +148,7 @@ $rel"
 
   # Tasks the last housekeeping run flagged. Housekeeping exits 3 for these,
   # but nothing keeps that exit code around, and a flag nobody sees is the
-  # manual discipline the framework exists to remove (SPEC §3.8).
+  # manual discipline the framework exists to remove (RULES.md, Scope invariants).
   #
   # Counted from the last `--- run` marker onwards, and by distinct task id.
   # Both halves matter: the log is append-only, so scanning all of it reports

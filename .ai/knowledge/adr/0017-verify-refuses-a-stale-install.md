@@ -77,7 +77,7 @@ it.
   an agent is a habit, not an invariant, and ADR-0001's premise is that mechanics belong
   in scripts rather than in prose the agent may skip.
 - **Fail when pending cannot be determined.** Rejected: a copy-mode install whose source
-  is gone is a normal, supported state (SPEC §32). Failing there would break verify for
+  is gone is a normal, supported state (domains/install). Failing there would break verify for
   exactly the projects copy mode exists to serve.
 - **A `jig doctor` command carrying all such checks.** Rejected for now: one more command
   to remember, reporting something the two commands agents already run can report in

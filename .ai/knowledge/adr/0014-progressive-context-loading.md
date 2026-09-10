@@ -11,7 +11,6 @@ paths:
   - scripts/lib/context.sh
   - scripts/lib/knowledge.sh
   - "templates/knowledge/**"
-  - docs/SPEC.md
 reviewed_at: 2026-09-09
 summary: Why knowledge declares how it should be loaded, and why directories never decide applicability.
 ---

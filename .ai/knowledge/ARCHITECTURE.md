@@ -16,7 +16,7 @@ Cross-cutting:
 - **Profiles** (`profiles/<stack>/`) plug into scripts (`verify`) and knowledge (rules).
 
 Invariant: no layer calls upward. Skills call scripts; scripts never call skills or the
-runtime. See `docs/SPEC.md` §4.
+runtime.
 
 ## Scripts layout
 

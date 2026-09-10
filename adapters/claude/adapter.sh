@@ -1,4 +1,4 @@
-# Claude Code adapter (SPEC §31, ADR-0003, ADR-0007).
+# Claude Code adapter (ARCHITECTURE.md, Adapter contract; ADR-0003, ADR-0007).
 #
 # Sourced by scripts/lib/init.sh and scripts/lib/upgrade.sh; must not be
 # executed directly. Defines where Claude-facing files live in a project and

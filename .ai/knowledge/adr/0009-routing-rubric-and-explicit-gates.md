@@ -12,7 +12,7 @@ summary: Why a written rubric picks the task class and human gates are full stop
 
 ## Context
 
-Adaptive SDLC (SPEC §17) needs someone to decide how much process a task gets. Scripts
+Adaptive SDLC (`jig-task/references/classification.md`) needs someone to decide how much process a task gets. Scripts
 cannot: the decision is a judgement about risk and blast radius (ADR-0001). Left to the
 agent without structure, the choice is inconsistent between sessions, and the framework
 loses the property that makes it worth having.
@@ -50,7 +50,7 @@ help, and picks by effort rather than by risk.
   for risk, and it would put an LLM-shaped judgement into a deterministic script.
 - **One monolithic workflow skill** — rejected: a single skill covering every stage grows
   past a thousand lines and is loaded in full for a typo fix, which is exactly the context
-  cost SPEC §3.4 forbids.
+  cost ADR-0001 forbids.
 
 ## Consequences
 

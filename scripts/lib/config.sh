@@ -1,4 +1,4 @@
-# Reader for .ai/config.yaml — flat YAML subset (SPEC §6.1).
+# Reader for .ai/config.yaml — flat YAML subset (domains/install).
 # Keys are `section.key: value`; lists are inline `[a, b]`; no nesting.
 # shellcheck shell=bash
 

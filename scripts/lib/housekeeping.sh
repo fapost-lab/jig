@@ -1,5 +1,5 @@
 # cmd_housekeeping — reconcile task workspaces with remote merge state and
-# retire what is finished (SPEC §23, §24; ADR-0005, ADR-0006).
+# retire what is finished (domains/housekeeping; ADR-0005, ADR-0006).
 # Sourced by scripts/jig; defines cmd_housekeeping.
 #
 # Deterministic and unattended: no LLM (ADR-0001), no prompt, no interactive
@@ -124,7 +124,7 @@ cmd_housekeeping() {
 
   # Exit 3, not 1: a hook or a cron job must be able to tell "someone has to
   # consolidate this" from "the command crashed" (jig_die uses 1), and 2 is
-  # already `task current`'s ambiguity code (SPEC §24.7).
+  # already `task current`'s ambiguity code (domains/housekeeping).
   if [ "$needs_consolidation" = 1 ]; then
     printf 'action needed: consolidate the tasks flagged needs-consolidation\n'
     return 3
@@ -140,7 +140,7 @@ cmd_housekeeping() {
 # comma-separated subset of needs-consolidation, abandoned?, STALE_CANDIDATE.
 #
 # A pure function of six strings: no filesystem, no git, no config. That is
-# what makes the SPEC §23 table exhaustively testable, and it is the reason
+# what makes the domains/housekeeping policy table exhaustively testable, and it is the reason
 # the destructive decision is separated from the destructive act.
 housekeeping_decide() {
   local status="$1" remote="$2" paused="$3" age="$4" abandoned_ttl="$5" stale_after="$6"
@@ -176,7 +176,7 @@ housekeeping_decide() {
   fi
 
   # Reported, never acted on: age is a hint, semantic lifecycle has priority
-  # over TTL (SPEC §23).
+  # over TTL (domains/housekeeping).
   if [ "$age" -gt "$stale_after" ] && [ "$action" != "purge" ]; then
     if [ -n "$flags" ]; then
       flags="$flags,STALE_CANDIDATE"
@@ -195,7 +195,7 @@ housekeeping_decide() {
 # --- remote state ------------------------------------------------------------
 
 # _hk_remote_state <branch> — print "<state> <via>" where state is
-# merged|open|closed|unknown and via is the tier that decided it (SPEC §24.3).
+# merged|open|closed|unknown and via is the tier that decided it (domains/housekeeping).
 #
 # Both values are printed rather than one of them assigned to a global,
 # because every caller reads this through `$(...)` and a subshell would
@@ -226,7 +226,7 @@ _hk_remote_state() {
 }
 
 # _hk_fetch <dry> — refresh remote refs once per run when allowed. A failure
-# is not fatal: the run continues on local state and says so (SPEC §24.1).
+# is not fatal: the run continues on local state and says so (domains/housekeeping).
 _hk_fetch() {
   local dry="$1"
   if ! cfg_bool housekeeping.fetch true; then
@@ -327,10 +327,10 @@ _hk_forge_state() {
 
 # _hk_ancestry_state <branch> — merged|unknown.
 #
-# Deliberately narrower than SPEC §24.3 (design.md §2): git knows whether work
+# Deliberately narrower than domains/housekeeping (design.md §2): git knows whether work
 # landed and knows nothing about pull requests, so "not an ancestor" is not
-# evidence of an open PR. §23 gives `open` and `unknown` the same action, so
-# this costs no behaviour and keeps the report honest.
+# evidence of an open PR. The housekeeping policy gives `open` and `unknown` the same
+# action, so this costs no behaviour and keeps the report honest.
 _hk_ancestry_state() {
   local branch="$1" base_commit="${2:-}" base tip mb combined c base_name
   base_name=$(cfg git.base_branch main)
@@ -345,7 +345,7 @@ _hk_ancestry_state() {
   # `merged` for all of them, which turned 13 `consolidated` workspaces into
   # would-purge on the first real run. Trunk-based work has no local evidence
   # of landing, so the honest answer is `unknown` and the workspace is
-  # preserved; only a forge can resolve these (SPEC §23: when uncertain,
+  # preserved; only a forge can resolve these (domains/housekeeping: when uncertain,
   # preserve).
   if [ "$branch" = "$base_name" ]; then
     printf 'unknown\n'

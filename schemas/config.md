@@ -1,7 +1,7 @@
 # Project configuration
 
 `.ai/config.yaml`, flat YAML subset: `section.key: value`, inline lists only, no nesting.
-Reference: SPEC §6.1. Read with `cfg`, `cfg_list`, `cfg_bool` from `scripts/lib/config.sh`.
+Reference: `domains/install`. Read with `cfg`, `cfg_list`, `cfg_bool` from `scripts/lib/config.sh`.
 Absent keys take the default. Paths are not configurable.
 
 | Key | Default | Meaning |

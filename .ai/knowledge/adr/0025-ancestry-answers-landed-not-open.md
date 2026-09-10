@@ -15,8 +15,8 @@ reviewed_at: 2026-09-10
 
 ## Context
 
-Housekeeping derives remote state per task in three tiers (SPEC §24.3): a forge API, then
-git ancestry, then `unknown`. The policy table of §23 acts on four values —
+Housekeeping derives remote state per task in three tiers (domains/housekeeping): a forge API, then
+git ancestry, then `unknown`. The policy table acts on four values —
 `merged | open | closed | unknown` — and the spec's wording implies the ancestry tier
 produces the same four.
 

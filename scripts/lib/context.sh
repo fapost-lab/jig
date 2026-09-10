@@ -1,4 +1,4 @@
-# cmd_context — relevant knowledge for a task (SPEC §26; ADR-0004; ADR-0008).
+# cmd_context — relevant knowledge for a task (ADR-0014; ADR-0004; ADR-0008).
 # Sourced by scripts/jig; defines cmd_context. Deterministic: no LLM, no
 # judgement calls beyond the matching rules below. bash 3.2 compatible: no
 # associative arrays, no ${var,,}, no mapfile.
@@ -8,7 +8,7 @@
 _CTX_GLOBAL_FILES="GLOSSARY.md ARCHITECTURE.md RULES.md"
 
 # Workspace artifacts other than task.md, in the fixed order they are
-# reported, when present (SPEC §14).
+# reported, when present (domains/task).
 _CTX_WORKSPACE_ARTIFACTS="discovery.md spec.md alternatives.md design.md plan.md review.md verification.md handoff.md"
 
 CTX_USAGE="usage: jig context [--task <id>] [--files <list>|-] [--domains a,b] [--all] [--format list|paths]
@@ -28,7 +28,7 @@ cmd_context() {
 
   # A subcommand is a bare word; every option of the stateless form starts
   # with `--`, so the two cannot be confused and `jig context` keeps working
-  # exactly as before (SPEC §26).
+  # exactly as before (ADR-0014).
   case "${1:-}" in
     resolve) shift; ctx_resolve "$@"; return $? ;;
     pending) shift; ctx_pending "$@"; return $? ;;
@@ -72,8 +72,8 @@ ctx_stateless() {
   # --- task resolution --------------------------------------------------------
   # An explicit --task must name a real workspace (the caller made a
   # deliberate choice); the implicit `task current` lookup fails silently on
-  # "no candidate" — a normal outcome, not an error (SPEC §26: "If nothing
-  # matched, only global + workspace are returned"). On "several candidates"
+  # "no candidate" — a normal outcome, not an error (ADR-0014: if nothing
+  # matched, only global + workspace are returned). On "several candidates"
   # (exit 2, design.md §2) the workspace section is omitted too — picking one
   # would risk loading the wrong task's artifacts — but this time it is not
   # silent: task_current's own stderr (one line per candidate) is forwarded
@@ -304,7 +304,7 @@ _ctx_parse_selectors() {
     # Same contract as the stateless form: "no candidate" is a normal outcome
     # and stays silent, but "several candidates" (exit 2) forwards task_current's
     # own listing so the caller can see why no workspace was selected
-    # (SPEC §26, ADR-0012). Swallowing it would make the progressive commands
+    # (ADR-0014, ADR-0012). Swallowing it would make the progressive commands
     # quieter than the command they extend.
     local tc_rc=0 tc_err_file
     tc_err_file=$(mktemp "${TMPDIR:-/tmp}/jig-context-current.XXXXXX")

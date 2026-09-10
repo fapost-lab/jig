@@ -1,4 +1,4 @@
-# Tests for `jig init` (SPEC §32, ADR-0003). Runs the real dispatcher from
+# Tests for `jig init` (domains/install, ADR-0003). Runs the real dispatcher from
 # the framework source checkout ($JIG_HOME) against a fixture repository.
 # shellcheck shell=bash
 
@@ -154,7 +154,7 @@ test_init_is_idempotent() {
 }
 
 
-# --- re-run picks up the config, not the flag defaults (SPEC §32) ----------
+# --- re-run picks up the config, not the flag defaults (domains/install) ----------
 
 test_init_rerun_picks_up_profiles_from_config_copy_mode() {
   fixture_repo
@@ -241,7 +241,7 @@ test_init_conflict_is_kept_and_not_tracked() {
 # any tracked path it reported as `conflict` (a user-modified file) — real
 # `modified` drift then read back as `0 modified`, and a later `jig upgrade`
 # no longer had the original hash to compare against, so it reported
-# `keep-conflict` instead of `keep-modified` (SPEC §32).
+# `keep-conflict` instead of `keep-modified` (domains/install).
 test_init_rerun_preserves_manifest_entry_for_modified_file() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
@@ -269,8 +269,8 @@ test_init_rerun_preserves_manifest_entry_for_modified_file() {
 }
 
 # A re-run must reinstall a tracked file the user deleted locally, and the
-# manifest must keep tracking it afterwards (SPEC §32: "yes / yes / file
-# absent -> install, add to manifest").
+# manifest must keep tracking it afterwards (domains/install: a tracked file
+# that is absent is installed and kept on the manifest).
 test_init_rerun_reinstalls_deleted_tracked_file() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
@@ -487,7 +487,7 @@ test_init_link_mode_symlinks_templates_scheduler_directory() {
 }
 
 test_init_prints_the_session_hook_advisory_without_installing_it() {
-  # SPEC §25 / ADR-0024: the adapter offers the entry, the user installs it.
+  # domains/housekeeping / ADR-0024: the adapter offers the entry, the user installs it.
   # init must stay non-interactive and must not touch .claude/settings.json.
   fixture_repo
   run jig init --from "$JIG_HOME"

@@ -1,4 +1,4 @@
-# Tests for scripts/lib/profiles.sh (SPEC §30).
+# Tests for scripts/lib/profiles.sh (domains/verify).
 # shellcheck shell=bash
 # Every profiles_harness call below intentionally passes a single-quoted
 # script containing $VAR references meant to expand inside the harness's

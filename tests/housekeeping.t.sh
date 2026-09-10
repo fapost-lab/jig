@@ -1,4 +1,4 @@
-# Tests for `jig housekeeping` (SPEC §23, §24; ADR-0005; ADR-0006).
+# Tests for `jig housekeeping` (domains/housekeeping; ADR-0005; ADR-0006).
 # shellcheck shell=bash
 
 hk_setup() {
@@ -23,7 +23,7 @@ hk_days_ago() {
 }
 
 # Call housekeeping_decide directly. The policy is a pure function, so the
-# whole SPEC §23 table is testable without a git repository or a workspace.
+# whole domains/housekeeping table is testable without a git repository or a workspace.
 hk_decide() {
   bash -c '
     set -eu
@@ -34,7 +34,7 @@ hk_decide() {
   ' _ "$@"
 }
 
-# --- policy table (SPEC §23) -------------------------------------------------
+# --- policy table (domains/housekeeping) -------------------------------------------------
 
 test_housekeeping_decide_consolidated_merged_purges() {
   assert_eq "purge" "$(hk_decide consolidated merged "" 1 14 60)"
@@ -455,7 +455,7 @@ test_housekeeping_rejects_an_invalid_forge_value() {
   assert_contains "$OUT" "invalid forge"
 }
 
-# --- session hook (SPEC §25) -------------------------------------------------
+# --- session hook (domains/housekeeping) -------------------------------------------------
 
 # Wait up to ~5s for the detached housekeeping run to produce <file>.
 hk_wait_for() {

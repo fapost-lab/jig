@@ -36,7 +36,7 @@ relative symlink (link mode).
 
 Framework-owned, not project-owned: a project does not edit these, `upgrade` carries
 improvements forward, and a locally modified template is reported as a conflict rather
-than silently replaced (SPEC §32).
+than silently replaced (domains/install).
 
 The three global documents keep their existing treatment — seeded once, project-owned
 forever. A project's `RULES.md` is its own; the template that started it is not.
@@ -56,8 +56,8 @@ forever. A project's `RULES.md` is its own; the template that started it is not.
 
 ## Consequences
 
-- `.ai/templates/` is a new tracked directory in every project. It is listed in SPEC §6
-  among the framework-owned paths.
+- `.ai/templates/` is a new tracked directory in every project. It is listed in
+  `domains/install` among the framework-owned paths.
 - `jig knowledge new` works in a consumer project with no framework checkout present.
 - Changing a template is now a versioned, reviewable event: it reaches projects through
   `upgrade`, with a conflict reported if the project edited it.

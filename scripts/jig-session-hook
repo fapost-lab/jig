@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# jig-session-hook — the cheap housekeeping trigger (SPEC §25).
+# jig-session-hook — the cheap housekeeping trigger (domains/housekeeping).
 #
 # Runs at the start of an agent session. When nothing is due the whole cost is
 # one `stat`: no network, no git, no forge. When housekeeping *is* due it is

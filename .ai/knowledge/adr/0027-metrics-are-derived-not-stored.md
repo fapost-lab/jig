@@ -54,7 +54,8 @@ already derives whether work landed, uses the answer for one decision and discar
 - **"Cost measurement" is delivered as process weight against change size.** The report
   says how much process a change asked for (its class) and how large the change turned out
   to be (commits, files, lines, days from fork to tip). It does not claim to price the
-  work, and `docs/SPEC.md` was corrected to promise what can be delivered.
+  work, and the product specification was corrected to promise what can be delivered
+  (that document has since been retired; see ADR-0028).
 - **"Benchmarking" means the process, not the scripts.** Reclassification, outcomes and
   the spread of classes are what the framework can be judged on. Script runtime stays a
   task-level measurement, taken when it matters (ADR-0013, `fewer-spawns-on-install`).
@@ -81,7 +82,8 @@ already derives whether work landed, uses the answer for one decision and discar
 - **Persist to `.ai/runtime/metrics/`.** Rejected. The same storage cost for data that is
   per-developer and gone on a fresh clone regardless, in a directory where the housekeeping
   log already occupies the niche for free.
-- **Telemetry for real cost.** Rejected by the spec (`docs/SPEC.md:21`), and by the reason
+- **Telemetry for real cost.** Rejected by the product specification before its
+  retirement, and by the reason
   behind it: a project-owned framework that phones home stops being project-owned.
 - **Record the facts on every housekeeping decision rather than only on purge.** Rejected:
   a preserved task is re-reported on every run, so its attributes would be rewritten daily

@@ -1,7 +1,7 @@
 # Jig (Agent SDLC Framework) — agent instructions
 
 This repository *is* the framework and also uses it (dogfooding). Follow the process
-described in `docs/SPEC.md` and the durable knowledge in `.ai/knowledge/`.
+described in the durable knowledge under `.ai/knowledge/`.
 
 ## Read first
 
@@ -9,7 +9,7 @@ described in `docs/SPEC.md` and the durable knowledge in `.ai/knowledge/`.
 - `.ai/knowledge/RULES.md` — invariants; do not violate.
 - `.ai/knowledge/adr/` — accepted decisions; propose a new ADR instead of silently
   contradicting one.
-- `docs/SPEC.md` — the product specification (human-facing).
+- `README.md` — what Jig is and how it is used (human-facing).
 
 ## Workflow
 

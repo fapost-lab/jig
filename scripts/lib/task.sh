@@ -1,4 +1,5 @@
-# cmd_task — task workspace and state (SPEC §14, §15, §29; ADR-0005; ADR-0008).
+# cmd_task — task workspace and state (domains/task; schemas/state.md;
+# ARCHITECTURE.md, Scripts layout; ADR-0005; ADR-0008).
 # Sourced by scripts/jig; defines cmd_task plus the reusable readers
 # `task_dir` and `task_state_get` that other libraries (context.sh) source
 # this file for. bash 3.2 compatible: no associative arrays, no ${var,,},

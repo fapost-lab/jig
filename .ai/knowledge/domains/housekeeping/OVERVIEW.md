@@ -2,7 +2,7 @@
 id: domain-housekeeping
 type: domain
 status: active
-summary: "Unattended, LLM-free end of a task's life: remote state, the SPEC §23 policy, two-stage purge, and the triggers."
+summary: "Unattended, LLM-free end of a task's life: remote state, the lifecycle policy, two-stage purge, and the triggers."
 domains:
   - housekeeping
 topics: []
@@ -23,7 +23,7 @@ evidence it inferred itself.
 
 - Deriving **Remote State** per task, in tiers: forge (`gh`/`glab`) → git ancestry →
   `unknown`. Derived every run, never written into a task's `state` (ADR-0005).
-- Applying the lifecycle policy of SPEC §23 — a pure function of `status`, remote state,
+- Applying the lifecycle policy — a pure function of `status`, remote state,
   `paused` and age, which is why the whole table is testable without a repository.
 - The two-stage **Purge**: move to **Trash**, delete only after `trash_ttl` (ADR-0006).
 - The audit trail: `.ai/runtime/housekeeping.log`, one line per decision including
@@ -38,7 +38,7 @@ evidence it inferred itself.
 
 Read these before changing anything here; each is a rule someone paid for.
 
-- **Nothing is destroyed on `unknown`** (RULES.md, SPEC §23). Every uncertainty in this
+- **Nothing is destroyed on `unknown`** (RULES.md). Every uncertainty in this
   domain must resolve *towards* `unknown`, never away from it.
 - **No path is deleted or moved without validation** (RULES.md, ADR-0006). Use
   `task_dir`/`_task_valid_id` — the single choke point — and never transcribe a regex.
@@ -66,7 +66,7 @@ configuration.
 Outside: installing `templates/scheduler/` — the `install` domain places it like any
 other framework-owned tree. This domain only writes what goes in it.
 
-The framework does not implement a scheduler (SPEC §34), and no script here ever calls
+The framework does not implement a scheduler (RULES.md, Scope invariants), and no script here ever calls
 an LLM (ADR-0001).
 
 ## Entry points

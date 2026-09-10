@@ -1,7 +1,7 @@
 # Task state file
 
 `.ai/workspace/tasks/<task-id>/state`, flat `key: value` lines, one per key, no nesting.
-Reference: SPEC §15, ADR-0005, ADR-0008. Written only through `jig task`, atomically
+Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 (temp file then `mv`), last-write-wins.
 
 | Key | Writer | Values |
@@ -41,7 +41,7 @@ long-lived branch and would otherwise crowd out the work in flight.
 |---|---|---|
 | `state` | `jig task new` | this file |
 | `task.md` | `jig task new`, from `templates/task.md` or from `--from <file>` | goal, scope, notes; context also lists existing known artifacts |
-| `discovery.md`, `spec.md`, `alternatives.md`, `design.md`, `plan.md`, `review.md`, `verification.md`, `handoff.md` | skills, when the task class calls for them | stage artifacts (SPEC §14) |
+| `discovery.md`, `spec.md`, `alternatives.md`, `design.md`, `plan.md`, `review.md`, `verification.md`, `handoff.md` | skills, when the task class calls for them | stage artifacts (domains/task) |
 
 ## Artifact input report (ADR-0020)
 

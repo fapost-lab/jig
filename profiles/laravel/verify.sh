@@ -2,7 +2,7 @@
 # Verification for the laravel profile. Called by `jig verify` from the
 # repository root. Exit 0 = pass, 1 = fail, 2 = skip. Only runs Laravel's
 # own test runner; PHPUnit/Pest/PHPStan/Pint/composer validate are the php
-# profile's job (requires: [php], SPEC §30) and are not duplicated here.
+# profile's job (requires: [php], domains/verify) and are not duplicated here.
 set -eu
 set -o pipefail
 

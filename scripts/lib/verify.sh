@@ -1,4 +1,5 @@
-# cmd_verify — run active profiles' checks (SPEC §29, §30). Sourced by
+# cmd_verify — run active profiles' checks (ARCHITECTURE.md, Scripts layout;
+# domains/verify). Sourced by
 # scripts/jig; defines cmd_verify.
 #
 # Scope protocol (ADR-0013): with --changed, the changed-file list is computed
@@ -118,7 +119,7 @@ cmd_verify() {
     fi
   fi
   # fw_pending_rc != 0: pending state unknown (e.g. no source checkout on
-  # this machine, SPEC §32) — proceed and verify the profiles normally.
+  # this machine, domains/install) — proceed and verify the profiles normally.
 
   if [ "$scope" = 1 ]; then
     JIG_VERIFY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-files.XXXXXX") \

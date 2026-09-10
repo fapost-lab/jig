@@ -1,4 +1,4 @@
-# cmd_init — idempotent project bootstrap (SPEC §32, ADR-0003).
+# cmd_init — idempotent project bootstrap (domains/install, ADR-0003).
 # Sourced by scripts/jig; defines cmd_init. Never overwrites an existing
 # file (RULES.md invariant); safe to run more than once.
 # shellcheck shell=bash
@@ -40,8 +40,9 @@ _init_words_to_csv() {
 # Rewrite the `<key>: [...]` line of an existing, project-owned
 # .ai/config.yaml in place (atomic tmp+mv, per shell conventions). Used only
 # when an explicit --profiles/--adapters flag disagrees with what the config
-# already says (SPEC §32: init takes profiles/adapters from the config on a
-# flag-less re-run, but an explicit flag still wins and updates the config).
+# already says (domains/install: init takes profiles/adapters from the config
+# on a flag-less re-run, but an explicit flag still wins and updates the
+# config).
 # Every other line, including comments, is left untouched.
 _init_update_config_list() {
   local file="$1" key="$2" words="$3" bracket tmp
@@ -111,7 +112,7 @@ _init_mkdir_for() {
 
 # Place a project-owned file (config.yaml, knowledge templates, AGENTS.md)
 # only if it does not already exist. Never compares content: these files are
-# owned by the project after creation (SPEC §6.2) and are never touched
+# owned by the project after creation (domains/install) and are never touched
 # again by init or upgrade.
 _init_place_if_absent() {
   local src="$1" dest="$2"
@@ -126,7 +127,8 @@ _init_place_if_absent() {
 
 # Place a framework-owned file: create if absent, silently keep if the
 # existing file is byte-identical to the source, report+keep as a conflict
-# otherwise (SPEC §32 decision table, "yes/no" rows). Conflicting files are
+# otherwise (domains/install: the install/replace/keep-modified/delete decision
+# table). Conflicting files are
 # intentionally NOT added to framework_paths, so the manifest never claims
 # ownership of a file it did not install.
 _init_copy_framework_file() {
@@ -231,7 +233,7 @@ $rel"
 # byte-identical to source) with any path the existing manifest already
 # tracks that this run did not (re)write but which still exists locally —
 # most notably a file init just reported as `conflict` because the user
-# modified it (SPEC §32; ADR-0003: init never overwrites user changes), or a
+# modified it (domains/install; ADR-0003: init never overwrites user changes), or a
 # file belonging to a profile/adapter no longer selected. Without this, a
 # path init did not touch this run would simply be missing from the
 # manifest it rewrites (see _init_copy_framework_file: conflicting paths are
@@ -286,7 +288,7 @@ cmd_init() {
     || jig_die "init: not a framework source root (missing skills/, templates/ or scripts/jig): $source"
 
   # On a re-run, mode (copy/link) sticks to whatever the manifest already
-  # says unless --link is given explicitly (SPEC §32: init is idempotent;
+  # says unless --link is given explicitly (domains/install: init is idempotent;
   # switching a project between copy and link is an explicit choice, never
   # inferred). A first run (no manifest yet) keeps the flag's default (copy).
   if [ "$link_given" = 0 ] && manifest_exists; then
@@ -295,7 +297,7 @@ cmd_init() {
 
   # Profiles/adapters: an explicit flag always wins. Otherwise, on a re-run
   # against an existing .ai/config.yaml, take the current selection from the
-  # config (SPEC §32) rather than silently falling back to the flag
+  # config (domains/install) rather than silently falling back to the flag
   # defaults; cfg_list's own default covers the first-run, no-config case.
   local profiles_words adapters_words
   if [ "$profiles_given" = 1 ]; then
@@ -329,7 +331,7 @@ cmd_init() {
   done
 
   # Suggest profiles the target project looks like it needs but the
-  # selection above does not include (SPEC §32 step 2). Advisory only:
+  # selection above does not include (domains/install). Advisory only:
   # never changes what gets installed, so init stays non-interactive and
   # predictable.
   local detected_words suggested_words="" w
@@ -369,7 +371,7 @@ cmd_init() {
   local cfg_dest="$JIG_PROJECT/.ai/config.yaml"
   if [ -f "$cfg_dest" ]; then
     kept_count=$((kept_count + 1))
-    # The config itself is otherwise never touched (SPEC §6.2) — this is the
+    # The config itself is otherwise never touched (domains/install) — this is the
     # one exception: an explicit flag that disagrees with what is already
     # configured updates just that one line, so the flag and the config
     # cannot silently diverge.
@@ -445,7 +447,7 @@ cmd_init() {
     done
     # Link mode points straight at the source skill directories; codex's
     # `/jig-` -> `$jig-` transform is a copy-time rewrite and does not apply
-    # here. This is a known limitation of --link (SPEC §33 dev-mode note):
+    # here. This is a known limitation of --link:
     # a linked codex skill still reads `/jig-*` in its SKILL.md.
     for skill_dir in "$source"/skills/*/; do
       [ -d "$skill_dir" ] || continue
@@ -468,7 +470,7 @@ cmd_init() {
       "$JIG_PROJECT/.ai/templates/knowledge"
     # Scheduler examples are framework-owned too: they are copied so a project
     # without the source checkout can still read them, and never activated —
-    # the framework does not implement a scheduler (SPEC §34).
+    # the framework does not implement a scheduler (RULES.md, Scope invariants).
     _init_copy_tree "$source/templates/scheduler" \
       "$JIG_PROJECT/.ai/templates/scheduler"
     for p in $profiles_words; do
@@ -497,7 +499,7 @@ cmd_init() {
     manifest_write "$version" "$source" "$adapters_manifest" "link"
   else
     # Never drop the manifest entry of a framework-owned path that still
-    # exists locally, even if this run did not (re)write it (SPEC §32).
+    # exists locally, even if this run did not (re)write it (domains/install).
     _init_merge_manifest_paths
 
     # A path the manifest already tracked keeps its existing hash unchanged
@@ -583,11 +585,11 @@ cmd_init() {
   fi
 
   # 8b. scheduling advisory --------------------------------------------------
-  # SPEC §32 step 8 said init should "offer to configure scheduled
-  # housekeeping". It advises instead, for the same reason as the suggested
-  # profiles above: a prompt would give init its first stdin dependency and
-  # break it in CI and in an agent session. Adopting a trigger is the user's
-  # action (ADR-0024, SPEC §34).
+  # Old spec guidance said init should "offer to configure scheduled
+  # housekeeping" (ADR-0024). It advises instead, for the same reason as the
+  # suggested profiles above: a prompt would give init its first stdin
+  # dependency and break it in CI and in an agent session. Adopting a
+  # trigger is the user's action (ADR-0024, RULES.md, Scope invariants).
   local hint hint_rc
   for a in $adapters_words; do
     if ! command -v "adapter_${a}_session_hook_hint" >/dev/null 2>&1; then

@@ -1,11 +1,11 @@
 # `jig measure` — the Phase 6 report: knowledge quality, process weight and the
-# size of the change each class produced (SPEC §36).
+# size of the change each class produced.
 #
 # Every number is derived, never stored: it is computed from sources that
 # already exist and already outlive the task — knowledge frontmatter, task
 # `state`, git history, and the purge lines of `.ai/runtime/housekeeping.log`.
 # There is no series on disk, no collection mechanism and no telemetry
-# (SPEC §21), and nothing here calls an LLM (ADR-0001). The same reasoning
+# (ADR-0027), and nothing here calls an LLM (ADR-0001). The same reasoning
 # ADR-0005 applies to remote merge state applies here: a fact that must be
 # true *now* is cheaper to derive than to keep correct forever.
 #

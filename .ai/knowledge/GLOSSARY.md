@@ -90,7 +90,7 @@ Ending a Workspace's life, in two stages: move to Trash, then permanent deletion
 ## STALE_CANDIDATE
 
 A report-only flag on a Workspace older than `stale_after`. It never triggers deletion:
-semantic lifecycle has priority over TTL (SPEC §23). Informal synonyms: stale, old.
+semantic lifecycle has priority over TTL (domains/housekeeping). Informal synonyms: stale, old.
 
 ## Session Hook
 

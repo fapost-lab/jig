@@ -498,7 +498,7 @@ housekeeping information and framework drift; `jig help` lists command families.
 
 ## Roadmap and Phase 6
 
-The [product specification](docs/SPEC.md) defines the full design. Its roadmap is
+The [accepted decisions](.ai/knowledge/adr/) define the design. The roadmap is
 broader than the currently completed implementation.
 
 | Phase | Focus | Status for this README |
@@ -558,6 +558,6 @@ bash tests/run.sh
 ```
 
 The shell profile also runs ShellCheck. Follow [AGENTS.md](AGENTS.md), the
-[specification](docs/SPEC.md), and [accepted decisions](.ai/knowledge/adr/) before
-changing framework behavior. Task notes belong in the ignored workspace; lasting
+[rules and invariants](.ai/knowledge/RULES.md), and [accepted
+decisions](.ai/knowledge/adr/) before changing framework behavior. Task notes belong in the ignored workspace; lasting
 engineering intent belongs in `.ai/knowledge/`.
