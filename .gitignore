@@ -1,0 +1,7 @@
+# agent-sdlc: transient workspace and runtime state are local-only
+.ai/workspace/
+.ai/runtime/
+
+.idea/
+.DS_Store
+CLAUDE.local.md
