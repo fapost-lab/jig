@@ -18,7 +18,7 @@ Decisions made while refining the spec (each recorded as a separate ADR in `.ai/
 - `CLAUDE.md` is a one-line import of `AGENTS.md`, to avoid duplicating instructions.
 - `RULES.md` is a single file of invariants; the `rules/` directory from the earlier spec is removed (until a real need appears).
 - Added install versioning and `upgrade`; defined `.ai/config.yaml` (flat YAML subset, fixed paths) and `.ai/manifest` (`git hash-object` hashes, framework-owned files only) with the `upgrade` decision table (§6.1, §6.2, §32).
-- Metrics from §40 moved to Phase 6, without telemetry in the MVP.
+- Metrics from §40 moved to Phase 6, without telemetry in the MVP. Phase 6 later replaced "cost measurement" with process weight against change size (ADR-0027); the no-telemetry constraint stands.
 - Open questions moved to §33.
 - Product named **Jig** (ADR-0007); script entry point `jig`, skills `jig-<stage>`, plugin namespace `/jig:<stage>`. The `.ai/` directory keeps its name: knowledge belongs to the project, not to the tool.
 
@@ -735,7 +735,7 @@ Activating a profile or adapter later is a config edit followed by `jig upgrade`
 Unresolved; do not block Phase 1–2.
 
 - **Git worktrees** and **concurrency**: resolved in Phase 2 by ADR-0008. A workspace belongs to the checkout it was created in; `state` is written atomically with last-write-wins semantics and no lock.
-- **Metrics §40 (0.3).** Require telemetry that does not exist. Deferred to Phase 6; MVP has only qualitative assessment.
+- **Metrics §40 (0.3).** Require telemetry that does not exist. Deferred to Phase 6 and resolved there by ADR-0027, though not as §40 proposed. Cost of agent work stays unmeasurable — tokens, turns and wall-clock effort are not recorded and cannot be without telemetry — so `jig measure` reports *process weight against change size* instead, and derives every number from evidence that already exists rather than collecting a series of its own.
 - **External artifact storage** for regulated environments — optional backend, not in MVP.
 - **Session hook installation** — resolved in Phase 5 by ADR-0024, and not as this question proposed. Merging a tagged entry into `.claude/settings.json` would mean editing arbitrary project-owned JSON with no JSON parser available (ADR-0002 allows only `git`), risking a file jig cannot rebuild. Instead the hook logic lives in a framework-owned script, the adapter prints the one line that names it, and a human pastes it. `jig status` reports whether it is installed by a read-only substring test.
 
@@ -763,7 +763,41 @@ The MVP must prove:
 | 3 — Adaptive SDLC | `jig-task` with classification, stage skills, human gates |
 | 4 — Consolidation | `jig-consolidate`, feature knowledge, ADR candidates, `paths` maintenance, stale knowledge detection |
 | 5 — Lifecycle Automation | forge detection, ancestry fallback, housekeeping, trash, session hook, scheduler templates |
-| 6 — Measurement & Evolution | benchmarking, cost measurement, knowledge quality |
+| 6 — Measurement & Evolution | `measure`: knowledge quality, process weight, change size |
+
+### 36.1 Measurement (Phase 6)
+
+`.ai/scripts/jig measure` prints one read-only report in three sections, and a fourth
+line naming what it cannot see:
+
+- **knowledge** — documents, invalid documents and warnings; documents with `paths`,
+  and how many are stale, unreviewed, orphaned or planned; uncovered directories,
+  unmatched globs, and proposals awaiting a decision. These numbers come from
+  `knowledge check`, `knowledge stale` and `knowledge paths` rather than from a second
+  implementation, so the report cannot disagree with the commands it summarises.
+- **process** — how many tasks the repository has evidence of, split live / recorded at
+  purge, their distribution across `T0`–`T4`, and their outcomes. A task with no class
+  is `unclassified`, never `T0`: the cheapest class must not be inflated by work nobody
+  classified.
+- **change** — for each class, the median commits, files, lines and days between the
+  fork point and the branch tip. Measurable only where ADR-0026 applies: the task needs
+  its recorded `base_commit` and a branch that still exists, and the report says for how
+  many tasks that held.
+
+Every number is derived when asked for, from evidence that already exists — knowledge
+frontmatter, task `state`, git history, and the purge lines of
+`.ai/runtime/housekeeping.log`. Nothing is stored, nothing is committed, and no
+telemetry is collected (ADR-0027). Because a task workspace is designed to be destroyed
+(ADR-0006), the purge line carries the task's own `class=`, `created=` and
+`consolidated=`: it is the last moment those facts exist anywhere.
+
+Two limits are structural, and the report prints them itself rather than letting a
+reader assume the numbers are complete. The cost of agent work — tokens, turns,
+wall-clock effort — is not recorded and cannot be without telemetry, so the phase
+delivers process weight against change size instead. And stage timing, session count and
+whether a human gate was passed are visible only to the agent (ADR-0001), so they are
+recorded nowhere; inferring them from artifact presence would produce claims, not
+evidence (ADR-0020).
 
 ## 37. Final Lifecycle
 

@@ -60,6 +60,7 @@ Usage: jig <command> [args]
   knowledge stale [--strict]     documents that drifted away from the code
   knowledge reviewed <id>        stamp a document as reconciled with the code
   housekeeping [--dry-run]       reconcile workspaces with remote state
+  measure                        knowledge quality, process weight, change size
   version                        print version
 EOF
 }
@@ -70,7 +71,7 @@ main() {
   case "$cmd" in
     help|-h|--help) jig_usage ;;
     version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
-    init|upgrade|status|task|context|verify|knowledge|housekeeping)
+    init|upgrade|status|task|context|verify|knowledge|housekeeping|measure)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi
