@@ -30,6 +30,16 @@ A helper that two commands must never disagree about lives in `lib/common.sh` in
 `jig_knowledge_is_global` ("which files are knowledge documents"). One command library
 never sources another: `context` and `knowledge` share code only through `common.sh`.
 
+**Reporting commands are the exception, and a narrow one.** `status` and `measure` exist
+to summarise what other commands already answer, so they source those libraries and call
+their entry points — `status` sources five, `measure` sources `task` and `knowledge`. What
+they may not do is *recompute* the answer: a second implementation of "how many documents
+are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
+is invisible until someone reads both. A reporting command therefore consumes a peer's
+output, never reimplements it, and never writes anything. Setup a peer needs before its
+functions work is exposed as a function of that peer (`km_init`) rather than transcribed —
+a copied prologue silently misses the step the original later gains.
+
 Why a dispatcher and not one executable per command: every command needs the same
 repository detection, config reader and error helpers; sourcing them once in the
 dispatcher removes that boilerplate from each command and gives one place for `--help`

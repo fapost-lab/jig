@@ -72,6 +72,22 @@ _measure_median() {
     | awk -v n="$n" 'NR == int((n + 1) / 2) { print; exit }'
 }
 
+# _measure_floor_days <seconds> — whole days, rounded towards minus infinity.
+#
+# Shell division truncates towards zero, so a tip older than its own fork point
+# — a branch rebased onto a rewritten base, a stale `base_commit` (ADR-0026) —
+# would come back as `0d` and read as "finished the same day". A measurement
+# command may print a number that looks wrong; it may not print a plausible one
+# that is.
+_measure_floor_days() {
+  local s="$1"
+  if [ "$s" -lt 0 ]; then
+    printf '%d\n' $(( -(( -s + 86399 ) / 86400) ))
+  else
+    printf '%d\n' $(( s / 86400 ))
+  fi
+}
+
 # --- knowledge ---------------------------------------------------------------
 
 # The three knowledge reports are consumed through their own summary lines
@@ -80,13 +96,11 @@ _measure_median() {
 # (ARCHITECTURE.md, scripts layout); a second implementation is exactly how the
 # two would drift.
 _measure_knowledge() {
-  # shellcheck source=lib/frontmatter.sh
-  . "$JIG_LIB/frontmatter.sh"
   # shellcheck source=lib/knowledge.sh
   . "$JIG_LIB/knowledge.sh"
-  # Read by knowledge.sh, which `cmd_knowledge` normally sets it for.
-  # shellcheck disable=SC2034
-  KM_DIR="$JIG_PROJECT/$JIG_AI_DIR/knowledge"
+  # Its own prologue, not a copy of one: `cmd_knowledge` runs the same call, so
+  # a setup step added there reaches this command too.
+  km_init
 
   # Each of the three exits non-zero when it found something wrong, which is
   # the normal case for a report about defects: capture the output, keep going.
@@ -264,16 +278,21 @@ _measure_change() {
     class=$(task_state_get "$id" class)
     [ -n "$class" ] || class="unclassified"
 
+    # `--no-renames` is not a detail: rename detection is on by default but a
+    # developer may switch it off globally, and with it a renamed file counts as
+    # one file and one line instead of two files and all their lines. A number
+    # that changes with whose machine printed it is not a measurement
+    # (convention-shell; the same reason jig_git_change_rows pins it).
     commits=$(git -C "$JIG_PROJECT" rev-list --count "$base..refs/heads/$branch")
-    files=$(git -C "$JIG_PROJECT" diff --name-only "$base" "refs/heads/$branch" \
+    files=$(git -C "$JIG_PROJECT" diff --no-renames --name-only "$base" "refs/heads/$branch" \
       | awk 'END { print NR + 0 }')
     # A binary file's numstat columns are `-`; counting them as zero lines is
     # the only honest option, since the diff has no lines to count.
-    lines=$(git -C "$JIG_PROJECT" diff --numstat "$base" "refs/heads/$branch" \
+    lines=$(git -C "$JIG_PROJECT" diff --no-renames --numstat "$base" "refs/heads/$branch" \
       | awk '{ a += ($1 == "-" ? 0 : $1) + ($2 == "-" ? 0 : $2) } END { print a + 0 }')
     fork=$(git -C "$JIG_PROJECT" log -1 --format=%ct "$base")
     tip=$(git -C "$JIG_PROJECT" log -1 --format=%ct "refs/heads/$branch")
-    days=$(( (tip - fork) / 86400 ))
+    days=$(_measure_floor_days $(( tip - fork )))
 
     printf '%s %s %s %s %s\n' "$class" "$commits" "$files" "$lines" "$days" >> "$rows"
     measured=$((measured + 1))

@@ -257,3 +257,51 @@ test_measure_counts_a_task_housekeeping_actually_purged() {
   assert_contains "$OUT" "process:    1 tasks (0 live, 1 recorded at purge)"
   assert_contains "$OUT" "class: T0 0, T1 0, T2 0, T3 0, T4 1, unclassified 0"
 }
+
+# --- numbers that must not depend on the machine -----------------------------
+
+# Call a pure helper directly, the way tests/housekeeping.t.sh calls
+# housekeeping_decide: no repository, no workspace, no fixture.
+m_floor_days() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/measure.sh"
+    _measure_floor_days "$@"
+  ' _ "$@"
+}
+
+test_measure_floors_days_towards_minus_infinity() {
+  # Shell division truncates towards zero, so a tip older than its own fork
+  # point would come back as 0d and read as "finished the same day".
+  assert_eq "0" "$(m_floor_days 0)"
+  assert_eq "0" "$(m_floor_days 86399)"
+  assert_eq "1" "$(m_floor_days 86400)"
+  assert_eq "2" "$(m_floor_days 200000)"
+  assert_eq "-1" "$(m_floor_days -1)"
+  assert_eq "-1" "$(m_floor_days -86400)"
+  assert_eq "-2" "$(m_floor_days -86401)"
+}
+
+test_measure_counts_a_rename_the_same_way_on_every_machine() {
+  # Rename detection is a git default a developer may switch off globally. With
+  # it, a renamed file is one file and one line; without it, two files and all
+  # their lines. The command must not report a different size depending on
+  # whose config it ran under.
+  fixture_jig_repo
+  printf 'a\nb\nc\n' > moved.txt
+  git add moved.txt
+  git commit -q -m "file to move"
+  local base
+  base=$(git rev-parse HEAD)
+
+  git config diff.renames true
+  git checkout -q -b task/renamer
+  git mv moved.txt elsewhere.txt
+  git commit -q -m "move it"
+  fixture_task renamer "task/renamer" active class:T2 "base_commit:$base"
+
+  run jig measure
+  assert_contains "$OUT" "T2: 1 task(s), median 1 commits, 2 files, 6 lines,"
+}

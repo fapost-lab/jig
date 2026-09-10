@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-09-10
+reviewed_at: 2026-09-11
 ---
 # Knowledge
 
@@ -56,8 +56,12 @@ Missing mandatory context fails, and no-task guard reports that no ledger exists
 
 ## Entry points
 
-- `scripts/lib/knowledge.sh` — `km_check` (validation entry), `km_new`, `km_paths_report`,
-  `km_stale`, and the review loop: `km_proposed`, `km_accept`, `km_reject`.
+- `scripts/lib/knowledge.sh` — `km_init` (the prologue every other entry point assumes:
+  the frontmatter parser and `KM_DIR`), `km_check` (validation entry), `km_new`,
+  `km_paths_report`, `km_stale`, and the review loop: `km_proposed`, `km_accept`,
+  `km_reject`. A command outside this domain that consumes these reports — `jig measure`
+  does — calls `km_init` rather than transcribing the setup, so a step added here reaches
+  it too.
 - `scripts/lib/status.sh` — `cmd_status`'s `proposals:` line, the count that makes an
   undecided proposal discoverable after the session that wrote it.
 - `scripts/lib/context.sh` — `ctx_resolve` (what to read), `ctx_acknowledge` /
