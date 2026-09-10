@@ -11,6 +11,7 @@ paths:
   - schemas/frontmatter.md
   - "skills/jig-consolidate/**"
 reviewed_at: 2026-09-09
+summary: Why staleness is derived from a reviewed_at stamp, and how rot is told apart from foresight.
 ---
 # ADR-0010: Knowledge staleness is a `reviewed_at` date compared against git history
 
@@ -51,7 +52,10 @@ it touches, which is the only thing that keeps the field honest — an unmaintai
 `reviewed_at` degrades to `unreviewed`, which is a true statement, not a wrong one.
 
 Documents whose status is `superseded`, `deprecated` or `rejected` are skipped: they
-describe the past on purpose.
+describe the past on purpose. Since ADR-0016 the filter is an allowlist of `active` and
+`accepted`, so `proposed` is skipped too — for the opposite reason: it describes
+something nobody has agreed to yet, and reporting it as `unreviewed` would be noise about
+a document that is not knowledge until it is accepted.
 
 The report is not a gate. `jig knowledge stale` exits 0 unless `--strict` is given, so
 `verify` stays a correctness check and does not begin failing on knowledge that is merely

@@ -40,14 +40,22 @@ Usage: jig <command> [args]
   upgrade [--from <dir>]         update framework-owned files (manifest-aware)
   status                         active tasks, housekeeping flags, drift
   task new|set|abandon ...       task workspace and state
+  task changes <id> --base <ref> inventory all change layers; --files and --format paths
+  task artifacts <id> [...]      fixed-route inputs; --provided names conversation outputs
   context [...]                  relevant knowledge for a task
-  context resolve [...]          required documents, plus --catalog metadata
+  context resolve [...]          required documents; --stage, --no-task, --catalog
   context pending|guard [...]    knowledge required but not yet acknowledged
   context acknowledge [...]      record documents as read
   verify                         run active profiles' checks
   knowledge check                validate .ai/knowledge
   knowledge new <type> <slug>    create a knowledge document (jig knowledge for types)
   knowledge paths [...]          report or maintain documents' paths coverage
+  knowledge summary <id> <text>  set the one-line catalog summary
+  knowledge stages add|remove <id> <stage>  maintain additive stage relevance
+  knowledge proposed             list documents awaiting accept or reject
+  knowledge accept <id>...       promote proposed document(s) to active
+  knowledge reject <id>...       mark proposed document(s) as rejected
+  knowledge inventory [...]      deterministic facts about the repository's shape
   knowledge stale [--strict]     documents that drifted away from the code
   knowledge reviewed <id>        stamp a document as reconciled with the code
   housekeeping [--dry-run]       reconcile workspaces with remote state

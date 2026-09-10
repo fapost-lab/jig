@@ -11,6 +11,7 @@ paths:
   - scripts/lib/upgrade.sh
   - "templates/knowledge/**"
 reviewed_at: 2026-09-09
+summary: Why knowledge templates ship with the framework instead of living in a skill.
 ---
 # ADR-0011: Knowledge document templates are installed as framework-owned files
 

@@ -8,6 +8,7 @@ paths:
   - "scripts/lib/task.sh"
   - "scripts/lib/housekeeping.sh"
   - "schemas/state.md"
+summary: Why task status is local and remote merge state is derived, never stored.
 ---
 # ADR-0005: Task `status` is local-only; merge state is derived, never stored as truth
 

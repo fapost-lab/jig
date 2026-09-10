@@ -45,6 +45,7 @@ id: feature-good
 type: feature
 status: active
 domains: [core]
+summary: "A good document."
 ---
 # Good
 EOF
@@ -1310,6 +1311,704 @@ EOF
   assert_contains "$OUT" "requires cycle through: feature-b"
 }
 
+# --- status: proposed / knowledge accept ----------------------------------------
+
+test_check_passes_proposed_feature_and_adr() {
+  km_setup
+  cat > .ai/knowledge/features/prop.md <<'EOF'
+---
+id: feature-prop
+type: feature
+status: proposed
+domains: [core]
+---
+EOF
+  cat > .ai/knowledge/adr/0001-prop.md <<'EOF'
+---
+id: adr-0001-prop
+type: adr
+status: proposed
+date: 2026-01-01
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge check: 2 documents, 0 failures, 0 warnings"
+}
+
+# --- summary -------------------------------------------------------------------
+
+test_summary_sets_the_field_and_clears_the_warning() {
+  km_setup
+  jig knowledge new feature thing --domains core >/dev/null
+
+  run jig knowledge summary feature-thing "What the thing is for."
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "summary    .ai/knowledge/features/thing.md"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "no summary"
+  assert_contains "$(cat .ai/knowledge/features/thing.md)" "summary: What the thing is for."
+}
+
+test_summary_refuses_empty_text() {
+  km_setup
+  jig knowledge new feature thing --domains core >/dev/null
+  run jig knowledge summary feature-thing ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge summary: text may not be empty"
+}
+
+test_summary_refuses_hash_which_the_reader_would_strip() {
+  km_setup
+  jig knowledge new feature thing --domains core >/dev/null
+  run jig knowledge summary feature-thing "Counts # of retries."
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge summary: text may not contain '#'"
+}
+
+test_summary_unknown_id_dies() {
+  km_setup
+  run jig knowledge summary feature-nope "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id:"
+}
+
+test_summary_requires_id_and_text() {
+  km_setup
+  run jig knowledge summary feature-thing
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge summary <id> <text>"
+}
+
+test_summary_rejects_extra_argument() {
+  km_setup
+  jig knowledge new feature thing --domains core >/dev/null
+  run jig knowledge summary feature-thing "a" "b"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge summary: unknown argument: b"
+}
+
+test_accept_promotes_proposed_feature_to_active() {
+  km_setup
+  jig knowledge new feature smoke >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/smoke.md \
+    > .ai/knowledge/features/smoke.md.new
+  mv .ai/knowledge/features/smoke.md.new .ai/knowledge/features/smoke.md
+
+  run jig knowledge accept feature-smoke
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "accepted   .ai/knowledge/features/smoke.md  (status: active)"
+  assert_contains "$OUT" "knowledge accept: 1 accepted"
+  assert_file_contains .ai/knowledge/features/smoke.md "status: active"
+}
+
+test_accept_promotes_proposed_adr_to_accepted_not_active() {
+  km_setup
+  jig knowledge new adr my-decision >/dev/null
+  sed 's/^status: accepted/status: proposed/' .ai/knowledge/adr/0001-my-decision.md \
+    > .ai/knowledge/adr/0001-my-decision.md.new
+  mv .ai/knowledge/adr/0001-my-decision.md.new .ai/knowledge/adr/0001-my-decision.md
+
+  run jig knowledge accept adr-0001-my-decision
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "accepted   .ai/knowledge/adr/0001-my-decision.md  (status: accepted)"
+  assert_contains "$OUT" "knowledge accept: 1 accepted"
+  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "status: accepted"
+}
+
+test_accept_twice_fails_on_second_call() {
+  km_setup
+  jig knowledge new feature smoke >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/smoke.md \
+    > .ai/knowledge/features/smoke.md.new
+  mv .ai/knowledge/features/smoke.md.new .ai/knowledge/features/smoke.md
+  jig knowledge accept feature-smoke >/dev/null
+
+  run jig knowledge accept feature-smoke
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: feature-smoke (status: active)"
+}
+
+test_accept_refuses_superseded_document() {
+  km_setup
+  jig knowledge new feature old >/dev/null
+  sed 's/^status: active/status: superseded/' .ai/knowledge/features/old.md \
+    > .ai/knowledge/features/old.md.new
+  mv .ai/knowledge/features/old.md.new .ai/knowledge/features/old.md
+
+  run jig knowledge accept feature-old
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: feature-old (status: superseded)"
+}
+
+test_accept_no_status_reports_status_none() {
+  km_setup
+  cat > .ai/knowledge/features/nostat.md <<'EOF'
+---
+id: feature-nostat
+type: feature
+domains: [core]
+---
+EOF
+  run jig knowledge accept feature-nostat
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: feature-nostat (status: none)"
+}
+
+test_accept_unknown_id_dies() {
+  km_setup
+  run jig knowledge accept no-such-id
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id: no-such-id"
+}
+
+test_accept_requires_id_argument() {
+  km_setup
+  run jig knowledge accept
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge accept <id>"
+}
+
+# --- knowledge accept: multiple ids ---------------------------------------------
+
+test_accept_multi_id_applies_all() {
+  km_setup
+  jig knowledge new feature one >/dev/null
+  jig knowledge new feature two >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
+    > .ai/knowledge/features/one.md.new
+  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/two.md \
+    > .ai/knowledge/features/two.md.new
+  mv .ai/knowledge/features/two.md.new .ai/knowledge/features/two.md
+
+  run jig knowledge accept feature-one feature-two
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "accepted   .ai/knowledge/features/one.md  (status: active)"
+  assert_contains "$OUT" "accepted   .ai/knowledge/features/two.md  (status: active)"
+  assert_contains "$OUT" "knowledge accept: 2 accepted"
+  assert_file_contains .ai/knowledge/features/one.md "status: active"
+  assert_file_contains .ai/knowledge/features/two.md "status: active"
+}
+
+test_accept_multi_id_with_bad_id_changes_nothing() {
+  km_setup
+  jig knowledge new feature one >/dev/null
+  jig knowledge new feature two >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
+    > .ai/knowledge/features/one.md.new
+  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/two.md \
+    > .ai/knowledge/features/two.md.new
+  mv .ai/knowledge/features/two.md.new .ai/knowledge/features/two.md
+
+  run jig knowledge accept feature-one feature-two no-such-id
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id: no-such-id"
+  assert_file_contains .ai/knowledge/features/one.md "status: proposed"
+  assert_file_contains .ai/knowledge/features/two.md "status: proposed"
+}
+
+test_accept_multi_id_with_non_proposed_id_changes_nothing() {
+  km_setup
+  jig knowledge new feature one >/dev/null
+  jig knowledge new feature two >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
+    > .ai/knowledge/features/one.md.new
+  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+  # feature-two is left at its default status: active, not proposed.
+
+  run jig knowledge accept feature-one feature-two
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: feature-two (status: active)"
+  assert_file_contains .ai/knowledge/features/one.md "status: proposed"
+}
+
+test_accept_duplicate_id_counts_document_once() {
+  km_setup
+  jig knowledge new feature x >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/x.md \
+    > .ai/knowledge/features/x.md.new
+  mv .ai/knowledge/features/x.md.new .ai/knowledge/features/x.md
+
+  run jig knowledge accept feature-x feature-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge accept: 1 accepted"
+  assert_file_contains .ai/knowledge/features/x.md "status: active"
+}
+
+# --- knowledge reject ------------------------------------------------------------
+
+test_reject_sets_status_rejected() {
+  km_setup
+  jig knowledge new feature smoke >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/smoke.md \
+    > .ai/knowledge/features/smoke.md.new
+  mv .ai/knowledge/features/smoke.md.new .ai/knowledge/features/smoke.md
+
+  run jig knowledge reject feature-smoke
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "rejected   .ai/knowledge/features/smoke.md  (status: rejected)"
+  assert_contains "$OUT" "knowledge reject: 1 rejected"
+  assert_file_contains .ai/knowledge/features/smoke.md "status: rejected"
+  assert_file .ai/knowledge/features/smoke.md
+}
+
+test_reject_refuses_active_document() {
+  km_setup
+  jig knowledge new feature smoke >/dev/null
+
+  run jig knowledge reject feature-smoke
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: feature-smoke (status: active)"
+  assert_file_contains .ai/knowledge/features/smoke.md "status: active"
+}
+
+test_reject_refuses_accepted_adr() {
+  km_setup
+  jig knowledge new adr my-decision >/dev/null
+
+  run jig knowledge reject adr-0001-my-decision
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: adr-0001-my-decision (status: accepted)"
+}
+
+test_reject_requires_id_argument() {
+  km_setup
+  run jig knowledge reject
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge reject <id>"
+}
+
+test_reject_unknown_id_dies() {
+  km_setup
+  run jig knowledge reject no-such-id
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id: no-such-id"
+}
+
+# --- knowledge reject: multiple ids ---------------------------------------------
+
+test_reject_multi_id_applies_all() {
+  km_setup
+  jig knowledge new feature one >/dev/null
+  jig knowledge new feature two >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
+    > .ai/knowledge/features/one.md.new
+  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/two.md \
+    > .ai/knowledge/features/two.md.new
+  mv .ai/knowledge/features/two.md.new .ai/knowledge/features/two.md
+
+  run jig knowledge reject feature-one feature-two
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "rejected   .ai/knowledge/features/one.md  (status: rejected)"
+  assert_contains "$OUT" "rejected   .ai/knowledge/features/two.md  (status: rejected)"
+  assert_contains "$OUT" "knowledge reject: 2 rejected"
+  assert_file_contains .ai/knowledge/features/one.md "status: rejected"
+  assert_file_contains .ai/knowledge/features/two.md "status: rejected"
+}
+
+test_reject_multi_id_with_bad_id_changes_nothing() {
+  km_setup
+  jig knowledge new feature one >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
+    > .ai/knowledge/features/one.md.new
+  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+
+  run jig knowledge reject feature-one no-such-id
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id: no-such-id"
+  assert_file_contains .ai/knowledge/features/one.md "status: proposed"
+}
+
+test_reject_multi_id_with_non_proposed_id_changes_nothing() {
+  km_setup
+  jig knowledge new feature one >/dev/null
+  jig knowledge new feature two >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
+    > .ai/knowledge/features/one.md.new
+  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+  # feature-two is left at its default status: active, not proposed.
+
+  run jig knowledge reject feature-one feature-two
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: feature-two (status: active)"
+  assert_file_contains .ai/knowledge/features/one.md "status: proposed"
+}
+
+test_reject_duplicate_id_counts_document_once() {
+  km_setup
+  jig knowledge new feature x >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/features/x.md \
+    > .ai/knowledge/features/x.md.new
+  mv .ai/knowledge/features/x.md.new .ai/knowledge/features/x.md
+
+  run jig knowledge reject feature-x feature-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge reject: 1 rejected"
+  assert_file_contains .ai/knowledge/features/x.md "status: rejected"
+}
+
+test_reject_domain_pack_warns_about_slot() {
+  km_setup
+  jig knowledge new domain payments >/dev/null
+  sed 's/^status: active/status: proposed/' .ai/knowledge/domains/payments/OVERVIEW.md \
+    > .ai/knowledge/domains/payments/OVERVIEW.md.new
+  mv .ai/knowledge/domains/payments/OVERVIEW.md.new .ai/knowledge/domains/payments/OVERVIEW.md
+
+  run jig knowledge reject domain-payments
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "rejected   .ai/knowledge/domains/payments/OVERVIEW.md  (status: rejected)"
+  assert_contains "$OUT" "keeps its domain's only slot"
+  assert_file_contains .ai/knowledge/domains/payments/OVERVIEW.md "status: rejected"
+}
+
+# --- knowledge check: rejected status --------------------------------------------
+
+test_check_passes_rejected_non_adr_document() {
+  km_setup
+  cat > .ai/knowledge/features/rej.md <<'EOF'
+---
+id: feature-rej
+type: feature
+status: rejected
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge check: 1 documents, 0 failures, 0 warnings"
+}
+
+test_check_fails_unquoted_scalar_that_yaml_reads_as_a_mapping() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+summary: Terms: resolution, selector
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unquoted 'summary' reads as a nested mapping in YAML"
+}
+
+test_check_passes_quoted_scalar_containing_colon_space() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+summary: "Terms: resolution, selector"
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+}
+
+test_check_ignores_colon_inside_a_block_list_item() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+summary: plain
+paths:
+  - "src/**: weird but quoted"
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+test_summary_written_by_the_command_survives_a_check() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+---
+EOF
+  run jig knowledge summary feature-a "Terms: resolution, selector"
+  assert_eq 0 "$RC"
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+test_rejected_document_does_not_resolve_via_context() {
+  km_setup
+  # Progressive context requires the three mandatory globals (ADR-0021).
+  for global in GLOSSARY ARCHITECTURE RULES; do
+    printf '# %s\n' "$global" > ".ai/knowledge/$global.md"
+  done
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: rejected
+load: always
+domains: [core]
+---
+EOF
+  run jig context resolve --domains core --catalog
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "required:  .ai/knowledge/features/a.md"
+  assert_not_contains "$OUT" "catalog:   .ai/knowledge/features/a.md"
+
+  run jig context resolve --domains core --catalog --all
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/a.md  (load: always)"
+}
+
+# --- knowledge proposed ------------------------------------------------------------
+
+test_proposed_lists_exactly_proposed_documents() {
+  km_setup
+  cat > .ai/knowledge/features/prop.md <<'EOF'
+---
+id: feature-prop
+type: feature
+status: proposed
+summary: A proposed feature.
+domains: [core]
+---
+EOF
+  cat > .ai/knowledge/features/active.md <<'EOF'
+---
+id: feature-active
+type: feature
+status: active
+summary: An active feature.
+domains: [core]
+---
+EOF
+  cat > .ai/knowledge/adr/0001-old.md <<'EOF'
+---
+id: adr-0001-old
+type: adr
+status: rejected
+date: 2026-01-01
+domains: [core]
+---
+EOF
+  run jig knowledge proposed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "proposed:  feature-prop  (feature)  .ai/knowledge/features/prop.md  A proposed feature."
+  assert_not_contains "$OUT" "feature-active"
+  assert_not_contains "$OUT" "adr-0001-old"
+  assert_contains "$OUT" "knowledge proposed: 1 proposed"
+}
+
+test_proposed_on_clean_tree_reports_none() {
+  km_setup
+  run jig knowledge proposed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge proposed: nothing proposed"
+}
+
+# --- knowledge check: missing summary warning -------------------------------------
+
+test_check_warns_missing_summary_on_active_document() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "WARN .ai/knowledge/features/a.md: no summary; it reads as (no summary) in the context catalog"
+}
+
+test_check_no_summary_warning_when_summary_present() {
+  km_setup
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+domains: [core]
+summary: "Does a thing."
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "no summary; it reads as"
+}
+
+test_check_no_summary_warning_for_unresolvable_status() {
+  km_setup
+  cat > .ai/knowledge/features/old.md <<'EOF'
+---
+id: feature-old
+type: feature
+status: superseded
+domains: [core]
+---
+EOF
+  cat > .ai/knowledge/features/prop.md <<'EOF'
+---
+id: feature-prop
+type: feature
+status: proposed
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "no summary; it reads as"
+}
+
+# --- knowledge inventory -----------------------------------------------------------
+
+test_inventory_names_tracked_root_files_and_ignores_untracked() {
+  km_setup
+  printf '{}' > composer.json
+  git add composer.json
+  git commit -q -m "add composer.json"
+  printf '{}' > package.json
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  # Root files are named, not counted: this is where manifests live, and recognising
+  # what one means is the agent's judgement, not the command's.
+  assert_contains "$OUT" "root:          composer.json"
+  # Untracked: inventory reports tracked files throughout, with no exception for the
+  # root, so an ignored or forgotten manifest does not read as part of the project.
+  assert_not_contains "$OUT" "package.json"
+  # And the root produces no tree group of its own.
+  assert_not_contains "$OUT" "tree:          (root)"
+}
+
+test_inventory_instructions_lines_for_agents_and_claude_md_root_and_nested() {
+  km_setup
+  printf '# agents\n' > AGENTS.md
+  printf '# claude\n' > CLAUDE.md
+  mkdir -p sub
+  printf '# sub agents\n' > sub/AGENTS.md
+  printf '# notes\n' > NOTES.md
+  git add AGENTS.md CLAUDE.md sub/AGENTS.md NOTES.md
+  git commit -q -m "add instruction files"
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions:  AGENTS.md"
+  assert_contains "$OUT" "instructions:  CLAUDE.md"
+  assert_contains "$OUT" "instructions:  sub/AGENTS.md"
+  assert_not_contains "$OUT" "instructions:  NOTES.md"
+}
+
+test_inventory_tree_groups_directories_and_counts_singular_and_plural() {
+  km_setup
+  mkdir -p src/widget src/other lib
+  printf 'a\n' > src/widget/a.php
+  printf 'b\n' > src/widget/b.php
+  printf 'c\n' > src/other/c.php
+  printf 'd\n' > lib/only.php
+  git add src lib
+  git commit -q -m "add tree files"
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "tree:          src  (3 files)"
+  assert_contains "$OUT" "tree:          lib  (1 file)"
+  # README.md from the fixture is a root file, so it is named rather than grouped.
+  assert_contains "$OUT" "root:          README.md"
+  assert_not_contains "$OUT" "tree:          (root)"
+}
+
+test_inventory_scope_restricts_and_prefixes_labels() {
+  km_setup
+  mkdir -p scripts/lib other
+  printf 'x\n' > scripts/top.sh
+  printf 'y\n' > scripts/lib/a.sh
+  printf 'z\n' > scripts/lib/b.sh
+  printf 'w\n' > other/file.sh
+  git add scripts other
+  git commit -q -m "add scoped files"
+
+  run jig knowledge inventory --scope scripts
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "root:          scripts/top.sh"
+  assert_contains "$OUT" "tree:          scripts/lib  (2 files)"
+  assert_not_contains "$OUT" "other/file.sh"
+  assert_not_contains "$OUT" "tree:          other"
+}
+
+test_inventory_scope_absolute_path_dies() {
+  km_setup
+  run jig knowledge inventory --scope /etc
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--scope must be repository-relative:"
+}
+
+test_inventory_scope_dotdot_dies() {
+  km_setup
+  run jig knowledge inventory --scope "../escape"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "may not contain '..'"
+}
+
+test_inventory_scope_invalid_character_dies() {
+  km_setup
+  run jig knowledge inventory --scope "sc ripts"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid --scope"
+
+  run jig knowledge inventory --scope "a;b"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid --scope"
+}
+
+test_inventory_scope_nonexistent_directory_dies() {
+  km_setup
+  run jig knowledge inventory --scope does/not/exist
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no such directory:"
+}
+
+test_inventory_scope_requires_value() {
+  km_setup
+  run jig knowledge inventory --scope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--scope requires a value"
+}
+
+test_inventory_unknown_flag_dies() {
+  km_setup
+  run jig knowledge inventory --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge inventory: unknown argument: --bogus"
+}
+
+# --- knowledge usage --------------------------------------------------------------
+
+test_knowledge_no_subcommand_usage_includes_accept_and_inventory() {
+  km_setup
+  run jig knowledge
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig knowledge proposed"
+  assert_contains "$OUT" "jig knowledge accept <id>"
+  assert_contains "$OUT" "jig knowledge reject <id>"
+  assert_contains "$OUT" "jig knowledge inventory [--scope <dir>]"
+}
+
 test_requires_valid_chain_passes_clean() {
   km_setup
   cat > .ai/knowledge/features/a.md <<'EOF'
@@ -1340,4 +2039,59 @@ domains: [core]
 EOF
   run jig knowledge check
   assert_eq 0 "$RC"
+}
+
+test_sdd_stages_writer_preserves_metadata_body_and_is_idempotent() {
+  km_setup
+  cat > .ai/knowledge/features/stages.md <<'DOC'
+---
+id: feature-stages
+type: feature
+status: active
+domains: [payments]
+summary: Stage guidance.
+---
+Body stays intact.
+DOC
+  run jig knowledge stages add feature-stages implement
+  assert_eq 0 "$RC"
+  run jig knowledge stages add feature-stages implement
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(grep -c '  - implement' .ai/knowledge/features/stages.md)"
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  run jig knowledge stages remove feature-stages implement
+  assert_eq 0 "$RC"
+  run jig knowledge stages remove feature-stages implement
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/knowledge/features/stages.md 'stages: \[\]'
+  assert_file_contains .ai/knowledge/features/stages.md 'Body stays intact.'
+}
+
+test_sdd_stages_invalid_metadata_and_writer_inputs_fail() {
+  km_setup
+  cat > .ai/knowledge/features/stages.md <<'DOC'
+---
+id: feature-stages
+type: feature
+status: active
+domains: [payments]
+stages: [deploy]
+---
+DOC
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid stage: deploy'
+  run jig knowledge stages add feature-stages deploy
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid stage: deploy'
+  run jig knowledge stages add unknown implement
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'no document with id'
+  run jig knowledge stages set feature-stages implement
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid operation'
+  run jig knowledge stages add
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'usage:'
 }

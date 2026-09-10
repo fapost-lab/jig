@@ -8,7 +8,7 @@ description: Implement a Jig task — write the change against the project's rul
 ## 1. Know what binds you
 
 ```
-.ai/scripts/jig context resolve --task <id> --catalog
+.ai/scripts/jig context resolve --task <id> --stage implement --catalog
 ```
 
 Read every `required:` document before writing code. Conventions and invariants are not
@@ -19,7 +19,7 @@ Then say what you read:
 
 ```
 .ai/scripts/jig context acknowledge --task <id> --files <list>|-
-.ai/scripts/jig context guard --task <id>
+.ai/scripts/jig context guard --task <id> --stage implement
 ```
 
 Run the guard before the first edit and again whenever the planned file list grows.
@@ -33,7 +33,10 @@ conversation, go back to the gate.
 
 ## 2. Follow the plan, one step at a time
 
-If `plan.md` exists, work through it in order and tick steps as they land. If the plan
+Before editing, record starting HEAD and existing changes in the task artifact; distinguish
+pre-existing work using the [scope reference](../jig-review/references/change-scope.md).
+Use [requirements and planning](../jig-task/references/requirements-and-planning.md):
+if `plan.md` exists, work through it and tick each step after its named check succeeds. If the plan
 turns out wrong, fix the plan first and say what changed. Do not silently diverge.
 
 ## 3. Write like the codebase, not like yourself
@@ -56,7 +59,12 @@ the whole suite after each edit or start another copy while a run is still activ
 An unproven claim is not done. If a check cannot run, say so plainly instead of
 declaring success.
 
+For UI criteria, follow the [state inventory](../jig-task/references/ui-states.md) and
+retain UI evidence for applicable failure states as well as the happy path.
+
 ## 5. Report
 
+Update the single acceptance map with real evidence and unresolved checks. Use the
+[handoff](../jig-task/references/handoff.md) when the executor/session changes.
 Say what changed, in which files, and what the evidence is. Then move to review for T2
 and above, or straight to `jig-verify` for T0 and T1.

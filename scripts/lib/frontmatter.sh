@@ -125,6 +125,44 @@ _fm_valid_item() {
   esac
 }
 
+# _fm_valid_scalar <value> — exit 0 when the value can be written as a scalar
+# and read back unchanged. `#` cannot, for the reason _fm_valid_item gives for
+# list items: fm_get strips a trailing comment *before* it strips the
+# surrounding quotes, so quoting does not rescue it. `"` cannot either — the
+# grammar has no escape (schemas/frontmatter.md), so an inner quote ends the
+# value for any real YAML parser. Both are refused rather than corrupted.
+_fm_valid_scalar() {
+  case "$1" in
+    *'#'* | *'"'*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# _fm_quote_scalar <value> — print the value ready to follow `key: `, quoted
+# when plain YAML would read it as anything but this string.
+#
+# jig's own reader is forgiving: fm_get takes everything after the first
+# `key: `, so `summary: Terms: a, b` reads back correctly here and breaks in
+# every real YAML parser, which sees a nested mapping. The frontmatter is meant
+# to be read by both, so the writer quotes what YAML requires and nothing more.
+# Deliberately *not* quoted: values that merely look numeric or boolean. Doing
+# so would rewrite `date: 2026-09-09` as a quoted string on every touch, which
+# is churn for a field no caller reads as anything but text.
+_fm_quote_scalar() {
+  local value="$1" first="${1:0:1}"
+  case "$first" in
+    '-' | '?' | ':' | ',' | '[' | ']' | '{' | '}' | '&' | '*' | '!' | '|' \
+      | '>' | "'" | '"' | '%' | '@' | '`' | ' ')
+      printf '"%s"' "$value"
+      return 0
+      ;;
+  esac
+  case "$value" in
+    '' | *': '* | *: | *' ') printf '"%s"' "$value" ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
 # _fm_replace <file> — replace <file> with stdin, atomically. Refuses to write
 # an empty document, so a failing awk upstream cannot truncate knowledge.
 _fm_replace() {
@@ -152,6 +190,12 @@ fm_set() {
     printf 'jig: error: frontmatter: %s holds a list; use fm_list_set\n' "$key" >&2
     return 1
   fi
+  if ! _fm_valid_scalar "$value"; then
+    printf 'jig: error: frontmatter: %s may not contain '"'"'#'"'"' or '"'"'"'"'"': %s\n' \
+      "$key" "$value" >&2
+    return 1
+  fi
+  value=$(_fm_quote_scalar "$value")
   awk -v key="$key" -v value="$value" '
     NR == 1 { print; in_block = 1; next }
     in_block && $0 == "---" {

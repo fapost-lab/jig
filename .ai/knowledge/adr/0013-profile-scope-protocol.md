@@ -10,6 +10,7 @@ paths:
   - scripts/lib/verify.sh
   - "profiles/**"
 reviewed_at: 2026-09-09
+summary: Why a verify scope is a file list at the profile boundary, and why an ignored scope is reported.
 ---
 # ADR-0013: `jig verify` narrows by changed files, and every profile declares whether it understands the scope
 

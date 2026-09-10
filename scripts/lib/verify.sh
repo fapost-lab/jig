@@ -93,6 +93,33 @@ cmd_verify() {
 
   [ "$scope" = 1 ] || [ -z "$base" ] || jig_die "verify: --base requires --changed"
 
+  # --- staleness gate --------------------------------------------------------
+  # A pass from a stale install is meaningless: refuse before running any
+  # profile when the current config would still need `jig upgrade` to place
+  # framework-owned files (a skill or profile added to the source but never
+  # copied/linked in — the gap `jig status`'s drift count used to miss
+  # entirely, since drift only covers paths already recorded in the
+  # manifest). Skipped only for `--list`, handled above; not folded into the
+  # `verify: %d profiles, ...` tally below, which counts profiles, not
+  # framework files.
+  # shellcheck source=lib/upgrade.sh
+  . "$JIG_LIB/upgrade.sh"
+  local fw_pending fw_pending_rc=0 fw_pending_n
+  fw_pending=$(upgrade_pending) || fw_pending_rc=$?
+  if [ "$fw_pending_rc" = 0 ]; then
+    fw_pending_n=$(printf '%s\n' "$fw_pending" | grep -c . || true)
+    if [ "$fw_pending_n" -gt 0 ]; then
+      printf '%s\n' "$fw_pending"
+      local fw_word='files'
+      if [ "$fw_pending_n" = 1 ]; then fw_word='file'; fi
+      printf 'FAIL framework: %d framework %s not installed (run jig upgrade)\n' \
+        "$fw_pending_n" "$fw_word"
+      return 1
+    fi
+  fi
+  # fw_pending_rc != 0: pending state unknown (e.g. no source checkout on
+  # this machine, SPEC §32) — proceed and verify the profiles normally.
+
   if [ "$scope" = 1 ]; then
     JIG_VERIFY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-files.XXXXXX") \
       || jig_die "verify: cannot create temporary file"

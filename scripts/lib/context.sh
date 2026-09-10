@@ -9,7 +9,7 @@ _CTX_GLOBAL_FILES="GLOSSARY.md ARCHITECTURE.md RULES.md"
 
 # Workspace artifacts other than task.md, in the fixed order they are
 # reported, when present (SPEC §14).
-_CTX_WORKSPACE_ARTIFACTS="discovery.md spec.md design.md plan.md review.md verification.md"
+_CTX_WORKSPACE_ARTIFACTS="discovery.md spec.md alternatives.md design.md plan.md review.md verification.md handoff.md"
 
 CTX_USAGE="usage: jig context [--task <id>] [--files <list>|-] [--domains a,b] [--all] [--format list|paths]
        jig context resolve   [selectors] [--catalog]
@@ -17,7 +17,7 @@ CTX_USAGE="usage: jig context [--task <id>] [--files <list>|-] [--domains a,b] [
        jig context guard     [selectors]
        jig context acknowledge --task <id> --files <list>|-
 
-selectors: --task <id> --files <list>|- --domains a,b --topics a,b --ids a,b --all"
+selectors: --task <id>|--no-task --stage <stage> --files <list>|- --domains a,b --topics a,b --ids a,b --all"
 
 cmd_context() {
   jig_require_init
@@ -44,10 +44,12 @@ cmd_context() {
 # --- the stateless form (unchanged behaviour) ---------------------------------
 
 ctx_stateless() {
-  local task_id="" files_arg="" files_stdin=0 domains_arg="" show_all=0 format="list"
+  local task_id="" no_task=0 files_arg="" files_stdin=0 domains_arg="" show_all=0 format="list"
   while [ $# -gt 0 ]; do
     case "$1" in
       --task) [ $# -ge 2 ] || jig_die "context: --task requires a value"; task_id="$2"; shift 2 ;;
+      --no-task) no_task=1; shift ;;
+      --stage) jig_die "context: --stage requires the progressive form; use jig context resolve" ;;
       --files)
         [ $# -ge 2 ] || jig_die "context: --files requires a value"
         if [ "$2" = "-" ]; then files_stdin=1; else files_arg="$2"; fi
@@ -76,9 +78,10 @@ ctx_stateless() {
   # would risk loading the wrong task's artifacts — but this time it is not
   # silent: task_current's own stderr (one line per candidate) is forwarded
   # so the caller can see why.
+  if [ "$no_task" -eq 1 ] && [ -n "$task_id" ]; then jig_die "context: --task conflicts with --no-task"; fi
   if [ -n "$task_id" ]; then
     [ -f "$(task_dir "$task_id")/state" ] || jig_die "context: unknown task: $task_id"
-  else
+  elif [ "$no_task" -eq 0 ]; then
     local tc_rc=0 tc_err_file
     tc_err_file=$(mktemp "${TMPDIR:-/tmp}/jig-context-current.XXXXXX")
     task_id=$(task_current 2>"$tc_err_file") || tc_rc=$?
@@ -233,9 +236,7 @@ _ctx_matched_docs() {
 
     if [ "$show_all" -ne 1 ]; then
       status=$(fm_get "$doc" status)
-      case "$status" in
-        superseded | deprecated | rejected) continue ;;
-      esac
+      jig_knowledge_status_resolvable "$status" || continue
     fi
 
     reason=$(_ctx_doc_reason "$doc" "$files" "$domains") || continue
@@ -259,6 +260,8 @@ ${relpath}${t}${reason}"
 
 _ctx_reset_selectors() {
   CTX_TASK=""
+  CTX_NO_TASK=0
+  CTX_STAGE=""
   CTX_FILES=""
   CTX_DOMAINS=""
   CTX_TOPICS=""
@@ -277,6 +280,8 @@ _ctx_parse_selectors() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --task) [ $# -ge 2 ] || jig_die "context: --task requires a value"; CTX_TASK="$2"; shift 2 ;;
+      --no-task) CTX_NO_TASK=1; shift ;;
+      --stage) [ $# -ge 2 ] || jig_die "context: --stage requires a value"; jig_valid_stage "$2" || jig_die "context: invalid stage: $2"; CTX_STAGE="$2"; shift 2 ;;
       --files)
         [ $# -ge 2 ] || jig_die "context: --files requires a value"
         if [ "$2" = "-" ]; then files_stdin=1; else files_arg="$2"; fi
@@ -291,9 +296,11 @@ _ctx_parse_selectors() {
     esac
   done
 
+  if [ "$CTX_NO_TASK" -eq 1 ] && [ -n "$CTX_TASK" ]; then jig_die "context: --task conflicts with --no-task"; fi
+  _ctx_check_globals
   if [ -n "$CTX_TASK" ]; then
     [ -f "$(task_dir "$CTX_TASK")/state" ] || jig_die "context: unknown task: $CTX_TASK"
-  else
+  elif [ "$CTX_NO_TASK" -eq 0 ]; then
     # Same contract as the stateless form: "no candidate" is a normal outcome
     # and stays silent, but "several candidates" (exit 2) forwards task_current's
     # own listing so the caller can see why no workspace was selected
@@ -339,9 +346,7 @@ _ctx_active_docs() {
     fm_has "$doc" || continue
     if [ "$CTX_ALL" -ne 1 ]; then
       status=$(fm_get "$doc" status)
-      case "$status" in
-        superseded | deprecated | rejected) continue ;;
-      esac
+      jig_knowledge_status_resolvable "$status" || continue
     fi
     printf '%s\n' "$doc"
   done < <(jig_knowledge_docs)
@@ -410,6 +415,18 @@ _ctx_select_reason() {
         return 0
       fi
     done < <(fm_list "$doc" topics)
+  fi
+
+  if [ -n "$CTX_STAGE" ] && [ -n "$CTX_DOMAINS" ] && [ "$load" = matched ]; then
+    if fm_list "$doc" stages | grep -qxF -- "$CTX_STAGE"; then
+      while IFS= read -r dom; do
+        [ -n "$dom" ] || continue
+        if _ctx_domain_matches_any "$dom" "$CTX_DOMAINS"; then
+          printf 'stage: %s; domain: %s\n' "$CTX_STAGE" "$dom"
+          return 0
+        fi
+      done < <(fm_list "$doc" domains)
+    fi
   fi
 
   return 1
@@ -486,6 +503,16 @@ _ctx_close_requires() {
   done
 
   rm -f "$snapshot"
+}
+
+# Validate synchronously: errors inside a process-substitution producer are lost.
+_ctx_check_globals() {
+  local g
+  for g in $_CTX_GLOBAL_FILES; do
+    if [ ! -f "$JIG_PROJECT/$JIG_AI_DIR/knowledge/$g" ] || [ ! -r "$JIG_PROJECT/$JIG_AI_DIR/knowledge/$g" ]; then
+      jig_die "context: missing or unreadable mandatory global: $JIG_AI_DIR/knowledge/$g; restore project knowledge"
+    fi
+  done
 }
 
 # _ctx_global_rows — "<relpath><TAB>global" for each global document present.
@@ -679,11 +706,19 @@ _ctx_pending_paths() {
 
 ctx_pending() {
   _ctx_parse_selectors "$@"
-  [ -n "$CTX_TASK" ] || return 0
-
   local rows ledger
   rows="${TMPDIR:-/tmp}/jig-context-required.$$"
   _ctx_required_rows "$rows"
+  if [ -z "$CTX_TASK" ]; then
+    rm -f "$rows"
+    # Keep the historical implicit "no current task" result silent. An
+    # explicit research request says why no ledger exists so callers cannot
+    # overstate it as a completed read check (ADR-0021).
+    if [ "$CTX_NO_TASK" -eq 1 ]; then
+      printf 'context pending: no task workspace; nothing tracked\n'
+    fi
+    return 0
+  fi
   ledger=$(_ctx_ledger_file "$CTX_TASK")
   _ctx_pending_paths "$rows" "$ledger"
   rm -f "$rows"
@@ -692,17 +727,19 @@ ctx_pending() {
 ctx_guard() {
   _ctx_parse_selectors "$@"
 
+  local rows ledger pending tracked_count pending_count
+  rows="${TMPDIR:-/tmp}/jig-context-required.$$"
+  _ctx_required_rows "$rows"
+
   # T0 and T1 deliberately have no workspace (jig-task), so there is no ledger
   # to check. Saying so out loud is the whole point: a skill can call the guard
   # unconditionally, and the report never implies a check that did not happen.
   if [ -z "$CTX_TASK" ]; then
+    rm -f "$rows"
     printf 'context guard: no task workspace; nothing tracked\n'
     return 0
   fi
 
-  local rows ledger pending tracked_count pending_count
-  rows="${TMPDIR:-/tmp}/jig-context-required.$$"
-  _ctx_required_rows "$rows"
   ledger=$(_ctx_ledger_file "$CTX_TASK")
 
   pending=$(_ctx_pending_paths "$rows" "$ledger")

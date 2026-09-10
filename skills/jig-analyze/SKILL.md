@@ -11,7 +11,7 @@ radius in a few sentences.
 ## 1. Context first, repository second
 
 ```
-.ai/scripts/jig context resolve --task <id> --catalog
+.ai/scripts/jig context resolve --task <id> --stage analyze --catalog
 ```
 
 Read every `required:` document; treat `catalog:` lines as a menu, and pull one in with
@@ -32,6 +32,11 @@ points the knowledge names.
 - **Constraints.** Which invariants in `RULES.md`, accepted ADRs and conventions bind
   this change. Quote the one that binds hardest.
 - **Options.** Where a real choice exists, name the alternatives in one line each.
+
+Run the [ambiguity sweep](references/ambiguity.md) and identify criteria/behavior deltas
+using [requirements guidance](../jig-task/references/requirements-and-planning.md).
+Standalone research uses `--no-task` and explicit relevance selectors; it need not
+classify work or edit task notes. Continue independent investigation while clarifying.
 
 ## 3. Check the class
 

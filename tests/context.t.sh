@@ -363,6 +363,75 @@ EOF
   assert_contains "$OUT" "features/active.md"
 }
 
+# --- status filtering: allowlist (status: proposed / unknown values) -------------------
+
+test_context_status_proposed_not_matched_unless_all() {
+  ctx_setup
+  cat > .ai/knowledge/features/prop.md <<'EOF'
+---
+id: feature-prop
+type: feature
+status: proposed
+paths:
+  - "x.php"
+---
+EOF
+  run jig context --files x.php
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "prop.md"
+
+  run jig context --files x.php --all
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "matched:   .ai/knowledge/features/prop.md"
+}
+
+test_context_resolve_status_proposed_not_required_or_catalog_unless_all() {
+  ctx_setup
+  cat > .ai/knowledge/features/prop.md <<'EOF'
+---
+id: feature-prop
+type: feature
+status: proposed
+load: always
+domains: [payments]
+---
+EOF
+  run jig context resolve --domains payments --catalog
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "required:  .ai/knowledge/features/prop.md"
+  assert_not_contains "$OUT" "catalog:   .ai/knowledge/features/prop.md"
+
+  run jig context resolve --domains payments --catalog --all
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/prop.md  (load: always)"
+}
+
+test_context_status_unknown_value_not_resolved_unless_all() {
+  ctx_setup
+  # Behaviour change: the old denylist (superseded|deprecated|rejected) let any
+  # other value through as if active. The allowlist rejects it too.
+  cat > .ai/knowledge/features/weird.md <<'EOF'
+---
+id: feature-weird
+type: feature
+status: banana
+paths:
+  - "x.php"
+---
+EOF
+  run jig context --files x.php
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "weird.md"
+
+  run jig context --files x.php --all
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "matched:   .ai/knowledge/features/weird.md"
+
+  run jig context resolve --files x.php
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "weird.md"
+}
+
 # --- --format paths ---------------------------------------------------------------------
 
 test_context_format_paths_prints_only_paths_no_prefixes() {
@@ -629,6 +698,31 @@ EOF
   assert_contains "$OUT" "required:  .ai/knowledge/features/checkout.md  (paths: src/Checkout/**)"
 }
 
+test_context_resolve_active_and_accepted_still_resolve() {
+  ctx_setup
+  cat > .ai/knowledge/features/active.md <<'EOF'
+---
+id: feature-active
+type: feature
+status: active
+load: always
+---
+EOF
+  cat > .ai/knowledge/adr/0001-accepted.md <<'EOF'
+---
+id: adr-0001-accepted
+type: adr
+status: accepted
+date: 2026-01-01
+load: always
+---
+EOF
+  run jig context resolve
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/active.md  (load: always)"
+  assert_contains "$OUT" "required:  .ai/knowledge/adr/0001-accepted.md  (load: always)"
+}
+
 test_context_resolve_matched_by_topics() {
   ctx_setup
   cat > .ai/knowledge/features/checkout.md <<'EOF'
@@ -777,6 +871,30 @@ test_context_resolve_requires_inactive_document_is_fatal() {
 id: feature-old
 type: feature
 status: deprecated
+---
+EOF
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+load: always
+requires: [feature-old]
+---
+EOF
+  run jig context resolve
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires unknown or inactive document: feature-old"
+  assert_contains "$OUT" "run: jig knowledge check"
+}
+
+test_context_resolve_requires_proposed_document_is_fatal() {
+  ctx_setup
+  cat > .ai/knowledge/features/old.md <<'EOF'
+---
+id: feature-old
+type: feature
+status: proposed
 ---
 EOF
   cat > .ai/knowledge/features/a.md <<'EOF'
@@ -981,4 +1099,186 @@ test_context_unknown_subcommand_dies_with_usage() {
   run jig context bogus
   assert_eq 1 "$RC"
   assert_contains "$OUT" "usage: jig context"
+}
+
+sdd_stage_setup() {
+  ctx_setup
+  jig task new stage-task --class T3 --domains payments >/dev/null
+  cat > .ai/knowledge/features/staged.md <<'DOC'
+---
+id: feature-staged
+type: feature
+status: active
+domains: [payments]
+load: matched
+stages: [implement]
+summary: Implementation guidance.
+requires: [feature-dependency]
+---
+Stage body.
+DOC
+  cat > .ai/knowledge/features/dependency.md <<'DOC'
+---
+id: feature-dependency
+type: feature
+status: active
+domains: [other]
+summary: Dependency.
+---
+Dependency body.
+DOC
+}
+
+test_sdd_stage_promotes_only_entered_catalog_and_closes_requires() {
+  sdd_stage_setup
+  run jig context resolve --task stage-task --stage implement --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'stage: implement; domain: payments'
+  assert_contains "$OUT" 'requires: feature-staged'
+  run jig context resolve --task stage-task --stage design --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'features/staged.md'
+  run jig context resolve --no-task --stage implement --domains other --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'features/staged.md'
+  run jig context resolve --no-task --stage implement --files - < /dev/null
+  assert_not_contains "$OUT" 'features/staged.md'
+}
+
+test_sdd_stage_never_hides_path_topic_always_domain_or_explicit_ids() {
+  sdd_stage_setup
+  cat > .ai/knowledge/features/binding.md <<'DOC'
+---
+id: feature-binding
+type: feature
+status: active
+paths: [bound.txt]
+topics: [money]
+stages: [verify]
+---
+Binding.
+DOC
+  run jig context resolve --task stage-task --stage design --files bound.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'paths: bound.txt'
+  run jig context resolve --task stage-task --stage design --topics money --files - < /dev/null
+  assert_contains "$OUT" 'topics: money'
+  run jig context resolve --task stage-task --stage design --ids feature-staged --files - < /dev/null
+  assert_contains "$OUT" 'id: feature-staged'
+  cat > .ai/knowledge/features/always.md <<'DOC'
+---
+id: feature-always
+type: feature
+status: active
+load: always
+stages: [verify]
+---
+Always.
+DOC
+  cat > .ai/knowledge/features/domain.md <<'DOC'
+---
+id: feature-domain
+type: feature
+status: active
+load: domain
+domains: [payments]
+stages: [verify]
+---
+Domain.
+DOC
+  run jig context resolve --task stage-task --stage design --files - < /dev/null
+  assert_contains "$OUT" 'load: always'
+  assert_contains "$OUT" 'features/domain.md'
+}
+
+test_sdd_stage_change_uses_hash_ledger_without_rereading_unchanged() {
+  sdd_stage_setup
+  local global
+  for global in GLOSSARY ARCHITECTURE RULES; do
+    jig context acknowledge --task stage-task --files ".ai/knowledge/$global.md" >/dev/null
+  done
+  run jig context guard --task stage-task --stage design --files - < /dev/null
+  assert_eq 0 "$RC"
+  run jig context guard --task stage-task --stage implement --files - < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'features/staged.md'
+  jig context acknowledge --task stage-task --files .ai/knowledge/features/staged.md,.ai/knowledge/features/dependency.md >/dev/null
+  run jig context guard --task stage-task --stage implement --files - < /dev/null
+  assert_eq 0 "$RC"
+  echo changed >> .ai/knowledge/features/staged.md
+  run jig context pending --task stage-task --stage implement --files - < /dev/null
+  assert_eq '.ai/knowledge/features/staged.md' "$OUT"
+}
+
+test_sdd_stage_missing_dependencies_and_globals_fail_even_taskless() {
+  sdd_stage_setup
+  rm .ai/knowledge/features/dependency.md
+  local sub
+  for sub in resolve pending guard; do
+    run jig context "$sub" --no-task --stage implement --domains payments --files - < /dev/null
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" 'requires unknown or inactive'
+    run jig context "$sub" --no-task --ids no-such-id --files - < /dev/null
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" 'no active document'
+  done
+  rm .ai/knowledge/RULES.md
+  for sub in resolve pending guard; do
+    run jig context "$sub" --no-task --files - < /dev/null
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" 'missing or unreadable mandatory global'
+  done
+}
+
+test_sdd_stage_excludes_proposed_and_rejected() {
+  sdd_stage_setup
+  sed 's/status: active/status: proposed/' .ai/knowledge/features/staged.md > proposed.tmp
+  mv proposed.tmp .ai/knowledge/features/staged.md
+  run jig context resolve --task stage-task --stage implement --catalog --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'features/staged.md'
+  jig knowledge reject feature-staged >/dev/null
+  run jig context resolve --task stage-task --stage implement --catalog --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'features/staged.md'
+}
+
+test_sdd_taskless_research_bypasses_ambiguous_and_single_task() {
+  sdd_stage_setup
+  local before
+  before=$(cat .ai/workspace/tasks/stage-task/state)
+  run jig context resolve --no-task --stage implement --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'workspace:'
+  assert_not_contains "$OUT" 'features/staged.md'
+  jig task new another >/dev/null
+  run jig context resolve --no-task --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'multiple'
+  assert_not_contains "$OUT" 'stage-task'
+  run jig context --no-task --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'workspace:'
+  run jig context guard --no-task --files - < /dev/null
+  assert_contains "$OUT" 'no task workspace; nothing tracked'
+  assert_eq "$before" "$(cat .ai/workspace/tasks/stage-task/state)"
+}
+
+test_sdd_stage_and_taskless_argument_validation() {
+  sdd_stage_setup
+  run jig context resolve --stage nonsense
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid stage'
+  run jig context resolve --stage
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'requires a value'
+  run jig context --stage implement
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'use jig context resolve'
+  run jig context resolve --no-task --task stage-task
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'conflicts'
+  run jig context --task stage-task --no-task
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'conflicts'
 }

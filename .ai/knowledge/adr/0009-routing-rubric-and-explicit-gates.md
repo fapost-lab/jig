@@ -6,6 +6,7 @@ date: 2026-09-08
 domains: [skills, sdlc]
 paths:
   - "skills/**"
+summary: Why a written rubric picks the task class and human gates are full stops.
 ---
 # ADR-0009: One entry skill routes by a fixed rubric; gates are explicit stops
 

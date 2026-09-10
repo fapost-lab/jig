@@ -1,5 +1,6 @@
-# cmd_status — version, init/manifest state, drift, active tasks,
-# housekeeping age (SPEC §29). Sourced by scripts/jig; defines cmd_status.
+# cmd_status — version, init/manifest state, drift, pending knowledge
+# proposals, active tasks, housekeeping age (SPEC §29). Sourced by
+# scripts/jig; defines cmd_status.
 # Read-only: never writes anything.
 # shellcheck shell=bash
 
@@ -7,6 +8,12 @@ cmd_status() {
   jig_require_repo
   # shellcheck source=lib/manifest.sh
   . "$JIG_LIB/manifest.sh"
+  # shellcheck source=lib/upgrade.sh
+  . "$JIG_LIB/upgrade.sh"
+  # shellcheck source=lib/frontmatter.sh
+  . "$JIG_LIB/frontmatter.sh"
+  # shellcheck source=lib/knowledge.sh
+  . "$JIG_LIB/knowledge.sh"
 
   printf '%s\n' "jig $JIG_VERSION"
 
@@ -41,7 +48,22 @@ $rel"
     fi
   done < <(manifest_paths)
 
-  printf '%s\n' "drift: $mcount modified, $xcount missing"
+  # Pending: framework-owned items `jig upgrade` would install/link right
+  # now (e.g. a skill added to the source since the last upgrade) — distinct
+  # from drift above, which only covers paths already recorded in the
+  # manifest. Omitted from the line entirely (rather than printed as "0
+  # pending") when it cannot be determined, most commonly because this
+  # install's source checkout no longer exists on this machine (SPEC §32):
+  # that is a different, unknown state from "checked and found nothing
+  # pending", and collapsing the two would misreport it as clean.
+  local pending pending_rc=0 pcount
+  pending=$(upgrade_pending) || pending_rc=$?
+  if [ "$pending_rc" = 0 ]; then
+    pcount=$(printf '%s\n' "$pending" | grep -c . || true)
+    printf '%s\n' "drift: $mcount modified, $xcount missing, $pcount pending"
+  else
+    printf '%s\n' "drift: $mcount modified, $xcount missing"
+  fi
   if [ "$mcount" -gt 0 ]; then
     printf '%s\n' "modified:"
     printf '%s\n' "$modified" | sed '/^$/d; s/^/  /'
@@ -49,6 +71,19 @@ $rel"
   if [ "$xcount" -gt 0 ]; then
     printf '%s\n' "missing:"
     printf '%s\n' "$missing" | sed '/^$/d; s/^/  /'
+  fi
+
+  # Knowledge awaiting a decision. A proposed document is deliberately
+  # invisible to every agent until a human accepts it (ADR-0016), and the
+  # decision is deliberately allowed to outlive the session that proposed
+  # (ADR-0018) — so the only thing that makes it discoverable later is this
+  # line. Counted, not listed: `jig knowledge proposed` does the listing.
+  local proposals
+  proposals=$(km_proposed_count)
+  if [ "$proposals" -gt 0 ]; then
+    printf 'proposals: %s awaiting decision (jig knowledge proposed)\n' "$proposals"
+  else
+    printf 'proposals: none\n'
   fi
 
   local found=0 finished=0 state_file tid class st paused reason line

@@ -11,6 +11,7 @@ paths:
   - "scripts/lib/knowledge.sh"
   - "templates/knowledge/**"
 reviewed_at: 2026-09-09
+summary: "Why knowledge carries frontmatter: it makes context resolution deterministic without an LLM."
 ---
 # ADR-0004: Knowledge documents carry frontmatter so context resolution is deterministic
 

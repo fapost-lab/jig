@@ -9,6 +9,7 @@ paths:
   - "scripts/lib/context.sh"
   - "scripts/lib/status.sh"
   - "schemas/state.md"
+summary: Why pause is a field, ambiguity exits 2, and resume reports overlap rather than distance.
 ---
 # ADR-0012: Resume is ambiguous or exact, never a guess; pause is a field
 

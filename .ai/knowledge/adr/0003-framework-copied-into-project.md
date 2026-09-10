@@ -9,6 +9,7 @@ paths:
   - "scripts/lib/init.sh"
   - "scripts/lib/manifest.sh"
   - "scripts/lib/upgrade.sh"
+summary: Why the framework is copied into a project rather than installed as a dependency.
 ---
 # ADR-0003: Framework files are copied into the project and tracked by git
 

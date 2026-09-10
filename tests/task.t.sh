@@ -772,3 +772,203 @@ test_task_list_reports_no_live_tasks() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "no live tasks (1 finished"
 }
+
+# Approved SDD/OpenSpec contracts; all setups remain isolated per test.
+sdd_task_setup() {
+  task_setup_clean
+  jig task new scoped --class T3 >/dev/null
+}
+
+test_sdd_changes_committed_clean_tree_and_explicit_scope() {
+  sdd_task_setup
+  local base
+  base=$(git rev-parse HEAD)
+  printf 'owned\n' > owned.txt
+  printf 'unrelated\n' > other.txt
+  git add owned.txt other.txt
+  git commit -qm 'committed work'
+  run jig task changes scoped --base "$base" --files owned.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed  owned.txt"
+  assert_contains "$OUT" "excluded: 1 candidate paths"
+  assert_not_contains "$OUT" "other.txt"
+  run jig task changes scoped --base "$base" --files owned.txt --format paths
+  assert_eq owned.txt "$OUT"
+}
+
+test_sdd_changes_retains_cancelled_layers_and_untracked() {
+  sdd_task_setup
+  printf 'changed\n' > README.md
+  git add README.md
+  git show HEAD:README.md > README.md
+  printf 'new\n' > new.txt
+  run jig task changes scoped --base HEAD
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "staged     README.md"
+  assert_contains "$OUT" "unstaged   README.md"
+  assert_contains "$OUT" "untracked  new.txt"
+}
+
+test_sdd_changes_rename_deletion_and_literal_space_scope() {
+  sdd_task_setup
+  printf 'file\n' > 'space [x].txt'
+  printf 'other\n' > 'space x.txt'
+  git add .
+  git commit -qm files
+  git mv README.md moved.md
+  rm 'space [x].txt'
+  printf 'changed\n' >> 'space x.txt'
+  run jig task changes scoped --base HEAD --format paths
+  assert_contains "$OUT" README.md
+  assert_contains "$OUT" moved.md
+  run jig task changes scoped --base HEAD --files 'space [x].txt' --format paths
+  assert_eq 0 "$RC"
+  assert_eq 'space [x].txt' "$OUT"
+}
+
+test_sdd_changes_empty_stdin_is_not_default_scope() {
+  sdd_task_setup
+  echo dirty >> README.md
+  run jig task changes scoped --base HEAD --files - --format paths < /dev/null
+  assert_eq 0 "$RC"
+  assert_eq '' "$OUT"
+  run jig task changes scoped --base HEAD --files ''
+  assert_contains "$OUT" 'selected: 0 paths; excluded: 1 candidate paths'
+}
+
+test_sdd_changes_rejects_missing_invalid_base_and_paths() {
+  sdd_task_setup
+  local scope
+  run jig task changes scoped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '--base is required'
+  run jig task changes scoped --base no-such-ref
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'cannot resolve commit'
+  for scope in '../outside' '/etc/passwd' 'a/../b' 'a/./b' 'a//b'; do
+    run jig task changes scoped --base HEAD --files "$scope"
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" 'path'
+  done
+  run jig task changes ../outside --base HEAD
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid task id'
+}
+
+test_sdd_changes_rejects_control_names_and_git_failures() {
+  sdd_task_setup
+  local name
+  name=$(printf 'bad\tname')
+  echo unsafe > "$name"
+  run jig task changes scoped --base HEAD --format paths
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unsupported path'
+  rm "$name"
+  name=$(printf 'bad\nname')
+  echo unsafe > "$name"
+  run jig task changes scoped --base HEAD
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unsupported path'
+  rm "$name"
+  run bash -c '. "$JIG_HOME/scripts/lib/common.sh"; JIG_PROJECT="$PWD"; jig_git_change_rows missing HEAD'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'Git inventory failed for committed'
+}
+
+test_sdd_changes_arguments_and_subdirectory_paths() {
+  sdd_task_setup
+  mkdir sub
+  echo new > 'sub/new file'
+  cd sub || return 1
+  run jig task changes scoped --base HEAD --format paths
+  assert_eq 'sub/new file' "$OUT"
+  local flag
+  for flag in --base --files --format; do
+    run jig task changes scoped "$flag"
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" 'requires a value'
+  done
+  run jig task changes scoped --base HEAD --format bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid format'
+  run jig task changes scoped --base HEAD --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unknown argument'
+}
+
+test_sdd_artifacts_t3_presence_never_approves_or_changes_state() {
+  sdd_task_setup
+  local state
+  state=$(cat .ai/workspace/tasks/scoped/state)
+  echo design > .ai/workspace/tasks/scoped/design.md
+  run jig task artifacts scoped
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'implement: inputs-available; inputs: task design'
+  assert_contains "$OUT" 'unassessed: human design approval'
+  assert_contains "$OUT" 'consolidate: needs-input'
+  assert_eq "$state" "$(cat .ai/workspace/tasks/scoped/state)"
+  assert_not_contains "$OUT" 'status: ready'
+}
+
+test_sdd_artifacts_routes_and_conversation_claims() {
+  sdd_task_setup
+  local class
+  for class in T0 T1 T2 T3 T4; do
+    jig task set scoped class "$class" >/dev/null
+    run jig task artifacts scoped --provided discovery,spec,alternatives,design,plan,verification
+    assert_eq 0 "$RC"
+    assert_contains "$OUT" "class: $class"
+    assert_not_contains "$OUT" 'needs-input'
+    assert_contains "$OUT" 'provided-claim'
+    assert_no_file .ai/workspace/tasks/scoped/design.md
+  done
+  jig task set scoped class T4 >/dev/null
+  run jig task artifacts scoped
+  assert_contains "$OUT" 'design: needs-input; inputs: task spec alternatives'
+  assert_contains "$OUT" 'unassessed: implementation and independent reviewer'
+  jig task set scoped class T0 >/dev/null
+  run jig task artifacts scoped
+  assert_not_contains "$OUT" 'needs-input'
+}
+
+test_sdd_artifacts_empty_external_and_internal_links() {
+  sdd_task_setup
+  local root
+  root=.ai/workspace/tasks/scoped
+  : > "$root/design.md"
+  run jig task artifacts scoped
+  assert_contains "$OUT" 'design         unavailable (empty)'
+  rm "$root/design.md"
+  echo external > external.md
+  ln -s "$PWD/external.md" "$root/design.md"
+  run jig task artifacts scoped
+  assert_contains "$OUT" 'design         unavailable (outside workspace)'
+  rm "$root/design.md"
+  echo internal > "$root/notes.md"
+  ln -s notes.md "$root/design.md"
+  run jig task artifacts scoped
+  assert_contains "$OUT" 'design         present'
+}
+
+test_sdd_artifacts_rejects_invalid_claims_and_class() {
+  sdd_task_setup
+  local provided
+  for provided in '' ',design' 'design,' 'design,,spec' approval implementation 'design,design'; do
+    run jig task artifacts scoped --provided "$provided"
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" 'task artifacts:'
+  done
+  run jig task artifacts scoped --provided
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'requires a value'
+  run jig task artifacts scoped --provided design --provided spec
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'duplicate --provided'
+  jig task new no-class >/dev/null
+  run jig task artifacts no-class
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'invalid or missing class'
+  run jig task artifacts unknown
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unknown task'
+}

@@ -8,6 +8,14 @@ description: Start or resume a task with Jig — classify it by risk, create its
 You decide the class; scripts record it. Keep this step short: it exists to avoid
 running an expensive process on cheap work, and a cheap process on risky work.
 
+## 0. Exploration is a valid entry
+
+For standalone research/comparison, use `jig context resolve --no-task --catalog` with
+explicit files/domains/topics; do not select an unrelated task, classify implementation,
+or create a workspace. Use `--files -` with empty stdin for a deliberately empty frontier.
+An explicit analysis of a named task stays there. Save research only when useful/requested;
+implementation intent returns to the route below.
+
 ## 1. Resume before starting
 
 ```
@@ -57,8 +65,11 @@ retyping it, and split it as §"When the task arrives written" says:
 
 ## 4. Load context
 
+Use the first stage selected by the class so stage-aware knowledge arrives before that
+stage begins (for example, `analyze` for T1/T2 and `discover` for T3/T4):
+
 ```
-.ai/scripts/jig context --task <id>
+.ai/scripts/jig context resolve --task <id> --stage <first-stage> --catalog
 ```
 
 Read exactly what it lists and nothing else. It returns global knowledge, documents
@@ -101,6 +112,13 @@ Stop. Present the design in a few lines: what changes, which alternatives lost a
 what it costs to undo. Wait for the human to approve, change or reject it. Do not start
 implementing while waiting, and do not treat silence or a general "ok, go on" from an
 earlier message as approval.
+
+For T2+, follow [requirements and planning](references/requirements-and-planning.md).
+Design UI changes with [applicable states](references/ui-states.md). At pause/resume or
+this gate use the [handoff](references/handoff.md); continuous work needs no extra stop.
+`jig task artifacts <id>` reports input facts, not approval or the next stage. If an input
+lives in conversation, locate/read it before using `--provided <kind>`; never invent a
+provided claim to silence a missing input.
 
 ## Artifacts
 

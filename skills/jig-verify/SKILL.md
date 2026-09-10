@@ -5,6 +5,9 @@ description: Verify a Jig task with evidence — run the project's checks and co
 
 # jig-verify — evidence, not claims
 
+Resolve context with `--stage verify` and the task's explicit selectors before verification;
+read required knowledge and use the same selectors for pending/guard.
+
 ## 1. Run the project's checks
 
 Reuse completed checks when their code, test inputs, and relevant environment have not
@@ -37,6 +40,10 @@ plus the neighbouring paths a mistake would break.
 Read the goal in `task.md` and check the change actually delivers it. Tests passing and
 the task being done are different claims. Where the goal is user-visible, exercise it the
 way a user would.
+
+For T2+, evaluate every row in the [acceptance map](../jig-task/references/requirements-and-planning.md),
+link actual evidence once, and keep not-run/blocked checks visible. A green suite cannot
+satisfy an omitted criterion. UI criteria require [UI state evidence](../jig-task/references/ui-states.md).
 
 ## 3. Check the knowledge still holds
 

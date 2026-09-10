@@ -6,6 +6,7 @@ date: 2026-09-08
 domains: [housekeeping, safety]
 paths:
   - "scripts/lib/housekeeping.sh"
+summary: Why workspace deletion happens in two stages and never on unknown remote state.
 ---
 # ADR-0006: Housekeeping purges in two stages via a local trash directory
 

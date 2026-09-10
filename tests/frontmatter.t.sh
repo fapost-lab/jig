@@ -252,6 +252,79 @@ EOF
   assert_eq 1 "$RC"
 }
 
+test_fm_set_quotes_a_scalar_containing_colon_space() {
+  cat > doc.md <<'EOF'
+---
+id: feature-x
+type: feature
+status: active
+---
+Body text.
+EOF
+  fm_harness 'fm_set doc.md summary "Terms: a, b"'
+  assert_eq 0 "$RC"
+  assert_file_contains doc.md 'summary: "Terms: a, b"'
+  fm_harness 'fm_get doc.md summary'
+  assert_eq "Terms: a, b" "$OUT"
+}
+
+test_fm_set_leaves_a_plain_scalar_unquoted() {
+  cat > doc.md <<'EOF'
+---
+id: feature-x
+type: feature
+---
+Body text.
+EOF
+  fm_harness 'fm_set doc.md status active'
+  assert_eq 0 "$RC"
+  assert_file_contains doc.md "status: active"
+  assert_not_contains "$(cat doc.md)" 'status: "active"'
+}
+
+test_fm_set_does_not_quote_a_date() {
+  cat > doc.md <<'EOF'
+---
+id: adr-0001-x
+type: adr
+---
+Body text.
+EOF
+  fm_harness 'fm_set doc.md date 2026-09-09'
+  assert_eq 0 "$RC"
+  assert_file_contains doc.md "date: 2026-09-09"
+}
+
+test_fm_set_quotes_a_scalar_with_a_leading_indicator() {
+  cat > doc.md <<'EOF'
+---
+id: feature-x
+type: feature
+---
+Body text.
+EOF
+  fm_harness 'fm_set doc.md summary "- not a list item"'
+  assert_eq 0 "$RC"
+  assert_file_contains doc.md 'summary: "- not a list item"'
+  fm_harness 'fm_get doc.md summary'
+  assert_eq "- not a list item" "$OUT"
+}
+
+test_fm_set_refuses_a_scalar_containing_hash_or_quote() {
+  cat > doc.md <<'EOF'
+---
+id: feature-x
+type: feature
+---
+Body text.
+EOF
+  fm_harness 'fm_set doc.md summary "has # hash"'
+  assert_eq 1 "$RC"
+  fm_harness 'fm_set doc.md summary "has \" quote"'
+  assert_eq 1 "$RC"
+  assert_not_contains "$(cat doc.md)" "summary:"
+}
+
 # --- writers: fm_list_set -------------------------------------------------------
 
 test_fm_list_set_converts_inline_list_to_block_list() {

@@ -70,6 +70,13 @@ The three documents a domain may keep under `.ai/knowledge/domains/<domain>/`:
 `OVERVIEW.md` (type `domain`), `GLOSSARY.md` (`glossary`) and `RULES.md` (`rule`).
 The directory is navigation only; applicability stays in frontmatter (ADR-0004, ADR-0014).
 
+## Proposed Knowledge
+
+A document written but not yet agreed to: `status: proposed`. It sits at its real path
+and is validated, but `jig context` will not resolve it, so nothing inferred reaches an
+Agent before a human runs `jig knowledge accept` (ADR-0016).
+Informal synonyms: draft, candidate.
+
 ## Load Policy
 
 A knowledge document's `load` field — `always`, `domain` or `matched` — stating how
@@ -88,6 +95,13 @@ The per-task record of documents the Agent stated it has read:
 `.ai/workspace/tasks/<id>/context`, one `<git-hash><TAB><path>` line each. Transient and
 never committed. It records a claim of reading, not comprehension (ADR-0015).
 Informal synonyms: acknowledgements, read tracking.
+
+## Verify Scope
+
+A narrowing passed to `jig verify`, expressed as a list of changed files rather than a
+filter string, because a file list means the same thing in every stack. A Profile
+receives it only if it declares support, and the report always says whether it was
+honoured (ADR-0013). Informal synonyms: filter, narrowing.
 
 ## Task Class
 

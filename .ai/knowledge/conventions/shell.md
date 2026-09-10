@@ -8,7 +8,8 @@ paths:
   - "adapters/**"
   - "profiles/**"
   - "tests/**"
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-10
+summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
 
@@ -28,9 +29,11 @@ bug during Phase 1; the rationale column says which.
 | Untrusted names (task ids, profile and adapter names, from flags *and* from config) are validated at the one function that builds the path, before any filesystem access or `sed`. | Validating at call sites leaves gaps: `jig verify --profile ../../x` executed a foreign script, `jig init --profiles ..` copied a whole tree into `.ai/`, and `--profiles ../x` reached a `sed` substitution and broke it. |
 | Any `rm -rf` or `mv` on a computed path is preceded by a validation that the path is inside `.ai/` and shaped as expected. | RULES.md invariant; ADR-0006. |
 | No bash 4 features: no associative arrays, `${var,,}`, `mapfile`, `readlink -f`, `cp --parents`, `sort -V`, `grep -P`. | macOS ships bash 3.2 (ADR-0002). |
+| Never write `A && B || C` as a statement, even when `C` exits. Use `if`. | shellcheck 0.10.0 reports SC2015 on it and 0.11.0 does not, so the same code passes `jig verify` on one machine and fails on another. `scripts/lib/upgrade.sh` had one such line: with shellcheck 0.10.0 (Debian stable, Ubuntu LTS) the shell profile failed on jig's own source, and every test whose fixture runs that profile failed with it — 6 failures on Linux that were one line. The linter version is not pinned anywhere and there is no CI, so this is invisible on the maintainer's machine. |
 | Glob matching against the tree uses `find -path` with `**` collapsed to `*`. | BSD and GNU `find -path` both match `*` across `/`, so one substitution covers any-depth and single-segment globs without `globstar`. |
 | A listing hides finished or superseded entries by default and counts them in a trailing line; `--all` shows everything. | Applies to `jig task list` and `jig context` alike. On a long-lived branch, done work outnumbers live work and crowds it out, and a listing nobody reads is worse than no listing. |
 | Under `set -e`, neither a loop body nor a function may end in `cmd && cmd`: the loop, or the function, takes that status, so one false condition aborts the caller before its own `return 0`. Use `if cmd; then ...; fi`. | Cost a silent `exit 1` with no output twice: in `profiles/shell/verify.sh` (loop body), and in `context.sh`'s `_ctx_parse_selectors` (last statement of the function), where it killed `context resolve\|pending\|guard` for every task with no domains — the common case. Note a probe that calls the function as `f && ...` cannot reproduce it — a condition context suspends `errexit` inside the callee. |
+| `profiles_detect` is called with an explicit profiles root, normally `profiles_installed_dir`. | With no argument it falls back to `profiles_source_dir`, which is empty whenever jig runs from `.ai/scripts` rather than a framework checkout — and it then reports `generic` and nothing else, with no error. Note also that it can only see stacks whose profile the project has installed, so it answers "which profiles are active", never "what is this codebase". |
 | Two files in one directory may not differ only by case. | macOS is case-insensitive by default, so `glossary.md` and `GLOSSARY.md` are one file: creating the type template silently overwrote the global knowledge template. The domain-pack templates live in `templates/knowledge/domain/` for this reason (ADR-0014). |
 | A command's primary output is plain `printf`, never `jig_log`. | `jig_log` obeys the global `JIG_QUIET`, so `JIG_QUIET=1` erased exactly the line `context guard` prints to say a check did not run — the property ADR-0015 depends on. See `_init_out` in `init.sh`. |
 | Commands that produce human output use plain `printf`; `jig_info`/`jig_warn`/`jig_die` go to stderr. A command's `--quiet` flag is local to that command. | Tests capture stdout per test, so there is no need for a global quiet switch. |

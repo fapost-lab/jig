@@ -8,6 +8,7 @@ paths:
   - "skills/**"
   - "scripts/**"
   - "adapters/**"
+summary: Why the product is called Jig, and what the name commits it to.
 ---
 # ADR-0007: The product is named "Jig"
 

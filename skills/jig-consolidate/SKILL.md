@@ -13,6 +13,10 @@ One question:
 Code already records behaviour. Knowledge records intent. Answering
 `NO_DURABLE_KNOWLEDGE` is a correct outcome, not a failure.
 
+Run this completion stage only after implementation and required review/verification are
+complete. Finishing analysis, a backlog, or a design does not complete its implementation
+task: keep it active or explicitly paused. Resolve/read context with `--stage consolidate`.
+
 ## 1. Review what happened
 
 Read the task's workspace artifacts and the diff. Look for: a decision with alternatives,
@@ -32,7 +36,8 @@ turned out wrong, a rule the codebase now depends on.
 | Orientation, terms or rules that bind one domain only | `jig knowledge new domain\|glossary\|rule <domain>` |
 | Process notes, task history, what you tried | nothing; it dies with the workspace |
 
-Never copy `plan.md`, `review.md` or `verification.md` into knowledge because they exist.
+Never copy `plan.md`, `review.md`, `verification.md`, acceptance maps, or behavior deltas
+into knowledge because they exist. Retain only the accepted intent in its durable owner.
 
 ## 3. Write into existing documents
 
@@ -66,6 +71,11 @@ Then stamp every document you edited as reconciled with the code:
 
 That stamp is the whole basis of `jig knowledge stale`. Skipping it does not save time,
 it degrades the document to "never reconciled".
+
+A document you edited that has no `summary` gets one now — it is the single line another
+agent reads in the context catalog before deciding whether to open the file, and
+`knowledge check` warns until it is there. One sentence saying what the document is for,
+not a restatement of its title.
 
 Frontmatter is never hand-edited: the commands above own it (ADR-0001, ADR-0010).
 

@@ -7,6 +7,7 @@ domains: [core, skills, scripts]
 paths:
   - "skills/**"
   - "scripts/**"
+summary: Why the agent does the judgement and scripts do the mechanics, never an LLM call.
 ---
 # ADR-0001: Skills execute the process; scripts are deterministic and never invoke an LLM
 

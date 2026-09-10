@@ -62,6 +62,14 @@ jig_source_root() {
 # `knowledge paths` both need the same answer to "what did this task touch",
 # and they must never disagree about it (ARCHITECTURE.md, scripts layout).
 jig_git_touched_files() {
+  if [ "$#" -gt 0 ]; then
+    local explicit_base explicit_head explicit_rows
+    explicit_base=$(jig_review_commit "$1") || return 1
+    explicit_head=$(jig_review_commit "${2:-HEAD}") || return 1
+    explicit_rows=$(jig_git_change_rows "$explicit_base" "$explicit_head") || return 1
+    printf '%s\n' "$explicit_rows" | sed '/^$/d' | cut -f1 | LC_ALL=C sort -u
+    return 0
+  fi
   local base mb out=""
   base=$(cfg git.base_branch main)
   if mb=$(git -C "$JIG_PROJECT" merge-base "$base" HEAD 2>/dev/null); then
@@ -123,6 +131,21 @@ jig_knowledge_docs() {
   done < <(find "$dir" -type f -name '*.md' | sort)
 }
 
+# jig_knowledge_status_resolvable <status> — true when a document may be loaded into
+# an agent's context, listed in the catalog, or pulled in as a `requires` target.
+#
+# An allowlist, deliberately: a denylist of retired values resolves anything it has not
+# heard of — a typo'd status, or a lifecycle value added later — as if it were active.
+# `proposed` is exactly such a later value, and the guarantee that a proposed document
+# cannot reach an agent rests on this being an allowlist. `accepted` is the ADR spelling
+# of `active`.
+jig_knowledge_status_resolvable() {
+  case "$1" in
+    active | accepted) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Translate a frontmatter `paths` glob into a pattern usable both with
 # `find -path` and with a bash `case`: `**` (any depth, including zero
 # directories) collapses to a single `*`. BSD and GNU `find -path` match `*`
@@ -171,3 +194,51 @@ jig_duration_seconds() {
     s) printf '%d\n' "$n" ;;
   esac
 }
+
+# Fixed route vocabulary shared by context and knowledge metadata validation.
+jig_valid_stage() {
+  case "$1" in
+    analyze | discover | specify | alternatives | design | plan | implement | review | architecture-review | verify | consolidate) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Literal repository-relative paths for a review inventory (not shell/Git patterns).
+jig_check_review_path() {
+  case "$1" in
+    '' | /* | *"$(printf '\t')"* | *'
+'*) jig_die "task changes: unsupported path (absolute, empty, tab or newline): $1" ;;
+  esac
+  case "/$1/" in
+    */../* | */./* | *//*) jig_die "task changes: path must be repository-relative without dot segments: $1" ;;
+  esac
+}
+
+jig_review_commit() {
+  case "$1" in '' | -*) jig_die "task changes: invalid base: $1" ;; esac
+  git -C "$JIG_PROJECT" rev-parse --verify "$1^{commit}" 2>/dev/null \
+    || jig_die "task changes: cannot resolve commit: $1"
+}
+
+# Strict inventory, path<TAB>layer. NUL Git output is decoded only after checking
+# producer exit status; process substitution would hide a failing Git command.
+# Buffer all rows so failures cannot be mistaken for a complete partial inventory.
+jig_git_change_rows() (
+  local base="$1" head="$2" layer path
+  JIG_CHANGE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-changes.XXXXXX") || exit 1
+  trap 'rm -rf "$JIG_CHANGE_TMP"' EXIT
+  : > "$JIG_CHANGE_TMP/rows"
+  for layer in committed staged unstaged untracked; do
+    case "$layer" in
+      committed) git -C "$JIG_PROJECT" diff --no-ext-diff --no-textconv --ignore-submodules=none --no-renames --name-only -z "$base" "$head" -- > "$JIG_CHANGE_TMP/paths" ;;
+      staged) git -C "$JIG_PROJECT" diff --no-ext-diff --no-textconv --ignore-submodules=none --no-renames --cached --name-only -z "$head" -- > "$JIG_CHANGE_TMP/paths" ;;
+      unstaged) git -C "$JIG_PROJECT" diff --no-ext-diff --no-textconv --ignore-submodules=none --no-renames --name-only -z -- > "$JIG_CHANGE_TMP/paths" ;;
+      untracked) git -C "$JIG_PROJECT" ls-files --others --exclude-standard -z > "$JIG_CHANGE_TMP/paths" ;;
+    esac || jig_die "task changes: Git inventory failed for $layer"
+    while IFS= read -r -d '' path; do
+      jig_check_review_path "$path"
+      printf '%s\t%s\n' "$path" "$layer" >> "$JIG_CHANGE_TMP/rows"
+    done < "$JIG_CHANGE_TMP/paths"
+  done
+  LC_ALL=C sort -u "$JIG_CHANGE_TMP/rows"
+)

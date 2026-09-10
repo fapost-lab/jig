@@ -11,12 +11,16 @@ system its documentation describes.
 ## 1. Load the shape
 
 ```
-.ai/scripts/jig context --task <id> --all
-git diff
+.ai/scripts/jig task changes <id> --base <ref>
+.ai/scripts/jig context resolve --task <id> --stage architecture-review --files - < <workspace>/review-files
+.ai/scripts/jig context guard --task <id> --stage architecture-review --files - < <workspace>/review-files
 ```
 
-`--all` includes superseded and deprecated documents: a change that revives a rejected
-approach is exactly what this review must catch.
+Create review-files and inspect all change layers via the same
+[scope reference](../jig-review/references/change-scope.md) used by code review. Read and
+acknowledge pending knowledge before the guard. Check the acceptance map for omitted
+requirements too. Use a separate `jig context --task <id> --all` inspection when historical
+or rejected decisions matter; diagnostic history is not binding accepted knowledge.
 
 ## 2. Check five things
 

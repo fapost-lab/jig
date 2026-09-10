@@ -46,3 +46,8 @@ files.
 ## 5. Report
 
 Summarise in a few lines what was written and which questions remain open for the user.
+
+When the project is larger than the three global documents can honestly describe, say so
+and offer `jig-map`: it proposes per-domain knowledge, and nothing it infers reaches an
+agent's context until a human accepts it. Do not run it as part of init — a map is a
+judgement about someone else's codebase and deserves its own gate.

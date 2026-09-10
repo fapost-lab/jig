@@ -8,6 +8,12 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge new <domain|glossary|rule> <domain> [--paths g,g]
        jig knowledge paths [--task <id>] [--files <list>|-]
        jig knowledge paths add|remove <id> <glob>
+       jig knowledge summary <id> <text>
+       jig knowledge stages add|remove <id> <stage>
+       jig knowledge proposed
+       jig knowledge accept <id>...
+       jig knowledge reject <id>...
+       jig knowledge inventory [--scope <dir>]
        jig knowledge stale [--strict]
        jig knowledge reviewed <id> [--date YYYY-MM-DD]"
 
@@ -19,7 +25,7 @@ cmd_knowledge() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    check | new | paths | stale | reviewed) ;;
+    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages) ;;
     *) jig_die "$KM_USAGE" ;;
   esac
 
@@ -34,6 +40,12 @@ cmd_knowledge() {
     paths) km_paths "$@" ;;
     stale) km_stale "$@" ;;
     reviewed) km_reviewed "$@" ;;
+    accept) km_accept "$@" ;;
+    reject) km_reject "$@" ;;
+    proposed) km_proposed "$@" ;;
+    summary) km_summary "$@" ;;
+    stages) km_stages "$@" ;;
+    inventory) km_inventory "$@" ;;
   esac
 }
 
@@ -109,6 +121,42 @@ km_check_links() {
 
 # --- per-document checks --------------------------------------------------------
 
+# km_check_scalar_yaml <file> <relpath> — fail every frontmatter scalar that
+# jig's own reader accepts but a real YAML parser rejects.
+#
+# fm_get takes everything after the first `key: `, so `summary: Terms: a, b`
+# reads back correctly here while any YAML parser sees a nested mapping and
+# refuses the document — which is how this was found, in an editor rather than
+# in a check. Frontmatter is meant to be read by both, so the two readers must
+# agree. `jig knowledge summary` quotes what needs quoting (fm_set); this catches
+# what a hand edit or another tool wrote.
+km_check_scalar_yaml() {
+  local file="$1" relpath="$2" line key value
+  while IFS= read -r line; do
+    # Block-list items and continuation lines are not `key: value` pairs.
+    case "$line" in
+      ' '* | '' | '#'*) continue ;;
+      *': '*) ;;
+      *) continue ;;
+    esac
+    key="${line%%:*}"
+    case "$key" in
+      *[!a-z_]*) continue ;;
+    esac
+    value="${line#*: }"
+    # An inline list is its own form, and a quoted scalar is already safe.
+    case "$value" in
+      '['*) continue ;;
+      '"'*'"') continue ;;
+    esac
+    case "$value" in
+      *': '* | *:)
+        km_fail "$relpath" "unquoted '$key' reads as a nested mapping in YAML; quote it"
+        ;;
+    esac
+  done < <(fm_block "$file")
+}
+
 # km_check_doc <file> <relpath> <require_fm> <ids_file> <ids_all_file> <adr_nums_file>
 km_check_doc() {
   local file="$1" relpath="$2" require_fm="$3" ids_file="$4" ids_all_file="$5" adr_nums_file="$6"
@@ -127,6 +175,7 @@ km_check_doc() {
         km_warn "$relpath" "missing frontmatter"
       fi
     else
+      km_check_scalar_yaml "$file" "$relpath"
       km_check_doc_frontmatter "$file" "$relpath" "$ids_file" "$ids_all_file" "$adr_nums_file"
     fi
   fi
@@ -163,19 +212,19 @@ km_check_doc_frontmatter() {
   case "$type" in
     feature | convention | domain | glossary | rule)
       case "$status" in
-        active | deprecated | superseded) ;;
+        proposed | active | deprecated | superseded | rejected) ;;
         *) km_fail "$relpath" "missing or invalid status" ;;
       esac
       ;;
     adr)
       case "$status" in
-        accepted | superseded | deprecated | rejected) ;;
+        proposed | accepted | superseded | deprecated | rejected) ;;
         *) km_fail "$relpath" "missing or invalid status" ;;
       esac
       ;;
     *)
       case "$status" in
-        active | deprecated | superseded | accepted | rejected) ;;
+        proposed | active | deprecated | superseded | accepted | rejected) ;;
         *) km_fail "$relpath" "missing or invalid status" ;;
       esac
       ;;
@@ -253,8 +302,13 @@ km_check_doc_frontmatter() {
     done < <(printf '%s\n' "$paths_out")
   fi
 
+  if jig_knowledge_status_resolvable "$status" && [ -z "$(fm_get "$file" summary)" ]; then
+    km_warn "$relpath" "no summary; it reads as (no summary) in the context catalog"
+  fi
+
   km_check_load "$file" "$relpath"
   km_check_topics "$file" "$relpath"
+  km_check_stages "$file" "$relpath"
   km_check_domain_placement "$file" "$relpath" "$domains"
 }
 
@@ -302,6 +356,290 @@ km_check_domain_placement() {
     || km_fail "$relpath" "filed under domains/$dir/ but does not declare domain: $dir"
 }
 
+# --- summary --------------------------------------------------------------------
+
+# km_summary <id> <text> — set the one-line `summary` a reader sees in the context
+# catalog.
+#
+# A command rather than a hand edit, because RULES.md says frontmatter is written by
+# the tooling: `knowledge check` warns until a resolvable document has one, and a
+# warning nothing can satisfy without breaking an invariant is not a warning, it is a
+# trap.
+km_summary() {
+  [ $# -ge 2 ] || jig_die "usage: jig knowledge summary <id> <text>"
+  local id="$1" text="$2" doc
+  shift 2
+  [ $# -eq 0 ] || jig_die "knowledge summary: unknown argument: $1"
+
+  case "$text" in
+    '') jig_die "knowledge summary: text may not be empty" ;;
+    # The reader strips a trailing `# comment` before anything else and the grammar has
+    # no escape (schemas/frontmatter.md), so a `#` would silently truncate the value on
+    # the next read.
+    *'#'*) jig_die "knowledge summary: text may not contain '#'" ;;
+  esac
+
+  doc=$(km_doc_by_id "$id")
+  fm_set "$doc" summary "$text" || jig_die "knowledge summary: could not write: $id"
+  printf 'summary    %s\n' "$(km_rel "$doc")"
+}
+
+# --- accept / reject --------------------------------------------------------------
+
+# km_require_proposed <id> — die unless <id> names a document whose status is
+# `proposed`; otherwise print its file path. Shared by accept and reject so the
+# two commands refuse the same things, in the same words.
+km_require_proposed() {
+  local id="$1" doc status
+  doc=$(km_doc_by_id "$id")
+  status=$(fm_get "$doc" status)
+  [ "$status" = proposed ] \
+    || jig_die "knowledge: not a proposed document: $id (status: ${status:-none})"
+  printf '%s\n' "$doc"
+}
+
+# km_dedupe_ids <id>... — the given ids with repeats removed, first occurrence
+# order preserved, one per line.
+#
+# accept and reject report how many documents they changed. Counting arguments
+# instead would let `accept feature-a feature-a` claim two documents were
+# accepted when one was, and the point of this loop is an accurate account of
+# what a human decided. Order is preserved rather than sorted so the output
+# still follows the order the ids were given in.
+km_dedupe_ids() {
+  local id seen=""
+  for id in "$@"; do
+    case "$seen" in
+      *"|$id|"*) continue ;;
+    esac
+    seen="$seen|$id|"
+    printf '%s\n' "$id"
+  done
+}
+
+# km_accept <id>... — promote one or more proposed documents to their resolvable
+# status.
+#
+# This is the whole point of `status: proposed` (ADR on proposed knowledge): a mapped
+# document sits at its real path, in git, validated, and mechanically unable to reach an
+# agent's context until a human runs this. The command refuses anything that is not
+# proposed, so it cannot be used to revive a superseded document by accident.
+#
+# Every id is validated before any document is written: a review loop that promotes
+# nine documents and dies on the tenth must not leave the batch half-applied.
+km_accept() {
+  [ $# -ge 1 ] || jig_die "usage: jig knowledge accept <id>..."
+  local id doc type target count=0 ids
+  ids=$(km_dedupe_ids "$@")
+
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    km_require_proposed "$id" >/dev/null
+  done <<EOF
+$ids
+EOF
+
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    doc=$(km_doc_by_id "$id")
+    type=$(fm_get "$doc" type)
+    if [ "$type" = adr ]; then target=accepted; else target=active; fi
+    fm_set "$doc" status "$target" \
+      || jig_die "knowledge accept: could not write: $id"
+    printf 'accepted   %s  (status: %s)\n' "$(km_rel "$doc")" "$target"
+    count=$((count + 1))
+  done <<EOF
+$ids
+EOF
+  printf 'knowledge accept: %d accepted\n' "$count"
+}
+
+# km_reject <id>... — mark one or more proposed documents `rejected`. Never
+# deletes or moves a file: the user has decided reject means the document
+# stays, on the record, at its real path — only its status changes, and
+# `rejected` is unresolvable like every other historical status.
+km_reject() {
+  [ $# -ge 1 ] || jig_die "usage: jig knowledge reject <id>..."
+  local id doc count=0 ids
+  ids=$(km_dedupe_ids "$@")
+
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    km_require_proposed "$id" >/dev/null
+  done <<EOF
+$ids
+EOF
+
+  local packs=0 type
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    doc=$(km_doc_by_id "$id")
+    type=$(fm_get "$doc" type)
+    case "$type" in
+      domain | glossary | rule) packs=$((packs + 1)) ;;
+    esac
+    fm_set "$doc" status rejected \
+      || jig_die "knowledge reject: could not write: $id"
+    printf 'rejected   %s  (status: rejected)\n' "$(km_rel "$doc")"
+    count=$((count + 1))
+  done <<EOF
+$ids
+EOF
+  printf 'knowledge reject: %d rejected\n' "$count"
+
+  # A domain pack's path is fixed by its type and domain (km_domain_file), so a
+  # rejected pack keeps the only slot that domain has: no better pack can be
+  # proposed for it afterwards. Rejecting one therefore means "not this domain",
+  # never "not this draft" — revising a draft is done in place while it is still
+  # proposed (ADR-0019). Said here because this is the moment it matters.
+  if [ "$packs" -gt 0 ]; then
+    jig_warn "a rejected domain pack keeps its domain's only slot; to revise a draft instead, edit it while it is still proposed"
+  fi
+}
+
+# --- proposed ---------------------------------------------------------------------
+
+# km_is_proposed <doc> — true when <doc> carries frontmatter whose status is
+# `proposed`.
+#
+# One definition, because two commands ask this question: `jig knowledge
+# proposed` lists what is waiting and `jig status` counts it. If they disagreed,
+# the count a human is shown on arrival would not match the list they then act
+# on — the same argument that made jig_knowledge_status_resolvable a single
+# helper in ADR-0016.
+km_is_proposed() {
+  local doc="$1"
+  fm_has "$doc" || return 1
+  [ "$(fm_get "$doc" status)" = proposed ]
+}
+
+# km_proposed_count — how many documents are awaiting a decision, as a bare
+# number on stdout. For `jig status`, which reports the count and leaves the
+# listing to `jig knowledge proposed`.
+km_proposed_count() {
+  local doc count=0
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    km_is_proposed "$doc" || continue
+    count=$((count + 1))
+  done < <(km_docs)
+  printf '%s\n' "$count"
+}
+
+# km_proposed — list every document with status: proposed, so a human returning
+# to the repository can find what is awaiting `accept` or `reject` without
+# grepping for the status by hand.
+km_proposed() {
+  [ $# -eq 0 ] || jig_die "usage: jig knowledge proposed"
+  local doc id type rel summary count=0
+
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    km_is_proposed "$doc" || continue
+
+    id=$(fm_get "$doc" id)
+    type=$(fm_get "$doc" type)
+    rel=$(km_rel "$doc")
+    summary=$(fm_get "$doc" summary)
+    count=$((count + 1))
+    if [ -n "$summary" ]; then
+      printf 'proposed:  %s  (%s)  %s  %s\n' "$id" "$type" "$rel" "$summary"
+    else
+      printf 'proposed:  %s  (%s)  %s\n' "$id" "$type" "$rel"
+    fi
+  done < <(km_docs)
+
+  if [ "$count" -eq 0 ]; then
+    printf 'knowledge proposed: nothing proposed\n'
+  else
+    printf 'knowledge proposed: %d proposed\n' "$count"
+  fi
+  return 0
+}
+
+# --- inventory -------------------------------------------------------------------
+
+# km_inventory [--scope <dir>] — deterministic facts about the repository's shape, for
+# an agent that is about to propose a knowledge map.
+#
+# It deliberately prints neither the knowledge catalog nor the coverage gaps: those are
+# `jig context resolve --catalog` and `jig knowledge paths`. Two commands printing the
+# same fact is how the two come to disagree about it.
+km_inventory() {
+  local scope=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scope)
+        [ $# -ge 2 ] || jig_die "knowledge inventory: --scope requires a value"
+        scope="$2"; shift 2 ;;
+      *) jig_die "knowledge inventory: unknown argument: $1" ;;
+    esac
+  done
+
+  # A caller-supplied path, so it is validated before it is joined to the project root
+  # (RULES.md invariant, ADR-0008).
+  if [ -n "$scope" ]; then
+    case "$scope" in
+      /*) jig_die "knowledge inventory: --scope must be repository-relative: $scope" ;;
+      *..*) jig_die "knowledge inventory: --scope may not contain '..': $scope" ;;
+      *[!A-Za-z0-9._/-]*)
+        jig_die "knowledge inventory: invalid --scope '$scope': expected [A-Za-z0-9._/-]" ;;
+    esac
+    scope="${scope%/}"
+    [ -d "$JIG_PROJECT/$scope" ] \
+      || jig_die "knowledge inventory: no such directory: $scope"
+  fi
+
+  local prefix="" spec="." f dir count last=""
+  if [ -n "$scope" ]; then
+    prefix="$scope/"
+    spec="$scope"
+  fi
+
+  # Root-level tracked files are named, not counted: this is where manifests live, and
+  # naming them is a fact. Which manifest means which stack is a judgement, and it is
+  # already declared once in each profile's `detect` globs — inventory neither repeats
+  # that mapping nor calls profiles_detect, which can only see stacks whose profile the
+  # project already installed and would therefore answer a question with itself. The
+  # agent reading this listing recognises `composer.json` on sight (ADR-0001).
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    f="${f#"$prefix"}"
+    case "$f" in */*) continue ;; esac
+    printf '%-14s %s\n' "root:" "$prefix$f"
+  done < <(git -C "$JIG_PROJECT" ls-files "$spec" | sort)
+
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    printf '%-14s %s\n' "instructions:" "$f"
+  done < <(git -C "$JIG_PROJECT" ls-files "$spec" \
+    | grep -E '(^|/)(AGENTS|CLAUDE)\.md$' | sort)
+
+  # Tracked files grouped by their first path segment below the scope: the coarsest
+  # honest description of where the code is.
+  # `${f#"$prefix"}` and not a `sed` expression: the scope reaches this line as a
+  # literal, and a path is full of characters a substitution would read as syntax
+  # (convention-shell).
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    f="${f#"$prefix"}"
+    case "$f" in */*) ;; *) continue ;; esac
+    dir="${f%%/*}"
+    if [ "$dir" != "$last" ]; then
+      if [ -n "$last" ]; then
+        printf '%-14s %s  (%s)\n' "tree:" "$prefix$last" "$(km_files_word "$count")"
+      fi
+      last="$dir"; count=0
+    fi
+    count=$((count + 1))
+  done < <(git -C "$JIG_PROJECT" ls-files "$spec" | sort)
+  if [ -n "$last" ]; then
+    printf '%-14s %s  (%s)\n' "tree:" "$prefix$last" "$(km_files_word "$count")"
+  fi
+
+  return 0
+}
+
 # --- requires graph ------------------------------------------------------------
 # Lines of the meta file collected by pass 1:
 #   <id><TAB><relpath><TAB><status><TAB><req,req,...>
@@ -310,16 +648,6 @@ km_check_domain_placement() {
 # empty when no document declares that id.
 km_meta_field() {
   awk -F '\t' -v want="$2" -v n="$3" '$1 == want { print $n; exit }' "$1"
-}
-
-# km_status_is_active <status> — a document that may be pulled in as a
-# requirement. `accepted` is the ADR spelling of `active`; deprecated,
-# superseded and rejected all mean "do not build on this".
-km_status_is_active() {
-  case "$1" in
-    active | accepted) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 # km_check_requires <meta-file> — validate the `requires` graph as a whole:
@@ -361,7 +689,7 @@ km_check_requires() {
         # Already reported, and unresolvable: settling it keeps the peel below
         # from reporting the same document a second time as a cycle.
         printf '%s\n' "$req" >> "$settled"
-      elif ! km_status_is_active "$target_status"; then
+      elif ! jig_knowledge_status_resolvable "$target_status"; then
         km_fail "$relpath" "requires inactive document: $req (status: $target_status)"
       fi
     done < <(printf '%s\n' "$reqs" | tr ',' '\n')
@@ -872,10 +1200,7 @@ km_stale() {
     [ -n "$doc" ] || continue
     fm_has "$doc" || continue
     status=$(fm_get "$doc" status)
-    case "$status" in
-      active | accepted) ;;
-      *) continue ;;
-    esac
+    jig_knowledge_status_resolvable "$status" || continue
 
     any_match=0
     first_unmatched=""
@@ -969,4 +1294,28 @@ km_reviewed() {
   fm_set "$file" reviewed_at "$date" \
     || jig_die "knowledge reviewed: failed to write $rel"
   printf 'reviewed   %s  %s\n' "$rel" "$date"
+}
+
+# Stages are optional relevance metadata; never task state or a filtering policy.
+km_check_stages() {
+  local file="$1" relpath="$2" stage
+  while IFS= read -r stage; do
+    [ -n "$stage" ] || continue
+    jig_valid_stage "$stage" || km_fail "$relpath" "invalid stage: $stage"
+  done < <(fm_list "$file" stages)
+}
+
+km_stages() {
+  [ $# -eq 3 ] || jig_die "usage: jig knowledge stages add|remove <id> <stage>"
+  local op="$1" id="$2" stage="$3" doc current
+  case "$op" in add | remove) ;; *) jig_die "knowledge stages: invalid operation: $op" ;; esac
+  jig_valid_stage "$stage" || jig_die "knowledge stages: invalid stage: $stage"
+  doc=$(km_doc_by_id "$id") || return 1
+  current=$(fm_list "$doc" stages)
+  if printf '%s\n' "$current" | grep -qxF -- "$stage"; then
+    if [ "$op" = remove ]; then fm_list_remove "$doc" stages "$stage" || return 1; fi
+  elif [ "$op" = add ]; then
+    fm_list_add "$doc" stages "$stage" || return 1
+  fi
+  printf 'stages     %s\n' "$(km_rel "$doc")"
 }

@@ -7,6 +7,7 @@ domains: [core, scripts]
 paths:
   - "scripts/**"
   - "tests/**"
+summary: Why Jig is bash 3.2 with git as its only mandatory dependency.
 ---
 # ADR-0002: Scripts are POSIX/bash-3.2 shell with no mandatory dependencies
 

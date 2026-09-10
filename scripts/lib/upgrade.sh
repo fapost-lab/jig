@@ -287,8 +287,9 @@ cmd_upgrade() {
     source=$(jig_source_root)
     [ -n "$source" ] || source=$(manifest_source)
   fi
-  [ -n "$source" ] && [ -d "$source" ] \
-    || jig_die "upgrade: cannot determine the framework source root; pass --from <dir>"
+  if [ -z "$source" ] || [ ! -d "$source" ]; then
+    jig_die "upgrade: cannot determine the framework source root; pass --from <dir>"
+  fi
   jig_is_source_root "$source" \
     || jig_die "upgrade: not a framework source root (missing skills/, templates/ or scripts/jig): $source"
 
@@ -337,4 +338,43 @@ cmd_upgrade() {
     printf '%s\n' "$new_entries" | sed '/^$/d' \
       | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy"
   fi
+}
+
+# --- upgrade_pending ---------------------------------------------------------
+
+# upgrade_pending — the pending action lines ("install <rel>", "link <rel>"
+# or "replace <rel>") that `jig upgrade` would apply right now, for whichever
+# project/config the caller is already running against. Read-only: never
+# mutates the project. Built on top of --dry-run rather than duplicating the
+# staging/decision-table logic — `cmd_upgrade --dry-run` already computes
+# exactly this, and command substitution already runs it in a subshell, so
+# its own EXIT/INT/TERM trap and locals never touch the caller's.
+#
+# Callers: `jig status` (drift's pending count) and `jig verify` (refuse to
+# run on a stale install). Precondition: the project is initialised
+# (jig_require_init already satisfied by the caller — cmd_upgrade re-checks
+# it regardless).
+#
+# Output/exit contract:
+#   0  success; zero or more pending lines printed on stdout, one per line,
+#      each exactly one of cmd_upgrade's own "install "/"link "/"replace "
+#      report lines. Link mode's "link mode: nothing to link (N already
+#      linked)" summary is dropped — it is informational, not a pending
+#      per-path action.
+#   3  pending state is unknown right now and nothing is printed. This is
+#      the expected outcome whenever the underlying dry run cannot complete
+#      at all — most notably when the framework source root cannot be
+#      determined (e.g. a copy-mode install whose source checkout was since
+#      deleted, SPEC §32). Any other cmd_upgrade failure (a corrupt
+#      .ai/config.yaml, say) also lands here rather than aborting the
+#      caller: a best-effort staleness check must never itself turn into a
+#      hard failure for status/verify — the caller's own subsequent logic
+#      (e.g. verify's profile-name validation) surfaces the real error.
+upgrade_pending() {
+  local out rc=0
+  out=$(cmd_upgrade --dry-run 2>&1) || rc=$?
+  [ "$rc" = 0 ] || return 3
+
+  printf '%s\n' "$out" | grep -E '^(install|link|replace) ' | grep -v '^link mode:' || true
+  return 0
 }

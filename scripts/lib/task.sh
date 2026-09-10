@@ -17,7 +17,9 @@ cmd_task() {
     list) task_list "$@" ;;
     show) task_show "$@" ;;
     current) task_current "$@" ;;
-    *) jig_die "usage: jig task new|set|abandon|pause|resume|list|show|current ..." ;;
+    changes) task_changes "$@" ;;
+    artifacts) task_artifacts "$@" ;;
+    *) jig_die "usage: jig task new|set|abandon|pause|resume|list|show|current|changes|artifacts ..." ;;
   esac
 }
 
@@ -619,4 +621,148 @@ task_current() {
     printf '%s  %s  updated_at=%s\n' "$cid" "$cst" "$cupd" >&2
   done < <(printf '%s\n' "$candidates")
   return 2
+}
+
+# Read-only review inventory; the task ID establishes context, not hunk ownership.
+task_changes() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]"
+  local id="$1" base="" head format=report files="" has_files=0 row path layer rows selected="" candidates kept t
+  shift
+  [ -f "$(task_dir "$id")/state" ] || jig_die "task changes: unknown task: $id"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --base) [ $# -ge 2 ] || jig_die "task changes: --base requires a value"; base="$2"; shift 2 ;;
+      --files)
+        [ $# -ge 2 ] || jig_die "task changes: --files requires a value"
+        [ "$has_files" -eq 0 ] || jig_die "task changes: duplicate --files"
+        has_files=1
+        if [ "$2" = - ]; then files=$(cat); else
+          case "$2" in *'
+'*) jig_die "task changes: use stdin for a multiline scope" ;; esac
+          files=$(printf '%s' "$2" | tr ',' '\n')
+        fi
+        shift 2 ;;
+      --format) [ $# -ge 2 ] || jig_die "task changes: --format requires a value"; format="$2"; shift 2 ;;
+      *) jig_die "task changes: unknown argument: $1" ;;
+    esac
+  done
+  case "$format" in report | paths) ;; *) jig_die "task changes: invalid format: $format" ;; esac
+  [ -n "$base" ] || jig_die "task changes: --base is required; establish the task baseline first"
+  base=$(jig_review_commit "$base") || return 1
+  head=$(jig_review_commit HEAD) || return 1
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    jig_check_review_path "$path"
+  done < <(printf '%s\n' "$files")
+  rows=$(jig_git_change_rows "$base" "$head") || return 1
+  t=$(printf '\t')
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    path=${row%%"$t"*}
+    if [ "$has_files" -eq 1 ] && ! printf '%s\n' "$files" | grep -qxF -- "$path"; then continue; fi
+    selected="$selected$row
+"
+  done < <(printf '%s\n' "$rows")
+  if [ "$format" = paths ]; then
+    printf '%s' "$selected" | cut -f1 | LC_ALL=C sort -u
+  else
+    candidates=$(printf '%s\n' "$rows" | sed '/^$/d' | cut -f1 | sort -u | wc -l | tr -d ' ')
+    kept=$(printf '%s' "$selected" | cut -f1 | sort -u | wc -l | tr -d ' ')
+    printf 'task: %s\nbase: %s\nhead: %s\nselected: %s paths; excluded: %s candidate paths\n' "$id" "$base" "$head" "$kept" "$((candidates - kept))"
+    while IFS="$t" read -r path layer; do
+      [ -n "$path" ] || continue
+      printf '%-10s %s\n' "$layer" "$path"
+    done < <(printf '%s' "$selected")
+    printf 'inventory only; task ownership and review remain unassessed\n'
+  fi
+}
+
+_task_artifact_kind() {
+  case "$1" in discovery | spec | alternatives | design | plan | review | verification | handoff) return 0 ;; *) return 1 ;; esac
+}
+
+# Resolve links without readlink -f. Do not read an artifact outside the workspace.
+_task_artifact_fact() {
+  local root="$1" kind="$2" provided="$3" path target parent hops=0
+  if printf '%s\n' "$provided" | grep -qxF -- "$kind"; then
+    printf 'provided-claim (caller must substantiate)\n'; return 0
+  fi
+  path="$root/$kind.md"
+  while [ -L "$path" ]; do
+    hops=$((hops + 1))
+    if [ "$hops" -gt 40 ]; then printf 'unavailable (symlink loop)\n'; return 0; fi
+    target=$(readlink "$path") || { printf 'unavailable (unreadable link)\n'; return 0; }
+    case "$target" in /*) path="$target" ;; *) path="$(dirname "$path")/$target" ;; esac
+  done
+  parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) || { printf 'unavailable (missing parent)\n'; return 0; }
+  path="$parent/$(basename "$path")"
+  case "$path" in "$root"/*) ;; *) printf 'unavailable (outside workspace)\n'; return 0 ;; esac
+  if [ ! -f "$path" ]; then printf 'unavailable (missing or not a regular file)\n'
+  elif [ ! -r "$path" ]; then printf 'unavailable (unreadable)\n'
+  elif [ ! -s "$path" ]; then printf 'unavailable (empty)\n'
+  else printf 'present\n'; fi
+}
+
+# stage|documentary inputs|unassessed semantic prerequisites. This is not a router.
+_task_artifact_route() {
+  case "$1" in
+    T0) printf '%s\n' 'implement|task|task intent' 'verify|task|implementation' ;;
+    T1) printf '%s\n' 'analyze|task|task intent' 'implement|task discovery|analysis sufficiency' 'verify|task|implementation' ;;
+    T2) printf '%s\n' 'analyze|task|task intent' 'plan|task discovery|analysis sufficiency' 'implement|task plan|plan sufficiency' 'review|task plan|implementation' 'verify|task plan|implementation and review outcome' ;;
+    T3) printf '%s\n' 'discover|task|task intent' 'design|task discovery|discovery sufficiency' 'human-gate|task design|human design decision' 'implement|task design|human design approval' 'architecture-review|task design|implementation' 'verify|task design|implementation and architecture review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
+    T4) printf '%s\n' 'discover|task|task intent' 'specify|task discovery|discovery sufficiency' 'alternatives|task spec|specification sufficiency' 'design|task spec alternatives|alternatives evaluated' 'human-gate|task spec design|human design decision' 'implement|task spec design|human design approval' 'review|task spec design|implementation and independent reviewer' 'verify|task spec design|implementation and independent review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
+  esac
+}
+
+task_artifacts() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "usage: jig task artifacts <id> [--provided discovery,design,...]"
+  local id="$1" root class provided="" seen=0 kinds kind fact stage inputs semantic availability facts="" t
+  shift
+  root=$(task_dir "$id") || return 1
+  [ -f "$root/state" ] || jig_die "task artifacts: unknown task: $id"
+  # A linked task directory can point outside the validated checkout workspace.
+  [ ! -L "$root" ] || jig_die "task artifacts: linked task workspace is unsupported"
+  root=$(cd -P "$root" && pwd -P) || jig_die "task artifacts: cannot inspect workspace"
+  local tasks_root
+  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" && pwd -P) || return 1
+  case "$root" in "$tasks_root"/"$id") ;; *) jig_die "task artifacts: workspace outside task root" ;; esac
+  class=$(task_state_get "$id" class)
+  _task_valid_class "$class" || jig_die "task artifacts: invalid or missing class: $class"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --provided)
+        [ $# -ge 2 ] || jig_die "task artifacts: --provided requires a value"
+        [ "$seen" -eq 0 ] || jig_die "task artifacts: duplicate --provided"
+        seen=1
+        case "$2" in '' | ,* | *, | *,,* | *[!a-z,]*) jig_die "task artifacts: malformed --provided: $2" ;; esac
+        provided=$(printf '%s' "$2" | tr ',' '\n')
+        kinds=""
+        while IFS= read -r kind; do
+          _task_artifact_kind "$kind" || jig_die "task artifacts: unknown provided kind: $kind"
+          case " $kinds " in *" $kind "*) jig_die "task artifacts: duplicate provided kind: $kind" ;; esac
+          kinds="$kinds $kind"
+        done < <(printf '%s\n' "$provided")
+        shift 2 ;;
+      *) jig_die "task artifacts: unknown argument: $1" ;;
+    esac
+  done
+  t=$(printf '\t')
+  printf 'task: %s; class: %s\nartifacts (optional unless consumed by a route stage):\n' "$id" "$class"
+  for kind in task discovery spec alternatives design plan review verification handoff; do
+    fact=$(_task_artifact_fact "$root" "$kind" "$provided")
+    facts="$facts$kind$t$fact
+"
+    printf '  %-14s %s\n' "$kind" "$fact"
+  done
+  while IFS='|' read -r stage inputs semantic; do
+    availability="inputs-available"
+    for kind in $inputs; do
+      fact=$(printf '%s' "$facts" | awk -F "$t" -v k="$kind" '$1 == k {print $2}')
+      case "$fact" in unavailable*) availability="needs-input" ;; esac
+    done
+    printf '%s: %s; inputs: %s\n  unassessed: %s\n' "$stage" "$availability" "$inputs" "$semantic"
+  done < <(_task_artifact_route "$class")
+  printf 'Presence and provided claims do not prove approval, quality or completion; state unchanged.\n'
 }

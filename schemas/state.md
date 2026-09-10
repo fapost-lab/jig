@@ -39,5 +39,39 @@ long-lived branch and would otherwise crowd out the work in flight.
 | File | Created by | Purpose |
 |---|---|---|
 | `state` | `jig task new` | this file |
-| `task.md` | `jig task new`, from `templates/task.md` or from `--from <file>` | goal, scope, notes; the only file `jig context` lists by default |
-| `discovery.md`, `spec.md`, `design.md`, `plan.md`, `review.md`, `verification.md` | skills, when the task class calls for them | stage artifacts (SPEC §14) |
+| `task.md` | `jig task new`, from `templates/task.md` or from `--from <file>` | goal, scope, notes; context also lists existing known artifacts |
+| `discovery.md`, `spec.md`, `alternatives.md`, `design.md`, `plan.md`, `review.md`, `verification.md`, `handoff.md` | skills, when the task class calls for them | stage artifacts (SPEC §14) |
+
+## Artifact input report (ADR-0020)
+
+`jig task artifacts <id> [--provided discovery,design,...]` reads the class and reports
+fixed-route documentary dependencies. `present` means a readable nonempty regular file
+inside this workspace. An external linked file, empty file or unavailable input has a
+reason. `provided-claim` names output the caller actually located in conversation or another
+artifact; it is not persisted or validated. Known optional kinds are discovery, spec,
+alternatives, design, plan, review, verification and handoff; task.md itself is inspected.
+
+T1 implementation consumes discovery; T2 planning consumes discovery and implementation/
+review/verify consume plan. T3 design consumes discovery and gate/implementation/
+architecture-review/verify consume design. T4 specification consumes discovery, alternatives
+consumes spec, design consumes spec+alternatives, and gate/implementation/review/verify
+consume spec+design. T3/T4 consolidation consumes verification. All stages also consume
+task.md; T0 has no additional documentary prerequisite.
+
+Stage rows report inputs-available/needs-input, with semantic prerequisites separately
+unassessed. Missing optional artifacts do not block unrelated stages. Exit 0 means the
+report succeeded, even with missing inputs; invalid invocation/inspection exits 1.
+Neither presence nor a provided claim proves approval, content quality or completion.
+No state fields or transitions are added. Workspace-free T0/T1 need not call the command.
+
+## Review scope (ADR-0022)
+
+`jig task changes <id> --base <ref> [--files <a,b|->] [--format report|paths]` requires an
+explicit commit base and inventories committed, staged, unstaged and untracked layers
+separately. The report includes resolved base/HEAD, path layers and excluded candidate
+count; paths format prints their sorted union only. Paths are literal repository-relative
+file names; stdin permits spaces/commas, explicit empty scope stays empty, and dot segments,
+absolute names and tab/newline names fail. Git failures do not become empty success.
+
+The base and ownership evidence live in task artifacts, not state. Mixed files still need
+hunk ownership evidence and actual patch inspection; inventory is not a review verdict.

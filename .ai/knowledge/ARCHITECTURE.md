@@ -48,6 +48,27 @@ and version.
 Adapters contain no SDLC logic; the only transform today is Codex's invocation syntax
 (`/jig-x` → `$jig-x`).
 
+## Profile contract
+
+`profiles/<stack>/profile.yaml` declares what the profile is and what it can do:
+
+- `name`, `description`;
+- `detect` — globs whose presence means this stack is here, or `always`. This is the one
+  place the mapping "manifest → stack" is written down; no command re-derives it.
+- `requires` — another profile this one implies;
+- `scope` — capabilities the profile understands, today only `[changed]` (ADR-0013).
+
+`profiles/<stack>/verify.sh` is run from the repository root and exits 0 pass, 1 fail,
+**2 skip**. It prints one line per check, because a profile runs several (shellcheck and
+tests; phpunit and phpstan), and a profile-level result hides which of them ran.
+
+Capabilities are granted, never assumed. `jig verify` passes `JIG_VERIFY_SCOPE` and
+`JIG_VERIFY_FILES` only to a profile whose `scope` declares support, and explicitly
+*unsets* both for every other profile rather than leaving whatever the caller's
+environment held — profiles are copied into projects and `upgrade` preserves
+user-modified ones, so a script written before a capability existed will meet a framework
+that has it.
+
 ## Install modes
 
 Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/knowledge/`

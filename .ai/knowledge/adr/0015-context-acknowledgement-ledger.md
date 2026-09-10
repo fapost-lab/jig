@@ -8,6 +8,7 @@ domains:
 paths:
   - scripts/lib/context.sh
 reviewed_at: 2026-09-09
+summary: Why reading knowledge is acknowledged per task, and what that ledger does not prove.
 ---
 # ADR-0015: Reading knowledge is acknowledged in a per-task ledger, and the ledger claims nothing more
 

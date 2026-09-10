@@ -281,3 +281,67 @@ test_upgrade_missing_from_falls_back_to_manifest_source() {
   run jig_installed upgrade
   assert_eq 0 "$RC"
 }
+
+# Regression for `upgrade_pending` (stale-install-check task): `status` and
+# `verify` treat an unresolvable source root as "unknown, skip the check"
+# (see tests/status.t.sh, tests/verify.t.sh), but that graceful degradation
+# lives entirely in upgrade_pending — a direct `jig upgrade` with no --from
+# and a deleted source checkout must still die exactly as before.
+test_upgrade_still_dies_without_from_when_source_root_gone() {
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-del.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" >/dev/null
+  rm -rf "$src"
+
+  run jig_installed upgrade
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "cannot determine the framework source root"
+}
+
+# New shared guidance must ship through real skills in both adapters/modes.
+_sdd_assert_reference_links() {
+  local runtime
+  for runtime in .claude .codex; do
+    assert_file "$runtime/skills/jig-task/references/requirements-and-planning.md"
+    assert_file "$runtime/skills/jig-task/references/handoff.md"
+    assert_file "$runtime/skills/jig-task/references/ui-states.md"
+    assert_file "$runtime/skills/jig-analyze/references/ambiguity.md"
+    assert_file "$runtime/skills/jig-review/references/change-scope.md"
+    assert_file "$runtime/skills/jig-review/../jig-task/references/ui-states.md"
+    assert_file "$runtime/skills/jig-implement/../jig-review/references/change-scope.md"
+  done
+}
+
+test_sdd_upgrade_adds_references_and_preserves_modified_consumers() {
+  fixture_repo
+  local old_source="$PWD/old-source" dir
+  mkdir "$old_source"
+  for dir in scripts skills templates adapters profiles; do
+    cp -R "$JIG_HOME/$dir" "$old_source/$dir"
+  done
+  rm "$old_source/skills/jig-task/references/requirements-and-planning.md" \
+    "$old_source/skills/jig-task/references/handoff.md" \
+    "$old_source/skills/jig-task/references/ui-states.md" \
+    "$old_source/skills/jig-analyze/references/ambiguity.md" \
+    "$old_source/skills/jig-review/references/change-scope.md"
+  jig init --from "$old_source" >/dev/null
+  echo 'User-owned review instruction' >> .codex/skills/jig-review/SKILL.md
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  _sdd_assert_reference_links
+  assert_file_contains .codex/skills/jig-review/SKILL.md 'User-owned review instruction'
+  assert_file_contains .ai/manifest '.codex/skills/jig-task/references/ui-states.md'
+}
+
+test_sdd_upgrade_link_mode_exposes_references_in_both_adapters() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  rm .codex/skills/jig-task
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_symlink .codex/skills/jig-task
+  _sdd_assert_reference_links
+}

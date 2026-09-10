@@ -17,6 +17,12 @@ Start work with the `jig-task` skill; it classifies the task by risk and names t
 Stage skills can also be used directly: `jig-analyze`, `jig-implement`, `jig-review`,
 `jig-verify`, `jig-consolidate`, `jig-architecture-review`.
 
+Two skills sit outside the task routes because they populate knowledge rather than change
+code: `jig-map` proposes per-domain knowledge, and `jig-accept` decides what is proposed.
+A proposed document is invisible to `jig context` until a human accepts it, so knowledge
+someone wrote but nobody agreed to reaches no agent — `jig status` reports the count on
+its `proposals:` line, and `jig knowledge proposed` lists it.
+
 | Class | Route |
 |---|---|
 | T0 trivial | implement, verify |
@@ -37,6 +43,11 @@ new class requires.
 - Scripts: POSIX sh / bash 3.2, no mandatory dependencies besides `git` (ADR-0002).
   Every script command has a test under `tests/`.
 - Skills are short; mechanics go to scripts (ADR-0001).
+- Adding or renaming anything framework-owned — a skill under `skills/`, a profile, a
+  template — is not finished until `jig upgrade` has placed it. This repository installs
+  itself in link mode, so a new skill exists in `skills/` but not in `.claude/skills/` or
+  `.codex/skills/` until then, and no runtime can see it. `jig verify` refuses to run
+  while anything is pending, and `jig status` reports the count.
 - Task-specific notes live in `.ai/workspace/tasks/<id>/` (gitignored), never in the repo.
 - Before finishing a task, ask: what here should survive the task? Update
   `.ai/knowledge/` accordingly, or state `NO_DURABLE_KNOWLEDGE`. Knowledge frontmatter is

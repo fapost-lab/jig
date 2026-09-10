@@ -280,6 +280,12 @@ Required fields: `id`, `type`, `status`. `domains`, `topics` and `paths` drive c
 
 Frontmatter is limited to flat scalars and single-level lists, so it can be parsed without a YAML parser. Keeping `paths` up to date is the responsibility of the consolidate skill.
 
+## 8.1 Proposed Knowledge
+
+`status: proposed` is knowledge written but not yet agreed to. The document lives at its real path, is validated by `jig knowledge check` and appears as an ordinary git diff, but `jig context` does not resolve it: resolution uses an allowlist of `active` and `accepted`, so a proposed document cannot enter any agent's context, be listed in the catalog, or satisfy a `requires`. `jig knowledge accept <id>` promotes it after a human has agreed; `--all` is how it is reviewed before that. `jig status` reports the count on the `proposals:` line, so knowledge left undecided is discoverable by someone arriving later rather than only by whoever was in the session that proposed it.
+
+This is what makes `jig-map` (§28) safe to run on an unfamiliar codebase: everything it infers is written where a human can read it in context, and nothing it infers is authoritative until accepted. An allowlist rather than a denylist of retired values, because a denylist resolves every value it has not heard of — a typo included — as though it were active.
+
 ## 9. Glossary
 
 `.ai/knowledge/GLOSSARY.md` contains the canonical ubiquitous language:
@@ -382,6 +388,35 @@ Classification is performed by the **agent** following the rubric from the `task
 | T4 | Critical | Discover → Specify → Alternatives → Design → Human Gate → Implement → Independent Review → Regression/Security Verification → Consolidate |
 
 Not every stage requires a persistent artifact. T0–T1 usually do not create a workspace at all.
+
+### 17.1 Requirements, inputs, and review
+
+Standalone exploration can answer a question before task classification/creation. Explicit
+analysis of a task stays attached to it. Once implementation intent is concrete, normal
+routing and gates apply. `context --no-task` bypasses unrelated current-task selection.
+
+For T2+, keep one acceptance-to-check/evidence map in plan.md or its existing design/spec
+owner. Analysis resolves material ambiguity; low-impact defaults are stated, deferred
+questions have owner/trigger and cannot cross dependent work. Describe relevant behavior
+deltas and compatibility consequences. Each plan step names its completion check; evidence
+can serve several steps/criteria. T0/T1 keep proportional prose. Omitted/unverified criteria
+remain visible; green tests do not substitute for requirement coverage.
+
+`task artifacts <id> [--provided <kinds>]` reports fixed-route inputs as present,
+provided-claim or unavailable, and input dependencies as inputs-available/needs-input.
+Conversation outputs need no separate file. The caller must substantiate provided claims;
+semantic approval, implementation and review outcomes remain unassessed. This read-only
+report never advances lifecycle. Exact relationships are in schemas/state.md (ADR-0020).
+
+`task changes <id> --base <ref> [--files <list>|-] [--format report|paths]` inventories
+committed/staged/unstaged/untracked layers with an explicit commit baseline. The file
+allowlist is literal; explicit empty scope remains empty. No-base and Git errors fail.
+Both review stages inspect all selected patches/new contents and every requirement;
+record ownership evidence and disclose unresolved mixed-file boundaries (ADR-0022).
+
+Use a compact persisted handoff at session/executor boundaries, pause or gate; same-session
+transitions are brief. UI work maps applicable states to criteria and UI evidence; backend
+work needs no UI artifact. Shared guidance is installed under existing skills/references.
 
 ## 18. Consolidation
 
@@ -498,7 +533,7 @@ Inputs:
 - **Files**: `--files` (comma list, or `-` for stdin), otherwise derived from git: files changed since the merge base with `git.base_branch`, plus unstaged and untracked files.
 - **Domains**: `--domains`, otherwise the task's `domains` state key.
 
-A document matches when any of its `paths` globs matches any file, or any of its `domains` equals a requested domain; the reason is printed. Documents with status `superseded`, `deprecated` or `rejected` are skipped unless `--all`. `--format paths` prints bare paths for piping. The agent reads only the returned list. If nothing matched, only global + workspace are returned.
+A document matches when any of its `paths` globs matches any file, or any of its `domains` equals a requested domain; the reason is printed. Resolution uses an allowlist of `active` and `accepted` (§8.1), so `proposed`, `superseded`, `deprecated`, `rejected` and any value the resolver has not heard of are skipped unless `--all`. `--format paths` prints bare paths for piping. The agent reads only the returned list. If nothing matched, only global + workspace are returned.
 
 Enumeration walks `.ai/knowledge/` recursively, so a document is resolved wherever it is filed; applicability lives in frontmatter, never in the directory (ADR-0004).
 
@@ -513,7 +548,7 @@ jig context guard   [selectors]
 jig context acknowledge --task <id> --files <list>|-
 ```
 
-Selectors are `--task`, `--files`, `--domains`, `--topics`, `--ids` and `--all`.
+Selectors are `--task` (or `--no-task`), `--stage`, `--files`, `--domains`, `--topics`, `--ids` and `--all`.
 
 `resolve` prints two things. **Required** documents, whose full body the agent must read: the globals, `load: always` documents, `load: domain` documents of an entered domain, `load: matched` documents hit by a path or topic, ids named with `--ids`, and the transitive `requires` closure of all of those. And, with `--catalog`, **catalog** entries: id, path and `summary` of the remaining active documents of the entered domains. A catalog entry is metadata only; the agent decides whether it is relevant and pulls it in with `--ids`. A body is never loaded merely because it shares a domain.
 
@@ -524,6 +559,23 @@ A `requires` that resolves to no active document is fatal: returning a partial c
 T0 and T1 have no workspace (§17), so they have no ledger. `guard` then prints `no task workspace; nothing tracked` and exits 0 — a skill can call it unconditionally, and the report never implies a check that did not happen.
 
 What the ledger proves is deliberately narrow: the agent stated it read the document. It is not evidence of comprehension, and a passing guard is not evidence that the knowledge was applied.
+
+### 26.2 Stage relevance and standalone exploration
+
+`--stage` adds relevance in progressive resolve/pending/guard. A load: matched document
+in an entered domain's catalog is promoted when its optional stages metadata matches.
+Existing mandatory globals, load policies, path/topic matches, explicit IDs and transitive
+requires remain binding. Stage never hides a constraint or selects unrelated domains.
+Supported names and writer commands are in schemas/frontmatter.md (ADR-0021).
+
+Use the same stage and other selectors for resolve/pending/guard. Newly required or changed
+hashes become pending; unchanged acknowledged documents need no reread. Missing mandatory
+globals, requested IDs or dependencies fail even without a task. Legacy context rejects
+--stage and directs callers to resolve. Workspace artifacts are not stage-filtered.
+
+Both forms accept --no-task, mutually exclusive with --task. It bypasses implicit task
+selection, inherited task domains and workspace artifacts; explicit selectors still work.
+No-task guard reports no ledger, not a successful read check. No task state is written.
 
 ## 27. Knowledge Authority
 
@@ -545,6 +597,8 @@ Significant conflicts are escalated to a human.
 ```
 skills/
 ├── jig-init/                 # initial knowledge population (analyze repo)
+├── jig-map/                  # propose per-domain knowledge; human accepts it
+├── jig-accept/               # decide pending proposals with a human
 ├── jig-task/                 # create/open a task, classify, choose workflow
 ├── jig-analyze/
 ├── jig-implement/
@@ -553,6 +607,10 @@ skills/
 ├── jig-consolidate/
 └── jig-architecture-review/
 ```
+
+`jig-init`, `jig-map` and `jig-accept` sit outside the task routes: they populate knowledge rather than change code. `jig-init` writes the three global documents; `jig-map` proposes per-domain knowledge as `proposed` documents (§8.1) and stops at its own human gate. Neither runs as part of a task route, because a judgement about someone else's codebase deserves its own approval.
+
+`jig-accept` is the other side of that gate, and a separate skill because the decision is deliberately allowed to outlive the session that proposed: `jig knowledge proposed` enumerates what is waiting, the skill presents each proposal with its body and its evidence, and `jig knowledge accept` / `jig knowledge reject` apply the answers in one all-or-nothing call each. Rejecting sets `status: rejected` and leaves the document at its path — it stops resolving, but the next map to propose the same domain can see the argument was already had (ADR-0018). The human is never asked for a document id; that is the skill's job to translate.
 
 `jig-task` is the entry point and the only router: it classifies the work against the rubric in `skills/jig-task/references/classification.md` and names the route (§17). Every other skill performs one stage and can also be invoked directly when the user already knows which stage they want. Human gates for T3 and T4 are full stops inside `jig-task`; approval must be given for that design, in that conversation. Re-classification with `jig task set <id> class Tn` is a normal event, not a failure (ADR-0009).
 
@@ -580,11 +638,14 @@ task resume <id>          clear the pause, apply the stash, report the gap
 task list [--all] [--status <s>]   live tasks by default; finished ones are counted
 task show <id>            print the state file
 task current              the one candidate for this branch; exit 2 lists several
+task changes <id> --base <ref> [...]   inventory committed/staged/unstaged/untracked layers
+task artifacts <id> [--provided <kinds>]  report fixed-route documentary inputs
 context [...]             §26
 verify [--profile <p>]    run checks from active profiles, return a combined exit code
 knowledge check           frontmatter validation, broken links, duplicate ids, documents without an owning path
 knowledge new <type> <slug>  instantiate a feature/adr/convention template, allocating the next ADR number
 knowledge paths [...]     report the gap between documents' `paths` and the files a task touched; `add`/`remove` a glob
+knowledge stages add|remove <id> <stage>  maintain additive stage relevance
 knowledge stale [--strict]  documents that drifted away from the code they describe (§19.1)
 knowledge reviewed <id>   stamp `reviewed_at` on a document reconciled with the code
 housekeeping [--dry-run]  §24
@@ -657,6 +718,10 @@ SDLC logic stays in skills and scripts. Installed files are committed — the wh
 | no | yes | ≠ manifest | keep, report `orphaned-modified` |
 
 The same principle as housekeeping applies: when in doubt, do not touch. `jig status` lists `modified` and `conflict` files so divergence from the framework is visible rather than silently accumulating. Both `init` and `upgrade` are idempotent.
+
+`jig status`'s `drift: <m> modified, <x> missing, <p> pending` line reports two distinct kinds of gap. `modified`/`missing` walk paths already recorded in `.ai/manifest`; `pending` is the count of framework-owned items — a skill, profile or adapter file added to the source since the project's last `upgrade` — that `jig upgrade` would install or link right now. The two cannot be merged: a path is only ever in the manifest once `init` or `upgrade` has placed it, so a newly added skill is invisible to `modified`/`missing` even though it is exactly what `jig upgrade` exists to catch up on — and in link mode the manifest carries no path lines at all, leaving `modified`/`missing` at zero no matter how far behind the project has drifted. `pending` is computed the same way `jig upgrade --dry-run` reports its own pending actions, without mutating anything. When the framework source root cannot be resolved (e.g. a copy-mode install whose source checkout no longer exists on this machine), pending state is unknown rather than zero, and the field is omitted from the line entirely.
+
+`jig verify` refuses to run any profile at all while framework files are pending: a pass computed against a stale install is not evidence of anything. It reports one line per pending path plus `FAIL framework: <n> framework files not installed (run jig upgrade)` and exits non-zero, before touching the profile loop (`--list` is unaffected — it only reports installed/not-installed, it runs nothing). As with `status`, an unresolvable source root degrades to "unknown" rather than a failure: verify proceeds to run the profiles normally.
 
 Activating a profile or adapter later is a config edit followed by `jig upgrade`: on a re-run, `init` and `upgrade` take `profiles` and `adapters` from `.ai/config.yaml` unless flags are given, and flags that differ from the config rewrite those two lines. In link mode `upgrade` creates any missing symlinks instead of copying.
 

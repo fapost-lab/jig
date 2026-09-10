@@ -24,6 +24,12 @@ Start work with the `jig-task` skill; it classifies the task by risk and names t
 Stage skills can also be used directly: `jig-analyze`, `jig-implement`, `jig-review`,
 `jig-verify`, `jig-consolidate`, `jig-architecture-review`.
 
+Two skills sit outside the task routes because they populate knowledge rather than change
+code: `jig-map` proposes per-domain knowledge, and `jig-accept` decides what is proposed.
+A proposed document is invisible to `jig context` until a human accepts it, so knowledge
+someone wrote but nobody agreed to reaches no agent — `jig status` reports the count on
+its `proposals:` line, and `jig knowledge proposed` lists it.
+
 | Class | Route |
 |---|---|
 | T0 trivial | implement, verify |

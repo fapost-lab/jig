@@ -76,6 +76,13 @@ test_verify_shell_profile_fails_on_bad_script() {
 # Activating a profile in config.yaml after init used to leave the hint a
 # dead end: copy mode's own decision table already installed the profile,
 # but link mode's `jig upgrade` was a pure no-op. Covers both modes.
+#
+# Since the stale-install-check task, the framework-level pending gate
+# (below) catches this case earlier than the per-profile "not installed"
+# check ever runs: activating `shell` without upgrading first now fails as
+# a framework staleness problem, not a per-profile one — a strictly earlier
+# and more actionable diagnosis of the same root cause, so these two tests
+# assert on the new message instead of the old per-profile one.
 
 test_verify_hint_resolved_by_upgrade_copy_mode() {
   fixture_repo
@@ -87,7 +94,10 @@ EOF
 
   run jig verify
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "FAIL shell: not installed (run jig upgrade)"
+  assert_contains "$OUT" "install .ai/profiles/shell/profile.yaml"
+  assert_contains "$OUT" "install .ai/profiles/shell/verify.sh"
+  assert_contains "$OUT" "FAIL framework: 2 framework files not installed (run jig upgrade)"
+  assert_not_contains "$OUT" "RESULT"
 
   jig upgrade --from "$JIG_HOME" >/dev/null
 
@@ -107,7 +117,9 @@ EOF
 
   run jig verify
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "FAIL shell: not installed (run jig upgrade)"
+  assert_contains "$OUT" "link .ai/profiles/shell"
+  assert_contains "$OUT" "FAIL framework: 1 framework file not installed (run jig upgrade)"
+  assert_not_contains "$OUT" "RESULT"
 
   jig upgrade --from "$JIG_HOME" >/dev/null
 
@@ -118,6 +130,57 @@ EOF
   run jig verify
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "not installed"
+}
+
+# --- framework staleness gate runs no profile at all (stale-install-check) -
+# A pass from a stale install is meaningless: prove no profile's verify.sh
+# executes at all while framework files are pending, using a profile that
+# *is* installed and would otherwise run cleanly (touching its own ".ran"
+# marker) — its absence afterward is the evidence.
+
+test_verify_fails_before_running_any_profile_when_framework_pending() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  _fixture_probe_profile probe ""
+  cat > .ai/config.yaml <<'EOF'
+profiles: [generic, probe, shell]
+adapters: [claude, codex]
+EOF
+
+  run jig verify
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "install .ai/profiles/shell/profile.yaml"
+  assert_contains "$OUT" "install .ai/profiles/shell/verify.sh"
+  assert_contains "$OUT" "FAIL framework: 2 framework files not installed (run jig upgrade)"
+  assert_not_contains "$OUT" "RESULT"
+  assert_not_contains "$OUT" "SKIP"
+  assert_no_file probe.ran
+
+  jig upgrade --from "$JIG_HOME" >/dev/null
+
+  run jig verify
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "RESULT shell: pass"
+  assert_contains "$OUT" "verify: 3 profiles, 3 pass, 0 fail, 0 skip"
+  assert_file probe.ran
+}
+
+# A copy-mode install whose source checkout no longer exists on this
+# machine must not turn into a verify failure (SPEC §32): pending state is
+# simply unknown, so verify falls back to running the profiles normally.
+test_verify_runs_profiles_when_source_root_unknown() {
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-del.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" --profiles generic >/dev/null
+  rm -rf "$src"
+
+  run jig_installed verify
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "RESULT generic: pass"
+  assert_not_contains "$OUT" "FAIL framework"
 }
 
 # --- path traversal in profile names (profile-name-validation task) -------

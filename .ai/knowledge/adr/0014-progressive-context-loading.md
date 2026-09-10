@@ -13,6 +13,7 @@ paths:
   - "templates/knowledge/**"
   - docs/SPEC.md
 reviewed_at: 2026-09-09
+summary: Why knowledge declares how it should be loaded, and why directories never decide applicability.
 ---
 # ADR-0014: Knowledge declares how it should be loaded, and directories never decide
 
@@ -105,6 +106,9 @@ it from validation and hidden it from every consumer, silently.
   like task ids, profile names and adapter names before it (ADR-0008).
 - Existing documents need no migration: absent `load` means `matched`, which is what they
   already did.
+- Extended by ADR-0016: `proposed` joins the status values, and resolution stopped
+  filtering by a denylist of retired values — which is what makes "a document declares
+  how it should be loaded" also mean "a document nobody has agreed to is not loaded".
 - The stateless `jig context` form keeps promoting a domain match to `matched:`. The two
   forms differ on exactly that point, deliberately, and it is written down in
   `schemas/frontmatter.md` rather than left to be discovered.
