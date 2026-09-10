@@ -145,8 +145,9 @@ test_status_via_installed_copy() {
 test_status_reports_current_task_ambiguous() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
-  jig task new T-1 >/dev/null
-  jig task new T-2 >/dev/null
+  # Two tasks on one branch, which branch-per-task otherwise prevents.
+  jig task new T-1 --no-branch >/dev/null
+  jig task new T-2 --no-branch >/dev/null
 
   run jig status
   assert_eq 0 "$RC"

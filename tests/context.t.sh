@@ -552,8 +552,12 @@ test_context_task_explicit_overrides_current_branch_resolution() {
 
 test_context_ambiguous_omits_workspace_warns_stderr_exits_0() {
   ctx_setup
-  jig task new T-1 >/dev/null
-  jig task new T-2 >/dev/null
+  # --no-branch on purpose: ambiguity needs two tasks on one branch, which
+  # branch-per-task (the default) prevents. The behaviour under test — context
+  # omits the workspace rather than guessing — still matters wherever
+  # branch-per-task is off.
+  jig task new T-1 --no-branch >/dev/null
+  jig task new T-2 --no-branch >/dev/null
 
   run jig context
   assert_eq 0 "$RC"

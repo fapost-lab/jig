@@ -9,6 +9,7 @@ domains:
 paths:
   - scripts/lib/housekeeping.sh
 summary: Why git ancestry may only answer merged-or-unknown, and why a task on the base branch is unknown.
+reviewed_at: 2026-09-10
 ---
 # ADR-0025: Git ancestry answers "did it land", never "is it open"
 
@@ -70,3 +71,7 @@ exit code 3 meaningless from the first day.
   evidence, so "why was this deleted" stays answerable.
 - Failure direction is preserved: every uncertainty in this tier resolves to `unknown`,
   and `unknown` never destroys anything (RULES.md).
+- **A second route to `unknown` arrived with ADR-0026**: a branch that has committed
+  nothing since the task forked it. Both routes exist for the same reason — a tip equal to
+  the base is not evidence of anything — and this one is the reason a task must record
+  where its branch started.

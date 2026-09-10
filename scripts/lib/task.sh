@@ -301,6 +301,50 @@ _task_resume_overlap() {
 # Refuse to start a new task on a dirty working tree (design §6): untracked
 # files never block (build output is not work in progress), only tracked
 # changes do — a `git status --porcelain` line that is not `??`.
+# _task_branch_name <id> — the branch this task will live on, from
+# `git.branch_template` with {id} substituted. Dies on a name git would
+# reject, using git's own rules rather than a hand-rolled regex: the set of
+# invalid ref names is long (`..`, a trailing `.lock`, control characters, a
+# leading dash) and getting it wrong here means creating a ref nobody can
+# delete without plumbing.
+_task_branch_name() {
+  local id="$1" template name
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    *'{id}'*) ;;
+    *) jig_die "task new: git.branch_template must contain {id}: $template" ;;
+  esac
+  name=${template%%'{id}'*}$id${template#*'{id}'}
+  git check-ref-format --branch "$name" >/dev/null 2>&1 \
+    || jig_die "task new: git rejects the branch name: $name"
+  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$name" >/dev/null 2>&1; then
+    jig_die "task new: branch already exists: $name (reusing it would attach this task to someone else's work)"
+  fi
+  printf '%s\n' "$name"
+}
+
+# _task_create_branch <name> — create <name> off the base branch, check it
+# out, and print the commit it starts from. Non-zero when git refuses.
+#
+# The branch is cut from `git.base_branch`, not from HEAD: a task is work
+# proposed against the base, and starting it from wherever the checkout
+# happened to be is how a task quietly inherits an unrelated branch's history.
+# When the base cannot be resolved (a repository with no commits yet) the
+# branch is cut from HEAD instead, which is the only thing that exists.
+_task_create_branch() {
+  local name="$1" base start
+  base=$(cfg git.base_branch main)
+  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null 2>&1; then
+    start="refs/heads/$base"
+  elif git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$base" >/dev/null 2>&1; then
+    start="refs/remotes/origin/$base"
+  else
+    start="HEAD"
+  fi
+  git -C "$JIG_PROJECT" checkout -q -b "$name" "$start" >/dev/null 2>&1 || return 1
+  git -C "$JIG_PROJECT" rev-parse HEAD 2>/dev/null || return 1
+}
+
 _task_refuse_dirty_tree() {
   local branch="$1" tracked owner
   tracked=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null | grep -v '^??' || true)
@@ -321,13 +365,14 @@ task_new() {
   [ $# -ge 1 ] || jig_die "usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>] [--force]"
   local id="$1"
   shift
-  local class="" domains="" from="" force=0
+  local class="" domains="" from="" force=0 no_branch=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --class) [ $# -ge 2 ] || jig_die "task new: --class requires a value"; class="$2"; shift 2 ;;
       --domains) [ $# -ge 2 ] || jig_die "task new: --domains requires a value"; domains="$2"; shift 2 ;;
       --from) [ $# -ge 2 ] || jig_die "task new: --from requires a value"; from="$2"; shift 2 ;;
       --force) force=1; shift ;;
+      --no-branch) no_branch=1; shift ;;
       *) jig_die "task new: unknown argument: $1" ;;
     esac
   done
@@ -358,12 +403,33 @@ task_new() {
   # owner when there is exactly one. Untracked-only trees pass through.
   [ "$force" -eq 1 ] || _task_refuse_dirty_tree "$branch"
 
+  # Everything that can refuse this task refuses it before anything is
+  # created, so a rejected `task new` leaves neither a workspace nor a branch.
+  local new_branch=""
+  if [ "$no_branch" -eq 0 ] && cfg_bool git.branch_per_task true; then
+    new_branch=$(_task_branch_name "$id")
+  fi
+
   mkdir -p "$dir"
+
+  # Create the branch after the workspace so a failure here can be undone
+  # cleanly: the directory was made by this call and nothing else has written
+  # to it yet. The reverse order would leave the checkout on a branch with no
+  # task behind it.
+  local base_commit=""
+  if [ -n "$new_branch" ]; then
+    if ! base_commit=$(_task_create_branch "$new_branch"); then
+      rm -rf "$dir"
+      jig_die "task new: could not create branch $new_branch"
+    fi
+    branch="$new_branch"
+  fi
 
   local tmp="$dir/state.tmp.$$"
   {
     printf 'task_id: %s\n' "$id"
     printf 'branch: %s\n' "$branch"
+    [ -z "$base_commit" ] || printf 'base_commit: %s\n' "$base_commit"
     [ -z "$class" ] || printf 'class: %s\n' "$class"
     printf 'status: active\n'
     printf 'knowledge_consolidated: false\n'
@@ -390,7 +456,7 @@ task_set() {
     status) _task_valid_status "$value" || jig_die "task set: invalid status: $value" ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
-    task_id | branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash)
+    task_id | branch | base_commit | created_at | updated_at | paused | paused_at | paused_reason | paused_stash)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac

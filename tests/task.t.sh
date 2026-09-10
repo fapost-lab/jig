@@ -43,10 +43,10 @@ test_task_new_creates_state_with_expected_keys_in_order() {
   # created_at, updated_at (no class/domains: not given).
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch status knowledge_consolidated created_at updated_at " "$keys"
+  assert_eq "task_id branch base_commit status knowledge_consolidated created_at updated_at " "$keys"
 
   assert_file_contains .ai/workspace/tasks/T-1/state "task_id: T-1"
-  assert_file_contains .ai/workspace/tasks/T-1/state "branch: main"
+  assert_file_contains .ai/workspace/tasks/T-1/state "branch: task/T-1"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
   assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
   assert_file_contains .ai/workspace/tasks/T-1/state "created_at: $(date +%Y-%m-%d)"
@@ -60,7 +60,7 @@ test_task_new_with_class_and_domains_order() {
 
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch class status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id branch base_commit class status knowledge_consolidated domains created_at updated_at " "$keys"
   assert_file_contains .ai/workspace/tasks/T-1/state "class: T2"
   assert_file_contains .ai/workspace/tasks/T-1/state "domains: flow,triggers"
 }
@@ -161,7 +161,7 @@ test_task_new_from_with_class_and_domains() {
   assert_file_contains .ai/workspace/tasks/T-1/task.md "Doc body."
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch class status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id branch base_commit class status knowledge_consolidated domains created_at updated_at " "$keys"
 }
 
 test_task_new_duplicate_id_dies() {
@@ -198,7 +198,9 @@ test_task_new_invalid_domains_dies() {
 test_task_new_detached_head_records_detached_branch() {
   task_setup
   git checkout -q --detach main
-  run jig task new T-1
+  # --no-branch keeps the checkout detached; with a branch created there is
+  # no longer a detached HEAD to record.
+  run jig task new T-1 --no-branch
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "branch: detached"
 }
@@ -251,7 +253,7 @@ test_task_set_domains_when_absent_inserts_before_created_at() {
   assert_file_contains .ai/workspace/tasks/T-1/state "domains: flow,triggers"
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id branch base_commit status knowledge_consolidated domains created_at updated_at " "$keys"
 }
 
 test_task_set_invalid_class_dies() {
@@ -390,12 +392,16 @@ test_task_list_ordering_and_fields() {
   jig task new T-2 >/dev/null
   jig task new T-1 --class T1 >/dev/null
   git checkout -q -b other
-  jig task new T-3 >/dev/null
+  # --no-branch so T-3 keeps the checkout's own branch: the point of this
+  # line is that a task belonging to a *different* branch still appears in
+  # the listing, which needs a branch this test chose rather than one
+  # task new derived from the id.
+  jig task new T-3 --no-branch >/dev/null
 
   run jig task list
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "T-1 class=T1 status=active branch=main"
-  assert_contains "$OUT" "T-2 class=- status=active branch=main"
+  assert_contains "$OUT" "T-1 class=T1 status=active branch=task/T-1"
+  assert_contains "$OUT" "T-2 class=- status=active branch=task/T-2"
   assert_contains "$OUT" "T-3 class=- status=active branch=other"
 
   # sorted by id
@@ -474,8 +480,12 @@ test_task_current_excludes_consolidated() {
 
 test_task_current_excludes_paused_task_from_candidates() {
   task_setup
-  jig task new T-1 >/dev/null
-  jig task new T-2 >/dev/null
+  # --no-branch on purpose: two tasks must share one branch for this to be a
+  # test of candidate selection at all. With branch-per-task on (the default)
+  # they cannot collide, which is the point of that feature — so ambiguity is
+  # now only reachable the way it is reproduced here.
+  jig task new T-1 --no-branch >/dev/null
+  jig task new T-2 --no-branch >/dev/null
   jig task pause T-2 >/dev/null
   # With T-2 paused, T-1 is the only candidate left: deterministic, not
   # ambiguous, even though both share the branch and an active-ish status.
@@ -486,8 +496,9 @@ test_task_current_excludes_paused_task_from_candidates() {
 
 test_task_current_several_candidates_exits_2_lists_both_nothing_on_stdout() {
   task_setup
-  jig task new T-1 >/dev/null
-  jig task new T-2 >/dev/null
+  # Two tasks on one branch: only reachable with --no-branch now.
+  jig task new T-1 --no-branch >/dev/null
+  jig task new T-2 --no-branch >/dev/null
   run_split jig task current
   assert_eq 2 "$RC"
   assert_eq "" "$OUT" "stdout must be empty on ambiguous current"
@@ -637,7 +648,7 @@ test_task_resume_wrong_branch_refuses_and_changes_nothing() {
 
   run jig task resume T-1
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "switch to main first"
+  assert_contains "$OUT" "switch to task/T-1 first"
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
 }
 
@@ -670,7 +681,7 @@ test_task_list_shows_paused_marker() {
 
   run jig task list
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "T-1 class=- status=active branch=main paused"
+  assert_contains "$OUT" "T-1 class=- status=active branch=task/T-1 paused"
   assert_not_contains "$OUT" "T-2 class=- status=active branch=main paused"
 }
 
@@ -971,4 +982,127 @@ test_sdd_artifacts_rejects_invalid_claims_and_class() {
   run jig task artifacts unknown
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'unknown task'
+}
+
+# --- branch per task (ADR-0008; a task lives on one branch) ------------------
+
+test_task_new_creates_and_checks_out_a_branch() {
+  task_setup
+  run jig task new T-1
+  assert_eq 0 "$RC"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "branch: task/T-1"
+}
+
+test_task_new_records_the_commit_it_forked_from() {
+  # Without this, ancestry cannot tell "this branch has done nothing" from
+  # "this branch was fast-forwarded in": in both cases the tip equals the base.
+  task_setup
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  jig task new T-1 >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $head_before"
+}
+
+test_task_new_branch_is_cut_from_the_base_branch_not_head() {
+  # A task is work proposed against the base. Starting it wherever the
+  # checkout happened to be is how a task inherits an unrelated history.
+  task_setup
+  git checkout -q -b unrelated
+  printf 'unrelated\n' > unrelated.txt
+  git add unrelated.txt
+  git commit -q -m "unrelated work"
+
+  jig task new T-1 --force >/dev/null
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  # The unrelated commit must not be an ancestor of the new branch.
+  if git merge-base --is-ancestor unrelated HEAD 2>/dev/null; then
+    fail "task branch was cut from HEAD, not from the base branch"
+  fi
+}
+
+test_task_new_no_branch_keeps_the_current_checkout() {
+  task_setup
+  run jig task new T-1 --no-branch
+  assert_eq 0 "$RC"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "branch: main"
+  if grep -q '^base_commit:' .ai/workspace/tasks/T-1/state; then
+    fail "no branch was created, so there is no fork point to record"
+  fi
+}
+
+test_task_new_respects_branch_per_task_false() {
+  task_setup
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  jig task new T-1 >/dev/null
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_task_new_uses_the_configured_branch_template() {
+  task_setup
+  sed 's|^git.branch_template:.*|git.branch_template: wip/{id}-x|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  jig task new T-1 >/dev/null
+  assert_eq "wip/T-1-x" "$(git symbolic-ref --short HEAD)"
+}
+
+test_task_new_rejects_a_template_without_the_id() {
+  task_setup
+  sed 's|^git.branch_template:.*|git.branch_template: wip/fixed|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  run jig task new T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "must contain {id}"
+  assert_no_file .ai/workspace/tasks/T-1/state
+}
+
+test_task_new_rejects_a_branch_name_git_would_reject() {
+  # git's own rules, not a hand-rolled regex: the invalid set is long and
+  # creating a ref nobody can delete without plumbing is the failure mode.
+  task_setup
+  sed 's|^git.branch_template:.*|git.branch_template: bad..{id}|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  run jig task new T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "git rejects the branch name"
+  assert_no_file .ai/workspace/tasks/T-1/state
+}
+
+test_task_new_refuses_an_existing_branch_and_leaves_nothing_behind() {
+  task_setup
+  git branch task/T-1
+
+  run jig task new T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "branch already exists"
+  assert_no_file .ai/workspace/tasks/T-1/state
+  assert_no_file .ai/workspace/tasks/T-1
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_task_set_refuses_to_write_base_commit() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 base_commit deadbeef
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
+test_task_new_branches_from_head_in_a_repository_with_no_base_branch() {
+  # Documented fallback: when neither the local nor the remote base branch
+  # resolves, the branch is cut from HEAD, which is the only thing there is.
+  task_setup
+  git branch -m main trunk
+  # git.base_branch still says `main`, which now resolves to nothing.
+  run jig task new T-1
+  assert_eq 0 "$RC"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $(git rev-parse trunk)"
 }

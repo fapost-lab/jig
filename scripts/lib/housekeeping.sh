@@ -56,7 +56,7 @@ cmd_housekeeping() {
   fi
 
   local needs_consolidation=0 found=0
-  local state_file tid st paused age branch remote remote_pair decision action flags dest
+  local state_file tid st paused age branch base_commit remote remote_pair decision action flags dest
 
   if [ -d "$tasks_dir" ]; then
     while IFS= read -r state_file; do
@@ -75,7 +75,8 @@ cmd_housekeeping() {
       branch=$(task_state_get "$tid" branch)
       age=$(_hk_task_age_days "$tid")
 
-      remote_pair=$(_hk_remote_state "$branch")
+      base_commit=$(task_state_get "$tid" base_commit)
+      remote_pair=$(_hk_remote_state "$branch" "$base_commit")
       remote=${remote_pair%% *}
       _HK_VIA=${remote_pair#* }
 
@@ -195,7 +196,7 @@ housekeeping_decide() {
 # because every caller reads this through `$(...)` and a subshell would
 # discard the assignment — the log would then report a tier that never ran.
 _hk_remote_state() {
-  local branch="$1" state
+  local branch="$1" base_commit="${2:-}" state
 
   if [ -z "$branch" ] || [ "$branch" = "detached" ]; then
     # `detached` is task.sh:100's fallback when HEAD is not on a branch, not a
@@ -210,7 +211,7 @@ _hk_remote_state() {
     return 0
   fi
 
-  state=$(_hk_ancestry_state "$branch")
+  state=$(_hk_ancestry_state "$branch" "$base_commit")
   if [ "$state" = "merged" ]; then
     printf 'merged ancestry\n'
     return 0
@@ -326,7 +327,7 @@ _hk_forge_state() {
 # evidence of an open PR. §23 gives `open` and `unknown` the same action, so
 # this costs no behaviour and keeps the report honest.
 _hk_ancestry_state() {
-  local branch="$1" base tip mb combined c base_name
+  local branch="$1" base_commit="${2:-}" base tip mb combined c base_name
   base_name=$(cfg git.base_branch main)
 
   # The task never had a branch of its own: it was worked on directly on the
@@ -353,6 +354,27 @@ _hk_ancestry_state() {
   if [ -z "$tip" ]; then
     printf 'unknown\n'
     return 0
+  fi
+
+  # 0. The branch has contributed nothing since the task forked it, so there
+  # is nothing that could have landed. Without this, a freshly created task
+  # branch answers `merged` — its tip *is* the base's — and a task that
+  # reaches `consolidated` without ever committing gets purged while all of
+  # its work sits uncommitted in the working tree. Measured, not theorised.
+  #
+  # Only tasks that recorded a fork point can be asked this; a workspace from
+  # before `base_commit` existed skips the check and behaves as it always did.
+  # `cat-file -e <sha>^{commit}`, not `rev-parse --verify`: the latter accepts
+  # the all-zero SHA as a well-formed object name and reports success, so a
+  # stale fork point from a rewritten history would pass the check and then
+  # make every rev-list against it empty — reading as "did nothing" for a
+  # branch that may well have landed.
+  if [ -n "$base_commit" ] \
+     && git -C "$JIG_PROJECT" cat-file -e "$base_commit^{commit}" 2>/dev/null; then
+    if [ -z "$(git -C "$JIG_PROJECT" rev-list -n 1 "$base_commit..$tip" 2>/dev/null)" ]; then
+      printf 'unknown\n'
+      return 0
+    fi
   fi
 
   # 1. Fast-forward or a real merge commit.
