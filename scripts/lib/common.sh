@@ -214,10 +214,16 @@ jig_check_review_path() {
   esac
 }
 
+# jig_review_commit <ref> [message-prefix]
+#
+# The prefix names the *calling* command in the error. Without it the message
+# was hardcoded to "task changes", so a second caller told the user about a
+# command they had not run.
 jig_review_commit() {
-  case "$1" in '' | -*) jig_die "task changes: invalid base: $1" ;; esac
+  local who="${2:-task changes}"
+  case "$1" in '' | -*) jig_die "$who: invalid base: $1" ;; esac
   git -C "$JIG_PROJECT" rev-parse --verify "$1^{commit}" 2>/dev/null \
-    || jig_die "task changes: cannot resolve commit: $1"
+    || jig_die "$who: cannot resolve commit: $1"
 }
 
 # Strict inventory, path<TAB>layer. NUL Git output is decoded only after checking

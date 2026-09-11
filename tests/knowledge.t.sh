@@ -2095,3 +2095,132 @@ DOC
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'usage:'
 }
+
+# --- knowledge changed (ADR-0022 precedent: the base is stated, never guessed) -
+
+# A committed baseline plus one knowledge document already in history, so a
+# test can distinguish "created since the base" from "was already there".
+kmc_setup() {
+  km_setup
+  printf -- '---\nid: adr-0001-base\ntype: adr\nstatus: accepted\n---\n# base\n' \
+    > .ai/knowledge/adr/0001-base.md
+  git add -A
+  git commit -q -m "knowledge baseline"
+}
+
+test_knowledge_changed_reports_a_created_document() {
+  # The case the command exists for: a document written during consolidation
+  # is still untracked, so `git diff` alone cannot see it.
+  kmc_setup
+  printf -- '---\nid: adr-0002-new\ntype: adr\nstatus: accepted\n---\n# new\n' \
+    > .ai/knowledge/adr/0002-new.md
+
+  run jig knowledge changed --base HEAD
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "created    .ai/knowledge/adr/0002-new.md"
+  assert_contains "$OUT" "1 created, 0 modified, 0 renamed, 0 deleted"
+}
+
+test_knowledge_changed_reports_a_modified_document() {
+  kmc_setup
+  printf '\nAmended.\n' >> .ai/knowledge/adr/0001-base.md
+
+  run jig knowledge changed --base HEAD
+  assert_contains "$OUT" "modified   .ai/knowledge/adr/0001-base.md"
+  assert_contains "$OUT" "0 created, 1 modified, 0 renamed, 0 deleted"
+}
+
+test_knowledge_changed_reports_a_deleted_document() {
+  kmc_setup
+  rm .ai/knowledge/adr/0001-base.md
+
+  run jig knowledge changed --base HEAD
+  assert_contains "$OUT" "deleted    .ai/knowledge/adr/0001-base.md"
+  assert_contains "$OUT" "0 created, 0 modified, 0 renamed, 1 deleted"
+}
+
+test_knowledge_changed_reports_a_changed_global_document() {
+  # jig_knowledge_docs deliberately omits the three global documents; this
+  # report must not, because a consolidation that edits RULES.md is exactly
+  # what it is for.
+  kmc_setup
+  printf '# Rules\n\n- something\n' > .ai/knowledge/RULES.md
+  git add -A && git commit -q -m "add rules"
+  printf -- '- another\n' >> .ai/knowledge/RULES.md
+
+  run jig knowledge changed --base HEAD
+  assert_contains "$OUT" "modified   .ai/knowledge/RULES.md"
+}
+
+test_knowledge_changed_ignores_non_knowledge_changes() {
+  kmc_setup
+  printf 'code\n' > somewhere.sh
+  mkdir -p .ai/knowledge/features
+  printf 'not markdown\n' > .ai/knowledge/features/notes.txt
+
+  run jig knowledge changed --base HEAD
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "somewhere.sh"
+  assert_not_contains "$OUT" "notes.txt"
+  assert_contains "$OUT" "0 created, 0 modified, 0 renamed, 0 deleted"
+}
+
+test_knowledge_changed_requires_a_base() {
+  kmc_setup
+  run jig knowledge changed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge changed"
+}
+
+test_knowledge_changed_names_itself_when_the_base_is_bad() {
+  # The shared validator used to hardcode "task changes" in its message, which
+  # would have told the user about a command they never ran.
+  kmc_setup
+  run jig knowledge changed --base no-such-ref
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge changed: cannot resolve commit"
+  assert_not_contains "$OUT" "task changes"
+}
+
+test_knowledge_changed_takes_the_base_from_a_task() {
+  kmc_setup
+  jig task new T-1 --no-branch >/dev/null
+  # --no-branch leaves no base_commit, so the task cannot supply one.
+  run jig knowledge changed --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no base_commit"
+}
+
+test_knowledge_changed_unknown_task_dies() {
+  kmc_setup
+  run jig knowledge changed --task nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task"
+}
+
+test_knowledge_changed_reports_a_rename_as_a_rename() {
+  # A rename arrives from git as "<status>\t<old>\t<new>". Splitting on the
+  # first tab alone printed both paths on one line and called it a
+  # modification. For a knowledge document the filename carries the id, so the
+  # rename usually *is* the change.
+  kmc_setup
+  git mv .ai/knowledge/adr/0001-base.md .ai/knowledge/adr/0001-renamed.md
+
+  run jig knowledge changed --base HEAD
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "renamed    .ai/knowledge/adr/0001-base.md -> .ai/knowledge/adr/0001-renamed.md"
+  assert_contains "$OUT" "0 created, 0 modified, 1 renamed, 0 deleted"
+}
+
+test_knowledge_changed_counts_a_file_once_when_both_layers_see_it() {
+  # The tracked diff and the untracked listing are not disjoint: a file removed
+  # from the index but left in the worktree is "deleted" to one and untracked
+  # to the other, and was reported as created AND deleted — one file, two lines.
+  kmc_setup
+  git rm -q --cached .ai/knowledge/adr/0001-base.md
+
+  run jig knowledge changed --base HEAD
+  assert_contains "$OUT" "deleted    .ai/knowledge/adr/0001-base.md"
+  assert_not_contains "$OUT" "created    .ai/knowledge/adr/0001-base.md"
+  assert_contains "$OUT" "0 created, 0 modified, 0 renamed, 1 deleted"
+}

@@ -15,7 +15,8 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge reject <id>...
        jig knowledge inventory [--scope <dir>]
        jig knowledge stale [--strict]
-       jig knowledge reviewed <id> [--date YYYY-MM-DD]"
+       jig knowledge reviewed <id> [--date YYYY-MM-DD]
+       jig knowledge changed --base <ref> | --task <id>"
 
 # Directory holding the project's knowledge; set once by cmd_knowledge so
 # every subcommand and the path builder below agree on the root.
@@ -25,7 +26,7 @@ cmd_knowledge() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages) ;;
+    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed) ;;
     *) jig_die "$KM_USAGE" ;;
   esac
 
@@ -44,6 +45,7 @@ cmd_knowledge() {
     summary) km_summary "$@" ;;
     stages) km_stages "$@" ;;
     inventory) km_inventory "$@" ;;
+    changed) km_changed "$@" ;;
   esac
 }
 
@@ -888,6 +890,98 @@ km_doc_by_id() {
 }
 
 # km_rel <file> — repo-relative path, the form every command prints.
+# km_changed — knowledge documents created, modified or deleted since a base.
+#
+# Consolidation's own report is prose written by the agent ("say what was
+# written and where"), so its accuracy is the agent's accuracy. `.ai/knowledge/`
+# is committed, so git already knows the exact answer; this command asks it.
+# Mechanics to scripts, judgement to the agent (ADR-0001) — the agent still
+# explains what the change *means*.
+#
+# `--base` is required, following `task changes` (ADR-0022): where to count
+# from is a decision, not something a command may guess. `--task` supplies it
+# from the task's own fork point when that exists.
+km_changed() {
+  jig_require_init
+  local base="" task_id="" line status rel old_rel seen=""
+  local created=0 modified=0 deleted=0 renamed=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --base) [ $# -ge 2 ] || jig_die "knowledge changed: --base requires a value"; base="$2"; shift 2 ;;
+      --task) [ $# -ge 2 ] || jig_die "knowledge changed: --task requires a value"; task_id="$2"; shift 2 ;;
+      *) jig_die "usage: jig knowledge changed --base <ref> | --task <id>" ;;
+    esac
+  done
+
+  if [ -z "$base" ] && [ -n "$task_id" ]; then
+    # shellcheck source=lib/task.sh
+    . "$JIG_LIB/task.sh"
+    [ -f "$(task_dir "$task_id")/state" ] \
+      || jig_die "knowledge changed: unknown task: $task_id"
+    base=$(task_state_get "$task_id" base_commit)
+    [ -n "$base" ] \
+      || jig_die "knowledge changed: task $task_id has no base_commit; pass --base <ref>"
+  fi
+  [ -n "$base" ] || jig_die "usage: jig knowledge changed --base <ref> | --task <id>"
+  base=$(jig_review_commit "$base" "knowledge changed")
+
+  local kdir="$JIG_AI_DIR/knowledge"
+
+  # Tracked changes, base against the working tree so uncommitted consolidation
+  # is visible — which is the state the report is wanted in.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    status=${line%%	*}
+    rel=${line#*	}
+    case "$status" in
+      R*|C*)
+        # A rename arrives as "<status>\t<old>\t<new>". Splitting on the first
+        # tab alone printed both paths on one line and called it a modification.
+        # For a knowledge document the rename usually *is* the change — the id
+        # lives in the filename — so it gets its own word.
+        old_rel=${rel%%	*}
+        rel=${rel#*	}
+        case "$rel" in *.md) ;; *) continue ;; esac
+        printf 'renamed    %s -> %s\n' "$old_rel" "$rel"
+        renamed=$((renamed + 1))
+        seen="$seen
+$rel"
+        continue
+        ;;
+    esac
+    case "$rel" in *.md) ;; *) continue ;; esac
+    seen="$seen
+$rel"
+    case "$status" in
+      A*) printf 'created    %s\n' "$rel"; created=$((created + 1)) ;;
+      D*) printf 'deleted    %s\n' "$rel"; deleted=$((deleted + 1)) ;;
+      *)  printf 'modified   %s\n' "$rel"; modified=$((modified + 1)) ;;
+    esac
+  done < <(git -C "$JIG_PROJECT" diff --name-status "$base" -- "$kdir" 2>/dev/null | LC_ALL=C sort -k2,2)
+
+  # A document written during consolidation is usually still untracked, and
+  # `git diff` cannot see it — the exact case this command exists for.
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    case "$rel" in *.md) ;; *) continue ;; esac
+    # The two layers are not disjoint: a file removed from the index but left
+    # in the worktree is "deleted" to diff and untracked to ls-files, and was
+    # reported twice — as created *and* deleted, for one file.
+    case "
+$seen" in *"
+$rel"*) continue ;; esac
+    printf 'created    %s\n' "$rel"
+    created=$((created + 1))
+  done < <(git -C "$JIG_PROJECT" ls-files --others --exclude-standard -- "$kdir" 2>/dev/null | LC_ALL=C sort)
+
+  # Filter is "*.md under .ai/knowledge/", not jig_knowledge_docs: that helper
+  # deliberately omits the three global documents, and a consolidation that
+  # edits RULES.md is exactly what this report must not hide.
+  printf 'knowledge changed: %d created, %d modified, %d renamed, %d deleted\n' \
+    "$created" "$modified" "$renamed" "$deleted"
+}
+
 km_rel() { jig_relpath "$1" "$JIG_PROJECT"; }
 
 # km_files_word <count> — "1 file" / "3 files".

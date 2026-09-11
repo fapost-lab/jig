@@ -93,5 +93,16 @@ documents; do not start a new task document for it.
 
 ## 6. Report
 
-Say what was written and where, or say `NO_DURABLE_KNOWLEDGE` and why the task left
-nothing behind.
+Ask the repository what changed, rather than reporting from memory:
+
+```
+.ai/scripts/jig knowledge changed --task <id>
+```
+
+It lists the documents created, modified and deleted since the task forked, untracked ones
+included — a document written minutes ago is usually not committed yet. Pass `--base <ref>`
+instead when the task has no fork point.
+
+The command supplies the facts; you supply the meaning. Say what was written and where and
+**why it earned a place**, or say `NO_DURABLE_KNOWLEDGE` and why the task left nothing
+behind. A list of paths is not a report.
