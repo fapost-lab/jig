@@ -267,8 +267,9 @@ here, start the next task in a worktree of its own instead of pausing the first:
 
 The dirty-tree refusal suggests exactly this. The new worktree is cut from the freshest
 base branch and leaves this checkout, and the work in it, untouched. The command prints the
-path and stops. An agent cannot move its own session, so opening a session in the new
-worktree is your step.
+path and stops; the script cannot move an agent's session. An agent whose runtime can
+switch a session into an existing worktree goes there itself; otherwise opening a session
+in the new worktree is your step.
 
 The task's workspace stays where the task was filed, and the worktree gets a link to it.
 From the original checkout, `task list` and `jig status` still show every task, and a task

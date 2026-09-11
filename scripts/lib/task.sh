@@ -576,9 +576,10 @@ task_start() {
 # both alike, and `git worktree repair` is the answer to that.
 #
 # No dirty-tree check: nothing uncommitted here can reach a tree cut fresh
-# from the base. The command prints the path and stops there. An agent session
-# has a working directory it cannot leave mid-session, so opening a session
-# in the new worktree is the human's step (the same stance as ADR-0024).
+# from the base. The command prints the path and stops there: a script cannot
+# move the agent session that called it. Getting a session into the worktree —
+# switching one there, where the runtime allows it, or opening a new one — is
+# the agent's and the human's step, not jig's (ADR-0029 as amended).
 _task_start_in_worktree() {
   local id="$1" dir="$2" branch path owner base_commit
   cfg_bool git.branch_per_task true \

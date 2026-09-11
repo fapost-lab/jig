@@ -44,17 +44,19 @@ a fact becomes a rule nobody remembers agreeing to.
 evidence for each, and — as its own section — **what you could not determine**. A map
 that claims complete coverage of a codebase it read for twenty minutes is not credible.
 
-Then create the documents at their real paths, proposed:
+Then create the documents at their real paths, proposed from the start:
 
 ```
-.ai/scripts/jig knowledge new domain <domain>
-.ai/scripts/jig knowledge new glossary <domain>
-.ai/scripts/jig knowledge new rule <domain>
+.ai/scripts/jig knowledge new domain <domain> --proposed
+.ai/scripts/jig knowledge new glossary <domain> --proposed
+.ai/scripts/jig knowledge new rule <domain> --proposed
 ```
 
-Fill them in, and set `status: proposed` on each. A proposed document is validated by
-`knowledge check` and visible as a normal diff, but `jig context` will not resolve it —
-so nothing you inferred can reach another agent before a human has seen it.
+Then fill them in. A proposed document is validated by `knowledge check` and visible as a
+normal diff, but `jig context` will not resolve it — so nothing you inferred can reach
+another agent before a human has seen it. Never create one without `--proposed` and
+demote it afterwards: until the status changes, the half-written document resolves as
+project knowledge.
 
 Give every document a `summary`. It is the one line an agent reads in the catalog when
 deciding whether to open the document; without it the catalog says nothing.

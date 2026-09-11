@@ -32,8 +32,10 @@ directory names and existing docs over reading source files broadly.
 - `ARCHITECTURE.md`: domains, boundaries, dependency direction, the two or three key
   runtime flows, system-wide invariants. Do not restate implementation.
 - `RULES.md`: enforced or clearly intended rules and invariants, each with its source.
-- If a decision is visible in the code and worth preserving, add an ADR from
-  `templates/knowledge/adr.md` with status `accepted`.
+- If a decision is visible in the code and worth preserving, create an ADR with
+  `.ai/scripts/jig knowledge new adr <slug>` — it allocates the number and writes the id,
+  date and status `accepted` — fill in its body, and give it a one-line summary with
+  `.ai/scripts/jig knowledge summary <id> "<text>"`.
 
 Ask the user when a term or boundary is ambiguous; do not guess canonical names.
 

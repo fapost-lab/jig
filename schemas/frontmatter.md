@@ -146,8 +146,8 @@ characters that a careless `sed` would eat (ADR-0001, convention-shell):
 
 | Command | Effect |
 |---|---|
-| `jig knowledge new <feature\|adr\|convention> <slug>` | instantiate `.ai/templates/knowledge/<type>.md`, allocating the next ADR number |
-| `jig knowledge new <domain\|glossary\|rule> <domain>` | instantiate the pack file under `.ai/knowledge/domains/<domain>/` from `.ai/templates/knowledge/domain/` |
+| `jig knowledge new <feature\|adr\|convention> <slug> [--proposed]` | instantiate `.ai/templates/knowledge/<type>.md`, allocating the next ADR number |
+| `jig knowledge new <domain\|glossary\|rule> <domain> [--proposed]` | instantiate the pack file under `.ai/knowledge/domains/<domain>/` from `.ai/templates/knowledge/domain/` |
 | `jig knowledge paths add\|remove <id> <glob>` | maintain one document's `paths` |
 | `jig knowledge stages add\|remove <id> <stage>` | add/remove optional stage relevance idempotently |
 | `jig knowledge summary <id> <text>` | set the one-line `summary`; refuses `#`, which the reader would strip as a comment |
@@ -160,6 +160,11 @@ characters that a careless `sed` would eat (ADR-0001, convention-shell):
 
 `jig knowledge paths` with no subcommand reports the gap in both directions: files the
 task touched that no document claims, and globs that claim nothing.
+
+`jig knowledge new` takes its status from the template (`active`; `accepted` for an ADR).
+`--proposed` creates the document as a proposal instead (ADR-0016), and a skill proposing
+knowledge must use it rather than demote a document after writing it: the document
+appears at its path only once, complete, so there is no moment when a proposal resolves.
 
 ## Stage relevance (ADR-0021)
 
