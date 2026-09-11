@@ -660,6 +660,212 @@ test_new_requires_type_and_slug() {
   assert_contains "$OUT" "jig knowledge new <feature|adr|convention> <slug>"
 }
 
+test_new_rejects_unknown_argument() {
+  km_setup
+  run jig knowledge new feature widget --status active
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: unknown argument: --status"
+}
+
+# --- knowledge new: --proposed flag ---------------------------------------------
+
+test_new_feature_proposed_sets_status_proposed() {
+  km_setup
+  run jig knowledge new feature my-feature --proposed
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/features/my-feature.md" "$OUT"
+  assert_file .ai/knowledge/features/my-feature.md
+  assert_file_contains .ai/knowledge/features/my-feature.md "id: feature-my-feature"
+  assert_file_contains .ai/knowledge/features/my-feature.md "status: proposed"
+}
+
+test_new_adr_proposed_sets_status_proposed_not_accepted() {
+  km_setup
+  run jig knowledge new adr my-decision --proposed
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/adr/0001-my-decision.md" "$OUT"
+  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "id: adr-0001-my-decision"
+  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "status: proposed"
+  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "date: $(date +%Y-%m-%d)"
+  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "# ADR-0001: <Decision in one sentence>"
+  local content
+  content=$(cat .ai/knowledge/adr/0001-my-decision.md)
+  assert_not_contains "$content" "status: accepted"
+}
+
+test_new_feature_proposed_with_domains_and_paths_writes_same_lists_as_unflagged() {
+  km_setup
+  run jig knowledge new feature widget --domains "core, ui" --paths "src/widget/**, README.md" --proposed
+  assert_eq 0 "$RC"
+  local content
+  content=$(cat .ai/knowledge/features/widget.md)
+  assert_contains "$content" "status: proposed"
+  assert_contains "$content" "  - core"
+  assert_contains "$content" "  - ui"
+  assert_contains "$content" '  - "src/widget/**"'
+  assert_contains "$content" "  - README.md"
+}
+
+test_new_feature_proposed_flag_before_options_also_works() {
+  km_setup
+  run jig knowledge new feature widget --proposed --domains "core, ui" --paths "src/widget/**, README.md"
+  assert_eq 0 "$RC"
+  local content
+  content=$(cat .ai/knowledge/features/widget.md)
+  assert_contains "$content" "status: proposed"
+  assert_contains "$content" "  - core"
+  assert_contains "$content" "  - ui"
+  assert_contains "$content" '  - "src/widget/**"'
+  assert_contains "$content" "  - README.md"
+}
+
+test_new_rule_proposed_sets_status_proposed_with_default_domains() {
+  km_setup
+  run jig knowledge new rule payments --proposed
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/domains/payments/RULES.md" "$OUT"
+  assert_file_contains .ai/knowledge/domains/payments/RULES.md "id: rule-payments"
+  assert_file_contains .ai/knowledge/domains/payments/RULES.md "status: proposed"
+  local content
+  content=$(cat .ai/knowledge/domains/payments/RULES.md)
+  assert_contains "$content" "  - payments"
+}
+
+test_new_without_proposed_flag_status_comes_from_template() {
+  km_setup
+  run jig knowledge new feature untouched
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/knowledge/features/untouched.md "status: active"
+
+  run jig knowledge new adr untouched-decision
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/knowledge/adr/0001-untouched-decision.md "status: accepted"
+}
+
+test_new_feature_proposed_is_listed_checked_and_promoted_by_accept() {
+  km_setup
+  run jig knowledge new feature widget --proposed --domains core
+  assert_eq 0 "$RC"
+
+  run jig knowledge proposed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "proposed:  feature-widget  (feature)  .ai/knowledge/features/widget.md"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+
+  run jig knowledge accept feature-widget
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "accepted   .ai/knowledge/features/widget.md  (status: active)"
+  assert_file_contains .ai/knowledge/features/widget.md "status: active"
+}
+
+test_new_adr_proposed_is_listed_checked_and_promoted_to_accepted() {
+  km_setup
+  run jig knowledge new adr my-decision --proposed --domains core
+  assert_eq 0 "$RC"
+
+  run jig knowledge proposed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "proposed:  adr-0001-my-decision  (adr)  .ai/knowledge/adr/0001-my-decision.md"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+
+  run jig knowledge accept adr-0001-my-decision
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "accepted   .ai/knowledge/adr/0001-my-decision.md  (status: accepted)"
+  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "status: accepted"
+}
+
+# jig context resolve must never surface a document created with --proposed,
+# under selectors that would match it once it is active (ADR-0016).
+test_new_feature_proposed_not_resolved_by_context_until_accepted() {
+  km_setup
+  # Progressive context requires the three mandatory globals (ADR-0021).
+  for global in GLOSSARY ARCHITECTURE RULES; do
+    printf '# %s\n' "$global" > ".ai/knowledge/$global.md"
+  done
+  run jig knowledge new feature ctxtest --proposed --domains core
+  assert_eq 0 "$RC"
+
+  run jig context resolve --no-task --domains core --catalog
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "required:  .ai/knowledge/features/ctxtest.md"
+  assert_not_contains "$OUT" "catalog:   .ai/knowledge/features/ctxtest.md"
+
+  run jig knowledge accept feature-ctxtest
+  assert_eq 0 "$RC"
+
+  run jig context resolve --no-task --domains core --catalog
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   .ai/knowledge/features/ctxtest.md"
+}
+
+# --- knowledge new: refused --domains/--paths items leave no leftover file -----
+
+test_new_refuses_domains_item_with_hash_and_leaves_no_leftover_file() {
+  km_setup
+  run jig knowledge new feature widget --domains "bad#value"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: invalid --domains value: bad#value"
+  assert_no_file .ai/knowledge/features/widget.md
+  local leftovers
+  leftovers=$(find .ai/knowledge/features -maxdepth 1 -type f)
+  assert_eq "" "$leftovers" "no leftover file in .ai/knowledge/features/"
+}
+
+test_new_proposed_refuses_domains_item_with_hash_and_leaves_no_leftover_file() {
+  km_setup
+  run jig knowledge new feature widget --proposed --domains "bad#value"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: invalid --domains value: bad#value"
+  assert_no_file .ai/knowledge/features/widget.md
+  local leftovers
+  leftovers=$(find .ai/knowledge/features -maxdepth 1 -type f)
+  assert_eq "" "$leftovers" "no leftover file in .ai/knowledge/features/"
+}
+
+test_new_refuses_paths_item_with_hash_and_leaves_no_leftover_file() {
+  km_setup
+  run jig knowledge new feature widget --paths "bad#glob"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: invalid --paths value: bad#glob"
+  assert_no_file .ai/knowledge/features/widget.md
+  local leftovers
+  leftovers=$(find .ai/knowledge/features -maxdepth 1 -type f)
+  assert_eq "" "$leftovers" "no leftover file in .ai/knowledge/features/"
+}
+
+test_new_proposed_refuses_paths_item_with_hash_and_leaves_no_leftover_file() {
+  km_setup
+  run jig knowledge new feature widget --proposed --paths "bad#glob"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: invalid --paths value: bad#glob"
+  assert_no_file .ai/knowledge/features/widget.md
+  local leftovers
+  leftovers=$(find .ai/knowledge/features -maxdepth 1 -type f)
+  assert_eq "" "$leftovers" "no leftover file in .ai/knowledge/features/"
+}
+
+test_new_unwritable_directory_fails_with_message_and_leaves_nothing() {
+  # Before the build file, `cp` wrote straight to the document's path, and a
+  # failing `cp` ended the command under `set -e` with no message of its own.
+  km_setup
+  mkdir -p .ai/knowledge/features
+  chmod 555 .ai/knowledge/features
+
+  run jig knowledge new feature widget --proposed
+  chmod 755 .ai/knowledge/features
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: could not write .ai/knowledge/features/widget.md"
+  local leftovers
+  leftovers=$(find .ai/knowledge/features -maxdepth 1 -type f)
+  assert_eq "" "$leftovers" "no leftover file in .ai/knowledge/features/"
+}
+
 # --- knowledge paths add|remove -------------------------------------------------
 
 test_paths_add_adds_glob_to_frontmatter() {
@@ -1393,10 +1599,7 @@ test_summary_rejects_extra_argument() {
 
 test_accept_promotes_proposed_feature_to_active() {
   km_setup
-  jig knowledge new feature smoke >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/smoke.md \
-    > .ai/knowledge/features/smoke.md.new
-  mv .ai/knowledge/features/smoke.md.new .ai/knowledge/features/smoke.md
+  jig knowledge new feature smoke --proposed >/dev/null
 
   run jig knowledge accept feature-smoke
   assert_eq 0 "$RC"
@@ -1407,10 +1610,7 @@ test_accept_promotes_proposed_feature_to_active() {
 
 test_accept_promotes_proposed_adr_to_accepted_not_active() {
   km_setup
-  jig knowledge new adr my-decision >/dev/null
-  sed 's/^status: accepted/status: proposed/' .ai/knowledge/adr/0001-my-decision.md \
-    > .ai/knowledge/adr/0001-my-decision.md.new
-  mv .ai/knowledge/adr/0001-my-decision.md.new .ai/knowledge/adr/0001-my-decision.md
+  jig knowledge new adr my-decision --proposed >/dev/null
 
   run jig knowledge accept adr-0001-my-decision
   assert_eq 0 "$RC"
@@ -1421,10 +1621,7 @@ test_accept_promotes_proposed_adr_to_accepted_not_active() {
 
 test_accept_twice_fails_on_second_call() {
   km_setup
-  jig knowledge new feature smoke >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/smoke.md \
-    > .ai/knowledge/features/smoke.md.new
-  mv .ai/knowledge/features/smoke.md.new .ai/knowledge/features/smoke.md
+  jig knowledge new feature smoke --proposed >/dev/null
   jig knowledge accept feature-smoke >/dev/null
 
   run jig knowledge accept feature-smoke
@@ -1476,14 +1673,8 @@ test_accept_requires_id_argument() {
 
 test_accept_multi_id_applies_all() {
   km_setup
-  jig knowledge new feature one >/dev/null
-  jig knowledge new feature two >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
-    > .ai/knowledge/features/one.md.new
-  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/two.md \
-    > .ai/knowledge/features/two.md.new
-  mv .ai/knowledge/features/two.md.new .ai/knowledge/features/two.md
+  jig knowledge new feature one --proposed >/dev/null
+  jig knowledge new feature two --proposed >/dev/null
 
   run jig knowledge accept feature-one feature-two
   assert_eq 0 "$RC"
@@ -1496,14 +1687,8 @@ test_accept_multi_id_applies_all() {
 
 test_accept_multi_id_with_bad_id_changes_nothing() {
   km_setup
-  jig knowledge new feature one >/dev/null
-  jig knowledge new feature two >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
-    > .ai/knowledge/features/one.md.new
-  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/two.md \
-    > .ai/knowledge/features/two.md.new
-  mv .ai/knowledge/features/two.md.new .ai/knowledge/features/two.md
+  jig knowledge new feature one --proposed >/dev/null
+  jig knowledge new feature two --proposed >/dev/null
 
   run jig knowledge accept feature-one feature-two no-such-id
   assert_eq 1 "$RC"
@@ -1514,11 +1699,8 @@ test_accept_multi_id_with_bad_id_changes_nothing() {
 
 test_accept_multi_id_with_non_proposed_id_changes_nothing() {
   km_setup
-  jig knowledge new feature one >/dev/null
+  jig knowledge new feature one --proposed >/dev/null
   jig knowledge new feature two >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
-    > .ai/knowledge/features/one.md.new
-  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
   # feature-two is left at its default status: active, not proposed.
 
   run jig knowledge accept feature-one feature-two
@@ -1529,10 +1711,7 @@ test_accept_multi_id_with_non_proposed_id_changes_nothing() {
 
 test_accept_duplicate_id_counts_document_once() {
   km_setup
-  jig knowledge new feature x >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/x.md \
-    > .ai/knowledge/features/x.md.new
-  mv .ai/knowledge/features/x.md.new .ai/knowledge/features/x.md
+  jig knowledge new feature x --proposed >/dev/null
 
   run jig knowledge accept feature-x feature-x
   assert_eq 0 "$RC"
@@ -1544,10 +1723,7 @@ test_accept_duplicate_id_counts_document_once() {
 
 test_reject_sets_status_rejected() {
   km_setup
-  jig knowledge new feature smoke >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/smoke.md \
-    > .ai/knowledge/features/smoke.md.new
-  mv .ai/knowledge/features/smoke.md.new .ai/knowledge/features/smoke.md
+  jig knowledge new feature smoke --proposed >/dev/null
 
   run jig knowledge reject feature-smoke
   assert_eq 0 "$RC"
@@ -1594,14 +1770,8 @@ test_reject_unknown_id_dies() {
 
 test_reject_multi_id_applies_all() {
   km_setup
-  jig knowledge new feature one >/dev/null
-  jig knowledge new feature two >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
-    > .ai/knowledge/features/one.md.new
-  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/two.md \
-    > .ai/knowledge/features/two.md.new
-  mv .ai/knowledge/features/two.md.new .ai/knowledge/features/two.md
+  jig knowledge new feature one --proposed >/dev/null
+  jig knowledge new feature two --proposed >/dev/null
 
   run jig knowledge reject feature-one feature-two
   assert_eq 0 "$RC"
@@ -1614,10 +1784,7 @@ test_reject_multi_id_applies_all() {
 
 test_reject_multi_id_with_bad_id_changes_nothing() {
   km_setup
-  jig knowledge new feature one >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
-    > .ai/knowledge/features/one.md.new
-  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
+  jig knowledge new feature one --proposed >/dev/null
 
   run jig knowledge reject feature-one no-such-id
   assert_eq 1 "$RC"
@@ -1627,11 +1794,8 @@ test_reject_multi_id_with_bad_id_changes_nothing() {
 
 test_reject_multi_id_with_non_proposed_id_changes_nothing() {
   km_setup
-  jig knowledge new feature one >/dev/null
+  jig knowledge new feature one --proposed >/dev/null
   jig knowledge new feature two >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
-    > .ai/knowledge/features/one.md.new
-  mv .ai/knowledge/features/one.md.new .ai/knowledge/features/one.md
   # feature-two is left at its default status: active, not proposed.
 
   run jig knowledge reject feature-one feature-two
@@ -1642,10 +1806,7 @@ test_reject_multi_id_with_non_proposed_id_changes_nothing() {
 
 test_reject_duplicate_id_counts_document_once() {
   km_setup
-  jig knowledge new feature x >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/features/x.md \
-    > .ai/knowledge/features/x.md.new
-  mv .ai/knowledge/features/x.md.new .ai/knowledge/features/x.md
+  jig knowledge new feature x --proposed >/dev/null
 
   run jig knowledge reject feature-x feature-x
   assert_eq 0 "$RC"
@@ -1655,10 +1816,7 @@ test_reject_duplicate_id_counts_document_once() {
 
 test_reject_domain_pack_warns_about_slot() {
   km_setup
-  jig knowledge new domain payments >/dev/null
-  sed 's/^status: active/status: proposed/' .ai/knowledge/domains/payments/OVERVIEW.md \
-    > .ai/knowledge/domains/payments/OVERVIEW.md.new
-  mv .ai/knowledge/domains/payments/OVERVIEW.md.new .ai/knowledge/domains/payments/OVERVIEW.md
+  jig knowledge new domain payments --proposed >/dev/null
 
   run jig knowledge reject domain-payments
   assert_eq 0 "$RC"
@@ -2007,6 +2165,18 @@ test_knowledge_no_subcommand_usage_includes_accept_and_inventory() {
   assert_contains "$OUT" "jig knowledge accept <id>"
   assert_contains "$OUT" "jig knowledge reject <id>"
   assert_contains "$OUT" "jig knowledge inventory [--scope <dir>]"
+}
+
+test_knowledge_usage_shows_proposed_flag_on_both_new_lines() {
+  km_setup
+  run jig knowledge
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig knowledge new <feature|adr|convention> <slug> [--domains a,b] [--paths g,g] [--proposed]"
+  assert_contains "$OUT" "jig knowledge new <domain|glossary|rule> <domain> [--paths g,g] [--proposed]"
+
+  run jig knowledge new feature
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "[--proposed]"
 }
 
 test_requires_valid_chain_passes_clean() {

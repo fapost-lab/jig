@@ -4,8 +4,8 @@
 # shellcheck shell=bash
 
 KM_USAGE="usage: jig knowledge check [--quiet]
-       jig knowledge new <feature|adr|convention> <slug> [--domains a,b] [--paths g,g]
-       jig knowledge new <domain|glossary|rule> <domain> [--paths g,g]
+       jig knowledge new <feature|adr|convention> <slug> [--domains a,b] [--paths g,g] [--proposed]
+       jig knowledge new <domain|glossary|rule> <domain> [--paths g,g] [--proposed]
        jig knowledge paths [--task <id>] [--files <list>|-]
        jig knowledge paths add|remove <id> <glob>
        jig knowledge summary <id> <text>
@@ -1050,8 +1050,23 @@ km_csv_lines() {
   printf '%s\n' "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d'
 }
 
+# km_new_abandon <build> <message> — remove the unfinished build and fail, so a
+# retry starts from nothing and no half-filled document is ever left behind.
+km_new_abandon() {
+  rm -f "$1"
+  jig_die "$2"
+}
+
+# km_new <type> <slug> [--domains a,b] [--paths g,g] [--proposed] — instantiate a
+# template as a new document and print its path.
+#
+# `--proposed` makes the document a proposal from its first moment (ADR-0016): a
+# skill that writes inferences about someone else's code, as jig-map does, must not
+# create them resolvable and demote them afterwards. It is a flag rather than
+# `--status <s>` because `proposed` is the only other status a document can
+# sensibly be born with; the template supplies the resolvable one.
 km_new() {
-  local type="" slug="" domains="" paths_in=""
+  local type="" slug="" domains="" paths_in="" proposed=0
   [ $# -ge 2 ] || jig_die "$KM_USAGE"
   type="$1"
   slug="$2"
@@ -1062,6 +1077,7 @@ km_new() {
         domains="$2"; shift 2 ;;
       --paths) [ $# -ge 2 ] || jig_die "knowledge new: --paths requires a value"
         paths_in="$2"; shift 2 ;;
+      --proposed) proposed=1; shift ;;
       *) jig_die "knowledge new: unknown argument: $1" ;;
     esac
   done
@@ -1069,7 +1085,7 @@ km_new() {
   # The type is resolved to a path before the template is looked up, so an
   # unknown type is reported as an unknown type rather than as a missing
   # template.
-  local dir template file id number rel tmp
+  local dir template file id number rel build
   case "$type" in
     domain | glossary | rule)
       # For a domain document the slug *is* the domain: the pack lives under
@@ -1097,28 +1113,39 @@ km_new() {
 
   [ -e "$file" ] && jig_die "knowledge: document already exists: $(km_rel "$file")"
 
+  # The document is assembled beside its final path and moved there in one step,
+  # complete. Filled in place, it would sit at its real path for a moment as the
+  # bare template, carrying the template's resolvable status — for a proposal,
+  # exactly the window `--proposed` exists to close. The build name does not end
+  # in `.md`, so nothing that walks knowledge documents can see it.
   mkdir -p "$(dirname "$file")"
-  cp "$template" "$file"
+  build="$file.new.$$"
+  cp "$template" "$build" || km_new_abandon "$build" "knowledge new: could not write $(km_rel "$file")"
 
-  fm_set "$file" id "$id"
+  fm_set "$build" id "$id" || km_new_abandon "$build" "knowledge new: could not write id: $id"
   if [ "$type" = adr ]; then
-    fm_set "$file" date "$(jig_today)"
+    fm_set "$build" date "$(jig_today)" \
+      || km_new_abandon "$build" "knowledge new: could not write date"
     # The heading placeholder carries the number too. `number` is four digits
     # by construction, so it is safe on the right-hand side of a substitution.
-    tmp="$file.tmp.$$"
-    sed "s/ADR-NNNN/ADR-$number/g" "$file" > "$tmp"
-    mv "$tmp" "$file"
+    if ! sed "s/ADR-NNNN/ADR-$number/g" "$build" > "$build.tmp" || ! mv "$build.tmp" "$build"; then
+      rm -f "$build.tmp"
+      km_new_abandon "$build" "knowledge new: could not write the ADR heading"
+    fi
   fi
-  # A rejected item (see _fm_valid_item) must not leave a half-filled document
-  # behind: remove it and fail, so a retry starts from nothing.
-  if [ -n "$domains" ] && ! km_csv_lines "$domains" | fm_list_set "$file" domains; then
-    rm -f "$file"
-    jig_die "knowledge new: invalid --domains value: $domains"
+  if [ "$proposed" -eq 1 ]; then
+    fm_set "$build" status proposed \
+      || km_new_abandon "$build" "knowledge new: could not write status"
   fi
-  if [ -n "$paths_in" ] && ! km_csv_lines "$paths_in" | fm_list_set "$file" paths; then
-    rm -f "$file"
-    jig_die "knowledge new: invalid --paths value: $paths_in"
+  # A rejected item (see _fm_valid_item) is refused here, before the document
+  # exists at its path.
+  if [ -n "$domains" ] && ! km_csv_lines "$domains" | fm_list_set "$build" domains; then
+    km_new_abandon "$build" "knowledge new: invalid --domains value: $domains"
   fi
+  if [ -n "$paths_in" ] && ! km_csv_lines "$paths_in" | fm_list_set "$build" paths; then
+    km_new_abandon "$build" "knowledge new: invalid --paths value: $paths_in"
+  fi
+  mv "$build" "$file" || km_new_abandon "$build" "knowledge new: could not move the finished document into place: $(km_rel "$file")"
 
   rel=$(km_rel "$file")
   printf '%s\n' "$rel"

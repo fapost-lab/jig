@@ -108,3 +108,14 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 - `git.worktree_root` is read on every run, not recorded per task. Changing it strands every
   worktree made under the old root: housekeeping keeps them, flagged `worktree-kept` with
   reason `outside-worktree-root` in the log, until they are moved or removed by hand.
+
+> **Amendment (2026-09-11).** "An agent session cannot leave its working directory
+> mid-session" holds for some runtimes, not all: Claude Code can switch a running session
+> into an existing worktree. The decision stands, because it rests on the narrower fact
+> that the script cannot move the session that called it. What changes is the guidance
+> built on the premise: `jig-task` tells an agent that can switch to do so, and to ask the
+> user for a new session only when it cannot. The rejection of an automatic worktree still
+> holds on its second ground, the stray worktree a self-inflicted dirty tree would leave.
+> A switched session may be fenced to the worktree: Claude Code's editing tools refuse the
+> workspace link, because it resolves into the filing checkout, so task artifacts are
+> written there with plain shell commands.

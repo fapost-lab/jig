@@ -24,7 +24,9 @@ implementation intent returns to the route below.
 ```
 
 If a task for this work already exists, read its `task.md` and `plan.md`, say where it
-stands, and continue from there instead of creating a second workspace.
+stands, and continue from there instead of creating a second workspace. A task listed
+with `worktree=<path>` continues in that worktree, not in this checkout; §3 says how to
+get there.
 
 `task current` exiting 2 means several tasks are live on this branch. It prints them;
 ask the user which one, and never pick for them. Suggest pausing the other:
@@ -75,8 +77,10 @@ around it. Ask the user which road: pause the task that owns them
 .ai/scripts/jig task start <id> --worktree
 ```
 
-It prints a path and leaves this checkout alone. Your session cannot move there: tell the
-user to open a new agent session in that path, and do not continue the task from here.
+It prints a path and leaves this checkout alone. From then on the task is worked on from
+that path only. If your runtime can switch this session into an existing worktree, switch
+and run every command from there; otherwise tell the user to open a new agent session in
+that path. Either way, do not continue the task from here.
 
 When the user already wrote the task as a document, take it from disk instead of
 retyping it, and split it as §"When the task arrives written" says:
