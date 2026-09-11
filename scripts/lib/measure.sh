@@ -252,7 +252,7 @@ _measure_process() {
 #
 # Measurable only where ADR-0026 applies: a task needs the fork point it
 # recorded (`base_commit`) and a branch that still exists. Tasks that predate
-# ADR-0026, ran with `--no-branch`, or whose branch was deleted after merging
+# ADR-0026, were filed but never started, or whose branch was deleted after merging
 # are counted as unmeasurable and named as such rather than dropped silently.
 _measure_change() {
   local rows="$_MEASURE_TMP/change" tasks="$_MEASURE_TMP/tasks"

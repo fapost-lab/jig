@@ -10,6 +10,7 @@ paths:
   - "scripts/lib/status.sh"
   - "schemas/state.md"
 summary: Why pause is a field, ambiguity exits 2, and resume reports overlap rather than distance.
+reviewed_at: 2026-09-11
 ---
 # ADR-0012: Resume is ambiguous or exact, never a guess; pause is a field
 
@@ -71,3 +72,7 @@ session, and nothing stopped a new task from starting on another task's dirty tr
 - The cleanup policy (domains/housekeeping) gains explicit rows for paused tasks, so pause exempts a
   task from auto-resume but never from being reported stale.
 - ADR-0008 stands; this decision fills in what it left implicit about tie-breaking.
+
+> **Amendment (2026-09-11).** The dirty-tree refusal now belongs to `jig task start`, not
+> `jig task new`, and has no `--force` override: since ADR-0026 as amended, filing a task
+> no longer touches the checkout, and starting one is what cuts the branch. See ADR-0026.

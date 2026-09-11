@@ -7,8 +7,9 @@ profiles: [generic, shell]                   # generic is always active
 adapters: [claude, codex]
 
 git.base_branch: main                 # merge target for ancestry checks
-git.branch_per_task: true             # `jig task new` creates and checks out a branch
+git.branch_per_task: true             # `jig task start` creates and checks out a branch
 git.branch_template: task/{id}        # {id} is the task id; validated by git itself
+# git.worktree_root: ../<project>.worktrees   # where `jig task start --worktree` puts worktrees
 forge: auto                           # auto | github | gitlab | none
 
 housekeeping.cadence: 1d              # session hook runs housekeeping if last run is older

@@ -233,13 +233,57 @@ manual mechanics, not a substitute for the agent's classification and analysis:
 .ai/scripts/jig task list
 .ai/scripts/jig task current
 .ai/scripts/jig task new csv-export --class T2 --domains reporting
+.ai/scripts/jig task start csv-export
 .ai/scripts/jig task show csv-export
 .ai/scripts/jig task artifacts csv-export
 ```
 
-Start new work from an appropriate clean checkout. A task records the current
-branch; `task new` does not create or switch branches. Workspaces belong to the
-checkout where they were created, including Git worktrees.
+**Filing a task and starting it are two steps.** `task new` records the intent and
+nothing else: no branch, no checkout change, so filing something for next month costs
+nothing and does not compete with the work in progress. A task with no branch is listed
+as `not-started` and is never picked as `task current`.
+
+`task start` begins it: it cuts the task's branch from the base branch, switches to it,
+and records the commit it forked from. That fork point is recorded *then*, not at filing
+time, because a base recorded weeks before work begins is already wrong by the time
+anything needs it.
+
+Start from a clean checkout — `task start` refuses a dirty tree, so one task's work
+cannot become another's first commit. Workspaces belong to the checkout where they were
+created.
+
+Projects that work on one branch by choice set `git.branch_per_task: false`; `task start`
+then records the current branch instead of cutting a new one.
+
+### Several agents at once
+
+One checkout holds one piece of uncommitted work. When another agent is already working
+here, start the next task in a worktree of its own instead of pausing the first:
+
+```sh
+.ai/scripts/jig task start csv-import --worktree
+# prints ../<project>.worktrees/csv-import — open a new agent session there
+```
+
+The dirty-tree refusal suggests exactly this. The new worktree is cut from the freshest
+base branch and leaves this checkout, and the work in it, untouched. The command prints the
+path and stops. An agent cannot move its own session, so opening a session in the new
+worktree is your step.
+
+The task's workspace stays where the task was filed, and the worktree gets a link to it.
+From the original checkout, `task list` and `jig status` still show every task, and a task
+running in a worktree carries where it is and how much there is uncommitted:
+
+```text
+csv-import class=T2 status=active branch=task/csv-import worktree=/work/app.worktrees/csv-import uncommitted=4
+```
+
+Agents do not commit, so that count is what waits for your review. Review and commit in
+the worktree as you would anywhere. Once the task is merged and consolidated, housekeeping
+removes the worktree with `git worktree remove` when it purges the workspace. It never
+passes `--force`, so a worktree with uncommitted files stays, and `jig status` reports it
+as `worktrees kept`. The branch is not deleted. `git.worktree_root` moves the worktrees
+somewhere other than `../<project>.worktrees`.
 
 ### Pause and resume
 

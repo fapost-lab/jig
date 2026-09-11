@@ -12,6 +12,7 @@ cmd_task() {
   case "$sub" in
     new) task_new "$@" ;;
     set) task_set "$@" ;;
+    start) task_start "$@" ;;
     abandon) task_abandon "$@" ;;
     pause) task_pause "$@" ;;
     resume) task_resume "$@" ;;
@@ -20,7 +21,7 @@ cmd_task() {
     current) task_current "$@" ;;
     changes) task_changes "$@" ;;
     artifacts) task_artifacts "$@" ;;
-    *) jig_die "usage: jig task new|set|abandon|pause|resume|list|show|current|changes|artifacts ..." ;;
+    *) jig_die "usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts ..." ;;
   esac
 }
 
@@ -109,6 +110,90 @@ _task_current_branch() {
   fi
 }
 
+# --- worktrees (ADR-0029) -------------------------------------------------------
+
+# _task_worktree_root — the directory `task start --worktree` creates task
+# worktrees under: `git.worktree_root`, relative to the project root unless it
+# is absolute. By default a sibling of the project, `<project>.worktrees`.
+#
+# Beside the repository rather than inside it: a nested copy of the whole tree
+# is found twice by every tool that walks the directory — test runners, type
+# checkers, IDE indexers — and jig can teach its own profiles to prune it but
+# not the tools of the project that adopted it (ADR-0029).
+_task_worktree_root() {
+  local root
+  root=$(cfg git.worktree_root "")
+  [ -n "$root" ] || root="../$(basename "$JIG_PROJECT").worktrees"
+  case "$root" in
+    /*) printf '%s\n' "$root" ;;
+    *) printf '%s/%s\n' "$JIG_PROJECT" "$root" ;;
+  esac
+}
+
+# _task_worktrees — "<branch><TAB><path>" for every worktree of this
+# repository other than this checkout that has a branch checked out and still
+# exists on disk. Paths are physical.
+#
+# This reads git's list of worktrees, never another checkout's .ai/, so it is
+# not the cross-worktree lookup ADR-0008 rules out: it says where a branch is
+# checked out, which only git knows.
+_task_worktrees() {
+  local list self path branch t
+  list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 0
+  self=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 0
+  t=$(printf '\t')
+  while IFS="$t" read -r path branch; do
+    [ -n "$branch" ] || continue
+    path=$(cd -P "$path" 2>/dev/null && pwd -P) || continue
+    [ "$path" != "$self" ] || continue
+    printf '%s\t%s\n' "$branch" "$path"
+  done < <(printf '%s\n' "$list" | awk '
+    /^worktree / { if (p != "") print p "\t" b; p = substr($0, 10); b = "" }
+    /^branch refs\/heads\// { b = substr($0, 19) }
+    END { if (p != "") print p "\t" b }
+  ')
+  return 0
+}
+
+# _task_worktree_for <branch> <worktrees> — the path of the worktree that has
+# <branch> checked out, from a `_task_worktrees` listing; empty when none.
+_task_worktree_for() {
+  printf '%s\n' "$2" | awk -F '\t' -v b="$1" '$1 == b { print $2; exit }'
+}
+
+# _task_worktree_note <path> — how a task started in its own worktree is shown
+# by `task list` and `jig status`: where it is, and how many files there wait
+# for the human's review. Agents do not commit, so that count is the queue.
+_task_worktree_note() {
+  local n
+  n=$(_task_count_lines "$(git -C "$1" status --porcelain 2>/dev/null || true)")
+  printf 'worktree=%s uncommitted=%s\n' "$1" "$n"
+}
+
+# _task_borrowed_workspace <id> — the physical path of this task's workspace
+# when it is the link `task start --worktree` made: a symlink to the same
+# task's workspace in another worktree of this repository. Non-zero for any
+# other link, which could point anywhere.
+_task_borrowed_workspace() {
+  local id="$1" link real list p
+  link=$(task_dir "$id")
+  [ -L "$link" ] || return 1
+  real=$(cd -P "$link" 2>/dev/null && pwd -P) || return 1
+  list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 1
+  while IFS= read -r p; do
+    case "$p" in
+      "worktree "*) p=${p#worktree } ;;
+      *) continue ;;
+    esac
+    p=$(cd -P "$p" 2>/dev/null && pwd -P) || continue
+    if [ "$real" = "$p/$JIG_AI_DIR/workspace/tasks/$id" ]; then
+      printf '%s\n' "$real"
+      return 0
+    fi
+  done < <(printf '%s\n' "$list")
+  return 1
+}
+
 # --- candidates (design §1) -----------------------------------------------------
 
 # Number of non-empty lines in <text>. Avoids `wc -l`'s BSD/GNU leading-space
@@ -146,7 +231,7 @@ $id"
 }
 
 # The single candidate on <branch>, or nothing when there are zero or several
-# (an advisory hint for `task new`'s dirty-tree refusal, not a resume
+# (an advisory hint for `task start`'s dirty-tree refusal, not a resume
 # decision — ambiguity there is fine, it just means the message stays
 # generic rather than naming a task it cannot be sure of).
 _task_likely_owner() {
@@ -299,9 +384,6 @@ _task_resume_overlap() {
     <(printf '%s\n' "$base_files" | sed '/^$/d' | sort -u)
 }
 
-# Refuse to start a new task on a dirty working tree (design §6): untracked
-# files never block (build output is not work in progress), only tracked
-# changes do — a `git status --porcelain` line that is not `??`.
 # _task_branch_name <id> — the branch this task will live on, from
 # `git.branch_template` with {id} substituted. Dies on a name git would
 # reject, using git's own rules rather than a hand-rolled regex: the set of
@@ -313,49 +395,39 @@ _task_branch_name() {
   template=$(cfg git.branch_template "task/{id}")
   case "$template" in
     *'{id}'*) ;;
-    *) jig_die "task new: git.branch_template must contain {id}: $template" ;;
+    *) jig_die "task start: git.branch_template must contain {id}: $template" ;;
   esac
   name=${template%%'{id}'*}$id${template#*'{id}'}
   git check-ref-format --branch "$name" >/dev/null 2>&1 \
-    || jig_die "task new: git rejects the branch name: $name"
+    || jig_die "task start: git rejects the branch name: $name"
   if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$name" >/dev/null 2>&1; then
-    jig_die "task new: branch already exists: $name (reusing it would attach this task to someone else's work)"
+    jig_die "task start: branch already exists: $name (reusing it would attach this task to someone else's work)"
   fi
   printf '%s\n' "$name"
 }
 
-# _task_create_branch <name> — create <name> off the base branch, check it
-# out, and print the commit it starts from. Non-zero when git refuses.
+# Refuse to start a task on a dirty working tree (design §6): untracked files
+# never block (build output is not work in progress), only tracked changes do —
+# a `git status --porcelain` line that is not `??`. There is no override: the
+# changes would ride into the new branch and become this task's first commit,
+# which is how four tasks recorded someone else's work on 2026-09-11.
 #
-# The branch is cut from `git.base_branch`, not from HEAD: a task is work
-# proposed against the base, and starting it from wherever the checkout
-# happened to be is how a task quietly inherits an unrelated branch's history.
-# When the base cannot be resolved (a repository with no commits yet) the
-# branch is cut from HEAD instead, which is the only thing that exists.
-_task_create_branch() {
-  local name="$1" base start
-  base=$(cfg git.base_branch main)
-  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null 2>&1; then
-    start="refs/heads/$base"
-  elif git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$base" >/dev/null 2>&1; then
-    start="refs/remotes/origin/$base"
-  else
-    start="HEAD"
-  fi
-  git -C "$JIG_PROJECT" checkout -q -b "$name" "$start" >/dev/null 2>&1 || return 1
-  git -C "$JIG_PROJECT" rev-parse HEAD 2>/dev/null || return 1
-}
-
+# The refusal is a fork, not a dead end, when branches are per task: the other
+# road is a worktree of its own, which leaves this checkout — and the work in
+# it — untouched (ADR-0029).
 _task_refuse_dirty_tree() {
-  local branch="$1" tracked owner
+  local branch="$1" id="${2:-}" tracked owner fork=""
   tracked=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null | grep -v '^??' || true)
   [ -n "$tracked" ] || return 0
 
+  if [ -n "$id" ] && cfg_bool git.branch_per_task true; then
+    fork=", or start it in its own worktree: \`jig task start $id --worktree\`"
+  fi
   owner=$(_task_likely_owner "$branch")
   if [ -n "$owner" ]; then
-    jig_die "task new: uncommitted changes in the working tree, likely from task $owner; run \`jig task pause $owner --stash\` or pass --force"
+    jig_die "task start: uncommitted changes in the working tree, likely from task $owner; run \`jig task pause $owner --stash\` first$fork"
   else
-    jig_die "task new: uncommitted changes in the working tree; pause the task that owns them with --stash, or pass --force"
+    jig_die "task start: uncommitted changes in the working tree; commit them, or pause the task that owns them with --stash$fork"
   fi
 }
 
@@ -363,17 +435,15 @@ _task_refuse_dirty_tree() {
 
 task_new() {
   jig_require_init
-  [ $# -ge 1 ] || jig_die "usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>] [--force]"
+  [ $# -ge 1 ] || jig_die "usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]"
   local id="$1"
   shift
-  local class="" domains="" from="" force=0 no_branch=0
+  local class="" domains="" from=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --class) [ $# -ge 2 ] || jig_die "task new: --class requires a value"; class="$2"; shift 2 ;;
       --domains) [ $# -ge 2 ] || jig_die "task new: --domains requires a value"; domains="$2"; shift 2 ;;
       --from) [ $# -ge 2 ] || jig_die "task new: --from requires a value"; from="$2"; shift 2 ;;
-      --force) force=1; shift ;;
-      --no-branch) no_branch=1; shift ;;
       *) jig_die "task new: unknown argument: $1" ;;
     esac
   done
@@ -396,41 +466,22 @@ task_new() {
     [ -r "$from" ] || jig_die "task new: --from: file not readable: $from"
   fi
 
-  local branch
-  branch=$(_task_current_branch)
-
-  # Prevention beats resolution (design §6): a dirty tracked tree is refused
-  # before the new workspace is even created, naming the branch's likely
-  # owner when there is exactly one. Untracked-only trees pass through.
-  [ "$force" -eq 1 ] || _task_refuse_dirty_tree "$branch"
-
-  # Everything that can refuse this task refuses it before anything is
-  # created, so a rejected `task new` leaves neither a workspace nor a branch.
-  local new_branch=""
-  if [ "$no_branch" -eq 0 ] && cfg_bool git.branch_per_task true; then
-    new_branch=$(_task_branch_name "$id")
-  fi
-
+  # No dirty-tree check here: filing touches neither the checkout nor the
+  # branch, so there is nothing for uncommitted work to leak into. The check
+  # lives in `task start`, and filing a task for later in the middle of other
+  # work is the case this split exists for.
   mkdir -p "$dir"
 
-  # Create the branch after the workspace so a failure here can be undone
-  # cleanly: the directory was made by this call and nothing else has written
-  # to it yet. The reverse order would leave the checkout on a branch with no
-  # task behind it.
-  local base_commit=""
-  if [ -n "$new_branch" ]; then
-    if ! base_commit=$(_task_create_branch "$new_branch"); then
-      rm -rf "$dir"
-      jig_die "task new: could not create branch $new_branch"
-    fi
-    branch="$new_branch"
-  fi
-
+  # `branch` and `base_commit` are written by `task start`, not here. A task
+  # filed for later has no branch, and saying so by *omission* is what makes
+  # it invisible to `_task_candidates_for_branch`: an absent value matches no
+  # branch name, so the task cannot become an ambiguous `task current`
+  # candidate. Before this, a filed task claimed whatever branch the checkout
+  # happened to be on, and four of them claimed a branch they had nothing to
+  # do with in a single day (ADR-0026, as amended).
   local tmp="$dir/state.tmp.$$"
   {
     printf 'task_id: %s\n' "$id"
-    printf 'branch: %s\n' "$branch"
-    [ -z "$base_commit" ] || printf 'base_commit: %s\n' "$base_commit"
     [ -z "$class" ] || printf 'class: %s\n' "$class"
     printf 'status: active\n'
     printf 'knowledge_consolidated: false\n'
@@ -443,6 +494,204 @@ task_new() {
   _task_write_task_md "$id" "$dir/task.md" "$from"
 
   jig_relpath "$dir" "$JIG_PROJECT"
+}
+
+# task_start <id> — begin work on a filed task: cut its branch, check it out
+# and record where it forked from.
+#
+# Separate from `resume` on purpose. `resume` means "undo a pause", and a task
+# can be *both* unstarted and paused — every task filed on 2026-09-11 was. One
+# verb doing either thing depending on hidden state would collapse the two
+# absences this design just separated, which is the ambiguity ADR-0012 refused
+# for `task current`.
+#
+# The branch is cut here rather than at `task new` because a fork point
+# recorded weeks before work begins is a fact that is false by the time it is
+# first needed (ADR-0026, as amended).
+task_start() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "usage: jig task start <id> [--worktree]"
+  local id="$1" worktree=0
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --worktree) worktree=1; shift ;;
+      *) jig_die "task start: unknown argument: $1" ;;
+    esac
+  done
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task start: unknown task: $id"
+
+  # A `branch` with no `base_commit` was recorded at filing, before starting
+  # was a separate step: it is the branch the checkout happened to be on, not
+  # one the task forked. Such a task was never started, and starting it is how
+  # its record gets repaired — by the script that owns the key, not by hand
+  # (ADR-0008). A task with a fork point is started, and stays refused.
+  local existing
+  existing=$(task_state_get "$id" branch)
+  if [ -n "$existing" ]; then
+    [ -z "$(task_state_get "$id" base_commit)" ] \
+      || jig_die "task start: already started on $existing"
+    jig_info "task start: $id recorded $existing when it was filed, with no fork point; starting it now"
+  fi
+
+  if [ "$worktree" -eq 1 ]; then
+    _task_start_in_worktree "$id" "$dir"
+    return 0
+  fi
+
+  # Before either path, not only before a branch is cut: with one shared
+  # branch the leak is the same — base_commit would name a point the
+  # uncommitted work is already on top of.
+  _task_refuse_dirty_tree "$(_task_current_branch)" "$id"
+
+  local branch base_commit
+  if cfg_bool git.branch_per_task true; then
+    branch=$(_task_branch_name "$id")
+    base_commit=$(_task_start_branch "$branch") \
+      || jig_die "task start: could not create branch $branch"
+  else
+    # A project that works on one branch by choice still gets a start: the
+    # task records where it began, which is what housekeeping needs to tell
+    # "did nothing" from "landed".
+    branch=$(_task_current_branch)
+    base_commit=$(git -C "$JIG_PROJECT" rev-parse HEAD 2>/dev/null) \
+      || jig_die "task start: cannot resolve HEAD"
+  fi
+
+  _task_rewrite_state "$dir" branch "$branch"
+  _task_rewrite_state "$dir" base_commit "$base_commit"
+  _task_paused_hint "$id" ""
+  printf '%s\n' "$branch"
+}
+
+# _task_start_in_worktree <id> <dir> — start the task on its own branch in a
+# new worktree, leaving this checkout exactly as it was (ADR-0029).
+#
+# The workspace does not move. The worktree gets one link to it, so the
+# checkout the task was filed in keeps seeing every task, and the workspace's
+# lifecycle — housekeeping, trash — stays in one place. The link is absolute
+# because git keeps worktree paths absolute too; moving the repository breaks
+# both alike, and `git worktree repair` is the answer to that.
+#
+# No dirty-tree check: nothing uncommitted here can reach a tree cut fresh
+# from the base. The command prints the path and stops there. An agent session
+# has a working directory it cannot leave mid-session, so opening a session
+# in the new worktree is the human's step (the same stance as ADR-0024).
+_task_start_in_worktree() {
+  local id="$1" dir="$2" branch path owner base_commit
+  cfg_bool git.branch_per_task true \
+    || jig_die "task start: --worktree needs git.branch_per_task: true (one branch cannot be checked out in two worktrees)"
+  branch=$(_task_branch_name "$id")
+  path="$(_task_worktree_root)/$id"
+  [ ! -e "$path" ] && [ ! -L "$path" ] \
+    || jig_die "task start: worktree path already exists: $path"
+  owner=$(cd -P "$dir" && pwd -P) || jig_die "task start: cannot resolve the workspace of $id"
+
+  local start
+  start=$(_task_fresh_base) || exit 1
+  base_commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) \
+    || jig_die "task start: cannot resolve $start"
+
+  if ! git -C "$JIG_PROJECT" worktree add -q -b "$branch" "$path" "$base_commit" >/dev/null 2>&1; then
+    _task_undo_worktree_start "$branch" "$path" "$base_commit"
+    jig_die "task start: could not create worktree $path"
+  fi
+  if ! mkdir -p "$path/$JIG_AI_DIR/workspace/tasks" 2>/dev/null \
+     || ! ln -s "$owner" "$path/$JIG_AI_DIR/workspace/tasks/$id" 2>/dev/null; then
+    _task_undo_worktree_start "$branch" "$path" "$base_commit"
+    jig_die "task start: could not link the workspace of $id into $path"
+  fi
+  path=$(cd -P "$path" && pwd -P) || jig_die "task start: cannot resolve worktree $path"
+
+  _task_rewrite_state "$dir" branch "$branch"
+  _task_rewrite_state "$dir" base_commit "$base_commit"
+  _task_paused_hint "$id" " there"
+  jig_info "task start: $id is on $branch in its own worktree; open a new agent session in $path"
+  printf '%s\n' "$path"
+}
+
+# _task_paused_hint <id> <where> — starting is not resuming (a task can be
+# both unstarted and paused), so a paused task stays paused; say how to go on.
+_task_paused_hint() {
+  [ "$(task_state_get "$1" paused)" = "true" ] || return 0
+  jig_info "task start: $1 is paused; run \`jig task resume $1\`$2 to make it current"
+}
+
+# _task_fresh_base — the ref a task's branch is cut from: the freshest base.
+#
+# Freshest, not nearest: resolving refs/heads/<base> first meant a local base
+# that had fallen behind produced a stale branch *and* a stale base_commit,
+# silently. That happened on 2026-09-11 — a branch was cut from the previous
+# merge and the work done on it was missing a command merged an hour earlier.
+# Diverged bases are refused rather than guessed: picking either surprises
+# somebody, and the surprise surfaces far from its cause.
+_task_fresh_base() {
+  local base local_ref remote_ref
+  base=$(cfg git.base_branch main)
+  local_ref="refs/heads/$base"
+  remote_ref="refs/remotes/origin/$base"
+
+  local has_local=0 has_remote=0
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$local_ref" >/dev/null 2>&1 && has_local=1
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$remote_ref" >/dev/null 2>&1 && has_remote=1
+
+  if [ "$has_local" = 1 ] && [ "$has_remote" = 1 ]; then
+    if git -C "$JIG_PROJECT" merge-base --is-ancestor "$local_ref" "$remote_ref" 2>/dev/null; then
+      if ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$remote_ref" "$local_ref" 2>/dev/null; then
+        jig_info "task start: local $base is behind origin/$base; branching from origin/$base"
+        printf '%s\n' "$remote_ref"
+      else
+        printf '%s\n' "$local_ref"
+      fi
+    elif git -C "$JIG_PROJECT" merge-base --is-ancestor "$remote_ref" "$local_ref" 2>/dev/null; then
+      printf '%s\n' "$local_ref"
+    else
+      jig_die "task start: $base and origin/$base have diverged; reconcile them first"
+    fi
+  elif [ "$has_local" = 1 ]; then
+    printf '%s\n' "$local_ref"
+  elif [ "$has_remote" = 1 ]; then
+    printf '%s\n' "$remote_ref"
+  else
+    printf 'HEAD\n'
+  fi
+}
+
+# _task_start_branch <name> — create <name> off the freshest base, check it out
+# here, and print the commit it starts from.
+#
+# Cut from the commit, not the ref: a branch started from origin/<base> would
+# otherwise get origin/<base> as its upstream, and `git status` would report
+# the task as "ahead of origin/main" — a branch that is never pushed there.
+_task_start_branch() {
+  local name="$1" start commit
+  start=$(_task_fresh_base) || exit 1
+  commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) || return 1
+  git -C "$JIG_PROJECT" checkout -q -b "$name" "$commit" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$commit"
+}
+
+# _task_undo_worktree_start <branch> <path> <commit> — take back what a failed
+# `task start --worktree` made, so that running it again can succeed rather
+# than hitting "branch already exists" forever. `git worktree add -b` creates
+# the branch before the directory, so a failure can leave either behind.
+#
+# Only what this very call created is removed, and without force. The path
+# did not exist before (checked), and a fresh checkout has nothing to lose, so
+# `git worktree remove` needs no --force; if it refuses, the worktree stays.
+# The branch is deleted with `update-ref -d <ref> <commit>`, which deletes only
+# while it still points at the commit it was cut at — a branch anyone has
+# committed to since is never touched — and only when no worktree has it
+# checked out.
+_task_undo_worktree_start() {
+  local branch="$1" path="$2" commit="$3"
+  git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || true
+  git -C "$JIG_PROJECT" worktree prune >/dev/null 2>&1 || true
+  if [ -z "$(_task_worktree_for "$branch" "$(_task_worktrees)")" ]; then
+    git -C "$JIG_PROJECT" update-ref -d "refs/heads/$branch" "$commit" >/dev/null 2>&1 || true
+  fi
 }
 
 task_set() {
@@ -508,6 +757,15 @@ task_pause() {
 
   local stash_sha=""
   if [ "$stash" -eq 1 ]; then
+    # --stash sets aside *this checkout's* changes and records them as the
+    # task's. When the task's branch is checked out somewhere else — its own
+    # worktree, most often (ADR-0029) — those changes are not the task's, and
+    # its real work would stay where it is while the record said otherwise.
+    local state_branch
+    state_branch=$(task_state_get "$id" branch)
+    if [ -n "$state_branch" ] && [ "$state_branch" != "$(_task_current_branch)" ]; then
+      jig_die "task pause: --stash stashes this checkout, but $id is on $state_branch; run it where $state_branch is checked out"
+    fi
     local changed count
     changed=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null)
     count=$(_task_count_lines "$changed")
@@ -542,10 +800,14 @@ task_resume() {
   [ -f "$dir/state" ] || jig_die "task resume: unknown task: $id"
   [ "$(task_state_get "$id" paused)" = "true" ] || jig_die "task resume: not paused: $id"
 
+  # A task that was filed and paused before it was ever started has no branch
+  # to switch to; the check applies only once `task start` gave it one.
   local state_branch cur_branch
   state_branch=$(task_state_get "$id" branch)
-  cur_branch=$(_task_current_branch)
-  [ "$cur_branch" = "$state_branch" ] || jig_die "task resume: switch to $state_branch first"
+  if [ -n "$state_branch" ]; then
+    cur_branch=$(_task_current_branch)
+    [ "$cur_branch" = "$state_branch" ] || jig_die "task resume: switch to $state_branch first"
+  fi
 
   local sha stash_line=""
   sha=$(task_state_get "$id" paused_stash)
@@ -612,7 +874,8 @@ task_list() {
   done
 
   local base="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  local dir id class status branch paused line lines="" hidden=0
+  local dir id class status branch paused line lines="" hidden=0 worktrees wt
+  worktrees=$(_task_worktrees)
   for dir in "$base"/*/; do
     [ -f "${dir}state" ] || continue
     id=$(basename "$dir")
@@ -627,7 +890,16 @@ task_list() {
       continue
     fi
     [ -n "$class" ] || class="-"
-    line="$id class=$class status=$status branch=$branch"
+    # A task with no branch has not been started. Saying so is the whole
+    # point of representing "not started" as an absence: without a marker the
+    # listing shows it as indistinguishable from work in progress.
+    if [ -n "$branch" ]; then
+      line="$id class=$class status=$status branch=$branch"
+      wt=$(_task_worktree_for "$branch" "$worktrees")
+      [ -z "$wt" ] || line="$line $(_task_worktree_note "$wt")"
+    else
+      line="$id class=$class status=$status not-started"
+    fi
     [ "$paused" = "true" ] && line="$line paused"
     lines="$lines
 $line"
@@ -789,12 +1061,18 @@ task_artifacts() {
   shift
   root=$(task_dir "$id") || return 1
   [ -f "$root/state" ] || jig_die "task artifacts: unknown task: $id"
-  # A linked task directory can point outside the validated checkout workspace.
-  [ ! -L "$root" ] || jig_die "task artifacts: linked task workspace is unsupported"
-  root=$(cd -P "$root" && pwd -P) || jig_die "task artifacts: cannot inspect workspace"
-  local tasks_root
-  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" && pwd -P) || return 1
-  case "$root" in "$tasks_root"/"$id") ;; *) jig_die "task artifacts: workspace outside task root" ;; esac
+  # A linked task directory can point outside the validated checkout
+  # workspace. The one link accepted is the one `task start --worktree` makes:
+  # to this same task's workspace in another worktree of this repository.
+  if [ -L "$root" ]; then
+    root=$(_task_borrowed_workspace "$id") \
+      || jig_die "task artifacts: linked task workspace is unsupported unless it is this task's workspace in another worktree"
+  else
+    root=$(cd -P "$root" && pwd -P) || jig_die "task artifacts: cannot inspect workspace"
+    local tasks_root
+    tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" && pwd -P) || return 1
+    case "$root" in "$tasks_root"/"$id") ;; *) jig_die "task artifacts: workspace outside task root" ;; esac
+  fi
   class=$(task_state_get "$id" class)
   _task_valid_class "$class" || jig_die "task artifacts: invalid or missing class: $class"
   while [ $# -gt 0 ]; do

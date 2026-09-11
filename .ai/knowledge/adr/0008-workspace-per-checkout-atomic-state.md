@@ -9,6 +9,7 @@ paths:
   - "scripts/lib/context.sh"
   - "schemas/state.md"
 summary: Why a workspace belongs to its checkout and state is written atomically without locks.
+reviewed_at: 2026-09-11
 ---
 # ADR-0008: Task workspaces are per checkout; state writes are atomic, last-write-wins
 
@@ -46,3 +47,13 @@ write the same `state` file.
   to clean.
 - Two sessions on one task in one checkout must coordinate through the branch and
   the task artifacts, not through state locking.
+
+> **Amendment (2026-09-11).** One named exception to "no cross-worktree lookup": a worktree
+> made by `jig task start --worktree` borrows exactly one workspace, through a link to the
+> task's workspace in the checkout where it was filed (ADR-0029). The link is given at
+> creation, not looked up, and the workspace still belongs to that checkout — housekeeping
+> and trash act there only. Where a task's branch is checked out is read from
+> `git worktree list`, which reads git's data, not another checkout's `.ai/`. The
+> consequence above about `git worktree remove` taking the workspaces with it still holds
+> for a workspace filed inside a worktree. That is why housekeeping never removes a
+> worktree that holds one.

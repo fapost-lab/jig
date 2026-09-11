@@ -7,8 +7,8 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | Key | Writer | Values |
 |---|---|---|
 | `task_id` | `jig task new` | `^[A-Za-z0-9][A-Za-z0-9._-]*$` (no leading dot, so `.`, `..` and hidden names are impossible); every `jig task` subcommand validates the id before touching the filesystem |
-| `branch` | `jig task new` | branch name at creation, or the branch it created |
-| `base_commit` | `jig task new` | 40-hex commit the task's branch forked from; absent when no branch was created (`--no-branch`, `git.branch_per_task: false`, or a workspace predating the field). Housekeeping treats an absent fork point as "ask the old question", so a task without one is also without the protection the field provides |
+| `branch` | `jig task start` | the branch the task was started on. **Absent means the task has not been started** — it is listed as `not-started` and never becomes a `task current` candidate. Present *without* `base_commit` means an older `task new` recorded the checkout's branch at filing; `task start` treats such a task as unstarted and rewrites both keys |
+| `base_commit` | `jig task start` | 40-hex commit the task's branch forked from, resolved when work began rather than when the task was filed. Absent while the task is unstarted, and in workspaces predating the field. Housekeeping treats an absent fork point as "ask the old question", so such a task is also without the protection the field provides |
 | `class` | skill via `jig task set` | `T0` … `T4` |
 | `status` | skills via `jig task set` | `active`, `ready`, `consolidated`, `abandoned` |
 | `knowledge_consolidated` | `jig-consolidate` skill via `jig task set` | `true`, `false` |
@@ -76,3 +76,19 @@ absolute names and tab/newline names fail. Git failures do not become empty succ
 
 The base and ownership evidence live in task artifacts, not state. Mixed files still need
 hunk ownership evidence and actual patch inspection; inventory is not a review verdict.
+
+## Where a task is checked out
+
+No key records it. A task started with `jig task start --worktree` has its `branch`
+checked out in a Task Worktree, and `git worktree list` says where; `task list` and
+`jig status` derive `worktree=<path> uncommitted=<n>` from that on every call (ADR-0029).
+The worktree reaches this file through a link to the workspace, so the state file itself
+exists once, in the checkout where the task was filed.
+
+## Key order
+
+`jig task new` writes `task_id`, `class`, `status`, `knowledge_consolidated`, `domains`,
+`created_at`, `updated_at` — the keys it knows at filing time. `jig task start` inserts
+`branch` and `base_commit` before `created_at`, the same place `jig task set` inserts a
+key it is adding for the first time. The order is stable, not canonical: nothing reads
+this file positionally.

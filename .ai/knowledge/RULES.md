@@ -4,7 +4,10 @@
 
 - Scripts never invoke an LLM. (ADR-0001)
 - Scripts never delete a path they have not validated to be inside `.ai/` and shaped
-  like a workspace or trash entry. (ADR-0006)
+  like a workspace or trash entry. (ADR-0006) The one exception is a task worktree, and
+  git deletes it, not the script. It is removed only by `git worktree remove` without
+  `--force`, only when git lists it with the task's branch, it lies under
+  `git.worktree_root`, and it holds no workspace of its own. (ADR-0029)
 - Housekeeping never destroys a workspace whose remote state is `unknown`.
   (`domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.

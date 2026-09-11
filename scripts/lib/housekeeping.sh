@@ -56,7 +56,12 @@ cmd_housekeeping() {
   fi
 
   local needs_consolidation=0 found=0
-  local state_file tid st paused age branch base_commit remote remote_pair decision action flags dest facts
+  local state_file tid st paused age branch base_commit remote remote_pair decision action flags dest facts wt
+
+  # Worktrees tasks were started in, from git's own list, read once per run.
+  # A task's worktree goes when its workspace goes (ADR-0029).
+  local worktrees
+  worktrees=$(_task_worktrees)
 
   if [ -d "$tasks_dir" ]; then
     while IFS= read -r state_file; do
@@ -89,6 +94,17 @@ cmd_housekeeping() {
       case "$flags" in
         *needs-consolidation*) needs_consolidation=1 ;;
       esac
+
+      # A worktree that has to stay keeps its workspace too. Purging the
+      # workspace would leave the worktree's link dangling beside whatever
+      # made it stay — and the uncertain direction is always preserve.
+      if [ "$action" = "purge" ] && [ -n "$branch" ]; then
+        wt=$(_task_worktree_for "$branch" "$worktrees")
+        if [ -n "$wt" ] && ! _hk_worktree_retire "$dry" "$tid" "$wt"; then
+          action="preserve"
+          flags="worktree-kept"
+        fi
+      fi
 
       dest=""
       facts=""
@@ -501,6 +517,56 @@ _hk_purge() {
   mkdir -p "$(dirname "$dest")"
   mv "$dir" "$dest"
   printf '%s\n' "$dest"
+}
+
+# _hk_worktree_retire <dry> <task-id> <path> — remove the worktree a task was
+# started in, as its workspace is purged (ADR-0029). Non-zero, having said
+# why, when the worktree has to stay.
+#
+# The one deletion outside .ai/ (RULES.md), so it is narrow on purpose:
+# - git lists <path> as the worktree of the task's branch (the caller's lookup);
+# - <path> lies under git.worktree_root, so a worktree somebody made by hand,
+#   for reasons of their own, is never touched;
+# - nothing under its .ai/workspace/tasks/ is anything but a link: `git
+#   worktree remove` deletes ignored files silently, and a real workspace
+#   there is one this checkout knows nothing about;
+# - git does the deleting, without --force, so tracked changes and untracked
+#   files make it refuse. Agents do not commit: uncommitted work in a task
+#   worktree is the normal state before review, not debris.
+_hk_worktree_retire() {
+  local dry="$1" tid="$2" path="$3" root="" reason="" own=""
+  root=$(cd -P "$(_task_worktree_root)" 2>/dev/null && pwd -P) || root=""
+  if [ -z "$root" ]; then
+    reason="no-worktree-root"
+  else
+    case "$path" in
+      "$root"/*) ;;
+      *) reason="outside-worktree-root" ;;
+    esac
+  fi
+  if [ -z "$reason" ]; then
+    own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l 2>/dev/null | head -n 1) || own=""
+    [ -z "$own" ] || reason="own-workspace"
+  fi
+  if [ -z "$reason" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || true)" ]; then
+    reason="uncommitted-changes"
+  fi
+  if [ -z "$reason" ] && [ "$dry" != 1 ]; then
+    git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || reason="git-refused"
+  fi
+
+  if [ -n "$reason" ]; then
+    printf 'worktree %s kept (%s)\n' "$path" "$reason"
+    [ "$dry" = 1 ] || _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=keep reason=$reason"
+    return 1
+  fi
+  if [ "$dry" = 1 ]; then
+    printf 'would-remove worktree %s\n' "$path"
+  else
+    printf 'remove worktree %s\n' "$path"
+    _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=remove"
+  fi
+  return 0
 }
 
 # _hk_trash_expire <dry> <ttl_days> — phase two of ADR-0006. The age comes
