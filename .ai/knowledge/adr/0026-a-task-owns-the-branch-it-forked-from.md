@@ -11,6 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - schemas/state.md
 summary: Why task new creates its own branch, and why the fork point must be recorded before ancestry can be trusted.
+reviewed_at: 2026-09-11
 ---
 # ADR-0026: A task creates its own branch and records where it forked from
 
@@ -36,7 +37,7 @@ this feature does not repair housekeeping; it arms it.
 
 ## Decision
 
-- **`jig task new` creates and checks out a branch**, cut from `git.base_branch` rather
+- **`jig task start` creates and checks out a branch**, cut from `git.base_branch` rather
   than from `HEAD` — a task is work proposed against the base, and starting it wherever
   the checkout happened to be is how a task inherits an unrelated history. Configured by
   `git.branch_per_task` (default `true`) and `git.branch_template` (default `task/{id}`),
@@ -77,6 +78,46 @@ this feature does not repair housekeeping; it arms it.
 - **A per-checkout pointer to the active task** (`.ai/runtime/`), to allow several tasks on
   one branch. Deferred: branch-per-task removes the ambiguity the pointer was invented for,
   and a second source of truth for "which task is active" drifts from the first.
+
+> **Amendment (2026-09-11).** The branch was originally cut by `jig task new`. That was
+> wrong for a task filed and started later: `base_commit` means "where this task's branch
+> began", and a fork point recorded weeks before work starts is false by the time anything
+> reads it. Measured on this repository the same week — six of seven live tasks had been
+> filed for later and never started, so branch-at-filing fitted one task in seven.
+>
+> Creating the branch moved to **`jig task start <id>`**, and a task filed but not started
+> now carries **no `branch` and no `base_commit` at all**. The absence does the work:
+> `_task_candidates_for_branch` matches on `branch`, so an absent one keeps the task out of
+> `task current` without a pause. Before this, filed tasks claimed whatever branch the
+> checkout happened to be on — four of them claimed a foreign branch in one day.
+>
+> A second defect fixed with it: `_task_create_branch` resolved `refs/heads/<base>` before
+> `refs/remotes/origin/<base>`, so a local base that had fallen behind produced a stale
+> branch *and* a stale `base_commit`, silently. `task start` now prefers `origin/<base>`
+> when local is strictly behind and says which it used; diverged bases are refused rather
+> than guessed.
+>
+> `--no-branch` is gone: not creating a branch at `task new` is the behaviour now.
+>
+> The dirty-tree refusal ADR-0012 put on `task new` moved with the branch to `task start`,
+> on both paths — with a branch per task and with one shared branch — and it has no
+> `--force`. Filing touches nothing that uncommitted work could leak into; starting cuts
+> the branch that work would ride into, or records a `base_commit` it already sits on top
+> of. Every wrong `branch` field recorded on 2026-09-11 came through that override.
+>
+> Two consequences below are historical as written. A failed start leaves the task filed
+> and unstarted instead of removing a workspace, because `task start` writes `branch` and
+> `base_commit` only after the checkout succeeds. And the exposure and the tests attributed
+> to `--no-branch` now belong to `git.branch_per_task: false`.
+>
+> Two follow-ups settled later the same day, with ADR-0029. **A `branch` with no
+> `base_commit` counts as not started**: it was recorded at filing, from whatever the
+> checkout was on, so `task start` rewrites both fields and says so. That repairs the tasks
+> filed before this amendment without a new command and without hand-editing a
+> script-owned key. **The per-checkout active-task pointer below is closed, not
+> deferred.** Branch-per-task and worktrees give each checkout at most one live task by
+> construction, and a pointer would be a second source of truth. It would disagree with the
+> branch after the first `git checkout` — the failure class ADR-0012 exists to prevent.
 
 ## Consequences
 

@@ -524,6 +524,7 @@ test_context_no_workspace_line_without_a_task() {
 test_context_resolves_task_via_current_branch() {
   ctx_setup
   jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
   run jig context
   assert_eq 0 "$RC"
   assert_contains "$OUT" "workspace: .ai/workspace/tasks/T-1/task.md"
@@ -552,12 +553,12 @@ test_context_task_explicit_overrides_current_branch_resolution() {
 
 test_context_ambiguous_omits_workspace_warns_stderr_exits_0() {
   ctx_setup
-  # --no-branch on purpose: ambiguity needs two tasks on one branch, which
-  # branch-per-task (the default) prevents. The behaviour under test — context
-  # omits the workspace rather than guessing — still matters wherever
-  # branch-per-task is off.
-  jig task new T-1 --no-branch >/dev/null
-  jig task new T-2 --no-branch >/dev/null
+  # Ambiguity needs two *started* tasks sharing one branch, which only a
+  # project with branch-per-task off can produce.
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  jig task new T-1 >/dev/null; jig task start T-1 >/dev/null
+  jig task new T-2 >/dev/null; jig task start T-2 >/dev/null
 
   run jig context
   assert_eq 0 "$RC"
@@ -583,8 +584,11 @@ test_context_paused_task_excluded_leaves_one_candidate() {
   # tasks would still resolve deterministically here (tie-break by id) and
   # mask the bug. Pausing T-1 — the one that would otherwise win the
   # tie-break — makes the assertion actually exercise the exclusion.
-  jig task new T-1 >/dev/null
-  jig task new T-2 >/dev/null
+  # Both started on one branch, which needs branch-per-task off.
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  jig task new T-1 >/dev/null; jig task start T-1 >/dev/null
+  jig task new T-2 >/dev/null; jig task start T-2 >/dev/null
   printf 'paused: true\n' >> .ai/workspace/tasks/T-1/state
 
   run jig context

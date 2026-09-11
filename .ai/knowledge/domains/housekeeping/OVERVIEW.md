@@ -33,6 +33,10 @@ evidence it inferred itself.
   facts exist anywhere (ADR-0027).
 - The **Session Hook** and the scheduler examples — triggers, both optional, neither
   installed automatically (ADR-0024).
+- Removing a **Task Worktree** when the task's workspace is purged (ADR-0029). This is the
+  one deletion outside `.ai/`, and git performs it: `git worktree remove`, never with
+  `--force`. A worktree that has to stay keeps the workspace with it, flagged
+  `worktree-kept`, and `jig status` counts it.
 
 ## What governs it
 
@@ -45,6 +49,13 @@ Read these before changing anything here; each is a rule someone paid for.
   ADR-0006's own text carried a wrong pattern for two phases; the code was right.
 - **Ancestry answers "landed", not "open"** (ADR-0025), and a task whose branch *is* the
   base branch is `unknown`, because `--is-ancestor main main` is trivially true.
+- **A worktree goes only with its workspace, and only through git** (RULES.md,
+  ADR-0029). It must be listed with the task's branch, lie under `git.worktree_root`,
+  hold nothing under `.ai/workspace/tasks/` but links, and be clean. `git worktree remove`
+  deletes *ignored* files without asking, so the no-workspace-of-its-own check carries the
+  whole weight for anything gitignored. Inside a worktree, housekeeping never sees the
+  borrowed workspace: it finds workspaces with `find`, which does not follow links. Keep
+  it that way.
 - **Exit 3 means "a human must consolidate"**; 1 is a real error, 2 belongs to
   `task current`. A trigger has to be able to tell those apart.
 
@@ -72,7 +83,8 @@ an LLM (ADR-0001).
 ## Entry points
 
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
-  `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`.
+  `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
+  `_hk_worktree_retire`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six
   merge topologies (fast-forward, merge commit, squash, rebase, open, deleted branch).

@@ -50,6 +50,13 @@ Informal synonyms: docs, context, memory.
 Transient, gitignored directory `.ai/workspace/tasks/<task-id>/` holding task
 artifacts and `state`. Informal synonyms: task dir, scratch.
 
+## Task Worktree
+
+A git worktree created by `jig task start --worktree`, beside the repository under
+`git.worktree_root`, with the task's branch checked out. It borrows the task's Workspace
+through a link and owns none; Housekeeping removes it through git when it purges that
+Workspace (ADR-0029). Informal synonyms: agent tree, sandbox.
+
 ## State
 
 The flat `key: value` file in a Workspace describing local task lifecycle.

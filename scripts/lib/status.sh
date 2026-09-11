@@ -86,7 +86,10 @@ $rel"
     printf 'proposals: none\n'
   fi
 
-  local found=0 finished=0 state_file tid class st paused reason line
+  # shellcheck source=lib/task.sh
+  . "$JIG_LIB/task.sh"
+  local found=0 finished=0 state_file tid class st paused reason line branch worktrees wt
+  worktrees=$(_task_worktrees)
   for state_file in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
     [ -f "$state_file" ] || continue
     tid=$(sed -n 's/^task_id:[[:space:]]*//p' "$state_file" | head -n 1)
@@ -102,6 +105,13 @@ $rel"
     found=1
     paused=$(sed -n 's/^paused:[[:space:]]*//p' "$state_file" | head -n 1)
     line="task $tid class=$class status=$st"
+    # A task started in its own worktree is still listed here, where it was
+    # filed; git says where its branch is checked out (ADR-0029).
+    branch=$(sed -n 's/^branch:[[:space:]]*//p' "$state_file" | head -n 1)
+    if [ -n "$branch" ]; then
+      wt=$(_task_worktree_for "$branch" "$worktrees")
+      [ -z "$wt" ] || line="$line $(_task_worktree_note "$wt")"
+    fi
     if [ "$paused" = "true" ]; then
       reason=$(sed -n 's/^paused_reason:[[:space:]]*//p' "$state_file" | head -n 1)
       if [ -n "$reason" ]; then
@@ -120,8 +130,6 @@ $rel"
   # prints "none", several print "ambiguous (a, b)" built from task_current's
   # own stderr (one line per candidate, id is the first field) rather than
   # re-deriving the candidate list here.
-  # shellcheck source=lib/task.sh
-  . "$JIG_LIB/task.sh"
   local current cur_rc=0 cur_err_file ids
   cur_err_file=$(mktemp "${TMPDIR:-/tmp}/jig-status-current.XXXXXX")
   current=$(task_current 2>"$cur_err_file") || cur_rc=$?
@@ -154,25 +162,38 @@ $rel"
   # Both halves matter: the log is append-only, so scanning all of it reports
   # a task flagged on three consecutive days as three tasks, and keeps
   # reporting one that was consolidated months ago.
-  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log" nc
+  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log" nc kept
   if [ -f "$hk_log" ]; then
-    nc=$(awk '
-      # split("", seen) clears the array portably; `delete seen` is an
-      # extension not every awk on a supported machine has.
-      /^--- run /            { split("", seen); n = 0; next }
-      /flags=[^ ]*needs-consolidation/ {
-        for (i = 1; i <= NF; i++) {
-          if ($i ~ /^task=/ && !($i in seen)) { seen[$i] = 1; n++ }
-        }
-      }
-      END { print n + 0 }
-    ' "$hk_log")
+    nc=$(_status_flagged "$hk_log" needs-consolidation)
     if [ "$nc" != "0" ]; then
       printf '%s\n' "needs consolidation: $nc task(s) (see .ai/runtime/housekeeping.log)"
+    fi
+    # A finished task whose worktree could not be removed is hidden from the
+    # task listing above, so this line is the only place it surfaces. The
+    # worktree usually holds work nobody committed (ADR-0029).
+    kept=$(_status_flagged "$hk_log" worktree-kept)
+    if [ "$kept" != "0" ]; then
+      printf '%s\n' "worktrees kept: $kept task(s) (see .ai/runtime/housekeeping.log)"
     fi
   fi
 
   _status_session_hook
+}
+
+# _status_flagged <log> <flag> — distinct tasks the last housekeeping run
+# flagged with <flag>.
+_status_flagged() {
+  awk -v flag="$2" '
+    # split("", seen) clears the array portably; `delete seen` is an
+    # extension not every awk on a supported machine has.
+    /^--- run /            { split("", seen); n = 0; next }
+    $0 ~ ("flags=[^ ]*" flag) {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^task=/ && !($i in seen)) { seen[$i] = 1; n++ }
+      }
+    }
+    END { print n + 0 }
+  ' "$1"
 }
 
 # Whether the housekeeping trigger is wired up for the installed runtimes.

@@ -177,7 +177,7 @@ test_measure_ignores_non_purge_log_lines() {
 # --- change ------------------------------------------------------------------
 
 test_measure_cannot_size_a_task_without_a_fork_point() {
-  # Tasks predating ADR-0026, or created with --no-branch, have no base_commit
+  # Tasks predating ADR-0026, or filed but never started, have no base_commit
   # and are named as unmeasurable rather than dropped from the count.
   fixture_jig_repo
   fixture_task one main active class:T2

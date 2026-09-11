@@ -45,16 +45,38 @@ the one signal that decided it, in a single sentence. Do not narrate the rubric.
 
 If the description is too vague to classify, ask one question. One, not a list.
 
-## 3. Create the workspace
+## 3. Create the workspace, then start it
 
 T0 and T1 that fit in one session need no workspace. Otherwise:
 
 ```
 .ai/scripts/jig task new <id> --class T2 --domains <a,b>
+.ai/scripts/jig task start <id>
 ```
 
 The id is short and kebab-case, derived from the work (`fix-trigger-idempotency`), not a
 ticket number unless the project uses one. Fill in `task.md`: goal, scope, notes.
+
+**Two commands, because filing and beginning are different acts.** `task new` records the
+intent: no branch, no checkout change. `task start` cuts the branch and records the commit
+it forked from, which is why it belongs at the moment work actually begins — a fork point
+recorded weeks earlier is wrong by the time anything reads it.
+
+**File without starting when the work is for later.** A task with no branch is listed as
+`not-started` and never becomes an ambiguous `task current` candidate, so parking an idea
+costs nothing and does not need a pause to stay out of the way. Pause means "was being
+worked on, set aside" — do not use it to mean "not begun".
+
+**When `task start` refuses a dirty tree**, the changes belong to other work — never work
+around it. Ask the user which road: pause the task that owns them
+(`jig task pause <owner> --stash`), or start this one in a worktree of its own:
+
+```
+.ai/scripts/jig task start <id> --worktree
+```
+
+It prints a path and leaves this checkout alone. Your session cannot move there: tell the
+user to open a new agent session in that path, and do not continue the task from here.
 
 When the user already wrote the task as a document, take it from disk instead of
 retyping it, and split it as §"When the task arrives written" says:

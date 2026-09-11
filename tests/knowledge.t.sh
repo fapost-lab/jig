@@ -2184,8 +2184,8 @@ test_knowledge_changed_names_itself_when_the_base_is_bad() {
 
 test_knowledge_changed_takes_the_base_from_a_task() {
   kmc_setup
-  jig task new T-1 --no-branch >/dev/null
-  # --no-branch leaves no base_commit, so the task cannot supply one.
+  jig task new T-1 >/dev/null
+  # A filed task has no base_commit, so it cannot supply one.
   run jig knowledge changed --task T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "no base_commit"

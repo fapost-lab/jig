@@ -52,13 +52,36 @@ merge state is derived there, every run, and stored nowhere.**
 
 One consequence lands squarely on this domain, and ADR-0026 is the answer to it.
 Housekeeping can only establish that work landed when the task had a branch of its own: a
-task whose `branch` is the base branch resolves to `unknown` forever (ADR-0025). So
-`task new` now **creates** that branch and records the commit it forked from in
-`base_commit`. Two things follow for anyone changing this domain:
+task whose `branch` is the base branch resolves to `unknown` forever (ADR-0025). So a task
+gets a branch of its own — but at `jig task start`, not at `jig task new`.
 
-- `branch` is no longer merely observed. It is written from the branch `task new` created,
-  unless `--no-branch` or `git.branch_per_task: false` puts the task back on whatever the
-  checkout was using.
-- `base_commit` is script-owned and write-once, like `task_id` and `branch`. It exists so
-  another domain can ask "has this branch done anything", and a task without it — legacy
-  or `--no-branch` — is a task housekeeping must judge the old, weaker way.
+**Filing and beginning are different acts**, and the distinction is carried by an absence:
+
+- A filed task has **no `branch` and no `base_commit`**. That absence is what keeps it out
+  of `_task_candidates_for_branch`, so it is never an ambiguous `task current` candidate
+  and needs no pause to stay out of the way. `task list` shows it as `not-started`.
+- `jig task start` writes both. It is the only command that may write `branch` after
+  creation; `task set` still refuses every script-owned key, so ADR-0008's invariant is
+  intact.
+- `base_commit` is resolved when work begins rather than when the task is filed, because a
+  fork point recorded weeks earlier is false by the time anything reads it. A task without
+  one — legacy or unstarted — is one housekeeping must judge the old, weaker way.
+- `paused` means "was being worked on, set aside". It is not the way to say "not begun";
+  that is what the missing `branch` says.
+
+**Where a started task runs is a second, independent choice** (ADR-0029). `task start`
+checks the branch out here. `task start --worktree` checks it out in a Task Worktree beside
+the repository, for when this checkout is busy with other uncommitted work — the case the
+dirty-tree refusal now names as its other road. Three things about it are easy to get
+wrong from inside this domain's code:
+
+- The workspace never moves. The worktree gets a link to it, so everything that reads a
+  workspace works there unchanged, and the filing checkout keeps listing every task.
+  Nothing may delete or move a workspace through that link. `task artifacts`, which
+  refuses links, accepts exactly this one.
+- Which worktree a task is in is *derived* from `git worktree list` on every call, never
+  stored. `task list` and `jig status` print it with the count of uncommitted files there,
+  because agents do not commit and that count is the human's review queue.
+- A task in a worktree is not `task current` in the filing checkout: its branch is checked
+  out elsewhere, and ADR-0008's branch match is what decides.
+

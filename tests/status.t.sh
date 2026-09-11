@@ -146,8 +146,10 @@ test_status_reports_current_task_ambiguous() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
   # Two tasks on one branch, which branch-per-task otherwise prevents.
-  jig task new T-1 --no-branch >/dev/null
-  jig task new T-2 --no-branch >/dev/null
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  jig task new T-1 >/dev/null; jig task start T-1 >/dev/null
+  jig task new T-2 >/dev/null; jig task start T-2 >/dev/null
 
   run jig status
   assert_eq 0 "$RC"
@@ -207,7 +209,8 @@ test_status_reports_current_task_by_branch() {
   run jig status
   assert_contains "$OUT" "current task: none"
   git checkout -q -b feature/x
-  run jig task new T-1
+  jig task new T-1 >/dev/null
+  run jig task start T-1
   assert_eq 0 "$RC"
   run jig status
   assert_contains "$OUT" "current task: T-1"
@@ -376,4 +379,23 @@ test_status_silent_about_consolidation_when_nothing_is_flagged() {
 
   run jig status
   assert_not_contains "$OUT" "needs consolidation"
+}
+
+# --- task worktrees (ADR-0029) -------------------------------------------------
+
+test_status_shows_where_a_task_started_in_a_worktree_is() {
+  mkdir repo && cd repo || return 1
+  fixture_jig_repo
+  git add -A
+  git commit -q -m "jig init snapshot"
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'a\n' > "$wt/a.txt"
+  printf 'b\n' > "$wt/b.txt"
+
+  run jig status
+  assert_contains "$OUT" "task T-1 class= status=active worktree=$wt uncommitted=2"
+  # It is not current here: its branch is checked out elsewhere.
+  assert_contains "$OUT" "current task: none"
 }

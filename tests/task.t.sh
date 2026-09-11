@@ -19,6 +19,18 @@ task_setup_clean() {
   git commit -q -m "jig init snapshot"
 }
 
+# Turn branch-per-task off, the only way two started tasks can share a branch.
+_task_share_one_branch() {
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+}
+
+# File a task and start it: what a single `task new` used to do.
+task_started() {
+  jig task new "$@" >/dev/null
+  jig task start "$1" >/dev/null
+}
+
 # Run a jig command, capturing stdout in OUT and stderr in ERR separately
 # (unlike run(), which merges both into OUT). task_current's contract
 # (design §2) depends on which stream each part lands on.
@@ -40,14 +52,12 @@ test_task_new_creates_state_with_expected_keys_in_order() {
   assert_contains "$OUT" ".ai/workspace/tasks/T-1"
 
   assert_file .ai/workspace/tasks/T-1/state
-  # exact key order: task_id, branch, status, knowledge_consolidated,
-  # created_at, updated_at (no class/domains: not given).
+  # Filing writes only what it knows: no branch, no fork point.
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch base_commit status knowledge_consolidated created_at updated_at " "$keys"
+  assert_eq "task_id status knowledge_consolidated created_at updated_at " "$keys"
 
   assert_file_contains .ai/workspace/tasks/T-1/state "task_id: T-1"
-  assert_file_contains .ai/workspace/tasks/T-1/state "branch: task/T-1"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
   assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
   assert_file_contains .ai/workspace/tasks/T-1/state "created_at: $(date +%Y-%m-%d)"
@@ -61,7 +71,7 @@ test_task_new_with_class_and_domains_order() {
 
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch base_commit class status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id class status knowledge_consolidated domains created_at updated_at " "$keys"
   assert_file_contains .ai/workspace/tasks/T-1/state "class: T2"
   assert_file_contains .ai/workspace/tasks/T-1/state "domains: flow,triggers"
 }
@@ -162,7 +172,7 @@ test_task_new_from_with_class_and_domains() {
   assert_file_contains .ai/workspace/tasks/T-1/task.md "Doc body."
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch base_commit class status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id class status knowledge_consolidated domains created_at updated_at " "$keys"
 }
 
 test_task_new_duplicate_id_dies() {
@@ -196,12 +206,16 @@ test_task_new_invalid_domains_dies() {
   assert_contains "$OUT" "invalid domains"
 }
 
-test_task_new_detached_head_records_detached_branch() {
+test_task_start_on_detached_head_records_detached() {
+  # The `detached` fallback survives where it still applies: a project with
+  # branch-per-task off records the checkout's branch, and a detached HEAD
+  # has none.
   task_setup
+  _task_share_one_branch
+  jig task new T-1 >/dev/null
   git checkout -q --detach main
-  # --no-branch keeps the checkout detached; with a branch created there is
-  # no longer a detached HEAD to record.
-  run jig task new T-1 --no-branch
+
+  run jig task start T-1
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "branch: detached"
 }
@@ -254,7 +268,7 @@ test_task_set_domains_when_absent_inserts_before_created_at() {
   assert_file_contains .ai/workspace/tasks/T-1/state "domains: flow,triggers"
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id branch base_commit status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id status knowledge_consolidated domains created_at updated_at " "$keys"
 }
 
 test_task_set_invalid_class_dies() {
@@ -390,14 +404,13 @@ test_task_list_empty() {
 
 test_task_list_ordering_and_fields() {
   task_setup
-  jig task new T-2 >/dev/null
-  jig task new T-1 --class T1 >/dev/null
+  task_started T-2
+  task_started T-1 --class T1
   git checkout -q -b other
-  # --no-branch so T-3 keeps the checkout's own branch: the point of this
-  # line is that a task belonging to a *different* branch still appears in
-  # the listing, which needs a branch this test chose rather than one
-  # task new derived from the id.
-  jig task new T-3 --no-branch >/dev/null
+  # T-3 is started on a branch this test chose, to show that the listing
+  # includes a task belonging to a *different* branch.
+  _task_share_one_branch
+  task_started T-3
 
   run jig task list
   assert_eq 0 "$RC"
@@ -436,7 +449,7 @@ test_task_show_unknown_dies() {
 
 test_task_current_matches_branch() {
   task_setup
-  jig task new T-1 >/dev/null
+  task_started T-1
   run jig task current
   assert_eq 0 "$RC"
   assert_eq "T-1" "$OUT"
@@ -481,12 +494,12 @@ test_task_current_excludes_consolidated() {
 
 test_task_current_excludes_paused_task_from_candidates() {
   task_setup
-  # --no-branch on purpose: two tasks must share one branch for this to be a
-  # test of candidate selection at all. With branch-per-task on (the default)
-  # they cannot collide, which is the point of that feature — so ambiguity is
-  # now only reachable the way it is reproduced here.
-  jig task new T-1 --no-branch >/dev/null
-  jig task new T-2 --no-branch >/dev/null
+  # Ambiguity needs two *started* tasks sharing one branch, which only a
+  # project that turned branch-per-task off can produce. That it takes this
+  # much setup is the point of the feature.
+  _task_share_one_branch
+  task_started T-1
+  task_started T-2
   jig task pause T-2 >/dev/null
   # With T-2 paused, T-1 is the only candidate left: deterministic, not
   # ambiguous, even though both share the branch and an active-ish status.
@@ -497,9 +510,10 @@ test_task_current_excludes_paused_task_from_candidates() {
 
 test_task_current_several_candidates_exits_2_lists_both_nothing_on_stdout() {
   task_setup
-  # Two tasks on one branch: only reachable with --no-branch now.
-  jig task new T-1 --no-branch >/dev/null
-  jig task new T-2 --no-branch >/dev/null
+  # Two started tasks on one branch: only reachable with branch-per-task off.
+  _task_share_one_branch
+  task_started T-1
+  task_started T-2
   run_split jig task current
   assert_eq 2 "$RC"
   assert_eq "" "$OUT" "stdout must be empty on ambiguous current"
@@ -643,7 +657,7 @@ test_task_resume_not_paused_dies() {
 
 test_task_resume_wrong_branch_refuses_and_changes_nothing() {
   task_setup_clean
-  jig task new T-1 >/dev/null
+  task_started T-1
   jig task pause T-1 >/dev/null
   git checkout -q -b other
 
@@ -676,7 +690,7 @@ test_task_resume_failed_apply_leaves_paused_set_and_exits_nonzero() {
 
 test_task_list_shows_paused_marker() {
   task_setup
-  jig task new T-1 >/dev/null
+  task_started T-1
   jig task new T-2 >/dev/null
   jig task pause T-1 >/dev/null
 
@@ -686,21 +700,57 @@ test_task_list_shows_paused_marker() {
   assert_not_contains "$OUT" "T-2 class=- status=active branch=main paused"
 }
 
-# --- new: dirty-tree refusal (design §6) -----------------------------------------------
+# --- dirty-tree refusal (design §6): at start, never at filing ----------------------
 
-test_task_new_refuses_dirty_tracked_tree_names_task_and_passes_with_force() {
+test_task_new_files_on_a_dirty_tree() {
+  # Filing a task for later in the middle of other work is the case the
+  # new/start split exists for; the uncommitted work must stay where it is.
   task_setup
-  jig task new T-1 >/dev/null
+  task_started T-1
   printf 'dirty\n' >> README.md
 
   run jig task new T-2
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" "T-1"
-  assert_no_file .ai/workspace/tasks/T-2
-
-  run jig task new T-2 --force
   assert_eq 0 "$RC"
   assert_file .ai/workspace/tasks/T-2/state
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  assert_contains "$(git status --porcelain)" "README.md"
+}
+
+test_task_start_refusal_names_the_likely_owner() {
+  task_setup
+  # Only a *started* task owns a branch, so only a started one can be named
+  # as the likely owner of uncommitted work.
+  task_started T-1
+  printf 'dirty\n' >> README.md
+  jig task new T-2 >/dev/null
+
+  run jig task start T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig task pause T-1 --stash"
+  # task start has no override, so the message must not offer one.
+  assert_not_contains "$OUT" "--force"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  if grep -q '^branch:' .ai/workspace/tasks/T-2/state; then
+    fail "a refused start recorded a branch"
+  fi
+}
+
+test_task_start_refuses_a_dirty_tree_on_a_shared_branch() {
+  # With one shared branch nothing is cut, but base_commit would still name
+  # a point the uncommitted work already sits on top of.
+  task_setup_clean
+  _task_share_one_branch
+  git add .ai/config.yaml
+  git commit -q -m "share one branch"
+  jig task new T-1 >/dev/null
+  printf 'dirty\n' >> README.md
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes"
+  if grep -q '^base_commit:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded base_commit"
+  fi
 }
 
 test_task_new_untracked_only_does_not_block() {
@@ -987,15 +1037,16 @@ test_sdd_artifacts_rejects_invalid_claims_and_class() {
 
 # --- branch per task (ADR-0008; a task lives on one branch) ------------------
 
-test_task_new_creates_and_checks_out_a_branch() {
+test_task_start_creates_and_checks_out_a_branch() {
   task_setup
-  run jig task new T-1
+  jig task new T-1 >/dev/null
+  run jig task start T-1
   assert_eq 0 "$RC"
   assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
   assert_file_contains .ai/workspace/tasks/T-1/state "branch: task/T-1"
 }
 
-test_task_new_records_the_commit_it_forked_from() {
+test_task_start_records_the_commit_it_forked_from() {
   # Without this, ancestry cannot tell "this branch has done nothing" from
   # "this branch was fast-forwarded in": in both cases the tip equals the base.
   task_setup
@@ -1003,10 +1054,11 @@ test_task_new_records_the_commit_it_forked_from() {
   head_before=$(git rev-parse HEAD)
 
   jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
   assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $head_before"
 }
 
-test_task_new_branch_is_cut_from_the_base_branch_not_head() {
+test_task_start_branch_is_cut_from_the_base_branch_not_head() {
   # A task is work proposed against the base. Starting it wherever the
   # checkout happened to be is how a task inherits an unrelated history.
   task_setup
@@ -1015,7 +1067,8 @@ test_task_new_branch_is_cut_from_the_base_branch_not_head() {
   git add unrelated.txt
   git commit -q -m "unrelated work"
 
-  jig task new T-1 --force >/dev/null
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
   assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
   # The unrelated commit must not be an ancestor of the new branch.
   if git merge-base --is-ancestor unrelated HEAD 2>/dev/null; then
@@ -1023,69 +1076,87 @@ test_task_new_branch_is_cut_from_the_base_branch_not_head() {
   fi
 }
 
-test_task_new_no_branch_keeps_the_current_checkout() {
+test_task_new_files_without_touching_the_checkout() {
+  # Filing is not beginning: no branch, no checkout change, and — crucially —
+  # no `branch` field. The absence is what keeps a filed task out of
+  # `task current` without anyone having to pause it.
   task_setup
-  run jig task new T-1 --no-branch
+  run jig task new T-1
   assert_eq 0 "$RC"
   assert_eq "main" "$(git symbolic-ref --short HEAD)"
-  assert_file_contains .ai/workspace/tasks/T-1/state "branch: main"
-  if grep -q '^base_commit:' .ai/workspace/tasks/T-1/state; then
-    fail "no branch was created, so there is no fork point to record"
+  if grep -qE '^(branch|base_commit):' .ai/workspace/tasks/T-1/state; then
+    fail "task new recorded a branch or a fork point"
   fi
+
+  run jig task list
+  assert_contains "$OUT" "T-1 class=- status=active not-started"
+
+  run jig task current
+  assert_eq 1 "$RC" "a filed task must not be a candidate"
 }
 
-test_task_new_respects_branch_per_task_false() {
+test_task_start_respects_branch_per_task_false() {
   task_setup
   sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
   mv c.tmp .ai/config.yaml
 
   jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
   assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  # Still "started": the task records where it began, which is what
+  # housekeeping needs to tell "did nothing" from "landed".
+  assert_file_contains .ai/workspace/tasks/T-1/state "branch: main"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: "
 }
 
-test_task_new_uses_the_configured_branch_template() {
+test_task_start_uses_the_configured_branch_template() {
   task_setup
   sed 's|^git.branch_template:.*|git.branch_template: wip/{id}-x|' .ai/config.yaml > c.tmp
   mv c.tmp .ai/config.yaml
 
   jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
   assert_eq "wip/T-1-x" "$(git symbolic-ref --short HEAD)"
 }
 
-test_task_new_rejects_a_template_without_the_id() {
+test_task_start_rejects_a_template_without_the_id() {
   task_setup
   sed 's|^git.branch_template:.*|git.branch_template: wip/fixed|' .ai/config.yaml > c.tmp
   mv c.tmp .ai/config.yaml
 
-  run jig task new T-1
+  jig task new T-1 >/dev/null
+  run jig task start T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "must contain {id}"
-  assert_no_file .ai/workspace/tasks/T-1/state
+  # The workspace survives: filing succeeded, only starting failed.
+  assert_file .ai/workspace/tasks/T-1/state
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
 }
 
-test_task_new_rejects_a_branch_name_git_would_reject() {
+test_task_start_rejects_a_branch_name_git_would_reject() {
   # git's own rules, not a hand-rolled regex: the invalid set is long and
   # creating a ref nobody can delete without plumbing is the failure mode.
   task_setup
   sed 's|^git.branch_template:.*|git.branch_template: bad..{id}|' .ai/config.yaml > c.tmp
   mv c.tmp .ai/config.yaml
 
-  run jig task new T-1
+  jig task new T-1 >/dev/null
+  run jig task start T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "git rejects the branch name"
-  assert_no_file .ai/workspace/tasks/T-1/state
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
 }
 
-test_task_new_refuses_an_existing_branch_and_leaves_nothing_behind() {
+test_task_start_refuses_an_existing_branch() {
   task_setup
   git branch task/T-1
+  jig task new T-1 >/dev/null
 
-  run jig task new T-1
+  run jig task start T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "branch already exists"
-  assert_no_file .ai/workspace/tasks/T-1/state
-  assert_no_file .ai/workspace/tasks/T-1
   assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
 }
 
 test_task_set_refuses_to_write_base_commit() {
@@ -1096,14 +1167,354 @@ test_task_set_refuses_to_write_base_commit() {
   assert_contains "$OUT" "not writable"
 }
 
-test_task_new_branches_from_head_in_a_repository_with_no_base_branch() {
+test_task_start_branches_from_head_in_a_repository_with_no_base_branch() {
   # Documented fallback: when neither the local nor the remote base branch
   # resolves, the branch is cut from HEAD, which is the only thing there is.
   task_setup
   git branch -m main trunk
+  jig task new T-1 >/dev/null
   # git.base_branch still says `main`, which now resolves to nothing.
-  run jig task new T-1
+  run jig task start T-1
   assert_eq 0 "$RC"
   assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
   assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $(git rev-parse trunk)"
 }
+
+# --- start takes the freshest base -------------------------------------------
+
+test_task_start_prefers_origin_when_local_base_is_behind() {
+  # Resolving refs/heads/<base> first meant a local base that had fallen
+  # behind produced a stale branch AND a stale base_commit, silently. It
+  # happened: a branch was cut from the previous merge and the work on it was
+  # missing a command merged an hour earlier.
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  # Move origin/main forward, leaving local main where it is.
+  git checkout -q -b ahead
+  printf 'ahead\n' > ahead.txt
+  git add ahead.txt
+  git commit -q -m "ahead"
+  git push -q origin ahead:main
+  git checkout -q main
+  git fetch -q origin
+
+  jig task new T-1 >/dev/null
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "behind origin"
+
+  # The branch must contain the commit only origin had.
+  if ! git merge-base --is-ancestor origin/main HEAD; then
+    fail "branch was cut from the stale local base"
+  fi
+  # ...without taking origin/main as its upstream: the task branch is never
+  # pushed there, and `git status` would call it "ahead of origin/main".
+  assert_eq "" "$(git config --get branch.task/T-1.merge || true)"
+}
+
+test_task_start_refuses_diverged_bases() {
+  # Picking either side surprises somebody, and the surprise surfaces far from
+  # its cause, so the command refuses instead of guessing.
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  git checkout -q -b theirs
+  printf 'theirs\n' > theirs.txt
+  git add theirs.txt
+  git commit -q -m theirs
+  git push -q origin theirs:main
+  git checkout -q main
+  printf 'ours\n' > ours.txt
+  git add ours.txt
+  git commit -q -m ours
+  git fetch -q origin
+
+  jig task new T-1 >/dev/null
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "diverged"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
+}
+
+test_task_start_refuses_a_dirty_tree() {
+  # One task's uncommitted work must not become another's first commit.
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  printf 'dirty\n' >> README.md
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes"
+}
+
+test_task_start_unknown_task_dies() {
+  task_setup
+  run jig task start nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task"
+}
+
+# --- start: a started task, and one only recorded at filing (ADR-0026 amended) ---
+
+test_task_start_refuses_a_task_that_is_already_started() {
+  task_setup
+  task_started T-1
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already started on task/T-1"
+}
+
+test_task_start_repairs_a_branch_recorded_at_filing() {
+  # Before filing and starting were separate, `task new` wrote whatever branch
+  # the checkout was on and no fork point. Such a task was never started, and
+  # starting it is how the record gets repaired.
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  sed 's|^created_at:|branch: main\ncreated_at:|' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  assert_file_contains .ai/workspace/tasks/T-1/state "branch: main"
+
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "recorded main when it was filed"
+  grep -qx 'branch: task/T-1' .ai/workspace/tasks/T-1/state \
+    || fail "branch was not rewritten: $(cat .ai/workspace/tasks/T-1/state)"
+  grep -q '^base_commit: [0-9a-f]\{40\}$' .ai/workspace/tasks/T-1/state \
+    || fail "no base_commit recorded"
+}
+
+test_task_start_on_a_paused_task_says_how_to_resume() {
+  # Starting is not resuming: the pause stays, and the output says so.
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  jig task pause T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "jig task resume T-1"
+  assert_eq "true" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# --- start --worktree (ADR-0029) -----------------------------------------------
+
+# Worktrees are created beside the project, so the project is put one level
+# down: the default `../<project>.worktrees` then lands inside this test's own
+# temporary directory and is removed with it.
+task_setup_nested() {
+  mkdir repo && cd repo || return 1
+  task_setup_clean
+}
+
+test_task_start_worktree_leaves_this_checkout_alone() {
+  task_setup_nested
+  task_started T-1
+  printf 'dirty\n' >> README.md
+  jig task new T-2 >/dev/null
+
+  run_split jig task start T-2 --worktree
+  assert_eq 0 "$RC"
+  assert_eq "$(cd .. && pwd -P)/repo.worktrees/T-2" "$OUT"
+  assert_contains "$ERR" "open a new agent session in $OUT"
+  # The work in progress here is untouched: same branch, still uncommitted.
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  assert_contains "$(git status --porcelain)" "README.md"
+  assert_eq "task/T-2" "$(git -C "$OUT" symbolic-ref --short HEAD)"
+}
+
+test_task_start_worktree_borrows_the_workspace_by_link() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt owner
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  owner=$(cd .ai/workspace/tasks/T-1 && pwd -P)
+
+  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the worktree has no link to the workspace"
+  assert_eq "$owner" "$(cd "$wt/.ai/workspace/tasks/T-1" && pwd -P)"
+  grep -qx 'branch: task/T-1' .ai/workspace/tasks/T-1/state || fail "branch not recorded"
+  grep -q '^base_commit: [0-9a-f]\{40\}$' .ai/workspace/tasks/T-1/state || fail "base_commit not recorded"
+  # Inside the worktree the task is current, and the link leaves git clean.
+  assert_eq "T-1" "$(cd "$wt" && jig task current)"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+}
+
+test_task_start_worktree_branches_from_the_base_not_head() {
+  task_setup_nested
+  git checkout -q -b unrelated
+  printf 'unrelated\n' > unrelated.txt
+  git add unrelated.txt
+  git commit -q -m "unrelated work"
+  jig task new T-1 >/dev/null
+
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  assert_eq "$(git rev-parse main)" "$(git -C "$wt" rev-parse HEAD)"
+  assert_eq "$(git rev-parse main)" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+test_task_start_worktree_honours_the_configured_root() {
+  task_setup_nested
+  printf 'git.worktree_root: ../elsewhere\n' >> .ai/config.yaml
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  assert_eq "$(cd .. && pwd -P)/elsewhere/T-1" "$OUT"
+}
+
+test_task_start_worktree_refuses_an_existing_path() {
+  task_setup_nested
+  mkdir -p ../repo.worktrees/T-1
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "worktree path already exists"
+  if grep -q '^branch:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded a branch"
+  fi
+}
+
+test_task_start_worktree_refuses_a_shared_branch() {
+  # git will not check one branch out in two worktrees, and one shared branch
+  # is what `branch_per_task: false` means.
+  task_setup_nested
+  _task_share_one_branch
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--worktree needs git.branch_per_task: true"
+  assert_no_file ../repo.worktrees/T-1
+}
+
+test_task_start_dirty_refusal_offers_the_worktree() {
+  task_setup_clean
+  printf 'dirty\n' >> README.md
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig task start T-1 --worktree"
+}
+
+test_task_start_dirty_refusal_on_a_shared_branch_offers_no_worktree() {
+  task_setup_clean
+  _task_share_one_branch
+  git add .ai/config.yaml
+  git commit -q -m "share one branch"
+  printf 'dirty\n' >> README.md
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_not_contains "$OUT" "--worktree"
+}
+
+test_task_list_shows_the_worktree_and_what_waits_for_review() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'new\n' > "$wt/new.txt"
+
+  run jig task list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "T-1 class=- status=active branch=task/T-1 worktree=$wt uncommitted=1"
+}
+
+test_task_artifacts_reads_the_borrowed_workspace() {
+  task_setup_nested
+  jig task new T-1 --class T2 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'design\n' > .ai/workspace/tasks/T-1/plan.md
+
+  set +e
+  OUT=$(cd "$wt" && jig task artifacts T-1 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task: T-1; class: T2"
+  assert_contains "$OUT" "plan           present"
+}
+
+test_task_artifacts_refuses_a_link_to_anywhere_else() {
+  # The one link accepted is to this task's own workspace in another worktree
+  # of this repository; a link elsewhere could point at anything.
+  task_setup
+  mkdir -p elsewhere/T-1
+  printf 'task_id: T-1\nclass: T2\nstatus: active\n' > elsewhere/T-1/state
+  mkdir -p .ai/workspace/tasks
+  ln -s "$PWD/elsewhere/T-1" .ai/workspace/tasks/T-1
+
+  run jig task artifacts T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "linked task workspace is unsupported"
+}
+
+test_task_start_worktree_failure_leaves_nothing_behind() {
+  # `git worktree add -b` creates the branch before the directory. Without an
+  # undo, a failed start left the branch behind and every retry died with
+  # "branch already exists".
+  task_setup_nested
+  mkdir ../repo.worktrees
+  chmod 555 ../repo.worktrees
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1 --worktree
+  chmod 755 ../repo.worktrees
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "could not create worktree"
+  if git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null; then
+    fail "the branch of a failed start was left behind"
+  fi
+  if grep -q '^branch:' .ai/workspace/tasks/T-1/state; then
+    fail "a failed start recorded a branch"
+  fi
+
+  run jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+}
+
+test_task_start_worktree_undoes_itself_when_the_link_fails() {
+  # The worktree and branch exist by then; both must go so a retry can work.
+  # A tracked *file* named .ai/workspace is the simplest way to make the link
+  # impossible in the new checkout without touching this one.
+  task_setup_nested
+  local blob
+  blob=$(printf 'not a directory\n' | git hash-object -w --stdin)
+  git update-index --add --cacheinfo "100644,$blob,.ai/workspace"
+  git commit -q -m "a file where the workspace directory belongs"
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "could not link the workspace"
+  assert_no_file ../repo.worktrees/T-1
+  if git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null; then
+    fail "the branch of a failed start was left behind"
+  fi
+  assert_eq "" "$(git worktree list --porcelain | grep 'repo.worktrees' || true)"
+}
+
+test_task_pause_stash_refuses_a_task_checked_out_elsewhere() {
+  # --stash sets aside this checkout's changes. For a task running in its own
+  # worktree they are somebody else's, and the task's own work stays put.
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task start T-1 --worktree >/dev/null 2>&1
+  printf 'unrelated\n' >> README.md
+
+  run jig task pause T-1 --stash
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 is on task/T-1"
+  assert_contains "$(git status --porcelain)" "README.md"
+  assert_eq "" "$(git stash list)"
+  if grep -q '^paused:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused pause marked the task paused"
+  fi
+}
+

@@ -720,3 +720,130 @@ test_housekeeping_facts_are_logged_not_printed() {
   assert_contains "$OUT" "action=purge"
   assert_not_contains "$OUT" "class=T2"
 }
+
+# --- task worktrees (ADR-0029) -------------------------------------------------
+
+# hk_worktree_task <id> — a task started in its own worktree, committed to and
+# fast-forwarded into main, then consolidated: the case housekeeping purges.
+# The project is put one level down so the default worktree root lands inside
+# the test's temporary directory. Prints the worktree path.
+hk_worktree_setup() {
+  mkdir repo && cd repo || return 1
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+}
+
+hk_worktree_task() {
+  local id="$1" wt
+  jig task new "$id" >/dev/null
+  wt=$(jig task start "$id" --worktree 2>/dev/null)
+  printf 'work\n' > "$wt/$id.txt"
+  git -C "$wt" add "$id.txt"
+  git -C "$wt" commit -q -m "work for $id"
+  git merge -q --ff-only "task/$id"
+  jig task set "$id" status consolidated >/dev/null
+  printf '%s\n' "$wt"
+}
+
+test_housekeeping_removes_the_worktree_of_a_purged_task() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remove worktree $wt"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=purge"
+  assert_no_file "$wt"
+  assert_no_file .ai/workspace/tasks/T-1
+  # The commits outlive the worktree: the branch is not housekeeping's.
+  git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null || fail "the task branch was deleted"
+  assert_file_contains .ai/runtime/housekeeping.log "task=T-1 worktree=$wt action=remove"
+}
+
+test_housekeeping_keeps_a_worktree_with_uncommitted_work_and_its_workspace() {
+  # Agents do not commit: uncommitted work in a task worktree is the normal
+  # state before review. git refuses to remove it, and the workspace stays
+  # with it rather than leaving the worktree's link dangling.
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+  printf 'not reviewed yet\n' > "$wt/draft.txt"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (uncommitted-changes)"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=worktree-kept"
+  assert_file "$wt/draft.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+
+  run jig status
+  assert_contains "$OUT" "worktrees kept: 1 task(s)"
+}
+
+test_housekeeping_keeps_a_worktree_holding_a_workspace_of_its_own() {
+  # `git worktree remove` deletes ignored files without a word, and a real
+  # workspace inside the worktree is one this checkout knows nothing about.
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+  mkdir -p "$wt/.ai/workspace/tasks/filed-there"
+  printf 'task_id: filed-there\n' > "$wt/.ai/workspace/tasks/filed-there/state"
+
+  run jig housekeeping
+  assert_contains "$OUT" "worktree $wt kept (own-workspace)"
+  assert_file "$wt/.ai/workspace/tasks/filed-there/state"
+  assert_file .ai/workspace/tasks/T-1/state
+}
+
+test_housekeeping_never_touches_a_worktree_outside_the_root() {
+  # A worktree somebody made by hand, for reasons of their own, is not a task
+  # worktree even when it has the task's branch checked out.
+  hk_worktree_setup
+  # The root exists, so what refuses is the path check, not a missing root.
+  mkdir -p ../repo.worktrees
+  jig task new T-1 >/dev/null
+  git worktree add -q -b task/T-1 ../manual main
+  sed "s|^created_at:|branch: task/T-1\nbase_commit: $(git rev-parse main)\ncreated_at:|" \
+    .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  printf 'work\n' > ../manual/T-1.txt
+  git -C ../manual add T-1.txt
+  git -C ../manual commit -q -m "work"
+  git merge -q --ff-only task/T-1
+  jig task set T-1 status consolidated >/dev/null
+
+  run jig housekeeping
+  assert_contains "$OUT" "kept (outside-worktree-root)"
+  assert_file ../manual/T-1.txt
+  assert_file .ai/workspace/tasks/T-1/state
+}
+
+test_housekeeping_dry_run_removes_no_worktree() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+
+  run jig housekeeping --dry-run
+  assert_contains "$OUT" "would-remove worktree $wt"
+  assert_file "$wt/T-1.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+}
+
+test_housekeeping_inside_a_worktree_leaves_the_borrowed_workspace_alone() {
+  # The worktree's link is not a workspace it owns. Housekeeping there must
+  # neither purge through it nor move the link: the owner decides.
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+
+  set +e
+  OUT=$(cd "$wt" && jig housekeeping 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no task workspaces"
+  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the link was moved"
+  assert_file .ai/workspace/tasks/T-1/state
+}
