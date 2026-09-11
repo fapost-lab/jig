@@ -57,6 +57,7 @@ Usage: jig <command> [args]
   knowledge accept <id>...       promote proposed document(s) to active
   knowledge reject <id>...       mark proposed document(s) as rejected
   knowledge inventory [...]      deterministic facts about the repository's shape
+  knowledge changed --base <ref>  knowledge documents created/modified since <ref>
   knowledge stale [--strict]     documents that drifted away from the code
   knowledge reviewed <id>        stamp a document as reconciled with the code
   housekeeping [--dry-run]       reconcile workspaces with remote state
