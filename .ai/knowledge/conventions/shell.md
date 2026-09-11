@@ -74,8 +74,12 @@ cmd_example() {
 - Every negative path that ends in `jig_die` has a test asserting the message.
 - During edits, use `tests/run.sh <name-filter>` for the affected behavior; reuse valid
   results across stages and avoid simultaneous duplicate full runs. Wait on the run's own
-  handle — `tests/run.sh >run.log 2>&1 & wait $!` — and read that exit code; a `pgrep -f`
-  poll matches its own command line and never returns.
+  handle — `tests/run.sh >"${TMPDIR:-/tmp}/jig-run.log" 2>&1 & wait $!` — and read that
+  exit code; a `pgrep -f` poll matches its own command line and never returns.
+  **Write the log outside the repository.** This line used to say `>run.log`, and every
+  agent that followed it left a file in the working tree: one of them reached the index and
+  was a `git commit` away from being shipped. A convention that manufactures untracked
+  junk teaches the next reader to make the same mess.
 - Tests of commands that only need a default Jig installation may use `fixture_jig_repo`.
   It installs once per sequential runner invocation and copies the complete fixture into
   each isolated test directory, including independent Git state. The cache is temporary

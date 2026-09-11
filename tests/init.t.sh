@@ -56,6 +56,11 @@ test_init_creates_expected_layout() {
   assert_file .gitignore
   assert_file_contains .gitignore ".ai/workspace/"
   assert_file_contains .gitignore ".ai/runtime/"
+  # Test-run output at the repository root. conventions/shell.md once told
+  # agents to write `run.log` there; one of those files reached the index.
+  # Whole line, not a substring: `assert_file_contains` would accept a typo'd
+  # `/*.logXX` because the correct rule is still a substring of it.
+  grep -qx '\*\.log' .gitignore || fail ".gitignore lacks the exact rule *.log"
 
   assert_contains "$OUT" "next:"
 }
