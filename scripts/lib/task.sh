@@ -585,8 +585,9 @@ _task_start_in_worktree() {
     || jig_die "task start: --worktree needs git.branch_per_task: true (one branch cannot be checked out in two worktrees)"
   branch=$(_task_branch_name "$id")
   path="$(_task_worktree_root)/$id"
-  [ ! -e "$path" ] && [ ! -L "$path" ] \
-    || jig_die "task start: worktree path already exists: $path"
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    jig_die "task start: worktree path already exists: $path"
+  fi
   owner=$(cd -P "$dir" && pwd -P) || jig_die "task start: cannot resolve the workspace of $id"
 
   local start

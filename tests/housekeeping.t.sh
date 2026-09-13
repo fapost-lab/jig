@@ -728,7 +728,8 @@ test_housekeeping_facts_are_logged_not_printed() {
 # The project is put one level down so the default worktree root lands inside
 # the test's temporary directory. Prints the worktree path.
 hk_worktree_setup() {
-  mkdir repo && cd repo || return 1
+  mkdir repo || return 1
+  cd repo || return 1
   hk_setup
   git add -A
   git commit -q -m "jig init snapshot"
