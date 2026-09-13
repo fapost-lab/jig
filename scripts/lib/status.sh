@@ -30,23 +30,42 @@ cmd_status() {
     printf '%s\n' "manifest: missing"
   fi
 
-  local modified="" missing="" mcount=0 xcount=0 rel mhash lhash
-  while IFS= read -r rel; do
-    [ -z "$rel" ] && continue
-    mhash=$(manifest_hash_of "$rel")
+  # Drift: one pass over the manifest, then one git process for every file
+  # still on disk (jig_hash_list). A manifest_hash_of and a jig_hash per path
+  # cost 1.5 s on a 72-file install — the manifest reread for every path, and
+  # a git startup for every hash. Both lists stay in manifest order.
+  local modified="" missing="" mcount=0 xcount=0 line rel mhash lhash drift_tmp
+  drift_tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-drift.XXXXXX")
+  : > "$drift_tmp/present"
+  : > "$drift_tmp/abs"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    mhash=${line%% *}
+    rel=${line#* }
     if [ -f "$JIG_PROJECT/$rel" ]; then
-      lhash=$(jig_hash "$JIG_PROJECT/$rel")
-      if [ "$lhash" != "$mhash" ]; then
-        modified="$modified
-$rel"
-        mcount=$((mcount + 1))
-      fi
+      printf '%s %s\n' "$mhash" "$rel" >> "$drift_tmp/present"
+      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$drift_tmp/abs"
     else
       missing="$missing
 $rel"
       xcount=$((xcount + 1))
     fi
-  done < <(manifest_paths)
+  done < <(manifest_entries)
+  jig_hash_list "$drift_tmp/abs" > "$drift_tmp/hashes" \
+    || jig_die "status: could not hash the installed files"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    lhash=${line%% *}
+    line=${line#* }
+    mhash=${line%% *}
+    rel=${line#* }
+    if [ "$lhash" != "$mhash" ]; then
+      modified="$modified
+$rel"
+      mcount=$((mcount + 1))
+    fi
+  done < <(paste -d' ' "$drift_tmp/hashes" "$drift_tmp/present")
+  rm -rf "$drift_tmp"
 
   # Pending: framework-owned items `jig upgrade` would install/link right
   # now (e.g. a skill added to the source since the last upgrade) — distinct

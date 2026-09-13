@@ -22,18 +22,26 @@ fixture_jig_repo() {
     fixture_repo && jig init --from "$JIG_HOME" >/dev/null
     return $?
   fi
+  fixture_cache_prepare || return 1
+  cp -R "$JIG_TEST_CACHE/installed/." .
+}
+
+# fixture_cache_prepare — build the cached install fixture_jig_repo copies, once
+# per runner invocation. Lazy when tests run one at a time; a parallel runner
+# calls it before it starts any test, because two tests building it at once
+# would both miss `ready`, and the second `mv` would put its build *inside* the
+# first one's — a fixture corrupted without an error.
+fixture_cache_prepare() {
   local seed="$JIG_TEST_CACHE/installed" build
-  if [ ! -f "$JIG_TEST_CACHE/ready" ]; then
-    mkdir -p "$JIG_TEST_CACHE" || return 1
-    build=$(mktemp -d "$JIG_TEST_CACHE/build.XXXXXX") || return 1
-    (
-      cd "$build" || exit 1
-      fixture_repo && jig init --from "$JIG_HOME" >/dev/null
-    ) || return 1
-    mv "$build" "$seed" || return 1
-    touch "$JIG_TEST_CACHE/ready" || return 1
-  fi
-  cp -R "$seed/." .
+  [ ! -f "$JIG_TEST_CACHE/ready" ] || return 0
+  mkdir -p "$JIG_TEST_CACHE" || return 1
+  build=$(mktemp -d "$JIG_TEST_CACHE/build.XXXXXX") || return 1
+  (
+    cd "$build" || exit 1
+    fixture_repo && jig init --from "$JIG_HOME" >/dev/null
+  ) || return 1
+  mv "$build" "$seed" || return 1
+  touch "$JIG_TEST_CACHE/ready" || return 1
 }
 
 # Build the merge topologies housekeeping has to tell apart, on top of the
@@ -187,10 +195,34 @@ assert_exit() {
 
 # Run a command, capture stdout+stderr into OUT and exit code into RC without
 # failing the test. Usage: run cmd args...; then assert on $OUT / $RC.
+#
+# Captured through a file, never a pipe. bash 3.2 does not restart a write
+# that SIGCHLD interrupts: a jig command whose own child exits while the pipe
+# it writes to is full loses the line it was writing, with "printf: write
+# error: Interrupted system call". Under load that happened to a test, which
+# then missed a line it asserted on. A write to a regular file does not block,
+# so nothing interrupts it. The command still runs in a subshell, as it did
+# inside $(...), so an `exit` or a `cd` in it cannot reach the test.
 run() {
+  local out
+  out=$(_run_out)
   set +e
-  OUT=$("$@" 2>&1)
+  ( "$@" ) >"$out" 2>&1
   RC=$?
   set -e
+  OUT=$(cat "$out")
+  rm -f "$out"
   export OUT RC
+}
+
+# _run_out [suffix] — the file run() and its variants capture into: beside the
+# test's directory, never inside it, since that directory is often the
+# repository under test and `git status` would list the file. tests/run.sh
+# removes it with the directory.
+_run_out() {
+  if [ -n "${JIG_TEST_TMP:-}" ]; then
+    printf '%s.out%s\n' "$JIG_TEST_TMP" "${1:-}"
+  else
+    mktemp "${TMPDIR:-/tmp}/jig-run-out.XXXXXX"
+  fi
 }

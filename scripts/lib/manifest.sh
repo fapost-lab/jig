@@ -50,6 +50,17 @@ manifest_paths() {
   done < "$file"
 }
 
+# manifest_entries
+# Prints every body line of the manifest, "<hash> <path>", in one pass. Use it
+# instead of calling manifest_hash_of in a loop: that rereads the whole file
+# for every path, which is quadratic in the size of the install.
+manifest_entries() {
+  local file
+  file=$(manifest_file)
+  [ -f "$file" ] || return 0
+  awk 'body { if ($0 != "") print; next } $0 == "---" { body = 1 }' "$file"
+}
+
 # manifest_hash_of <path>
 # Prints the manifest hash recorded for <path> (relative to JIG_PROJECT), or
 # nothing when the path is not tracked.

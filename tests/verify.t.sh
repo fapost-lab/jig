@@ -19,6 +19,14 @@ tr head tail wc chmod ls date dirname basename cmp paste stat readlink diff env"
 # one can never be seen by the next, and the first draft's env-var check
 # could not fire even once.
 #
+# Published atomically, because tests run in parallel. It used to be filled
+# in place and taken as ready once `git` was in it; `git` is third on the
+# list, so a test running alongside the one building it could see `git`
+# before `sed` and `awk` existed, and fail its `jig verify` with exit 1 —
+# seen at 16 workers. Now it is built complete in a private directory and
+# published by `ln -s`, which either creates the name or fails because
+# another test got there first. A reader finds the whole set or nothing.
+#
 # Resolution goes through `env -i /bin/sh -c`, not a bare `command -v`,
 # because the latter answers from the *developer's* shell: on a machine where
 # grep is aliased to ugrep it returns the string `grep` rather than a path,
@@ -32,9 +40,18 @@ tr head tail wc chmod ls date dirname basename cmp paste stat readlink diff env"
 _NO_TOOLS_TMP=""
 
 _no_tools_bin() {
-  local dir t p
+  local dir build
   if [ -n "${JIG_TEST_CACHE:-}" ]; then
     dir="$JIG_TEST_CACHE/no-tools-bin"
+    if [ -d "$dir" ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    build=$(mktemp -d "$JIG_TEST_CACHE/no-tools-bin.XXXXXX")
+    _no_tools_fill "$build"
+    ln -s "$build" "$dir" 2>/dev/null || rm -rf "$build"
+    printf '%s\n' "$dir"
+    return 0
   else
     # No runner cache to live in, and therefore no runner trap to clean up
     # after: this branch owns its directory and removes it itself.
@@ -42,18 +59,20 @@ _no_tools_bin() {
     _NO_TOOLS_TMP="$dir"
     trap 'rm -rf "$_NO_TOOLS_TMP"' EXIT INT TERM
   fi
-  if [ -x "$dir/git" ]; then
-    printf '%s\n' "$dir"
-    return 0
-  fi
-  mkdir -p "$dir"
+  _no_tools_fill "$dir"
+  printf '%s\n' "$dir"
+}
+
+# _no_tools_fill <dir> — a symlink in <dir> to each tool in _NO_TOOLS_LIST.
+_no_tools_fill() {
+  local t p
   for t in $_NO_TOOLS_LIST; do
     p=$(env -i /bin/sh -c "command -v $t" 2>/dev/null) || continue
     case "$p" in
-      /*) ln -sf "$p" "$dir/$t" ;;
+      /*) ln -sf "$p" "$1/$t" ;;
     esac
   done
-  printf '%s\n' "$dir"
+  return 0
 }
 
 # Run a command with no development toolchain reachable at all.
@@ -64,12 +83,15 @@ _no_tools_bin() {
 # Linux CI runner they sit in /usr/bin and stayed perfectly visible — so
 # every "skips without toolchain" test passed locally and failed in CI.
 run_no_tools() {
-  local bin
+  local bin out
   bin=$(_no_tools_bin)
+  out=$(_run_out)
   set +e
-  OUT=$(PATH="$bin" "$@" 2>&1)
+  ( PATH="$bin" "$@" ) >"$out" 2>&1
   RC=$?
   set -e
+  OUT=$(cat "$out")
+  rm -f "$out"
   export OUT RC
 }
 

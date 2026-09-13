@@ -34,6 +34,7 @@ bug during Phase 1; the rationale column says which.
 | Build a file the next command consumes in full before handing it over, when the consumer replaces something. | The same manifest write streamed entries through a pipe into `manifest_write_entries`, so a failure mid-batch still replaced the manifest with a truncated one. Assembling the entries in a file first costs ~100 ms on an install and leaves the previous manifest untouched on any failure. |
 | A test that asserts a tool is **absent** controls `PATH` by enumerating the tools it needs, never by listing directories it believes are tool-free. | `run_no_tools` set `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and called that "no toolchain". That is only true where development tools live elsewhere: on macOS php and go come from `/opt/homebrew/bin` and fall away, on a Linux runner they sit in `/usr/bin` and stayed fully visible. Three "skips without toolchain" tests passed locally and failed in CI, and the bug was **unreproducible on macOS by construction** — `/usr/bin` is read-only under SIP, so no local test could plant a tool there to catch it. |
 | Build such a `PATH` by resolving each tool through `env -i /bin/sh -c "command -v X"`, and keep only absolute answers. | A bare `command -v` answers from the developer's shell. On a machine where `grep` is aliased to ugrep it returns the string `grep`, which became a self-referential symlink and a `grep: command not found` in the middle of a run. A helper written to remove environment dependence must not inherit any. |
+| A list of files is hashed by one `git hash-object --stdin-paths` (`jig_hash_list`), the manifest is read once (`manifest_entries`), and a scratch tree is copied one `cp` per directory (`jig_copy_tree`). Never loop over `jig_hash`, `manifest_hash_of` or a per-file `cp`. | Every one of those is a process start per file, and they were almost all of what `jig status` cost: 1.5 s on drift and 3.5 s asking `upgrade` whether anything was pending, on a 72-file install. On 65 files the hashing loop took 0.879 s, one call 0.013 s, with identical hashes. Batching took `jig status` on a copy install from ~4 s to ~0.6 s. `jig verify` asks the same pending question (ADR-0017), so the `status` and `verify` tests alone were 47% of the suite's wall-clock time. |
 | Measure shell benchmarks under `bash`, not the interactive shell. | zsh does not word-split an unquoted parameter, so `for f in $files` runs **once** over the whole multi-line string. That turned "35 files hashed in 45 ms" into a measurement of one call, and led to the wrong conclusion that `git hash-object` was cheap; under `bash` it is ~13.6 ms per call and was the largest single cost of `jig init`. |
 | Glob matching against the tree uses `find -path` with `**` collapsed to `*`. | BSD and GNU `find -path` both match `*` across `/`, so one substitution covers any-depth and single-segment globs without `globstar`. |
 | A listing hides finished or superseded entries by default and counts them in a trailing line; `--all` shows everything. | Applies to `jig task list` and `jig context` alike. On a long-lived branch, done work outnumbers live work and crowds it out, and a listing nobody reads is worse than no listing. |
@@ -69,6 +70,25 @@ cmd_example() {
 
 - One `tests/<command>.t.sh` per command; functions `test_*`; each runs in a fresh temp
   directory with `HOME` isolated and a deterministic git identity (see `tests/run.sh`).
+- **Tests run in parallel**, `JIG_TEST_JOBS` at a time, by default one per CPU;
+  `JIG_TEST_JOBS=1` runs them one after another. Each test prints its `ok`/`FAIL` line when
+  it finishes; the logs of the failures, the five slowest tests and the wall time follow,
+  and the last line is still `N passed, M failed`. On this repository the suite went from
+  724 s to ~90 s (10 jobs): 476 s of that from batching jig's own hashing (the row above),
+  the rest from the workers.
+- **A test never assumes it runs alone.** Anything shared between tests — the fixture
+  cache, the no-tools `PATH` directory — is built complete and then published atomically
+  (`ln -s`, or built by the runner before any test starts), never filled in place and
+  taken as ready by a marker inside it. `_no_tools_bin` did the latter: `git` is third on
+  its list, so a test running alongside the builder saw `git` before `sed` and failed its
+  `jig verify` — 2 to 4 failures in every `verify::` run at 32 workers until it was fixed.
+- **Output is captured through a file, never a pipe** (`run`, `run_split`,
+  `run_no_tools`). bash 3.2 does not restart a write that SIGCHLD interrupts: a jig
+  command whose child exits while its output pipe is full loses the line it was writing
+  (`printf: write error: Interrupted system call`). Reproduced in isolation — 1 lost line
+  in 3000 into a slow pipe, 0 into a file — and seen once in a real run, where a test
+  missed the line it asserted on. The same limit applies to any caller piping jig's output
+  into a slow reader; it is bash's, and only capturing to a file avoids it.
 - Assert behaviour, not only exit codes: file presence, symlink targets, manifest lines,
   output substrings via `run cmd; assert_contains "$OUT" ...`.
 - Every negative path that ends in `jig_die` has a test asserting the message.
@@ -81,7 +101,8 @@ cmd_example() {
   was a `git commit` away from being shipped. A convention that manufactures untracked
   junk teaches the next reader to make the same mess.
 - Tests of commands that only need a default Jig installation may use `fixture_jig_repo`.
-  It installs once per sequential runner invocation and copies the complete fixture into
+  It installs once per runner invocation (`fixture_cache_prepare`, which a parallel run
+  calls before starting any test) and copies the complete fixture into
   each isolated test directory, including independent Git state. The cache is temporary
   and never preserves test results. Tests of init, upgrade, or non-default installation
   options must perform their own real setup.
