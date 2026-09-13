@@ -19,39 +19,20 @@ _upgrade_out() { [ "${quiet:-0}" = 1 ] || printf '%s\n' "$*"; }
 # <skills_dir>/<skill>/**). Not conflict-aware: plain overwrite into a
 # scratch directory, so it is safe to always rebuild from scratch.
 _upgrade_build_staged() {
-  local source="$1" stage="$2" profiles="$3" adapters="$4" f p a skill_dir
+  local source="$1" stage="$2" profiles="$3" adapters="$4" p a skill_dir
   local src_pdir stage_pdir adir
   mkdir -p "$stage/.ai/scripts" "$stage/.ai/profiles" \
     "$stage/.ai/templates/knowledge" "$stage/.ai/templates/scheduler"
 
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    mkdir -p "$(dirname "$stage/.ai/scripts/$f")"
-    cp -p "$source/scripts/$f" "$stage/.ai/scripts/$f"
-  done < <(cd "$source/scripts" && find . -type f | sed 's|^\./||')
-
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    mkdir -p "$(dirname "$stage/.ai/templates/knowledge/$f")"
-    cp -p "$source/templates/knowledge/$f" "$stage/.ai/templates/knowledge/$f"
-  done < <(cd "$source/templates/knowledge" && find . -type f | sed 's|^\./||')
-
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    mkdir -p "$(dirname "$stage/.ai/templates/scheduler/$f")"
-    cp -p "$source/templates/scheduler/$f" "$stage/.ai/templates/scheduler/$f"
-  done < <(cd "$source/templates/scheduler" && find . -type f | sed 's|^\./||')
+  jig_copy_tree "$source/scripts" "$stage/.ai/scripts"
+  jig_copy_tree "$source/templates/knowledge" "$stage/.ai/templates/knowledge"
+  jig_copy_tree "$source/templates/scheduler" "$stage/.ai/templates/scheduler"
 
   for p in $profiles; do
     src_pdir=$(profiles_dir "$source/profiles" "$p")
     [ -d "$src_pdir" ] || continue
     stage_pdir=$(profiles_dir "$stage/.ai/profiles" "$p")
-    mkdir -p "$stage_pdir"
-    while IFS= read -r f; do
-      [ -z "$f" ] && continue
-      mkdir -p "$(dirname "$stage_pdir/$f")"
-      cp -p "$src_pdir/$f" "$stage_pdir/$f"
-    done < <(cd "$src_pdir" && find . -type f | sed 's|^\./||')
+    jig_copy_tree "$src_pdir" "$stage_pdir"
   done
 
   for a in $adapters; do
@@ -90,27 +71,25 @@ _upgrade_csv() {
 
 # --- decision table (domains/install) ---------------------------------------------
 
-# _upgrade_process_path <rel> <stage-dir> <dry-run>
+# _upgrade_process_path <rel> <stage-dir> <dry-run> <manifest-hash>
+#                       <local-hash> <staged-hash>
 # Applies one row of the upgrade decision table to a single framework-owned
 # path and appends the resulting manifest line ("<hash> <path>") to the
 # caller's `new_entries` variable (dynamic scope; cmd_upgrade declares it
 # local). Prints one report line per non-trivial action.
+#
+# The three hashes come precomputed from _upgrade_hash_table, empty when the
+# path is absent from the manifest, the project or the stage respectively, so
+# this function starts no process of its own for a path it leaves alone.
 _upgrade_process_path() {
-  local rel="$1" stage="$2" dry_run="$3"
+  local rel="$1" stage="$2" dry_run="$3" manifest_hash="$4" local_hash="$5" staged_hash="$6"
   local staged_abs="$stage/$rel" staged_exists local_abs local_exists
-  local local_hash manifest_hash in_manifest action staged_hash
+  local in_manifest action
 
-  if [ -f "$staged_abs" ]; then staged_exists=1; else staged_exists=0; fi
-  manifest_hash=$(manifest_hash_of "$rel")
+  if [ -n "$staged_hash" ]; then staged_exists=1; else staged_exists=0; fi
   if [ -n "$manifest_hash" ]; then in_manifest=1; else in_manifest=0; fi
   local_abs="$JIG_PROJECT/$rel"
-  if [ -f "$local_abs" ]; then
-    local_exists=1
-    local_hash=$(jig_hash "$local_abs")
-  else
-    local_exists=0
-    local_hash=""
-  fi
+  if [ -n "$local_hash" ]; then local_exists=1; else local_exists=0; fi
 
   if [ "$staged_exists" = 1 ] && [ "$in_manifest" = 1 ]; then
     if [ "$local_exists" = 0 ]; then
@@ -138,7 +117,6 @@ _upgrade_process_path() {
 
   case "$action" in
     replace)
-      staged_hash=$(jig_hash "$staged_abs")
       if [ "$staged_hash" != "$local_hash" ]; then
         if [ "$dry_run" != 1 ]; then
           mkdir -p "$(dirname "$local_abs")"
@@ -150,7 +128,6 @@ _upgrade_process_path() {
 $staged_hash $rel"
       ;;
     install)
-      staged_hash=$(jig_hash "$staged_abs")
       if [ "$dry_run" != 1 ]; then
         mkdir -p "$(dirname "$local_abs")"
         cp -p "$staged_abs" "$local_abs"
@@ -179,6 +156,53 @@ $manifest_hash $rel"
       _upgrade_out "delete $rel"
       ;;
   esac
+}
+
+# _upgrade_hash_table <union-file> <stage-dir> <work-dir>
+# Prints one line per path in <union-file>: "<path>\t<manifest>\t<local>\t<staged>",
+# each hash `-` when the path is absent from that side.
+#
+# Built once for the whole union — one pass over the manifest, one
+# `git hash-object` for the project's files and one for the stage's — instead
+# of a manifest reread and up to three git startups per path. On a 72-file
+# install that per-path loop was most of the 3.5 s `jig status` spent asking
+# whether anything was pending. `-`, not an empty field: `read` treats tab as
+# whitespace and would collapse two adjacent separators into one.
+_upgrade_hash_table() {
+  local union="$1" stage="$2" work="$3" rel
+  : > "$work/local.paths"; : > "$work/local.abs"
+  : > "$work/staged.paths"; : > "$work/staged.abs"
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    if [ -f "$JIG_PROJECT/$rel" ]; then
+      printf '%s\n' "$rel" >> "$work/local.paths"
+      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$work/local.abs"
+    fi
+    if [ -f "$stage/$rel" ]; then
+      printf '%s\n' "$rel" >> "$work/staged.paths"
+      printf '%s/%s\n' "$stage" "$rel" >> "$work/staged.abs"
+    fi
+  done < "$union"
+  jig_hash_list "$work/local.abs" > "$work/local.hashes" \
+    || jig_die "upgrade: could not hash the installed files"
+  jig_hash_list "$work/staged.abs" > "$work/staged.hashes" \
+    || jig_die "upgrade: could not hash the staged files"
+
+  # Tagged streams in one awk: a per-file `NR == FNR` join goes wrong as soon
+  # as one of the inputs is empty (conventions/shell.md).
+  {
+    manifest_entries | sed 's/^/M /'
+    paste -d' ' "$work/local.hashes" "$work/local.paths" | sed 's/^/L /'
+    paste -d' ' "$work/staged.hashes" "$work/staged.paths" | sed 's/^/S /'
+    sed 's/^/U /' "$union"
+  } | awk '
+    function rest(n,   i, s) { s = $0; for (i = 0; i < n; i++) s = substr(s, index(s, " ") + 1); return s }
+    function or_dash(v) { return v == "" ? "-" : v }
+    $1 == "M" { m[rest(2)] = $2; next }
+    $1 == "L" { l[rest(2)] = $2; next }
+    $1 == "S" { st[rest(2)] = $2; next }
+    $1 == "U" { p = rest(1); if (p != "") print p "\t" or_dash(m[p]) "\t" or_dash(l[p]) "\t" or_dash(st[p]) }
+  '
 }
 
 # --- link mode ---------------------------------------------------------------
@@ -262,12 +286,13 @@ _upgrade_link() {
 
 # --- cmd_upgrade -------------------------------------------------------------
 
-# Staging directory / union-of-paths temp file for the current cmd_upgrade
-# run. Script-global (not `local`) so the EXIT/INT/TERM cleanup trap below
+# Staging directory / union-of-paths temp file / hash-table work directory for
+# the current cmd_upgrade run. Script-global (not `local`) so the EXIT/INT/TERM cleanup trap below
 # still sees them if the process dies mid-run — same pattern as
 # scripts/lib/knowledge.sh's KM_*_FILE variables.
 _UPGRADE_STAGE=""
 _UPGRADE_UNION_FILE=""
+_UPGRADE_WORK=""
 
 cmd_upgrade() {
   local from="" dry_run=0 quiet=0
@@ -286,7 +311,8 @@ cmd_upgrade() {
   . "$JIG_LIB/profiles.sh"
 
   trap '[ -n "$_UPGRADE_STAGE" ] && rm -rf "$_UPGRADE_STAGE"
-        [ -n "$_UPGRADE_UNION_FILE" ] && rm -f "$_UPGRADE_UNION_FILE"' EXIT INT TERM
+        [ -n "$_UPGRADE_UNION_FILE" ] && rm -f "$_UPGRADE_UNION_FILE"
+        [ -n "$_UPGRADE_WORK" ] && rm -rf "$_UPGRADE_WORK"' EXIT INT TERM
 
   local source
   if [ -n "$from" ]; then
@@ -330,11 +356,21 @@ cmd_upgrade() {
   _UPGRADE_UNION_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-upgrade-union.XXXXXX")
   { (cd "$_UPGRADE_STAGE" && find . -type f | sed 's|^\./||'); manifest_paths; } | sort -u > "$_UPGRADE_UNION_FILE"
 
-  local new_entries="" rel
-  while IFS= read -r rel; do
-    [ -z "$rel" ] && continue
-    _upgrade_process_path "$rel" "$_UPGRADE_STAGE" "$dry_run"
-  done < "$_UPGRADE_UNION_FILE"
+  _UPGRADE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/jig-upgrade-work.XXXXXX")
+  _upgrade_hash_table "$_UPGRADE_UNION_FILE" "$_UPGRADE_STAGE" "$_UPGRADE_WORK" \
+    > "$_UPGRADE_WORK/table"
+
+  local new_entries="" rel mhash lhash shash t
+  t=$(printf '\t')
+  while IFS="$t" read -r rel mhash lhash shash; do
+    [ -n "$rel" ] || continue
+    [ "$mhash" != "-" ] || mhash=""
+    [ "$lhash" != "-" ] || lhash=""
+    [ "$shash" != "-" ] || shash=""
+    _upgrade_process_path "$rel" "$_UPGRADE_STAGE" "$dry_run" "$mhash" "$lhash" "$shash"
+  done < "$_UPGRADE_WORK/table"
+  rm -rf "$_UPGRADE_WORK"
+  _UPGRADE_WORK=""
   rm -f "$_UPGRADE_UNION_FILE"
   _UPGRADE_UNION_FILE=""
   rm -rf "$_UPGRADE_STAGE"

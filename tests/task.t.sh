@@ -34,12 +34,16 @@ task_started() {
 # Run a jig command, capturing stdout in OUT and stderr in ERR separately
 # (unlike run(), which merges both into OUT). task_current's contract
 # (design §2) depends on which stream each part lands on.
+# Captured through files for the reason run() gives.
 run_split() {
-  local errfile="run_split.stderr.$$"
-  OUT=$("$@" 2>"$errfile")
+  local out err
+  out=$(_run_out)
+  err=$(_run_out .err)
+  ( "$@" ) >"$out" 2>"$err"
   RC=$?
-  ERR=$(cat "$errfile")
-  rm -f "$errfile"
+  OUT=$(cat "$out")
+  ERR=$(cat "$err")
+  rm -f "$out" "$err"
   export OUT RC ERR
 }
 

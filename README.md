@@ -601,6 +601,10 @@ bash tests/run.sh
 .ai/scripts/jig knowledge check
 ```
 
+`tests/run.sh` runs the tests in parallel, one per CPU; set `JIG_TEST_JOBS=1` to run them
+one at a time, or any other number to choose the width. A name filter narrows the run:
+`tests/run.sh knowledge::`.
+
 The shell profile also runs ShellCheck. Follow [AGENTS.md](AGENTS.md), the
 [rules and invariants](.ai/knowledge/RULES.md), and [accepted
 decisions](.ai/knowledge/adr/) before changing framework behavior. Task notes belong in the ignored workspace; lasting

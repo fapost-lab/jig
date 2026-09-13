@@ -528,22 +528,30 @@ cmd_init() {
     # manifest_write_entries only once it is complete, so a failure anywhere
     # in the batch leaves the previous manifest untouched instead of
     # replacing it with a truncated one.
-    local rel hash
+    local rel
     _INIT_HASH_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-init-hash.XXXXXX")
     local need_file="$_INIT_HASH_TMP/rel" abs_file="$_INIT_HASH_TMP/abs"
     local hash_file="$_INIT_HASH_TMP/hash" entries="$_INIT_HASH_TMP/entries"
     : > "$need_file"; : > "$abs_file"; : > "$entries"
 
+    # Known hashes come from one pass over the manifest joined in one awk,
+    # not a manifest_hash_of per path, which rereads the file every time.
+    # FILENAME, not NR == FNR, tells the inputs apart: with an empty manifest
+    # body NR == FNR would hold for every line of the path list as well.
+    local known="$_INIT_HASH_TMP/known" all="$_INIT_HASH_TMP/all"
+    manifest_entries > "$known"
+    printf '%s\n' "$framework_paths" | sed '/^$/d' | sort -u > "$all"
+    # The output paths go through the environment, not `awk -v`, which would
+    # interpret backslashes in them.
+    JIG_INIT_ENTRIES="$entries" JIG_INIT_NEED="$need_file" awk '
+      FILENAME == ARGV[1] { known[substr($0, index($0, " ") + 1)] = $1; next }
+      ($0 in known) { print known[$0] " " $0 > ENVIRON["JIG_INIT_ENTRIES"]; next }
+      { print > ENVIRON["JIG_INIT_NEED"] }
+    ' "$known" "$all"
     while IFS= read -r rel; do
-      [ -z "$rel" ] && continue
-      hash=$(manifest_hash_of "$rel")
-      if [ -n "$hash" ]; then
-        printf '%s %s\n' "$hash" "$rel" >> "$entries"
-      else
-        printf '%s\n' "$rel" >> "$need_file"
-        printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$abs_file"
-      fi
-    done < <(printf '%s\n' "$framework_paths" | sed '/^$/d' | sort -u)
+      [ -n "$rel" ] || continue
+      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$abs_file"
+    done < "$need_file"
 
     if [ -s "$need_file" ]; then
       # One git startup for the whole install instead of one per path.
@@ -551,7 +559,7 @@ cmd_init() {
       # order, so `paste` re-pairs them; a path containing a newline would
       # desync that, which the newline-delimited framework_paths accumulator
       # already rules out.
-      git hash-object --stdin-paths < "$abs_file" > "$hash_file" \
+      jig_hash_list "$abs_file" > "$hash_file" \
         || jig_die "init: could not hash installed files"
       paste -d' ' "$hash_file" "$need_file" >> "$entries"
     fi

@@ -667,13 +667,23 @@ ctx_acknowledge() {
     done < "$ledger"
   fi
 
+  # Every path is validated before any is hashed, then all are hashed by one
+  # git process (jig_hash_list) and paired back by position — `paste` joins
+  # with a tab, which is the ledger's own separator.
   count=0
+  : > "$tmp.abs"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     _ctx_check_knowledge_path "$rel"
-    printf '%s%s%s\n' "$(jig_hash "$JIG_PROJECT/$rel")" "$t" "$rel" >> "$tmp"
+    printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$tmp.abs"
     count=$((count + 1))
   done < <(printf '%s\n' "$files")
+  if ! jig_hash_list "$tmp.abs" > "$tmp.hash"; then
+    rm -f "$tmp" "$tmp.abs" "$tmp.hash"
+    jig_die "context acknowledge: could not hash the documents"
+  fi
+  paste "$tmp.hash" <(printf '%s\n' "$files") >> "$tmp"
+  rm -f "$tmp.abs" "$tmp.hash"
 
   sort -o "$tmp" "$tmp"
   mv "$tmp" "$ledger"
@@ -691,17 +701,31 @@ _ctx_tracked_paths() {
 # _ctx_pending_paths <rows-file> <ledger> — tracked documents with no
 # acknowledgement, or whose content has changed since one. A changed document
 # becomes pending again: that is the point of hashing rather than listing.
+#
+# One git process hashes every tracked document and one awk compares them with
+# the ledger, in tracked-path order; the per-document loop started a git and an
+# awk for each. The two inputs are tagged rather than joined on NR == FNR,
+# which goes wrong when the ledger is empty (conventions/shell.md).
 _ctx_pending_paths() {
-  local rows="$1" ledger="$2" t relpath want have
+  local rows="$1" ledger="$2" paths relpath tmp t
   t=$(printf '\t')
+  paths=$(_ctx_tracked_paths "$rows")
+  [ -n "$paths" ] || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jig-context-pending.XXXXXX")
   while IFS= read -r relpath; do
     [ -n "$relpath" ] || continue
-    want=$(jig_hash "$JIG_PROJECT/$relpath")
-    have=""
-    [ -f "$ledger" ] && have=$(awk -F "$t" -v p="$relpath" '$2 == p { print $1; exit }' "$ledger")
-    [ "$want" = "$have" ] && continue
-    printf '%s\n' "$relpath"
-  done < <(_ctx_tracked_paths "$rows")
+    printf '%s/%s\n' "$JIG_PROJECT" "$relpath"
+  done > "$tmp" < <(printf '%s\n' "$paths")
+  if ! jig_hash_list "$tmp" > "$tmp.hash"; then
+    rm -f "$tmp" "$tmp.hash"
+    jig_die "context: could not hash the tracked documents"
+  fi
+  {
+    # $t, not a `\t` escape: BSD sed does not read one in a replacement.
+    if [ -f "$ledger" ]; then sed "s/^/L$t/" "$ledger"; fi
+    paste "$tmp.hash" <(printf '%s\n' "$paths" | sed '/^$/d') | sed "s/^/W$t/"
+  } | awk -F '\t' '$1 == "L" { have[$3] = $2; next } $1 == "W" && have[$3] != $2 { print $3 }'
+  rm -f "$tmp" "$tmp.hash"
 }
 
 ctx_pending() {

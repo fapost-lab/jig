@@ -164,6 +164,60 @@ jig_today() { date +%Y-%m-%d; }
 # shasum/sha256sum are not portable.
 jig_hash() { git hash-object "$1"; }
 
+# jig_copy_tree <src-dir> <dst-dir> — copy every regular file under <src-dir>
+# (`find -type f`: symlinks and empty directories are not copied) to the same
+# relative path under <dst-dir>, with `cp -p`. Plain overwrite, no conflict
+# handling: for scratch trees such as upgrade's stage, not for a project.
+#
+# One `mkdir -p` and one `cp` per directory rather than per file. The file list
+# is sorted so each directory's files arrive together; a directory split
+# around a subdirectory only costs an extra `cp`, never a wrong copy. The
+# per-file loop — `dirname`, `mkdir` and `cp` for each of 43 framework files —
+# was the largest part of what `jig status` still spent once hashing was
+# batched.
+jig_copy_tree() {
+  local src="$1" dst="$2" f dir last="" n=0
+  local -a batch
+  mkdir -p "$dst"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    f=${f#./}
+    case "$f" in
+      */*) dir=${f%/*} ;;
+      *) dir=. ;;
+    esac
+    if [ "$dir" != "$last" ] && [ "$n" -gt 0 ]; then
+      mkdir -p "$dst/$last"
+      cp -p "${batch[@]}" "$dst/$last/"
+      n=0
+      batch=()
+    fi
+    last=$dir
+    batch[n]="$src/$f"
+    n=$((n + 1))
+  done < <(cd "$src" && find . -type f | LC_ALL=C sort)
+  if [ "$n" -gt 0 ]; then
+    mkdir -p "$dst/$last"
+    cp -p "${batch[@]}" "$dst/$last/"
+  fi
+  return 0
+}
+
+# jig_hash_list <file> — the blob hash of every path listed in <file>, one per
+# line and in the same order, from a single `git hash-object` process. Nothing
+# for an empty list. Every listed path must exist: git fails the whole batch
+# otherwise, which the caller turns into an error rather than a missing hash.
+#
+# Use this, not a loop over jig_hash, whenever there is more than one file.
+# Each call is a git startup, and on 65 manifest files the loop took 0.879 s
+# where one call took 0.013 s — it was most of what `jig status` cost.
+# Pair the output back with its paths by position (`paste`); a path containing
+# a newline would desync that, and none of jig's line-based lists can hold one.
+jig_hash_list() {
+  [ -s "$1" ] || return 0
+  git hash-object --stdin-paths < "$1"
+}
+
 # Path of <file> relative to <base>, both absolute. Pure string operation.
 jig_relpath() {
   local base="${2%/}/" file="$1"
