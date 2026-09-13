@@ -308,6 +308,8 @@ _sdd_assert_reference_links() {
     assert_file "$runtime/skills/jig-task/references/requirements-and-planning.md"
     assert_file "$runtime/skills/jig-task/references/handoff.md"
     assert_file "$runtime/skills/jig-task/references/ui-states.md"
+    assert_file "$runtime/skills/jig-task/references/show-the-document.md"
+    assert_file "$runtime/skills/jig-accept/../jig-task/references/show-the-document.md"
     assert_file "$runtime/skills/jig-analyze/references/ambiguity.md"
     assert_file "$runtime/skills/jig-review/references/change-scope.md"
     assert_file "$runtime/skills/jig-review/../jig-task/references/ui-states.md"
@@ -325,6 +327,7 @@ test_sdd_upgrade_adds_references_and_preserves_modified_consumers() {
   rm "$old_source/skills/jig-task/references/requirements-and-planning.md" \
     "$old_source/skills/jig-task/references/handoff.md" \
     "$old_source/skills/jig-task/references/ui-states.md" \
+    "$old_source/skills/jig-task/references/show-the-document.md" \
     "$old_source/skills/jig-analyze/references/ambiguity.md" \
     "$old_source/skills/jig-review/references/change-scope.md"
   jig init --from "$old_source" >/dev/null

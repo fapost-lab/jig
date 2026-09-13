@@ -28,8 +28,10 @@ comprehension, so a guard you satisfied without reading buys nothing and reports
 check that did not happen. When the task has no workspace the guard says so and exits 0;
 that line is the honest result, not a pass to quote as one.
 
-For T3 and T4, check that the human approved the design. If no approval was given in this
-conversation, go back to the gate.
+For T3 and T4, check that the human approved the design as it was shown to them, in this
+conversation, and that `design.md` has not changed since. If there is no approval, or the
+document changed after it, go back to the gate with the changed sections
+([show the document](../jig-task/references/show-the-document.md)).
 
 ## 2. Follow the plan, one step at a time
 

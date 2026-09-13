@@ -136,7 +136,9 @@ It lists the documents created, modified and deleted since the task forked, untr
 included — a document written minutes ago is usually not committed yet. Pass `--base <ref>`
 instead when the task has no fork point.
 
-The command supplies the facts; you supply the meaning. Say what was written and where and
-**why it earned a place**, or say `NO_DURABLE_KNOWLEDGE` and why the task left nothing
-behind. A list of paths is not a report. Say too whether the task is closed or waits for
-its change to land.
+The command supplies the facts; you supply the meaning. Show what was written — each new
+document, and each changed section of an existing one — verbatim, as
+[show the document](../jig-task/references/show-the-document.md) says: it binds every agent
+that resolves it. After it, say **why it earned a place**, or say `NO_DURABLE_KNOWLEDGE`
+and why the task left nothing behind. A list of paths is not a report. Say too whether the
+task is closed or waits for its change to land.

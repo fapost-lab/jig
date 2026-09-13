@@ -221,8 +221,9 @@ can still be T4. T0/T1 work that fits in one session need not create a workspace
 | T3 — architectural | Boundaries, dependencies or lifecycle semantics | discover → design → **human gate** → implement → architecture review → verify → consolidate |
 | T4 — critical | Security, secrets, destructive operations or money | discover → specify → alternatives → design → **human gate** → implement → independent review → verify → consolidate |
 
-At a human gate, the agent presents a concrete design and waits for approval before
-implementing. If scope grows, reclassify and complete the newly required stages.
+At a human gate, the agent shows the design document itself — verbatim, with its own
+objections after it — and waits for approval before implementing. If scope grows,
+reclassify and complete the newly required stages.
 Every route ends in consolidation, including the smaller classes: a task that produced no
 lasting intent still records `NO_DURABLE_KNOWLEDGE`, and a task left at `ready` is never
 cleaned up.

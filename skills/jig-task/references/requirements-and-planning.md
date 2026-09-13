@@ -21,3 +21,6 @@ Keep pass, fail, not-run and blocked distinct. Skip is not pass. Tick a step onl
 its named check supports completion. Unavailable checks and omitted requirements remain
 visible gaps; deferring scope requires an explicit user decision, not a green suite.
 Review every criterion before reviewing code quality, including behavior with no diff.
+
+Once `plan.md` is written, show it to the user verbatim
+([show the document](show-the-document.md)). For T2 that adds no stop to the route.

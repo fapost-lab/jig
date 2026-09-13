@@ -49,8 +49,11 @@ higher class in `jig-task/references/classification.md`, say so and re-classify:
 
 ## 4. Report
 
-A few sentences to the user, and, for T2 and above, the same in `task.md` under Notes so
-the next session does not redo the work. For T3 and T4 this feeds `design.md`.
+For T2 and above, write the analysis in `task.md` under Notes so the next session does not
+redo the work, then show the user what you wrote, verbatim
+([show the document](../jig-task/references/show-the-document.md)) — not a second, shorter
+version of it. Without a workspace, a few sentences to the user are the report. For T3
+and T4 this feeds `design.md`.
 
 Stop here. Implementation is the next stage, and for T3 and T4 a human gate stands
 between them.
