@@ -63,8 +63,10 @@ The flat `key: value` file in a Workspace describing local task lifecycle.
 
 ## Consolidation
 
-The SDLC stage that decides what from a task becomes Durable Knowledge.
-`NO_DURABLE_KNOWLEDGE` is a valid outcome.
+The SDLC stage that decides what from a task becomes Durable Knowledge. It ends every
+route. `NO_DURABLE_KNOWLEDGE` is a valid outcome. It is recorded twice (ADR-0030): the
+knowledge decision (`knowledge_consolidated: true`) before the commit, and the close
+(`status: consolidated`) after the task's change has landed.
 
 ## Housekeeping
 

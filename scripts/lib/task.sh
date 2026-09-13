@@ -712,6 +712,19 @@ task_set() {
     *) jig_die "task set: unknown key: $key" ;;
   esac
 
+  # ADR-0030: a task closes only after the knowledge decision is recorded.
+  # Without this order check, `status consolidated` could be written by hand
+  # ahead of `knowledge_consolidated`, which is exactly how a task ended up
+  # closed with no recorded knowledge decision. Idempotent: re-setting
+  # `status consolidated` on an already-consolidated task still succeeds,
+  # since its flag is already true by then.
+  if [ "$key" = status ] && [ "$value" = consolidated ] && [ "$(task_state_get "$id" knowledge_consolidated)" != "true" ]; then
+    jig_die "task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set $id knowledge_consolidated true"
+  fi
+  if [ "$key" = knowledge_consolidated ] && [ "$value" = false ] && [ "$(task_state_get "$id" status)" = consolidated ]; then
+    jig_die "task set: knowledge_consolidated cannot be false on a consolidated task: $id"
+  fi
+
   _task_rewrite_state "$dir" "$key" "$value"
 }
 
@@ -1047,9 +1060,9 @@ _task_artifact_fact() {
 # stage|documentary inputs|unassessed semantic prerequisites. This is not a router.
 _task_artifact_route() {
   case "$1" in
-    T0) printf '%s\n' 'implement|task|task intent' 'verify|task|implementation' ;;
-    T1) printf '%s\n' 'analyze|task|task intent' 'implement|task discovery|analysis sufficiency' 'verify|task|implementation' ;;
-    T2) printf '%s\n' 'analyze|task|task intent' 'plan|task discovery|analysis sufficiency' 'implement|task plan|plan sufficiency' 'review|task plan|implementation' 'verify|task plan|implementation and review outcome' ;;
+    T0) printf '%s\n' 'implement|task|task intent' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
+    T1) printf '%s\n' 'analyze|task|task intent' 'implement|task discovery|analysis sufficiency' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
+    T2) printf '%s\n' 'analyze|task|task intent' 'plan|task discovery|analysis sufficiency' 'implement|task plan|plan sufficiency' 'review|task plan|implementation' 'verify|task plan|implementation and review outcome' 'consolidate|task plan|implementation, review and verification outcomes' ;;
     T3) printf '%s\n' 'discover|task|task intent' 'design|task discovery|discovery sufficiency' 'human-gate|task design|human design decision' 'implement|task design|human design approval' 'architecture-review|task design|implementation' 'verify|task design|implementation and architecture review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
     T4) printf '%s\n' 'discover|task|task intent' 'specify|task discovery|discovery sufficiency' 'alternatives|task spec|specification sufficiency' 'design|task spec alternatives|alternatives evaluated' 'human-gate|task spec design|human design decision' 'implement|task spec design|human design approval' 'review|task spec design|implementation and independent reviewer' 'verify|task spec design|implementation and independent review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
   esac

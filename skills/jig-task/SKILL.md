@@ -40,6 +40,16 @@ dormant. Treat a long pause or an overlap line as a reason to re-check the premi
 `design.md` before building on it; the stage skills can be re-run, and re-running
 `jig-analyze` is how research is restarted.
 
+Then ask which merged tasks wait to be closed. The dry run changes nothing:
+
+```
+.ai/scripts/jig housekeeping --dry-run
+```
+
+For each task flagged `needs-consolidation`, name it and ask the user whether it can be
+closed — a fix may still be expected. On yes, close it with `jig-consolidate` §6. Never
+close without asking, and do not hold up the work the user came for while waiting.
+
 ## 2. Classify
 
 Read `references/classification.md` and pick T0–T4 from the signals. State the class and
@@ -107,11 +117,15 @@ Announce the route, then start the first stage. Each stage is its own skill:
 
 | Class | Route |
 |---|---|
-| T0 | jig-implement → jig-verify |
-| T1 | jig-analyze → jig-implement → jig-verify |
-| T2 | jig-analyze → plan → jig-implement → jig-review → jig-verify |
+| T0 | jig-implement → jig-verify → jig-consolidate |
+| T1 | jig-analyze → jig-implement → jig-verify → jig-consolidate |
+| T2 | jig-analyze → plan → jig-implement → jig-review → jig-verify → jig-consolidate |
 | T3 | discover → design → **human gate** → jig-implement → jig-architecture-review → jig-verify → jig-consolidate |
 | T4 | discover → specify → alternatives → design → **human gate** → jig-implement → independent jig-review → jig-verify → jig-consolidate |
+
+Every route ends in `jig-consolidate`, even when nothing durable came out of the task: it
+records the knowledge decision before the commit and, once the change has landed, closes
+the task. A task stopped at `ready` is never cleaned up.
 
 A stage whose output the user already supplied is not re-run; see the next section.
 

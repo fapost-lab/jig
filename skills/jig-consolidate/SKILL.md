@@ -1,6 +1,6 @@
 ---
 name: jig-consolidate
-description: Decide what a finished Jig task should leave behind in durable knowledge, and write it. Use before committing or opening a PR, or when the user says "consolidate", "what should we document", "update the knowledge".
+description: Decide what a finished Jig task should leave behind in durable knowledge, record that decision, and close the task once its change has landed. Use at the end of every task route, before committing or opening a PR; when `jig status` or housekeeping reports a task under needs-consolidation; or when the user says "consolidate", "what should we document", "update the knowledge", "close the task".
 ---
 
 # jig-consolidate — what survives the task
@@ -13,15 +13,26 @@ One question:
 Code already records behaviour. Knowledge records intent. Answering
 `NO_DURABLE_KNOWLEDGE` is a correct outcome, not a failure.
 
-Run this completion stage only after implementation and required review/verification are
-complete. Finishing analysis, a backlog, or a design does not complete its implementation
-task: keep it active or explicitly paused. Resolve/read context with `--stage consolidate`.
+This is the last stage of **every** route, T0 included, and it has two entries (ADR-0030):
+
+- **Record the decision** (§1–§5) — after implementation and required review/verification,
+  before the commit, so code and the intent behind it enter the repository together.
+- **Close the task** (§6) — after its change has landed. A merge is not the end of a task:
+  fixes can follow it, and only the close says the task is done.
+
+Finishing analysis, a backlog, or a design does not complete its implementation task: keep
+it active or explicitly paused. Resolve/read context with `--stage consolidate`.
+
+A T0/T1 task without a workspace has no state to record: state the decision in the report
+and stop there.
 
 ## 1. Review what happened
 
 Read the task's workspace artifacts and the diff. Look for: a decision with alternatives,
 a constraint discovered the hard way, a term used inconsistently, an assumption that
 turned out wrong, a rule the codebase now depends on.
+
+Found nothing? That is `NO_DURABLE_KNOWLEDGE`: skip to §5.
 
 ## 2. Route each finding
 
@@ -79,19 +90,41 @@ not a restatement of its title.
 
 Frontmatter is never hand-edited: the commands above own it (ADR-0001, ADR-0010).
 
-## 5. Verify and record
+## 5. Verify and record the decision
 
 ```
 .ai/scripts/jig knowledge check
 .ai/scripts/jig task set <id> knowledge_consolidated true
+```
+
+The status stays `ready`: the task is still current, and fixes from review of the commit
+or PR continue in it. If review changes the implementation, update the same documents; do
+not start a new task document for it.
+
+A task whose landing cannot be observed closes now, in §6: `jig task list` shows no
+`branch` for it, or the base branch. Housekeeping never sees such a task land (ADR-0025).
+
+## 6. Close the task
+
+Close when the change has landed: `jig-task` found the task flagged `needs-consolidation`
+at session start and the user agreed, `jig status` counts it under `needs consolidation`,
+or the human says the work is finished.
+
+1. `knowledge_consolidated` must already be `true`. If it is not, run §1–§5 first; the
+   knowledge then reaches the repository in a follow-up change.
+2. If fixes after the commit changed the intent, update the documents they touched.
+3. Ask the human whether a fix is still expected on this task. If one is, leave it open.
+
+```
 .ai/scripts/jig task set <id> status consolidated
 ```
 
-Consolidation happens before the commit, so code and the intent behind it enter the
-repository together. If review later changes the implementation, update the same
-documents; do not start a new task document for it.
+The script refuses this while the knowledge decision is unrecorded. Once the task's branch
+is confirmed merged, housekeeping moves the workspace to trash; a task whose landing
+cannot be observed keeps its workspace, closed and unflagged, because housekeeping never
+destroys on `unknown`. A problem found after the close is a new task.
 
-## 6. Report
+## 7. Report
 
 Ask the repository what changed, rather than reporting from memory:
 
@@ -105,4 +138,5 @@ instead when the task has no fork point.
 
 The command supplies the facts; you supply the meaning. Say what was written and where and
 **why it earned a place**, or say `NO_DURABLE_KNOWLEDGE` and why the task left nothing
-behind. A list of paths is not a report.
+behind. A list of paths is not a report. Say too whether the task is closed or waits for
+its change to land.

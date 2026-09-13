@@ -9,6 +9,7 @@ paths:
   - "scripts/lib/housekeeping.sh"
   - "schemas/state.md"
 summary: Why task status is local and remote merge state is derived, never stored.
+reviewed_at: 2026-09-13
 ---
 # ADR-0005: Task `status` is local-only; merge state is derived, never stored as truth
 
@@ -43,3 +44,8 @@ The spec also had no path for a PR closed without merge.
 - The cleanup policy is a two-axis table (`domains/housekeeping`) that is easy to test
   exhaustively.
 - Abandoned work no longer lives forever under "not merged → preserve".
+
+> **Amendment (2026-09-13).** The two fields now record two different moments:
+> `knowledge_consolidated: true` is written at the end of every route, before the commit,
+> and `status: consolidated` closes the task after its change has landed. `jig task set`
+> refuses the status while the flag is not `true`. See ADR-0030.

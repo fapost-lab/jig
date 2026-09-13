@@ -11,7 +11,8 @@ One obvious change with no design choice and no new behaviour.
 Signals: typo, wording, comment, formatting, a rename confined to one file, a version
 bump, a doc fix. Reverting it is trivial and nothing depends on the change.
 
-Route: **implement → verify**. No workspace, no artifacts.
+Route: **implement → verify → consolidate**. No workspace, no artifacts; consolidation is
+the `NO_DURABLE_KNOWLEDGE` or knowledge decision stated in the report.
 
 ## T1 — Local
 
@@ -21,7 +22,8 @@ Signals: a bug fix with a known cause, a small feature inside an existing module
 added for existing code. No new dependency, no change to a contract another component
 relies on, no data shape change.
 
-Route: **analyze → implement → verify**. Workspace only if the task spans sessions.
+Route: **analyze → implement → verify → consolidate**. Workspace only if the task spans
+sessions.
 
 ## T2 — Structural
 
@@ -31,7 +33,8 @@ Signals: a new module inside existing boundaries, a signature or interface used 
 components, a refactor across files, a new command or endpoint following an existing
 pattern, a change whose blast radius you cannot state without looking.
 
-Route: **analyze → plan → implement → review → verify**. Workspace with `plan.md`.
+Route: **analyze → plan → implement → review → verify → consolidate**. Workspace with
+`plan.md`.
 
 ## T3 — Architectural
 

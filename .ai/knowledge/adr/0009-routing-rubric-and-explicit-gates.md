@@ -7,6 +7,7 @@ domains: [skills, sdlc]
 paths:
   - "skills/**"
 summary: Why a written rubric picks the task class and human gates are full stops.
+reviewed_at: 2026-09-13
 ---
 # ADR-0009: One entry skill routes by a fixed rubric; gates are explicit stops
 
@@ -57,3 +58,7 @@ help, and picks by effort rather than by risk.
 - Classification is auditable: the class is in the task state, the reason is stated once.
 - Stage skills stay short because the router owns the sequencing.
 - A wrong class is cheap to correct and expected to happen.
+
+> **Amendment (2026-09-13).** Every class's route, T0–T2 included, now ends with
+> `consolidate`; a task stopped at `ready` was never closed and never cleaned up. See
+> ADR-0030.

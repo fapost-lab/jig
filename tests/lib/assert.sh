@@ -119,7 +119,13 @@ fixture_task() {
     printf 'task_id: %s\n' "$id"
     printf 'branch: %s\n' "$branch"
     printf 'status: %s\n' "$status"
-    printf 'knowledge_consolidated: false\n'
+    # A closed task always carries a recorded knowledge decision: `task set`
+    # refuses the other combination (ADR-0030), so a fixture must not build it.
+    if [ "$status" = consolidated ]; then
+      printf 'knowledge_consolidated: true\n'
+    else
+      printf 'knowledge_consolidated: false\n'
+    fi
     printf 'created_at: %s\n' "$today"
     printf 'updated_at: %s\n' "$today"
   } > "$file"

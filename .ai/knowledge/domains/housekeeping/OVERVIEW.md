@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-13
 ---
 # Housekeeping
 
@@ -58,6 +58,17 @@ Read these before changing anything here; each is a rule someone paid for.
   it that way.
 - **Exit 3 means "a human must consolidate"**; 1 is a real error, 2 belongs to
   `task current`. A trigger has to be able to tell those apart.
+- **`needs-consolidation` is the expected signal to close a task, not an anomaly**
+  (ADR-0030). Every task on a branch other than the base branch reaches `ready:merged` with its knowledge
+  decision already recorded, and waits there for a human to close it. A merge never closes
+  a task: do not relax the policy to purge `ready:merged`, with or without
+  `knowledge_consolidated: true` — the maintainer rejected exactly that. The flag keeps its
+  name although only the close may be missing, because `jig status` and `jig measure` read
+  it from the log.
+- **`--dry-run` has a reader at every session start.** `jig-task` runs it to find the tasks
+  flagged `needs-consolidation` and asks the user about each (ADR-0030). That only works
+  while the dry run stays free of side effects — no fetch, no log line, no stamp — and its
+  per-task stdout line keeps the task id first and the `flags=` field.
 
 ## Boundaries
 

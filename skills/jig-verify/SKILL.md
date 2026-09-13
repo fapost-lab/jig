@@ -65,4 +65,5 @@ When everything holds:
 .ai/scripts/jig task set <id> status ready
 ```
 
-Then consolidate for T3 and T4, or whenever the task produced knowledge worth keeping.
+Then run `jig-consolidate`, whatever the class. `ready` is not the end of a route: a task
+left there is never closed, and housekeeping never cleans it up.

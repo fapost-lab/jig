@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-13
 ---
 # Task
 
@@ -49,6 +49,13 @@ copy is by key, and an absent key is read as unknown rather than as an error.
 It has its own domain — see `domains/housekeeping/` — and the split is worth stating,
 because the two are easy to confuse: **`status` is local progress, owned here; remote
 merge state is derived there, every run, and stored nowhere.**
+
+**The two consolidation fields are two moments, and `task set` keeps their order**
+(ADR-0030). `knowledge_consolidated: true` is written at the end of every route, before the
+commit; `status: consolidated` closes the task after its change has landed, prompted by
+housekeeping's `needs-consolidation`. `task set` refuses the status while the flag is not
+`true`, and refuses `false` on a closed task. This is the only cross-key rule in
+`task_set`: every other key is validated on its own value alone.
 
 One consequence lands squarely on this domain, and ADR-0026 is the answer to it.
 Housekeeping can only establish that work landed when the task had a branch of its own: a
