@@ -16,6 +16,10 @@ _HK_VIA=""          # tier that decided the last remote state: forge|ancestry|no
 _HK_FORGE_KIND=""   # github|gitlab|none — resolved once per run
 _HK_FORGE_PRS=""    # "<branch><TAB><state>" lines, fetched once per run (C1)
 _HK_STALE_REMOTE=0  # 1 when the fetch or the forge tier could not answer
+_HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
+_HK_ROWS=""         # "<group>\t<task>\t<note>" per task, printed as the report
+_HK_WT_LINE=""      # what _hk_worktree_retire did, as a --verbose line
+_HK_WT_NOTE=""      # ... and as a note in the grouped report
 
 cmd_housekeeping() {
   jig_require_init
@@ -26,9 +30,15 @@ cmd_housekeeping() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) dry=1; shift ;;
-      *) jig_die "usage: jig housekeeping [--dry-run]" ;;
+      --verbose) _HK_VERBOSE=1; shift ;;
+      *) jig_die "usage: jig housekeeping [--dry-run] [--verbose]" ;;
     esac
   done
+
+  # The report is printed once every task is decided, grouped by outcome:
+  # forty identical lines in id order said nothing a person could act on.
+  _HK_ROWS=$(mktemp "${TMPDIR:-/tmp}/jig-housekeeping.XXXXXX")
+  trap 'rm -f "$_HK_ROWS"' EXIT
 
   local runtime="$JIG_PROJECT/$JIG_AI_DIR/runtime"
   local tasks_dir="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
@@ -70,7 +80,8 @@ cmd_housekeeping() {
       # A directory that is not a well-formed task id is not ours to touch:
       # report it and never build a path from it (RULES.md, convention-shell).
       if ! _task_valid_id "$tid"; then
-        printf 'skip %s (invalid task id)\n' "$tid"
+        [ "$_HK_VERBOSE" != 1 ] || printf 'skip %s (invalid task id)\n' "$tid"
+        printf 'skipped\t%s\t\n' "$tid" >> "$_HK_ROWS"
         continue
       fi
       found=1
@@ -98,11 +109,16 @@ cmd_housekeeping() {
       # A worktree that has to stay keeps its workspace too. Purging the
       # workspace would leave the worktree's link dangling beside whatever
       # made it stay — and the uncertain direction is always preserve.
+      _HK_WT_LINE=""
+      _HK_WT_NOTE=""
       if [ "$action" = "purge" ] && [ -n "$branch" ]; then
         wt=$(_task_worktree_for "$branch" "$worktrees")
         if [ -n "$wt" ] && ! _hk_worktree_retire "$dry" "$tid" "$wt"; then
           action="preserve"
           flags="worktree-kept"
+        fi
+        if [ "$_HK_VERBOSE" = 1 ] && [ -n "$_HK_WT_LINE" ]; then
+          printf '%s\n' "$_HK_WT_LINE"
         fi
       fi
 
@@ -121,9 +137,16 @@ cmd_housekeeping() {
       fi
 
       _hk_report "$dry" "$tid" "$st" "$remote" "$action" "$flags" "$dest" "$facts"
+      _hk_record "$tid" "$st" "$remote" "$action" "$flags" "$age" \
+        "$abandoned_ttl_days" "$branch" "$base_commit"
     done < <(find "$tasks_dir" -mindepth 2 -maxdepth 2 -name state -type f 2>/dev/null | LC_ALL=C sort)
   fi
 
+  # The report is for a person; every decision it describes is already made
+  # and logged. A failure to print it must not stop trash expiry, the stamp or
+  # exit code 3 from happening.
+  _hk_print_report "$dry" "$trash_ttl_days" \
+    || jig_warn "housekeeping: could not print the report; the decisions are in .ai/runtime/housekeeping.log"
   [ "$found" = 1 ] || printf 'no task workspaces\n'
 
   _hk_trash_expire "$dry" "$trash_ttl_days"
@@ -169,6 +192,9 @@ housekeeping_decide() {
     active:merged|ready:merged)
       flags="needs-consolidation"
       ;;
+    # Already abandoned: "abandoned?" would ask a question that has been
+    # answered.
+    abandoned:closed) ;;
     *:closed)
       flags="abandoned?"
       ;;
@@ -176,10 +202,12 @@ housekeeping_decide() {
 
   # A merged task that was paused before consolidation still needs
   # consolidating: pause is orthogonal to status (ADR-0012) and never
-  # suppresses a flag.
+  # suppresses a flag. An abandoned task has nothing to consolidate, whatever
+  # its branch did — five abandoned, paused tasks on this repository were
+  # flagged on every run, and made exit code 3 mean nothing.
   if [ "$paused" = "true" ] && [ "$remote" = "merged" ]; then
     case "$status" in
-      consolidated) ;;
+      consolidated | abandoned) ;;
       *) flags="needs-consolidation" ;;
     esac
   fi
@@ -555,15 +583,26 @@ _hk_worktree_retire() {
     git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || reason="git-refused"
   fi
 
+  # Recorded, not printed: the caller shows it as a --verbose line and as a
+  # note in the grouped report.
   if [ -n "$reason" ]; then
-    printf 'worktree %s kept (%s)\n' "$path" "$reason"
+    _HK_WT_LINE="worktree $path kept ($reason)"
+    case "$reason" in
+      no-worktree-root) _HK_WT_NOTE="worktree kept, git.worktree_root does not exist ($path)" ;;
+      outside-worktree-root) _HK_WT_NOTE="worktree kept, it is outside git.worktree_root ($path)" ;;
+      own-workspace) _HK_WT_NOTE="worktree kept, it holds a task workspace of its own ($path)" ;;
+      uncommitted-changes) _HK_WT_NOTE="worktree kept, it has uncommitted changes ($path)" ;;
+      *) _HK_WT_NOTE="worktree kept, git refused to remove it ($path)" ;;
+    esac
     [ "$dry" = 1 ] || _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=keep reason=$reason"
     return 1
   fi
   if [ "$dry" = 1 ]; then
-    printf 'would-remove worktree %s\n' "$path"
+    _HK_WT_LINE="would-remove worktree $path"
+    _HK_WT_NOTE="worktree would be removed"
   else
-    printf 'remove worktree %s\n' "$path"
+    _HK_WT_LINE="remove worktree $path"
+    _HK_WT_NOTE="worktree removed"
     _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=remove"
   fi
   return 0
@@ -605,7 +644,8 @@ _hk_trash_expire() {
 # --- reporting ---------------------------------------------------------------
 
 # _hk_report <dry> <task> <status> <remote> <action> <flags> <dest> [facts]
-# One stdout line for a human, one log line for the audit trail. The log
+# One log line for the audit trail, and the same decision as a stdout line
+# with --verbose; the grouped report is _hk_record's. The log
 # records `via=` — the tier that decided — because "why was this deleted" has
 # to be answerable from the log alone, months later.
 #
@@ -626,10 +666,138 @@ _hk_report() {
   local line="$tid status=$st remote=$remote via=$_HK_VIA action=$shown"
   [ -n "$rel" ] && line="$line dest=$rel"
   [ -n "$flags" ] && line="$line flags=$flags"
-  printf '%s\n' "$line"
+  [ "$_HK_VERBOSE" != 1 ] || printf '%s\n' "$line"
 
   [ "$dry" = 1 ] && return 0
   _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid status=$st remote=$remote via=$_HK_VIA action=$shown${rel:+ dest=$rel}${flags:+ flags=$flags}${facts:+ $facts}"
+}
+
+# _hk_record <task> <status> <remote> <action> <flags> <age_days>
+#            <abandoned_ttl_days> <branch> <base_commit>
+# File one task under the report group its outcome belongs to, with a note a
+# person can act on. Groups: needs (something only a human can do), removed,
+# waiting (consolidated, pull request open), progress, unknown (kept because
+# jig cannot tell whether the work landed), expiring (abandoned, TTL running),
+# skipped.
+_hk_record() {
+  local tid="$1" st="$2" remote="$3" action="$4" flags="$5" age="$6" ttl="$7"
+  local branch="$8" base_commit="$9" group note=""
+
+  if [ "$action" = "purge" ]; then
+    group="removed"
+    note="$_HK_WT_NOTE"
+  else
+    case ",$flags," in
+      *,worktree-kept,*) group="needs"; note="$_HK_WT_NOTE" ;;
+      *,needs-consolidation,*) group="needs"; note="merged but not consolidated, run jig-consolidate" ;;
+      *,abandoned?,*) group="needs"; note="pull request closed, run jig task abandon or reopen it" ;;
+      *)
+        case "$st" in
+          abandoned) group="expiring"; note="expires in $((ttl - age + 1)) days" ;;
+          consolidated)
+            if [ "$remote" = "open" ]; then
+              group="waiting"
+            else
+              group="unknown"
+              note=$(_hk_unknown_reason "$branch" "$base_commit")
+            fi
+            ;;
+          *)
+            group="progress"
+            if [ "$remote" = "open" ]; then note="pull request open"; fi
+            ;;
+        esac
+        ;;
+    esac
+  fi
+  case ",$flags," in
+    *,STALE_CANDIDATE,*) note="${note:+$note, }untouched for more than the stale_after period" ;;
+  esac
+  printf '%s\t%s\t%s\n' "$group" "$tid" "$note" >> "$_HK_ROWS"
+}
+
+# _hk_unknown_reason <branch> <base_commit> — why the remote state of a
+# consolidated task came out `unknown`, in words. It answers the question the
+# report exists for: this workspace is kept, so what would it take for it not
+# to be? Mirrors the order _hk_ancestry_state gives up in.
+_hk_unknown_reason() {
+  local branch="$1" base_commit="$2" base tip
+  base=$(cfg git.base_branch main)
+  case "$branch" in
+    '') printf 'never started, so there is no branch to check\n'; return 0 ;;
+    detached) printf 'recorded on a detached HEAD, so there is no branch to check\n'; return 0 ;;
+  esac
+  if [ "$branch" = "$base" ]; then
+    printf 'worked on %s directly, which leaves no trace of landing\n' "$base"
+    return 0
+  fi
+  tip=$(_hk_resolve_ref "$branch")
+  if [ -z "$tip" ]; then
+    printf 'its branch %s no longer exists\n' "$branch"
+    return 0
+  fi
+  if [ -n "$base_commit" ] \
+     && git -C "$JIG_PROJECT" cat-file -e "$base_commit^{commit}" 2>/dev/null \
+     && [ -z "$(git -C "$JIG_PROJECT" rev-list -n 1 "$base_commit..$tip" 2>/dev/null || true)" ]; then
+    printf 'its branch has no commits since the task started\n'
+    return 0
+  fi
+  printf 'no sign that its branch landed on %s\n' "$base"
+}
+
+# _hk_print_report <dry> <trash_ttl_days> — the grouped report: what needs a
+# person first, then what happened, then what is simply being kept. Within a
+# group, tasks sharing a note are listed together after it, wrapped. Empty
+# groups are not printed.
+#
+# Nothing here may look like a log line: the session hook and the scheduler
+# templates append this output to the log that `jig status` and `jig measure`
+# read by `task=` fields and `--- run` markers.
+_hk_print_report() {
+  local dry="$1" ttl="$2" day
+  [ -s "$_HK_ROWS" ] || return 0
+  day=$(jig_today)
+  awk -F '\t' -v dry="$dry" -v day="$day" -v ttl="$ttl" '
+    function emit(prefix, names,   n, p, i, w, line) {
+      n = split(names, p, SUBSEP)
+      line = prefix
+      for (i = 1; i <= n; i++) {
+        w = p[i] (i < n ? "," : "")
+        if (line == prefix) line = prefix w
+        else if (length(line) + 1 + length(w) > 88) { print line; line = "    " w }
+        else line = line " " w
+      }
+      print line
+    }
+    {
+      g = $1; note = $3
+      count[g]++
+      key = g SUBSEP note
+      if (!(key in names)) { order[g, ++notes[g]] = note; names[key] = $2 }
+      else names[key] = names[key] SUBSEP $2
+    }
+    END {
+      split("needs removed waiting progress unknown expiring skipped", groups, " ")
+      head["needs"] = "needs you (%d):"
+      if (dry == 1) head["removed"] = "would remove (%d): would move to .ai/runtime/trash/" day "/"
+      else head["removed"] = "removed (%d): moved to .ai/runtime/trash/" day "/, recoverable for " ttl " days"
+      head["waiting"] = "waiting for merge (%d): consolidated, pull request still open"
+      head["progress"] = "in progress (%d):"
+      head["unknown"] = "kept, cannot tell whether it landed (%d):"
+      head["expiring"] = "abandoned, waiting to expire (%d):"
+      head["skipped"] = "skipped (%d): not a valid task id, left alone"
+      for (gi = 1; gi <= 7; gi++) {
+        g = groups[gi]
+        if (!(g in count)) continue
+        printf head[g] "\n", count[g]
+        if ((g SUBSEP "") in names) emit("  ", names[g SUBSEP ""])
+        for (k = 1; k <= notes[g]; k++) {
+          if (order[g, k] == "") continue
+          emit("  " order[g, k] ": ", names[g SUBSEP order[g, k]])
+        }
+      }
+    }
+  ' "$_HK_ROWS"
 }
 
 _hk_log() {

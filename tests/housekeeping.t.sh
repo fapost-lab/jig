@@ -92,6 +92,18 @@ test_housekeeping_decide_stale_candidate_absent_when_purging() {
   assert_eq "purge" "$(hk_decide abandoned unknown "" 99 14 60)"
 }
 
+test_housekeeping_decide_abandoned_is_never_flagged_for_consolidation() {
+  # An abandoned task has nothing to consolidate. Paused and merged, it used to
+  # be flagged anyway: five tasks on this repository, exit 3 on every run.
+  assert_eq "preserve" "$(hk_decide abandoned merged true 1 14 60)"
+  assert_eq "preserve" "$(hk_decide abandoned merged "" 1 14 60)"
+}
+
+test_housekeeping_decide_closed_asks_only_a_task_that_is_not_abandoned_yet() {
+  assert_eq "preserve" "$(hk_decide abandoned closed "" 1 14 60)"
+  assert_eq "preserve abandoned?" "$(hk_decide consolidated closed "" 1 14 60)"
+}
+
 # --- pause is orthogonal (ADR-0012) ------------------------------------------
 
 test_housekeeping_decide_paused_never_changes_the_action() {
@@ -128,7 +140,7 @@ test_housekeeping_ancestry_detects_every_merge_shape() {
   fixture_task sq "squash-merged" consolidated
   fixture_task rb "rebase-merged" consolidated
 
-  run jig housekeeping --dry-run
+  run jig housekeeping --dry-run --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ff status=consolidated remote=merged via=ancestry action=would-purge"
   assert_contains "$OUT" "mc status=consolidated remote=merged via=ancestry action=would-purge"
@@ -143,7 +155,7 @@ test_housekeeping_ancestry_says_unknown_not_open() {
   fixture_merge_repo
   fixture_task op "still-open" consolidated
 
-  run jig housekeeping --dry-run
+  run jig housekeeping --dry-run --verbose
   assert_contains "$OUT" "op status=consolidated remote=unknown via=none action=preserve"
   assert_not_contains "$OUT" "remote=open"
 }
@@ -156,7 +168,7 @@ test_housekeeping_deleted_branch_is_unknown_not_merged() {
   fixture_merge_repo
   fixture_task gone "gone-merged" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "gone status=consolidated remote=unknown via=none action=preserve"
   assert_dir .ai/workspace/tasks/gone
 }
@@ -165,7 +177,7 @@ test_housekeeping_detached_branch_is_unknown() {
   hk_setup
   fixture_task det "detached" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "det status=consolidated remote=unknown via=none action=preserve"
   assert_dir .ai/workspace/tasks/det
 }
@@ -181,8 +193,8 @@ test_housekeeping_purges_consolidated_merged_to_trash() {
   assert_eq 0 "$RC"
   assert_no_file .ai/workspace/tasks/ff/state
   assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/ff/state"
-  assert_contains "$OUT" "action=purge"
-  assert_contains "$OUT" "dest=.ai/runtime/trash/"
+  assert_contains "$OUT" "removed (1): moved to .ai/runtime/trash/$(date +%Y-%m-%d)/, recoverable for 7 days"
+  assert_contains "$OUT" "  ff"
 }
 
 test_housekeeping_purge_keeps_the_workspace_readable_in_trash() {
@@ -221,7 +233,7 @@ test_housekeeping_never_purges_on_unknown_remote() {
   for st in active ready consolidated; do
     assert_dir ".ai/workspace/tasks/u-$st"
   done
-  assert_not_contains "$OUT" "action=purge"
+  assert_not_contains "$OUT" "removed ("
 }
 
 test_housekeeping_purges_abandoned_past_ttl_only() {
@@ -243,7 +255,7 @@ test_housekeeping_dry_run_changes_nothing() {
 
   run jig housekeeping --dry-run
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "would-purge"
+  assert_contains "$OUT" "would remove (1): would move to .ai/runtime/trash/"
   assert_contains "$OUT" "dry run: nothing was changed"
   assert_dir .ai/workspace/tasks/ff
   assert_no_file .ai/runtime/last-housekeeping
@@ -309,7 +321,8 @@ test_housekeeping_exits_3_when_consolidation_is_needed() {
 
   run jig housekeeping
   assert_eq 3 "$RC"
-  assert_contains "$OUT" "flags=needs-consolidation"
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "  merged but not consolidated, run jig-consolidate: ff"
   assert_contains "$OUT" "action needed"
 }
 
@@ -404,7 +417,7 @@ test_housekeeping_forge_state_wins_over_ancestry() {
   hk_stub_gh "still-open$(printf '\t')MERGED"
   fixture_task op "still-open" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "remote=merged via=forge"
   assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/op/state"
 }
@@ -416,7 +429,7 @@ test_housekeeping_forge_reports_closed_which_ancestry_cannot() {
   hk_stub_gh "still-open$(printf '\t')CLOSED"
   fixture_task op "still-open" active
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "remote=closed via=forge"
   assert_contains "$OUT" "flags=abandoned?"
@@ -430,7 +443,7 @@ test_housekeeping_forge_none_skips_the_tier_entirely() {
   hk_stub_gh "still-open$(printf '\t')MERGED"
   fixture_task op "still-open" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "via=none"
   assert_not_contains "$OUT" "via=forge"
   assert_dir .ai/workspace/tasks/op
@@ -443,7 +456,7 @@ test_housekeeping_branch_without_a_pull_request_falls_through_to_ancestry() {
   hk_stub_gh "some-other-branch$(printf '\t')MERGED"
   fixture_task ff "ff-merged" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "remote=merged via=ancestry"
 }
 
@@ -512,7 +525,7 @@ test_housekeeping_task_on_the_base_branch_is_unknown_not_merged() {
   hk_setup
   fixture_task trunk "main" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "trunk status=consolidated remote=unknown via=none action=preserve"
   assert_dir .ai/workspace/tasks/trunk
 }
@@ -528,7 +541,7 @@ test_housekeeping_does_not_flag_every_active_trunk_task() {
 
   run jig housekeeping
   assert_eq 0 "$RC"
-  assert_not_contains "$OUT" "needs-consolidation"
+  assert_not_contains "$OUT" "needs you"
 }
 
 test_housekeeping_base_branch_from_config_is_honoured() {
@@ -538,7 +551,7 @@ test_housekeeping_base_branch_from_config_is_honoured() {
   # is a real question again rather than a tautology.
   fixture_task t "main" consolidated
 
-  run jig housekeeping --dry-run
+  run jig housekeeping --dry-run --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "t status=consolidated"
 }
@@ -603,7 +616,7 @@ test_housekeeping_branch_with_no_commits_since_the_fork_is_unknown() {
   git branch task/fresh
   fixture_task fresh "task/fresh" consolidated "base_commit:$fork"
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "fresh status=consolidated remote=unknown via=none action=preserve"
   assert_dir .ai/workspace/tasks/fresh
 }
@@ -620,7 +633,7 @@ test_housekeeping_branch_with_landed_commits_is_merged() {
   git merge -q --no-ff -m "merge task/landed" task/landed
   fixture_task landed "task/landed" consolidated "base_commit:$fork"
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "landed status=consolidated remote=merged via=ancestry action=purge"
   assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/landed/state"
 }
@@ -636,7 +649,7 @@ test_housekeeping_branch_with_unlanded_commits_is_preserved() {
   git checkout -q main
   fixture_task op "task/open" consolidated "base_commit:$fork"
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "op status=consolidated remote=unknown"
   assert_dir .ai/workspace/tasks/op
 }
@@ -648,7 +661,7 @@ test_housekeeping_task_without_a_fork_point_behaves_as_before() {
   fixture_merge_repo
   fixture_task ff "ff-merged" consolidated
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "ff status=consolidated remote=merged via=ancestry action=purge"
 }
 
@@ -659,7 +672,7 @@ test_housekeeping_ignores_a_fork_point_that_no_longer_exists() {
   fixture_merge_repo
   fixture_task ff "ff-merged" consolidated "base_commit:0000000000000000000000000000000000000000"
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ff status=consolidated remote=merged"
 }
@@ -716,7 +729,7 @@ test_housekeeping_facts_are_logged_not_printed() {
   fixture_merge_repo
   fixture_task ff "ff-merged" consolidated class:T2
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "action=purge"
   assert_not_contains "$OUT" "class=T2"
 }
@@ -752,7 +765,7 @@ test_housekeeping_removes_the_worktree_of_a_purged_task() {
   local wt
   wt=$(hk_worktree_task T-1)
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "remove worktree $wt"
   assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=purge"
@@ -772,7 +785,7 @@ test_housekeeping_keeps_a_worktree_with_uncommitted_work_and_its_workspace() {
   wt=$(hk_worktree_task T-1)
   printf 'not reviewed yet\n' > "$wt/draft.txt"
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "worktree $wt kept (uncommitted-changes)"
   assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=worktree-kept"
@@ -781,6 +794,10 @@ test_housekeeping_keeps_a_worktree_with_uncommitted_work_and_its_workspace() {
 
   run jig status
   assert_contains "$OUT" "worktrees kept: 1 task(s)"
+
+  run jig housekeeping
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "  worktree kept, it has uncommitted changes ($wt): T-1"
 }
 
 test_housekeeping_keeps_a_worktree_holding_a_workspace_of_its_own() {
@@ -792,7 +809,7 @@ test_housekeeping_keeps_a_worktree_holding_a_workspace_of_its_own() {
   mkdir -p "$wt/.ai/workspace/tasks/filed-there"
   printf 'task_id: filed-there\n' > "$wt/.ai/workspace/tasks/filed-there/state"
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "worktree $wt kept (own-workspace)"
   assert_file "$wt/.ai/workspace/tasks/filed-there/state"
   assert_file .ai/workspace/tasks/T-1/state
@@ -815,7 +832,7 @@ test_housekeeping_never_touches_a_worktree_outside_the_root() {
   git merge -q --ff-only task/T-1
   jig task set T-1 status consolidated >/dev/null
 
-  run jig housekeeping
+  run jig housekeeping --verbose
   assert_contains "$OUT" "kept (outside-worktree-root)"
   assert_file ../manual/T-1.txt
   assert_file .ai/workspace/tasks/T-1/state
@@ -826,8 +843,11 @@ test_housekeeping_dry_run_removes_no_worktree() {
   local wt
   wt=$(hk_worktree_task T-1)
 
-  run jig housekeeping --dry-run
+  run jig housekeeping --dry-run --verbose
   assert_contains "$OUT" "would-remove worktree $wt"
+
+  run jig housekeeping --dry-run
+  assert_contains "$OUT" "  worktree would be removed: T-1"
   assert_file "$wt/T-1.txt"
   assert_file .ai/workspace/tasks/T-1/state
 }
@@ -848,3 +868,117 @@ test_housekeeping_inside_a_worktree_leaves_the_borrowed_workspace_alone() {
   [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the link was moved"
   assert_file .ai/workspace/tasks/T-1/state
 }
+
+# --- the grouped report -------------------------------------------------------
+
+test_housekeeping_report_groups_tasks_by_outcome() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task done-a "ff-merged" consolidated
+  fixture_task todo "commit-merged" active
+  fixture_task wip "no-such-branch" active
+  fixture_task trunk "main" consolidated
+  fixture_task gone "gone-merged" consolidated
+  fixture_task old "no-such-branch" abandoned "updated_at:$(hk_days_ago 3)"
+
+  run jig housekeeping
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "  merged but not consolidated, run jig-consolidate: todo"
+  assert_contains "$OUT" "removed (1): moved to .ai/runtime/trash/$(date +%Y-%m-%d)/, recoverable for 7 days"
+  assert_contains "$OUT" "in progress (1):"
+  assert_contains "$OUT" "kept, cannot tell whether it landed (2):"
+  assert_contains "$OUT" "  worked on main directly, which leaves no trace of landing: trunk"
+  assert_contains "$OUT" "  its branch gone-merged no longer exists: gone"
+  assert_contains "$OUT" "abandoned, waiting to expire (1):"
+  assert_contains "$OUT" "  expires in 12 days: old"
+  # The per-task decision lines are for --verbose only.
+  assert_not_contains "$OUT" "status="
+
+  # What needs a person comes first, then what happened, then what is kept.
+  local order
+  order=$(printf '%s\n' "$OUT" | grep -oE '^(needs you|removed|in progress|kept, cannot tell|abandoned, waiting)' | tr '\n' '|')
+  assert_eq "needs you|removed|in progress|kept, cannot tell|abandoned, waiting|" "$order"
+}
+
+test_housekeeping_report_lists_tasks_sharing_a_note_together() {
+  hk_setup
+  fixture_task a "main" consolidated
+  fixture_task b "main" consolidated
+  fixture_task c "main" consolidated
+
+  run jig housekeeping
+  assert_contains "$OUT" "kept, cannot tell whether it landed (3):"
+  assert_contains "$OUT" "  worked on main directly, which leaves no trace of landing: a, b, c"
+}
+
+test_housekeeping_report_wraps_a_long_group() {
+  hk_setup
+  local i
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    fixture_task "a-task-in-progress-$i" "no-such-branch" active
+  done
+
+  run jig housekeeping
+  assert_contains "$OUT" "in progress (12):"
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    assert_contains "$OUT" "a-task-in-progress-$i"
+  done
+  local longest
+  longest=$(printf '%s\n' "$OUT" | awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }')
+  [ "$longest" -le 88 ] || fail "a report line is $longest characters wide"
+}
+
+test_housekeeping_report_says_why_a_branch_cannot_tell() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  git branch task/fresh
+  git checkout -q -b task/open
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  git checkout -q main
+  fixture_task fresh "task/fresh" consolidated "base_commit:$fork"
+  fixture_task op "task/open" consolidated "base_commit:$fork"
+  fixture_task never "" consolidated
+
+  run jig housekeeping
+  assert_contains "$OUT" "  its branch has no commits since the task started: fresh"
+  assert_contains "$OUT" "  no sign that its branch landed on main: op"
+  assert_contains "$OUT" "  never started, so there is no branch to check: never"
+}
+
+test_housekeeping_report_cannot_be_mistaken_for_log_lines() {
+  # The session hook and the scheduler templates append stdout to the log that
+  # `jig status` and `jig measure` read by `task=` fields and `--- run` markers.
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+  fixture_task todo "commit-merged" active
+
+  run jig housekeeping --verbose
+  assert_not_contains "$OUT" "task="
+  if printf '%s\n' "$OUT" | grep -q '^--- run '; then
+    fail "the report prints a line the log reader takes for a run marker"
+  fi
+}
+
+test_housekeeping_report_appended_to_the_log_changes_no_count() {
+  # Run the way the session hook runs it: the report goes into the same log
+  # as the audit lines. It purges one task and flags one; each must be counted
+  # exactly once by the readers of the log.
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+  fixture_task todo "commit-merged" active
+
+  jig housekeeping --verbose >> .ai/runtime/housekeeping.log 2>&1 || true
+  assert_file_contains .ai/runtime/housekeeping.log "ff status=consolidated remote=merged via=ancestry action=purge"
+  run jig status
+  assert_contains "$OUT" "needs consolidation: 1 task(s)"
+  run jig measure
+  # Counted once: the report line in the log carries no `task=` field.
+  assert_contains "$OUT" "2 tasks (1 live, 1 recorded at purge)"
+}
+
