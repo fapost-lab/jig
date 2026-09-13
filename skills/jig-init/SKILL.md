@@ -47,7 +47,10 @@ files.
 
 ## 5. Report
 
-Summarise in a few lines what was written and which questions remain open for the user.
+Show each document you wrote — `GLOSSARY.md`, `ARCHITECTURE.md`, `RULES.md`, any ADR —
+verbatim, as [show the document](../jig-task/references/show-the-document.md) says: they
+bind every agent from the next session on, and no gate stands before them. Then,
+separately, the questions that remain open for the user.
 
 When the project is larger than the three global documents can honestly describe, say so
 and offer `jig-map`: it proposes per-domain knowledge, and nothing it infers reaches an

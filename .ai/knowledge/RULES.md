@@ -58,3 +58,5 @@ of the form "while we're at it, let's also…" break against.
 - Consolidation stamps `reviewed_at` on every knowledge document it edits, so
   `jig knowledge stale` keeps telling the truth. (ADR-0010)
 - Skills reference `jig <command>` for mechanics instead of describing file operations.
+- Whatever a skill asks a human to agree to is shown to them verbatim, with the agent's
+  commentary after it; a summary is never what gets approved. (ADR-0031)

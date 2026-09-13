@@ -62,3 +62,8 @@ help, and picks by effort rather than by risk.
 > **Amendment (2026-09-13).** Every class's route, T0–T2 included, now ends with
 > `consolidate`; a task stopped at `ready` was never closed and never cleaned up. See
 > ADR-0030.
+
+> **Amendment (2026-09-13).** "The agent presents the design" said nothing about how the
+> design reaches the human, and the skills filled the gap with "in a few lines". ADR-0031
+> makes it concrete: the document is shown verbatim, the agent's commentary follows it, and
+> an approval covers the document as it was shown. The gate itself is unchanged.

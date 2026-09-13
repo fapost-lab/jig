@@ -148,10 +148,14 @@ already. Run the stage that is missing, not the ones the author has done.
 
 ## Human gate (T3, T4)
 
-Stop. Present the design in a few lines: what changes, which alternatives lost and why,
-what it costs to undo. Wait for the human to approve, change or reject it. Do not start
-implementing while waiting, and do not treat silence or a general "ok, go on" from an
-earlier message as approval.
+Stop. Show the document being approved — `design.md`; for T4 also `spec.md` and the
+alternatives — verbatim, with your objections after it, as
+[show the document](references/show-the-document.md) says. What changes, which
+alternatives lost and why, and what it costs to undo belong in the document itself; if
+they are missing, the document is not ready for the gate. Wait for the human to approve,
+change or reject it, and record the decision in `task.md`. Do not start implementing while
+waiting, and do not treat silence or a general "ok, go on" from an earlier message as
+approval.
 
 For T2+, follow [requirements and planning](references/requirements-and-planning.md).
 Design UI changes with [applicable states](references/ui-states.md). At pause/resume or

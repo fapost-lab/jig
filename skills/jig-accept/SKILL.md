@@ -20,21 +20,23 @@ documents for the first time.
 
 Nothing proposed is a normal answer. Say so and stop.
 
-## 2. Present, do not dump
+## 2. Show the documents, then your reading
 
 Number the list yourself and keep the numbering stable for the rest of the conversation.
 **The human must never have to type an id.** They answer with numbers, or with "all", or
 with the domain name — you translate that into ids.
 
-For each proposal show:
+For each proposal show, in this order:
 
+- its body, verbatim, as [show the document](../jig-task/references/show-the-document.md)
+  says. A document that will bind every future agent in this repository cannot be approved
+  from a summary, nor from the part of it you judged to matter;
 - what it claims, in a sentence of your own — not the document's `summary` echoed back;
-- its body, or the part of it that carries the judgement. A document that will bind every
-  future agent in this repository cannot be approved from a one-line summary;
 - what accepting it would cause: which files its `paths` claim, and therefore which future
   tasks would be required to read it.
 
-Group by domain when a map produced several packs at once, and read the map's own
+Group by domain, one domain's pack per message, when a map produced several packs at
+once, and read the map's own
 `knowledge-map.md` in the task workspace if one exists — it records the evidence and the
 uncertainty behind each proposal, which is exactly what the decision needs.
 

@@ -66,8 +66,10 @@ own, and a map proposes domains, not project-wide law.
 
 ## 4. Human gate
 
-Stop. Present the map and the diff together: which domains, what evidence, what you could
-not determine, and what you would drop first if the human wants fewer. Wait.
+Stop. Show `knowledge-map.md` whole, then the proposed documents one domain at a time,
+each verbatim, as [show the document](../jig-task/references/show-the-document.md) says.
+After them, yours: which proposals you are least sure of and why, and what you would drop
+first if the human wants fewer. Wait.
 
 Do not accept your own proposal. Silence is not approval.
 
