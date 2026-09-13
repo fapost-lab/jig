@@ -384,7 +384,8 @@ test_status_silent_about_consolidation_when_nothing_is_flagged() {
 # --- task worktrees (ADR-0029) -------------------------------------------------
 
 test_status_shows_where_a_task_started_in_a_worktree_is() {
-  mkdir repo && cd repo || return 1
+  mkdir repo || return 1
+  cd repo || return 1
   fixture_jig_repo
   git add -A
   git commit -q -m "jig init snapshot"

@@ -1304,7 +1304,8 @@ test_task_start_on_a_paused_task_says_how_to_resume() {
 # down: the default `../<project>.worktrees` then lands inside this test's own
 # temporary directory and is removed with it.
 task_setup_nested() {
-  mkdir repo && cd repo || return 1
+  mkdir repo || return 1
+  cd repo || return 1
   task_setup_clean
 }
 
