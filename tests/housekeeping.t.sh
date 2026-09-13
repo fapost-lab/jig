@@ -262,6 +262,26 @@ test_housekeeping_dry_run_changes_nothing() {
   assert_no_file .ai/runtime/housekeeping.log
 }
 
+test_housekeeping_dry_run_does_not_fetch() {
+  # jig-task runs the dry run at the start of every session to find tasks that
+  # wait to be closed (ADR-0030), so it must never reach the network. An origin
+  # that cannot be fetched makes an attempt visible as `stale-remote`.
+  hk_setup
+  fixture_merge_repo
+  hk_cfg housekeeping.fetch true
+  if ! git remote add origin "$PWD/no-such-remote" 2>/dev/null; then
+    git remote set-url origin "$PWD/no-such-remote"
+  fi
+
+  run jig housekeeping --dry-run
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "stale-remote"
+
+  # Control: the same setup without --dry-run does attempt the fetch.
+  run jig housekeeping
+  assert_contains "$OUT" "stale-remote"
+}
+
 test_housekeeping_dry_run_does_not_expire_trash() {
   hk_setup
   local old
@@ -582,6 +602,7 @@ test_status_forgets_a_flag_once_the_task_is_consolidated() {
 
   # Consolidate it: the next run purges it, and the stale flag from the
   # previous run must not keep being reported.
+  jig task set ff knowledge_consolidated true >/dev/null
   jig task set ff status consolidated >/dev/null
   jig housekeeping >/dev/null
   run jig status
@@ -756,6 +777,7 @@ hk_worktree_task() {
   git -C "$wt" add "$id.txt"
   git -C "$wt" commit -q -m "work for $id"
   git merge -q --ff-only "task/$id"
+  jig task set "$id" knowledge_consolidated true >/dev/null
   jig task set "$id" status consolidated >/dev/null
   printf '%s\n' "$wt"
 }
@@ -830,6 +852,7 @@ test_housekeeping_never_touches_a_worktree_outside_the_root() {
   git -C ../manual add T-1.txt
   git -C ../manual commit -q -m "work"
   git merge -q --ff-only task/T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
   jig task set T-1 status consolidated >/dev/null
 
   run jig housekeeping --verbose

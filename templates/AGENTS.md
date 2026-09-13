@@ -32,11 +32,17 @@ its `proposals:` line, and `jig knowledge proposed` lists it.
 
 | Class | Route |
 |---|---|
-| T0 trivial | implement, verify |
-| T1 local | analyze, implement, verify |
-| T2 structural | analyze, plan, implement, review, verify |
+| T0 trivial | implement, verify, consolidate |
+| T1 local | analyze, implement, verify, consolidate |
+| T2 structural | analyze, plan, implement, review, verify, consolidate |
 | T3 architectural | discover, design, human gate, implement, architecture review, verify, consolidate |
 | T4 critical | discover, specify, alternatives, design, human gate, implement, independent review, verify, consolidate |
+
+Every route ends in consolidation, and a task with a workspace ends it in two records.
+Before the commit, the knowledge decision — `NO_DURABLE_KNOWLEDGE` included — is recorded
+with `jig task set <id> knowledge_consolidated true`. After the change has landed, when
+`jig status` counts it under `needs consolidation`, the task is closed with
+`jig task set <id> status consolidated`. A merge alone never closes a task.
 
 Risk sets the floor: a one-line change to authentication is not trivial. When a task
 turns out bigger, re-classify with `jig task set <id> class Tn` and run the stages the
@@ -61,7 +67,8 @@ new class requires.
   become repository documentation by themselves.
 - Completion is proven by evidence: run `.ai/scripts/jig verify` before declaring done.
 - Before finishing a task, decide what should survive it. Update `.ai/knowledge/`, or
-  state `NO_DURABLE_KNOWLEDGE`. Frontmatter is maintained by `jig knowledge new`,
+  state `NO_DURABLE_KNOWLEDGE` — and record the decision in task state
+  (`jig-consolidate`). Frontmatter is maintained by `jig knowledge new`,
   `jig knowledge paths add|remove` and `jig knowledge reviewed`, never by hand.
 - Knowledge authority, highest first: human instruction, accepted ADR, architecture,
   rules and invariants, conventions, glossary, feature knowledge, task context.

@@ -10,8 +10,8 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `branch` | `jig task start` | the branch the task was started on. **Absent means the task has not been started** — it is listed as `not-started` and never becomes a `task current` candidate. Present *without* `base_commit` means an older `task new` recorded the checkout's branch at filing; `task start` treats such a task as unstarted and rewrites both keys |
 | `base_commit` | `jig task start` | 40-hex commit the task's branch forked from, resolved when work began rather than when the task was filed. Absent while the task is unstarted, and in workspaces predating the field. Housekeeping treats an absent fork point as "ask the old question", so such a task is also without the protection the field provides |
 | `class` | skill via `jig task set` | `T0` … `T4` |
-| `status` | skills via `jig task set` | `active`, `ready`, `consolidated`, `abandoned` |
-| `knowledge_consolidated` | `jig-consolidate` skill via `jig task set` | `true`, `false` |
+| `status` | skills via `jig task set` | `active`, `ready`, `consolidated`, `abandoned`. `consolidated` means the task is **closed**: written by `jig-consolidate` after the task's change has landed, or at the end of the route for a task whose landing cannot be observed — no `branch`, or `branch` equal to the base branch (ADR-0030) |
+| `knowledge_consolidated` | `jig-consolidate` skill via `jig task set` | `true`, `false`. `true` means the knowledge decision is recorded — `NO_DURABLE_KNOWLEDGE` included — at the end of every route, before the commit (ADR-0030) |
 | `domains` | skill via `jig task set` | comma-separated tags `^[a-z0-9-]+(,[a-z0-9-]+)*$`; used by `jig context` |
 | `paused` | `jig task pause` / `resume` | `true`; the line is removed on resume, so an absent key means false |
 | `paused_at` | `jig task pause` | `YYYY-MM-DD` |
@@ -23,6 +23,9 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 `jig task set` accepts only `class`, `status`, `knowledge_consolidated`, `domains` and
 validates the value; every other key is refused, the four `paused*` keys included:
 they are written only by `jig task pause` and `jig task resume` (ADR-0012).
+Two values are refused on top of validation, to keep the order of ADR-0030: `status
+consolidated` while `knowledge_consolidated` is not `true`, and `knowledge_consolidated
+false` on a task whose status is `consolidated`.
 
 Pause is orthogonal to `status`: a task paused while `ready` resumes as `ready`. A task
 is a candidate for `jig task current` when its `branch` matches the checkout, its status
@@ -56,8 +59,10 @@ T1 implementation consumes discovery; T2 planning consumes discovery and impleme
 review/verify consume plan. T3 design consumes discovery and gate/implementation/
 architecture-review/verify consume design. T4 specification consumes discovery, alternatives
 consumes spec, design consumes spec+alternatives, and gate/implementation/review/verify
-consume spec+design. T3/T4 consolidation consumes verification. All stages also consume
-task.md; T0 has no additional documentary prerequisite.
+consume spec+design. Every class ends with consolidation (ADR-0030): T3/T4 consolidation
+consumes verification, T2 consolidation consumes plan, and T0/T1 consolidation has no
+additional input. All stages also consume task.md; T0 has no additional documentary
+prerequisite.
 
 Stage rows report inputs-available/needs-input, with semantic prerequisites separately
 unassessed. Missing optional artifacts do not block unrelated stages. Exit 0 means the

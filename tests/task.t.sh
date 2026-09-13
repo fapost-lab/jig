@@ -300,6 +300,44 @@ test_task_set_invalid_knowledge_consolidated_dies() {
   assert_contains "$OUT" "invalid knowledge_consolidated"
 }
 
+# ADR-0030: closing a task (status consolidated) is refused until its
+# knowledge decision is recorded (knowledge_consolidated true).
+test_task_set_status_consolidated_without_knowledge_consolidated_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires knowledge_consolidated true"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+test_task_set_status_consolidated_succeeds_after_knowledge_consolidated() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  run jig task set T-1 status consolidated
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
+
+  # Idempotent: re-setting status consolidated on an already-consolidated
+  # task whose flag is still true must still succeed.
+  run jig task set T-1 status consolidated
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
+}
+
+test_task_set_knowledge_consolidated_false_on_consolidated_task_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  jig task set T-1 status consolidated >/dev/null
+  run jig task set T-1 knowledge_consolidated false
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge_consolidated cannot be false on a consolidated task"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: true"
+}
+
 test_task_set_invalid_domains_dies() {
   task_setup
   jig task new T-1 >/dev/null
@@ -491,6 +529,7 @@ test_task_current_excludes_abandoned() {
 test_task_current_excludes_consolidated() {
   task_setup
   jig task new T-1 >/dev/null
+  jig task set T-1 knowledge_consolidated true >/dev/null
   jig task set T-1 status consolidated >/dev/null
   run jig task current
   assert_eq 1 "$RC"
@@ -771,6 +810,7 @@ test_task_list_hides_finished_by_default() {
   run jig init --from "$JIG_HOME"
   run jig task new live-one
   run jig task new done-one
+  run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
   run jig task new gone-one
   run jig task set gone-one status abandoned
@@ -788,6 +828,7 @@ test_task_list_all_shows_everything() {
   run jig init --from "$JIG_HOME"
   run jig task new live-one
   run jig task new done-one
+  run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
 
   run jig task list --all
@@ -813,6 +854,7 @@ test_task_list_status_filter() {
   run jig init --from "$JIG_HOME"
   run jig task new live-one
   run jig task new done-one
+  run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
 
   run jig task list --status consolidated
@@ -833,6 +875,7 @@ test_task_list_reports_no_live_tasks() {
   fixture_repo
   run jig init --from "$JIG_HOME"
   run jig task new done-one
+  run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
   run jig task list
   assert_eq 0 "$RC"
@@ -987,6 +1030,13 @@ test_sdd_artifacts_routes_and_conversation_claims() {
     assert_not_contains "$OUT" 'needs-input'
     assert_contains "$OUT" 'provided-claim'
     assert_no_file .ai/workspace/tasks/scoped/design.md
+    # ADR-0030: every class's route ends in consolidate; T0/T1/T2 take their
+    # knowledge-decision input from task (and plan for T2), both satisfied
+    # here (task.md always exists; plan is a provided claim).
+    case "$class" in
+      T0 | T1) assert_contains "$OUT" 'consolidate: inputs-available; inputs: task' ;;
+      T2) assert_contains "$OUT" 'consolidate: inputs-available; inputs: task plan' ;;
+    esac
   done
   jig task set scoped class T4 >/dev/null
   run jig task artifacts scoped

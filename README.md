@@ -150,8 +150,9 @@ workspace cleanup. The framework makes five connected design choices:
    checks, upgrade installed files and perform housekeeping without calling an LLM.
    Mechanical operations are testable and have no inference cost.
 2. **Process follows risk.** T0 and T1 can finish without a task workspace. T3 and T4
-   require an approved design, stronger review and consolidation. A change that is
-   small to type but dangerous to undo still takes the higher-risk route.
+   require an approved design and stronger review. Every class ends in consolidation,
+   even when nothing durable came out of it. A change that is small to type but
+   dangerous to undo still takes the higher-risk route.
 3. **Knowledge has authority and lifecycle.** Durable knowledge is selected by path,
    domain, topic and stage. Agent-inferred domain knowledge remains `proposed` and
    cannot enter another agent's resolved context until a human accepts it.
@@ -199,7 +200,7 @@ adapters install them for each runtime.
 | [`jig-review`](skills/jig-review/SKILL.md) | Review a change, especially T2+ | Check requirements, correctness, rules, contracts and evidence against the actual diff. |
 | [`jig-architecture-review`](skills/jig-architecture-review/SKILL.md) | T3 or an explicit architecture review | Check boundaries, dependency direction, invariants and accepted ADRs. |
 | [`jig-verify`](skills/jig-verify/SKILL.md) | Before declaring completion | Run applicable checks and confirm the requested outcome, not just a green test suite. |
-| [`jig-consolidate`](skills/jig-consolidate/SKILL.md) | After required implementation/review/verification, before commit or PR | Update durable knowledge or record `NO_DURABLE_KNOWLEDGE`; complete consolidation. |
+| [`jig-consolidate`](skills/jig-consolidate/SKILL.md) | At the end of every route, before commit or PR; again after the change lands | Update durable knowledge or record `NO_DURABLE_KNOWLEDGE`; close the task once its change has landed. |
 
 Discovery, specification, alternatives, design and planning are workflow stages,
 not additional standalone skills. The agent produces only artifacts the route
@@ -214,15 +215,17 @@ can still be T4. T0/T1 work that fits in one session need not create a workspace
 
 | Class | Typical scope | Route |
 |---|---|---|
-| T0 — trivial | Wording, formatting, obvious documentation edit | implement → verify |
-| T1 — local | A contained change with an obvious solution | analyze → implement → verify |
-| T2 — structural | Several components or an internal contract | analyze → plan → implement → review → verify |
+| T0 — trivial | Wording, formatting, obvious documentation edit | implement → verify → consolidate |
+| T1 — local | A contained change with an obvious solution | analyze → implement → verify → consolidate |
+| T2 — structural | Several components or an internal contract | analyze → plan → implement → review → verify → consolidate |
 | T3 — architectural | Boundaries, dependencies or lifecycle semantics | discover → design → **human gate** → implement → architecture review → verify → consolidate |
 | T4 — critical | Security, secrets, destructive operations or money | discover → specify → alternatives → design → **human gate** → implement → independent review → verify → consolidate |
 
 At a human gate, the agent presents a concrete design and waits for approval before
 implementing. If scope grows, reclassify and complete the newly required stages.
-Consolidate whenever a task produces lasting intent, including smaller tasks.
+Every route ends in consolidation, including the smaller classes: a task that produced no
+lasting intent still records `NO_DURABLE_KNOWLEDGE`, and a task left at `ready` is never
+cleaned up.
 
 ### Start and inspect a task
 
@@ -320,20 +323,32 @@ Use the actual review base for your change, replacing `main` below if necessary:
 The review inventory includes committed, staged, unstaged and untracked changes.
 The agent must separate this task's changes from unrelated work. After required
 checks and acceptance criteria pass, `jig-verify` records `ready`. After knowledge
-has been reconciled, `jig-consolidate` records consolidation:
+has been reconciled, `jig-consolidate` records the knowledge decision:
 
 ```sh
 # Record these only after the corresponding work is complete.
 .ai/scripts/jig task set csv-export status ready
 .ai/scripts/jig task set csv-export knowledge_consolidated true
-.ai/scripts/jig task set csv-export status consolidated
 ```
 
 `NO_DURABLE_KNOWLEDGE` means the agent evaluated the outcome and found no new lasting
-intent to record; it is a valid consolidation result. Then review and commit the
-code and knowledge together, open a PR, and merge through your normal Git workflow.
-Jig does not make `ready` or `consolidated` mean “merged”: remote state is derived
-separately. Phase 5 handles eligible local workspaces after that.
+intent to record; it is a valid consolidation result and is recorded the same way. Then
+review and commit the code and knowledge together, open a PR, and merge through your
+normal Git workflow.
+
+A merge does not finish the task: fixes can still follow it. Once the change has landed
+and no fix is expected, close the task. You do not have to remember it: at the start of a
+session `jig-task` runs `jig housekeeping --dry-run`, names each merged task that waits
+to be closed and asks you. The close itself is one command:
+
+```sh
+.ai/scripts/jig task set csv-export status consolidated
+```
+
+`task set` refuses the close until the knowledge decision is recorded. A task with no
+branch, or on the base branch itself, closes right after the decision, because its
+landing cannot be observed. Jig does not make `ready` or `consolidated` mean “merged”: remote state is
+derived separately. Phase 5 moves a closed, merged workspace to trash after that.
 
 ## Knowledge workflows
 
@@ -468,17 +483,21 @@ forge can distinguish an open pull request from a closed one, and a task whose b
 was deleted after merging resolves to `unknown` — which keeps its workspace.
 
 ```text
-implementation → review → verification → consolidation → commit / PR → remote merge
-                                                                      ↓
-                                                           housekeeping (no LLM)
-                                                                      ↓
-                                                        eligible workspace → trash
-                                                                      ↓
-                                                           retention expires → purge
+implementation → review → verification → knowledge decision → commit / PR → remote merge
+                                                                             ↓
+                                                  housekeeping flags needs-consolidation
+                                                                             ↓
+                                                              close: status consolidated
+                                                                             ↓
+                                                                  housekeeping (no LLM)
+                                                                             ↓
+                                                               eligible workspace → trash
+                                                                             ↓
+                                                                  retention expires → purge
 ```
 
 The safety rule is to keep workspaces when remote state is unknown. A confirmed
-merge without consolidation requires attention. Stale work is reported; age alone
+merge of a task that is not closed requires attention. Stale work is reported; age alone
 does not justify deleting an active workspace. Eligible workspaces first move to
 `.ai/runtime/trash/`; permanent deletion happens after the retention period.
 
