@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-13
 ---
 # Housekeeping
 
@@ -66,6 +66,13 @@ Outside: what a `status` value *means* and who may write it — that is the `tas
 still holds now that the purge line copies three of its fields: they are copied into this
 domain's log, never back into the task's file.
 
+**The report on stdout is for people and is not an interface.** It is printed once
+every task is decided, grouped by outcome, and may change shape freely. What must not
+change is that it can never pass for a log line: the session hook and the scheduler
+templates append stdout to the same `housekeeping.log`, so no report line may carry a
+`task=` field or begin with `--- run`. The per-task decision lines survive under
+`--verbose`, and the tests of merge detection read those.
+
 **The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
 block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
 (ADR-0027). Its line shape is an interface with two consumers now, and nothing rotates it.
@@ -84,7 +91,8 @@ an LLM (ADR-0001).
 
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
   `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
-  `_hk_worktree_retire`.
+  `_hk_worktree_retire`, `_hk_record` and `_hk_print_report` (the grouped report),
+  `_hk_unknown_reason`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six
   merge topologies (fast-forward, merge commit, squash, rebase, open, deleted branch).

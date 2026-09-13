@@ -490,6 +490,29 @@ jig housekeeping --dry-run
 jig housekeeping
 ```
 
+The report groups tasks by outcome, most urgent first, and leaves out empty groups:
+
+```text
+needs you (1):
+  merged but not consolidated, run jig-consolidate: csv-export
+removed (2): moved to .ai/runtime/trash/2026-09-13/, recoverable for 7 days
+  billing-fix
+  worktree removed: csv-import
+in progress (3):
+  auth-refresh, report-cache, search-index
+kept, cannot tell whether it landed (2):
+  worked on main directly, which leaves no trace of landing: old-migration, readme-pass
+abandoned, waiting to expire (1):
+  expires in 9 days: spike-graphql
+```
+
+"Needs you" is the only group that asks something of you; the command exits 3 when it
+holds a task to consolidate. "Kept, cannot tell" says why jig could not establish that
+the work landed — a task done directly on the base branch leaves no trace of it, so
+housekeeping keeps it rather than guess. `--verbose` adds the underlying decision for
+every task (`status=`, `remote=`, the tier that decided it) when a verdict needs
+explaining.
+
 Forge detection can use optional authenticated `gh` or `glab`; Git provides a
 fallback when merge evidence is available. A dry run can still query the remote;
 `housekeeping.fetch` controls fetching. Neither a missing tool nor a failed lookup
