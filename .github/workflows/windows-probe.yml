@@ -49,6 +49,10 @@ jobs:
     env:
       MSYS: ${{ matrix.msys }}
       PROBE: ${{ github.workspace }}/probe-out
+      # The suite takes ~25 minutes per setup and its result is already known
+      # from the first run (defaults 83 failed, configured 40). Set to 1 to
+      # run it again.
+      PROBE_TESTS: "0"
 
     steps:
       # Before checkout, so the checkout itself is made under this setup.
@@ -111,6 +115,7 @@ jobs:
           } 2>&1 | tee "$PROBE/environment.log"
 
       - name: Test suite
+        if: env.PROBE_TESTS == '1'
         run: |
           set +e
           # Parallel mode needs a FIFO; without one the whole run would be
@@ -147,6 +152,8 @@ jobs:
             git -C "$work" commit -q -m init
             cd "$work" || exit 1
             step "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+            step .ai/scripts/jig knowledge new adr probe-crlf --domains core
+            step .ai/scripts/jig knowledge check
             git add -A && git commit -q -m "jig init"
             # Mode 100644 here means Linux and macOS teammates cannot run them.
             echo "== modes recorded for executables committed from Windows"
@@ -167,7 +174,14 @@ jobs:
             step .ai/scripts/jig status
             step .ai/scripts/jig housekeeping --dry-run
             step .ai/scripts/jig housekeeping
+            # The hook backgrounds housekeeping and returns at once. Remove the
+            # stamp the explicit run above left, so the hook finds it due, then
+            # give the background job time and look for what it leaves behind.
+            rm -f .ai/runtime/last-housekeeping
             step .ai/scripts/jig-session-hook
+            sleep 30
+            ls -la .ai/runtime
+            tail -n 5 .ai/runtime/housekeeping.log 2>&1
             step .ai/scripts/jig upgrade --dry-run
 
             # A teammate on Windows clones a project someone else initialised.
@@ -180,18 +194,37 @@ jobs:
             cd "$clone" || exit 1
             git config user.name jig
             git config user.email jig@example.com
-            printf '.ai/scripts/jig CR lines: '; grep -c "$(printf '\r')" .ai/scripts/jig
+            # grep may drop CR on Windows, so ask git and look at the bytes.
+            echo "== line endings as git sees them"
+            git ls-files --eol .ai/scripts/jig .ai/scripts/lib/common.sh .ai/manifest .ai/config.yaml .ai/knowledge/adr/
+            echo "== first bytes of .ai/scripts/jig"
+            od -c .ai/scripts/jig | sed -n 1,2p
+            echo "== first bytes of .ai/manifest"
+            od -c .ai/manifest | sed -n 1,3p
             step .ai/scripts/jig status
+            # Manifest parsing: one edited framework file must show as drift.
+            printf '# probe edit\n' >> .ai/profiles/generic/profile.yaml
+            step .ai/scripts/jig status
+            git checkout -q -- .ai/profiles/generic/profile.yaml
+            # Frontmatter parsing on this checkout.
+            step .ai/scripts/jig knowledge check
+            step .ai/scripts/jig context resolve --no-task --catalog --domains core < /dev/null
             step .ai/scripts/jig verify
+            step .ai/scripts/jig task new probe-c --class T1 --domains core
             step .ai/scripts/jig task list
+            step .ai/scripts/jig upgrade --dry-run
           } 2>&1 | tee "$PROBE/smoke-copy.log"
 
+      # Link mode twice: the project on C: (the temp dir, another drive than
+      # the source on D:) and on D: beside the source. A relative link cannot
+      # cross drives at all, so only the D: run isolates the path-form bug in
+      # the computed link target.
       - name: Smoke — link mode
         run: |
           set +e
           step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
-          {
-            work=$(mktemp -d)
+          link_probe() {
+            work=$1
             git -C "$work" init -q .
             git -C "$work" config user.name jig
             git -C "$work" config user.email jig@example.com
@@ -199,11 +232,24 @@ jobs:
             printf '# probe\n' > "$work/README.md"
             git -C "$work" add README.md
             git -C "$work" commit -q -m init
-            cd "$work" || exit 1
+            cd "$work" || return 1
+            echo "project: $(pwd) ($(pwd -W))"
             step "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --link --profiles generic,shell
-            ls -la .ai .ai/scripts 2>&1 | head -n 20
+            echo "readlink .ai/scripts: $(readlink .ai/scripts 2>&1)"
+            ls .ai/scripts/jig 2>&1
             step .ai/scripts/jig status
             step .ai/scripts/jig upgrade --dry-run
+            step "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --link --profiles generic,shell
+            cd "$GITHUB_WORKSPACE" || return 1
+          }
+          {
+            echo "===== project on C: (temp)"
+            link_probe "$(mktemp -d)"
+            echo
+            echo "===== project on D: (beside the source)"
+            d="$(cygpath -u "$RUNNER_TEMP")/link-probe"
+            mkdir -p "$d"
+            link_probe "$d"
           } 2>&1 | tee "$PROBE/smoke-link.log"
 
       - name: Smoke — install.sh
