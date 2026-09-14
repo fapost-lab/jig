@@ -195,6 +195,48 @@ test_task_new_invalid_id_dies() {
   assert_no_file ".ai/workspace/tasks/bad id!"
 }
 
+# An id is the first argument of every subcommand, so a leading dash is a flag
+# in the wrong place; accepting it once filed a workspace named `--help`.
+test_task_new_leading_dash_id_dies_no_workspace() {
+  task_setup
+  local id
+  for id in -x --bogus -; do
+    run jig task new "$id"
+    assert_eq 1 "$RC" "task new $id"
+    assert_contains "$OUT" "task new: invalid task id: $id"
+    assert_no_file ".ai/workspace/tasks/$id"
+  done
+}
+
+# The same rule holds where the path is built, for subcommands that never
+# call _task_valid_id themselves.
+test_task_subcommands_reject_leading_dash_id() {
+  task_setup
+  run jig task show -x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid task id: -x"
+  run jig task set -x class T1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid task id: -x"
+  assert_no_file ".ai/workspace/tasks/-x"
+}
+
+# A workspace filed under a dash-led name before the rule existed must not
+# break the listings that walk every directory.
+test_task_walks_skip_workspace_with_invalid_id() {
+  task_setup
+  task_started T-1
+  mkdir -p -- ".ai/workspace/tasks/--help"
+  sed 's/^task_id: .*/task_id: --help/' .ai/workspace/tasks/T-1/state > ".ai/workspace/tasks/--help/state"
+  run jig task list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "T-1"
+  assert_not_contains "$OUT" "--help"
+  run_split jig task current
+  assert_eq 0 "$RC"
+  assert_eq "T-1" "$OUT"
+}
+
 test_task_new_invalid_class_dies() {
   task_setup
   run jig task new T-1 --class T9
@@ -578,6 +620,40 @@ test_task_unknown_subcommand_dies_with_usage() {
   run jig task bogus
   assert_eq 1 "$RC"
   assert_contains "$OUT" "usage: jig task"
+}
+
+test_task_help_prints_usage() {
+  task_setup
+  local arg
+  for arg in help -h --help; do
+    run_split jig task "$arg"
+    assert_eq 0 "$RC" "task $arg"
+    assert_contains "$OUT" "usage: jig task new|start"
+    assert_eq "" "$ERR"
+  done
+}
+
+test_task_subcommand_help_prints_usage_and_changes_nothing() {
+  task_setup
+  local sub arg
+  for sub in new start set abandon pause resume list show current changes artifacts; do
+    for arg in -h --help; do
+      run_split jig task "$sub" "$arg"
+      assert_eq 0 "$RC" "task $sub $arg"
+      assert_contains "$OUT" "usage: jig task $sub"
+      assert_eq "" "$ERR" "task $sub $arg"
+    done
+  done
+  assert_no_file ".ai/workspace/tasks/--help"
+  assert_no_file ".ai/workspace/tasks/-h"
+  assert_eq "no tasks" "$(jig task list)"
+}
+
+test_task_unknown_subcommand_help_dies_with_usage() {
+  task_setup
+  run jig task bogus --help
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task new|start"
 }
 
 test_task_subcommands_reject_path_traversal_ids() {
