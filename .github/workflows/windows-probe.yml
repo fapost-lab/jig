@@ -53,6 +53,8 @@ jobs:
       # from the first run (defaults 83 failed, configured 40). Set to 1 to
       # run it again.
       PROBE_TESTS: "0"
+      # The v1/v2 smoke steps answered their questions; v3 asks new ones.
+      PROBE_SMOKE: "0"
 
     steps:
       # Before checkout, so the checkout itself is made under this setup.
@@ -138,6 +140,7 @@ jobs:
       # Each command reports its own exit code and the run continues, so one
       # early failure does not hide the rest.
       - name: Smoke — copy mode, tasks, worktree
+        if: env.PROBE_SMOKE == '1'
         run: |
           set +e
           step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
@@ -220,6 +223,7 @@ jobs:
       # cross drives at all, so only the D: run isolates the path-form bug in
       # the computed link target.
       - name: Smoke — link mode
+        if: env.PROBE_SMOKE == '1'
         run: |
           set +e
           step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
@@ -253,6 +257,7 @@ jobs:
           } 2>&1 | tee "$PROBE/smoke-link.log"
 
       - name: Smoke — install.sh
+        if: env.PROBE_SMOKE == '1'
         run: |
           set +e
           {
@@ -262,6 +267,152 @@ jobs:
             "$HOME/.local/bin/jig" version
             echo "installed jig version exit=$?"
           } 2>&1 | tee "$PROBE/smoke-install.log"
+
+      # --- v3: what a zero-config Windows installer could rely on -------------
+      # The runner is an administrator with Git preinstalled, so this cannot show
+      # a clean machine; it shows what the tools themselves do.
+
+      - name: v3 — winget, rights, execution policy, git and bash locations
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:PROBE | Out-Null
+          & {
+            "== winget"
+            try { winget --version } catch { "winget: not available: $_" }
+            "== running as administrator"
+            ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            "== execution policy"
+            Get-ExecutionPolicy -List | Format-Table -AutoSize | Out-String
+            "== winget show Git.Git"
+            try { winget show --id Git.Git -e --accept-source-agreements } catch { "failed: $_" }
+            "== winget show Git.Git --scope user"
+            try { winget show --id Git.Git -e --scope user --accept-source-agreements } catch { "failed: $_" }
+            "== git and bash on PATH"
+            Get-Command git -All -ErrorAction SilentlyContinue | Format-Table Source -AutoSize | Out-String
+            Get-Command bash -All -ErrorAction SilentlyContinue | Format-Table Source -AutoSize | Out-String
+            "git --exec-path: $(git --exec-path)"
+          } *>&1 | Tee-Object -FilePath "$env:PROBE/v3-environment.log"
+
+      # A junction needs no privilege. The questions: does jig's bash see it as
+      # a link, and does `git worktree remove` (no --force) delete the link or
+      # walk through it into the owner's workspace?
+      - name: v3 — junction as the worktree workspace link
+        run: |
+          set +e
+          step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
+          {
+            work=$(mktemp -d)
+            git -C "$work" init -q .
+            git -C "$work" config user.name jig
+            git -C "$work" config user.email jig@example.com
+            git -C "$work" symbolic-ref HEAD refs/heads/main
+            printf '# probe\n' > "$work/README.md"
+            git -C "$work" add README.md
+            git -C "$work" commit -q -m init
+            cd "$work" || exit 1
+            "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell > /dev/null 2>&1
+            git add -A && git commit -q -m "jig init"
+            step .ai/scripts/jig task new probe-j --class T1 --domains core
+            printf 'owner content\n' > .ai/workspace/tasks/probe-j/design.md
+
+            wt="$work.worktrees/probe-j"
+            step git worktree add -q -b task/probe-j "$wt"
+            mkdir -p "$wt/.ai/workspace/tasks"
+            link="$wt/.ai/workspace/tasks/probe-j"
+            step cmd //c mklink /J "$(cygpath -w "$link")" "$(cygpath -w "$work/.ai/workspace/tasks/probe-j")"
+
+            echo "== how bash sees the junction"
+            if [ -L "$link" ]; then echo "-L: yes"; else echo "-L: no"; fi
+            if [ -d "$link" ]; then echo "-d: yes"; else echo "-d: no"; fi
+            echo "readlink: $(readlink "$link" 2>&1)"
+            echo "cd -P: $(cd -P "$link" 2>&1 && pwd -P)"
+            echo "find ! -type l: [$(find "$wt/.ai/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l)]"
+            echo "find -type l: [$(find "$wt/.ai/workspace/tasks" -mindepth 1 -maxdepth 1 -type l)]"
+            echo "read through it: $(cat "$link/design.md")"
+            echo "git status in worktree: [$(git -C "$wt" status --porcelain)]"
+            (cd "$wt" && step .ai/scripts/jig task artifacts probe-j)
+            (cd "$wt" && step .ai/scripts/jig task current)
+
+            echo "== git worktree remove, no --force"
+            step git worktree remove "$wt"
+            ls -la "$wt" 2>&1
+            echo "== owner workspace afterwards"
+            ls -la .ai/workspace/tasks/probe-j
+            echo "design.md: $(cat .ai/workspace/tasks/probe-j/design.md 2>&1)"
+
+            echo "== rm -rf on a junction (a naive cleanup)"
+            j2="$(mktemp -d)/j2"
+            cmd //c mklink /J "$(cygpath -w "$j2")" "$(cygpath -w "$work/.ai/workspace/tasks/probe-j")" > /dev/null
+            step rm -rf "$j2"
+            echo "design.md after rm -rf: $(cat .ai/workspace/tasks/probe-j/design.md 2>&1)"
+          } 2>&1 | tee "$PROBE/v3-junction.log"
+
+      # A wrapper next to .ai/scripts/jig for callers that are not bash: native
+      # Codex runs agent commands through PowerShell. It finds Git Bash through
+      # git itself, never through PATH, where bash may be WSL's launcher.
+      - name: v3 — prepare a project with jig.cmd
+        run: |
+          set +e
+          work=$(mktemp -d)
+          git -C "$work" init -q .
+          git -C "$work" config user.name jig
+          git -C "$work" config user.email jig@example.com
+          git -C "$work" symbolic-ref HEAD refs/heads/main
+          printf '# probe\n' > "$work/README.md"
+          git -C "$work" add README.md
+          git -C "$work" commit -q -m init
+          cd "$work" || exit 1
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell > /dev/null 2>&1
+          .ai/scripts/jig knowledge new adr probe-wrapper --domains core
+          printf '%s\r\n' \
+            '@echo off' \
+            'setlocal' \
+            'for /f "delims=" %%G in ('"'"'git --exec-path'"'"') do set "JIG_GIT_EXEC=%%G"' \
+            'set "JIG_BASH=%JIG_GIT_EXEC%\..\..\..\bin\bash.exe"' \
+            'if not exist "%JIG_BASH%" (' \
+            '  echo jig: Git Bash not found next to git 1>&2' \
+            '  exit /b 127' \
+            ')' \
+            'set "JIG_SELF=%~dp0jig"' \
+            'set "JIG_SELF=%JIG_SELF:\=/%"' \
+            '"%JIG_BASH%" "%JIG_SELF%" %*' \
+            'exit /b %ERRORLEVEL%' > .ai/scripts/jig.cmd
+          cat .ai/scripts/jig.cmd
+          pwd -W > "$PROBE/v3-project.txt"
+
+      - name: v3 — jig.cmd from PowerShell 7
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Set-Location (Get-Content "$env:PROBE/v3-project.txt")
+          & {
+            "== Get-Command .ai/scripts/jig"
+            Get-Command .ai/scripts/jig -ErrorAction SilentlyContinue | Format-List Name,Source,CommandType | Out-String
+            "== .ai/scripts/jig status"
+            .ai/scripts/jig status; "exit=$LASTEXITCODE"
+            "== .ai\scripts\jig version"
+            .ai\scripts\jig version; "exit=$LASTEXITCODE"
+            "== exit code passes through"
+            .ai/scripts/jig no-such-command; "exit=$LASTEXITCODE"
+            "== arguments with spaces, quotes, & | and %"
+            .ai/scripts/jig knowledge summary adr-0001-probe-wrapper 'pwsh a & b | c "quoted" 100% done'; "exit=$LASTEXITCODE"
+            Get-Content .ai/knowledge/adr/0001-probe-wrapper.md -TotalCount 12
+          } *>&1 | Tee-Object -FilePath "$env:PROBE/v3-wrapper-pwsh.log"
+
+      - name: v3 — jig.cmd from Windows PowerShell 5.1
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-Location (Get-Content "$env:PROBE/v3-project.txt")
+          & {
+            "== PowerShell $($PSVersionTable.PSVersion)"
+            "== .ai/scripts/jig status"
+            .ai/scripts/jig status; "exit=$LASTEXITCODE"
+            "== arguments with spaces, quotes, & | and %"
+            .ai/scripts/jig knowledge summary adr-0001-probe-wrapper 'ps51 a & b | c "quoted" 100% done'; "exit=$LASTEXITCODE"
+            Get-Content .ai/knowledge/adr/0001-probe-wrapper.md -TotalCount 12
+          } *>&1 | Tee-Object -FilePath "$env:PROBE/v3-wrapper-ps51.log"
 
       - name: Upload probe logs
         if: always()
