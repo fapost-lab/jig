@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - schemas/state.md
 summary: Why task new creates its own branch, and why the fork point must be recorded before ancestry can be trusted.
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-13
 ---
 # ADR-0026: A task creates its own branch and records where it forked from
 
@@ -131,6 +131,11 @@ this feature does not repair housekeeping; it arms it.
   is reachable mainly where `branch_per_task` is off.
 - ADR-0025 gains a second route to `unknown`: not only "the task is on the base branch"
   but also "the branch has done nothing since it forked".
+
+  > **Amendment (2026-09-13).** "Commits since `base_commit`" turned out not to mean "the
+  > branch did something": a branch fast-forwarded onto a newer base carries the base's
+  > commits. The check stays and runs first, and a reflog-based one follows it, asking
+  > whether any of those commits is the branch's own. See ADR-0032.
 - A `--no-branch` task keeps the old exposure. That is the price of the escape hatch and
   is documented in `schemas/state.md` rather than left to be discovered.
 - Existing tests that needed two tasks on one branch — candidate ambiguity, detached HEAD —

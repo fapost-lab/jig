@@ -9,7 +9,7 @@ domains:
 paths:
   - scripts/lib/housekeeping.sh
 summary: Why git ancestry may only answer merged-or-unknown, and why a task on the base branch is unknown.
-reviewed_at: 2026-09-10
+reviewed_at: 2026-09-13
 ---
 # ADR-0025: Git ancestry answers "did it land", never "is it open"
 
@@ -75,3 +75,8 @@ exit code 3 meaningless from the first day.
   nothing since the task forked it. Both routes exist for the same reason — a tip equal to
   the base is not evidence of anything — and this one is the reason a task must record
   where its branch started.
+
+> **Amendment (2026-09-13).** A third route to `unknown`: a branch whose commits since the
+> fork are all commits the base already had — a task branch fast-forwarded onto a newer base.
+> "Positive evidence" for the fast-forward shape now includes a reflog position of the
+> branch's own. See ADR-0032.

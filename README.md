@@ -290,6 +290,11 @@ passes `--force`, so a worktree with uncommitted files stays, and `jig status` r
 as `worktrees kept`. The branch is not deleted. `git.worktree_root` moves the worktrees
 somewhere other than `../<project>.worktrees`.
 
+A worktree jig did not create — one you made by hand, or one your agent runtime made for its
+session, such as Claude Code's `.claude/worktrees/` — is never removed. When the task's
+branch is checked out there, the tree is clean and not locked, housekeeping purges the
+workspace and leaves the tree in place. Uncommitted changes or a lock keep the workspace.
+
 ### Pause and resume
 
 ```sh

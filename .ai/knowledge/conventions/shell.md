@@ -8,7 +8,7 @@ paths:
   - "adapters/**"
   - "profiles/**"
   - "tests/**"
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-14
 summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
@@ -82,6 +82,12 @@ cmd_example() {
   taken as ready by a marker inside it. `_no_tools_bin` did the latter: `git` is third on
   its list, so a test running alongside the builder saw `git` before `sed` and failed its
   `jig verify` — 2 to 4 failures in every `verify::` run at 32 workers until it was fixed.
+- **A wait on something a test cannot `wait` for has a wall-clock deadline sized for a
+  loaded machine** (`hk_wait_for`). A passing test leaves at the first poll that succeeds,
+  so a generous deadline costs only a real failure. The session-hook test gave the
+  detached housekeeping run 50 × `sleep 0.1`; at 10 workers each sleep takes longer
+  than it says, the test took 13 s, and it failed once in a full `jig verify` while
+  passing every time alone. Count `$SECONDS`, not iterations.
 - **Output is captured through a file, never a pipe** (`run`, `run_split`,
   `run_no_tools`). bash 3.2 does not restart a write that SIGCHLD interrupts: a jig
   command whose child exits while its output pipe is full loses the line it was writing
@@ -100,6 +106,13 @@ cmd_example() {
   agent that followed it left a file in the working tree: one of them reached the index and
   was a `git commit` away from being shipped. A convention that manufactures untracked
   junk teaches the next reader to make the same mess.
+- **A test whose verdict depends on when a ref moved sets git's clock itself.** Ancestry
+  compares reflog times, a tie goes to the base (ADR-0032), and a test commits and merges
+  within one second, so without a clock its own work reads as the base's: six existing
+  housekeeping tests went red at once. `hk_tick` moves `GIT_COMMITTER_DATE` ten seconds per
+  step. Its counter lives in the repository's git directory, not in `HOME`: the runner's
+  `HOME` is often the test repository itself, and a file there made every clean-checkout
+  assertion see an untracked change.
 - Tests of commands that only need a default Jig installation may use `fixture_jig_repo`.
   It installs once per runner invocation (`fixture_cache_prepare`, which a parallel run
   calls before starting any test) and copies the complete fixture into

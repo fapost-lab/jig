@@ -161,6 +161,79 @@ test_verify_shell_profile_fails_on_bad_script() {
   assert_contains "$OUT" "verify: 2 profiles, 1 pass, 1 fail, 0 skip"
 }
 
+# _shell_all_scripts takes its file list from git inside a work tree, so
+# nested worktrees agent runtimes create (e.g. .claude/worktrees/<name>/)
+# and anything gitignored are never linted, and a tracked or untracked
+# (non-ignored) script always is.
+test_verify_shell_all_scripts_uses_git_view_in_repo() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+
+  printf '#!/usr/bin/env bash\necho tracked\n' > tracked.sh
+  chmod +x tracked.sh
+  git add tracked.sh
+  git commit -q -m "add tracked script"
+
+  printf '#!/usr/bin/env bash\necho untracked\n' > untracked.sh
+  chmod +x untracked.sh
+
+  printf 'ignored.sh\n' >> .gitignore
+  printf '#!/usr/bin/env bash\necho ignored\n' > ignored.sh
+  chmod +x ignored.sh
+
+  # A nested worktree, the way an agent runtime creates one inside the
+  # repository: git reports it as a single directory entry without
+  # descending, so a script inside it never reaches the linter.
+  git worktree add -q .nested/tree -b nested-wt >/dev/null
+  printf '#!/usr/bin/env bash\necho nested\n' > .nested/tree/nested.sh
+  chmod +x .nested/tree/nested.sh
+
+  sc_stub_logging 1.0.0
+
+  run jig verify
+  assert_eq 0 "$RC"
+  assert_file_contains sc-linted.log tracked.sh
+  assert_file_contains sc-linted.log untracked.sh
+  assert_not_contains "$(cat sc-linted.log)" "ignored.sh"
+  assert_not_contains "$(cat sc-linted.log)" "nested.sh"
+}
+
+# git lists a tracked file from the index even after it was deleted from disk
+# and the deletion not yet staged — the ordinary state after `rm` or a rename.
+# Such a path must not reach the linter, which would fail on a missing file.
+test_verify_shell_all_scripts_skips_a_deleted_tracked_script() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+
+  printf '#!/usr/bin/env bash\necho gone\n' > gone.sh
+  chmod +x gone.sh
+  git add gone.sh
+  git commit -q -m "add a script"
+  rm gone.sh
+
+  sc_stub_logging 1.0.0
+
+  run jig verify
+  assert_eq 0 "$RC"
+  assert_not_contains "$(cat sc-linted.log 2>/dev/null)" "gone.sh"
+}
+
+# Outside a git work tree, _shell_all_scripts falls back to the find-based
+# walk it always used. Run the profile script directly, in a plain
+# directory with no .git, rather than through `jig verify` — jig itself
+# locates the project root via `git rev-parse --show-toplevel`, so a `jig`
+# command cannot run at all outside a repository.
+test_verify_shell_all_scripts_find_fallback_outside_git_repo() {
+  printf '#!/usr/bin/env bash\necho plain\n' > plain.sh
+  chmod +x plain.sh
+  sc_stub_logging 1.0.0
+
+  bash "$JIG_HOME/profiles/shell/verify.sh" >out 2>&1
+  rc=$?
+  assert_eq 0 "$rc"
+  assert_file_contains sc-linted.log plain.sh
+}
+
 # --- the "not installed (run jig upgrade)" hint stays actionable (domains/install) -
 # Activating a profile in config.yaml after init used to leave the hint a
 # dead end: copy mode's own decision table already installed the profile,
@@ -680,6 +753,35 @@ if [ "\$1" = "--version" ]; then
   exit 0
 fi
 exit $2
+STUB
+  chmod +x stub-bin/shellcheck
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# Like sc_stub, but also records every path it is invoked with (skipping
+# flags) to sc-linted.log, one per line, so a test can assert on exactly
+# which files reached the linter rather than only on the overall verdict.
+# Always reports version 1.0.0-shaped output and passes.
+#
+# Usage: sc_stub_logging <version>
+sc_stub_logging() {
+  mkdir -p stub-bin
+  cat > stub-bin/shellcheck <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then
+  printf 'ShellCheck - shell script analysis tool\n'
+  printf 'version: $1\n'
+  printf 'license: GNU General Public License, version 3\n'
+  exit 0
+fi
+for a in "\$@"; do
+  case "\$a" in
+    -*) continue ;;
+  esac
+  printf '%s\n' "\$a" >> "$PWD/sc-linted.log"
+done
+exit 0
 STUB
   chmod +x stub-bin/shellcheck
   PATH="$PWD/stub-bin:$PATH"

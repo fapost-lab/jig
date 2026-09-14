@@ -49,6 +49,11 @@ Read these before changing anything here; each is a rule someone paid for.
   ADR-0006's own text carried a wrong pattern for two phases; the code was right.
 - **Ancestry answers "landed", not "open"** (ADR-0025), and a task whose branch *is* the
   base branch is `unknown`, because `--is-ancestor main main` is trivially true.
+- **Commits since the fork are not proof of the branch's own work** (ADR-0032). A branch
+  fast-forwarded onto a newer base carries the base's commits and its tip is an ancestor of
+  the base. `merged` needs a reflog position the base did not contain at that time
+  (`_hk_own_work`); a tie in time goes to the base, and a missing reflog means `unknown`.
+  Compare positions, never reflog messages.
 - **A worktree goes only with its workspace, and only through git** (RULES.md,
   ADR-0029). It must be listed with the task's branch, lie under `git.worktree_root`,
   hold nothing under `.ai/workspace/tasks/` but links, and be clean. `git worktree remove`
@@ -56,6 +61,10 @@ Read these before changing anything here; each is a rule someone paid for.
   whole weight for anything gitignored. Inside a worktree, housekeeping never sees the
   borrowed workspace: it finds workspaces with `find`, which does not follow links. Keep
   it that way.
+- **A worktree jig did not create is never removed, and holds the workspace only while
+  work waits there** (ADR-0029 as amended): uncommitted changes or a lock keep it;
+  otherwise it is left in place and the workspace goes. The checkout housekeeping runs in
+  gets the same uncommitted-changes guard when the task's branch is checked out there.
 - **Exit 3 means "a human must consolidate"**; 1 is a real error, 2 belongs to
   `task current`. A trigger has to be able to tell those apart.
 - **`needs-consolidation` is the expected signal to close a task, not an anomaly**

@@ -61,6 +61,9 @@ test_init_creates_expected_layout() {
   # Whole line, not a substring: `assert_file_contains` would accept a typo'd
   # `/*.logXX` because the correct rule is still a substring of it.
   grep -qx '\*\.log' .gitignore || fail ".gitignore lacks the exact rule *.log"
+  # Nested worktrees Claude Code sessions create inside the project; one
+  # such worktree once reached the index as a gitlink.
+  assert_file_contains .gitignore ".claude/worktrees/"
 
   assert_contains "$OUT" "next:"
 }
