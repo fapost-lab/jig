@@ -55,6 +55,7 @@ jobs:
       PROBE_TESTS: "0"
       # The v1/v2 smoke steps answered their questions; v3 asks new ones.
       PROBE_SMOKE: "0"
+      PROBE_V3: "0"
 
     steps:
       # Before checkout, so the checkout itself is made under this setup.
@@ -273,6 +274,7 @@ jobs:
       # a clean machine; it shows what the tools themselves do.
 
       - name: v3 — winget, rights, execution policy, git and bash locations
+        if: env.PROBE_V3 == '1'
         shell: pwsh
         continue-on-error: true
         run: |
@@ -298,6 +300,7 @@ jobs:
       # a link, and does `git worktree remove` (no --force) delete the link or
       # walk through it into the owner's workspace?
       - name: v3 — junction as the worktree workspace link
+        if: env.PROBE_V3 == '1'
         run: |
           set +e
           step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
@@ -352,6 +355,7 @@ jobs:
       # Codex runs agent commands through PowerShell. It finds Git Bash through
       # git itself, never through PATH, where bash may be WSL's launcher.
       - name: v3 — prepare a project with jig.cmd
+        if: env.PROBE_V3 == '1'
         run: |
           set +e
           work=$(mktemp -d)
@@ -382,6 +386,7 @@ jobs:
           pwd -W > "$PROBE/v3-project.txt"
 
       - name: v3 — jig.cmd from PowerShell 7
+        if: env.PROBE_V3 == '1'
         shell: pwsh
         continue-on-error: true
         run: |
@@ -401,6 +406,7 @@ jobs:
           } *>&1 | Tee-Object -FilePath "$env:PROBE/v3-wrapper-pwsh.log"
 
       - name: v3 — jig.cmd from Windows PowerShell 5.1
+        if: env.PROBE_V3 == '1'
         shell: powershell
         continue-on-error: true
         run: |
@@ -413,6 +419,128 @@ jobs:
             .ai/scripts/jig knowledge summary adr-0001-probe-wrapper 'ps51 a & b | c "quoted" 100% done'; "exit=$LASTEXITCODE"
             Get-Content .ai/knowledge/adr/0001-probe-wrapper.md -TotalCount 12
           } *>&1 | Tee-Object -FilePath "$env:PROBE/v3-wrapper-ps51.log"
+
+      # --- v4 ------------------------------------------------------------------
+      # v3's junction was never created: MSYS rewrote mklink's /J switch into a
+      # path. Here PowerShell creates it and bash inspects it; bash then creates
+      # one itself with argument conversion off, since jig itself runs in bash.
+
+      - name: v4 — prepare a worktree for a junction
+        run: |
+          set +e
+          work=$(mktemp -d)
+          git -C "$work" init -q .
+          git -C "$work" config user.name jig
+          git -C "$work" config user.email jig@example.com
+          git -C "$work" symbolic-ref HEAD refs/heads/main
+          printf '# probe\n' > "$work/README.md"
+          git -C "$work" add README.md
+          git -C "$work" commit -q -m init
+          cd "$work" || exit 1
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell > /dev/null 2>&1
+          git add -A > /dev/null 2>&1
+          git commit -q -m "jig init"
+          .ai/scripts/jig task new probe-j --class T1 --domains core
+          printf 'owner content\n' > .ai/workspace/tasks/probe-j/design.md
+          wt="$work.worktrees/probe-j"
+          git worktree add -q -b task/probe-j "$wt"
+          mkdir -p "$wt/.ai/workspace/tasks"
+          {
+            echo "$work"
+            echo "$wt"
+            cygpath -w "$wt/.ai/workspace/tasks/probe-j"
+            cygpath -w "$work/.ai/workspace/tasks/probe-j"
+          } > "$PROBE/v4-paths.txt"
+          cat "$PROBE/v4-paths.txt"
+
+      - name: v4 — create the junction from PowerShell
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $p = Get-Content "$env:PROBE/v4-paths.txt"
+          & {
+            New-Item -ItemType Junction -Path $p[2] -Target $p[3] | Format-List FullName,LinkType,Target | Out-String
+            "LinkType: $((Get-Item $p[2]).LinkType)"
+          } *>&1 | Tee-Object -FilePath "$env:PROBE/v4-junction-create.log"
+
+      - name: v4 — inspect, use and remove the junction from bash
+        run: |
+          set +e
+          step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
+          {
+            work=$(sed -n 1p "$PROBE/v4-paths.txt")
+            wt=$(sed -n 2p "$PROBE/v4-paths.txt")
+            link="$wt/.ai/workspace/tasks/probe-j"
+            cd "$work" || exit 1
+            echo "== how bash sees the junction"
+            if [ -L "$link" ]; then echo "-L: yes"; else echo "-L: no"; fi
+            if [ -d "$link" ]; then echo "-d: yes"; else echo "-d: no"; fi
+            echo "readlink: [$(readlink "$link" 2>&1)]"
+            echo "cd -P: [$(cd -P "$link" 2>&1 && pwd -P)]"
+            echo "find ! -type l: [$(find "$wt/.ai/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l)]"
+            echo "find -type l: [$(find "$wt/.ai/workspace/tasks" -mindepth 1 -maxdepth 1 -type l)]"
+            echo "read through it: [$(cat "$link/design.md" 2>&1)]"
+            printf 'written through the link\n' > "$link/notes.md"
+            echo "owner sees the write: [$(cat .ai/workspace/tasks/probe-j/notes.md 2>&1)]"
+            echo "git status in worktree: [$(git -C "$wt" status --porcelain)]"
+            (cd "$wt" && step .ai/scripts/jig task artifacts probe-j)
+            step .ai/scripts/jig task list
+
+            echo "== git worktree remove, no --force"
+            step git worktree remove "$wt"
+            ls -la "$wt" 2>&1
+            echo "== owner workspace afterwards"
+            ls -la .ai/workspace/tasks/probe-j 2>&1
+
+            echo "== bash creates a junction itself, argument conversion off"
+            j2="$(mktemp -d)/j2"
+            MSYS2_ARG_CONV_EXCL='*' cmd /c mklink /J "$(cygpath -w "$j2")" "$(cygpath -w "$work/.ai/workspace/tasks/probe-j")"
+            echo "mklink exit=$?"
+            if [ -L "$j2" ]; then echo "-L: yes"; else echo "-L: no"; fi
+            echo "read through it: [$(cat "$j2/design.md" 2>&1)]"
+            echo "== rm -rf on that junction"
+            step rm -rf "$j2"
+            ls -la .ai/workspace/tasks/probe-j 2>&1
+          } 2>&1 | tee "$PROBE/v4-junction.log"
+
+      # Git for Windows' Inno installer has a per-user mode. The runner is an
+      # administrator, so this shows where it installs and that it works, not
+      # that it needs no rights.
+      - name: v4 — Git for Windows per-user install
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          & {
+            $url = 'https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/Git-2.55.0.3-64-bit.exe'
+            $exe = Join-Path $env:RUNNER_TEMP 'git-installer.exe'
+            $dir = Join-Path $env:LOCALAPPDATA 'Programs\GitProbe'
+            $start = Get-Date
+            Invoke-WebRequest -Uri $url -OutFile $exe
+            "download seconds: $([int]((Get-Date) - $start).TotalSeconds)"
+            $start = Get-Date
+            $proc = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES','/SP-','/NOICONS','/CURRENTUSER',"/DIR=$dir"
+            "installer exit: $($proc.ExitCode), seconds: $([int]((Get-Date) - $start).TotalSeconds)"
+            "== files"
+            "bash.exe: $(Test-Path (Join-Path $dir 'bin\bash.exe'))"
+            "git.exe: $(Test-Path (Join-Path $dir 'cmd\git.exe'))"
+            & (Join-Path $dir 'bin\bash.exe') -c 'echo "bash ok: $BASH_VERSION"'
+            & (Join-Path $dir 'cmd\git.exe') --exec-path
+            "== uninstall registration (HKCU means per-user)"
+            Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Git_is1' -ErrorAction SilentlyContinue | Format-List DisplayName,InstallLocation | Out-String
+            Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Git_is1' -ErrorAction SilentlyContinue | Format-List DisplayName,InstallLocation | Out-String
+            "== user PATH after install"
+            [Environment]::GetEnvironmentVariable('Path', 'User')
+          } *>&1 | Tee-Object -FilePath "$env:PROBE/v4-git-user-install.log"
+
+      # Last on purpose: it may replace the machine's git for anything after it.
+      - name: v4 — winget install Git.Git --scope user
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          & {
+            winget install --id Git.Git -e --source winget --scope user --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            "exit=$LASTEXITCODE"
+          } *>&1 | Tee-Object -FilePath "$env:PROBE/v4-winget-user.log"
 
       - name: Upload probe logs
         if: always()
