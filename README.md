@@ -14,6 +14,40 @@ It needs no Node.js, Python, package manager, or build step. Using its skills al
 requires a supported coding runtime. Project verification needs the tools used by
 the selected technology profiles.
 
+Install the newest release for your user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh | bash
+```
+
+The installer clones Jig into `~/.local/share/jig`, checked out at the newest release tag
+(`vX.Y.Z`), links `~/.local/bin/jig` to it and, only when `~/.local/bin` is not already on
+your `PATH`, adds one marked line to `~/.zshrc`, `~/.bashrc` or `~/.profile`. It needs no
+`sudo` and never touches the project you ran it from. The shell you ran it in cannot pick up
+the new `PATH`: open a new terminal, or use the absolute command the installer prints.
+
+To read the script before running it:
+
+```sh
+curl -fsSLo /tmp/jig-install.sh https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh
+less /tmp/jig-install.sh
+bash /tmp/jig-install.sh
+```
+
+Options: `--ref main` installs the development channel instead of a release, `--ref vX.Y.Z`
+a specific release; `--install-dir`, `--bin-dir` and `--no-path` change where things go and
+skip the startup-file line. Until the first release is tagged, the installer stops and names
+`--ref main`. Running it again is safe: it moves a clean installation forward and refuses to
+overwrite anything it did not create.
+
+Keep the whole checkout: the executable loads adjacent libraries, skills, adapters
+and templates. `jig version` and `jig help` work anywhere. Project commands
+operate on the Git repository containing your current directory, including when
+you are in one of its subdirectories. They do not operate on every project at once.
+
+<details>
+<summary>Without the installer</summary>
+
 Clone the framework into a permanent directory, then put its executable on `PATH`:
 
 ```sh
@@ -24,28 +58,12 @@ export PATH="$HOME/.local/bin:$PATH"
 jig version
 ```
 
-Repository access may require authentication. If you already have a clone, use its
-absolute path as the symlink target instead of cloning again:
+If you already have a clone, use its absolute path as the symlink target instead of
+cloning again. For future terminals, add `export PATH="$HOME/.local/bin:$PATH"` once to
+`~/.zshrc` (zsh, the macOS default) or `~/.bashrc` (interactive bash). A clone made this
+way sits on `main`, the development channel.
 
-```sh
-mkdir -p "$HOME/.local/bin"
-ln -s /absolute/path/to/jig/scripts/jig "$HOME/.local/bin/jig"
-```
-
-Keep the whole checkout: the executable loads adjacent libraries, skills, adapters
-and templates. If `~/.local/bin/jig` already exists, inspect it before replacing it.
-
-For future terminals, add this line once to `~/.zshrc` (zsh, the macOS default) or
-`~/.bashrc` (interactive bash). A bash login shell must also load that file:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Open a new terminal and check `command -v jig`. This is a per-user global command;
-it needs no `sudo`. `jig version` and `jig help` work anywhere. Project commands
-operate on the Git repository containing your current directory, including when
-you are in one of its subdirectories. They do not operate on every project at once.
+</details>
 
 ### 2. Install Jig into a project
 
@@ -437,15 +455,26 @@ checks belong in the project's installed profiles; upgrades preserve modified fi
 
 ## Upgrade the framework and a project
 
-There are two separate operations. First update the shared source checkout:
+There are two separate operations. First update the global framework:
 
 ```sh
-git -C "$HOME/.local/share/jig" pull --ff-only
-jig version
+jig self-update
 ```
 
-Use the actual clone path if you installed elsewhere. The global symlink immediately
-uses that checkout's version. Then update a selected project's installed copy:
+An installation at a release tag moves to the newest release tag and never backwards; a
+checkout on a branch with an upstream is fast-forwarded. `self-update` refuses a checkout
+with uncommitted changes, a branch without an upstream, or a detached commit that is not a
+release, and it changes nothing in any project. Run from a project's `.ai/scripts/jig`, it
+updates the global `jig` your `PATH` selects.
+
+`jig status` in a project compares the two versions:
+
+```text
+framework versions: project=0.1.0 global=0.2.0 mismatch
+hint: the global framework is newer; run `jig upgrade --dry-run`
+```
+
+Then update a selected project's installed copy:
 
 ```sh
 cd /path/to/your/project
@@ -628,6 +657,9 @@ reader to assume the numbers are complete.
 | Symptom | Action |
 |---|---|
 | `jig: command not found` | Check `PATH`, open a new shell, and verify the symlink target still exists. |
+| The installer says there is no release yet | Install the development channel with `--ref main`, or wait for the first release tag. |
+| `self-update` refuses the checkout | Commit or stash its changes; a developer checkout on a task branch has no upstream and is updated with Git directly. |
+| `framework versions: ... global=unavailable` | No global `jig` on `PATH`, or it is not a framework checkout. Harmless in CI; install it where you run `self-update`. |
 | `not inside a git repository` | Change into the target repository or initialize Git for a new project. |
 | `project is not initialised` | Run the globally installed `jig init` inside that repository. |
 | Cannot determine framework source | Pass `--from /absolute/path/to/jig`; an installed copy is not the full source checkout. |

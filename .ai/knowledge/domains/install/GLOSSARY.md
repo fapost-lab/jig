@@ -12,6 +12,9 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/manifest.sh
   - "adapters/**"
+  - install.sh
+  - scripts/lib/self-update.sh
+reviewed_at: 2026-09-14
 ---
 # Install glossary
 
@@ -51,3 +54,19 @@ Distinct from drift: pending is "not installed yet", drift is "installed and cha
 The upgrade outcome for a file the user edited: the new version is not written, the
 project's copy stays. It is the reason `upgrade` is safe to run and the reason an
 installed `verify.sh` may be older than the framework that calls it.
+
+## Global framework
+
+The framework checkout behind the `jig` that `PATH` selects: `~/.local/share/jig` when
+installed by `install.sh`, a developer's own clone otherwise. `jig self-update` moves it; a
+project's installed copy is unaffected until `upgrade` (ADR-0033).
+
+## Release tag
+
+An annotated tag `v<major>.<minor>.<patch>`, digits only, on a commit whose `JIG_VERSION` is
+the same version. Anything else — a pre-release suffix, a stray tag — is not a release.
+
+## Update channel
+
+What a global framework follows. Release tags are the default channel; `main` is the
+development channel, installed only with `--ref main` (ADR-0033).

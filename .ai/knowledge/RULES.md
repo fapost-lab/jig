@@ -7,7 +7,10 @@
   like a workspace or trash entry. (ADR-0006) The one exception is a task worktree, and
   git deletes it, not the script. It is removed only by `git worktree remove` without
   `--force`, only when git lists it with the task's branch, it lies under
-  `git.worktree_root`, and it holds no workspace of its own. (ADR-0029)
+  `git.worktree_root`, and it holds no workspace of its own. (ADR-0029) The installer,
+  `install.sh`, is the other: on a failed run it removes only the install directory it
+  created with a plain `mkdir` in that same run and the `jig` link it created, never a path
+  that existed before. (ADR-0033)
 - Housekeeping never destroys a workspace whose remote state is `unknown`.
   (`domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.

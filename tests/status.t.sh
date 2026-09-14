@@ -327,6 +327,253 @@ test_status_omits_pending_when_source_root_unknown() {
   assert_not_contains "$OUT" "pending"
 }
 
+# --- framework versions: project vs global (design.md §3-4) ----------------
+#
+# `jig status`'s "framework versions" line depends on `command -v jig`, so
+# every test here must build its own PATH (domains/verify: "a test decides
+# its own environment; it never inherits one") — otherwise it would see a
+# maintainer's real ~/.local/bin/jig on a dev machine, or find none at all on
+# a CI runner, and the same assertion would pass or fail depending on who ran
+# it. `jig()` here calls "$JIG_BIN" directly, bypassing PATH entirely, so the
+# fixture PATH only has to fool the *inner* `command -v jig` these tests
+# exercise, via `run env PATH=... "$JIG_BIN" status`.
+
+# _status_path_without_jig [prepend-dir] — the current PATH with every
+# directory that contains an executable named `jig` removed (so neither a
+# maintainer's real global install nor a stray unrelated `jig` reaches the
+# command under test), optionally with <prepend-dir> placed first.
+_status_path_without_jig() {
+  local prepend="${1:-}" dir out="" IFS=:
+  for dir in $PATH; do
+    [ -n "$dir" ] || continue
+    [ -x "$dir/jig" ] && continue
+    out="$out:$dir"
+  done
+  out="${out#:}"
+  if [ -n "$prepend" ]; then
+    printf '%s:%s\n' "$prepend" "$out"
+  else
+    printf '%s\n' "$out"
+  fi
+}
+
+# _status_make_stub_global <root-dir> <bin-dir> <version-file> — a fixture
+# "global framework": a directory shaped like a source checkout (skills/,
+# templates/, scripts/jig — jig_is_source_root's test), symlinked into
+# <bin-dir> as `jig` the way the installer places it (design.md §1).
+# <version-file> is written verbatim to scripts/lib/version.sh, so a caller can
+# declare a well-formed `JIG_VERSION="X.Y.Z"` or a deliberately broken file.
+#
+# `status` reads that file and must never run the executable (design.md §3):
+# the stub's scripts/jig leaves an `executed` marker and prints a version that
+# disagrees with the file, so running it would show up either way.
+_status_make_stub_global() {
+  local root="$1" bin="$2" version_file="$3"
+  mkdir -p "$root/skills" "$root/templates" "$root/scripts/lib" "$bin"
+  printf '%s\n' "$version_file" > "$root/scripts/lib/version.sh"
+  cat > "$root/scripts/jig" <<EOF
+#!/bin/sh
+: > "$root/executed"
+printf 'jig 0.0.0-from-running\n'
+EOF
+  chmod +x "$root/scripts/jig"
+  ln -s "$root/scripts/jig" "$bin/jig"
+}
+
+# The project's own installed version, read from the real JIG_VERSION rather
+# than hardcoded, so this test does not drift the day the source bumps it.
+_status_project_version() {
+  sed -n 's/^JIG_VERSION="\(.*\)"/\1/p' "$JIG_HOME/scripts/lib/version.sh" | head -n 1
+}
+
+# git status --porcelain plus the content hash of every file under .ai,
+# batched through one `git hash-object --stdin-paths` (shell conventions: no
+# per-file loop). Used by AC-06 to prove `jig status` changed nothing.
+_status_project_hash() {
+  { git status --porcelain
+    find .ai -type f 2>/dev/null | LC_ALL=C sort | git hash-object --stdin-paths
+  }
+}
+
+test_status_framework_versions_current() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  _status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\""
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=$version current"
+  assert_not_contains "$OUT" "hint: "
+  # Read, never run: a hanging global checkout must not be able to hang status.
+  assert_no_file "$stub_root/executed" "status executed the global jig"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_mismatch_global_newer() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"'
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=9.0.0 mismatch"
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'hint: the global framework is newer; run `jig upgrade --dry-run`'
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_mismatch_project_newer() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.0.1"'
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=0.0.1 mismatch"
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'hint: the project is newer than the global framework; run `jig self-update`'
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_non_release_global_gets_generic_hint() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="dev"'
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=dev mismatch"
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'hint: run `jig self-update`, then `jig upgrade --dry-run`'
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_no_global_on_path() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version
+  version=$(_status_project_version)
+
+  run env PATH="$(_status_path_without_jig)" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=unavailable"
+  assert_not_contains "$OUT" "hint: "
+}
+
+test_status_framework_versions_non_source_jig_is_unavailable() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version plain_bin
+  version=$(_status_project_version)
+  plain_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-plainbin.XXXXXX")
+  cat > "$plain_bin/jig" <<'EOF'
+#!/bin/sh
+[ "$1" = version ] && printf 'jig 9.9.9\n'
+EOF
+  chmod +x "$plain_bin/jig"
+
+  run env PATH="$(_status_path_without_jig "$plain_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=unavailable"
+  assert_not_contains "$OUT" "hint: "
+
+  rm -rf "$plain_bin"
+}
+
+test_status_framework_versions_two_declared_versions_are_unavailable() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  # Two declarations are not one version: jig_declared_version accepts exactly
+  # one `JIG_VERSION="<version>"` line.
+  _status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\"
+JIG_VERSION=\"9.9.9\""
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=unavailable"
+  assert_not_contains "$OUT" "hint: "
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_malformed_version_file_is_unavailable() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  # Unquoted: not the shape version.sh declares, so it is not read as a version.
+  _status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=9.9.9"
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=unavailable"
+  assert_not_contains "$OUT" "hint: "
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+# AC-11: in link mode the global executable can be the very checkout this
+# project links against; that is a normal "current", not a missing global.
+test_status_framework_versions_link_mode_reports_current() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local version stub_bin
+  version=$(_status_project_version)
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  ln -s "$JIG_HOME/scripts/jig" "$stub_bin/jig"
+
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=$version current"
+
+  rm -rf "$stub_bin"
+}
+
+# AC-06: mismatch guidance is purely diagnostic; it must never touch the project.
+test_status_framework_versions_mismatch_causes_no_project_mutation() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin before after
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"'
+
+  before=$(_status_project_hash)
+  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mismatch"
+  after=$(_status_project_hash)
+  assert_eq "$before" "$after" "jig status must not mutate the project"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
 # --- session hook and housekeeping flags (domains/housekeeping; ARCHITECTURE.md, Scripts layout) ---------------------
 
 test_status_session_hook_not_installed() {

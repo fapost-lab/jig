@@ -25,7 +25,10 @@ cmd_status() {
   printf '%s\n' "initialised: yes"
 
   if manifest_exists; then
-    printf '%s\n' "manifest: version=$(manifest_header_get jig.version) mode=$(manifest_header_get jig.mode) source=$(manifest_source)"
+    local proj_version
+    proj_version=$(manifest_header_get jig.version)
+    printf '%s\n' "manifest: version=$proj_version mode=$(manifest_header_get jig.mode) source=$(manifest_source)"
+    _status_framework_versions "$proj_version"
   else
     printf '%s\n' "manifest: missing"
   fi
@@ -197,6 +200,50 @@ $rel"
   fi
 
   _status_session_hook
+}
+
+# _status_framework_versions <project-version> — compares the project's
+# installed framework version (from .ai/manifest) against the framework
+# version of whatever `jig` the current PATH selects, and prints exactly one
+# line, plus a directional hint on mismatch (design.md §3-4).
+#
+# Read-only and offline, and it runs nothing: the global version is the one
+# its checkout declares in scripts/lib/version.sh (jig_declared_version), not
+# the output of executing it, so a broken or hanging global checkout cannot
+# hang `status` (design.md §3, decided 2026-09-14).
+#
+# "Unavailable" is never printed with a hint, since there is nothing to act
+# on. It covers both a PATH with no framework `jig` and a checkout whose
+# version file cannot be read; a CI runner or a colleague who only cloned the
+# project has no global install, and a hint there would repeat on every run.
+# In link mode the global executable can be the very checkout this dispatcher
+# runs from — a normal "current", not a missing global (common.sh,
+# jig_global_executable).
+_status_framework_versions() {
+  local project="$1" global_exe global
+  if ! global_exe=$(jig_global_executable) \
+     || ! global=$(jig_declared_version "${global_exe%/scripts/jig}"); then
+    printf '%s\n' "framework versions: project=$project global=unavailable"
+    return 0
+  fi
+  if [ "$project" = "$global" ]; then
+    printf '%s\n' "framework versions: project=$project global=$global current"
+    return 0
+  fi
+  printf '%s\n' "framework versions: project=$project global=$global mismatch"
+  if jig_release_version "v$global" >/dev/null 2>&1 && jig_release_version "v$project" >/dev/null 2>&1; then
+    if jig_version_newer "$global" "$project"; then
+      printf '%s\n' "hint: the global framework is newer; run \`jig upgrade --dry-run\`"
+      return 0
+    fi
+    if jig_version_newer "$project" "$global"; then
+      printf '%s\n' "hint: the project is newer than the global framework; run \`jig self-update\`"
+      return 0
+    fi
+  fi
+  # Not both orderable as release versions (e.g. a "dev" branch checkout), or
+  # some other non-directional disagreement: no basis to name a direction.
+  printf '%s\n' "hint: run \`jig self-update\`, then \`jig upgrade --dry-run\`"
 }
 
 # _status_flagged <log> <flag> — distinct tasks the last housekeeping run

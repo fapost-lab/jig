@@ -49,6 +49,142 @@ jig_source_root() {
   fi
 }
 
+# --- framework versions and the global executable -------------------------
+#
+# Release tags are the update channel: a release is `v<major>.<minor>.<patch>`,
+# digits only, and the newest one is what `install.sh` installs and what
+# `jig self-update` moves to. Versions are ordered in shell arithmetic because
+# `sort -V` is not available everywhere jig runs (conventions/shell.md).
+
+# jig_release_version <tag> — the `X.Y.Z` of release tag `vX.Y.Z`. Prints
+# nothing and fails for anything else: a pre-release suffix, a stray tag, a
+# version with more or fewer than three fields.
+jig_release_version() {
+  local v a b c rest
+  case "$1" in
+    v*) v="${1#v}" ;;
+    *) return 1 ;;
+  esac
+  case "$v" in
+    '' | *[!0-9.]* | .* | *. | *..*) return 1 ;;
+  esac
+  IFS=. read -r a b c rest <<EOF
+$v
+EOF
+  if [ -z "$a" ] || [ -z "$b" ] || [ -z "$c" ] || [ -n "$rest" ]; then
+    return 1
+  fi
+  printf '%s\n' "$v"
+}
+
+# jig_version_newer <a> <b> — true when release version <a> (`X.Y.Z`) is
+# strictly newer than <b>, comparing each field as a number: 0.10.0 is newer
+# than 0.9.0. False for equal versions and for anything that is not three
+# numeric fields, so an unparsable version never reads as an upgrade.
+jig_version_newer() {
+  local a1 a2 a3 b1 b2 b3
+  jig_release_version "v$1" >/dev/null || return 1
+  jig_release_version "v$2" >/dev/null || return 1
+  IFS=. read -r a1 a2 a3 <<EOF
+$1
+EOF
+  IFS=. read -r b1 b2 b3 <<EOF
+$2
+EOF
+  # 10#: a field with a leading zero is still decimal, not octal.
+  a1=$((10#$a1)); a2=$((10#$a2)); a3=$((10#$a3))
+  b1=$((10#$b1)); b2=$((10#$b2)); b3=$((10#$b3))
+  if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ]; return; fi
+  if [ "$a2" -ne "$b2" ]; then [ "$a2" -gt "$b2" ]; return; fi
+  [ "$a3" -gt "$b3" ]
+}
+
+# jig_newest_release — read tag names on stdin, one per line, and print the
+# newest release tag (`vX.Y.Z`). Accepts `git tag` names and `git ls-remote
+# --tags` lines alike: a `refs/tags/` prefix and the `^{}` of a peeled
+# annotated tag are stripped. Fails, printing nothing, when no line is a
+# release tag.
+jig_newest_release() {
+  local line tag v best="" best_v=""
+  while IFS= read -r line; do
+    tag=${line##*refs/tags/}
+    tag=${tag%'^{}'}
+    v=$(jig_release_version "$tag") || continue
+    if [ -z "$best_v" ] || jig_version_newer "$v" "$best_v"; then
+      best="$tag"
+      best_v="$v"
+    fi
+  done
+  [ -n "$best" ] || return 1
+  printf '%s\n' "$best"
+}
+
+# jig_version_of <executable> — the version a jig executable reports, taken
+# only from a single line shaped exactly `jig <version>`. Fails otherwise, so
+# a wrapper or an unrelated `jig` on PATH is never mistaken for a version.
+jig_version_of() {
+  local out
+  out=$("$1" version 2>/dev/null) || return 1
+  case "$out" in
+    *'
+'*) return 1 ;;
+    'jig '?*) printf '%s\n' "${out#jig }" ;;
+    *) return 1 ;;
+  esac
+}
+
+# jig_declared_version <source> — the version a framework checkout declares in
+# scripts/lib/version.sh, read without running anything. Fails unless exactly
+# one line is shaped `JIG_VERSION="<version>"` with a value free of quotes and
+# spaces. `jig status` uses this rather than jig_version_of: a read-only
+# command must not execute whatever PATH selects, and a broken global checkout
+# would otherwise hang it, with no portable timeout to bound the wait.
+jig_declared_version() {
+  local file="$1/scripts/lib/version.sh" found
+  [ -f "$file" ] || return 1
+  found=$(sed -n 's/^JIG_VERSION="\([^" ]\{1,\}\)"[[:space:]]*$/\1/p' "$file" 2>/dev/null) \
+    || return 1
+  case "$found" in
+    '' | *'
+'*) return 1 ;;
+  esac
+  printf '%s\n' "$found"
+}
+
+# jig_global_executable — the physical path of the `jig` the current PATH
+# selects, when it is the dispatcher of a framework source checkout. Fails,
+# printing nothing, when PATH has no `jig` or it resolves anywhere else.
+#
+# Symlinks are resolved with the dispatcher's own jig_resolve_path, defined in
+# scripts/jig before any library is sourced; it is reused rather than copied
+# here, because two resolvers would drift. Directories are then made physical
+# (conventions/shell.md), so the path compares equal to JIG_SELF resolved the
+# same way — equal means the same checkout, as in link mode.
+jig_global_executable() {
+  local found path dir
+  found=$(command -v jig 2>/dev/null) || return 1
+  case "$found" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  path=$(jig_resolve_path "$found") || return 1
+  dir=$(cd -P "${path%/*}" 2>/dev/null && pwd -P) || return 1
+  path="$dir/${path##*/}"
+  case "$path" in
+    */scripts/jig) ;;
+    *) return 1 ;;
+  esac
+  jig_is_source_root "${path%/scripts/jig}" || return 1
+  printf '%s\n' "$path"
+}
+
+# jig_physical_path <file> — <file> with its directory made physical.
+jig_physical_path() {
+  local dir
+  dir=$(cd -P "${1%/*}" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "$dir" "${1##*/}"
+}
+
 # Files this checkout has touched: the union of the diff against the merge-base
 # with the configured base branch, the staged and unstaged diffs, and untracked
 # files — all repo-relative (ARCHITECTURE.md, Scripts layout). `-C "$JIG_PROJECT"` matters: `git diff`
