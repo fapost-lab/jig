@@ -12,7 +12,9 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/manifest.sh
   - "adapters/**"
-reviewed_at: 2026-09-10
+  - install.sh
+  - scripts/lib/self-update.sh
+reviewed_at: 2026-09-14
 ---
 # Install
 
@@ -31,11 +33,19 @@ project owns.
   from the manifest hash, the on-disk file and the staged source.
 - The adapter contract: where each runtime's skills live and how a skill is transformed
   on the way in.
+- The global framework: `install.sh` bootstraps a per-user checkout at the newest release
+  tag, `jig self-update` moves it forward, and `jig status` compares the version it declares
+  with the project's installed one. Release tags are the update channel and `main` the
+  development channel (ADR-0033). Moving the global framework never changes a project; only
+  `upgrade` does.
 
 ## Boundaries
 
 Outside: what a skill or profile *says*. Adapters contain no SDLC logic; the only
 transform today is Codex's invocation syntax (`/jig-x` → `$jig-x`).
+
+Outside: how a release tag is made. The installer and `self-update` only read tags; the
+release process creates them, and must keep each tag equal to its commit's `JIG_VERSION`.
 
 Outside: running checks (domain `verify`). This domain installs `profiles/`; it does not
 know what a profile does.
@@ -51,3 +61,8 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
   `_upgrade_process_path`, `_upgrade_link`.
 - `scripts/lib/manifest.sh` — the manifest reader and writer.
 - `adapters/<runtime>/adapter.sh` — the three functions each adapter must define.
+- `install.sh` — the per-user bootstrap; cannot source libraries, so it carries copies of the
+  release-ordering helpers.
+- `scripts/lib/self-update.sh` — `cmd_self_update`.
+- `scripts/lib/common.sh` — `jig_release_version`, `jig_version_newer`, `jig_newest_release`,
+  `jig_global_executable`, `jig_declared_version`, `jig_version_of`.
