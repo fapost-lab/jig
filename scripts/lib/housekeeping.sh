@@ -20,6 +20,7 @@ _HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
 _HK_ROWS=""         # "<group>\t<task>\t<note>" per task, printed as the report
 _HK_WT_LINE=""      # what _hk_worktree_retire did, as a --verbose line
 _HK_WT_NOTE=""      # ... and as a note in the grouped report
+_HK_BASE_LOG=""     # "<ref>\t<epoch>\t<sha>" reflog of the base refs, newest first, read once per run
 
 cmd_housekeeping() {
   jig_require_init
@@ -56,6 +57,7 @@ cmd_housekeeping() {
 
   _hk_fetch "$dry"
   _hk_forge_init
+  _hk_base_reflog_init
 
   # A run boundary in the log. Without it the log is an undifferentiated
   # append-only history, and any reader asking "what does the latest run say"
@@ -70,8 +72,11 @@ cmd_housekeeping() {
 
   # Worktrees tasks were started in, from git's own list, read once per run.
   # A task's worktree goes when its workspace goes (ADR-0029).
-  local worktrees
+  local worktrees here
   worktrees=$(_task_worktrees)
+  # The branch this checkout has out, which `_task_worktrees` leaves out of its
+  # list: a task worked on here has no worktree to keep its workspace for it.
+  here=$(_task_current_branch)
 
   if [ -d "$tasks_dir" ]; then
     while IFS= read -r state_file; do
@@ -114,6 +119,9 @@ cmd_housekeeping() {
       if [ "$action" = "purge" ] && [ -n "$branch" ]; then
         wt=$(_task_worktree_for "$branch" "$worktrees")
         if [ -n "$wt" ] && ! _hk_worktree_retire "$dry" "$tid" "$wt"; then
+          action="preserve"
+          flags="worktree-kept"
+        elif [ -z "$wt" ] && [ "$branch" = "$here" ] && ! _hk_checkout_keep "$dry" "$tid"; then
           action="preserve"
           flags="worktree-kept"
         fi
@@ -424,6 +432,15 @@ _hk_ancestry_state() {
       printf 'unknown\n'
       return 0
     fi
+    # ... and commits since the fork are not yet the branch's own. A branch
+    # fast-forwarded onto a newer base carries the base's commits, its tip is
+    # an ancestor of the base, and step 1 would call it merged. Observed on
+    # 2026-09-13: `merge origin/main` onto a task branch with no commits of its
+    # own, and housekeeping flagged the task for closing (ADR-0032).
+    if [ "$(_hk_own_work "$tip" "$base_commit")" != "own" ]; then
+      printf 'unknown\n'
+      return 0
+    fi
   fi
 
   # 1. Fast-forward or a real merge commit.
@@ -468,6 +485,87 @@ _hk_ancestry_state() {
   fi
 
   printf 'unknown\n'
+}
+
+# _hk_reflog <ref> — "<epoch> <sha>" for every reflog entry of <ref>, newest
+# first. Empty when the ref has no reflog.
+_hk_reflog() {
+  local out
+  out=$(git -C "$JIG_PROJECT" reflog show --format='%gd %H' --date=unix "$1" 2>/dev/null \
+    | sed -n 's/^.*@{\([0-9][0-9]*\)} \([0-9a-f][0-9a-f]*\)$/\1 \2/p') || out=""
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+
+# _hk_base_reflog_init — read the reflog of the local and the remote-tracking
+# base once per run into _HK_BASE_LOG. `_hk_own_work` runs inside `$(...)` for
+# every task, and a cache filled there would be discarded with the subshell.
+_hk_base_reflog_init() {
+  local base ref lines
+  _HK_BASE_LOG=""
+  base=$(cfg git.base_branch main)
+  for ref in "refs/heads/$base" "refs/remotes/origin/$base"; do
+    lines=$(_hk_reflog "$ref")
+    [ -n "$lines" ] || continue
+    _HK_BASE_LOG="$_HK_BASE_LOG$(printf '%s\n' "$lines" | awk -v r="$ref" '{ print r "\t" $1 "\t" $2 }')
+"
+  done
+  return 0
+}
+
+# _hk_own_work <tip-ref> <base_commit> — own|none|nolog: whether the branch
+# holds a commit of its own, one the base did not have when the branch took it.
+#
+# Git's refs cannot tell "merged by fast-forward" from "fast-forwarded onto the
+# base with nothing of its own": in both, the tip is an ancestor of the base
+# and commits exist since the fork. Only time separates them — did the base
+# contain the commit before the branch moved onto it, or after — and the
+# reflog is where git records that time (ADR-0032). Positions are compared,
+# never reflog messages: IDEs and GUI clients write those as they please.
+#
+# A position counts as the branch's own when it is not the fork point or
+# behind it, is still contained in the tip (a commit reset away landed
+# nothing), and neither base ref contained it at the latest entry no later
+# than the branch's. A tie in the second goes to the base: `git pull` moves
+# both in one second. With no base entry that early the position cannot be
+# judged, and it is not counted — every uncertainty here resolves to
+# `unknown` (RULES.md).
+_hk_own_work() {
+  local tip="$1" fork="$2" log t p bases b foreign undecided=0
+  log=$(_hk_reflog "$tip")
+  if [ -z "$log" ] || [ -z "$_HK_BASE_LOG" ]; then
+    printf 'nolog\n'
+    return 0
+  fi
+  while read -r t p; do
+    [ -n "$p" ] || continue
+    [ "$p" != "$fork" ] || continue
+    ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$fork" 2>/dev/null || continue
+    git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$tip" 2>/dev/null || continue
+    bases=$(printf '%s' "$_HK_BASE_LOG" \
+      | awk -F '\t' -v t="$t" '$2 <= t && !($1 in seen) { seen[$1] = 1; print $3 }')
+    if [ -z "$bases" ]; then
+      undecided=1
+      continue
+    fi
+    foreign=0
+    for b in $bases; do
+      if git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$b" 2>/dev/null; then
+        foreign=1
+        break
+      fi
+    done
+    if [ "$foreign" = 0 ]; then
+      printf 'own\n'
+      return 0
+    fi
+  done <<EOF
+$log
+EOF
+  if [ "$undecided" = 1 ]; then
+    printf 'nolog\n'
+  else
+    printf 'none\n'
+  fi
 }
 
 # _hk_base_patch_ids <merge-base> <base> — patch-id of every commit the base
@@ -554,32 +652,39 @@ _hk_purge() {
 # The one deletion outside .ai/ (RULES.md), so it is narrow on purpose:
 # - git lists <path> as the worktree of the task's branch (the caller's lookup);
 # - <path> lies under git.worktree_root, so a worktree somebody made by hand,
-#   for reasons of their own, is never touched;
+#   or an agent runtime made for its session, is never touched;
 # - nothing under its .ai/workspace/tasks/ is anything but a link: `git
 #   worktree remove` deletes ignored files silently, and a real workspace
 #   there is one this checkout knows nothing about;
 # - git does the deleting, without --force, so tracked changes and untracked
 #   files make it refuse. Agents do not commit: uncommitted work in a task
 #   worktree is the normal state before review, not debris.
+#
+# A worktree outside the root is left in place, and when it is clean and not
+# locked it no longer holds the workspace back: the task is closed, its work
+# landed, and nothing waits there. Keeping the workspace would put the task
+# under "needs you" on every run until somebody removed a tree jig does not
+# own (ADR-0029 as amended). Uncommitted work, or a lock — Claude Code locks the
+# worktree of a running agent — still keeps it.
 _hk_worktree_retire() {
-  local dry="$1" tid="$2" path="$3" root="" reason="" own=""
+  local dry="$1" tid="$2" path="$3" root="" reason="" own="" ours=0
   root=$(cd -P "$(_task_worktree_root)" 2>/dev/null && pwd -P) || root=""
-  if [ -z "$root" ]; then
-    reason="no-worktree-root"
-  else
+  if [ -n "$root" ]; then
     case "$path" in
-      "$root"/*) ;;
-      *) reason="outside-worktree-root" ;;
+      "$root"/*) ours=1 ;;
     esac
   fi
-  if [ -z "$reason" ]; then
+  if [ "$ours" = 1 ]; then
     own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l 2>/dev/null | head -n 1) || own=""
     [ -z "$own" ] || reason="own-workspace"
   fi
   if [ -z "$reason" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || true)" ]; then
     reason="uncommitted-changes"
   fi
-  if [ -z "$reason" ] && [ "$dry" != 1 ]; then
+  if [ -z "$reason" ] && [ "$ours" = 0 ] && _hk_worktree_locked "$path"; then
+    reason="locked"
+  fi
+  if [ -z "$reason" ] && [ "$ours" = 1 ] && [ "$dry" != 1 ]; then
     git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || reason="git-refused"
   fi
 
@@ -588,14 +693,19 @@ _hk_worktree_retire() {
   if [ -n "$reason" ]; then
     _HK_WT_LINE="worktree $path kept ($reason)"
     case "$reason" in
-      no-worktree-root) _HK_WT_NOTE="worktree kept, git.worktree_root does not exist ($path)" ;;
-      outside-worktree-root) _HK_WT_NOTE="worktree kept, it is outside git.worktree_root ($path)" ;;
       own-workspace) _HK_WT_NOTE="worktree kept, it holds a task workspace of its own ($path)" ;;
       uncommitted-changes) _HK_WT_NOTE="worktree kept, it has uncommitted changes ($path)" ;;
+      locked) _HK_WT_NOTE="worktree kept, it is locked, a session may still be using it ($path)" ;;
       *) _HK_WT_NOTE="worktree kept, git refused to remove it ($path)" ;;
     esac
     [ "$dry" = 1 ] || _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=keep reason=$reason"
     return 1
+  fi
+  if [ "$ours" = 0 ]; then
+    _HK_WT_LINE="worktree $path left in place (outside-worktree-root)"
+    _HK_WT_NOTE="worktree left in place, jig did not create it ($path)"
+    [ "$dry" = 1 ] || _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=leave reason=outside-worktree-root"
+    return 0
   fi
   if [ "$dry" = 1 ]; then
     _HK_WT_LINE="would-remove worktree $path"
@@ -606,6 +716,36 @@ _hk_worktree_retire() {
     _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=remove"
   fi
   return 0
+}
+
+# _hk_worktree_locked <path> — true when git lists the worktree at <path> as
+# locked, and also when git cannot list worktrees at all: an unanswered
+# question keeps the workspace, like every other uncertainty here. Paths are
+# compared physically, as `_task_worktrees` prints them.
+_hk_worktree_locked() {
+  local want="$1" list p
+  list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    p=$(cd -P "$p" 2>/dev/null && pwd -P) || continue
+    [ "$p" != "$want" ] || return 0
+  done < <(printf '%s\n' "$list" \
+    | awk '/^worktree / { cur = substr($0, 10) } /^locked/ { print cur }')
+  return 1
+}
+
+# _hk_checkout_keep <dry> <task-id> — the guard `_hk_worktree_retire` gives a
+# task worktree, for a task whose branch is checked out in this checkout.
+# Non-zero, having said why, when uncommitted changes sit here: they are most
+# likely the task's own, and a `merged` that turned out wrong must not take the
+# workspace from beside them.
+_hk_checkout_keep() {
+  local dry="$1" tid="$2"
+  [ -n "$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null || true)" ] || return 0
+  _HK_WT_LINE="checkout $JIG_PROJECT kept (uncommitted-changes)"
+  _HK_WT_NOTE="this checkout has uncommitted changes on the task's branch"
+  [ "$dry" = 1 ] || _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$JIG_PROJECT action=keep reason=uncommitted-changes"
+  return 1
 }
 
 # _hk_trash_expire <dry> <ttl_days> — phase two of ADR-0006. The age comes
@@ -741,6 +881,19 @@ _hk_unknown_reason() {
      && [ -z "$(git -C "$JIG_PROJECT" rev-list -n 1 "$base_commit..$tip" 2>/dev/null || true)" ]; then
     printf 'its branch has no commits since the task started\n'
     return 0
+  fi
+  if [ -n "$base_commit" ] \
+     && git -C "$JIG_PROJECT" cat-file -e "$base_commit^{commit}" 2>/dev/null; then
+    case "$(_hk_own_work "$tip" "$base_commit")" in
+      none)
+        printf 'its branch has no commits of its own (only commits %s already had)\n' "$base"
+        return 0
+        ;;
+      nolog)
+        printf "no reflog for its branch, so its own commits cannot be told from %s's\n" "$base"
+        return 0
+        ;;
+    esac
   fi
   printf 'no sign that its branch landed on %s\n' "$base"
 }

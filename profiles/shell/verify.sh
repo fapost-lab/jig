@@ -36,7 +36,30 @@ _shell_is_script() {
 }
 
 # _shell_all_scripts — every script in the tree, one per line.
+#
+# Inside a git work tree, the listing comes from git, not the filesystem: an
+# agent runtime creates nested worktrees inside the repository (e.g.
+# .claude/worktrees/<name>/, a full copy of the repo — measured 39 extra
+# scripts from one such worktree), and those are not the project's code,
+# nor is anything gitignored or generated. git reports a nested
+# worktree — and a submodule the same way — as a single directory entry
+# without descending into it, which _shell_is_script rejects because it is
+# not a file, so nothing under it is linted. Outside a git work tree, fall
+# back to the previous filesystem walk.
 _shell_all_scripts() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # Guarded with `|| true`: under pipefail a git failure here must not
+    # abort the profile, only leave the list short.
+    # `-c` answers from the index, so a tracked script deleted but not yet
+    # staged is still listed; `[ -f ]` keeps shellcheck from failing on it.
+    git ls-files -co --exclude-standard \
+    | while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        [ -f "$f" ] || continue
+        if _shell_is_script "$f"; then printf '%s\n' "$f"; fi
+      done || true
+    return 0
+  fi
   find . \
     \( -path './.git' -o -path './node_modules' -o -path './vendor' \
        -o -path './.ai/runtime' -o -path './.ai/workspace' \) -prune -o \

@@ -11,6 +11,7 @@ paths:
   - scripts/lib/verify.sh
   - scripts/lib/profiles.sh
   - "profiles/**"
+reviewed_at: 2026-09-13
 ---
 # Verify
 
@@ -35,6 +36,12 @@ Outside: what any individual check *does*. `profiles/shell/verify.sh` running sh
 is content, not framework. Outside: installing profiles into a project — that is domain
 `install`, which owns `profiles_source_dir` and the upgrade decision table; this domain
 owns `profiles_installed_dir` and the contract the installed files must satisfy.
+
+One property of profile content is still a rule for any profile that walks the tree:
+inside git, take the file list from git (`git ls-files -co --exclude-standard`, skipping
+paths no longer on disk), not from the filesystem. Agent runtimes nest whole worktrees
+inside the repository, and git lists such a tree as one directory entry instead of a second
+copy of the project.
 
 `profiles.sh` sits on that seam and is claimed here because its subject is the profile
 contract. A change to how profiles are *copied* still belongs to `install`.

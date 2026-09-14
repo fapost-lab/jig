@@ -5,3 +5,7 @@
 # Test-run output. Logs belong outside the repository (conventions/shell.md);
 # this is the net under that rule, because one of them reached the index once.
 *.log
+
+# Claude Code sessions create worktrees inside the repository; one such
+# nested worktree once reached the index as a gitlink.
+.claude/worktrees/

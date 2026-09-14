@@ -16,6 +16,26 @@ hk_cfg() {
   mv .ai/config.yaml.tmp .ai/config.yaml
 }
 
+# hk_tick — move git's clock ten seconds past the previous tick, starting from
+# now. Ancestry tells a branch's own commit from one the base already had by
+# when each ref moved, and a tie goes to the base (ADR-0032), so a test that
+# commits and merges within one second would read its own work as foreign.
+# Call it before every git command that moves a ref the test relies on. The
+# clock lives in the repository's git directory: it survives the subshells a
+# helper runs in, is shared with the repository's worktrees, and never shows up
+# in `git status` — a clock in HOME did, whenever the test repository was HOME.
+hk_tick() {
+  local clock now
+  clock="$(git rev-parse --git-common-dir)/hk-clock"
+  if [ -f "$clock" ]; then
+    now=$(( $(cat "$clock") + 10 ))
+  else
+    now=$(( $(date +%s) + 10 ))
+  fi
+  printf '%s\n' "$now" > "$clock"
+  export GIT_COMMITTER_DATE="@$now +0000" GIT_AUTHOR_DATE="@$now +0000"
+}
+
 # hk_days_ago <n> — a YYYY-MM-DD date <n> days in the past, on BSD and GNU
 # date alike (the same portability split as jig_file_age_days).
 hk_days_ago() {
@@ -490,15 +510,23 @@ test_housekeeping_rejects_an_invalid_forge_value() {
 
 # --- session hook (domains/housekeeping) -------------------------------------------------
 
-# Wait up to ~5s for the detached housekeeping run to produce <file>.
+# hk_wait_for <file> [seconds] — wait for the detached housekeeping run to
+# produce <file>, up to [seconds] (default 60) of wall-clock time.
+#
+# The hook returns before housekeeping ends and hands back nothing to wait on,
+# so this polls. The deadline is sized for a loaded machine, not for a test
+# running alone: a passing test leaves at the first poll that sees the file, so
+# only a real failure pays for it. A 5 s budget failed under a full parallel
+# run, where this test took 13 s. The deadline is measured with $SECONDS rather
+# than counted in iterations, because under load each `sleep 0.1` takes longer
+# than it says.
 hk_wait_for() {
-  local f="$1" i=0
-  while [ "$i" -lt 50 ]; do
+  local f="$1" deadline=$((SECONDS + ${2:-60}))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     [ -e "$f" ] && return 0
     sleep 0.1
-    i=$((i + 1))
   done
-  return 1
+  [ -e "$f" ]
 }
 
 test_session_hook_runs_housekeeping_when_due() {
@@ -646,11 +674,14 @@ test_housekeeping_branch_with_landed_commits_is_merged() {
   hk_setup
   local fork
   fork=$(git rev-parse HEAD)
+  hk_tick
   git checkout -q -b task/landed
   printf 'work\n' > work.txt
   git add work.txt
+  hk_tick
   git commit -q -m "task work"
   git checkout -q main
+  hk_tick
   git merge -q --no-ff -m "merge task/landed" task/landed
   fixture_task landed "task/landed" consolidated "base_commit:$fork"
 
@@ -696,6 +727,291 @@ test_housekeeping_ignores_a_fork_point_that_no_longer_exists() {
   run jig housekeeping --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ff status=consolidated remote=merged"
+}
+
+# --- own work vs. a foreign fast-forward (ADR-0032) --------------------------
+# Git's refs alone cannot tell "merged by fast-forward" from "fast-forwarded
+# onto a newer base with nothing of its own": in both, the tip is an ancestor
+# of the base. Only reflog timing tells them apart.
+
+test_housekeeping_branch_moved_onto_a_newer_base_with_no_own_commits_is_unknown() {
+  # Observed on 2026-09-13: a task branch fast-forwarded onto origin/main with
+  # no commits of its own read as `merged`, and a `ready` task got flagged
+  # needs-consolidation for work nobody did. Three ways a branch ends up
+  # carrying only the base's commits: merge --ff-only, rebase, reset --hard.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git branch task/mff
+  git branch task/mrb
+  git branch task/mrs
+  hk_tick
+  printf 'main work\n' > main-work.txt
+  git add main-work.txt
+  git commit -q -m "main moves on"
+
+  hk_tick
+  git checkout -q task/mff
+  git merge -q --ff-only main
+  git checkout -q main
+
+  hk_tick
+  git checkout -q task/mrb
+  git rebase -q main
+  git checkout -q main
+
+  hk_tick
+  git checkout -q task/mrs
+  git reset -q --hard main
+  git checkout -q main
+
+  fixture_task mff "task/mff" ready "base_commit:$fork"
+  fixture_task mrb "task/mrb" ready "base_commit:$fork"
+  fixture_task mrs "task/mrs" ready "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mff status=ready remote=unknown"
+  assert_contains "$OUT" "mrb status=ready remote=unknown"
+  assert_contains "$OUT" "mrs status=ready remote=unknown"
+  assert_not_contains "$OUT" "flags=needs-consolidation"
+}
+
+test_housekeeping_branch_moved_onto_a_newer_base_reports_the_reason() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git branch task/noown
+  hk_tick
+  printf 'main work\n' > main-work.txt
+  git add main-work.txt
+  git commit -q -m "main moves on"
+  hk_tick
+  git checkout -q task/noown
+  git merge -q --ff-only main
+  git checkout -q main
+  fixture_task noown "task/noown" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "noown status=consolidated remote=unknown"
+  assert_contains "$OUT" \
+    "its branch has no commits of its own (only commits main already had): noown"
+}
+
+test_housekeeping_own_commit_then_fast_forward_merge_is_merged() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/ownff
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge -q --ff-only task/ownff
+  fixture_task ownff "task/ownff" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "ownff status=consolidated remote=merged via=ancestry action=purge"
+}
+
+test_housekeeping_own_commit_squash_merged_with_a_fork_point_is_merged() {
+  # The squash shape (design.md §2 step 2), now with base_commit recorded: the
+  # fork-point gate must not get in the way of a squash merge it can vouch for.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/ownsq
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge --squash task/ownsq >/dev/null
+  hk_tick
+  git commit -q -m "squashed task/ownsq"
+  fixture_task ownsq "task/ownsq" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "ownsq status=consolidated remote=merged via=ancestry action=purge"
+}
+
+test_housekeeping_own_commit_cherry_picked_onto_main_is_merged() {
+  # The rebase-merge shape (design.md §2 step 3): every commit lands
+  # individually, with the branch itself left untouched.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/owncp
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git cherry-pick task/owncp >/dev/null
+  fixture_task owncp "task/owncp" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "owncp status=consolidated remote=merged via=ancestry action=purge"
+}
+
+test_housekeeping_own_work_after_an_earlier_fast_forward_is_still_seen() {
+  # The branch first carries only the base's commits (which alone would read
+  # `unknown`), then gets a commit of its own before merging. The earlier
+  # fast-forward must not hide the later own work.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git branch task/ffthenown
+  hk_tick
+  printf 'main work\n' > main-work.txt
+  git add main-work.txt
+  git commit -q -m "main moves on"
+  hk_tick
+  git checkout -q task/ffthenown
+  git merge -q --ff-only main
+  hk_tick
+  printf 'own\n' > own.txt
+  git add own.txt
+  git commit -q -m "own work after the fast-forward"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/ffthenown" task/ffthenown
+  fixture_task ffthenown "task/ffthenown" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" \
+    "ffthenown status=consolidated remote=merged via=ancestry action=purge"
+}
+
+test_housekeeping_a_discarded_own_commit_is_unknown() {
+  # A commit made on the branch and then reset away landed nothing: it is not
+  # an ancestor of the tip any more, so it must not count as own work.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/discarded
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work to be discarded"
+  hk_tick
+  git checkout -q main
+  printf 'main work\n' > main-work.txt
+  git add main-work.txt
+  hk_tick
+  git commit -q -m "main moves on"
+  hk_tick
+  git checkout -q task/discarded
+  git reset -q --hard main
+  git checkout -q main
+  fixture_task discarded "task/discarded" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "discarded status=consolidated remote=unknown"
+  assert_contains "$OUT" \
+    "its branch has no commits of its own (only commits main already had): discarded"
+}
+
+test_housekeeping_remote_tracking_ref_reads_merged_from_origin() {
+  # The bare remote lives beside the project, not inside it, the same reason
+  # hk_worktree_setup nests the project under `repo`.
+  mkdir repo
+  cd repo
+  hk_setup
+  git init -q --bare ../origin.git
+  git remote add origin ../origin.git
+  hk_tick
+  git push -q origin main
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/remote
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git push -q origin task/remote
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/remote" task/remote
+  hk_tick
+  git push -q origin main
+  git branch -q -D task/remote
+  fixture_task remote "task/remote" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "remote status=consolidated remote=merged via=ancestry action=purge"
+}
+
+test_housekeeping_remote_tracking_ref_ff_onto_main_with_no_own_commits_is_unknown() {
+  # The mirror of the case above: nothing of its own, read from
+  # origin/<branch> once the local branch is gone.
+  mkdir repo
+  cd repo
+  hk_setup
+  git init -q --bare ../origin.git
+  git remote add origin ../origin.git
+  hk_tick
+  git push -q origin main
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git branch task/remoteff
+  hk_tick
+  printf 'main work\n' > main-work.txt
+  git add main-work.txt
+  git commit -q -m "main moves on"
+  hk_tick
+  git push -q origin main
+  hk_tick
+  git checkout -q task/remoteff
+  git merge -q --ff-only main
+  hk_tick
+  git push -q origin task/remoteff
+  git checkout -q main
+  git branch -q -D task/remoteff
+  fixture_task remoteff "task/remoteff" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "remoteff status=consolidated remote=unknown"
+}
+
+test_housekeeping_no_reflog_for_branch_stays_unknown() {
+  # core.logAllRefUpdates is turned off before the branch exists, so its ref
+  # never gets a reflog: its own commits cannot be told from the base's.
+  hk_setup
+  git config core.logAllRefUpdates false
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/noreflog
+  rm -f .git/logs/refs/heads/task/noreflog
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  rm -f .git/logs/refs/heads/task/noreflog
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/noreflog" task/noreflog
+  fixture_task noreflog "task/noreflog" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "noreflog status=consolidated remote=unknown"
+  assert_contains "$OUT" \
+    "no reflog for its branch, so its own commits cannot be told from main's: noreflog"
 }
 
 # --- what a purged task leaves behind ----------------------------------------
@@ -772,10 +1088,13 @@ hk_worktree_setup() {
 hk_worktree_task() {
   local id="$1" wt
   jig task new "$id" >/dev/null
+  hk_tick
   wt=$(jig task start "$id" --worktree 2>/dev/null)
   printf 'work\n' > "$wt/$id.txt"
   git -C "$wt" add "$id.txt"
+  hk_tick
   git -C "$wt" commit -q -m "work for $id"
+  hk_tick
   git merge -q --ff-only "task/$id"
   jig task set "$id" knowledge_consolidated true >/dev/null
   jig task set "$id" status consolidated >/dev/null
@@ -837,28 +1156,81 @@ test_housekeeping_keeps_a_worktree_holding_a_workspace_of_its_own() {
   assert_file .ai/workspace/tasks/T-1/state
 }
 
-test_housekeeping_never_touches_a_worktree_outside_the_root() {
-  # A worktree somebody made by hand, for reasons of their own, is not a task
-  # worktree even when it has the task's branch checked out.
-  hk_worktree_setup
-  # The root exists, so what refuses is the path check, not a missing root.
+# hk_foreign_worktree_task <id> — the task's branch checked out in a worktree
+# jig did not create (`../manual`, beside the default root), committed to,
+# fast-forwarded into main and closed: how an agent runtime's own session
+# worktree looks once a task was started inside it.
+hk_foreign_worktree_task() {
+  local id="$1"
+  # The root exists, so what decides is the path check, not a missing root.
   mkdir -p ../repo.worktrees
-  jig task new T-1 >/dev/null
-  git worktree add -q -b task/T-1 ../manual main
-  sed "s|^created_at:|branch: task/T-1\nbase_commit: $(git rev-parse main)\ncreated_at:|" \
-    .ai/workspace/tasks/T-1/state > s.tmp
-  mv s.tmp .ai/workspace/tasks/T-1/state
-  printf 'work\n' > ../manual/T-1.txt
-  git -C ../manual add T-1.txt
+  jig task new "$id" >/dev/null
+  hk_tick
+  git worktree add -q -b "task/$id" ../manual main
+  sed "s|^created_at:|branch: task/$id\nbase_commit: $(git rev-parse main)\ncreated_at:|" \
+    ".ai/workspace/tasks/$id/state" > ../s.tmp
+  mv ../s.tmp ".ai/workspace/tasks/$id/state"
+  printf 'work\n' > "../manual/$id.txt"
+  git -C ../manual add "$id.txt"
+  hk_tick
   git -C ../manual commit -q -m "work"
-  git merge -q --ff-only task/T-1
-  jig task set T-1 knowledge_consolidated true >/dev/null
-  jig task set T-1 status consolidated >/dev/null
+  hk_tick
+  git merge -q --ff-only "task/$id"
+  jig task set "$id" knowledge_consolidated true >/dev/null
+  jig task set "$id" status consolidated >/dev/null
+}
+
+test_housekeeping_leaves_a_clean_foreign_worktree_and_purges_the_workspace() {
+  # A worktree somebody made by hand, or a runtime made for its session, is
+  # never touched. Clean and unlocked, it no longer holds the workspace back:
+  # otherwise the task sits under "needs you" on every run until a person
+  # removes a tree jig does not own (ADR-0029 as amended).
+  hk_worktree_setup
+  hk_foreign_worktree_task T-1
+  local wt
+  wt=$(cd -P ../manual && pwd -P)
 
   run jig housekeeping --verbose
-  assert_contains "$OUT" "kept (outside-worktree-root)"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt left in place (outside-worktree-root)"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=purge"
   assert_file ../manual/T-1.txt
+  assert_no_file .ai/workspace/tasks/T-1
+  assert_file_contains .ai/runtime/housekeeping.log "task=T-1 worktree=$wt action=leave reason=outside-worktree-root"
+
+  run jig housekeeping
+  assert_not_contains "$OUT" "needs you"
+}
+
+test_housekeeping_keeps_the_workspace_of_a_foreign_worktree_with_uncommitted_work() {
+  hk_worktree_setup
+  hk_foreign_worktree_task T-1
+  local wt
+  wt=$(cd -P ../manual && pwd -P)
+  printf 'not reviewed yet\n' > ../manual/draft.txt
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "worktree $wt kept (uncommitted-changes)"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=worktree-kept"
+  assert_file ../manual/draft.txt
   assert_file .ai/workspace/tasks/T-1/state
+}
+
+test_housekeeping_keeps_the_workspace_of_a_locked_foreign_worktree() {
+  # Claude Code locks the worktree of a running agent: a live session is not
+  # the moment to take the task's context away.
+  hk_worktree_setup
+  hk_foreign_worktree_task T-1
+  local wt
+  wt=$(cd -P ../manual && pwd -P)
+  git worktree lock ../manual
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "worktree $wt kept (locked)"
+  assert_file .ai/workspace/tasks/T-1/state
+
+  run jig housekeeping
+  assert_contains "$OUT" "  worktree kept, it is locked, a session may still be using it ($wt): T-1"
 }
 
 test_housekeeping_dry_run_removes_no_worktree() {
@@ -890,6 +1262,100 @@ test_housekeeping_inside_a_worktree_leaves_the_borrowed_workspace_alone() {
   assert_contains "$OUT" "no task workspaces"
   [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the link was moved"
   assert_file .ai/workspace/tasks/T-1/state
+}
+
+# --- the checkout guard (a purge target checked out in this checkout) -------
+# `_task_worktrees` never lists the checkout housekeeping itself runs from, so
+# a task whose branch is checked out right here, not in a worktree, needs its
+# own guard: uncommitted changes on that branch are most likely the task's
+# own, and a `merged` verdict must not take the workspace from beside them.
+
+test_housekeeping_guard_keeps_this_checkout_with_uncommitted_changes_on_the_purged_branch() {
+  hk_setup
+  local fork proj
+  fork=$(git rev-parse HEAD)
+  proj=$(git rev-parse --show-toplevel)
+  hk_tick
+  git checkout -q -b task/here
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/here" task/here
+  hk_tick
+  git checkout -q task/here
+  fixture_task t "task/here" consolidated "base_commit:$fork"
+  printf 'not reviewed yet\n' > uncommitted.txt
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "checkout $proj kept (uncommitted-changes)"
+  assert_contains "$OUT" \
+    "t status=consolidated remote=merged via=ancestry action=preserve flags=worktree-kept"
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "  this checkout has uncommitted changes on the task's branch: t"
+  assert_dir .ai/workspace/tasks/t
+  assert_file_contains .ai/runtime/housekeeping.log \
+    "task=t worktree=$proj action=keep reason=uncommitted-changes"
+
+  run jig status
+  assert_contains "$OUT" "worktrees kept: 1 task(s)"
+}
+
+test_housekeeping_guard_does_not_block_a_clean_checkout_on_the_purged_branch() {
+  # A fixture repo from hk_setup may already have untracked files; commit
+  # everything first so the branch checked out here is genuinely clean, the
+  # way hk_worktree_setup does for the same reason.
+  mkdir repo
+  cd repo
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/here-clean
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/here-clean" task/here-clean
+  hk_tick
+  git checkout -q task/here-clean
+  fixture_task t "task/here-clean" consolidated "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "t status=consolidated remote=merged via=ancestry action=purge"
+  assert_no_file .ai/workspace/tasks/t
+}
+
+test_housekeeping_dry_run_guard_writes_no_log() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/here-dry
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/here-dry" task/here-dry
+  hk_tick
+  git checkout -q task/here-dry
+  fixture_task t "task/here-dry" consolidated "base_commit:$fork"
+  printf 'not reviewed yet\n' > uncommitted.txt
+
+  run jig housekeeping --dry-run --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "action=preserve flags=worktree-kept"
+  assert_no_file .ai/runtime/housekeeping.log
 }
 
 # --- the grouped report -------------------------------------------------------

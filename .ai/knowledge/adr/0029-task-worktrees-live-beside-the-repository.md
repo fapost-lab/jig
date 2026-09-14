@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-13
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -119,3 +119,24 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > A switched session may be fenced to the worktree: Claude Code's editing tools refuse the
 > workspace link, because it resolves into the filing checkout, so task artifacts are
 > written there with plain shell commands.
+
+> **Amendment (2026-09-13).** A worktree outside `git.worktree_root` is still never touched,
+> but it no longer holds the workspace back unconditionally. Claude Code creates a worktree
+> per session under `.claude/worktrees/`; a task started inside one checked its branch out
+> there, and housekeeping kept the task under "needs you" on every run until a person removed
+> a tree jig does not own. That is cleanup by manual discipline, which this decision rejected.
+> Now such a worktree, when clean and not locked, is left in place and the workspace is purged
+> (log `action=leave reason=outside-worktree-root`). Uncommitted changes keep it, as before,
+> and so does a lock (`git worktree lock`, which Claude Code holds while an agent runs).
+> The consequence above about a changed `git.worktree_root` changes with it: a clean worktree
+> stranded under the old root no longer keeps its workspace.
+>
+> Removing runtime worktrees was considered and rejected: the runtime removes clean ones
+> itself when a session ends, removal would pull the working directory from under a live
+> session, and it would add a second deletion outside `.ai/`. Declaring the runtime's worktree
+> directory in an adapter was rejected too: once foreign worktrees are left alone and the
+> `shell` profile takes its file list from git, nothing consumes it, and the location is the
+> runtime's to change (Claude Code's `WorktreeCreate` hook moves it).
+>
+> The checkout housekeeping runs in now gets the same guard as a task worktree: a task whose
+> branch is checked out there, with uncommitted changes, keeps its workspace (ADR-0032).
