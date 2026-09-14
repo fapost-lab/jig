@@ -1,0 +1,225 @@
+# TEMPORARY discovery probe for task windows-support. Delete before merging.
+#
+# Collects the real failure list on windows-latest instead of guessing it from
+# the code. Nothing here is asserted: every step records what happened and the
+# job stays green, so one run yields the whole picture rather than the first
+# failure.
+#
+# Two setups on the same runner image:
+#   defaults   — git and Git Bash as a Windows user gets them out of the box:
+#                core.autocrlf=true, `ln -s` copies instead of linking.
+#   configured — what a Windows guide could tell the user to set: LF checkout,
+#                core.symlinks=true, MSYS=winsymlinks:nativestrict.
+# The difference between the two is the design question: what must be fixed
+# in code, and what may be required in documentation.
+name: windows-probe
+
+on:
+  push:
+    branches: [task/windows-support]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: windows ${{ matrix.setup }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - setup: defaults
+            autocrlf: "true"
+            symlinks: "false"
+            msys: ""
+          - setup: configured
+            autocrlf: "input"
+            symlinks: "true"
+            msys: "winsymlinks:nativestrict"
+    defaults:
+      run:
+        shell: bash
+    env:
+      MSYS: ${{ matrix.msys }}
+      PROBE: ${{ github.workspace }}/probe-out
+
+    steps:
+      # Before checkout, so the checkout itself is made under this setup.
+      # --global is acceptable on an ephemeral runner; do not copy this block
+      # into anything run on a developer machine.
+      - name: Configure git
+        run: |
+          git config --global core.autocrlf "${{ matrix.autocrlf }}"
+          git config --global core.symlinks "${{ matrix.symlinks }}"
+
+      - uses: actions/checkout@v4
+
+      - name: Environment facts
+        run: |
+          set +e
+          mkdir -p "$PROBE"
+          {
+            echo "== versions"
+            bash --version | head -n 1
+            git --version
+            uname -a
+            echo "OSTYPE=$OSTYPE MSYS=$MSYS"
+            if command -v shellcheck >/dev/null 2>&1; then
+              shellcheck --version | sed -n 's/^version: /shellcheck /p'
+            else
+              echo "shellcheck: not installed"
+            fi
+            echo "== git config"
+            git config --show-origin --get-all core.autocrlf
+            git config --show-origin --get-all core.symlinks
+            git config --show-origin --get-all core.filemode
+            echo "== line endings of the checkout"
+            printf 'scripts/jig CR lines: '; grep -c "$(printf '\r')" scripts/jig
+            printf 'scripts/lib/common.sh CR lines: '; grep -c "$(printf '\r')" scripts/lib/common.sh
+            echo "== committed symlinks as checked out"
+            git ls-files -s | awk '$1 == "120000" { print $4 }' | while read -r p; do
+              if [ -L "$p" ]; then echo "link  $p -> $(readlink "$p")"; else echo "plain $p"; fi
+            done
+            echo "== ln -s behaviour"
+            tmp=$(mktemp -d)
+            mkdir "$tmp/target"
+            ln -s "$tmp/target" "$tmp/link"; echo "ln -s exit=$?"
+            if [ -L "$tmp/link" ]; then echo "ln -s makes a symlink"; else echo "ln -s makes a copy"; fi
+            echo "== exec bit"
+            touch "$tmp/f"; chmod 555 "$tmp"; touch "$tmp/g" 2>/dev/null && echo "chmod 555 dir: still writable" || echo "chmod 555 dir: read-only"
+            chmod 755 "$tmp"
+            echo "== fifo (tests/run.sh parallel mode needs one)"
+            if command -v mkfifo >/dev/null 2>&1 && mkfifo "$tmp/fifo" 2>/dev/null && [ -p "$tmp/fifo" ]; then
+              echo "mkfifo works"
+            else
+              echo "mkfifo unavailable"
+            fi
+            echo "== paths"
+            echo "pwd=$(pwd)"
+            echo "pwd -P=$(pwd -P)"
+            echo "pwd -W=$(pwd -W 2>/dev/null)"
+            echo "HOME=$HOME TMPDIR=${TMPDIR:-} TEMP=${TEMP:-}"
+            echo "git toplevel=$(git rev-parse --show-toplevel)"
+            echo "nproc=$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
+          } 2>&1 | tee "$PROBE/environment.log"
+
+      - name: Test suite
+        run: |
+          set +e
+          # Parallel mode needs a FIFO; without one the whole run would be
+          # lost to the runner rather than to the tests, so fall back to serial.
+          tmp=$(mktemp -d)
+          if command -v mkfifo >/dev/null 2>&1 && mkfifo "$tmp/fifo" 2>/dev/null; then
+            export JIG_TEST_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+          else
+            export JIG_TEST_JOBS=1
+          fi
+          echo "JIG_TEST_JOBS=$JIG_TEST_JOBS" | tee "$PROBE/tests.log"
+          start=$(date +%s)
+          tests/run.sh >> "$PROBE/tests.log" 2>&1
+          status=$?
+          echo "tests/run.sh exit=$status seconds=$(( $(date +%s) - start ))" | tee -a "$PROBE/tests.log"
+          grep -E '^(ok|FAIL)' "$PROBE/tests.log" | sort | uniq -c | sort -rn | head -n 5
+          grep -E '^FAIL' "$PROBE/tests.log" > "$PROBE/tests-failed.txt"
+          wc -l < "$PROBE/tests-failed.txt"
+
+      # Each command reports its own exit code and the run continues, so one
+      # early failure does not hide the rest.
+      - name: Smoke — copy mode, tasks, worktree
+        run: |
+          set +e
+          step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
+          {
+            work=$(mktemp -d)
+            git -C "$work" init -q .
+            git -C "$work" config user.name jig
+            git -C "$work" config user.email jig@example.com
+            git -C "$work" symbolic-ref HEAD refs/heads/main
+            printf '# probe\n' > "$work/README.md"
+            git -C "$work" add README.md
+            git -C "$work" commit -q -m init
+            cd "$work" || exit 1
+            step "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+            git add -A && git commit -q -m "jig init"
+            # Mode 100644 here means Linux and macOS teammates cannot run them.
+            echo "== modes recorded for executables committed from Windows"
+            git ls-files -s .ai/scripts/jig .ai/scripts/jig-session-hook .ai/profiles/shell/verify.sh
+            step .ai/scripts/jig status
+            step .ai/scripts/jig verify
+            step .ai/scripts/jig task new probe-a --class T1 --domains core
+            step .ai/scripts/jig task start probe-a
+            step .ai/scripts/jig task current
+            git checkout -q main
+            step .ai/scripts/jig task new probe-b --class T1 --domains core
+            step .ai/scripts/jig task start probe-b --worktree
+            step .ai/scripts/jig task list
+            step .ai/scripts/jig task artifacts probe-b
+            wt=$(git worktree list --porcelain | sed -n 's/^worktree //p' | tail -n 1)
+            echo "worktree path from git: $wt"
+            ls -la "$wt/.ai/workspace/tasks/" 2>&1
+            step .ai/scripts/jig status
+            step .ai/scripts/jig housekeeping --dry-run
+            step .ai/scripts/jig housekeeping
+            step .ai/scripts/jig-session-hook
+            step .ai/scripts/jig upgrade --dry-run
+
+            # A teammate on Windows clones a project someone else initialised.
+            # The jig repository has `.gitattributes` with eol=lf, but a project
+            # does not, so this is where core.autocrlf reaches the installed
+            # scripts.
+            echo; echo "== fresh clone of the initialised project"
+            clone=$(mktemp -d)/clone
+            git clone -q "$work" "$clone"
+            cd "$clone" || exit 1
+            git config user.name jig
+            git config user.email jig@example.com
+            printf '.ai/scripts/jig CR lines: '; grep -c "$(printf '\r')" .ai/scripts/jig
+            step .ai/scripts/jig status
+            step .ai/scripts/jig verify
+            step .ai/scripts/jig task list
+          } 2>&1 | tee "$PROBE/smoke-copy.log"
+
+      - name: Smoke — link mode
+        run: |
+          set +e
+          step() { echo; echo "\$ $*"; "$@"; echo "exit=$?"; }
+          {
+            work=$(mktemp -d)
+            git -C "$work" init -q .
+            git -C "$work" config user.name jig
+            git -C "$work" config user.email jig@example.com
+            git -C "$work" symbolic-ref HEAD refs/heads/main
+            printf '# probe\n' > "$work/README.md"
+            git -C "$work" add README.md
+            git -C "$work" commit -q -m init
+            cd "$work" || exit 1
+            step "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --link --profiles generic,shell
+            ls -la .ai .ai/scripts 2>&1 | head -n 20
+            step .ai/scripts/jig status
+            step .ai/scripts/jig upgrade --dry-run
+          } 2>&1 | tee "$PROBE/smoke-link.log"
+
+      - name: Smoke — install.sh
+        run: |
+          set +e
+          {
+            bash install.sh --repository "https://github.com/${{ github.repository }}.git" --ref "${{ github.ref_name }}" --no-path
+            echo "install.sh exit=$?"
+            ls -la "$HOME/.local/bin" 2>&1
+            "$HOME/.local/bin/jig" version
+            echo "installed jig version exit=$?"
+          } 2>&1 | tee "$PROBE/smoke-install.log"
+
+      - name: Upload probe logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-probe-${{ matrix.setup }}
+          path: probe-out/
