@@ -10,6 +10,17 @@ cmd_task() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
+    help | -h | --help) _task_usage; return 0 ;;
+  esac
+  # `jig task <sub> -h|--help` prints that subcommand's usage and does nothing
+  # else. Only the first argument counts: it is where every subcommand reads
+  # its task id, and a later `--help` is a value (`pause --reason --help`).
+  case "${1:-}" in
+    -h | --help)
+      if _task_usage "$sub"; then return 0; fi
+      ;;
+  esac
+  case "$sub" in
     new) task_new "$@" ;;
     set) task_set "$@" ;;
     start) task_start "$@" ;;
@@ -21,7 +32,28 @@ cmd_task() {
     current) task_current "$@" ;;
     changes) task_changes "$@" ;;
     artifacts) task_artifacts "$@" ;;
-    *) jig_die "usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts ..." ;;
+    *) jig_die "$(_task_usage)" ;;
+  esac
+}
+
+# _task_usage [sub] — the usage line of <sub>, or of `jig task` as a whole
+# when <sub> is empty; non-zero, printing nothing, for an unknown <sub>. The
+# one source for both `--help` and the usage errors the subcommands die with.
+_task_usage() {
+  case "${1:-}" in
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts ...\n' ;;
+    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
+    start) printf 'usage: jig task start <id> [--worktree]\n' ;;
+    set) printf 'usage: jig task set <id> <key> <value>\n' ;;
+    abandon) printf 'usage: jig task abandon <id>\n' ;;
+    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
+    resume) printf 'usage: jig task resume <id>\n' ;;
+    list) printf 'usage: jig task list [--all] [--status <status>]\n' ;;
+    show) printf 'usage: jig task show <id>\n' ;;
+    current) printf 'usage: jig task current\n' ;;
+    changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
+    artifacts) printf 'usage: jig task artifacts <id> [--provided discovery,design,...]\n' ;;
+    *) return 1 ;;
   esac
 }
 
@@ -52,8 +84,11 @@ task_state_get() {
 _task_valid_id() {
   # No leading dot: rules out `.`, `..` and hidden directories, which the
   # `*/` walks in task_list / task_current would not see.
+  # No leading dash: every subcommand reads its id from the first argument,
+  # so `-x` is a flag in the wrong place, never a name. `jig task new --help`
+  # used to file a workspace named `--help`.
   case "$1" in
-    '' | .* | *[!A-Za-z0-9._-]*) return 1 ;;
+    '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -215,6 +250,9 @@ _task_candidates_for_branch() {
   for dir in "$base"/*/; do
     [ -f "${dir}state" ] || continue
     id=$(basename "$dir")
+    # A directory that is not a well-formed task id is not ours to read
+    # (RULES.md): task_state_get would die on it, and take `task current` with it.
+    _task_valid_id "$id" || continue
     br=$(task_state_get "$id" branch)
     [ "$br" = "$branch" ] || continue
     st=$(task_state_get "$id" status)
@@ -435,7 +473,7 @@ _task_refuse_dirty_tree() {
 
 task_new() {
   jig_require_init
-  [ $# -ge 1 ] || jig_die "usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]"
+  [ $# -ge 1 ] || jig_die "$(_task_usage new)"
   local id="$1"
   shift
   local class="" domains="" from=""
@@ -510,7 +548,7 @@ task_new() {
 # first needed (ADR-0026, as amended).
 task_start() {
   jig_require_init
-  [ $# -ge 1 ] || jig_die "usage: jig task start <id> [--worktree]"
+  [ $# -ge 1 ] || jig_die "$(_task_usage start)"
   local id="$1" worktree=0
   shift
   while [ $# -gt 0 ]; do
@@ -697,7 +735,7 @@ _task_undo_worktree_start() {
 }
 
 task_set() {
-  [ $# -eq 3 ] || jig_die "usage: jig task set <id> <key> <value>"
+  [ $# -eq 3 ] || jig_die "$(_task_usage set)"
   jig_require_init
   local id="$1" key="$2" value="$3" dir
   dir=$(task_dir "$id")
@@ -730,7 +768,7 @@ task_set() {
 }
 
 task_abandon() {
-  [ $# -eq 1 ] || jig_die "usage: jig task abandon <id>"
+  [ $# -eq 1 ] || jig_die "$(_task_usage abandon)"
   task_set "$1" status abandoned
 }
 
@@ -743,7 +781,7 @@ task_abandon() {
 # index, because `stash@{0}` shifts as other entries are pushed.
 task_pause() {
   jig_require_init
-  [ $# -ge 1 ] || jig_die "usage: jig task pause <id> [--reason <text>] [--stash]"
+  [ $# -ge 1 ] || jig_die "$(_task_usage pause)"
   local id="$1"
   shift
   local reason="" stash=0
@@ -809,7 +847,7 @@ task_pause() {
 # as a backup, which is why `paused_stash` itself is not cleared here.
 task_resume() {
   jig_require_init
-  [ $# -eq 1 ] || jig_die "usage: jig task resume <id>"
+  [ $# -eq 1 ] || jig_die "$(_task_usage resume)"
   local id="$1" dir
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task resume: unknown task: $id"
@@ -894,6 +932,9 @@ task_list() {
   for dir in "$base"/*/; do
     [ -f "${dir}state" ] || continue
     id=$(basename "$dir")
+    # Same rule as _task_candidates_for_branch: skip, never die on, a
+    # directory whose name is not a task id.
+    _task_valid_id "$id" || continue
     class=$(task_state_get "$id" class)
     status=$(task_state_get "$id" status)
     branch=$(task_state_get "$id" branch)
@@ -935,7 +976,7 @@ $line"
 
 task_show() {
   jig_require_init
-  [ $# -eq 1 ] || jig_die "usage: jig task show <id>"
+  [ $# -eq 1 ] || jig_die "$(_task_usage show)"
   local file
   file="$(task_dir "$1")/state"
   [ -f "$file" ] || jig_die "task show: unknown task: $1"
@@ -980,7 +1021,7 @@ task_current() {
 # Read-only review inventory; the task ID establishes context, not hunk ownership.
 task_changes() {
   jig_require_init
-  [ $# -ge 1 ] || jig_die "usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]"
+  [ $# -ge 1 ] || jig_die "$(_task_usage changes)"
   local id="$1" base="" head format=report files="" has_files=0 row path layer rows selected="" candidates kept t
   shift
   [ -f "$(task_dir "$id")/state" ] || jig_die "task changes: unknown task: $id"
@@ -1071,7 +1112,7 @@ _task_artifact_route() {
 
 task_artifacts() {
   jig_require_init
-  [ $# -ge 1 ] || jig_die "usage: jig task artifacts <id> [--provided discovery,design,...]"
+  [ $# -ge 1 ] || jig_die "$(_task_usage artifacts)"
   local id="$1" root class provided="" seen=0 kinds kind fact stage inputs semantic availability facts="" t
   shift
   root=$(task_dir "$id") || return 1
