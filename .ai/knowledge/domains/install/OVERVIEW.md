@@ -14,6 +14,7 @@ paths:
   - "adapters/**"
   - install.sh
   - scripts/lib/self-update.sh
+  - .github/scripts/release-tag.sh
 reviewed_at: 2026-09-14
 ---
 # Install
@@ -38,14 +39,22 @@ project owns.
   with the project's installed one. Release tags are the update channel and `main` the
   development channel (ADR-0033). Moving the global framework never changes a project; only
   `upgrade` does.
+- Releases: a merge into `main` that raises `JIG_VERSION` is tagged `v<JIG_VERSION>` by the
+  `release` job in CI once the tests pass; `.github/scripts/release-tag.sh` decides (ADR-0034).
+  Raise the version in the pull request that should become the release, in
+  `scripts/lib/version.sh` only, as `major.minor.patch` without leading zeros: patch for a fix,
+  minor for a new capability, major for a change that breaks commands, the `.ai/` layout, the
+  `init`/`upgrade` contract or the installer — minor instead while below `1.0.0`. A version never
+  goes back.
 
 ## Boundaries
 
 Outside: what a skill or profile *says*. Adapters contain no SDLC logic; the only
 transform today is Codex's invocation syntax (`/jig-x` → `$jig-x`).
 
-Outside: how a release tag is made. The installer and `self-update` only read tags; the
-release process creates them, and must keep each tag equal to its commit's `JIG_VERSION`.
+The installer and `self-update` only read release tags. Only the CI `release` job creates them,
+and it never tags a version its commit does not declare (ADR-0034). The release script lives under
+`.github/` so that `init`, which copies `scripts/`, never installs it into a project.
 
 Outside: running checks (domain `verify`). This domain installs `profiles/`; it does not
 know what a profile does.
@@ -66,3 +75,5 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
 - `scripts/lib/self-update.sh` — `cmd_self_update`.
 - `scripts/lib/common.sh` — `jig_release_version`, `jig_version_newer`, `jig_newest_release`,
   `jig_global_executable`, `jig_declared_version`, `jig_version_of`.
+- `.github/scripts/release-tag.sh` — whether to tag a release; run by the `release` job of
+  `.github/workflows/ci.yml`.

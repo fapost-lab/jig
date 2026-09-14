@@ -686,6 +686,13 @@ bash tests/run.sh
 one at a time, or any other number to choose the width. A name filter narrows the run:
 `tests/run.sh knowledge::`.
 
+To release a new version, raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request
+that should become the release: `major.minor.patch` without leading zeros, where patch is a fix, minor a new
+capability, and major a change that breaks commands, the `.ai/` layout, `init`/`upgrade` or the
+installer (before `1.0.0`, such a change raises minor). After the merge, CI runs the tests and
+then tags `v<JIG_VERSION>` itself; a merge that leaves the version alone creates nothing, and a
+version lower than the latest release fails the job. Nobody tags by hand.
+
 The shell profile also runs ShellCheck. Follow [AGENTS.md](AGENTS.md), the
 [rules and invariants](.ai/knowledge/RULES.md), and [accepted
 decisions](.ai/knowledge/adr/) before changing framework behavior. Task notes belong in the ignored workspace; lasting
