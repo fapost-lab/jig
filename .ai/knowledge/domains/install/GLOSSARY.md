@@ -14,6 +14,7 @@ paths:
   - "adapters/**"
   - install.sh
   - scripts/lib/self-update.sh
+  - .github/scripts/release-tag.sh
 reviewed_at: 2026-09-14
 ---
 # Install glossary
@@ -64,7 +65,8 @@ project's installed copy is unaffected until `upgrade` (ADR-0033).
 ## Release tag
 
 An annotated tag `v<major>.<minor>.<patch>`, digits only, on a commit whose `JIG_VERSION` is
-the same version. Anything else — a pre-release suffix, a stray tag — is not a release.
+the same version. Anything else — a pre-release suffix, a stray tag — is not a release. Only the
+CI `release` job creates one, always without leading zeros (ADR-0034).
 
 ## Update channel
 

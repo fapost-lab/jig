@@ -108,3 +108,7 @@ projects.
   runner decides an assertion.
 - A new command library is framework-owned: copy-mode projects report it as pending until
   `jig upgrade` (ADR-0017).
+
+> **Amendment (2026-09-14).** "How tags are made belongs to the release process" is settled by
+> ADR-0034: the `release` job in CI tags `v<JIG_VERSION>` after the tests pass on a merge that
+> raises the version, and a tag name is always canonical — no leading zeros.
