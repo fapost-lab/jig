@@ -26,7 +26,7 @@ up the links from its unfinished tasks.
   clarifies what was said.
 - What is true when the work is done: an idea is tested in conversation and kept as a committed
   specification with a roadmap; tasks are filed from it phase by phase and linked back; the
-  roadmap shows progress; a spec can be removed cleanly or carried into a new project.
+  roadmap shows progress; a spec can be removed cleanly or copied into a new project.
 
 ## Stress test
 
@@ -55,9 +55,10 @@ up the links from its unfinished tasks.
 ## Scope and non-goals
 
 - In scope: `.ai/specs/<id>/` storage; the `jig-idea` skill; `jig spec list` and the `specs:`
-  status line; filing phase tasks with a `Spec:` link; roadmap checkmarks at consolidation;
-  `jig spec remove`; carrying a spec into a new project.
-- Not doing: spec statuses; a `parent` field in task state; dates or point estimates in
+  status line; filing phase tasks with a `Spec:` link; roadmap checkmarks at the knowledge decision;
+  `jig spec remove`.
+- Not doing: a mechanism for carrying a spec into a new project (the directory is copied by
+  hand); spec statuses; a `parent` field in task state; dates or point estimates in
   roadmaps; copying the SDD plugin's skills.
 
 ## Decisions
@@ -73,16 +74,17 @@ up the links from its unfinished tasks.
 - `jig spec remove` unlinks unfinished tasks, abandons unstarted ones only with
   `--abandon-unstarted`, never abandons started ones, and moves the spec to trash — rejected:
   `rm -rf` or `git rm`.
-- Carrying a spec to a new project is a copy with one living copy, through guided project
-  init — its own phase.
+- Carrying a spec into a new project is a plain copy of its directory; from then on that
+  project's Jig tracks it — decided by the human on 2026-09-15, which dropped the planned phase 3.
+- A task's roadmap items are checked when its knowledge decision is recorded, before the commit,
+  so the checkmark lands with the work — rejected: checking at the close, after the merge, which
+  would need a second commit and pull request per task.
 - SDD plugin techniques (three conversation phases, pressure lenses, an independent failure
   hunt, destination, fog, waves) are restated, not copied.
 
 ## Open questions
 
-- Phase 3: what the source project keeps after a spec moves out (pointer form) without
-  statuses.
-- Phase 2: whether `jig-task` should warn when a task with a `Spec:` line is started before the
+- Later: whether `jig-task` should warn when a task with a `Spec:` line is started before the
   items it depends on are done.
 
 ## Assumptions left untested

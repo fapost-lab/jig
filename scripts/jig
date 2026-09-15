@@ -62,6 +62,9 @@ Usage: jig <command> [args]
   knowledge reviewed <id>        stamp a document as reconciled with the code
   spec new <id>                  create .ai/specs/<id>/ from the specification templates
   spec list                      specifications under .ai/specs/ and their roadmap progress
+  spec done <task-id>            check the roadmap items that name a spec-linked task
+  spec remove <id> [--dry-run] [--abandon-unstarted]
+                                 unlink a spec's open tasks and move the spec to trash
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
   measure                        knowledge quality, process weight, change size
   self-update                    move the global framework checkout to the newest release

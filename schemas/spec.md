@@ -46,4 +46,51 @@ A line that opens with a backticked command rather than a task id, like
 - An item is a finished slice, never a layer; a dependency carries a one-line reason:
   `(after: `<id>` — <reason>)`.
 - No dates and no point estimates.
-- A `task-id` is added when the item's task is filed; `[x]` when that task is closed.
+- A `task-id` is added when the item's task is filed; `[x]` is set by `jig spec done` when that
+  task's knowledge decision is recorded, never by hand.
+
+## The `Spec:` line in a task
+
+A task filed from a roadmap carries one line in its `.ai/workspace/tasks/<task-id>/task.md`:
+
+```text
+Spec: .ai/specs/<spec-id>/ — Phase <n>
+```
+
+The whole line must match: `Spec: .ai/specs/<spec-id>/`, then optionally whitespace, a dash (`—`,
+`-` or `--`), whitespace and `Phase <n>`. A `<spec-id>` outside the id grammar links to nothing. Two
+lines naming different specs are a conflict: `jig spec done` refuses, `jig spec remove` leaves the
+task alone and names it. No field in `state` carries the link.
+
+## `jig spec done <task-id>`
+
+| Situation | Result |
+|---|---|
+| no `Spec:` line | `spec done: <id> is not linked to a spec`, exit 0 |
+| unchecked items name the task | all of them become `[x]`, written atomically; the marked lines are printed |
+| every item naming it is checked | `already done`, exit 0, file unchanged |
+| no item names it | error: the roadmap and the task disagree |
+| spec or its `roadmap.md` missing, two specs linked | error |
+
+An item names the task when its text starts with the backticked id and a dash — the "filed"
+grammar above — compared as a string. Run when the knowledge decision is recorded, before the
+commit (ADR-0035).
+
+## `jig spec remove <spec-id> [--dry-run] [--abandon-unstarted]`
+
+Report lines, one per decision:
+
+| Line | Meaning |
+|---|---|
+| `abandoned <id> (not started)` | with `--abandon-unstarted`: no `branch`, or `branch` without `base_commit`; done through `jig task abandon`, before unlinking |
+| `unlinked <id>` | an open linked task lost its `Spec:` lines for this spec; the rest of `task.md` is unchanged |
+| `kept <id> (consolidated\|abandoned)` | closed tasks keep their line |
+| `kept <id> (links to more than one spec)` | conflict, untouched |
+| `not-here <id> (…)` | the roadmap names the id; no workspace in this checkout |
+| `moved .ai/specs/<id> -> .ai/runtime/trash/<date>/spec-<id>` | `-2`, `-3` when taken |
+
+Linked tasks are found through their own `Spec:` lines among this checkout's workspaces; workspace
+links are skipped. `--dry-run` prints the same lines as `would-abandon`, `would-unlink` and
+`would-move` and changes nothing. Git is not touched.
+
+A copy of a spec directory in another project is a separate spec; nothing links the two.

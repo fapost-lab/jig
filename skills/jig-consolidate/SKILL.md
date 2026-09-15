@@ -94,8 +94,14 @@ Frontmatter is never hand-edited: the commands above own it (ADR-0001, ADR-0010)
 
 ```
 .ai/scripts/jig knowledge check
+.ai/scripts/jig spec done <id>
 .ai/scripts/jig task set <id> knowledge_consolidated true
 ```
+
+`spec done` checks the roadmap items that name the task when its `task.md` carries a `Spec:`
+line, so the checkmark reaches the base branch in the same change as the work; for a task with
+no link it says so and changes nothing. If it reports that no roadmap item names the task, the
+roadmap and the task disagree: ask the human, and do not edit the roadmap by hand.
 
 The status stays `ready`: the task is still current, and fixes from review of the commit
 or PR continue in it. If review changes the implementation, update the same documents; do

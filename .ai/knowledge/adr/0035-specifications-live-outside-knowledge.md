@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-09-14
+reviewed_at: 2026-09-15
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -95,3 +95,17 @@ so it cannot live where everything is read as describing it.
 - `jig spec new` is a third deletion outside a workspace or trash entry, named in RULES.md:
   on a failed copy it removes only its own temporary files and `rmdir`s the directory it
   just created.
+
+> **Amendment (2026-09-15).** The next phase landed, and two statements above changed with it.
+> **A task links to its spec** with one line in its `task.md`, `Spec: .ai/specs/<id>/ — Phase <n>`,
+> and the roadmap items it covers start with its id; no field was added to `state`. **Its items are
+> checked when its knowledge decision is recorded**, before the commit, by `jig spec done <task-id>`
+> called from `jig-consolidate` — not at the close: the close comes after the merge, and a
+> checkmark written then would need a second commit and pull request per task. The checkmark is on
+> the base branch exactly when the work is. **`jig spec remove <id>`** unlinks the spec's open tasks
+> in this checkout, found through their own `Spec:` lines because the roadmap is shared and
+> workspaces are local; abandons never-started ones only with `--abandon-unstarted`, through the
+> dispatcher so that `jig task` stays the only writer of `state`; leaves started and closed tasks
+> alone; and moves the directory to trash. **Carrying a spec into a new project is a plain copy of
+> its directory**, decided by the maintainer: the new project's Jig tracks it from there, so no
+> mechanism or pointer was built.

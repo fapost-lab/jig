@@ -7,7 +7,7 @@ domains: [housekeeping, safety]
 paths:
   - "scripts/lib/housekeeping.sh"
 summary: Why workspace deletion happens in two stages and never on unknown remote state.
-reviewed_at: 2026-09-10
+reviewed_at: 2026-09-15
 ---
 # ADR-0006: Housekeeping purges in two stages via a local trash directory
 
@@ -46,3 +46,8 @@ framework.
 
 - A false positive is recoverable for `trash_ttl` days with `mv`.
 - Disk usage is bounded by the TTL, not by developer memory.
+
+> **Amendment (2026-09-15).** Trash holds more than workspaces: `jig spec remove` moves a
+> specification directory to `.ai/runtime/trash/<date>/spec-<id>/`. Both commands pick the place
+> through one helper, `jig_trash_dest` in `common.sh`, which appends `-2`, `-3` rather than merge into
+> an entry already there. Expiry is unchanged: whole date directories age out. See ADR-0035.

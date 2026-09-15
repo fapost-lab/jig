@@ -312,6 +312,24 @@ jig_glob_pattern() {
 
 jig_today() { date +%Y-%m-%d; }
 
+# jig_trash_dest <name> — where <name> goes in trash today:
+# .ai/runtime/trash/<date>/<name>, or <name>-2, -3, … when that is taken. Never
+# overwrites and never merges into an existing entry (ADR-0006). Shared by
+# housekeeping (a workspace, named by its task id) and `jig spec remove`
+# (`spec-<id>`), so two commands putting things in the same trash cannot
+# disagree about collisions. Prints the path; creates nothing.
+jig_trash_dest() {
+  local base dest n
+  base="$JIG_PROJECT/$JIG_AI_DIR/runtime/trash/$(jig_today)/$1"
+  dest="$base"
+  n=2
+  while [ -e "$dest" ]; do
+    dest="$base-$n"
+    n=$((n + 1))
+  done
+  printf '%s\n' "$dest"
+}
+
 # Content hash used by the manifest (ADR-0003, domains/install). git is mandatory,
 # shasum/sha256sum are not portable.
 jig_hash() { git hash-object "$1"; }
