@@ -494,6 +494,25 @@ test_init_link_mode_symlinks_templates_scheduler_directory() {
   assert_file .ai/templates/scheduler/README.md
 }
 
+test_init_installs_spec_templates_in_copy_mode() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_file .ai/templates/spec/spec.md
+  assert_file .ai/templates/spec/roadmap.md
+  assert_file_contains .ai/manifest ".ai/templates/spec/spec.md"
+  assert_file_contains .ai/manifest ".ai/templates/spec/roadmap.md"
+}
+
+test_init_link_mode_symlinks_templates_spec_directory() {
+  fixture_repo
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 0 "$RC"
+  assert_symlink .ai/templates/spec
+  assert_file .ai/templates/spec/spec.md
+  assert_file .ai/templates/spec/roadmap.md
+}
+
 test_init_prints_the_session_hook_advisory_without_installing_it() {
   # domains/housekeeping / ADR-0024: the adapter offers the entry, the user installs it.
   # init must stay non-interactive and must not touch .claude/settings.json.

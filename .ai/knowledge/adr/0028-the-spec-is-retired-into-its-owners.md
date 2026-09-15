@@ -10,6 +10,7 @@ paths:
   - .ai/knowledge/RULES.md
   - README.md
 summary: Why the 840-line product specification was dissolved into the schemas, domains and ADRs that already owned its content.
+reviewed_at: 2026-09-14
 ---
 # ADR-0028: The product specification is retired into the documents that own its content
 
@@ -91,3 +92,9 @@ subject, and every citation is rewritten to point there.**
 - Anyone looking for the shape of the whole system reads `ARCHITECTURE.md` plus the domain
   overviews. No single document describes it end to end any more. That is a real loss, and
   it is accepted: the end-to-end description was the part that kept going stale.
+
+> **Amendment (2026-09-14).** "The framework has one knowledge location again" still holds for
+> knowledge. Plans for future work now have a committed location of their own,
+> `.ai/specs/<id>/`, deliberately outside `.ai/knowledge/` and never resolved: this ADR's
+> finding that a document mixing plan and reference goes stale is exactly why a plan is kept
+> apart from what describes the system. See ADR-0035.

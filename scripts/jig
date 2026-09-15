@@ -60,6 +60,8 @@ Usage: jig <command> [args]
   knowledge changed --base <ref>  knowledge documents created/modified since <ref>
   knowledge stale [--strict]     documents that drifted away from the code
   knowledge reviewed <id>        stamp a document as reconciled with the code
+  spec new <id>                  create .ai/specs/<id>/ from the specification templates
+  spec list                      specifications under .ai/specs/ and their roadmap progress
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
   measure                        knowledge quality, process weight, change size
   self-update                    move the global framework checkout to the newest release
@@ -73,7 +75,7 @@ main() {
   case "$cmd" in
     help|-h|--help) jig_usage ;;
     version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
-    init|upgrade|status|task|context|verify|knowledge|housekeeping|measure)
+    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi

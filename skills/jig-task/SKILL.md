@@ -16,6 +16,10 @@ or create a workspace. Use `--files -` with empty stdin for a deliberately empty
 An explicit analysis of a named task stays there. Save research only when useful/requested;
 implementation intent returns to the route below.
 
+An idea whose shape is not settled, or work too big for one task (phases, many tasks), goes
+to `jig-idea` first: it tests the idea and keeps a specification with a roadmap. Specs are
+listed by `jig spec list`.
+
 ## 1. Resume before starting
 
 ```

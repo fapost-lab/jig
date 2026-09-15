@@ -82,15 +82,8 @@ task_state_get() {
 # --- validation ---------------------------------------------------------------
 
 _task_valid_id() {
-  # No leading dot: rules out `.`, `..` and hidden directories, which the
-  # `*/` walks in task_list / task_current would not see.
-  # No leading dash: every subcommand reads its id from the first argument,
-  # so `-x` is a flag in the wrong place, never a name. `jig task new --help`
-  # used to file a workspace named `--help`.
-  case "$1" in
-    '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
-    *) return 0 ;;
-  esac
+  # The grammar is shared with spec ids (common.sh, jig_valid_id).
+  jig_valid_id "$1"
 }
 
 _task_valid_class() {

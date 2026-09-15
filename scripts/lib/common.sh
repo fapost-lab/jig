@@ -25,6 +25,22 @@ jig_require_repo() {
   export JIG_PROJECT
 }
 
+# jig_valid_id <id> — the grammar of a name that becomes a directory under
+# .ai/: a task id and a spec id. Both must agree, because a spec's roadmap
+# names task ids and a spec id follows task id rules; two copies of the case
+# below would be free to drift.
+# No leading dot: rules out `.`, `..` and hidden directories, which the `*/`
+# walks over workspaces and specs would not see.
+# No leading dash: every subcommand reads its id from the first argument, so
+# `-x` is a flag in the wrong place, never a name. `jig task new --help` used
+# to file a workspace named `--help`.
+jig_valid_id() {
+  case "$1" in
+    '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 # Die unless the project has been initialised with jig init.
 jig_require_init() {
   jig_require_repo
