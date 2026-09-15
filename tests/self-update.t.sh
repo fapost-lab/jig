@@ -469,7 +469,18 @@ test_self_update_refuses_branch_without_upstream() {
   local share
   share=$(su_share)
   mkdir -p "$(dirname "$share")"
-  cp -R "$HOME/work" "$share"
+  # A git clone, not `cp -R`: `cp` recreates the framework's committed
+  # relative symlinks with the OS's own `cp` semantics rather than git's,
+  # and on Windows the copy reads back with different link text than the
+  # original even though the link still resolves. Git then sees the tree as
+  # modified, so self-update refused for "uncommitted changes" before it
+  # ever reached the upstream check this test is about. Cloning checks the
+  # symlinks out the same way every other fixture in this file does
+  # (su_clone_global_detached, su_clone_global_branch); dropping the
+  # tracking branch afterwards leaves a clean tree on a branch with no
+  # upstream, which is the condition under test.
+  git clone -q "$HOME/work" "$share"
+  git -C "$share" branch --unset-upstream
   mkdir -p "$(su_bin)"
   ln -s "$share/scripts/jig" "$(su_bin)/jig"
 

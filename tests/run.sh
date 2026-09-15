@@ -8,8 +8,13 @@
 #
 # Tests run JIG_TEST_JOBS at a time — by default one per CPU. JIG_TEST_JOBS=1
 # runs them one after another, printing each failure's log as it happens.
-# In parallel, each test prints its `ok`/`FAIL` line when it finishes, and the
-# logs of the failures follow the run, in discovery order.
+# In parallel, each test prints its `ok`/`FAIL`/`skip` line when it finishes,
+# and the logs of the failures follow the run, in discovery order.
+#
+# A test that calls `skip "<reason>"` (tests/lib/assert.sh) exits 77. Skip is
+# a third outcome, not a pass: it is tallied on its own and never lowers the
+# failure count, because a check that quietly stopped running must stay
+# visible as something other than green (RULES.md, ADR-0013).
 #
 # Usage: tests/run.sh [name-filter]
 set -u
@@ -82,6 +87,12 @@ run_test() {
   rm -rf "$tmp" "$tmp.out" "$tmp.out.err"
   if [ "$rc" -eq 0 ]; then
     printf 'ok   %s\n' "$full"
+  elif [ "$rc" -eq 77 ]; then
+    # The reason is the last SKIP: line, not the first: a test may print one
+    # while probing several capabilities before settling on the one it acts on.
+    local reason
+    reason=$(sed -n 's/^SKIP: //p' "$RESULTS/$idx.log" | tail -n 1)
+    printf 'skip %s (%s)\n' "$full" "$reason"
   else
     printf 'FAIL %s\n' "$full"
     [ "$jobs" -gt 1 ] || sed 's/^/     | /' "$RESULTS/$idx.log"
@@ -148,11 +159,14 @@ fi
 
 pass=0
 fail=0
+skip=0
 while IFS="$t" read -r -u 4 idx file name full; do
   rc=missing
   [ -f "$RESULTS/$idx.result" ] && IFS="$t" read -r rc _ < "$RESULTS/$idx.result"
   if [ "$rc" = 0 ]; then
     pass=$((pass + 1))
+  elif [ "$rc" = 77 ]; then
+    skip=$((skip + 1))
   else
     fail=$((fail + 1))
     if [ "$jobs" -gt 1 ]; then
@@ -176,5 +190,5 @@ EOF
   printf 'wall: %ss, %s job(s)\n' "$((SECONDS - start_all))" "$jobs"
 fi
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
+printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
 [ "$fail" -eq 0 ]

@@ -209,7 +209,14 @@ _init_place_symlink() {
   target_rel=$(_init_relpath "$(dirname "$link_abs")" "$target_abs")
   if [ -L "$link_abs" ]; then
     current=$(readlink "$link_abs")
-    if [ "$current" = "$target_rel" ]; then
+    # The text is the fast answer, not the only one: Cygwin reads a relative
+    # link back through a different spelling of the same directory (an 8.3
+    # short name), so a link this function made reads as foreign on Windows.
+    # Where the text differs, the link is still ours when it resolves to the
+    # same physical directory.
+    if [ "$current" = "$target_rel" ] \
+       || { [ -d "$link_abs" ] \
+            && [ "$(cd -P "$link_abs" 2>/dev/null && pwd -P)" = "$(cd -P "$target_abs" 2>/dev/null && pwd -P)" ]; }; then
       kept_count=$((kept_count + 1))
     else
       conflict_count=$((conflict_count + 1))
@@ -516,8 +523,9 @@ cmd_init() {
     # ~13 ms each, which measured as the single largest cost of `jig init`.
     # Batch output is byte-identical to per-file hashing (verified), and
     # `paste` re-pairs it with the paths in the order they were sent.
-    # Absolute paths are built by plain concatenation, never by `sed`: the
-    # project root comes from `git rev-parse --show-toplevel`, so it is an
+    # Paths go to git relative to the project root (jig_hash_list), and no
+    # path is ever built with `sed`: the project root comes from
+    # `git rev-parse --show-toplevel`, so it is an
     # arbitrary user path, and an `&` in a sed replacement means "the text
     # that matched". A project under `R&D/` silently lost that segment from
     # every path, and the run then died inside git with a raw error, having
@@ -528,11 +536,10 @@ cmd_init() {
     # manifest_write_entries only once it is complete, so a failure anywhere
     # in the batch leaves the previous manifest untouched instead of
     # replacing it with a truncated one.
-    local rel
     _INIT_HASH_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-init-hash.XXXXXX")
-    local need_file="$_INIT_HASH_TMP/rel" abs_file="$_INIT_HASH_TMP/abs"
+    local need_file="$_INIT_HASH_TMP/rel"
     local hash_file="$_INIT_HASH_TMP/hash" entries="$_INIT_HASH_TMP/entries"
-    : > "$need_file"; : > "$abs_file"; : > "$entries"
+    : > "$need_file"; : > "$entries"
 
     # Known hashes come from one pass over the manifest joined in one awk,
     # not a manifest_hash_of per path, which rereads the file every time.
@@ -548,10 +555,6 @@ cmd_init() {
       ($0 in known) { print known[$0] " " $0 > ENVIRON["JIG_INIT_ENTRIES"]; next }
       { print > ENVIRON["JIG_INIT_NEED"] }
     ' "$known" "$all"
-    while IFS= read -r rel; do
-      [ -n "$rel" ] || continue
-      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$abs_file"
-    done < "$need_file"
 
     if [ -s "$need_file" ]; then
       # One git startup for the whole install instead of one per path.
@@ -559,7 +562,7 @@ cmd_init() {
       # order, so `paste` re-pairs them; a path containing a newline would
       # desync that, which the newline-delimited framework_paths accumulator
       # already rules out.
-      jig_hash_list "$abs_file" > "$hash_file" \
+      jig_hash_list "$JIG_PROJECT" "$need_file" > "$hash_file" \
         || jig_die "init: could not hash installed files"
       paste -d' ' "$hash_file" "$need_file" >> "$entries"
     fi

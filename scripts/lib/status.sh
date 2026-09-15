@@ -40,21 +40,21 @@ cmd_status() {
   local modified="" missing="" mcount=0 xcount=0 line rel mhash lhash drift_tmp
   drift_tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-drift.XXXXXX")
   : > "$drift_tmp/present"
-  : > "$drift_tmp/abs"
+  : > "$drift_tmp/rel"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     mhash=${line%% *}
     rel=${line#* }
     if [ -f "$JIG_PROJECT/$rel" ]; then
       printf '%s %s\n' "$mhash" "$rel" >> "$drift_tmp/present"
-      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$drift_tmp/abs"
+      printf '%s\n' "$rel" >> "$drift_tmp/rel"
     else
       missing="$missing
 $rel"
       xcount=$((xcount + 1))
     fi
   done < <(manifest_entries)
-  jig_hash_list "$drift_tmp/abs" > "$drift_tmp/hashes" \
+  jig_hash_list "$JIG_PROJECT" "$drift_tmp/rel" > "$drift_tmp/hashes" \
     || jig_die "status: could not hash the installed files"
   while IFS= read -r line; do
     [ -n "$line" ] || continue

@@ -14,9 +14,9 @@
 # in code, and what may be required in documentation.
 name: windows-probe
 
+# Push trigger removed once implementation started: every question it was
+# written for is answered (discovery.md), and v4 installs Git on each run.
 on:
-  push:
-    branches: [task/windows-support]
   workflow_dispatch:
 
 permissions:

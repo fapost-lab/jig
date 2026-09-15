@@ -445,6 +445,50 @@ test_init_link_mode_is_idempotent() {
   assert_contains "$OUT" "0 conflict(s)"
 }
 
+test_init_link_mode_keeps_a_link_that_resolves_to_the_same_directory_with_different_text() {
+  # _init_place_symlink's fallback (scripts/lib/init.sh): Cygwin reads a
+  # relative link back with a different spelling of the same directory, so
+  # the function also accepts a link whose *text* differs as long as it
+  # resolves, physically, to the same target. An absolute symlink to the
+  # same directory is the platform-independent way to get different text
+  # for an identical target on macOS/Linux too.
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local target
+  target=$(cd -P "$JIG_HOME/scripts" && pwd -P)
+  rm .ai/scripts
+  ln -s "$target" .ai/scripts
+  case "$(readlink .ai/scripts)" in
+    /*) ;;
+    *) fail "test setup: expected an absolute (thus differently-spelled) link" ;;
+  esac
+
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 created"
+  assert_contains "$OUT" "0 conflict(s)"
+  assert_eq "$target" "$(readlink .ai/scripts)" \
+    "a link already kept must not be rewritten"
+}
+
+test_init_link_mode_flags_a_link_to_a_different_directory_as_conflict() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local other
+  other=$(mktemp -d "${TMPDIR:-/tmp}/jig-other-dir.XXXXXX")
+  rm .ai/scripts
+  ln -s "$other" .ai/scripts
+
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "1 conflict(s)"
+  assert_contains "$OUT" "conflicts (kept existing content, did not overwrite):"
+  assert_contains "$OUT" ".ai/scripts"
+  assert_eq "$other" "$(readlink .ai/scripts)" \
+    "a conflicting link must be left exactly as it was, never overwritten"
+  rm -rf "$other"
+}
+
 test_init_codex_transform_end_to_end() {
   fixture_repo
   local src

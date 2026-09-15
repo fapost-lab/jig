@@ -1041,6 +1041,7 @@ test_sdd_changes_rejects_missing_invalid_base_and_paths() {
 }
 
 test_sdd_changes_rejects_control_names_and_git_failures() {
+  skip_unless_control_char_names
   sdd_task_setup
   local name
   name=$(printf 'bad\tname')
@@ -1590,6 +1591,7 @@ test_task_start_worktree_failure_leaves_nothing_behind() {
   # `git worktree add -b` creates the branch before the directory. Without an
   # undo, a failed start left the branch behind and every retry died with
   # "branch already exists".
+  skip_unless_readonly_dirs
   task_setup_nested
   mkdir ../repo.worktrees
   chmod 555 ../repo.worktrees

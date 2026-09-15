@@ -87,6 +87,37 @@ jobs:
           .ai/scripts/jig verify
           .ai/scripts/jig housekeeping
 
+  # Windows under Git Bash, with the git settings a Windows user gets out of the
+  # box: core.autocrlf=true and no native symlinks, so `ln -s` copies. Run by
+  # hand while the suite is being made portable; a failure here is a list of
+  # what is still unported, not a verdict on a pull request. It joins every run
+  # once it is green.
+  test-windows:
+    name: windows-latest (Git Bash)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          bash --version | head -n 1
+          git --version
+          git config --get core.autocrlf || true
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version | sed -n 's/^version: /shellcheck /p'
+          else
+            echo "shellcheck: not installed"
+          fi
+
+      - name: Tests
+        run: tests/run.sh
+
   # Tags a release once the tests passed on every platform (ADR-0033). The tag
   # is v<JIG_VERSION>; a merge that did not bump the version finds its tag
   # already there and does nothing. The decision lives in

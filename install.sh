@@ -222,6 +222,23 @@ _install_fresh_checkout() {
     || _install_die "could not clone $REPOSITORY at $INSTALL_REF: $out"
 }
 
+# _install_same_repository <origin> <repository> — true when a checkout's
+# origin names the repository asked for. A URL is compared as written. Two
+# local paths are compared as the physical directories they resolve to: Git
+# for Windows stores a /tmp/... argument converted, as C:/Users/RUNNER~1/...,
+# and a repeat run refused its own install as "tracks another remote".
+_install_same_repository() {
+  local a b
+  if [ "$1" = "$2" ]; then
+    return 0
+  fi
+  case "$1" in *://* | *@*:*) return 1 ;; esac
+  case "$2" in *://* | *@*:*) return 1 ;; esac
+  a=$(cd -P "$1" 2>/dev/null && pwd -P) || return 1
+  b=$(cd -P "$2" 2>/dev/null && pwd -P) || return 1
+  [ "$a" = "$b" ]
+}
+
 # _install_update_checkout — the repeat-run path. Refuses, without touching
 # anything, unless $INSTALL_DIR is the clean root of a checkout whose
 # 'origin' is exactly $REPOSITORY (design.md: "a dirty checkout, unexpected
@@ -239,7 +256,7 @@ _install_update_checkout() {
     || _install_die "$INSTALL_DIR is not the root of its git checkout; refusing to overwrite it"
   origin=$(git -C "$INSTALL_DIR" remote get-url origin 2>/dev/null) \
     || _install_die "$INSTALL_DIR has no 'origin' remote; refusing to overwrite it"
-  [ "$origin" = "$REPOSITORY" ] \
+  _install_same_repository "$origin" "$REPOSITORY" \
     || _install_die "$INSTALL_DIR tracks $origin, not $REPOSITORY; refusing to overwrite it"
   [ -z "$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null)" ] \
     || _install_die "$INSTALL_DIR has local changes; refusing to overwrite it"

@@ -20,8 +20,18 @@ jig_repo_root() {
 }
 
 # Set JIG_PROJECT to the repository root; die when not inside a repository.
+#
+# The root is made physical in bash's own spelling. Git for Windows prints
+# C:/Users/..., while every path bash builds is /c/Users/...; a symlink target
+# computed between the two, or a prefix comparison, finds no common part —
+# `init --link` produced ../../../../d/a/jig/jig/scripts, dangling, on the
+# same drive. git already resolves symlinks on macOS and Linux, so this
+# changes nothing there.
 jig_require_repo() {
-  JIG_PROJECT=$(jig_repo_root) || jig_die "not inside a git repository"
+  local top
+  top=$(jig_repo_root) || jig_die "not inside a git repository"
+  JIG_PROJECT=$(cd -P "$top" 2>/dev/null && pwd -P) \
+    || jig_die "cannot resolve the repository root: $top"
   export JIG_PROJECT
 }
 
@@ -339,10 +349,16 @@ jig_copy_tree() {
   return 0
 }
 
-# jig_hash_list <file> — the blob hash of every path listed in <file>, one per
-# line and in the same order, from a single `git hash-object` process. Nothing
-# for an empty list. Every listed path must exist: git fails the whole batch
-# otherwise, which the caller turns into an error rather than a missing hash.
+# jig_hash_list <base> <file> — the blob hash of every path listed in <file>,
+# one per line and in the same order, from a single `git hash-object` process
+# run in <base>. Nothing for an empty list. Every listed path must exist under
+# <base>: git fails the whole batch otherwise, which the caller turns into an
+# error rather than a missing hash.
+#
+# The paths are relative to <base>, never absolute. MSYS converts a path only
+# when it is an argument; on stdin Git for Windows gets /tmp/... verbatim and
+# cannot open it — `jig upgrade` died on every Windows run with "could not open
+# '/tmp/jig-upgrade-stage…'". A relative path is spelled the same everywhere.
 #
 # Use this, not a loop over jig_hash, whenever there is more than one file.
 # Each call is a git startup, and on 65 manifest files the loop took 0.879 s
@@ -350,8 +366,8 @@ jig_copy_tree() {
 # Pair the output back with its paths by position (`paste`); a path containing
 # a newline would desync that, and none of jig's line-based lists can hold one.
 jig_hash_list() {
-  [ -s "$1" ] || return 0
-  git hash-object --stdin-paths < "$1"
+  [ -s "$2" ] || return 0
+  (cd "$1" && git hash-object --stdin-paths) < "$2"
 }
 
 # Path of <file> relative to <base>, both absolute. Pure string operation.

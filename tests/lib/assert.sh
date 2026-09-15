@@ -163,6 +163,55 @@ jig_installed() { ".ai/scripts/jig" "$@"; }
 
 fail() { printf 'ASSERT FAIL: %s\n' "$*"; exit 1; }
 
+# skip <reason> — mark the running test skipped rather than passed or
+# failed: print "SKIP: <reason>" and exit 77, the code tests/run.sh treats
+# as a skip. A skip is not a pass (RULES.md, ADR-0013): it must stay
+# distinguishable in the tally, the same invariant verify.sh already
+# applies to a profile's exit code 2.
+skip() {
+  printf 'SKIP: %s\n' "$1"
+  exit 77
+}
+
+# skip_unless_readonly_dirs — skip the calling test unless `chmod 555` on a
+# directory actually blocks creating a file inside it on this filesystem.
+# Windows/MSYS was seen to ignore the read-only bit for a directory owned by
+# the running user, so a negative-path test that depends on the write
+# failing must confirm the guarantee itself rather than assume POSIX
+# permission semantics everywhere.
+skip_unless_readonly_dirs() {
+  local dir blocked=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-ro-check.XXXXXX") || return 1
+  chmod 555 "$dir"
+  ( : > "$dir/probe" ) 2>/dev/null || blocked=1
+  chmod 755 "$dir"
+  rm -rf "$dir"
+  [ "$blocked" -eq 1 ] || skip "chmod 555 does not make a directory read-only here"
+}
+
+# skip_unless_control_char_names — skip the calling test unless a file name
+# containing a tab round-trips through `git status --porcelain`, which
+# quotes such names as "bad\tname". NTFS under MSYS maps a tab in a file
+# name to a private-use Unicode character instead of keeping the byte, so a
+# test that plants a tab and expects to see it quoted back must confirm
+# this filesystem can represent it at all.
+skip_unless_control_char_names() {
+  local dir name status
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-ctrl-check.XXXXXX") || return 1
+  name=$(printf 'bad\tname')
+  status=$(
+    cd "$dir" || exit 1
+    git init -q .
+    : > "$name" 2>/dev/null
+    git status --porcelain 2>/dev/null
+  )
+  rm -rf "$dir"
+  case "$status" in
+    *'bad\tname'*) ;;
+    *) skip "this filesystem cannot represent a tab in a file name" ;;
+  esac
+}
+
 assert_eq() {
   # assert_eq <expected> <actual> [message]
   [ "$1" = "$2" ] || fail "${3:-values differ}: expected [$1] got [$2]"

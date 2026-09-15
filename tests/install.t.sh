@@ -182,8 +182,29 @@ test_install_fresh_via_piped_bash() {
 
   assert_dir "$(inst_share)"
   assert_symlink "$(inst_bin)/jig"
-  assert_eq "../share/jig/scripts/jig" "$(readlink "$(inst_bin)/jig")" \
-    "defaults are siblings under \$HOME/.local: the link must be relative"
+  # Not a literal-text comparison: Cygwin's readlink answers a relative link
+  # with a different (but still correct) spelling — seen in CI as
+  # "../../../../../../../runneradmin/AppData/Local/Temp/jig-test.X/.local/share/jig/scripts/jig"
+  # instead of "../share/jig/scripts/jig" — because it renders the link
+  # relative to a different base than plain POSIX readlink. The invariant
+  # this test protects is "defaults are siblings under $HOME/.local: the
+  # link must be relative", so assert that (not absolute) and that it still
+  # resolves, physically, to the installed jig.
+  local link_text target target_dir resolved expected
+  link_text=$(readlink "$(inst_bin)/jig")
+  case "$link_text" in
+    /*) fail "defaults are siblings under \$HOME/.local: the link must be relative: $link_text" ;;
+  esac
+  # A relative target resolves against the directory holding the link, not
+  # cwd; make it physical the way the scripts do (jig_physical_path,
+  # common.sh): cd -P into its directory, then append the basename.
+  target="$(inst_bin)/$link_text"
+  target_dir=$(cd -P "${target%/*}" 2>/dev/null && pwd -P) \
+    || fail "symlink target directory does not exist: $target"
+  resolved="$target_dir/${target##*/}"
+  expected="$(cd -P "$(inst_share)/scripts" && pwd -P)/jig"
+  assert_eq "$expected" "$resolved" \
+    "relative link must resolve to the installed jig: $link_text"
 
   run "$(inst_bin)/jig" version
   assert_eq 0 "$RC"
@@ -281,7 +302,16 @@ test_install_repeat_run_refuses_a_different_remote() {
 
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
   [ "$RC" != 0 ] || fail "a checkout tracking a different remote must refuse: $OUT"
-  assert_eq "$PWD/other-remote.git" "$(git -C "$(inst_share)" remote get-url origin)"
+  # Not a literal-text comparison: git.exe on Windows stores (and echoes
+  # back) a converted spelling of the path, e.g.
+  # "C:/Users/RUNNER~1/.../other-remote.git" instead of "$PWD/other-remote.git",
+  # even though both name the same directory. Compare physical directories,
+  # the way the scripts do (conventions/shell.md), so the assertion still
+  # means what it says: the refused run must not change origin.
+  assert_eq \
+    "$(cd -P "$PWD/other-remote.git" && pwd -P)" \
+    "$(cd -P "$(git -C "$(inst_share)" remote get-url origin)" && pwd -P)" \
+    "a refused install must not change origin"
 }
 
 test_install_repeat_run_refuses_conflicting_bin_dir_file_and_cleans_up() {
@@ -758,4 +788,64 @@ test_install_newest_release_fails_without_a_release_tag() {
   # shellcheck disable=SC2016 # expanded by the inner bash, not here
   inst_lib_run 'rc=0; printf "%s\n" v1.0.0-rc1 latest | jig_newest_release || rc=$?; printf "rc=%s" "$rc"'
   assert_eq "rc=1" "$OUT"
+}
+
+# --- _install_same_repository ------------------------------------------------
+#
+# Unit-level, same sourcing pattern as the release-ordering tests above:
+# equal strings are true outright, either side matching a URL shape makes
+# it false without ever touching the filesystem, and two local paths are
+# compared as the physical directories they resolve to (install.sh's own
+# comment: Git for Windows stores a converted spelling of a local path).
+
+test_install_same_repository_resolves_local_paths_physically() {
+  local dir_a dir_b parent linked
+  dir_a="$JIG_TEST_TMP.same-repo-a"
+  dir_b="$JIG_TEST_TMP.same-repo-b"
+  mkdir -p "$dir_a" "$dir_a/sub" "$dir_b"
+  # A symlinked parent: the same directory reached through a differently
+  # spelled path, the general case behind "Git for Windows stores a
+  # converted spelling", reproducible on macOS/Linux with a plain symlink.
+  parent=$(dirname "$dir_a")
+  ln -s "$parent" "$JIG_TEST_TMP.same-repo-a-parent-link"
+  linked="$JIG_TEST_TMP.same-repo-a-parent-link/$(basename "$dir_a")"
+
+  SAME_A="$dir_a" SAME_A_DOTDOT="$dir_a/sub/.." SAME_A_VIA_LINK="$linked" \
+    SAME_B="$dir_b" SAME_MISSING="$dir_a/does-not-exist"
+  export SAME_A SAME_A_DOTDOT SAME_A_VIA_LINK SAME_B SAME_MISSING
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  inst_lib_run 'check() { if _install_same_repository "$1" "$2"; then printf "%s==%s " "$1" "$2"; else printf "%s!=%s " "$1" "$2"; fi; }
+    check "$SAME_A" "$SAME_A"
+    check "$SAME_A" "$SAME_A_DOTDOT"
+    check "$SAME_A" "$SAME_A_VIA_LINK"
+    check "$SAME_A" "$SAME_B"
+    check "$SAME_A" "$SAME_MISSING"'
+  assert_eq 0 "$RC"
+  assert_eq \
+    "$SAME_A==$SAME_A $SAME_A==$SAME_A_DOTDOT $SAME_A==$SAME_A_VIA_LINK $SAME_A!=$SAME_B $SAME_A!=$SAME_MISSING " \
+    "$OUT"
+}
+
+test_install_same_repository_treats_urls_literally_never_resolving_them() {
+  local dir_b url1 url2
+  dir_b="$JIG_TEST_TMP.same-repo-url-b"
+  mkdir -p "$dir_b"
+  url1="https://example.com/$(basename "$dir_b").git"
+  url2="https://example.com/other.git"
+
+  SAME_URL1="$url1" SAME_URL2="$url2" SAME_B="$dir_b"
+  export SAME_URL1 SAME_URL2 SAME_B
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  inst_lib_run 'check() { if _install_same_repository "$1" "$2"; then printf "%s==%s " "$1" "$2"; else printf "%s!=%s " "$1" "$2"; fi; }
+    check "$SAME_URL1" "$SAME_URL1"
+    check "$SAME_URL1" "$SAME_URL2"
+    check "$SAME_URL1" "$SAME_B"'
+  assert_eq 0 "$RC"
+  # A URL matching the local path's basename still compares false: a URL is
+  # compared as written, never resolved against the filesystem.
+  assert_eq \
+    "$SAME_URL1==$SAME_URL1 $SAME_URL1!=$SAME_URL2 $SAME_URL1!=$SAME_B " \
+    "$OUT"
 }
