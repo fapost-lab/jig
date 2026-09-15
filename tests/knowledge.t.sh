@@ -2394,3 +2394,542 @@ test_knowledge_changed_counts_a_file_once_when_both_layers_see_it() {
   assert_not_contains "$OUT" "created    .ai/knowledge/adr/0001-base.md"
   assert_contains "$OUT" "0 created, 0 modified, 0 renamed, 1 deleted"
 }
+
+# --- knowledge new: --source (a linked-source stub, ADR-0036) ------------------
+
+# km_track_file <path> [content] — write <path> (creating parent directories)
+# and commit it, so it is a file git tracks with this exact case. The default
+# content is irrelevant to every test that uses it; where the byte count
+# matters the test writes the file itself and reads it back with `wc -c`
+# instead of hard-coding a count that a whitespace edit here would silently
+# invalidate.
+km_track_file() {
+  local path="$1" content="${2:-linked source}"
+  mkdir -p "$(dirname "$path")"
+  printf '%s\n' "$content" > "$path"
+  git add "$path"
+  git commit -q -m "add $path"
+}
+
+test_new_source_convention_stub_has_expected_frontmatter_and_link_body() {
+  km_setup
+  km_track_file docs/coding-style.md
+  run jig knowledge new convention coding-style --source docs/coding-style.md --proposed --domains a
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/sources/coding-style.md" "$OUT"
+  assert_file .ai/knowledge/sources/coding-style.md
+  assert_file_contains .ai/knowledge/sources/coding-style.md "id: convention-coding-style"
+  assert_file_contains .ai/knowledge/sources/coding-style.md "type: convention"
+  assert_file_contains .ai/knowledge/sources/coding-style.md "status: proposed"
+  assert_file_contains .ai/knowledge/sources/coding-style.md "source: docs/coding-style.md"
+  local content
+  content=$(cat .ai/knowledge/sources/coding-style.md)
+  assert_contains "$content" "Linked source: [docs/coding-style.md](../../../docs/coding-style.md)"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+}
+
+test_new_source_adr_stub_has_no_date_and_no_jig_number() {
+  km_setup
+  km_track_file docs/adr/0003-use-postgres.md
+  run jig knowledge new adr 0003-use-postgres --source docs/adr/0003-use-postgres.md --proposed --domains a
+  assert_eq 0 "$RC"
+  # Under sources/, never under adr/: the team's own number stays in the slug,
+  # not in an NNNN- prefix a Jig ADR would claim.
+  assert_eq ".ai/knowledge/sources/0003-use-postgres.md" "$OUT"
+  assert_file_contains .ai/knowledge/sources/0003-use-postgres.md "id: adr-0003-use-postgres"
+  assert_file_contains .ai/knowledge/sources/0003-use-postgres.md "type: adr"
+  local content
+  content=$(cat .ai/knowledge/sources/0003-use-postgres.md)
+  assert_not_contains "$content" "date:"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+}
+
+test_new_source_without_proposed_is_refused() {
+  km_setup
+  km_track_file docs/coding-style.md
+  run jig knowledge new convention coding-style --source docs/coding-style.md --domains a
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: --source requires --proposed; jig context does not resolve linked sources yet"
+  assert_no_file .ai/knowledge/sources/coding-style.md
+}
+
+test_new_source_refuses_domain_glossary_rule_types() {
+  km_setup
+  km_track_file docs/coding-style.md
+  local t
+  for t in domain glossary rule; do
+    run jig knowledge new "$t" coding-style --source docs/coding-style.md --proposed
+    assert_eq 1 "$RC" "type: $t"
+    assert_contains "$OUT" "knowledge new: --source links adr, convention or feature documents, not: $t"
+  done
+  assert_no_file .ai/knowledge/sources/coding-style.md
+  assert_no_file .ai/knowledge/domains
+}
+
+# --- knowledge new: --source path validation (nothing created on refusal) ------
+
+# km_assert_source_refused <path> [expected substring] — the shape or
+# git-tracking checks in km_source_problem/km_source_tracked refuse <path>
+# before anything is written; every case reuses the same stub slug because a
+# refused call never reaches the point of building a file.
+km_assert_source_refused() {
+  local src="$1" expect="${2:-}"
+  run jig knowledge new convention stub --source "$src" --proposed --domains a
+  assert_eq 1 "$RC" "source: $src"
+  [ -z "$expect" ] || assert_contains "$OUT" "$expect" "source: $src"
+  assert_no_file .ai/knowledge/sources/stub.md
+}
+
+test_new_source_rejects_absolute_dotdot_dot_and_double_slash_paths() {
+  km_setup
+  km_assert_source_refused "/docs/coding-style.md" "must be repository-relative"
+  km_assert_source_refused "docs/../coding-style.md" "must be a plain file path without dot segments"
+  km_assert_source_refused "docs/./coding-style.md" "must be a plain file path without dot segments"
+  km_assert_source_refused "docs//coding-style.md" "must be a plain file path without dot segments"
+}
+
+test_new_source_rejects_paths_under_the_ai_directory() {
+  km_setup
+  km_assert_source_refused ".ai/notes.md" "may not point inside .ai/"
+}
+
+test_new_source_rejects_forbidden_characters() {
+  km_setup
+  km_assert_source_refused 'docs/a#b.md'
+  km_assert_source_refused 'docs/a"b.md'
+  km_assert_source_refused 'docs/a(b).md'
+  km_assert_source_refused 'docs/a[b].md'
+  km_assert_source_refused 'docs/a\b.md'
+  km_assert_source_refused "$(printf 'docs/a\tb.md')"
+}
+
+test_new_source_rejects_claude_local_md_basename_in_any_case() {
+  km_setup
+  km_assert_source_refused "CLAUDE.local.md" "CLAUDE.local.md is never linked"
+  km_assert_source_refused "docs/claude.local.md" "CLAUDE.local.md is never linked"
+}
+
+test_new_source_rejects_untracked_file() {
+  km_setup
+  mkdir -p docs
+  printf 'x\n' > docs/untracked.md
+  # "git tracks with this exact case" is the stable part of this message; the
+  # full text also now says "regular file" and "(symlinks are refused)" with
+  # the path after that parenthetical, not right after "exact case".
+  km_assert_source_refused "docs/untracked.md" "git tracks with this exact case"
+  assert_contains "$OUT" "docs/untracked.md"
+}
+
+test_new_source_rejects_wrong_case_of_a_tracked_path() {
+  km_setup
+  km_track_file Docs/a.md
+  # Compared as a plain string against `git ls-files`, never as `[ -f ... ]` or
+  # a pathspec: on a case-insensitive filesystem the file at "docs/a.md" and
+  # "Docs/a.md" is the same inode, so only the exact string comparison catches
+  # this regardless of which filesystem the test runs on.
+  km_assert_source_refused "docs/a.md" "git tracks with this exact case"
+  assert_contains "$OUT" "docs/a.md"
+}
+
+test_new_source_rejects_a_directory() {
+  km_setup
+  km_track_file docs/sub/inner.md
+  km_assert_source_refused "docs/sub" "git tracks with this exact case"
+  assert_contains "$OUT" "docs/sub"
+}
+
+test_new_source_rejects_a_deleted_but_still_indexed_file() {
+  km_setup
+  km_track_file docs/gone.md
+  rm docs/gone.md
+  km_assert_source_refused "docs/gone.md" "git tracks with this exact case"
+  assert_contains "$OUT" "docs/gone.md"
+}
+
+test_new_source_rejects_a_tracked_symlink() {
+  km_setup
+  mkdir -p docs
+  (cd docs && ln -s ../README.md link.md)
+  git add docs/link.md
+  git commit -q -m "add symlink"
+  # `-f` follows a symlink, so `docs/link.md -> ../README.md` is a well-formed
+  # path to a file — just not the file git tracks at that path (ADR-0036).
+  km_assert_source_refused "docs/link.md" "git tracks with this exact case"
+  assert_contains "$OUT" "docs/link.md"
+}
+
+test_new_source_rejects_a_path_already_linked_by_another_stub() {
+  km_setup
+  km_track_file docs/shared.md
+  jig knowledge new convention first --source docs/shared.md --proposed --domains a >/dev/null
+  run jig knowledge new feature second --source docs/shared.md --proposed --domains a
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: docs/shared.md is already linked by convention-first"
+  assert_no_file .ai/knowledge/sources/second.md
+}
+
+test_new_source_accepts_a_tracked_non_ascii_name() {
+  km_setup
+  km_track_file "docs/правила.md"
+  run jig knowledge new convention rules --source "docs/правила.md" --proposed --domains a
+  assert_eq 0 "$RC"
+  assert_eq ".ai/knowledge/sources/rules.md" "$OUT"
+  assert_file_contains .ai/knowledge/sources/rules.md "source: docs/правила.md"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+}
+
+# --- knowledge check: linked-source stubs (ADR-0036) ----------------------------
+
+test_check_fails_when_a_stub_source_is_renamed() {
+  km_setup
+  km_track_file docs/moved.md
+  jig knowledge new convention moved --source docs/moved.md --proposed --domains a >/dev/null
+  git mv docs/moved.md docs/renamed.md
+  git commit -q -m "rename"
+
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "FAIL .ai/knowledge/sources/moved.md: source is missing, a symlink, or not tracked by git with this exact case: docs/moved.md"
+}
+
+test_check_fails_when_a_stub_source_becomes_untracked() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention x --source docs/x.md --proposed --domains a >/dev/null
+  git rm -q --cached docs/x.md
+
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "FAIL .ai/knowledge/sources/x.md: source is missing, a symlink, or not tracked by git with this exact case: docs/x.md"
+}
+
+test_check_fails_when_a_stub_source_is_a_tracked_symlink() {
+  km_setup
+  mkdir -p docs
+  (cd docs && ln -s ../README.md link.md)
+  git add docs/link.md
+  git commit -q -m "add symlink"
+  mkdir -p .ai/knowledge/sources
+  cat > .ai/knowledge/sources/link.md <<'EOF'
+---
+id: convention-link
+type: convention
+status: proposed
+source: docs/link.md
+domains: [a]
+---
+# Link stub
+
+Linked source: [docs/link.md](../../../docs/link.md).
+EOF
+
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "FAIL .ai/knowledge/sources/link.md: source is missing, a symlink, or not tracked by git with this exact case: docs/link.md"
+}
+
+test_check_fails_when_two_stubs_link_the_same_source() {
+  km_setup
+  km_track_file docs/shared.md
+  km_track_file docs/other.md
+  jig knowledge new convention first --source docs/shared.md --proposed --domains a >/dev/null
+  jig knowledge new feature second --source docs/other.md --proposed --domains a >/dev/null
+  sed 's#^source: docs/other.md#source: docs/shared.md#' .ai/knowledge/sources/second.md \
+    > .ai/knowledge/sources/second.md.new
+  mv .ai/knowledge/sources/second.md.new .ai/knowledge/sources/second.md
+
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "FAIL .ai/knowledge/sources/second.md: source already linked by convention-first: docs/shared.md"
+}
+
+test_check_fails_when_a_stub_is_hand_edited_to_active() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention x --source docs/x.md --proposed --domains a >/dev/null
+  sed 's/^status: proposed/status: active/' .ai/knowledge/sources/x.md > .ai/knowledge/sources/x.md.new
+  mv .ai/knowledge/sources/x.md.new .ai/knowledge/sources/x.md
+
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "FAIL .ai/knowledge/sources/x.md: a linked source cannot be active yet: jig context does not resolve linked sources"
+}
+
+test_check_fails_when_a_stub_has_type_rule() {
+  km_setup
+  km_track_file docs/x.md
+  mkdir -p .ai/knowledge/sources
+  cat > .ai/knowledge/sources/badtype.md <<'EOF'
+---
+id: rule-badtype
+type: rule
+status: proposed
+source: docs/x.md
+domains: [a]
+---
+# Bad type stub
+
+Linked source: [docs/x.md](../../../docs/x.md).
+EOF
+
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "FAIL .ai/knowledge/sources/badtype.md: source: links adr, convention or feature documents, not: rule"
+}
+
+test_check_passes_a_proposed_adr_stub_without_date() {
+  km_setup
+  km_track_file docs/adr/0003-use-postgres.md
+  jig knowledge new adr 0003-use-postgres --source docs/adr/0003-use-postgres.md --proposed --domains a >/dev/null
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+}
+
+# --- knowledge accept/reject/proposed: linked-source stubs (ADR-0036) -----------
+
+test_accept_refuses_a_batch_containing_a_stub_and_changes_neither() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge new feature normal --proposed --domains a >/dev/null
+
+  run jig knowledge accept convention-stub feature-normal
+  assert_eq 1 "$RC"
+  # A stable substring rather than the full sentence, which also names the id
+  # and the source and could be reworded around them independently.
+  assert_contains "$OUT" "knowledge accept: convention-stub links docs/x.md"
+  assert_contains "$OUT" "does not resolve linked sources"
+  assert_file_contains .ai/knowledge/sources/stub.md "status: proposed"
+  assert_file_contains .ai/knowledge/features/normal.md "status: proposed"
+}
+
+test_reject_works_on_a_stub() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+
+  run jig knowledge reject convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "rejected   .ai/knowledge/sources/stub.md  (status: rejected)"
+  assert_file_contains .ai/knowledge/sources/stub.md "status: rejected"
+}
+
+test_proposed_shows_the_source_for_a_stub() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+
+  run jig knowledge proposed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "proposed:  convention-stub  (convention)  .ai/knowledge/sources/stub.md  -> docs/x.md"
+}
+
+# --- knowledge inventory: instructions from other tools (ADR-0036) --------------
+
+test_inventory_reports_an_untracked_cursorrules_file() {
+  km_setup
+  printf '# rules\n' > .cursorrules
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  local expect
+  expect=$(printf '%-14s %s  (%s)' "instructions:" ".cursorrules" "untracked")
+  assert_contains "$OUT" "$expect"
+}
+
+test_inventory_recognises_cursor_rules_copilot_and_nested_gemini() {
+  km_setup
+  km_track_file .cursor/rules/a.mdc
+  km_track_file .github/copilot-instructions.md
+  km_track_file sub/GEMINI.md
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions:  .cursor/rules/a.mdc"
+  assert_contains "$OUT" "instructions:  .github/copilot-instructions.md"
+  assert_contains "$OUT" "instructions:  sub/GEMINI.md"
+}
+
+# --- knowledge inventory: doc: candidates (ADR-0036) ----------------------------
+
+test_inventory_doc_lines_report_state_and_byte_size() {
+  km_setup
+  km_track_file docs/tracked.md
+  mkdir -p docs
+  printf '%s' "01234" > TODO-rules.md
+  # A sibling tracked file keeps `notes/` from being collapsed to a single
+  # ignored-directory line: only notes/ignored.md itself is ignored.
+  km_track_file notes/keep.md
+  printf 'notes/ignored.md\n' >> .gitignore
+  git add .gitignore
+  git commit -q -m "ignore notes/ignored.md"
+  printf '%s' "0123456789ab" > notes/ignored.md
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+
+  local expect
+  expect=$(printf '%-14s %s  (%s, %s bytes)' "doc:" "docs/tracked.md" "tracked" "$(wc -c < docs/tracked.md | tr -d ' ')")
+  assert_contains "$OUT" "$expect"
+  expect=$(printf '%-14s %s  (%s, %s bytes)' "doc:" "TODO-rules.md" "untracked" "5")
+  assert_contains "$OUT" "$expect"
+  expect=$(printf '%-14s %s  (%s, %s bytes)' "doc:" "notes/ignored.md" "ignored" "12")
+  assert_contains "$OUT" "$expect"
+}
+
+test_inventory_skips_a_candidate_name_containing_a_tab() {
+  km_setup
+  mkdir -p docs
+  local tabname
+  tabname=$(printf 'docs/a\tb.md')
+  printf 'x\n' > "$tabname"
+  git add "$tabname"
+  git commit -q -m "add tab-named file"
+  # A normal candidate alongside it: the tab-named one is skipped, everyone
+  # else's doc: line (state and byte size) is unaffected by it.
+  km_track_file docs/normal.md
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "$tabname"
+  local expect
+  expect=$(printf '%-14s %s  (%s, %s bytes)' "doc:" "docs/normal.md" "tracked" "$(wc -c < docs/normal.md | tr -d ' ')")
+  assert_contains "$OUT" "$expect"
+}
+
+test_inventory_doc_line_for_a_tracked_symlink_has_no_size() {
+  km_setup
+  mkdir -p docs
+  (cd docs && ln -s ../README.md link.md)
+  git add docs/link.md
+  git commit -q -m "add symlink"
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  local expect
+  expect=$(printf '%-14s %s  (%s)' "doc:" "docs/link.md" "tracked")
+  assert_contains "$OUT" "$expect"
+}
+
+test_inventory_doc_line_names_the_stub_linking_it() {
+  km_setup
+  km_track_file docs/policy.md
+  jig knowledge new convention policy --source docs/policy.md --proposed --domains a >/dev/null
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  local expect
+  expect=$(printf '%-14s %s  (%s, %s bytes, linked by %s)' \
+    "doc:" "docs/policy.md" "tracked" "$(wc -c < docs/policy.md | tr -d ' ')" "convention-policy")
+  assert_contains "$OUT" "$expect"
+}
+
+test_inventory_reports_an_ignored_directory_as_skipped_and_does_not_walk_it() {
+  km_setup
+  mkdir -p node_modules/pkg
+  printf 'node_modules/\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "ignore node_modules"
+  printf '# not a real package\n' > node_modules/pkg/index.md
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  local expect
+  expect=$(printf '%-14s %s  (%s)' "skipped:" "node_modules/" "ignored directory, not inspected")
+  assert_contains "$OUT" "$expect"
+  assert_not_contains "$OUT" "node_modules/pkg"
+}
+
+test_inventory_doc_line_for_non_ascii_tracked_name_is_unquoted_with_size() {
+  km_setup
+  mkdir -p docs
+  printf '%s' "0123456789" > "docs/правила.md"
+  git add "docs/правила.md"
+  git commit -q -m "add non-ascii doc"
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  local expect
+  expect=$(printf '%-14s %s  (%s, %s bytes)' "doc:" "docs/правила.md" "tracked" "10")
+  assert_contains "$OUT" "$expect"
+  # Never the git-quoted C-style escape a non-ASCII name gets without -z.
+  assert_not_contains "$OUT" '\320\277'
+}
+
+test_inventory_never_lists_claude_local_md_tracked_untracked_or_ignored() {
+  km_setup
+  printf '# mine\n' > CLAUDE.local.md
+  km_track_file sub/keep.md
+  printf 'sub/CLAUDE.local.md\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "ignore sub/CLAUDE.local.md"
+  printf '# mine too\n' > sub/CLAUDE.local.md
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "CLAUDE.local.md"
+}
+
+test_inventory_excludes_files_under_the_ai_directory_from_doc_lines() {
+  km_setup
+  mkdir -p .ai/notes
+  printf '# not a project document\n' > .ai/notes/readme.md
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "readme.md"
+}
+
+test_inventory_scope_limits_doc_lines_to_the_given_directory() {
+  km_setup
+  km_track_file scoped/docs/a.md
+  km_track_file outside/b.md
+
+  run jig knowledge inventory --scope scoped
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "doc:           scoped/docs/a.md"
+  assert_not_contains "$OUT" "outside/b.md"
+}
+
+test_inventory_does_not_list_a_non_candidate_extension() {
+  km_setup
+  km_track_file docs/readme.txt
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "readme.txt"
+}
+
+# A repeated adoption must see that an instruction file already has a stub:
+# only the `instructions:` line names it, since such a file never gets a
+# `doc:` line (ADR-0036).
+test_inventory_instructions_line_names_the_stub_that_links_it() {
+  km_setup
+  km_track_file CLAUDE.md "Use black."
+  km_track_file AGENTS.md "agents"
+  run jig knowledge new convention claude-md --source CLAUDE.md --proposed
+  assert_eq 0 "$RC"
+
+  run jig knowledge inventory
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions:  CLAUDE.md  (linked by convention-claude-md)"
+  assert_contains "$OUT" "instructions:  AGENTS.md"
+  assert_not_contains "$OUT" "instructions:  AGENTS.md  (linked by"
+}

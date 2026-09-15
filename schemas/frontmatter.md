@@ -55,6 +55,23 @@ key:
 | `paths` | no | list of globs relative to the repository root, matched by `jig context --files`; `**` matches any depth |
 | `supersedes` | no | id of the document this one replaces |
 | `reviewed_at` | no | `YYYY-MM-DD`, when the document was last reconciled with the code it describes; read by `jig knowledge stale` (ADR-0010) |
+| `source` | no | repository-relative path of an existing tracked file this document links; makes it a stub (see below, ADR-0036) |
+
+## Linked sources
+
+A stub links a project's existing rule document instead of copying it (ADR-0036). It lives in
+`.ai/knowledge/sources/<slug>.md` — navigation only, like `domains/` — has `type` `adr`, `convention` or
+`feature` (what the source is), id `<type>-<slug>`, and no `date` even as an ADR. Its body is a heading
+and a relative link to the source.
+
+`source` must be a regular, non-symlink file git tracks with exactly this case, not absolute, without
+dot segments, not under `.ai/`, without `#`, `"`, a backslash, brackets, parentheses, a tab or a newline,
+and never `CLAUDE.local.md`. One source has at most one stub.
+
+**A stub reaches no agent yet.** It is created `proposed`, `jig knowledge accept` refuses it, `knowledge
+check` fails it when `active` or `accepted`, and both forms of `jig context` skip any document with
+`source:` whatever its status (`--all` still shows it). These hold until `jig context` resolves a stub
+to its source.
 
 ## Proposed knowledge
 
@@ -135,6 +152,10 @@ domain just as well.
 | `supersedes` pointing to an unknown id | fail |
 | invalid `reviewed_at` (not `YYYY-MM-DD`) | fail |
 | unquoted scalar containing `: `, which YAML reads as a nested mapping | fail |
+| `source` absent, a symlink, untracked, or tracked with different case | fail |
+| `source` path breaks the rules in "Linked sources", or `type` is not `adr`/`convention`/`feature` | fail |
+| two documents with the same `source` | fail |
+| document with `source` that is `active` or `accepted` | fail |
 | `paths` glob that matches no file in the repository | warn |
 | resolvable document (`active`/`accepted`) with no `summary` | warn |
 | document without `domains` and without `paths` | warn |
@@ -148,13 +169,14 @@ characters that a careless `sed` would eat (ADR-0001, convention-shell):
 |---|---|
 | `jig knowledge new <feature\|adr\|convention> <slug> [--proposed]` | instantiate `.ai/templates/knowledge/<type>.md`, allocating the next ADR number |
 | `jig knowledge new <domain\|glossary\|rule> <domain> [--proposed]` | instantiate the pack file under `.ai/knowledge/domains/<domain>/` from `.ai/templates/knowledge/domain/` |
+| `jig knowledge new <feature\|adr\|convention> <slug> --source <path> --proposed` | write a stub in `.ai/knowledge/sources/` from `.ai/templates/knowledge/source.md`; refuses the path before writing anything |
 | `jig knowledge paths add\|remove <id> <glob>` | maintain one document's `paths` |
 | `jig knowledge stages add\|remove <id> <stage>` | add/remove optional stage relevance idempotently |
 | `jig knowledge summary <id> <text>` | set the one-line `summary`; refuses `#`, which the reader would strip as a comment |
 | `jig knowledge proposed` | list every document with `status: proposed` |
 | `jig knowledge accept <id>...` | promote one or more `proposed` documents to `active` (adr: `accepted`) |
 | `jig knowledge reject <id>...` | mark one or more `proposed` documents `rejected`; never deletes or moves the file |
-| `jig knowledge inventory [--scope <dir>]` | deterministic facts about the repository's shape: tracked root files named individually (where manifests live), runtime instruction files, and tracked file counts per directory. It carries no knowledge of what a manifest *means* — that mapping is declared once in each profile's `detect` globs, and recognising it is the agent's judgement (ADR-0001). Prints neither the catalog nor the coverage gaps either — those are `jig context resolve --catalog` and `jig knowledge paths` |
+| `jig knowledge inventory [--scope <dir>]` | deterministic facts about the repository's shape: tracked root files named individually (where manifests live), instruction files of every known tool (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`, `.github/copilot-instructions.md`, `.cursor/rules/*.mdc`) with their git state when untracked and the stub linking them, tracked file counts per directory, `doc:` candidates (Markdown-like files, tracked, untracked or ignored, with size and `linked by <id>`), and `skipped:` ignored directories it did not walk; `CLAUDE.local.md` never appears. It carries no knowledge of what a manifest *means* — that mapping is declared once in each profile's `detect` globs, and recognising it is the agent's judgement (ADR-0001). Prints neither the catalog nor the coverage gaps either — those are `jig context resolve --catalog` and `jig knowledge paths` |
 | `jig knowledge reviewed <id>` | stamp `reviewed_at` |
 | `jig knowledge stale` | `stale` / `unreviewed` / `orphaned` (stamped, code gone) / `planned` (never stamped, code not written yet) |
 

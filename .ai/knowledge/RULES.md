@@ -32,9 +32,12 @@
   spec ids, profile names, adapter names and knowledge domain names are checked at the
   single function that builds the path (`task_dir`, `spec_new` and the `spec_ids` walk,
   `spec_task_dir` and `spec_remove`, `profiles_dir`, `adapters_dir`, `km_domain_dir`), before
-  any read, write or `sed` expression that embeds them. A path supplied by a caller rather than derived from a name is validated the same way at the
-  point it is joined to the project root — `_ctx_check_knowledge_path` for an
-  acknowledged document, the `--scope` check in `km_inventory` for a directory. Each
+  any read, write or `sed` expression that embeds them. A path supplied by a caller rather
+  than derived from a name is validated the same way at the point it is joined to the
+  project root — `_ctx_check_knowledge_path` for an
+  acknowledged document, the `--scope` check in `km_inventory` for a directory, and
+  `km_source_problem` plus `km_source_tracked` for a linked source, which also refuses a
+  tracked symlink because it may point outside the repository (ADR-0036). Each
   validates for the shape it needs; none may skip the check because another command
   already ran one. (ADR-0008, convention-shell)
 

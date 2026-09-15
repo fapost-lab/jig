@@ -13,20 +13,71 @@ knowledge until someone agrees with them.
 
 ```
 .ai/scripts/jig knowledge inventory [--scope <dir>]
-.ai/scripts/jig context resolve --catalog --domains <domains so far>
-.ai/scripts/jig knowledge paths
+.ai/scripts/jig context resolve --no-task --catalog [--domains <domains so far>]
+git ls-files | .ai/scripts/jig knowledge paths --files -
 ```
 
 The first names the tracked files at the repository root — where manifests live, and
 recognising what `composer.json` or `go.mod` implies is your judgement, not the
-command's — plus the runtime instruction files and where the tracked code sits. The second
-gives what knowledge already exists. The third gives where it is missing: `uncovered` is
-code no document claims, `unmatched` is a document pointing at code that moved.
+command's — plus the runtime instruction files, where the tracked code sits, and the
+documents that may already hold rules. The second gives what knowledge already exists; on a
+first pass there are no domains to name. The third gives where knowledge is missing across the
+whole repository: `uncovered` is code no document claims, `unmatched` is a document pointing at
+code that moved. Without `--files` it looks only at what changed on this branch. A proposed
+document's globs already count as coverage there, although nothing resolves it.
 
 Read the code the inventory names. A map proposed from directory names alone is a guess
 with a table of contents.
 
-## 2. Separate what you saw from what you concluded
+## 2. Adopt what the project already has
+
+A project that adopts Jig often keeps its rules somewhere already: `docs/`, its own ADRs,
+`CONTRIBUTING.md`, instruction files of other tools. Proposing new documents beside them makes
+two copies of every rule. The inventory lists the candidates: `instructions:` lines, and `doc:`
+lines with their git state and size. Read them. Everything below goes into the
+`knowledge-map.md` §4 describes — start it now, in the task workspace; if you are not in a task,
+file one with `jig-task` first.
+
+Files `jig init` wrote — `AGENTS.md`, and `CLAUDE.md` when it only points at `AGENTS.md` — are
+Jig's own, not candidates. A `skipped:` directory was not inspected: look inside the ones that
+could hold rules (`notes/`, `docs-private/`), never dependency or build directories (`.venv/`,
+`node_modules/`), and say which you opened.
+
+- **Pick the rule-like documents**: conventions, ADRs, anything that helps maintain the code.
+  Skip READMEs, changelogs, API references and guides for people, and name what you skipped in
+  `knowledge-map.md`.
+- **Instruction files, by the runtimes in `adapters` of `.ai/config.yaml`.** A file every
+  configured runtime loads on its own is not linked — it would be read twice. `CLAUDE.md` in a
+  project that also runs Codex is linked, unless it only points at `AGENTS.md`. Another tool's
+  file (`.cursorrules`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`) is linked.
+  Only a tracked file can be linked: an instruction file marked `(untracked)` or `(ignored)` goes
+  to "copy later" like any other. `CLAUDE.local.md` is never touched.
+- **Duplicates and contradictions** get their own section in `knowledge-map.md`: the rule, where
+  each version is written, how they differ, and how you would reconcile them. Settle nothing
+  silently — existing rules keep their authority until the human decides.
+- **Link each tracked rule document in place** with a proposed stub:
+
+  ```
+  .ai/scripts/jig knowledge new <adr|convention|feature> <slug> --source <path> --proposed [--domains <a,b>] [--paths <globs>]
+  .ai/scripts/jig knowledge summary <id> "<what the source is for>"
+  ```
+
+  The type is what the source is: a recorded decision is `adr`; rules for writing, structuring
+  or contributing code — architecture and layering documents included — are `convention`; how
+  one part of the product behaves is `feature`. A team's ADR keeps its own number in the slug
+  and gets no `paths`: it stays in the catalog. Give `--domains` and `--paths` only when the
+  source really is limited to them; a project-wide document gets neither, and `knowledge check`
+  warning about it is expected until linked sources resolve. Replace the stub's placeholder
+  heading with the source's title and give it a summary. Write the size of every source into
+  `knowledge-map.md` (`doc:` lines carry it; for an instruction file, `wc -c`). A line saying
+  `linked by` already has a stub — do not propose it again.
+- **Untracked and ignored candidates** are listed in `knowledge-map.md` as "copy later"; do
+  nothing with them yet.
+
+A stub cannot be accepted yet: `jig context` does not resolve linked sources, and an accepted
+stub would give an agent its two-line body instead of the rules. Say so at the gate.
+
+## 3. Separate what you saw from what you concluded
 
 Every statement in the proposal is labelled:
 
@@ -38,7 +89,7 @@ A rule with no evidence is a proposal, not an observation, however obvious it lo
 Mislabelling here is the failure this skill exists to prevent: an inference that reads as
 a fact becomes a rule nobody remembers agreeing to.
 
-## 3. Write the proposal
+## 4. Write the proposal
 
 `knowledge-map.md` in the task workspace: candidate domains, their boundaries, the
 evidence for each, and — as its own section — **what you could not determine**. A map
@@ -64,7 +115,7 @@ deciding whether to open the document; without it the catalog says nothing.
 Do not write to `GLOSSARY.md`, `ARCHITECTURE.md` or `RULES.md`. Those are the project's
 own, and a map proposes domains, not project-wide law.
 
-## 4. Human gate
+## 5. Human gate
 
 Stop. Show `knowledge-map.md` whole, then the proposed documents one domain at a time,
 each verbatim, as [show the document](../jig-task/references/show-the-document.md) says.
@@ -73,7 +124,7 @@ first if the human wants fewer. Wait.
 
 Do not accept your own proposal. Silence is not approval.
 
-## 5. Accept, then validate
+## 6. Accept, then validate
 
 ```
 .ai/scripts/jig knowledge accept <id> [<id>...]

@@ -5,6 +5,7 @@
 
 KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge new <feature|adr|convention> <slug> [--domains a,b] [--paths g,g] [--proposed]
+       jig knowledge new <feature|adr|convention> <slug> --source <path> --proposed [--domains a,b] [--paths g,g]
        jig knowledge new <domain|glossary|rule> <domain> [--paths g,g] [--proposed]
        jig knowledge paths [--task <id>] [--files <list>|-]
        jig knowledge paths add|remove <id> <glob>
@@ -199,12 +200,13 @@ km_check_doc() {
 # km_check_doc_frontmatter — id/type/status/adr/supersedes/domains/paths checks.
 km_check_doc_frontmatter() {
   local file="$1" relpath="$2" ids_file="$3" ids_all_file="$4" adr_nums_file="$5"
-  local id type status date supersedes domains paths_out reviewed
+  local id type status date supersedes domains paths_out reviewed source
   local reldir under_adr base num slug
 
   id=$(fm_get "$file" id)
   type=$(fm_get "$file" type)
   status=$(fm_get "$file" status)
+  source=$(jig_knowledge_source "$file")
 
   case "$id" in
     '' | *[!a-z0-9-]*) km_fail "$relpath" "missing or invalid id" ;;
@@ -279,7 +281,8 @@ km_check_doc_frontmatter() {
     esac
   fi
 
-  if [ "$type" = "adr" ]; then
+  # A linked team ADR keeps its date in its source (ADR-0036).
+  if [ "$type" = "adr" ] && [ -z "$source" ]; then
     date=$(fm_get "$file" date)
     case "$date" in
       [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
@@ -323,6 +326,40 @@ km_check_doc_frontmatter() {
   km_check_topics "$file" "$relpath"
   km_check_stages "$file" "$relpath"
   km_check_domain_placement "$file" "$relpath" "$domains"
+  if [ -n "$source" ]; then
+    km_check_source "$relpath" "$type" "$status" "$source" "$id"
+  fi
+}
+
+# km_check_source <relpath> <type> <status> <source> <id> — a stub's link to an
+# existing document (ADR-0036). Needs the tracked list and the seen-sources file
+# km_check prepares; without them only the shape is checked.
+km_check_source() {
+  local relpath="$1" type="$2" status="$3" src="$4" id="$5" problem seen
+  case "$type" in
+    adr | convention | feature) ;;
+    *) km_fail "$relpath" "source: links adr, convention or feature documents, not: ${type:-none}" ;;
+  esac
+  problem=$(km_source_problem "$src")
+  if [ -n "$problem" ]; then
+    km_fail "$relpath" "invalid source '$src': $problem"
+  elif [ -n "${KM_TRACKED_FILE:-}" ] && ! km_source_tracked "$src" "$KM_TRACKED_FILE"; then
+    km_fail "$relpath" "source is missing, a symlink, or not tracked by git with this exact case: $src"
+  fi
+  if [ -n "${KM_SOURCES_FILE:-}" ]; then
+    seen=$(awk -F '\t' -v s="$src" '$1 == s { print $2; exit }' "$KM_SOURCES_FILE")
+    if [ -n "$seen" ]; then
+      km_fail "$relpath" "source already linked by $seen: $src"
+    else
+      printf '%s\t%s\n' "$src" "${id:-$relpath}" >> "$KM_SOURCES_FILE"
+    fi
+  fi
+  # Temporary, until jig context resolves a stub to its source: an active stub
+  # would hand an agent its two-line body instead of the rules.
+  if jig_knowledge_status_resolvable "$status"; then
+    km_fail "$relpath" "a linked source cannot be $status yet: jig context does not resolve linked sources"
+  fi
+  return 0
 }
 
 # km_check_load <file> <relpath> — `load` is optional and defaults to
@@ -442,12 +479,18 @@ km_dedupe_ids() {
 # nine documents and dies on the tenth must not leave the batch half-applied.
 km_accept() {
   [ $# -ge 1 ] || jig_die "usage: jig knowledge accept <id>..."
-  local id doc type target count=0 ids
+  local id doc type target count=0 ids src
   ids=$(km_dedupe_ids "$@")
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    km_require_proposed "$id" >/dev/null
+    doc=$(km_require_proposed "$id") || exit 1
+    # A stub cannot be accepted until jig context resolves it to its source
+    # (ADR-0036); refused before anything in the batch is written.
+    src=$(jig_knowledge_source "$doc")
+    if [ -n "$src" ]; then
+      jig_die "knowledge accept: $id links $src; jig context does not resolve linked sources yet — review it, or reject it"
+    fi
   done <<EOF
 $ids
 EOF
@@ -544,7 +587,7 @@ km_proposed_count() {
 # grepping for the status by hand.
 km_proposed() {
   [ $# -eq 0 ] || jig_die "usage: jig knowledge proposed"
-  local doc id type rel summary count=0
+  local doc id type rel summary src count=0
 
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
@@ -554,6 +597,8 @@ km_proposed() {
     type=$(fm_get "$doc" type)
     rel=$(km_rel "$doc")
     summary=$(fm_get "$doc" summary)
+    src=$(jig_knowledge_source "$doc")
+    [ -z "$src" ] || rel="$rel  -> $src"
     count=$((count + 1))
     if [ -n "$summary" ]; then
       printf 'proposed:  %s  (%s)  %s  %s\n' "$id" "$type" "$rel" "$summary"
@@ -603,11 +648,22 @@ km_inventory() {
       || jig_die "knowledge inventory: no such directory: $scope"
   fi
 
-  local prefix="" spec="." f dir count last=""
+  local prefix="" spec="." f dir count last="" inv state doc src
   if [ -n "$scope" ]; then
     prefix="$scope/"
     spec="$scope"
   fi
+
+  # Script-global: the EXIT trap runs after this function has returned.
+  KM_INV_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-knowledge-inventory.XXXXXX")
+  trap 'if [ -n "${KM_INV_TMP:-}" ]; then rm -rf "$KM_INV_TMP"; fi' EXIT INT TERM
+  inv="$KM_INV_TMP"
+
+  # Every listing is read with -z: without it git quotes a non-ASCII name
+  # ("Docs/\320\277…"), and a quoted name is a path that does not exist.
+  git -C "$JIG_PROJECT" ls-files -z -- "$spec" > "$inv/tracked.z" \
+    || jig_die "knowledge inventory: could not list tracked files"
+  tr '\0' '\n' < "$inv/tracked.z" | sort > "$inv/tracked"
 
   # Root-level tracked files are named, not counted: this is where manifests live, and
   # naming them is a fact. Which manifest means which stack is a judgement, and it is
@@ -620,13 +676,81 @@ km_inventory() {
     f="${f#"$prefix"}"
     case "$f" in */*) continue ;; esac
     printf '%-14s %s\n' "root:" "$prefix$f"
-  done < <(git -C "$JIG_PROJECT" ls-files "$spec" | sort)
+  done < "$inv/tracked"
 
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    printf '%-14s %s\n' "instructions:" "$f"
-  done < <(git -C "$JIG_PROJECT" ls-files "$spec" \
-    | grep -E '(^|/)(AGENTS|CLAUDE)\.md$' | sort)
+  # Candidates for adoption (ADR-0036): tracked, untracked and ignored files, each
+  # line `<state><TAB><path>`. Ignored directories are listed collapsed
+  # (--directory) and never walked: node_modules/ would otherwise be thousands of
+  # lines, and the report names what it did not look into instead.
+  git -C "$JIG_PROJECT" ls-files -z --others --exclude-standard -- "$spec" > "$inv/untracked.z" \
+    || jig_die "knowledge inventory: could not list untracked files"
+  git -C "$JIG_PROJECT" ls-files -z --others --ignored --exclude-standard --directory -- "$spec" \
+    > "$inv/ignored.z" || jig_die "knowledge inventory: could not list ignored files"
+  {
+    sed 's/^/tracked	/' "$inv/tracked"
+    tr '\0' '\n' < "$inv/untracked.z" | sed 's/^/untracked	/'
+    tr '\0' '\n' < "$inv/ignored.z" | sed 's/^/ignored	/'
+  } > "$inv/all"
+
+  # One pass sorts every candidate into an instruction file, a document or a
+  # skipped directory. `CLAUDE.local.md` holds one person's preferences, not
+  # project rules, and is never listed. Framework and runtime-skill directories
+  # are Jig's own. Which documents hold rules is the agent's judgement.
+  awk -F '\t' -v ai="$JIG_AI_DIR/" '
+    function instruction(p, b) {
+      b = p
+      sub(/.*\//, "", b)
+      if (b == "AGENTS.md" || b == "CLAUDE.md" || b == "GEMINI.md") return 1
+      if (b == ".cursorrules" || b == ".windsurfrules") return 1
+      if (p == ".github/copilot-instructions.md") return 1
+      if (p ~ /\/\.github\/copilot-instructions\.md$/) return 1
+      if (p ~ /^\.cursor\/rules\/[^\/]*\.mdc$/ || p ~ /\/\.cursor\/rules\/[^\/]*\.mdc$/) return 1
+      return 0
+    }
+    {
+      state = $1
+      p = substr($0, length(state) + 2)
+      if (p == "") next
+      # A tab would split the records below, and a name with a tab cannot be a
+      # linked source anyway (km_source_problem).
+      if (index(p, "\t")) next
+      if (index(p, ai) == 1 || index(p, ".git/") == 1) next
+      if (index(p, ".claude/skills/") == 1 || index(p, ".codex/skills/") == 1) next
+      if (state == "ignored" && p ~ /\/$/) { print "skip\t" p; next }
+      b = p
+      sub(/.*\//, "", b)
+      lb = tolower(b)
+      if (lb == "claude.local.md") next
+      if (instruction(p)) { print "inst\t" p "\t" state; next }
+      if (lb ~ /\.(md|mdc|markdown|rst|adoc)$/) print "doc\t" p "\t" state
+    }
+  ' "$inv/all" | sort > "$inv/class"
+
+  # Sources already linked by a stub, so a repeated adoption does not propose
+  # them twice.
+  : > "$inv/linked"
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    fm_has "$doc" || continue
+    src=$(jig_knowledge_source "$doc")
+    [ -n "$src" ] || continue
+    printf '%s\t%s\n' "$src" "$(fm_get "$doc" id)" >> "$inv/linked"
+  done < <(km_docs)
+
+  # A tracked instruction file prints as it always has, plus the stub that links
+  # it; one git does not track says so, because nothing but this line tells the
+  # agent it is not shared.
+  while IFS='	' read -r f doc state; do
+    [ "$f" = inst ] || continue
+    src=$(awk -F '\t' -v p="$doc" '$1 == p { print $2; exit }' "$inv/linked")
+    if [ "$state" = tracked ] && [ -z "$src" ]; then
+      printf '%-14s %s\n' "instructions:" "$doc"
+    elif [ "$state" = tracked ]; then
+      printf '%-14s %s  (linked by %s)\n' "instructions:" "$doc" "$src"
+    else
+      printf '%-14s %s  (%s)\n' "instructions:" "$doc" "$state"
+    fi
+  done < "$inv/class"
 
   # Tracked files grouped by their first path segment below the scope: the coarsest
   # honest description of where the code is.
@@ -645,10 +769,59 @@ km_inventory() {
       last="$dir"; count=0
     fi
     count=$((count + 1))
-  done < <(git -C "$JIG_PROJECT" ls-files "$spec" | sort)
+  done < "$inv/tracked"
   if [ -n "$last" ]; then
     printf '%-14s %s  (%s)\n' "tree:" "$prefix$last" "$(km_files_word "$count")"
   fi
+
+  # Sizes: one `wc -c` over every document, not a process per file. Matched to the
+  # documents by order, not by name: in the C locale wc prints every non-ASCII
+  # byte of a name as `?`. Its `total` lines never name a candidate, which always
+  # carries an extension. When the counts disagree — a file became unreadable —
+  # no size is printed rather than a size next to the wrong file.
+  # Only existing regular files are measured: a symlink would report the size of
+  # whatever it points at, possibly outside the repository, and a name git split
+  # at a newline is a path that does not exist. Both still get their doc: line.
+  : > "$inv/docs"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -f "$JIG_PROJECT/$f" ] && [ ! -L "$JIG_PROJECT/$f" ]; then
+      printf '%s\n' "$f" >> "$inv/docs"
+    fi
+  done < <(awk -F '\t' '$1 == "doc" { print $2 }' "$inv/class")
+  : > "$inv/sizes"
+  if [ -s "$inv/docs" ]; then
+    tr '\n' '\0' < "$inv/docs" \
+      | (cd "$JIG_PROJECT" && xargs -0 wc -c) > "$inv/sizes" 2>/dev/null || true
+  fi
+
+  # FILENAME, not NR == FNR: either of the first two files may be empty
+  # (convention-shell).
+  awk -F '\t' -v sizes="$inv/sizes" -v docs="$inv/docs" -v linked="$inv/linked" '
+    FILENAME == sizes {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      n = line
+      sub(/[^0-9].*$/, "", n)
+      sub(/^[0-9]+[[:space:]]/, "", line)
+      if (line == "total") next
+      s[++ns] = n
+      next
+    }
+    FILENAME == docs { d[++nd] = $0; next }
+    FILENAME == linked { by[$1] = $2; next }
+    !mapped {
+      mapped = 1
+      if (ns == nd) for (i = 1; i <= nd; i++) size[d[i]] = s[i]
+    }
+    $1 == "doc" {
+      extra = $3
+      if ($2 in size) extra = extra ", " size[$2] " bytes"
+      if ($2 in by) extra = extra ", linked by " by[$2]
+      printf "%-14s %s  (%s)\n", "doc:", $2, extra
+    }
+    $1 == "skip" { printf "%-14s %s  (ignored directory, not inspected)\n", "skipped:", $2 }
+  ' "$inv/sizes" "$inv/docs" "$inv/linked" "$inv/class"
 
   return 0
 }
@@ -769,7 +942,14 @@ km_check() {
   KM_IDS_ALL_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-ids-all.XXXXXX")
   KM_ADR_NUMS_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-adr-nums.XXXXXX")
   KM_META_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-meta.XXXXXX")
-  trap 'rm -f "$KM_LIST_FILE" "$KM_IDS_FILE" "$KM_IDS_ALL_FILE" "$KM_ADR_NUMS_FILE" "$KM_META_FILE"' EXIT INT TERM
+  KM_TRACKED_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-tracked.XXXXXX")
+  KM_SOURCES_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-sources.XXXXXX")
+  trap 'rm -f "$KM_LIST_FILE" "$KM_IDS_FILE" "$KM_IDS_ALL_FILE" "$KM_ADR_NUMS_FILE" "$KM_META_FILE" "$KM_TRACKED_FILE" "$KM_SOURCES_FILE"' EXIT INT TERM
+
+  # One git call for every linked source in the knowledge base, not one per stub
+  # (convention-shell).
+  km_tracked_list "$KM_TRACKED_FILE" \
+    || jig_die "knowledge check: could not list the files git tracks"
 
   if [ -d "$kdir" ]; then
     find "$kdir" -type f -name '*.md' | sort > "$KM_LIST_FILE"
@@ -836,7 +1016,7 @@ km_type_dir() {
 km_doc_file() {
   local dir="$1" name="$2"
   case "$dir" in
-    features | conventions | adr) ;;
+    features | conventions | adr | sources) ;;
     *) jig_die "knowledge: unknown document directory: $dir" ;;
   esac
   case "$name" in
@@ -1045,6 +1225,104 @@ km_template() {
   jig_die "knowledge: no template for type '$type'; run: jig upgrade"
 }
 
+# --- linked sources ----------------------------------------------------------------
+#
+# A stub under .ai/knowledge/sources/ links an existing document with `source:`
+# (ADR-0036). Its path comes from a caller, so it is validated where it is
+# accepted — `jig knowledge new` — and again by `jig knowledge check`, which
+# also sees stubs written by hand (RULES.md).
+
+# km_source_problem <path> — why <path> cannot be a linked source, or nothing.
+# Shape only; whether git tracks it is km_source_tracked.
+km_source_problem() {
+  local src="$1" base lower nl tab
+  nl=$'\n'
+  tab=$'\t'
+  case "$src" in
+    '') printf 'empty path'; return 0 ;;
+    /*) printf 'must be repository-relative'; return 0 ;;
+  esac
+  # `#` and `"` cannot be stored in frontmatter; brackets, parentheses and a
+  # backslash break the markdown link the stub carries.
+  case "$src" in
+    *"$nl"* | *"$tab"* | *'#'* | *'"'* | *\\* | *'('* | *')'* | *'['* | *']'*)
+      printf "may not contain '#', '\"', a backslash, brackets, parentheses, a tab or a newline"
+      return 0
+      ;;
+  esac
+  case "/$src/" in
+    */../* | */./* | *//*) printf 'must be a plain file path without dot segments'; return 0 ;;
+  esac
+  case "$src" in
+    "$JIG_AI_DIR" | "$JIG_AI_DIR"/*) printf 'may not point inside %s/' "$JIG_AI_DIR"; return 0 ;;
+  esac
+  base=${src##*/}
+  lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+  if [ "$lower" = claude.local.md ]; then
+    printf 'CLAUDE.local.md is never linked'
+  fi
+  return 0
+}
+
+# km_tracked_list <out> — every path git tracks, one per line, into <out>.
+# Read with -z so a non-ASCII name arrives as it is, not quoted.
+km_tracked_list() {
+  git -C "$JIG_PROJECT" ls-files -z > "$1.z" || { rm -f "$1.z"; return 1; }
+  tr '\0' '\n' < "$1.z" > "$1"
+  rm -f "$1.z"
+}
+
+# km_source_tracked <path> <tracked-list> — true when git tracks <path> with
+# exactly this case and it is a regular file, not a symlink. Compared as a
+# string, never as a pathspec: on a case-insensitive filesystem
+# `[ -f docs/x.md ]` is true for `Docs/x.md`, and a pathspec would read a leading
+# `:` as magic. The index keeps a deleted file until it is staged, hence the -f.
+# A tracked symlink is refused because `-f` follows it: `docs/x.md -> /etc/passwd`
+# is a well-formed path to a file outside the repository. A symlinked directory
+# needs no check: git tracks no path through one.
+km_source_tracked() {
+  grep -qxF -- "$1" "$2" || return 1
+  [ -f "$JIG_PROJECT/$1" ] && [ ! -L "$JIG_PROJECT/$1" ]
+}
+
+# km_source_linked_by <path> — id of the document whose `source:` is <path>,
+# or nothing.
+km_source_linked_by() {
+  local want="$1" doc
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    fm_has "$doc" || continue
+    if [ "$(jig_knowledge_source "$doc")" = "$want" ]; then
+      fm_get "$doc" id
+      return 0
+    fi
+  done < <(km_docs)
+  return 0
+}
+
+# km_source_link_body <file> <path> — replace the template's {{SOURCE_LINK}}
+# with a relative markdown link from .ai/knowledge/sources/ to <path>, the link
+# `knowledge check` already verifies. The path reaches awk through the
+# environment, never as a substitution: a replacement reads `&` as syntax
+# (convention-shell).
+km_source_link_body() {
+  local file="$1" src="$2" prefix="" seg rest
+  rest="$JIG_AI_DIR/knowledge/sources"
+  while [ -n "$rest" ]; do
+    seg=${rest%%/*}
+    [ -z "$seg" ] || prefix="../$prefix"
+    case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+  done
+  KM_SOURCE_LINK="[$src]($prefix$src)" awk '
+    {
+      i = index($0, "{{SOURCE_LINK}}")
+      if (i) $0 = substr($0, 1, i - 1) ENVIRON["KM_SOURCE_LINK"] substr($0, i + 15)
+      print
+    }
+  ' "$file" > "$file.tmp" || { rm -f "$file.tmp"; return 1; }
+  mv "$file.tmp" "$file"
+}
+
 # km_csv_lines <csv> — split "a, b" into one item per line.
 km_csv_lines() {
   printf '%s\n' "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d'
@@ -1066,7 +1344,7 @@ km_new_abandon() {
 # `--status <s>` because `proposed` is the only other status a document can
 # sensibly be born with; the template supplies the resolvable one.
 km_new() {
-  local type="" slug="" domains="" paths_in="" proposed=0
+  local type="" slug="" domains="" paths_in="" proposed=0 source="" has_source=0
   [ $# -ge 2 ] || jig_die "$KM_USAGE"
   type="$1"
   slug="$2"
@@ -1077,6 +1355,8 @@ km_new() {
         domains="$2"; shift 2 ;;
       --paths) [ $# -ge 2 ] || jig_die "knowledge new: --paths requires a value"
         paths_in="$2"; shift 2 ;;
+      --source) [ $# -ge 2 ] || jig_die "knowledge new: --source requires a value"
+        source="$2"; has_source=1; shift 2 ;;
       --proposed) proposed=1; shift ;;
       *) jig_die "knowledge new: unknown argument: $1" ;;
     esac
@@ -1085,31 +1365,61 @@ km_new() {
   # The type is resolved to a path before the template is looked up, so an
   # unknown type is reported as an unknown type rather than as a missing
   # template.
-  local dir template file id number rel build
-  case "$type" in
-    domain | glossary | rule)
-      # For a domain document the slug *is* the domain: the pack lives under
-      # domains/<domain>/ and the file name is fixed by type.
-      file=$(km_domain_file "$type" "$slug") || exit 1
-      id="$type-$slug"
-      # A pack file that did not claim its own domain would fail
-      # `knowledge check` immediately (km_check_domain_placement), so the
-      # default is the only sensible one.
-      [ -n "$domains" ] || domains="$slug"
-      ;;
-    adr)
-      dir=$(km_type_dir "$type")
-      number=$(km_next_adr)
-      file=$(km_doc_file "$dir" "$number-$slug")
-      id="adr-$number-$slug"
-      ;;
-    *)
-      dir=$(km_type_dir "$type")
-      file=$(km_doc_file "$dir" "$slug")
-      id="$type-$slug"
-      ;;
-  esac
-  template=$(km_template "$type")
+  local dir template file id number rel build problem linked tracked
+  if [ "$has_source" -eq 1 ]; then
+    # A stub linking an existing document (ADR-0036). Everything that can refuse
+    # refuses before anything is written.
+    case "$type" in
+      adr | convention | feature) ;;
+      *) jig_die "knowledge new: --source links adr, convention or feature documents, not: $type" ;;
+    esac
+    # Until jig context resolves a stub to its source, an active stub would put
+    # its two-line body in front of an agent instead of the rules it points at.
+    [ "$proposed" -eq 1 ] \
+      || jig_die "knowledge new: --source requires --proposed; jig context does not resolve linked sources yet"
+    problem=$(km_source_problem "$source")
+    [ -z "$problem" ] || jig_die "knowledge new: invalid --source '$source': $problem"
+    tracked=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-tracked.XXXXXX")
+    if ! km_tracked_list "$tracked"; then
+      rm -f "$tracked"
+      jig_die "knowledge new: could not list the files git tracks"
+    fi
+    if ! km_source_tracked "$source" "$tracked"; then
+      rm -f "$tracked"
+      jig_die "knowledge new: --source is not a regular file git tracks with this exact case (symlinks are refused): $source"
+    fi
+    rm -f "$tracked"
+    linked=$(km_source_linked_by "$source")
+    [ -z "$linked" ] || jig_die "knowledge new: $source is already linked by $linked"
+    file=$(km_doc_file sources "$slug")
+    id="$type-$slug"
+    template=$(km_template source)
+  else
+    case "$type" in
+      domain | glossary | rule)
+        # For a domain document the slug *is* the domain: the pack lives under
+        # domains/<domain>/ and the file name is fixed by type.
+        file=$(km_domain_file "$type" "$slug") || exit 1
+        id="$type-$slug"
+        # A pack file that did not claim its own domain would fail
+        # `knowledge check` immediately (km_check_domain_placement), so the
+        # default is the only sensible one.
+        [ -n "$domains" ] || domains="$slug"
+        ;;
+      adr)
+        dir=$(km_type_dir "$type")
+        number=$(km_next_adr)
+        file=$(km_doc_file "$dir" "$number-$slug")
+        id="adr-$number-$slug"
+        ;;
+      *)
+        dir=$(km_type_dir "$type")
+        file=$(km_doc_file "$dir" "$slug")
+        id="$type-$slug"
+        ;;
+    esac
+    template=$(km_template "$type")
+  fi
 
   [ -e "$file" ] && jig_die "knowledge: document already exists: $(km_rel "$file")"
 
@@ -1123,7 +1433,12 @@ km_new() {
   cp "$template" "$build" || km_new_abandon "$build" "knowledge new: could not write $(km_rel "$file")"
 
   fm_set "$build" id "$id" || km_new_abandon "$build" "knowledge new: could not write id: $id"
-  if [ "$type" = adr ]; then
+  if [ "$has_source" -eq 1 ]; then
+    fm_set "$build" type "$type" || km_new_abandon "$build" "knowledge new: could not write type"
+    fm_set "$build" source "$source" || km_new_abandon "$build" "knowledge new: could not write source"
+    km_source_link_body "$build" "$source" \
+      || km_new_abandon "$build" "knowledge new: could not write the link to $source"
+  elif [ "$type" = adr ]; then
     fm_set "$build" date "$(jig_today)" \
       || km_new_abandon "$build" "knowledge new: could not write date"
     # The heading placeholder carries the number too. `number` is four digits

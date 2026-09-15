@@ -11,7 +11,7 @@ paths:
   - scripts/lib/context.sh
   - scripts/lib/knowledge.sh
   - "templates/knowledge/**"
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-15
 summary: Why knowledge declares how it should be loaded, and why directories never decide applicability.
 ---
 # ADR-0014: Knowledge declares how it should be loaded, and directories never decide
@@ -111,3 +111,7 @@ it from validation and hidden it from every consumer, silently.
 - The stateless `jig context` form keeps promoting a domain match to `matched:`. The two
   forms differ on exactly that point, deliberately, and it is written down in
   `schemas/frontmatter.md` rather than left to be discovered.
+
+> **Amendment (2026-09-15).** `.ai/knowledge/sources/` holds stubs that link existing documents
+> (ADR-0036). Like `domains/`, the directory is navigation only. Until resolution can hand an agent
+> the source, both forms of `jig context` skip any document with `source:`, whatever its status.

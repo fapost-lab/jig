@@ -130,6 +130,13 @@ progress is read from the roadmap's checkboxes (ADR-0035). A task filed from it 
 with a `Spec:` line in its `task.md`. Not the retired product specification of ADR-0028.
 Informal synonyms: plan, roadmap, design doc.
 
+## Linked Source (Stub)
+
+A knowledge document whose frontmatter names an existing tracked file with `source:`, so a project's own
+rule document is adopted without being copied. It lives in `.ai/knowledge/sources/` and holds only
+metadata; the source owns the rules. Until `jig context` resolves stubs to their sources, a stub stays
+proposed and reaches no agent (ADR-0036). Informal synonyms: link, pointer, adopted document.
+
 ## Load Policy
 
 A knowledge document's `load` field — `always`, `domain` or `matched` — stating how
