@@ -143,19 +143,22 @@ function Get-JigVersion {
     return $Matches[1]
 }
 
-# New-JigFixtureSourceTree <dir> <version> -- a minimal framework source
-# tree: the real scripts/ (so the installed `scripts/jig version` runs for
-# real, exactly like inst_fixture_source_tree in tests/install.t.sh), and
-# skills/templates as placeholders (jig_is_source_root only checks the
-# directories exist, but git does not track an empty one).
+# New-JigFixtureSourceTree <dir> <version> -- a framework source tree built
+# from this checkout's real framework directories, with scripts/lib/version.sh
+# rewritten to <version>. Unlike inst_fixture_source_tree in
+# tests/install.t.sh, whose install.sh never runs `jig init`, nothing here
+# can be a placeholder.
 function New-JigFixtureSourceTree {
     param([Parameter(Mandatory)][string]$Dir, [Parameter(Mandatory)][string]$Version)
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-    Copy-Item -Path (Join-Path $script:RepoRoot 'scripts') -Destination (Join-Path $Dir 'scripts') -Recurse -Force
-    New-Item -ItemType Directory -Path (Join-Path $Dir 'skills') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $Dir 'templates') -Force | Out-Null
-    New-Item -ItemType File -Path (Join-Path $Dir 'skills\.gitkeep') -Force | Out-Null
-    New-Item -ItemType File -Path (Join-Path $Dir 'templates\.gitkeep') -Force | Out-Null
+    # The installer runs a real `jig init` from this checkout, which reads
+    # templates/, profiles/, adapters/ and skills/ -- placeholders would fail
+    # there, not in the installer. .gitattributes comes along so the clone
+    # gets LF scripts under core.autocrlf=true, as a clone of jig itself does.
+    foreach ($name in 'scripts', 'skills', 'templates', 'profiles', 'adapters', 'hooks', 'schemas') {
+        Copy-Item -Path (Join-Path $script:RepoRoot $name) -Destination (Join-Path $Dir $name) -Recurse -Force
+    }
+    Copy-Item -Path (Join-Path $script:RepoRoot '.gitattributes') -Destination (Join-Path $Dir '.gitattributes') -Force
     # LF, no BOM: written with File.WriteAllText + a plain ASCII encoding
     # rather than Set-Content, which defaults to CRLF and a UTF-8 BOM on
     # Windows PowerShell 5.1 -- either would still parse under
