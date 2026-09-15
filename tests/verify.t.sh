@@ -12,20 +12,39 @@
 _NO_TOOLS_LIST="bash sh git sed awk grep find mktemp cat cp mv rm mkdir sort
 tr head tail wc chmod ls date dirname basename cmp paste stat readlink diff env"
 
-# A directory of symlinks to exactly those tools, built once per runner
-# invocation under $JIG_TEST_CACHE so the runner's own EXIT trap removes it.
-# Reuse is decided by the directory being on disk, not by an exported
-# variable: every test runs in its own forked subshell, so a variable set by
-# one can never be seen by the next, and the first draft's env-var check
-# could not fire even once.
+# A directory of wrapper scripts for exactly those tools, built once per
+# runner invocation under $JIG_TEST_CACHE so the runner's own EXIT trap
+# removes it. Reuse is decided by the directory being on disk, not by an
+# exported variable: every test runs in its own forked subshell, so a
+# variable set by one can never be seen by the next, and the first draft's
+# env-var check could not fire even once.
+#
+# Wrapper scripts, not symlinks: on Windows Git Bash `ln -sf` copies instead
+# of linking, which moves each tool binary (bash.exe, env.exe, ...) away
+# from msys-2.0.dll in /usr/bin — nothing in the copy can start, so PATH="$bin"
+# resolved to nothing and every "skips without toolchain" test hung on
+# exit 127 instead of taking the skip path it meant to exercise. A tiny
+# `#!/bin/sh; exec '<real path>' "$@"` wrapper has no such dependency: the OS
+# reads its own shebang, not PATH, so `/bin/sh` resolves even here (and `sh`
+# itself is on _NO_TOOLS_LIST for callers that need it directly).
 #
 # Published atomically, because tests run in parallel. It used to be filled
 # in place and taken as ready once `git` was in it; `git` is third on the
 # list, so a test running alongside the one building it could see `git`
 # before `sed` and `awk` existed, and fail its `jig verify` with exit 1 —
 # seen at 16 workers. Now it is built complete in a private directory and
-# published by `ln -s`, which either creates the name or fails because
-# another test got there first. A reader finds the whole set or nothing.
+# published by `mv "$build" "$dir"` — a plain rename, so unlike `ln -s` it
+# never risks becoming a copy on Windows in the first place. Verified on
+# macOS: when this is the first test to publish, `$dir` does not yet exist
+# and the rename lands exactly there. When two tests race, the loser's `mv`
+# does not error (a POSIX `mv` onto an existing, non-empty directory nests
+# the source *inside* it instead of failing) — but that nested leftover sits
+# under a random mktemp name that never collides with a real tool, so `$dir`
+# itself still holds exactly the winner's complete, real set of wrapper
+# scripts and every lookup through it resolves correctly. `rm -rf "$build"`
+# below only fires if the rename itself errors (e.g. a permissions problem);
+# it is not what protects against the race, so it is a courtesy, not the
+# safety net the "if mv fails, discard the build" framing might suggest.
 #
 # Resolution goes through `env -i /bin/sh -c`, not a bare `command -v`,
 # because the latter answers from the *developer's* shell: on a machine where
@@ -49,7 +68,7 @@ _no_tools_bin() {
     fi
     build=$(mktemp -d "$JIG_TEST_CACHE/no-tools-bin.XXXXXX")
     _no_tools_fill "$build"
-    ln -s "$build" "$dir" 2>/dev/null || rm -rf "$build"
+    mv "$build" "$dir" 2>/dev/null || rm -rf "$build"
     printf '%s\n' "$dir"
     return 0
   else
@@ -63,13 +82,24 @@ _no_tools_bin() {
   printf '%s\n' "$dir"
 }
 
-# _no_tools_fill <dir> — a symlink in <dir> to each tool in _NO_TOOLS_LIST.
+# _no_tools_fill <dir> — a wrapper script in <dir> for each tool in
+# _NO_TOOLS_LIST, each one `exec`ing the real tool's resolved absolute path.
+# Not a symlink (see the comment above _no_tools_bin). The path is single-
+# quoted with every embedded quote escaped, so a tool path containing a
+# space or a single quote still execs correctly.
 _no_tools_fill() {
-  local t p
+  local t p esc
   for t in $_NO_TOOLS_LIST; do
     p=$(env -i /bin/sh -c "command -v $t" 2>/dev/null) || continue
     case "$p" in
-      /*) ln -sf "$p" "$1/$t" ;;
+      /*)
+        esc=$(printf '%s' "$p" | sed "s/'/'\\\\''/g")
+        {
+          printf '#!/bin/sh\n'
+          printf "exec '%s' \"\$@\"\n" "$esc"
+        } > "$1/$t"
+        chmod +x "$1/$t"
+        ;;
     esac
   done
   return 0
@@ -271,6 +301,7 @@ EOF
 }
 
 test_verify_hint_resolved_by_upgrade_link_mode() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   cat > .ai/config.yaml <<'EOF'
@@ -460,7 +491,7 @@ exit 0
 EOF
   chmod -x .ai/profiles/noexec/verify.sh
   if [ -x .ai/profiles/noexec/verify.sh ]; then
-    fail "fixture setup: verify.sh is still executable"
+    skip "chmod cannot clear the executable bit here"
   fi
 
   run jig verify --profile noexec
@@ -548,7 +579,7 @@ test_verify_php_skips_every_check_without_toolchain() {
   jig init --from "$JIG_HOME" --profiles php >/dev/null
 
   run_no_tools jig verify --profile php
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "php: phpunit: skip"
   assert_contains "$OUT" "php: phpstan: skip"
   assert_contains "$OUT" "php: pint: skip"
@@ -569,7 +600,7 @@ EOF
   chmod +x vendor/bin/phpunit
 
   run_no_tools jig verify --profile php
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "php: phpunit: pass"
   assert_contains "$OUT" "RESULT php: pass"
   assert_contains "$OUT" "verify: 1 profiles, 1 pass, 0 fail, 0 skip"
@@ -580,7 +611,7 @@ test_verify_go_skips_without_toolchain() {
   jig init --from "$JIG_HOME" --profiles go >/dev/null
 
   run_no_tools jig verify --profile go
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "go: vet: skip"
   assert_contains "$OUT" "go: test: skip"
   assert_contains "$OUT" "RESULT go: skip"
@@ -593,7 +624,7 @@ test_verify_node_skips_without_toolchain() {
   printf '{"scripts": {"test": "echo ok", "lint": "echo ok"}}\n' > package.json
 
   run_no_tools jig verify --profile node
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "node: npm test: skip"
   assert_contains "$OUT" "node: npm run lint: skip"
   assert_contains "$OUT" "RESULT node: skip"
@@ -619,7 +650,7 @@ test_verify_laravel_skips_without_artisan_or_php() {
   jig init --from "$JIG_HOME" --profiles laravel >/dev/null
 
   run_no_tools jig verify --profile laravel
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "laravel: artisan test: skip"
   assert_contains "$OUT" "RESULT laravel: skip"
 }

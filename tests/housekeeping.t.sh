@@ -67,6 +67,21 @@ hk_leftover() {
   ' _ "$@"
 }
 
+# hk_link <target-abs> <link-abs> — plant a directory link the same way the
+# framework itself would (jig_link_dir, common.sh): a real symlink on
+# macOS/Linux, an NTFS junction on Windows Git Bash, where plain `ln -s`
+# copies instead of linking -- exactly the case `_hk_worktree_leftover`
+# exists to clean up (its own comment: "measured on windows-latest"). Skips
+# the calling test when neither kind of link can be made here.
+hk_link() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"
+    jig_link_dir "$1" "$2"
+  ' _ "$1" "$2" || skip "no directory link can be made here"
+}
+
 # --- policy table (domains/housekeeping) -------------------------------------------------
 
 test_housekeeping_decide_consolidated_merged_purges() {
@@ -1300,7 +1315,13 @@ test_housekeeping_guard_keeps_this_checkout_with_uncommitted_changes_on_the_purg
   hk_setup
   local fork proj
   fork=$(git rev-parse HEAD)
-  proj=$(git rev-parse --show-toplevel)
+  # Not `git rev-parse --show-toplevel`: Git for Windows prints it in
+  # Windows form (`C:/Users/...`), while the code under test builds
+  # JIG_PROJECT with `cd -P && pwd -P` and logs it in bash form
+  # (`/c/Users/...`) on purpose. This test runs at the repo root (hk_setup
+  # does not `cd repo` the way hk_worktree_setup does), so `pwd -P` here is
+  # the same directory `jig housekeeping` reports.
+  proj=$(pwd -P)
   hk_tick
   git checkout -q -b task/here
   printf 'own\n' > own.txt
@@ -1536,7 +1557,7 @@ test_hk_worktree_leftover_removes_links_and_empty_dirs_keeps_owner_content() {
   owner_abs=$(cd owner && pwd)
 
   mkdir -p wt/.ai/workspace/tasks
-  ln -s "$owner_abs" wt/.ai/workspace/tasks/T-1
+  hk_link "$owner_abs" wt/.ai/workspace/tasks/T-1
   # Extra empty directories a leftover can carry alongside the junction.
   mkdir -p wt/.ai/runtime/empty-a/empty-b
   mkdir -p wt/empty-top
@@ -1555,7 +1576,7 @@ test_hk_worktree_leftover_keeps_a_leftover_that_still_holds_a_file() {
   owner_abs=$(cd owner && pwd)
 
   mkdir -p wt/.ai/workspace/tasks
-  ln -s "$owner_abs" wt/.ai/workspace/tasks/T-1
+  hk_link "$owner_abs" wt/.ai/workspace/tasks/T-1
   printf 'meeting notes\n' > wt/notes.txt
   wt_abs=$(cd wt && pwd)
 
@@ -1573,12 +1594,12 @@ test_hk_worktree_leftover_does_not_descend_into_a_linked_directory() {
   # must be left exactly as it is — only the link at the top is ever seen.
   mkdir target
   printf 'target data\n' > target/data.txt
-  ln -s /nonexistent-leftover-probe target/inner-link
+  hk_link /nonexistent-leftover-probe target/inner-link
   local target_abs wt_abs
   target_abs=$(cd target && pwd)
 
   mkdir -p wt/.ai/workspace/tasks
-  ln -s "$target_abs" wt/.ai/workspace/tasks/T-1
+  hk_link "$target_abs" wt/.ai/workspace/tasks/T-1
   wt_abs=$(cd wt && pwd)
 
   run hk_leftover "$wt_abs"
@@ -1595,7 +1616,7 @@ test_hk_worktree_leftover_handles_a_path_with_spaces() {
   owner_abs=$(cd "owner with spaces" && pwd)
 
   mkdir -p "wt with spaces/.ai/workspace/tasks"
-  ln -s "$owner_abs" "wt with spaces/.ai/workspace/tasks/T-1"
+  hk_link "$owner_abs" "wt with spaces/.ai/workspace/tasks/T-1"
   wt_abs=$(cd "wt with spaces" && pwd)
 
   run hk_leftover "$wt_abs"

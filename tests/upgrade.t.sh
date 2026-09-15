@@ -39,6 +39,7 @@ test_upgrade_from_without_value_dies() {
 }
 
 test_upgrade_link_mode_is_noop_when_everything_already_linked() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   run jig upgrade --from "$JIG_HOME"
@@ -51,6 +52,7 @@ test_upgrade_link_mode_is_noop_when_everything_already_linked() {
 # left `jig upgrade` a pure no-op, so `jig verify`'s "run jig upgrade" hint
 # was a dead end (domains/install).
 test_upgrade_link_mode_creates_missing_profile_symlink() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   assert_no_file .ai/profiles/shell
@@ -78,6 +80,7 @@ EOF
 }
 
 test_upgrade_link_mode_reports_conflict_and_keeps_existing_file() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   cat > .ai/config.yaml <<'EOF'
@@ -98,6 +101,7 @@ EOF
 # a link-mode project must refuse rather than silently place a copy where the
 # manifest expects a symlink (jig_link_detect, common.sh).
 test_upgrade_link_mode_refuses_when_only_copying_links_are_available() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   assert_no_file .ai/profiles/shell
@@ -259,6 +263,7 @@ EOF
 }
 
 test_upgrade_link_mode_rejects_config_path_traversal_profile() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   cat > .ai/config.yaml <<'EOF'
@@ -369,6 +374,7 @@ test_sdd_upgrade_adds_references_and_preserves_modified_consumers() {
 }
 
 test_sdd_upgrade_link_mode_exposes_references_in_both_adapters() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   rm .codex/skills/jig-task

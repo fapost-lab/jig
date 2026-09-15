@@ -42,11 +42,59 @@ su_system_path() {
   printf '%s\n' "${result#:}"
 }
 
-su_path() { printf '%s:%s\n' "$(su_bin)" "$(su_system_path)"; }
+# _SU_GLOBAL_SCRIPTS_DIR — set by su_link_global when `ln -s` cannot make a
+# real link here (Windows Git Bash copies instead): the framework's own
+# scripts/ directory, to be put on PATH directly instead of the su_bin
+# symlink. Empty means the bin-dir symlink is in play, as on every platform
+# where it works.
+_SU_GLOBAL_SCRIPTS_DIR=""
 
-# Run the fixture's global jig (the symlink at su_bin) as `jig self-update`
-# would find it via PATH.
-su_jig() { env PATH="$(su_path)" "$(su_bin)/jig" "$@"; }
+# su_link_global <framework-dir> — expose <framework-dir>/scripts/jig as "the
+# global jig" every su_jig/su_path call finds. When `ln -s` makes a real
+# symlink here (macOS/Linux, this repository's default), a real symlink is
+# placed at su_bin/jig, exactly as install.sh's own bin-dir layout
+# (design.md §1) -- unchanged from what every fixture builder did before.
+# Where it does not (Windows Git Bash copies instead of linking: a copied jig
+# looks for lib/ beside itself and dies with "no such file or directory"),
+# no link is attempted; su_path and su_jig instead reach
+# <framework-dir>/scripts directly, the same PATH fallback install.sh itself
+# uses (_install_symlinks_work). One decision, made once per fixture, so
+# every place in this file that used to hardcode
+# `ln -s ".../scripts/jig" "$(su_bin)/jig"` calls this instead.
+su_link_global() {
+  local fw="$1" bin
+  bin=$(su_bin)
+  mkdir -p "$bin"
+  rm -f "$bin/jig"
+  if ln -s "$fw/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
+    _SU_GLOBAL_SCRIPTS_DIR=""
+    return 0
+  fi
+  rm -f "$bin/jig"
+  _SU_GLOBAL_SCRIPTS_DIR=$(cd -P "$fw/scripts" && pwd -P)
+}
+
+# su_global_jig — the executable su_jig invokes directly: the su_bin symlink,
+# or (su_link_global's fallback) the framework's own scripts/jig.
+su_global_jig() {
+  if [ -n "$_SU_GLOBAL_SCRIPTS_DIR" ]; then
+    printf '%s/jig\n' "$_SU_GLOBAL_SCRIPTS_DIR"
+  else
+    printf '%s/jig\n' "$(su_bin)"
+  fi
+}
+
+su_path() {
+  if [ -n "$_SU_GLOBAL_SCRIPTS_DIR" ]; then
+    printf '%s:%s\n' "$_SU_GLOBAL_SCRIPTS_DIR" "$(su_system_path)"
+  else
+    printf '%s:%s\n' "$(su_bin)" "$(su_system_path)"
+  fi
+}
+
+# Run the fixture's global jig (the symlink at su_bin, or su_link_global's
+# PATH fallback) as `jig self-update` would find it via PATH.
+su_jig() { env PATH="$(su_path)" "$(su_global_jig)" "$@"; }
 
 # Run a project's installed copy, the same way its own users would.
 su_installed_jig() {
@@ -57,12 +105,24 @@ su_installed_jig() {
 
 # su_copy_framework_files <dest> — everything a framework source root needs
 # (scripts/, skills/, templates/, adapters/, profiles/, ...), copied from
-# this repository's own checkout. Mirrors upgrade.t.sh's _mk_source_v2.
+# this repository's own checkout. Mirrors upgrade.t.sh's _mk_source_v2, minus
+# this checkout's own .git (a worktree pointer file, never wanted here) and
+# its .claude/.codex (this repository dogfoods itself, so those hold
+# committed symlinks -- git mode 120000 -- to its own skills/; a framework
+# source root never reads its own .claude/.codex, only adapters/<name>, so
+# skipping them changes nothing a test observes). Copying them verbatim
+# flooded the log on Windows Git Bash, where `ln -s` cannot reproduce a
+# symlink and either errors per entry or checks one out as a plain text file
+# pointing nowhere.
 su_copy_framework_files() {
-  local dest="$1"
+  local dest="$1" entry name
   mkdir -p "$dest"
-  cp -R "$JIG_HOME"/. "$dest"/
-  rm -rf "$dest/.git"
+  for entry in "$JIG_HOME"/* "$JIG_HOME"/.[!.]*; do
+    [ -e "$entry" ] || continue
+    name=$(basename "$entry")
+    case "$name" in .git | .claude | .codex) continue ;; esac
+    cp -R "$entry" "$dest/"
+  done
 }
 
 # su_set_version <dir> <version> — rewrite JIG_VERSION in a source tree's
@@ -121,29 +181,26 @@ su_build_upstream() {
 su_push() { (cd "$1" && git push -q origin main --tags); }
 
 # su_clone_global_detached <upstream> <tag> — the fixture "global install":
-# a clone of <upstream> detached at <tag>, with the fixture bin symlink
-# pointing at it (install.sh's own layout, design.md section 1).
+# a clone of <upstream> detached at <tag>, exposed the way `jig self-update`
+# finds a global install (su_link_global: install.sh's own layout,
+# design.md section 1, or its PATH fallback where a symlink cannot be made).
 su_clone_global_detached() {
-  local upstream="$1" tag="$2" share bin
+  local upstream="$1" tag="$2" share
   share=$(su_share)
-  bin=$(su_bin)
   mkdir -p "$(dirname "$share")"
   git clone -q "$upstream" "$share"
   (cd "$share" && git checkout -q --detach "$tag")
-  mkdir -p "$bin"
-  ln -s "../share/jig/scripts/jig" "$bin/jig"
+  su_link_global "$share"
 }
 
 # su_clone_global_branch <upstream> — the fixture "global install" on branch
 # main, tracking origin/main (a developer's checkout, `--ref main`).
 su_clone_global_branch() {
-  local upstream="$1" share bin
+  local upstream="$1" share
   share=$(su_share)
-  bin=$(su_bin)
   mkdir -p "$(dirname "$share")"
   git clone -q "$upstream" "$share"
-  mkdir -p "$bin"
-  ln -s "../share/jig/scripts/jig" "$bin/jig"
+  su_link_global "$share"
 }
 
 # su_init_project <source> <project> [jig-init-args...] — a project
@@ -371,6 +428,7 @@ test_self_update_copy_mode_project_delegates_and_stays_pinned() {
 # --- AC-11: link mode acts directly, nothing to delegate to -----------------
 
 test_self_update_link_mode_acts_without_delegation() {
+  skip_unless_symlinks
   su_build_source "$HOME/work"
   su_build_upstream "$HOME/work" "$HOME/upstream.git"
   su_clone_global_detached "$HOME/upstream.git" v0.1.0
@@ -440,8 +498,7 @@ test_self_update_refuses_when_source_not_a_git_checkout() {
   local plain
   plain=$(su_share)
   su_copy_framework_files "$plain"
-  mkdir -p "$(su_bin)"
-  ln -s "../share/jig/scripts/jig" "$(su_bin)/jig"
+  su_link_global "$plain"
 
   run su_jig self-update
   [ "$RC" != 0 ] || fail "self-update must refuse a non-Git source: $OUT"
@@ -456,8 +513,7 @@ test_self_update_refuses_when_nested_inside_another_worktree() {
   nested="$outer/fw"
   su_copy_framework_files "$nested"
   (cd "$outer" && git add -A && git commit -q -m "add nested framework")
-  mkdir -p "$(su_bin)"
-  ln -s "$nested/scripts/jig" "$(su_bin)/jig"
+  su_link_global "$nested"
 
   run su_jig self-update
   [ "$RC" != 0 ] || fail "self-update must refuse a nested worktree: $OUT"
@@ -481,8 +537,7 @@ test_self_update_refuses_branch_without_upstream() {
   # upstream, which is the condition under test.
   git clone -q "$HOME/work" "$share"
   git -C "$share" branch --unset-upstream
-  mkdir -p "$(su_bin)"
-  ln -s "$share/scripts/jig" "$(su_bin)/jig"
+  su_link_global "$share"
 
   local head_before
   head_before=$(git -C "$share" rev-parse HEAD)

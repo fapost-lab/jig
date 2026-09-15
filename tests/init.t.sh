@@ -85,6 +85,7 @@ test_init_installs_document_templates_in_copy_mode() {
 }
 
 test_init_link_mode_symlinks_templates_knowledge_directory() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"
@@ -149,6 +150,7 @@ test_init_installs_windows_entry_point_in_copy_mode() {
 }
 
 test_init_self_install_writes_dot_source() {
+  skip_unless_symlinks
   fixture_repo
   # Make the fixture repository itself a framework source root, and run its
   # own dispatcher with no --from so it self-detects (dogfooding/--link).
@@ -203,6 +205,7 @@ EOF
 }
 
 test_init_rerun_picks_up_profiles_from_config_link_mode() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   assert_no_file .ai/profiles/shell
@@ -468,6 +471,7 @@ test_init_link_mode_refuses_before_writing_when_symlinks_copy() {
 }
 
 test_init_link_mode_creates_relative_symlinks() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"
@@ -492,6 +496,7 @@ test_init_link_mode_creates_relative_symlinks() {
 }
 
 test_init_link_mode_is_idempotent() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   run jig init --from "$JIG_HOME" --link
@@ -507,6 +512,7 @@ test_init_link_mode_keeps_a_link_that_resolves_to_the_same_directory_with_differ
   # resolves, physically, to the same target. An absolute symlink to the
   # same directory is the platform-independent way to get different text
   # for an identical target on macOS/Linux too.
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   local target
@@ -527,6 +533,7 @@ test_init_link_mode_keeps_a_link_that_resolves_to_the_same_directory_with_differ
 }
 
 test_init_link_mode_flags_a_link_to_a_different_directory_as_conflict() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   local other
@@ -586,6 +593,7 @@ test_init_installs_scheduler_templates_in_copy_mode() {
 }
 
 test_init_link_mode_symlinks_templates_scheduler_directory() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"

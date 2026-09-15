@@ -1125,6 +1125,7 @@ test_sdd_artifacts_routes_and_conversation_claims() {
 }
 
 test_sdd_artifacts_empty_external_and_internal_links() {
+  skip_unless_symlinks
   sdd_task_setup
   local root
   root=.ai/workspace/tasks/scoped
@@ -1525,6 +1526,7 @@ test_task_start_worktree_refuses_a_shared_branch() {
 # --- start --worktree on a machine where `ln -s` copies (Windows Git Bash) ----
 
 test_task_start_worktree_refuses_when_only_copying_links_are_available() {
+  skip_unless_link_simulation
   task_setup_nested
   jig task new T-1 >/dev/null
   local lndir
@@ -1544,6 +1546,7 @@ test_task_start_worktree_refuses_when_only_copying_links_are_available() {
 }
 
 test_task_start_worktree_links_via_a_junction_when_symlinks_copy() {
+  skip_unless_link_simulation
   task_setup_nested
   jig task new T-1 >/dev/null
   local lndir jdir owner wt
@@ -1613,6 +1616,7 @@ test_task_artifacts_reads_the_borrowed_workspace() {
 test_task_artifacts_refuses_a_link_to_anywhere_else() {
   # The one link accepted is to this task's own workspace in another worktree
   # of this repository; a link elsewhere could point at anything.
+  skip_unless_symlinks
   task_setup
   mkdir -p elsewhere/T-1
   printf 'task_id: T-1\nclass: T2\nstatus: active\n' > elsewhere/T-1/state

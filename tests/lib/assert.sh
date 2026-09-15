@@ -283,6 +283,34 @@ skip_unless_control_char_names() {
   esac
 }
 
+# skip_unless_symlinks — skip the calling test unless `ln -s` makes a real
+# symbolic link here. Git Bash on Windows copies instead, by default. A test
+# that is about symbolic links themselves (link mode, a link the test plants)
+# has nothing to check without them; a test that merely *uses* a link as a
+# fixture should build its fixture another way rather than skip.
+skip_unless_symlinks() {
+  local dir linked=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-symlink-check.XXXXXX") || return 1
+  mkdir "$dir/target"
+  if ln -s "$dir/target" "$dir/link" 2>/dev/null && [ -L "$dir/link" ]; then
+    linked=1
+  fi
+  rm -rf "$dir"
+  [ "$linked" -eq 1 ] || skip "symbolic links cannot be made here"
+}
+
+# skip_unless_link_simulation — skip the calling test unless stubs on PATH can
+# stand for "this machine cannot link": real `ln -s` must work (the junction
+# stub makes its "junction" with it) and no real `cmd` may be reachable, or a
+# genuine junction gets made instead. On Windows the cases these tests
+# simulate are the real machine, and other tests exercise them for real.
+skip_unless_link_simulation() {
+  skip_unless_symlinks
+  if command -v cmd >/dev/null 2>&1; then
+    skip "cmd is on PATH, so link failures cannot be simulated here"
+  fi
+}
+
 assert_eq() {
   # assert_eq <expected> <actual> [message]
   [ "$1" = "$2" ] || fail "${3:-values differ}: expected [$1] got [$2]"

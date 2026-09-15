@@ -171,9 +171,63 @@ STUB
 inst_share() { printf '%s/.local/share/jig\n' "$HOME"; }
 inst_bin() { printf '%s/.local/bin\n' "$HOME"; }
 
+# inst_global_jig — the executable install.sh actually put where a user's
+# PATH would find it: the bin-dir symlink when `ln -s` made one, or the
+# checkout's own scripts/jig otherwise (install.sh's no-symlink fallback,
+# _install_symlinks_work). Tests that only care "the installed jig runs and
+# reports the right version" use this instead of assuming the bin-dir symlink
+# always exists, so they pass unmodified whether or not this machine can make
+# a symlink -- on Windows Git Bash, production installs never get the
+# symlink, so these tests must exercise that real path, not skip it.
+inst_global_jig() {
+  if [ -e "$(inst_bin)/jig" ]; then
+    printf '%s/jig\n' "$(inst_bin)"
+  else
+    printf '%s/scripts/jig\n' "$(inst_share)"
+  fi
+}
+
+# inst_path_dir — the directory install.sh put on PATH for this install: the
+# bin dir when the symlink exists, the checkout's own physical scripts/
+# otherwise (PATH_DIR in install.sh, made physical there via
+# _install_physical_path).
+inst_path_dir() {
+  if [ -e "$(inst_bin)/jig" ]; then
+    inst_bin
+  else
+    (cd -P "$(inst_share)/scripts" && pwd -P)
+  fi
+}
+
+# inst_predict_path_dir — inst_path_dir's answer, but usable *before*
+# install.sh has ever run: a "skips when already on PATH / already mentioned"
+# test has to pre-seed that state ahead of the install, when $(inst_share)
+# does not exist yet and inst_path_dir's own `cd -P` would fail. Probes
+# whether `ln -s` makes a real symlink here -- the same check install.sh's
+# own _install_symlinks_work makes -- and predicts the bin dir when it does,
+# the checkout's would-be scripts/ dir otherwise, built as a string
+# concatenation onto $(inst_share) (consistent with inst_share itself, which
+# never resolves physically either) rather than by cd -P into a directory
+# that may not exist yet.
+inst_predict_path_dir() {
+  local probe linked=0
+  probe=$(mktemp -d "${TMPDIR:-/tmp}/jig-inst-predict.XXXXXX") || return 1
+  mkdir "$probe/target" || { rm -rf "$probe"; return 1; }
+  if ln -s "$probe/target" "$probe/link" 2>/dev/null && [ -L "$probe/link" ]; then
+    linked=1
+  fi
+  rm -rf "$probe"
+  if [ "$linked" -eq 1 ]; then
+    inst_bin
+  else
+    printf '%s/scripts\n' "$(inst_share)"
+  fi
+}
+
 # --- AC-00: fresh install through the documented one-liner -------------------
 
 test_install_fresh_via_piped_bash() {
+  skip_unless_symlinks
   inst_build_remote "$PWD/remote.git" v0.1.0
 
   run bash -c 'cat "$JIG_HOME/install.sh" | bash -s -- --repository "'"$PWD"'/remote.git" --no-path'
@@ -217,7 +271,7 @@ test_install_direct_invocation_matches_piped_result() {
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
   assert_eq 0 "$RC" "install should succeed: $OUT"
 
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.1.0" "$OUT"
 }
 
@@ -225,6 +279,7 @@ test_install_direct_invocation_matches_piped_result() {
 # link between them cannot be relative (_install_link_new): it must be
 # absolute, and that absolute target must still resolve to the checkout.
 test_install_custom_dirs_use_absolute_symlink() {
+  skip_unless_symlinks
   inst_build_remote "$PWD/remote.git" v0.1.0
   local install_dir="$HOME/custom/share-jig" bin_dir="$HOME/custom/bin-jig"
 
@@ -304,7 +359,7 @@ test_install_repeat_run_is_a_no_op_at_the_same_tag() {
   head_after=$(git -C "$(inst_share)" rev-parse HEAD)
   assert_eq "$head_before" "$head_after" "a repeat run at the same tag must not move HEAD"
 
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.1.0" "$OUT"
 }
 
@@ -318,7 +373,7 @@ test_install_repeat_run_moves_to_a_newly_pushed_tag() {
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
   assert_eq 0 "$RC" "repeat run should move forward: $OUT"
 
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.2.0" "$OUT"
   git -C "$(inst_share)" describe --tags --exact-match HEAD > "$JIG_TEST_TMP.tag"
   assert_eq "v0.2.0" "$(cat "$JIG_TEST_TMP.tag")"
@@ -364,6 +419,7 @@ test_install_repeat_run_refuses_a_different_remote() {
 }
 
 test_install_repeat_run_refuses_conflicting_bin_dir_file_and_cleans_up() {
+  skip_unless_symlinks
   inst_build_remote "$PWD/remote.git" v0.1.0
   mkdir -p "$(inst_bin)"
   printf 'not jig\n' > "$(inst_bin)/jig"
@@ -376,6 +432,7 @@ test_install_repeat_run_refuses_conflicting_bin_dir_file_and_cleans_up() {
 }
 
 test_install_repeat_run_preserves_another_valid_checkout_linked() {
+  skip_unless_symlinks
   inst_build_remote "$PWD/remote.git" v0.1.0
   inst_fixture_source_tree "$HOME/other-jig"
   mkdir -p "$(inst_bin)"
@@ -410,7 +467,7 @@ test_install_repeat_run_tag_mismatch_rolls_back_and_stays_failing() {
   assert_not_contains "$OUT" "jig installed"
   assert_eq "$head_v1" "$(git -C "$(inst_share)" rev-parse HEAD)" \
     "a failed repeat-run update must roll the checkout back to its previous commit"
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.1.0" "$OUT"
 
   # A third run must retry the same update and fail the same way, never
@@ -432,7 +489,7 @@ test_install_path_appends_zshrc_for_zsh() {
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
   assert_eq 0 "$RC" "install should succeed: $OUT"
 
-  assert_file_contains "$HOME/.zshrc" "$(inst_bin)"
+  assert_file_contains "$HOME/.zshrc" "$(inst_path_dir)"
   assert_no_file "$HOME/.bashrc"
   assert_no_file "$HOME/.profile"
   assert_contains "$OUT" "new terminal"
@@ -447,7 +504,7 @@ test_install_path_appends_bashrc_for_bash() {
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
   assert_eq 0 "$RC" "install should succeed: $OUT"
 
-  assert_file_contains "$HOME/.bashrc" "$(inst_bin)"
+  assert_file_contains "$HOME/.bashrc" "$(inst_path_dir)"
   assert_no_file "$HOME/.zshrc"
   assert_no_file "$HOME/.profile"
 }
@@ -461,7 +518,7 @@ test_install_path_falls_back_to_profile_for_other_shells() {
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
   assert_eq 0 "$RC" "install should succeed: $OUT"
 
-  assert_file_contains "$HOME/.profile" "$(inst_bin)"
+  assert_file_contains "$HOME/.profile" "$(inst_path_dir)"
   assert_no_file "$HOME/.zshrc"
   assert_no_file "$HOME/.bashrc"
 }
@@ -470,8 +527,13 @@ test_install_path_skips_when_bin_dir_already_on_path() {
   inst_build_remote "$PWD/remote.git" v0.1.0
   export SHELL=/usr/bin/zsh
   export PATH
-  PATH="$(inst_bin):$(inst_system_path)"
-  mkdir -p "$(inst_bin)"
+  # Whichever directory this install will actually put on PATH (the bin dir
+  # when `ln -s` works here, the physical scripts dir otherwise) -- not
+  # unconditionally $(inst_bin): without symlinks install.sh puts the scripts
+  # dir on PATH regardless of whether the bin dir is already there, and a
+  # fixture that only pre-seeded the bin dir was silently missing that case
+  # (CI: a startup file got written that this test expected to stay absent).
+  PATH="$(inst_predict_path_dir):$(inst_system_path)"
 
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
   assert_eq 0 "$RC" "install should succeed: $OUT"
@@ -486,8 +548,11 @@ test_install_path_skips_when_startup_file_already_mentions_bin_dir() {
   export SHELL=/usr/bin/zsh
   export PATH
   PATH=$(inst_system_path)
+  # Pre-seed the startup file with whatever directory this install will
+  # actually put on PATH (see test_install_path_skips_when_bin_dir_already_on_path
+  # for why this must not be unconditionally $(inst_bin)).
   # shellcheck disable=SC2016 # $PATH is meant to stay literal in the file
-  printf '# manually configured\nexport PATH="%s:$PATH"\n' "$(inst_bin)" > "$HOME/.zshrc"
+  printf '# manually configured\nexport PATH="%s:$PATH"\n' "$(inst_predict_path_dir)" > "$HOME/.zshrc"
   local before
   before=$(cat "$HOME/.zshrc")
 
@@ -521,7 +586,7 @@ test_install_path_rerun_does_not_duplicate_the_entry() {
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
   assert_eq 0 "$RC" "repeat run should succeed: $OUT"
 
-  grep -c -- "$(inst_bin)" "$HOME/.zshrc" > "$JIG_TEST_TMP.count"
+  grep -c -- "$(inst_path_dir)" "$HOME/.zshrc" > "$JIG_TEST_TMP.count"
   assert_eq "1" "$(cat "$JIG_TEST_TMP.count")"
 }
 
@@ -598,7 +663,7 @@ test_install_picks_the_numerically_highest_release_tag() {
   inst_build_remote "$PWD/remote.git" v0.1.0 v0.9.0 v0.10.0 v1.0.0-rc1
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
   assert_eq 0 "$RC" "install should succeed: $OUT"
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.10.0" "$OUT"
 }
 
@@ -617,7 +682,7 @@ test_install_ref_main_installs_the_branch() {
 
   git -C "$(inst_share)" symbolic-ref --short HEAD > "$JIG_TEST_TMP.branch"
   assert_eq "main" "$(cat "$JIG_TEST_TMP.branch")"
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   case "$OUT" in
     'jig '?*) ;;
     *) fail "branch install must still print jig <version>: $OUT" ;;
@@ -631,7 +696,7 @@ test_install_ref_explicit_tag_installs_that_tag() {
 
   git -C "$(inst_share)" describe --tags --exact-match HEAD > "$JIG_TEST_TMP.tag"
   assert_eq "v0.9.0" "$(cat "$JIG_TEST_TMP.tag")"
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.9.0" "$OUT"
 }
 
@@ -677,12 +742,12 @@ test_install_ref_explicit_tag_pin_is_not_advanced_until_ref_dropped() {
 
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --ref v0.9.0 --no-path
   assert_eq 0 "$RC" "a repeat run pinned to its own current tag must succeed: $OUT"
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.9.0" "$OUT" "an explicit tag pin must not advance even when a newer release exists"
 
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
   assert_eq 0 "$RC" "dropping --ref must resume normal forward movement: $OUT"
-  run "$(inst_bin)/jig" version
+  run "$(inst_global_jig)" version
   assert_eq "jig 0.10.0" "$OUT"
 }
 
@@ -848,6 +913,7 @@ test_install_newest_release_fails_without_a_release_tag() {
 # comment: Git for Windows stores a converted spelling of a local path).
 
 test_install_same_repository_resolves_local_paths_physically() {
+  skip_unless_symlinks
   local dir_a dir_b parent linked
   dir_a="$JIG_TEST_TMP.same-repo-a"
   dir_b="$JIG_TEST_TMP.same-repo-b"

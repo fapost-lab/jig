@@ -86,6 +86,7 @@ test_doctor_git_identity_ok_when_set() {
 # --- directory links (ADR-0029, common.sh's jig_link_detect) ------------------
 
 test_doctor_directory_links_symlink_ok_on_this_machine() {
+  skip_unless_symlinks
   mkdir work && cd work || return 1
   run jig doctor
   assert_eq 0 "$RC"
@@ -93,6 +94,7 @@ test_doctor_directory_links_symlink_ok_on_this_machine() {
 }
 
 test_doctor_directory_links_none_warns() {
+  skip_unless_link_simulation
   local tools stub
   tools=$(_doctor_tools_bin)
   stub=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-none.XXXXXX")
@@ -117,6 +119,7 @@ EOF
 # fulfils that function's actual contract (cygpath -w echoes a path, cmd /c
 # mklink /J makes the link) using the real `ln` underneath.
 test_doctor_directory_links_junction_ok() {
+  skip_unless_link_simulation
   local tools stub real_ln
   tools=$(_doctor_tools_bin)
   real_ln=$(command -v ln)

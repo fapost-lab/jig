@@ -87,14 +87,14 @@ jobs:
           .ai/scripts/jig verify
           .ai/scripts/jig housekeeping
 
-  # Windows under Git Bash, with the git settings a Windows user gets out of the
-  # box: core.autocrlf=true and no native symlinks, so `ln -s` copies. Run by
-  # hand while the suite is being made portable; a failure here is a list of
-  # what is still unported, not a verdict on a pull request. It joins every run
-  # once it is green.
+  # The whole suite on Windows under Git Bash, with the git settings a Windows
+  # user gets out of the box: core.autocrlf=true and no native symlinks, so
+  # `ln -s` copies and links fall back to junctions. It takes about 25 minutes,
+  # so it runs on main (a release waits for it) and by hand, not on every pull
+  # request; smoke-windows below covers those.
   test-windows:
     name: windows-latest (Git Bash)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 90
     defaults:
@@ -118,6 +118,45 @@ jobs:
       - name: Tests
         run: tests/run.sh
 
+  # What a Windows user runs, on every pull request: the installer end to end
+  # (tests/install.t.ps1, in Windows PowerShell 5.1, which every Windows has)
+  # and the everyday commands in a project, including a worktree whose
+  # workspace link has to be a junction here.
+  smoke-windows:
+    name: windows-latest smoke (install.ps1)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer tests
+        shell: powershell
+        run: ./tests/install.t.ps1
+
+      - name: Everyday commands in Git Bash
+        shell: bash
+        run: |
+          set -eu
+          work=$(mktemp -d)
+          git -C "$work" init -q .
+          git -C "$work" config user.name jig
+          git -C "$work" config user.email jig@example.com
+          git -C "$work" symbolic-ref HEAD refs/heads/main
+          printf '# ci\n' > "$work/README.md"
+          git -C "$work" add README.md
+          git -C "$work" commit -q -m init
+          cd "$work"
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          git add -A
+          git commit -q -m "jig init"
+          .ai/scripts/jig doctor
+          .ai/scripts/jig upgrade --dry-run
+          .ai/scripts/jig task new ci-demo --class T1 --domains core
+          .ai/scripts/jig task start ci-demo --worktree
+          .ai/scripts/jig task list
+          .ai/scripts/jig housekeeping
+
   # Tags a release once the tests passed on every platform (ADR-0033). The tag
   # is v<JIG_VERSION>; a merge that did not bump the version finds its tag
   # already there and does nothing. The decision lives in
@@ -126,7 +165,7 @@ jobs:
   # Write access is granted to this job alone: the rest of the workflow keeps
   # `contents: read`. Pull requests and manual runs never tag.
   release:
-    needs: test
+    needs: [test, test-windows, smoke-windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

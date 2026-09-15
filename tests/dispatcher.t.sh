@@ -21,6 +21,7 @@ test_unknown_command_fails() {
 }
 
 test_symlinked_dispatcher_resolves_lib() {
+  skip_unless_symlinks
   mkdir -p bin
   ln -s "$JIG_BIN" bin/jig
   run bin/jig version
