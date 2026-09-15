@@ -196,7 +196,11 @@ function Invoke-JigNative {
 # Never just "git": a caller needs the real path to derive --exec-path and
 # to put git's own directory on PATH before anything shells out to it.
 function Find-JigGitCommand {
-    $cmd = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
+    # Get-Command returns every git.exe on PATH, and Git for Windows can put
+    # several there (bin\, cmd\, mingw64\bin\); any one of them reports the
+    # same --exec-path, so the first is taken and a single string returned.
+    $cmd = Get-Command git -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
     if ($cmd) {
         return $cmd.Source
     }
@@ -334,9 +338,12 @@ function Install-JigGitViaDownloadedInstaller {
         Write-JigStep 'Downloading the Git for Windows installer...'
         $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' `
             -Headers @{ 'User-Agent' = 'jig-install.ps1' } -ErrorAction Stop
-        $asset = $release.assets | Where-Object { $_.name -like 'Git-*-64-bit.exe' } | Select-Object -First 1
+        # The exact shape of the 64-bit x86 installer's name (Git-2.47.1-64-bit.exe,
+        # Git-2.47.1.2-64-bit.exe): a looser glob could also take an ARM64 or a
+        # differently packaged asset, whichever the release happens to list first.
+        $asset = $release.assets | Where-Object { $_.name -match '^Git-[0-9.]+-64-bit\.exe$' } | Select-Object -First 1
         if (-not $asset) {
-            Write-JigResult 'no Git-*-64-bit.exe asset found on the latest release'
+            Write-JigResult 'no Git-<version>-64-bit.exe asset found on the latest release'
             return
         }
         $downloaded = Join-Path $env:TEMP $asset.name

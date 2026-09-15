@@ -180,14 +180,24 @@ function New-JigTestRemote {
     New-JigFixtureSourceTree -Dir $work -Version $version
     Push-Location -LiteralPath $work
     try {
-        & git init -q .
-        & git symbolic-ref HEAD refs/heads/main
-        & git remote add origin $BareDir
-        & git add -A
-        & git -c user.name=jig -c user.email=jig@example.com commit -q -m $Tag
-        & git tag -a -m $Tag $Tag
-        & git push -q origin main --tags
-        if ($LASTEXITCODE -ne 0) { throw "git push to $BareDir failed" }
+        # HOME is a fresh temp directory here, so there is no git identity:
+        # the commit and the annotated tag both carry one explicitly, and every
+        # step is checked, because a missing tag would otherwise surface much
+        # later as "no release" rather than here.
+        $identity = @('-c', 'user.name=jig', '-c', 'user.email=jig@example.com')
+        $steps = @(
+            @('init', '-q', '.'),
+            @('symbolic-ref', 'HEAD', 'refs/heads/main'),
+            @('remote', 'add', 'origin', $BareDir),
+            @('add', '-A'),
+            ($identity + @('commit', '-q', '-m', $Tag)),
+            ($identity + @('tag', '-a', '-m', $Tag, $Tag)),
+            @('push', '-q', 'origin', 'main', '--tags')
+        )
+        foreach ($step in $steps) {
+            & git @step
+            if ($LASTEXITCODE -ne 0) { throw "git $($step -join ' ') failed in $work" }
+        }
     }
     finally {
         Pop-Location
@@ -430,6 +440,30 @@ function Test-MissingGitFails {
     Assert-JigContains $text 'gitforwindows.org' 'the failure message should point at gitforwindows.org'
 }
 
+function Test-FindGitReturnsOneStringWithSeveralOnPath {
+    # Git for Windows can put git.exe on PATH more than once (bin\, cmd\,
+    # mingw64\bin\ -- the windows-latest runner does), and Get-Command then
+    # returns all of them. Every caller binds the result to a [string]
+    # parameter, so an array broke the whole install. Two fake git.cmd files
+    # stand for the real ones: .CMD is in PATHEXT, so Get-Command counts them
+    # as applications, and nothing here runs them.
+    $first = New-JigTempDir -Prefix 'git-first'
+    $second = New-JigTempDir -Prefix 'git-second'
+    foreach ($dir in $first, $second) {
+        [System.IO.File]::WriteAllText((Join-Path $dir 'git.cmd'), "@exit /b 0`r`n")
+    }
+    $originalPath = $env:Path
+    $env:Path = "$first;$second"
+    try {
+        $found = Find-JigGitCommand
+    }
+    finally {
+        $env:Path = $originalPath
+    }
+    Assert-JigTrue ($found -is [string]) "Find-JigGitCommand must return one string, got: $($found | Out-String)"
+    Assert-JigEqual (Join-Path $first 'git.cmd') $found 'the first git on PATH should win'
+}
+
 # --- run -------------------------------------------------------------------
 
 $script:OriginalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -452,6 +486,7 @@ try {
     $script:InstallShPath = Join-Path $script:RepoRoot 'install.sh'
 
     Invoke-JigTest 'GetJigInstalledInfoParsesAllThreeForms' { Test-GetJigInstalledInfoParsesAllThreeForms }
+    Invoke-JigTest 'FindGitReturnsOneStringWithSeveralOnPath' { Test-FindGitReturnsOneStringWithSeveralOnPath }
     Invoke-JigTest 'GitPresentFreshInstall' { Test-GitPresentFreshInstall }
     Invoke-JigTest 'RepeatRunIsIdempotent' { Test-RepeatRunIsIdempotent }
     Invoke-JigTest 'ExistingRepositoryGetsNoCommit' { Test-ExistingRepositoryGetsNoCommit }
