@@ -149,6 +149,9 @@ already. Run the stage that is missing, not the ones the author has done.
   part of discovery that is still owed.
 - The gate is then the moment you and the author settle on the final shape, and
   implementation starts from that, not from the original text.
+- **A task linked to a spec** carries a `Spec: .ai/specs/<id>/ — Phase <n>` line: it was filed
+  from that spec's roadmap. Read every file of the spec as input and check the premises the task
+  rests on, as for any written design. The roadmap items that name the task are its boundary.
 
 ## Human gate (T3, T4)
 

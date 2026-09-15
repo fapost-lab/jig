@@ -130,3 +130,52 @@ test_help_lists_spec_new() {
   run jig help
   assert_contains "$OUT" "spec new <id>"
 }
+
+test_help_lists_spec_done() {
+  run jig help
+  assert_contains "$OUT" "spec done <task-id>"
+}
+
+test_help_lists_spec_remove() {
+  run jig help
+  assert_contains "$OUT" "spec remove <id>"
+}
+
+# --- jig_trash_dest (shared by housekeeping and `jig spec remove`) -----------
+
+test_jig_trash_dest_no_collision() {
+  fixture_repo
+  local today root
+  today=$(date +%Y-%m-%d)
+  # jig_repo_root (git rev-parse --show-toplevel) resolves symlinks in the
+  # path (e.g. macOS's /tmp -> /private/tmp), which plain $PWD does not.
+  root=$(git rev-parse --show-toplevel)
+  lib_run 'jig_require_repo; jig_trash_dest foo'
+  assert_eq 0 "$RC"
+  assert_eq "$root/.ai/runtime/trash/$today/foo" "$OUT"
+}
+
+test_jig_trash_dest_appends_suffix_on_collision() {
+  fixture_repo
+  local today root
+  today=$(date +%Y-%m-%d)
+  root=$(git rev-parse --show-toplevel)
+  mkdir -p ".ai/runtime/trash/$today"
+  touch ".ai/runtime/trash/$today/foo"
+
+  lib_run 'jig_require_repo; jig_trash_dest foo'
+  assert_eq 0 "$RC"
+  assert_eq "$root/.ai/runtime/trash/$today/foo-2" "$OUT"
+
+  mkdir -p ".ai/runtime/trash/$today/foo-2"
+  lib_run 'jig_require_repo; jig_trash_dest foo'
+  assert_eq 0 "$RC"
+  assert_eq "$root/.ai/runtime/trash/$today/foo-3" "$OUT"
+}
+
+test_jig_trash_dest_creates_nothing() {
+  fixture_repo
+  lib_run 'jig_require_repo; jig_trash_dest bar'
+  assert_eq 0 "$RC"
+  assert_no_file .ai/runtime/trash
+}

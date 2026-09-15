@@ -13,7 +13,9 @@
   that existed before. (ADR-0033) `jig spec new` is the third: when a template copy fails it
   removes only the two temporary files it named in `.ai/specs/<id>/` and then `rmdir`s the
   directory it created with a plain `mkdir` in that run; `rmdir` refuses anything that is
-  not empty. (ADR-0035)
+  not empty. (ADR-0035) Moving to trash is not deleting, and it has two users: housekeeping moves
+  a workspace, and `jig spec remove` moves `.ai/specs/<id>/` only after checking that the id is
+  valid and the directory resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)
 - Housekeeping never destroys a workspace whose remote state is `unknown`.
   (`domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.
@@ -29,9 +31,8 @@
 - No filesystem path is built from a name that has not been validated first: task ids,
   spec ids, profile names, adapter names and knowledge domain names are checked at the
   single function that builds the path (`task_dir`, `spec_new` and the `spec_ids` walk,
-  `profiles_dir`, `adapters_dir`, `km_domain_dir`), before any read, write or `sed`
-  expression that embeds them. A path
-  supplied by a caller rather than derived from a name is validated the same way at the
+  `spec_task_dir` and `spec_remove`, `profiles_dir`, `adapters_dir`, `km_domain_dir`), before
+  any read, write or `sed` expression that embeds them. A path supplied by a caller rather than derived from a name is validated the same way at the
   point it is joined to the project root — `_ctx_check_knowledge_path` for an
   acknowledged document, the `--scope` check in `km_inventory` for a directory. Each
   validates for the shape it needs; none may skip the check because another command

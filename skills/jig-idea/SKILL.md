@@ -134,5 +134,36 @@ Check the result:
 .ai/scripts/jig spec list
 ```
 
-When the human wants to begin an item, hand it to `jig-task` with the item's text and a link
-to the spec. Do not start it here.
+## 10. File a phase's tasks — only when asked
+
+"File the tasks for phase N": for each item of that phase with no task id and not `fog:`.
+
+1. Classify it with [the rubric](../jig-task/references/classification.md); say the class and
+   the signal that decided it in one sentence.
+2. File it from an excerpt — a heading, the link line, the item's goal, its boundary, its
+   dependencies with their reasons:
+
+   ```
+   .ai/scripts/jig task new <task-id> --class Tn --domains <a,b> --from - <<'EOF'
+   # <title>
+
+   Spec: .ai/specs/<spec-id>/ — Phase <n>
+   ...
+   EOF
+   ```
+
+   Write the `Spec:` line exactly so: `jig spec done` and `jig spec remove` read it.
+3. Rewrite the item in `roadmap.md` to start with the id: ``- [ ] `<task-id>` — <goal>``. One task
+   may cover several items; each of them then names it. Show the changed phase verbatim.
+
+The tasks are filed, not started. When the human wants to begin one, hand it to `jig-task`. The
+item is checked later by `jig spec done`, called from consolidation — never by hand.
+
+## 11. Moving or dropping a spec
+
+- **Starting a new project from a spec**: copy `.ai/specs/<id>/` into that project, which needs
+  Jig 0.3.0 or later. From then on its own Jig tracks the spec; nothing links the two copies.
+  Task ids in a copied roadmap belong to the old project.
+- **Dropping a spec**: `jig spec remove <id> --dry-run` shows what would happen — open tasks
+  unlinked, never-started ones abandoned only with `--abandon-unstarted`, the directory moved to
+  trash. Run it without `--dry-run` once the human agrees.

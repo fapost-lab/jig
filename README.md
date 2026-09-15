@@ -259,6 +259,21 @@ billing-rework  Usage-based billing                     incomplete (no roadmap.m
 `jig status` counts specifications on its `specs:` line. The skill never starts a task;
 work on a roadmap item begins with `jig-task`.
 
+When asked, `jig-idea` files a phase's tasks from the roadmap. Each filed task carries one line in
+its `task.md`, `Spec: .ai/specs/<spec-id>/ — Phase <n>`, and its roadmap items name its id. When
+the task's knowledge decision is recorded, before the commit, consolidation runs `jig spec done`,
+which checks those items — so the checkmark lands in the same pull request as the work.
+
+```sh
+.ai/scripts/jig spec done spec-task-links
+.ai/scripts/jig spec remove csv-export --dry-run --abandon-unstarted
+```
+
+`jig spec remove` unlinks the spec's open tasks in this checkout, abandons the never-started ones
+only when asked, leaves started and closed tasks alone, and moves the spec directory to
+`.ai/runtime/trash/`. To start a new project from a spec, copy its directory into that project's
+`.ai/specs/`; the new project's Jig tracks it from there.
+
 ## Task workflows
 
 ### Choose a route

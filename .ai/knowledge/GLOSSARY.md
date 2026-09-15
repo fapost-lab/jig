@@ -126,8 +126,9 @@ The committed plan for work larger than one task, under `.ai/specs/<spec-id>/`: 
 (the idea, its stress test, decisions, open questions) and `roadmap.md` (destination,
 phases, items, fog, waves). Created by `jig spec new` and developed with the `jig-idea`
 skill. A plan, not Knowledge: `jig context` never resolves it, and it has no status —
-progress is read from the roadmap's checkboxes (ADR-0035). Not the retired product
-specification of ADR-0028. Informal synonyms: plan, roadmap, design doc.
+progress is read from the roadmap's checkboxes (ADR-0035). A task filed from it links back
+with a `Spec:` line in its `task.md`. Not the retired product specification of ADR-0028.
+Informal synonyms: plan, roadmap, design doc.
 
 ## Load Policy
 
