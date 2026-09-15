@@ -13,7 +13,7 @@ paths:
   - "skills/jig-map/**"
   - schemas/frontmatter.md
 summary: Why a proposal is a status on the real document, and why resolution filters by an allowlist.
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-15
 ---
 # ADR-0016: Proposed knowledge is a lifecycle state, and resolution filters by an allowlist
 
@@ -85,3 +85,8 @@ about how to ask the same question, and the safe form was already the one in use
   makes `jig-map` runnable on an unfamiliar codebase at all.
 - A proposed document left unaccepted is noise the next map has to argue with; `jig-map`
   is instructed to delete what the human rejected.
+
+> **Amendment (2026-09-15).** A stub linking an existing document (`source:`, ADR-0036) cannot leave
+> `proposed` yet: `jig knowledge accept` refuses a batch that contains one, and `knowledge check` fails
+> a stub that is `active` or `accepted`. An accepted stub would resolve to its two-line body instead of
+> the rules it points at. Reject works as for any proposal. The refusal is lifted when sources resolve.

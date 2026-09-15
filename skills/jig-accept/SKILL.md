@@ -40,6 +40,11 @@ once, and read the map's own
 `knowledge-map.md` in the task workspace if one exists — it records the evidence and the
 uncertainty behind each proposal, which is exactly what the decision needs.
 
+**A stub that links an existing document** — `jig knowledge proposed` shows it with
+`-> <source>` — has no rules in its body. Show the source's path and size instead, and the source
+itself when the human asks. It cannot be accepted yet: `jig context` does not resolve linked
+sources, so `accept` refuses it. Offer to reject it or leave it proposed.
+
 Say plainly which proposals you are least confident in. A skill that presents its own
 guesses with uniform confidence has hidden the only thing the human is there to judge.
 

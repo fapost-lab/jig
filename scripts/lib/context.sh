@@ -237,6 +237,9 @@ _ctx_matched_docs() {
     if [ "$show_all" -ne 1 ]; then
       status=$(fm_get "$doc" status)
       jig_knowledge_status_resolvable "$status" || continue
+      # A stub for an existing document is not resolved yet (ADR-0036), in this
+      # form as in the progressive one (_ctx_active_docs).
+      [ -z "$(jig_knowledge_source "$doc")" ] || continue
     fi
 
     reason=$(_ctx_doc_reason "$doc" "$files" "$domains") || continue
@@ -347,6 +350,11 @@ _ctx_active_docs() {
     if [ "$CTX_ALL" -ne 1 ]; then
       status=$(fm_get "$doc" status)
       jig_knowledge_status_resolvable "$status" || continue
+      # A stub linking an existing document (ADR-0036) is not resolved until
+      # context can hand the agent its source: resolving it now would give the
+      # agent two lines of body instead of the rules. `knowledge check` fails an
+      # active stub; this keeps a hand-edited one from reaching an agent anyway.
+      [ -z "$(jig_knowledge_source "$doc")" ] || continue
     fi
     printf '%s\n' "$doc"
   done < <(jig_knowledge_docs)

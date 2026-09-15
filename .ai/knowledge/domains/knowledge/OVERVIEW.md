@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-15
 ---
 # Knowledge
 
@@ -31,6 +31,9 @@ them an agent has to read.
   counts it, so a decision may be taken later and by someone else.
 - Whether a document still describes the code: `paths` coverage and `reviewed_at`
   staleness (ADR-0010).
+- Adopting a project's existing documents: stubs in `sources/` that link a tracked file with
+  `source:`, the checks on that path, and the inventory of candidates (ADR-0036). A stub is
+  held back from agents — not accepted, not resolved — until `jig context` resolves sources.
 - Which documents a task must read, how much of each, and the record that it did:
   resolution by selectors, the catalog, and the context ledger (ADR-0014, ADR-0015).
 
@@ -42,8 +45,9 @@ supplies the task id the ledger is keyed by but knows nothing about documents.
 
 Dependencies point one way. `knowledge.sh` and `context.sh` never source each other; the
 handful of definitions both must agree on live in `scripts/lib/common.sh`
-(`jig_knowledge_docs`, `jig_knowledge_is_global`, `jig_knowledge_status_resolvable`). A
-new shared notion goes there, not into one command with the other reaching across.
+(`jig_knowledge_docs`, `jig_knowledge_is_global`, `jig_knowledge_status_resolvable`,
+`jig_knowledge_source`). A new shared notion goes there, not into one command with the other
+reaching across.
 
 `frontmatter.sh` is a parser and writer with no knowledge semantics: it does not know
 what a `load` value means. Keep it that way — semantics belong above it.
