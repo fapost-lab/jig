@@ -1,0 +1,3 @@
+# jig: line endings of the framework's own files, whatever core.autocrlf says
+.ai/scripts/** text eol=lf
+.ai/profiles/**/*.sh text eol=lf

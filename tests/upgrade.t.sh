@@ -94,6 +94,35 @@ EOF
   assert_file_contains .ai/profiles/shell/verify.sh "pre-existing, not a symlink"
 }
 
+# Reproduces the Windows Git Bash gap: `ln -s` copies instead of linking, so
+# a link-mode project must refuse rather than silently place a copy where the
+# manifest expects a symlink (jig_link_detect, common.sh).
+test_upgrade_link_mode_refuses_when_only_copying_links_are_available() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
+  assert_no_file .ai/profiles/shell
+  cat > .ai/config.yaml <<'EOF'
+profiles: [generic, shell]
+adapters: [claude, codex]
+EOF
+  local before lndir
+  before=$(git status --porcelain)
+  lndir=$(stub_ln_copy_dir)
+  export PATH="$lndir:$PATH"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "installed in link mode, which needs symbolic links"
+  assert_no_file .ai/profiles/shell
+  assert_eq "$before" "$(git status --porcelain)" "a refused upgrade must change nothing"
+
+  run jig upgrade --from "$JIG_HOME" --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "installed in link mode, which needs symbolic links"
+  assert_no_file .ai/profiles/shell
+  assert_eq "$before" "$(git status --porcelain)" "a refused dry-run must change nothing"
+}
+
 test_upgrade_dry_run_makes_no_changes() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null

@@ -344,6 +344,11 @@ cmd_upgrade() {
   local mode
   mode=$(manifest_header_get jig.mode)
   if [ "$mode" = "link" ]; then
+    # The same refusal as `init --link`, for the same reason: where `ln -s`
+    # copies, every "missing link" would be placed as a copy of the source.
+    jig_link_detect
+    [ "$_JIG_LINK_KIND" = symlink ] \
+      || jig_die "upgrade: this project is installed in link mode, which needs symbolic links, and they cannot be made here"
     _upgrade_link "$source" "$active_profiles" "$active_adapters" "$dry_run"
     return 0
   fi

@@ -1522,6 +1522,43 @@ test_task_start_worktree_refuses_a_shared_branch() {
   assert_no_file ../repo.worktrees/T-1
 }
 
+# --- start --worktree on a machine where `ln -s` copies (Windows Git Bash) ----
+
+test_task_start_worktree_refuses_when_only_copying_links_are_available() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local lndir
+  lndir=$(stub_ln_copy_dir)
+  export PATH="$lndir:$PATH"
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--worktree needs a directory link"
+  assert_no_file ../repo.worktrees/T-1
+  if git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null; then
+    fail "the branch of a refused start was left behind"
+  fi
+  if grep -q '^branch:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded a branch"
+  fi
+}
+
+test_task_start_worktree_links_via_a_junction_when_symlinks_copy() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local lndir jdir owner wt
+  lndir=$(stub_ln_copy_dir)
+  jdir=$(stub_junction_dir)
+  owner=$(cd .ai/workspace/tasks/T-1 && pwd -P)
+  export PATH="$jdir:$lndir:$PATH"
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC" "task start should succeed: $ERR"
+  wt="$OUT"
+  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the worktree has no link to the workspace"
+  assert_eq "$owner" "$(cd "$wt/.ai/workspace/tasks/T-1" && pwd -P)"
+}
+
 test_task_start_dirty_refusal_offers_the_worktree() {
   task_setup_clean
   printf 'dirty\n' >> README.md

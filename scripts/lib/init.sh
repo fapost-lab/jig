@@ -302,6 +302,16 @@ cmd_init() {
     if [ "$(manifest_header_get jig.mode)" = "link" ]; then link=1; else link=0; fi
   fi
 
+  # Link mode is a tree of relative symlinks. A junction cannot stand in for
+  # them: it has no relative target and git does not store it. Where `ln -s`
+  # copies instead (Git Bash by default), step 7 failed after config and
+  # knowledge were already written, so this is refused before the first write.
+  if [ "$link" = 1 ]; then
+    jig_link_detect
+    [ "$_JIG_LINK_KIND" = symlink ] \
+      || jig_die "init: --link needs symbolic links, which cannot be made here; use copy mode (without --link)"
+  fi
+
   # Profiles/adapters: an explicit flag always wins. Otherwise, on a re-run
   # against an existing .ai/config.yaml, take the current selection from the
   # config (domains/install) rather than silently falling back to the flag
@@ -435,6 +445,23 @@ cmd_init() {
     grep -qxF "$gi_line" "$gi_dest" || { printf '%s\n' "$gi_line" >> "$gi_dest"; gi_added=1; }
   done < "$source/templates/gitignore"
   [ "$gi_added" = 1 ] && created_count=$((created_count + 1))
+
+  # 6b. .gitattributes --------------------------------------------------------
+  # Line endings of the framework's own files, appended line by line like
+  # .gitignore and never parsed. A clone made by Git for Windows
+  # (core.autocrlf=true) otherwise checks .ai/scripts out with CRLF — Git Bash
+  # tolerates that, Linux bash in WSL on the same checkout does not. Every
+  # framework file is LF, jig.cmd included: upgrade hashes source files as raw
+  # bytes, so a CRLF source would read as changed on every run.
+  local ga_dest="$JIG_PROJECT/.gitattributes" ga_line ga_added=0
+  [ -f "$ga_dest" ] || : > "$ga_dest"
+  while IFS= read -r ga_line; do
+    case "$ga_line" in
+      ''|'#'*) continue ;;
+    esac
+    grep -qxF "$ga_line" "$ga_dest" || { printf '%s\n' "$ga_line" >> "$ga_dest"; ga_added=1; }
+  done < "$source/templates/gitattributes"
+  [ "$ga_added" = 1 ] && created_count=$((created_count + 1))
 
   # 7. framework-owned files: scripts, profiles, skills ----------------------
   local p skill_dir sname sdir pdir dest_pdir

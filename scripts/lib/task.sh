@@ -628,6 +628,12 @@ _task_start_in_worktree() {
     jig_die "task start: worktree path already exists: $path"
   fi
   owner=$(cd -P "$dir" && pwd -P) || jig_die "task start: cannot resolve the workspace of $id"
+  # Before anything is created: without a directory link the worktree could
+  # only get a copy of the workspace, and a copy is two tasks from its first
+  # write (jig_link_detect).
+  jig_link_detect
+  [ "$_JIG_LINK_KIND" != none ] \
+    || jig_die "task start: --worktree needs a directory link, and neither a symlink nor a junction can be made here; start the task in this checkout instead"
 
   local start
   start=$(_task_fresh_base) || exit 1
@@ -639,7 +645,7 @@ _task_start_in_worktree() {
     jig_die "task start: could not create worktree $path"
   fi
   if ! mkdir -p "$path/$JIG_AI_DIR/workspace/tasks" 2>/dev/null \
-     || ! ln -s "$owner" "$path/$JIG_AI_DIR/workspace/tasks/$id" 2>/dev/null; then
+     || ! jig_link_dir "$owner" "$path/$JIG_AI_DIR/workspace/tasks/$id"; then
     _task_undo_worktree_start "$branch" "$path" "$base_commit"
     jig_die "task start: could not link the workspace of $id into $path"
   fi

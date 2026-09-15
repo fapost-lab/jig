@@ -37,7 +37,10 @@ main() {
   # .ai/scripts/jig-session-hook -> the project root is two levels up.
   project=$(cd "$dir/../.." && pwd) || return 0
   [ -f "$project/.ai/config.yaml" ] || return 0
-  [ -x "$project/.ai/scripts/jig" ] || return 0
+  # -f, not -x, and `bash` below: a project committed from Windows records
+  # .ai/scripts/jig without the executable bit, and the hook then skipped
+  # housekeeping for every teammate on macOS and Linux, silently.
+  [ -f "$project/.ai/scripts/jig" ] || return 0
 
   stamp="$project/.ai/runtime/last-housekeeping"
   cadence=$(sed -n 's/^housekeeping.cadence:[[:space:]]*//p' "$project/.ai/config.yaml" \
@@ -59,7 +62,7 @@ main() {
   mkdir -p "$project/.ai/runtime" 2>/dev/null || return 0
   (
     cd "$project" || exit 0
-    "$project/.ai/scripts/jig" housekeeping \
+    bash "$project/.ai/scripts/jig" housekeeping \
       >> "$project/.ai/runtime/housekeeping.log" 2>&1 </dev/null
   ) &
   return 0

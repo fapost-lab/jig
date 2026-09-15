@@ -62,6 +62,7 @@ Usage: jig <command> [args]
   knowledge reviewed <id>        stamp a document as reconciled with the code
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
   measure                        knowledge quality, process weight, change size
+  doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release
   version                        print version
 EOF
@@ -73,7 +74,7 @@ main() {
   case "$cmd" in
     help|-h|--help) jig_usage ;;
     version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
-    init|upgrade|status|task|context|verify|knowledge|housekeeping|measure)
+    init|upgrade|status|task|context|verify|knowledge|housekeeping|measure|doctor)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi

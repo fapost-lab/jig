@@ -188,6 +188,63 @@ jig_global_executable() {
   printf '%s\n' "$path"
 }
 
+# --- directory links ----------------------------------------------------------
+
+# How this machine links one directory to another: symlink, junction or none.
+# Set by jig_link_detect, once per process. Cleared here so that a value in the
+# caller's environment is never taken for a measurement.
+_JIG_LINK_KIND=""
+
+# jig_link_detect — measure which kind of directory link works here and keep it
+# in _JIG_LINK_KIND. Not a `$(...)` helper: the answer must outlive the call.
+#
+# `ln -s` is never trusted to have made a link. Git Bash on Windows copies by
+# default, and a copied task workspace diverges from its first write — two
+# `state` files, and housekeeping keeping the worktree forever, because a copy
+# is "a workspace of its own" (ADR-0029). Where symlinks are unavailable an
+# NTFS junction needs no privilege; bash reads it as a link (`-L`,
+# `find -type l`), and `git worktree remove` and `rm -rf` remove the junction
+# without touching its target (measured on windows-latest, 2026-09-14).
+jig_link_detect() {
+  [ -z "$_JIG_LINK_KIND" ] || return 0
+  local dir
+  _JIG_LINK_KIND=none
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-link-probe.XXXXXX") || return 0
+  mkdir "$dir/target" || { rm -rf "$dir"; return 0; }
+  if ln -s "$dir/target" "$dir/symlink" 2>/dev/null && [ -L "$dir/symlink" ]; then
+    _JIG_LINK_KIND=symlink
+  elif _jig_junction "$dir/target" "$dir/junction" && [ -L "$dir/junction" ]; then
+    _JIG_LINK_KIND=junction
+  fi
+  rm -rf "$dir"
+  return 0
+}
+
+# _jig_junction <target-abs> <link-abs> — an NTFS junction made by cmd.exe.
+# MSYS rewrites mklink's `/J` into a path unless argument conversion is off,
+# and cmd.exe needs both paths in Windows form.
+_jig_junction() {
+  local target link
+  command -v cmd >/dev/null 2>&1 || return 1
+  command -v cygpath >/dev/null 2>&1 || return 1
+  target=$(cygpath -w "$1") || return 1
+  link=$(cygpath -w "$2") || return 1
+  MSYS2_ARG_CONV_EXCL='*' cmd /c mklink /J "$link" "$target" >/dev/null 2>&1
+}
+
+# jig_link_dir <target-abs> <link-abs> — link <link-abs> to the existing
+# directory <target-abs> with the kind jig_link_detect found. Non-zero when no
+# kind works, or when what was made does not read as a link.
+jig_link_dir() {
+  jig_link_detect
+  case "$_JIG_LINK_KIND" in
+    symlink) ln -s "$1" "$2" 2>/dev/null || return 1 ;;
+    junction) _jig_junction "$1" "$2" || return 1 ;;
+    *) return 1 ;;
+  esac
+  [ -L "$2" ]
+}
+
 # jig_physical_path <file> — <file> with its directory made physical.
 jig_physical_path() {
   local dir

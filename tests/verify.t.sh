@@ -440,6 +440,36 @@ EOF
   assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 1 skip"
 }
 
+# A profile checked out on Windows (or restored by any path that does not
+# preserve unix file modes) has verify.sh at mode 644, no executable bit.
+# `cmd_verify` runs it through `bash` rather than executing it directly, so
+# the result must not depend on that bit (scripts/lib/verify.sh).
+test_verify_profile_verify_script_runs_without_executable_bit() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/noexec
+  cat > .ai/profiles/noexec/profile.yaml <<'EOF'
+name: noexec
+description: fixture profile with a non-executable verify.sh.
+detect: always
+EOF
+  cat > .ai/profiles/noexec/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "noexec: ran"
+exit 0
+EOF
+  chmod -x .ai/profiles/noexec/verify.sh
+  if [ -x .ai/profiles/noexec/verify.sh ]; then
+    fail "fixture setup: verify.sh is still executable"
+  fi
+
+  run jig verify --profile noexec
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "noexec: ran"
+  assert_contains "$OUT" "RESULT noexec: pass"
+  assert_contains "$OUT" "verify: 1 profiles, 1 pass, 0 fail, 0 skip"
+}
+
 test_verify_profile_filter_accepts_comma_list() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles shell >/dev/null

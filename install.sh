@@ -432,6 +432,24 @@ _install_link_new() {
 
 # --- verification --------------------------------------------------------------
 
+# _install_symlinks_work — whether `ln -s` makes a symbolic link here. Git Bash
+# on Windows copies by default, and a copied $BIN_DIR/jig looks for lib/ next
+# to the copy: every call died with "cd: .../.local/bin/lib: No such file or
+# directory", and a repeat run refused the copy as "not a symlink". The probe
+# lives in a temporary directory of its own and removes only that.
+_install_symlinks_work() {
+  local probe ok=1
+  probe=$(mktemp -d "${TMPDIR:-/tmp}/jig-install-link.XXXXXX") || return 1
+  # Called as an `if` condition, so `set -e` is off here: a failed mkdir must
+  # end the probe itself, not leave `ln -s` pointing at nothing.
+  mkdir "$probe/target" || { rm -rf "$probe"; return 1; }
+  if ln -s "$probe/target" "$probe/link" 2>/dev/null && [ -L "$probe/link" ]; then
+    ok=0
+  fi
+  rm -rf "$probe"
+  return "$ok"
+}
+
 # _install_verify — runs $INSTALL_DIR/scripts/jig directly, not through
 # $BIN_DIR/jig: when the symlink was preserved pointing at another checkout
 # (_install_place_symlink), $BIN_DIR/jig deliberately is not ours, and
@@ -472,14 +490,16 @@ _install_startup_file() {
   esac
 }
 
-# _install_setup_path — writes nothing when $BIN_DIR is already on $PATH or
+# _install_setup_path — puts $PATH_DIR on PATH: $BIN_DIR normally, the
+# checkout's own scripts/ where symbolic links cannot be made. Writes nothing
+# when $PATH_DIR is already on $PATH or
 # the target startup file already mentions it (repeat runs never duplicate
 # the block). The piped process cannot change its parent shell's
 # environment, so both the new-terminal instruction and the command that
 # works immediately are printed either way that PATH gets there.
 _install_setup_path() {
   case ":$PATH:" in
-    *":$BIN_DIR:"*)
+    *":$PATH_DIR:"*)
       return 0
       ;;
   esac
@@ -487,20 +507,20 @@ _install_setup_path() {
   local rc_file
   rc_file=$(_install_startup_file)
 
-  if [ -f "$rc_file" ] && grep -qF "$BIN_DIR" "$rc_file" 2>/dev/null; then
+  if [ -f "$rc_file" ] && grep -qF "$PATH_DIR" "$rc_file" 2>/dev/null; then
     return 0
   fi
 
   {
     printf '\n# added by the Jig installer (install.sh)\n'
     # shellcheck disable=SC2016 # $PATH must reach the file literally, expanded when the shell starts, not now
-    printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
+    printf 'export PATH="%s:$PATH"\n' "$PATH_DIR"
   } >> "$rc_file" || _install_die "could not update $rc_file"
 
   _install_info ""
-  _install_info "Added $BIN_DIR to PATH in $rc_file."
+  _install_info "Added $PATH_DIR to PATH in $rc_file."
   _install_info "Open a new terminal, or run this in the current one:"
-  _install_info "  export PATH=\"$BIN_DIR:\$PATH\""
+  _install_info "  export PATH=\"$PATH_DIR:\$PATH\""
 }
 
 # --- failure cleanup ---------------------------------------------------------
@@ -581,20 +601,36 @@ main() {
   CREATED_BIN_DIR=0
   CREATED_SYMLINK=0
   SYMLINK_ELSEWHERE=0
+  NO_SYMLINKS=0
+  PATH_DIR="$BIN_DIR"
   MOVED_CHECKOUT=0
   PREVIOUS_COMMIT=""
   trap _install_cleanup_on_failure EXIT
 
   _install_resolve_ref
   _install_setup_checkout
-  _install_place_symlink
+  if _install_symlinks_work; then
+    _install_place_symlink
+  else
+    # No link: the checkout's own scripts/ goes on PATH instead. The global
+    # jig is then still a path ending in /scripts/jig, which is all that
+    # jig_global_executable, status and self-update look for.
+    NO_SYMLINKS=1
+    PATH_DIR=$(_install_physical_path "$INSTALL_DIR/scripts/jig") \
+      || _install_die "could not resolve $INSTALL_DIR/scripts/jig"
+    PATH_DIR=${PATH_DIR%/jig}
+  fi
   _install_verify
 
   if [ "$ADD_PATH" = 1 ]; then
     _install_setup_path
+  elif [ "$NO_SYMLINKS" = 1 ]; then
+    _install_info "Symbolic links cannot be made here; add $PATH_DIR to PATH to use jig."
   fi
 
-  if [ "$SYMLINK_ELSEWHERE" = 1 ]; then
+  if [ "$NO_SYMLINKS" = 1 ]; then
+    printf 'jig installed: %s (%s)\n' "$PATH_DIR/jig" "$ACTUAL_REF"
+  elif [ "$SYMLINK_ELSEWHERE" = 1 ]; then
     printf 'jig installed: %s (%s)\n' "$INSTALL_DIR" "$ACTUAL_REF"
   else
     printf 'jig installed: %s -> %s (%s)\n' "$BIN_DIR/jig" "$INSTALL_DIR" "$ACTUAL_REF"

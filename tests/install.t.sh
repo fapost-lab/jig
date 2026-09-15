@@ -241,6 +241,55 @@ test_install_custom_dirs_use_absolute_symlink() {
   assert_eq "jig 0.1.0" "$OUT" "the absolute symlink must resolve to the installed checkout"
 }
 
+# --- Windows Git Bash: `ln -s` copies instead of linking ---------------------
+
+test_install_copying_symlinks_falls_back_to_the_physical_scripts_dir() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  local lndir
+  lndir=$(stub_ln_copy_dir)
+  export PATH
+  PATH="$lndir:$(inst_system_path)"
+
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
+  assert_eq 0 "$RC" "install should still succeed: $OUT"
+  assert_no_file "$(inst_bin)/jig"
+
+  local expected_dir
+  expected_dir=$(cd -P "$(inst_share)/scripts" && pwd -P)
+  assert_contains "$OUT" "add $expected_dir to PATH"
+
+  run "$(inst_share)/scripts/jig" version
+  assert_eq 0 "$RC"
+  assert_eq "jig 0.1.0" "$OUT"
+
+  # A repeat run is a no-op, not a retry that tries (and fails) to link.
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
+  assert_eq 0 "$RC" "repeat run should still succeed: $OUT"
+  assert_no_file "$(inst_bin)/jig"
+}
+
+test_install_copying_symlinks_adds_scripts_dir_to_path_once() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  export SHELL=/usr/bin/zsh
+  local lndir
+  lndir=$(stub_ln_copy_dir)
+  export PATH
+  PATH="$lndir:$(inst_system_path)"
+
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+
+  local expected_dir
+  expected_dir=$(cd -P "$(inst_share)/scripts" && pwd -P)
+  assert_file_contains "$HOME/.zshrc" "$expected_dir"
+
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"
+  assert_eq 0 "$RC" "repeat run should succeed: $OUT"
+
+  grep -c -- "$expected_dir" "$HOME/.zshrc" > "$JIG_TEST_TMP.count"
+  assert_eq "1" "$(cat "$JIG_TEST_TMP.count")" "the PATH entry must not be duplicated"
+}
+
 # --- AC-00a: idempotent repeat runs ------------------------------------------
 
 test_install_repeat_run_is_a_no_op_at_the_same_tag() {

@@ -129,6 +129,25 @@ test_init_manifest_format_and_hashes() {
   assert_eq "$want" "$got"
 }
 
+# The whole scripts/ tree is copied by _init_copy_tree with no per-file
+# allowlist (domains/install), so jig.cmd needs no code of its own to reach
+# a copy-mode install: this pins that it actually does, byte for byte, and
+# is recorded on the manifest the same way every other framework file is.
+test_init_installs_windows_entry_point_in_copy_mode() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+
+  assert_file .ai/scripts/jig.cmd
+  cmp -s "$JIG_HOME/scripts/jig.cmd" .ai/scripts/jig.cmd \
+    || fail "installed jig.cmd is not byte-identical to source"
+
+  local want got
+  want=$(git -C "$JIG_HOME" hash-object scripts/jig.cmd)
+  got=$(sed -n 's/^\(.*\) \.ai\/scripts\/jig\.cmd$/\1/p' .ai/manifest)
+  assert_eq "$want" "$got"
+}
+
 test_init_self_install_writes_dot_source() {
   fixture_repo
   # Make the fixture repository itself a framework source root, and run its
@@ -309,6 +328,26 @@ test_init_gitignore_merges_without_duplicating() {
   assert_eq 1 "$count"
 }
 
+test_init_gitattributes_merges_without_duplicating() {
+  # Line endings of the framework's own files are pinned per project: a clone
+  # made by Git for Windows (core.autocrlf=true) must still check .ai/scripts
+  # out LF, which Linux bash in WSL needs. Rules the project had stay.
+  fixture_repo
+  printf '*.png binary\n.ai/scripts/** text eol=lf\n' > .gitattributes
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  grep -qxF '*.png binary' .gitattributes || fail "an existing rule was lost"
+  grep -qxF '.ai/profiles/**/*.sh text eol=lf' .gitattributes || fail "the profile rule was not added"
+  assert_eq 1 "$(grep -cxF '.ai/scripts/** text eol=lf' .gitattributes)"
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(grep -cxF '.ai/scripts/** text eol=lf' .gitattributes)" \
+    "a repeat init must not duplicate a rule"
+  assert_eq "lf" "$(git check-attr eol -- .ai/scripts/jig | sed 's/.*: //')"
+}
+
 test_init_respects_adapters_flag() {
   fixture_repo
   run jig init --from "$JIG_HOME" --adapters claude
@@ -410,6 +449,22 @@ test_init_via_installed_copy_without_from_dies() {
   run jig_installed init
   assert_eq 1 "$RC"
   assert_contains "$OUT" "cannot determine the framework source root"
+}
+
+test_init_link_mode_refuses_before_writing_when_symlinks_copy() {
+  # Where `ln -s` copies instead of linking (Git Bash by default), link mode
+  # failed in step 7, after config and knowledge had already been written.
+  fixture_repo
+  local before lndir
+  before=$(git status --porcelain)
+  lndir=$(stub_ln_copy_dir)
+  export PATH="$lndir:$PATH"
+
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--link needs symbolic links"
+  assert_no_file .ai/config.yaml
+  assert_eq "$before" "$(git status --porcelain)" "a refused init must write nothing"
 }
 
 test_init_link_mode_creates_relative_symlinks() {

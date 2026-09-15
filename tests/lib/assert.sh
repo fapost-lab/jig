@@ -159,6 +159,77 @@ jig() { "$JIG_BIN" "$@"; }
 # Run jig from the copy installed into the current project.
 jig_installed() { ".ai/scripts/jig" "$@"; }
 
+# --- directory-link stubs (Windows Git Bash simulation) -----------------------
+#
+# On Windows Git Bash `ln -s` silently copies instead of linking, so
+# jig_link_detect/jig_link_dir (common.sh) and install.sh's
+# _install_symlinks_work never see a real symlink there and fall back to an
+# NTFS junction or a physical PATH entry. Neither code path runs naturally on
+# macOS/Linux, so tests simulate the Windows toolchain with stubs on PATH.
+# Callers build the stub dir(s) they need, then prepend them to PATH only for
+# the one invocation under test (conventions/shell.md: "a test decides its
+# own environment") -- never for the fixture setup that runs before it.
+
+# stub_ln_copy_dir -- prints a directory holding an `ln` that, for
+# `-s TARGET LINK`, copies TARGET to LINK (an empty directory when TARGET
+# does not exist) and exits 0, instead of linking. Any other invocation falls
+# through to the real `ln`, resolved once here, before this directory is ever
+# put on PATH. Side of $JIG_TEST_TMP, never inside it, so it never shows up
+# in a `git status` a test asserts on (same reason install.t.sh's gitstub
+# dir and _run_out live beside the test directory, not in it).
+stub_ln_copy_dir() {
+  local dir="${JIG_TEST_TMP}.lnstub" real_ln
+  real_ln=$(command -v ln) || fail "stub_ln_copy_dir: no real ln on PATH to wrap"
+  mkdir -p "$dir"
+  cat > "$dir/ln" <<STUB
+#!/bin/sh
+if [ "\$1" = "-s" ]; then
+  target="\$2"
+  link="\$3"
+  if [ -d "\$target" ]; then
+    cp -R "\$target" "\$link"
+  elif [ -e "\$target" ]; then
+    cp "\$target" "\$link"
+  else
+    mkdir -p "\$link"
+  fi
+  exit 0
+fi
+exec "$real_ln" "\$@"
+STUB
+  chmod +x "$dir/ln"
+  printf '%s\n' "$dir"
+}
+
+# stub_junction_dir -- prints a directory holding `cmd` and `cygpath` stubs
+# that simulate an NTFS junction (_jig_junction, common.sh) with a real
+# symlink: `cygpath -w X` prints X unchanged (these tests only ever pass
+# already-POSIX paths through it), and `cmd /c mklink /J LINK TARGET` makes a
+# real symlink at LINK with the true `ln`, resolved once here before any stub
+# reaches PATH -- so it works even when this directory is combined with
+# stub_ln_copy_dir's, whose own `ln -s` copies. bash reads a symlink as a
+# link (`-L`), which is what a real junction would give jig_link_detect too.
+# Combine with stub_ln_copy_dir on PATH (that one first) to reproduce a
+# machine where plain `ln -s` copies but a junction is available.
+stub_junction_dir() {
+  local dir="${JIG_TEST_TMP}.junctionstub" real_ln
+  real_ln=$(command -v ln) || fail "stub_junction_dir: no real ln on PATH to wrap"
+  mkdir -p "$dir"
+  cat > "$dir/cygpath" <<'STUB'
+#!/bin/sh
+shift
+printf '%s\n' "$1"
+STUB
+  chmod +x "$dir/cygpath"
+  cat > "$dir/cmd" <<STUB
+#!/bin/sh
+# \$1=/c \$2=mklink \$3=/J \$4=link \$5=target
+"$real_ln" -s "\$5" "\$4"
+STUB
+  chmod +x "$dir/cmd"
+  printf '%s\n' "$dir"
+}
+
 # --- assertions --------------------------------------------------------------
 
 fail() { printf 'ASSERT FAIL: %s\n' "$*"; exit 1; }
