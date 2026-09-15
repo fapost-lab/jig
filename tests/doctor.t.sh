@@ -19,7 +19,7 @@ _doctor_tools_bin() {
   local dir t p
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-tools.XXXXXX") || return 1
   for t in $_DOCTOR_TOOLS; do
-    p=$(env -i /bin/sh -c "command -v $t" 2>/dev/null) || continue
+    p=$(env -i PATH="$PATH" /bin/sh -c "command -v $t" 2>/dev/null) || continue
     case "$p" in /*) ln -sf "$p" "$dir/$t" ;; esac
   done
   printf '%s\n' "$dir"

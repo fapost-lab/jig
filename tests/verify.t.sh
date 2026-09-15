@@ -51,7 +51,10 @@ tr head tail wc chmod ls date dirname basename cmp paste stat readlink diff env"
 # grep is aliased to ugrep it returns the string `grep` rather than a path,
 # which produced a self-referential symlink and a `grep: command not found`
 # in the middle of a run. A helper built to remove environment dependence
-# must not inherit any.
+# must not inherit any. PATH is the one thing passed in: the default search
+# path of a bare `env -i` shell differs per platform, and under Git Bash it
+# leaves out /mingw64/bin, where git lives — the no-tools directory then had
+# no git at all and every run died with "not inside a git repository".
 # Script-global, never `local`: the EXIT trap below runs after the function
 # has returned, and a `local` would be out of scope by then — leaving the
 # trap to `rm -rf ""` and the directory to leak, which is exactly what the
@@ -90,7 +93,7 @@ _no_tools_bin() {
 _no_tools_fill() {
   local t p esc
   for t in $_NO_TOOLS_LIST; do
-    p=$(env -i /bin/sh -c "command -v $t" 2>/dev/null) || continue
+    p=$(env -i PATH="$PATH" /bin/sh -c "command -v $t" 2>/dev/null) || continue
     case "$p" in
       /*)
         esc=$(printf '%s' "$p" | sed "s/'/'\\\\''/g")

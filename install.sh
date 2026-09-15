@@ -616,9 +616,11 @@ main() {
     # jig is then still a path ending in /scripts/jig, which is all that
     # jig_global_executable, status and self-update look for.
     NO_SYMLINKS=1
-    PATH_DIR=$(_install_physical_path "$INSTALL_DIR/scripts/jig") \
-      || _install_die "could not resolve $INSTALL_DIR/scripts/jig"
-    PATH_DIR=${PATH_DIR%/jig}
+    # Spelled as given, like $BIN_DIR, not made physical: the startup file and
+    # $PATH are compared as text, and Git Bash spells one directory two ways
+    # (/tmp/... and /c/Users/.../Temp/...), so a physical spelling was never
+    # found there and the PATH line was appended again on every run.
+    PATH_DIR="$INSTALL_DIR/scripts"
   fi
   _install_verify
 

@@ -188,14 +188,14 @@ inst_global_jig() {
 }
 
 # inst_path_dir — the directory install.sh put on PATH for this install: the
-# bin dir when the symlink exists, the checkout's own physical scripts/
-# otherwise (PATH_DIR in install.sh, made physical there via
-# _install_physical_path).
+# bin dir when the symlink exists, the checkout's own scripts/ otherwise
+# (PATH_DIR in install.sh), spelled as given rather than made physical, the
+# way install.sh compares it with $PATH and the startup file.
 inst_path_dir() {
   if [ -e "$(inst_bin)/jig" ]; then
     inst_bin
   else
-    (cd -P "$(inst_share)/scripts" && pwd -P)
+    printf '%s/scripts\n' "$(inst_share)"
   fi
 }
 
@@ -298,7 +298,7 @@ test_install_custom_dirs_use_absolute_symlink() {
 
 # --- Windows Git Bash: `ln -s` copies instead of linking ---------------------
 
-test_install_copying_symlinks_falls_back_to_the_physical_scripts_dir() {
+test_install_copying_symlinks_falls_back_to_the_scripts_dir() {
   inst_build_remote "$PWD/remote.git" v0.1.0
   local lndir
   lndir=$(stub_ln_copy_dir)
@@ -310,7 +310,7 @@ test_install_copying_symlinks_falls_back_to_the_physical_scripts_dir() {
   assert_no_file "$(inst_bin)/jig"
 
   local expected_dir
-  expected_dir=$(cd -P "$(inst_share)/scripts" && pwd -P)
+  expected_dir="$(inst_share)/scripts"
   assert_contains "$OUT" "add $expected_dir to PATH"
 
   run "$(inst_share)/scripts/jig" version
@@ -335,7 +335,7 @@ test_install_copying_symlinks_adds_scripts_dir_to_path_once() {
   assert_eq 0 "$RC" "install should succeed: $OUT"
 
   local expected_dir
-  expected_dir=$(cd -P "$(inst_share)/scripts" && pwd -P)
+  expected_dir="$(inst_share)/scripts"
   assert_file_contains "$HOME/.zshrc" "$expected_dir"
 
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git"

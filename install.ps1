@@ -754,16 +754,16 @@ function Uninstall-JigFramework {
         (Test-Path -LiteralPath (Join-Path $installDir 'templates'))
     )
     if (-not $isSourceRoot) {
-        Write-JigResult "refusing to remove $installDir: not a jig checkout"
+        Write-JigResult "refusing to remove ${installDir}: not a jig checkout"
         return
     }
     if (-not $GitExe) {
-        Write-JigResult "refusing to remove $installDir: git is not available to verify it is unmodified"
+        Write-JigResult "refusing to remove ${installDir}: git is not available to verify it is unmodified"
         return
     }
     $statusResult = Invoke-JigNative -FilePath $GitExe -NativeArgs @('-C', $installDir, 'status', '--porcelain')
     if ($statusResult.ExitCode -ne 0 -or $statusResult.Output.Count -gt 0) {
-        Write-JigResult "refusing to remove $installDir: it has local changes or is not a git checkout"
+        Write-JigResult "refusing to remove ${installDir}: it has local changes or is not a git checkout"
         return
     }
     Remove-Item -Recurse -Force -LiteralPath $installDir
