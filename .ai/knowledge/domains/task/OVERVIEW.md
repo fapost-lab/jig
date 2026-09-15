@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-15
 ---
 # Task
 
@@ -49,6 +49,12 @@ copy is by key, and an absent key is read as unknown rather than as an error.
 It has its own domain — see `domains/housekeeping/` — and the split is worth stating,
 because the two are easy to confuse: **`status` is local progress, owned here; remote
 merge state is derived there, every run, and stored nowhere.**
+
+`jig spec remove` is a third reader: it reads `status`, `branch` and `base_commit` to decide which
+linked tasks it may abandon, and abandons them through `jig task abandon`, never by writing `state`
+(ADR-0035). A renamed `branch` or `base_commit` would make every task look not started, so
+`--abandon-unstarted` would abandon started work; a renamed `status` would let it touch closed
+tasks. Rename a field here and `spec.sh` changes with it.
 
 **The two consolidation fields are two moments, and `task set` keeps their order**
 (ADR-0030). `knowledge_consolidated: true` is written at the end of every route, before the

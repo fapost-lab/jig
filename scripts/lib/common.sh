@@ -35,6 +35,22 @@ jig_require_repo() {
   export JIG_PROJECT
 }
 
+# jig_valid_id <id> — the grammar of a name that becomes a directory under
+# .ai/: a task id and a spec id. Both must agree, because a spec's roadmap
+# names task ids and a spec id follows task id rules; two copies of the case
+# below would be free to drift.
+# No leading dot: rules out `.`, `..` and hidden directories, which the `*/`
+# walks over workspaces and specs would not see.
+# No leading dash: every subcommand reads its id from the first argument, so
+# `-x` is a flag in the wrong place, never a name. `jig task new --help` used
+# to file a workspace named `--help`.
+jig_valid_id() {
+  case "$1" in
+    '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 # Die unless the project has been initialised with jig init.
 jig_require_init() {
   jig_require_repo
@@ -362,6 +378,24 @@ jig_glob_pattern() {
 # --- misc ------------------------------------------------------------------
 
 jig_today() { date +%Y-%m-%d; }
+
+# jig_trash_dest <name> — where <name> goes in trash today:
+# .ai/runtime/trash/<date>/<name>, or <name>-2, -3, … when that is taken. Never
+# overwrites and never merges into an existing entry (ADR-0006). Shared by
+# housekeeping (a workspace, named by its task id) and `jig spec remove`
+# (`spec-<id>`), so two commands putting things in the same trash cannot
+# disagree about collisions. Prints the path; creates nothing.
+jig_trash_dest() {
+  local base dest n
+  base="$JIG_PROJECT/$JIG_AI_DIR/runtime/trash/$(jig_today)/$1"
+  dest="$base"
+  n=2
+  while [ -e "$dest" ]; do
+    dest="$base-$n"
+    n=$((n + 1))
+  done
+  printf '%s\n' "$dest"
+}
 
 # Content hash used by the manifest (ADR-0003, domains/install). git is mandatory,
 # shasum/sha256sum are not portable.

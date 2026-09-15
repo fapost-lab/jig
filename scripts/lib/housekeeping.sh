@@ -605,19 +605,10 @@ _hk_resolve_ref() {
 # --- purge -------------------------------------------------------------------
 
 # _hk_trash_dest <task-id> — the trash path this task would be moved to,
-# avoiding collision with an entry purged earlier the same day. Never
-# overwrites and never merges into an existing entry (ADR-0006).
+# avoiding collision with an entry purged earlier the same day. The rule is
+# shared with `jig spec remove` and lives in common.sh (jig_trash_dest).
 _hk_trash_dest() {
-  local id="$1" day base dest n
-  day=$(jig_today)
-  base="$JIG_PROJECT/$JIG_AI_DIR/runtime/trash/$day/$id"
-  dest="$base"
-  n=2
-  while [ -e "$dest" ]; do
-    dest="$base-$n"
-    n=$((n + 1))
-  done
-  printf '%s\n' "$dest"
+  jig_trash_dest "$1"
 }
 
 # _hk_purge <task-id> — move the workspace to trash. Prints the destination.

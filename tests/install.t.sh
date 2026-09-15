@@ -753,20 +753,33 @@ test_install_ref_explicit_tag_pin_is_not_advanced_until_ref_dropped() {
 
 # --- AC-10: a truncated download executes nothing ----------------------------
 
+# Only true prefixes: a fraction of 1 is the whole file, which is not a
+# truncation but a real install. It used to fail early only because no release
+# tag existed; once v0.2.0 was published it installed into $HOME/.local over
+# the network and the test failed on every machine. git is a recording stub,
+# so no prefix can reach the network and "never invoked" is proven, not
+# inferred from absent files. The bytes nearest the end are covered by the
+# next test.
 test_install_truncated_download_executes_nothing() {
-  local len frac n
+  local len frac n stub_log stub_dir
   len=$(wc -c < "$JIG_HOME/install.sh")
-  for frac in 100 20 4 2 1; do
+  stub_log="$JIG_TEST_TMP.gitstub.log"
+  : > "$stub_log"
+  stub_dir=$(inst_git_stub_dir "$stub_log")
+  for frac in 100 20 4 2; do
     n=$((len / frac))
     [ "$n" -gt 0 ] || n=1
     rm -rf "$HOME/.local" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"
+    : > "$stub_log"
     set +e
-    head -c "$n" "$JIG_HOME/install.sh" | env HOME="$HOME" PATH="$(inst_system_path)" bash >/dev/null 2>&1
+    head -c "$n" "$JIG_HOME/install.sh" \
+      | env HOME="$HOME" PATH="$stub_dir:$(inst_system_path)" bash >/dev/null 2>&1
     set -e
     assert_no_file "$HOME/.local" "a $n-byte prefix must not create $HOME/.local"
     assert_no_file "$HOME/.zshrc" "a $n-byte prefix must not touch shell startup files"
     assert_no_file "$HOME/.bashrc"
     assert_no_file "$HOME/.profile"
+    assert_eq "" "$(cat "$stub_log")" "a $n-byte prefix must never invoke git"
   done
 }
 

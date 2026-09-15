@@ -7,7 +7,7 @@ domains: [skills, sdlc]
 paths:
   - "skills/**"
 summary: Why a written rubric picks the task class and human gates are full stops.
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-14
 ---
 # ADR-0009: One entry skill routes by a fixed rubric; gates are explicit stops
 
@@ -67,3 +67,7 @@ help, and picks by effort rather than by risk.
 > design reaches the human, and the skills filled the gap with "in a few lines". ADR-0031
 > makes it concrete: the document is shown verbatim, the agent's commentary follows it, and
 > an approval covers the document as it was shown. The gate itself is unchanged.
+
+> **Amendment (2026-09-14).** `jig-idea` sits before the entry skill, not beside it: it tests
+> an idea and keeps a specification with a roadmap, but starts no task. Work on a roadmap item
+> still enters through `jig-task`. See ADR-0035.

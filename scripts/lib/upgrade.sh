@@ -22,11 +22,13 @@ _upgrade_build_staged() {
   local source="$1" stage="$2" profiles="$3" adapters="$4" p a skill_dir
   local src_pdir stage_pdir adir
   mkdir -p "$stage/.ai/scripts" "$stage/.ai/profiles" \
-    "$stage/.ai/templates/knowledge" "$stage/.ai/templates/scheduler"
+    "$stage/.ai/templates/knowledge" "$stage/.ai/templates/scheduler" \
+    "$stage/.ai/templates/spec"
 
   jig_copy_tree "$source/scripts" "$stage/.ai/scripts"
   jig_copy_tree "$source/templates/knowledge" "$stage/.ai/templates/knowledge"
   jig_copy_tree "$source/templates/scheduler" "$stage/.ai/templates/scheduler"
+  jig_copy_tree "$source/templates/spec" "$stage/.ai/templates/spec"
 
   for p in $profiles; do
     src_pdir=$(profiles_dir "$source/profiles" "$p")
@@ -250,6 +252,8 @@ _upgrade_link() {
     "$JIG_PROJECT/.ai/templates/knowledge" "$dry_run"
   _upgrade_link_one "$(cd "$source/templates/scheduler" && pwd)" \
     "$JIG_PROJECT/.ai/templates/scheduler" "$dry_run"
+  _upgrade_link_one "$(cd "$source/templates/spec" && pwd)" \
+    "$JIG_PROJECT/.ai/templates/spec" "$dry_run"
 
   for p in $active_profiles; do
     pdir=$(profiles_dir "$source/profiles" "$p")

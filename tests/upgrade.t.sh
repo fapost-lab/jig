@@ -307,6 +307,61 @@ test_upgrade_propagates_changed_knowledge_template() {
   rm -rf "$src"
 }
 
+# --- spec templates: an install that predates them --------------------------
+# Simulates a project initialised before `.ai/templates/spec/` existed: the
+# installed copy and its manifest entries are removed by hand, the way a
+# frozen/older install would look, then `jig upgrade` must pick it back up
+# (mirrors test_upgrade_copy_mode_installs_newly_activated_profile).
+
+test_upgrade_dry_run_reports_missing_spec_templates_as_pending() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  rm -rf .ai/templates/spec
+  grep -v '\.ai/templates/spec/' .ai/manifest > .ai/manifest.tmp
+  mv .ai/manifest.tmp .ai/manifest
+
+  run jig upgrade --from "$JIG_HOME" --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "install .ai/templates/spec/spec.md"
+  assert_contains "$OUT" "install .ai/templates/spec/roadmap.md"
+  assert_no_file .ai/templates/spec/spec.md
+}
+
+test_upgrade_installs_spec_templates_for_a_pre_spec_install_copy_mode() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  rm -rf .ai/templates/spec
+  grep -v '\.ai/templates/spec/' .ai/manifest > .ai/manifest.tmp
+  mv .ai/manifest.tmp .ai/manifest
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "install .ai/templates/spec/spec.md"
+  assert_contains "$OUT" "install .ai/templates/spec/roadmap.md"
+  assert_file .ai/templates/spec/spec.md
+  assert_file .ai/templates/spec/roadmap.md
+  assert_file_contains .ai/manifest ".ai/templates/spec/spec.md"
+  assert_file_contains .ai/manifest ".ai/templates/spec/roadmap.md"
+
+  # spec new now finds the reinstalled template on its own, no --from needed.
+  run jig spec new idea-x
+  assert_eq 0 "$RC"
+}
+
+test_upgrade_link_mode_links_spec_templates_for_a_pre_spec_install() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  rm -f .ai/templates/spec
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "link .ai/templates/spec"
+  assert_symlink .ai/templates/spec
+  assert_file .ai/templates/spec/spec.md
+  assert_file .ai/templates/spec/roadmap.md
+}
+
 test_upgrade_missing_from_falls_back_to_manifest_source() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null

@@ -7,8 +7,9 @@ Layers, top to bottom (dependencies point downward only):
    Installed per runtime by an adapter; vendor-neutral content.
 3. **Scripts** — `scripts/` → installed as `.ai/scripts/jig <command>`;
    deterministic, no LLM. Housekeeping additionally runs from a scheduler/hook.
-4. **Project state** — `.ai/knowledge` (durable, tracked), `.ai/workspace` and
-   `.ai/runtime` (transient, ignored).
+4. **Project state** — `.ai/knowledge` (durable, tracked), `.ai/specs` (plans, tracked,
+   never resolved as knowledge — ADR-0035), `.ai/workspace` and `.ai/runtime` (transient,
+   ignored).
 
 Cross-cutting:
 
@@ -27,13 +28,22 @@ file per command (`tests/<command>.t.sh`). Shared parsers live in their own libr
 (`lib/frontmatter.sh`, `lib/manifest.sh`) and are sourced by the commands that need them.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_knowledge_docs` and
-`jig_knowledge_is_global` ("which files are knowledge documents"). One command library
-never sources another: `context` and `knowledge` share code only through `common.sh`.
+`jig_knowledge_is_global` ("which files are knowledge documents"), `jig_valid_id` ("which
+name may become a task or spec directory" — a roadmap names task ids, so the two grammars
+may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
+`jig spec remove` both put things there). One command library never sources another: `context`
+and `knowledge` share code only through `common.sh`.
+
+When a command needs another domain to *act* — not to answer — it runs that command through the
+dispatcher as a process: `jig spec remove` abandons a task with `"$JIG_SELF" task abandon <id>`.
+The alternative, sourcing `task.sh` or moving its writer into `common.sh`, would give `state` a
+second writer; running the command keeps one. Reading a peer's files directly is allowed and
+makes the reader depend on that file's shape, which the owning domain records.
 
 **Reporting commands are the exception, and a narrow one.** `status` and `measure` exist
 to summarise what other commands already answer, so they source those libraries and call
-their entry points — `status` sources five, `measure` sources `task` and `knowledge`. What
-they may not do is *recompute* the answer: a second implementation of "how many documents
+their entry points — `status` sources six (`spec` for its `specs:` count), `measure`
+sources `task` and `knowledge`. What they may not do is *recompute* the answer: a second implementation of "how many documents
 are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
 is invisible until someone reads both. A reporting command therefore consumes a peer's
 output, never reimplements it, and never writes anything. Setup a peer needs before its
@@ -102,7 +112,7 @@ that has it.
 ## Install modes
 
 Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/knowledge/`,
-`.ai/templates/scheduler/` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/config.yaml`, `AGENTS.md`.
+`.ai/templates/scheduler/`, `.ai/templates/spec/` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/specs/`, `.ai/config.yaml`, `AGENTS.md`.
 The split matters to `upgrade`, which carries framework-owned files forward and never
 touches the rest (ADR-0011).
 

@@ -121,3 +121,63 @@ test_help_lists_self_update() {
   run jig help
   assert_contains "$OUT" "self-update"
 }
+
+test_help_lists_spec_list() {
+  run jig help
+  assert_contains "$OUT" "spec list"
+}
+
+test_help_lists_spec_new() {
+  run jig help
+  assert_contains "$OUT" "spec new <id>"
+}
+
+test_help_lists_spec_done() {
+  run jig help
+  assert_contains "$OUT" "spec done <task-id>"
+}
+
+test_help_lists_spec_remove() {
+  run jig help
+  assert_contains "$OUT" "spec remove <id>"
+}
+
+# --- jig_trash_dest (shared by housekeeping and `jig spec remove`) -----------
+
+test_jig_trash_dest_no_collision() {
+  fixture_repo
+  local today root
+  today=$(date +%Y-%m-%d)
+  # JIG_PROJECT is the physical path in bash's own spelling (jig_require_repo):
+  # `pwd -P` matches it, where plain $PWD keeps macOS's /tmp -> /private/tmp
+  # link and git's --show-toplevel prints C:/... on Windows.
+  root=$(pwd -P)
+  lib_run 'jig_require_repo; jig_trash_dest foo'
+  assert_eq 0 "$RC"
+  assert_eq "$root/.ai/runtime/trash/$today/foo" "$OUT"
+}
+
+test_jig_trash_dest_appends_suffix_on_collision() {
+  fixture_repo
+  local today root
+  today=$(date +%Y-%m-%d)
+  root=$(pwd -P)
+  mkdir -p ".ai/runtime/trash/$today"
+  touch ".ai/runtime/trash/$today/foo"
+
+  lib_run 'jig_require_repo; jig_trash_dest foo'
+  assert_eq 0 "$RC"
+  assert_eq "$root/.ai/runtime/trash/$today/foo-2" "$OUT"
+
+  mkdir -p ".ai/runtime/trash/$today/foo-2"
+  lib_run 'jig_require_repo; jig_trash_dest foo'
+  assert_eq 0 "$RC"
+  assert_eq "$root/.ai/runtime/trash/$today/foo-3" "$OUT"
+}
+
+test_jig_trash_dest_creates_nothing() {
+  fixture_repo
+  lib_run 'jig_require_repo; jig_trash_dest bar'
+  assert_eq 0 "$RC"
+  assert_no_file .ai/runtime/trash
+}

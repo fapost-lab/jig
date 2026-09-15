@@ -73,14 +73,7 @@ hk_leftover() {
 # copies instead of linking -- exactly the case `_hk_worktree_leftover`
 # exists to clean up (its own comment: "measured on windows-latest"). Skips
 # the calling test when neither kind of link can be made here.
-hk_link() {
-  bash -c '
-    set -eu
-    JIG_LIB="$JIG_HOME/scripts/lib"
-    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"
-    jig_link_dir "$1" "$2"
-  ' _ "$1" "$2" || skip "no directory link can be made here"
-}
+hk_link() { plant_dir_link "$1" "$2"; }
 
 # --- policy table (domains/housekeeping) -------------------------------------------------
 

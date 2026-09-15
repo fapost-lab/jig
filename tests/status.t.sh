@@ -640,6 +640,45 @@ test_status_silent_about_consolidation_when_nothing_is_flagged() {
   assert_not_contains "$OUT" "needs consolidation"
 }
 
+# --- specs: specifications outside knowledge (jig-idea) ----------------------
+
+test_status_reports_no_specs_by_default() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "specs: none"
+}
+
+test_status_reports_spec_count() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/specs/idea-a .ai/specs/idea-b
+  printf '%s\n' '# Idea A' > .ai/specs/idea-a/spec.md
+  printf '%s\n' '- [ ] item' > .ai/specs/idea-a/roadmap.md
+  printf '%s\n' '# Idea B' > .ai/specs/idea-b/spec.md
+  # idea-b has no roadmap.md: an incomplete spec still counts.
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "specs: 2 (jig spec list)"
+  assert_not_contains "$OUT" "specs: none"
+}
+
+test_status_does_not_count_invalid_id_spec_directories() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/specs/idea-a
+  printf '%s\n' '# Idea A' > .ai/specs/idea-a/spec.md
+  printf '%s\n' '- [ ] item' > .ai/specs/idea-a/roadmap.md
+  mkdir -p .ai/specs/.hidden
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "specs: 1 (jig spec list)"
+}
+
 # --- task worktrees (ADR-0029) -------------------------------------------------
 
 test_status_shows_where_a_task_started_in_a_worktree_is() {

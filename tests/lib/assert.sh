@@ -260,6 +260,33 @@ skip_unless_readonly_dirs() {
   [ "$blocked" -eq 1 ] || skip "chmod 555 does not make a directory read-only here"
 }
 
+# skip_unless_unreadable_files — skip the calling test unless `chmod 000` on a
+# file actually blocks reading it. The same two gaps as a read-only directory:
+# root reads anyway, and Git Bash on NTFS keeps the file readable.
+skip_unless_unreadable_files() {
+  local dir blocked=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-unreadable-check.XXXXXX") || return 1
+  printf 'probe\n' > "$dir/probe"
+  chmod 000 "$dir/probe"
+  cat "$dir/probe" >/dev/null 2>&1 || blocked=1
+  chmod 644 "$dir/probe"
+  rm -rf "$dir"
+  [ "$blocked" -eq 1 ] || skip "chmod 000 does not make a file unreadable here"
+}
+
+# plant_dir_link <target> <link> — a directory link made the way jig makes
+# one (jig_link_dir: a symbolic link, else an NTFS junction), for a test that
+# needs a linked directory as its fixture. bash sees either as `-L`. Skips
+# when this machine can make neither.
+plant_dir_link() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"
+    jig_link_dir "$1" "$2"
+  ' _ "$1" "$2" || skip "no directory link can be made here"
+}
+
 # skip_unless_control_char_names — skip the calling test unless a file name
 # containing a tab round-trips through `git status --porcelain`, which
 # quotes such names as "bad\tname". NTFS under MSYS maps a tab in a file

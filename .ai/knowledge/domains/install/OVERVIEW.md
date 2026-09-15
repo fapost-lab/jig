@@ -25,8 +25,9 @@ project owns.
 ## Responsibility
 
 - The framework-owned / project-owned split: `.ai/scripts/`, `.ai/profiles/`,
-  `.ai/templates/knowledge/` and the installed skills are carried forward by upgrade;
-  `.ai/knowledge/`, `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
+  `.ai/templates/knowledge/`, `.ai/templates/scheduler/`, `.ai/templates/spec/` and the
+  installed skills are carried forward by upgrade; `.ai/knowledge/`, `.ai/specs/`,
+  `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
   ADR-0011).
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).

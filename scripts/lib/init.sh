@@ -471,6 +471,8 @@ cmd_init() {
       "$JIG_PROJECT/.ai/templates/knowledge"
     _init_place_symlink "$(cd "$source/templates/scheduler" && pwd)" \
       "$JIG_PROJECT/.ai/templates/scheduler"
+    _init_place_symlink "$(cd "$source/templates/spec" && pwd)" \
+      "$JIG_PROJECT/.ai/templates/spec"
     for p in $profiles_words; do
       pdir=$(profiles_dir "$source/profiles" "$p")
       [ -d "$pdir" ] \
@@ -507,6 +509,10 @@ cmd_init() {
     # the framework does not implement a scheduler (RULES.md, Scope invariants).
     _init_copy_tree "$source/templates/scheduler" \
       "$JIG_PROJECT/.ai/templates/scheduler"
+    # Specification templates, for the same reason as the knowledge ones:
+    # `jig spec new` instantiates them in a project with no framework checkout.
+    _init_copy_tree "$source/templates/spec" \
+      "$JIG_PROJECT/.ai/templates/spec"
     for p in $profiles_words; do
       pdir=$(profiles_dir "$source/profiles" "$p")
       [ -d "$pdir" ] \
