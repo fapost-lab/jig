@@ -108,6 +108,19 @@ $rel"
     printf 'proposals: none\n'
   fi
 
+  # Specifications (jig-idea). A spec is a plan outside .ai/knowledge/, so no
+  # `jig context` call ever surfaces it; this line is how an agent starting a
+  # session learns that one exists. Counted, not listed: `jig spec list` lists.
+  # shellcheck source=lib/spec.sh
+  . "$JIG_LIB/spec.sh"
+  local specs
+  specs=$(spec_count)
+  if [ "$specs" -gt 0 ]; then
+    printf 'specs: %s (jig spec list)\n' "$specs"
+  else
+    printf 'specs: none\n'
+  fi
+
   # shellcheck source=lib/task.sh
   . "$JIG_LIB/task.sh"
   local found=0 finished=0 state_file tid class st paused reason line branch worktrees wt

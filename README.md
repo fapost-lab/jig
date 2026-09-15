@@ -125,6 +125,7 @@ For a larger project, invoke `jig-map` next to propose domain knowledge, then
 - [What Jig provides](#what-jig-provides)
 - [How Jig differs from adjacent frameworks](#how-jig-differs-from-adjacent-frameworks)
 - [Skills and responsibilities](#skills-and-responsibilities)
+- [Ideas and specifications](#ideas-and-specifications)
 - [Task workflows](#task-workflows)
 - [Knowledge workflows](#knowledge-workflows)
 - [Verify with profiles](#verify-with-profiles)
@@ -212,6 +213,7 @@ adapters install them for each runtime.
 | [`jig-init`](skills/jig-init/SKILL.md) | First adoption or stale global knowledge | Analyze the project and populate glossary, architecture and rules. |
 | [`jig-map`](skills/jig-map/SKILL.md) | Global documents no longer describe the domains adequately | Propose domain boundaries and knowledge packs with evidence; wait for human acceptance. |
 | [`jig-accept`](skills/jig-accept/SKILL.md) | Knowledge proposals are waiting | Present proposals, collect human decisions and record acceptance or rejection. |
+| [`jig-idea`](skills/jig-idea/SKILL.md) | An idea whose shape is not settled; work too big for one task; a future project's architecture and stack | Stress-test the idea with questions and critique; keep the result as a specification with phases and a roadmap under `.ai/specs/`. Starts no task and changes no code. |
 | [`jig-task`](skills/jig-task/SKILL.md) | Start or resume work | Find the relevant task, classify risk T0–T4 and choose the route. |
 | [`jig-analyze`](skills/jig-analyze/SKILL.md) | Before a local or structural change; investigate a problem | Establish cause, affected components, constraints and options. |
 | [`jig-implement`](skills/jig-implement/SKILL.md) | After analysis or approved design | Load binding knowledge, make the change and collect evidence. |
@@ -223,6 +225,39 @@ adapters install them for each runtime.
 Discovery, specification, alternatives, design and planning are workflow stages,
 not additional standalone skills. The agent produces only artifacts the route
 actually needs. A CLI artifact inventory does not prove completion or approval.
+
+## Ideas and specifications
+
+Some work is too big or too unclear to start as a task: an idea that needs questioning
+before anyone commits to it, a change that will take tens of tasks, or a future project
+whose architecture and stack are worked out before any code exists. `jig-idea` handles
+that part. It asks, critiques and looks for the ways the idea fails, then keeps what
+survived as a specification:
+
+```text
+.ai/specs/<spec-id>/
+  spec.md       idea, goal, stress test, scope, decisions, open questions
+  roadmap.md    destination, phases, items with dependencies, fog, waves
+  ...           architecture.md, stack.md, research.md — when needed
+```
+
+A specification is committed and reviewed like any file, but it is a plan, not
+knowledge: `jig context` never resolves it and `jig knowledge check` never reads it, so
+agents working on today's code do not read tomorrow's plan as a description of the
+system. It has no status; progress comes from the roadmap's checkboxes.
+
+```sh
+.ai/scripts/jig spec new csv-export   # the skill runs this; refuses an invalid or taken id
+.ai/scripts/jig spec list
+```
+
+```text
+csv-export      CSV export for every report             roadmap 2/9 done, 3 filed, fog 1
+billing-rework  Usage-based billing                     incomplete (no roadmap.md)
+```
+
+`jig status` counts specifications on its `specs:` line. The skill never starts a task;
+work on a roadmap item begins with `jig-task`.
 
 ## Task workflows
 
@@ -592,8 +627,9 @@ your-project/
     ├── manifest               installed version, source and framework file hashes
     ├── scripts/               installed deterministic commands
     ├── profiles/              installed technology checks
-    ├── templates/             framework-owned document / scheduler templates
+    ├── templates/             framework-owned document / scheduler / specification templates
     ├── knowledge/             durable, committed project knowledge
+    ├── specs/                 committed specifications and roadmaps (plans, not knowledge)
     ├── workspace/tasks/       local task artifacts and state; gitignored
     └── runtime/               local reports, timestamps and trash; gitignored
 ```
@@ -616,7 +652,7 @@ knowledge.require_frontmatter: true
 
 Housekeeping keys apply to Phase 5. See the [configuration template](templates/config.yaml)
 for defaults and comments. `jig status` summarizes tasks, knowledge proposals,
-housekeeping information and framework drift; `jig help` lists command families.
+specifications, housekeeping information and framework drift; `jig help` lists command families.
 
 ## Roadmap and Phase 6
 

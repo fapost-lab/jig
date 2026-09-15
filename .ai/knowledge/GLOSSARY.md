@@ -120,6 +120,15 @@ and is validated, but `jig context` will not resolve it, so nothing inferred rea
 Agent before a human runs `jig knowledge accept` (ADR-0016).
 Informal synonyms: draft, candidate.
 
+## Specification (Spec)
+
+The committed plan for work larger than one task, under `.ai/specs/<spec-id>/`: `spec.md`
+(the idea, its stress test, decisions, open questions) and `roadmap.md` (destination,
+phases, items, fog, waves). Created by `jig spec new` and developed with the `jig-idea`
+skill. A plan, not Knowledge: `jig context` never resolves it, and it has no status —
+progress is read from the roadmap's checkboxes (ADR-0035). Not the retired product
+specification of ADR-0028. Informal synonyms: plan, roadmap, design doc.
+
 ## Load Policy
 
 A knowledge document's `load` field — `always`, `domain` or `matched` — stating how

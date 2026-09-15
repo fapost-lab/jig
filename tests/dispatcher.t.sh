@@ -120,3 +120,13 @@ test_help_lists_self_update() {
   run jig help
   assert_contains "$OUT" "self-update"
 }
+
+test_help_lists_spec_list() {
+  run jig help
+  assert_contains "$OUT" "spec list"
+}
+
+test_help_lists_spec_new() {
+  run jig help
+  assert_contains "$OUT" "spec new <id>"
+}

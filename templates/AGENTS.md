@@ -24,11 +24,15 @@ Start work with the `jig-task` skill; it classifies the task by risk and names t
 Stage skills can also be used directly: `jig-analyze`, `jig-implement`, `jig-review`,
 `jig-verify`, `jig-consolidate`, `jig-architecture-review`.
 
-Two skills sit outside the task routes because they populate knowledge rather than change
+Three skills sit outside the task routes. Two populate knowledge rather than change
 code: `jig-map` proposes per-domain knowledge, and `jig-accept` decides what is proposed.
 A proposed document is invisible to `jig context` until a human accepts it, so knowledge
 someone wrote but nobody agreed to reaches no agent — `jig status` reports the count on
-its `proposals:` line, and `jig knowledge proposed` lists it.
+its `proposals:` line, and `jig knowledge proposed` lists it. The third, `jig-idea`, works
+before a route: it stress-tests an idea and keeps the result as a specification with a
+roadmap under `.ai/specs/<id>/`. A specification is a plan, not knowledge, so `jig context`
+never resolves it — `jig status` counts specs on its `specs:` line, and `jig spec list`
+lists them with their roadmap progress.
 
 | Class | Route |
 |---|---|
