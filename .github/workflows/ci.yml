@@ -157,9 +157,15 @@ jobs:
           .ai/scripts/jig task list
           # The worktree's workspace is a junction here: a landed, closed task
           # must leave neither the worktree directory nor its workspace behind.
+          # Ancestry tells the branch's own commit from the base's by when each
+          # ref moved, to the second, and a tie goes to the base (ADR-0032):
+          # a script that starts, commits and merges within one second reads
+          # its own work as foreign. tests/housekeeping.t.sh uses hk_tick.
+          sleep 2
           printf 'work\n' > "$wt/ci-demo.txt"
           git -C "$wt" add ci-demo.txt
           git -C "$wt" commit -q -m "work for ci-demo"
+          sleep 2
           git merge -q --ff-only task/ci-demo
           .ai/scripts/jig task set ci-demo knowledge_consolidated true
           .ai/scripts/jig task set ci-demo status consolidated
