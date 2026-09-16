@@ -5,6 +5,8 @@ Destination: a project that adopts Jig gets its existing rule documents to agent
 or changed without anyone seeing it, and can later migrate them into Jig's structure when the user
 chooses.
 
+Epic: epic/knowledge-adoption
+
 ## Phase 1 — Inventory and proposals
 
 Goal: adopting Jig shows what the project already has and proposes links for it. Done when:

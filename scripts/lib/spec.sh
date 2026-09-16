@@ -370,20 +370,27 @@ spec_epic_reopen() {
 
 # spec_epic_write <roadmap> <declare|finish|reopen> <branch> — rewrite the
 # Epic: line in place, atomically. `declare` puts it after the Destination:
-# line and refuses a roadmap without one.
+# paragraph and refuses a roadmap without one.
 spec_epic_write() {
   local roadmap="$1" op="$2" branch="$3" tmp
   tmp="$roadmap.tmp.$$"
   awk -v op="$op" -v b="$branch" '
     function epic_line(l) { return l ~ /^Epic:[[:space:]]+[^[:space:]]+([[:space:]]+(—|-|--)[[:space:]]+finished)?[[:space:]]*$/ }
+    # The destination is a paragraph and may wrap: the line goes after the
+    # paragraph ends, never inside the sentence.
     op == "declare" {
+      if (pending && !done && $0 ~ /^[[:space:]]*$/) { print ""; print "Epic: " b; done = 1 }
       print
-      if (!done && $0 ~ /^Destination:/) { print ""; print "Epic: " b; done = 1 }
+      if (!pending && $0 ~ /^Destination:/) pending = 1
       next
     }
     epic_line($0) { print (op == "finish" ? "Epic: " b " — finished" : "Epic: " b); next }
     { print }
-    END { if (op == "declare" && !done) exit 3 }
+    END {
+      if (op != "declare" || done) exit 0
+      if (!pending) exit 3
+      print ""; print "Epic: " b
+    }
   ' "$roadmap" > "$tmp" || {
     rm -f "$tmp"
     if [ "$op" = declare ]; then
