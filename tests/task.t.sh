@@ -805,6 +805,74 @@ test_task_resume_failed_apply_leaves_paused_set_and_exits_nonzero() {
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
 }
 
+# --- resume overlap is computed against the task's own base (ADR-0038) --------
+
+test_task_resume_overlap_computed_against_task_base() {
+  # A task cut from an epic branch, not from main. A file the epic branch
+  # keeps changing after the fork overlaps; a change on main, which the task
+  # never forked from, must not be mistaken for overlap.
+  task_setup_clean
+  git checkout -q -b epic/x
+  printf 'v1\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "epic: add shared.txt"
+
+  git checkout -q -b task/ov epic/x
+  printf 'v1
+v2\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "task: touch shared.txt"
+
+  git checkout -q epic/x
+  printf 'v1
+v3\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "epic: touch shared.txt again"
+
+  git checkout -q main
+  printf 'unrelated\n' > main-only.txt
+  git add main-only.txt
+  git commit -q -m "main: unrelated change"
+
+  git checkout -q task/ov
+  fixture_task ov "task/ov" active "base_branch:epic/x" "paused:true" "paused_at:$(date +%Y-%m-%d)"
+
+  run jig task resume ov
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "overlap: 1 files you changed also changed on epic/x"
+  assert_contains "$OUT" "shared.txt"
+}
+
+test_task_resume_overlap_falls_back_to_configured_base_without_one_recorded() {
+  # Same shape as above, but the task carries no base_branch (a workspace
+  # from before the field existed, or one never cut from an epic). Judged
+  # against main, the epic's own change to shared.txt is not overlap.
+  task_setup_clean
+  git checkout -q -b epic/x
+  printf 'v1\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "epic: add shared.txt"
+
+  git checkout -q -b task/ov epic/x
+  printf 'v1
+v2\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "task: touch shared.txt"
+
+  git checkout -q epic/x
+  printf 'v1
+v3\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "epic: touch shared.txt again"
+
+  git checkout -q task/ov
+  fixture_task ov "task/ov" active "paused:true" "paused_at:$(date +%Y-%m-%d)"
+
+  run jig task resume ov
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "overlap:"
+}
+
 # --- list (paused marker, design §2/§5) -----------------------------------------------
 
 test_task_list_shows_paused_marker() {
@@ -1239,6 +1307,88 @@ test_task_start_respects_branch_per_task_false() {
   assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: "
 }
 
+# --- base_branch recorded at start (ADR-0038) ---------------------------------
+# Everything that later judges a task against its base — housekeeping,
+# context, knowledge paths, resume overlap — reads this one field, so it has
+# to land beside branch/base_commit in every path task start takes.
+
+test_task_start_records_base_branch_matching_config() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: main"
+}
+
+test_task_start_worktree_records_base_branch() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task start T-1 --worktree >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: main"
+}
+
+test_task_start_branch_per_task_false_records_base_branch() {
+  task_setup
+  _task_share_one_branch
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: main"
+}
+
+test_task_start_records_a_non_default_configured_base() {
+  # git.base_branch need not be "main"; whatever it names is what gets
+  # recorded and what the task is cut from.
+  task_setup
+  git branch develop
+  sed 's|^git.base_branch:.*|git.base_branch: develop|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: develop"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $(git rev-parse develop)"
+}
+
+test_task_set_refuses_base_branch() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 base_branch epic/x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
+test_task_start_rejects_a_base_branch_name_git_would_reject() {
+  # Checked before anything is created, the same guard as an invalid branch
+  # template name: a task must not end up half-started on a bad base.
+  task_setup
+  sed 's|^git.base_branch:.*|git.base_branch: bad..name|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  jig task new T-1 >/dev/null
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "git rejects the base branch name: bad..name"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  if grep -qE '^(branch|base_commit|base_branch):' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded branch, base_commit or base_branch"
+  fi
+}
+
+test_task_list_shows_base_only_when_it_differs_from_config() {
+  # The state file is edited directly: `task set` refuses base_branch, and
+  # `task start` only ever records the configured base for now (an epic base
+  # is how a future feature would record one).
+  task_setup
+  task_started T-1
+  task_started T-2
+  sed 's|^base_branch:.*|base_branch: epic/foo|' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+
+  run jig task list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "T-1 class=- status=active branch=task/T-1 base=epic/foo"
+  assert_not_contains "$OUT" "T-2 class=- status=active branch=task/T-2 base="
+}
+
 test_task_start_uses_the_configured_branch_template() {
   task_setup
   sed 's|^git.branch_template:.*|git.branch_template: wip/{id}-x|' .ai/config.yaml > c.tmp
@@ -1367,6 +1517,194 @@ test_task_start_refuses_diverged_bases() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "diverged"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
+}
+
+test_task_start_unreachable_origin_warns_and_succeeds() {
+  # A command that only wanted fresh refs must not stop the start over a
+  # network problem: it warns and goes on with the refs this checkout has.
+  task_setup_clean
+  git remote add origin "$PWD/no-such-remote"
+
+  jig task new T-1 >/dev/null
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task start: could not fetch main from origin; using the refs this checkout has"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+}
+
+# --- start from a spec's epic (ADR-0039) ---------------------------------------
+# A task linked to a spec whose roadmap declares an open epic is cut from the
+# epic instead of the project's configured base.
+
+# task_open_epic <id> — a spec with an open epic, declared, merged into main
+# and cut, exactly what `jig spec epic <id>` twice in a row builds. Duplicated
+# from spec.t.sh's epic_ready_to_finish because each test file sources only
+# itself.
+task_open_epic() {
+  local id="$1"
+  jig spec new "$id" >/dev/null
+  git add -A
+  git commit -q -m "add spec $id"
+  jig spec epic "$id" >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic "$id" >/dev/null
+}
+
+# task_link_spec <task-id> <spec-id> — append the Spec: line `jig-idea` would
+# have written, the way spec.t.sh links a task to a spec for `spec done`.
+task_link_spec() {
+  printf 'Spec: .ai/specs/%s/\n' "$2" >> ".ai/workspace/tasks/$1/task.md"
+}
+
+test_task_start_cuts_from_the_spec_epic() {
+  task_setup_clean
+  task_open_epic idea-x
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run_split jig task start T-1
+  assert_eq 0 "$RC"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: epic/idea-x"
+  assert_eq "$(git rev-parse epic/idea-x)" \
+    "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-1/state)"
+  assert_contains "$ERR" "task start: T-1 is cut from epic/idea-x; open its pull request into epic/idea-x"
+}
+
+test_task_start_worktree_cuts_from_the_spec_epic() {
+  task_setup_nested
+  task_open_epic idea-x
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: epic/idea-x"
+  assert_contains "$ERR" "task start: T-1 is cut from epic/idea-x; open its pull request into epic/idea-x"
+}
+
+test_task_start_no_spec_no_epic_line_in_the_output() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$ERR" "is cut from"
+}
+
+test_task_start_spec_roadmap_missing_in_this_checkout_dies() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 ghost
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: T-1 links to spec ghost, which this checkout does not have; switch to a branch that has it"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
+}
+
+test_task_start_two_spec_lines_dies() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  {
+    printf 'Spec: .ai/specs/alpha/\n'
+    printf 'Spec: .ai/specs/beta/\n'
+  } >> .ai/workspace/tasks/T-1/task.md
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: T-1 links to more than one spec; keep one Spec: line"
+}
+
+test_task_start_two_epic_lines_in_the_roadmap_dies() {
+  task_setup_clean
+  jig spec new idea-x >/dev/null
+  printf 'Epic: epic/a\nEpic: epic/b\n' >> .ai/specs/idea-x/roadmap.md
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: spec idea-x declares more than one epic; keep one Epic: line"
+}
+
+test_task_start_finished_epic_dies() {
+  task_setup_clean
+  task_open_epic idea-x
+  git checkout -q epic/idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+  git checkout -q main
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  # shellcheck disable=SC2016 # backticks are part of the message
+  assert_contains "$OUT" 'task start: epic epic/idea-x of spec idea-x is finished; reopen it with `jig spec epic idea-x --reopen` for a fix, or link the task to another spec'
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
+}
+
+test_task_start_open_epic_branch_missing_everywhere_dies() {
+  task_setup_clean
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  # Deliberately never run `jig spec epic idea-x` again: the branch is never cut.
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  # shellcheck disable=SC2016 # backticks are part of the message
+  assert_contains "$OUT" 'task start: epic epic/idea-x of spec idea-x exists neither here nor on origin; push it, or create it with `jig spec epic idea-x`'
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
+}
+
+test_task_start_picks_up_a_remote_only_epic_without_manual_fetch() {
+  # A bare local origin sees a branch pushed by another clone; task start
+  # fetches on its own rather than trusting whatever refs this checkout
+  # happened to have last time it looked (decided 2026-09-16: always).
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git push -q origin main
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  git push -q origin main
+  jig spec epic idea-x >/dev/null
+  # Simulate a second clone that pushed the epic to origin; it never existed
+  # here except as a remote-tracking ref this checkout never fetched.
+  git push -q origin epic/idea-x
+  git branch -D epic/idea-x
+
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: epic/idea-x"
+}
+
+test_task_start_unreachable_origin_for_epic_base_warns_and_succeeds() {
+  task_setup_clean
+  task_open_epic idea-x
+  git remote add origin "$PWD/no-such-remote"
+  jig task new T-1 >/dev/null
+  task_link_spec T-1 idea-x
+
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task start: could not fetch main from origin; using the refs this checkout has"
+  assert_contains "$OUT" "task start: could not fetch epic/idea-x from origin; using the refs this checkout has"
+  assert_file_contains .ai/workspace/tasks/T-1/state "base_branch: epic/idea-x"
 }
 
 test_task_start_refuses_a_dirty_tree() {

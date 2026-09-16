@@ -25,7 +25,8 @@ its `proposals:` line, and `jig knowledge proposed` lists it. The third, `jig-id
 before a route: it stress-tests an idea and keeps the result as a specification with a
 roadmap under `.ai/specs/<id>/`. A specification is a plan, not knowledge, so `jig context`
 never resolves it — `jig status` counts specs on its `specs:` line, and `jig spec list`
-lists them with their roadmap progress.
+lists them with their roadmap progress. A spec released once, at the end, is built on an epic branch
+(`jig spec epic`): its tasks are cut from the epic and their pull requests go into it.
 
 | Class | Route |
 |---|---|

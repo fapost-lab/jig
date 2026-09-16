@@ -201,6 +201,154 @@ jig_physical_path() {
   printf '%s/%s\n' "$dir" "${1##*/}"
 }
 
+# jig_task_base <task-id> — the branch a task was cut from and has to land on:
+# `base_branch` from its state file, or `git.base_branch` when the task never
+# recorded one (not started, or started before the field existed). One answer
+# for `task`, `housekeeping`, `context` and `knowledge`, which must never
+# disagree about what a task is judged against (ADR-0038). The state file is
+# the task domain's; reading it here is allowed, writing it is not. An id that
+# is not a task id gets the configured base, never a path built from it.
+jig_task_base() {
+  local id="${1:-}" file value=""
+  if jig_valid_id "$id"; then
+    file="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$id/state"
+    if [ -f "$file" ]; then
+      value=$(sed -n 's/^base_branch:[[:space:]]*//p' "$file" | head -n 1)
+    fi
+  fi
+  [ -n "$value" ] || value=$(cfg git.base_branch main)
+  printf '%s\n' "$value"
+}
+
+# jig_base_ref <name> — the ref a base branch is judged by:
+# refs/remotes/origin/<name> when it exists, else refs/heads/<name>, else
+# nothing. Origin first because landed means landed on the remote: a local
+# base can be behind it (a teammate who never fetched the branch) or ahead of
+# it (commits nobody pushed), and a bare name lets git pick the local one.
+jig_base_ref() {
+  local name="${1:-}"
+  [ -n "$name" ] || return 0
+  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$name^{commit}" >/dev/null 2>&1; then
+    printf '%s\n' "refs/remotes/origin/$name"
+  elif git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$name^{commit}" >/dev/null 2>&1; then
+    printf '%s\n' "refs/heads/$name"
+  fi
+  return 0
+}
+
+# jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
+# refs/heads/<name> and refs/remotes/origin/<name>, or HEAD when neither exists.
+#
+# Freshest, not nearest: resolving refs/heads/<base> first meant a local base
+# that had fallen behind produced a stale branch *and* a stale base_commit,
+# silently. That happened on 2026-09-11 — a branch was cut from the previous
+# merge and the work done on it was missing a command merged an hour earlier.
+# Diverged refs are refused rather than guessed: picking either surprises
+# somebody, and the surprise surfaces far from its cause. <who> prefixes the
+# messages (`task start`, `spec epic`). Shared because a task and an epic are
+# both cut this way, and must never disagree about which commit is fresh.
+jig_fresh_base_ref() {
+  local base="$1" who="$2" local_ref remote_ref has_local=0 has_remote=0
+  local_ref="refs/heads/$base"
+  remote_ref="refs/remotes/origin/$base"
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$local_ref" >/dev/null 2>&1 && has_local=1
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$remote_ref" >/dev/null 2>&1 && has_remote=1
+
+  if [ "$has_local" = 1 ] && [ "$has_remote" = 1 ]; then
+    if git -C "$JIG_PROJECT" merge-base --is-ancestor "$local_ref" "$remote_ref" 2>/dev/null; then
+      if ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$remote_ref" "$local_ref" 2>/dev/null; then
+        jig_info "$who: local $base is behind origin/$base; branching from origin/$base"
+        printf '%s\n' "$remote_ref"
+      else
+        printf '%s\n' "$local_ref"
+      fi
+    elif git -C "$JIG_PROJECT" merge-base --is-ancestor "$remote_ref" "$local_ref" 2>/dev/null; then
+      printf '%s\n' "$local_ref"
+    else
+      jig_die "$who: $base and origin/$base have diverged; reconcile them first"
+    fi
+  elif [ "$has_local" = 1 ]; then
+    printf '%s\n' "$local_ref"
+  elif [ "$has_remote" = 1 ]; then
+    printf '%s\n' "$remote_ref"
+  else
+    printf 'HEAD\n'
+  fi
+}
+
+# jig_fetch_branches <who> <name>... — refresh origin/<name> for each branch
+# from origin, one at a time, so that a branch origin does not have fails
+# alone. Does nothing without an origin. A failure is a warning, never fatal:
+# the caller goes on with the refs it has, and says what it decided from them.
+# GIT_TERMINAL_PROMPT=0: a command that only wanted fresh refs must not stop
+# and wait for a password.
+jig_fetch_branches() {
+  local who="$1" name
+  shift
+  git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 || return 0
+  for name in "$@"; do
+    [ -n "$name" ] || continue
+    if ! GIT_TERMINAL_PROMPT=0 git -C "$JIG_PROJECT" fetch --quiet origin \
+         "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1; then
+      jig_warn "$who: could not fetch $name from origin; using the refs this checkout has"
+    fi
+  done
+  return 0
+}
+
+# --- specification links ------------------------------------------------------
+
+# jig_spec_link <task.md> — the spec id a task links to, or nothing.
+#
+# A link is a whole line `Spec: .ai/specs/<id>/`, optionally followed by a
+# dash and `Phase <n>`. A line whose id breaks the id grammar links to
+# nothing. Exits 2 when the file links to two different specs: which roadmap
+# to read would be a guess. Here rather than in spec.sh because `task start`
+# needs it too, and one command library never sources another.
+jig_spec_link() {
+  awk '
+    /^Spec: \.ai\/specs\/[A-Za-z0-9._-]+\/([[:space:]]+(—|-|--)[[:space:]]+Phase[[:space:]]+[0-9]+)?[[:space:]]*$/ {
+      id = $0
+      sub(/^Spec: \.ai\/specs\//, "", id)
+      sub(/\/.*$/, "", id)
+      if (id ~ /^[.-]/) next
+      if (found == "") found = id
+      else if (found != id) conflict = 1
+    }
+    END {
+      if (conflict) exit 2
+      if (found != "") print found
+    }
+  ' "$1"
+}
+
+# jig_spec_epic <roadmap.md|-> — "<branch> open" or "<branch> finished" when
+# the roadmap declares an epic branch, nothing when it does not (ADR-0039).
+#
+# The declaration is a whole line `Epic: <branch>`, closed before the epic's
+# final pull request as `Epic: <branch> — finished`. Exits 2 when two lines
+# disagree, on the branch or on its state: which base a task is cut from
+# would be a guess. The branch name is not validated here; a caller that
+# builds a ref from it runs `git check-ref-format --branch` first.
+jig_spec_epic() {
+  awk '
+    /^Epic:[[:space:]]+[^[:space:]]+([[:space:]]+(—|-|--)[[:space:]]+finished)?[[:space:]]*$/ {
+      line = $0
+      sub(/^Epic:[[:space:]]+/, "", line)
+      b = line
+      sub(/[[:space:]].*$/, "", b)
+      st = (line ~ /finished[[:space:]]*$/) ? "finished" : "open"
+      v = b " " st
+      if (found == "") found = v
+      else if (found != v) conflict = 1
+    }
+    END {
+      if (conflict) exit 2
+      if (found != "") print found
+    }
+  ' "$1"
+}
+
 # Files this checkout has touched: the union of the diff against the merge-base
 # with the configured base branch, the staged and unstaged diffs, and untracked
 # files — all repo-relative (ARCHITECTURE.md, Scripts layout). `-C "$JIG_PROJECT"` matters: `git diff`
@@ -210,10 +358,20 @@ jig_physical_path() {
 # When the base branch does not exist, merge-base fails and only the working
 # tree diffs (staged, unstaged, untracked) are used.
 #
+# `--base-branch <name>` names the base a task was cut from (jig_task_base);
+# without it the configured `git.base_branch` is used. Either way the base is
+# resolved as jig_base_ref resolves it, origin first.
+#
 # Lives here rather than in one command's library because `context` and
 # `knowledge paths` both need the same answer to "what did this task touch",
 # and they must never disagree about it (ARCHITECTURE.md, scripts layout).
 jig_git_touched_files() {
+  local base=""
+  if [ "${1:-}" = "--base-branch" ]; then
+    [ "$#" -ge 2 ] || { jig_warn "jig_git_touched_files: --base-branch requires a value"; return 1; }
+    base="$2"
+    shift 2
+  fi
   if [ "$#" -gt 0 ]; then
     local explicit_base explicit_head explicit_rows
     explicit_base=$(jig_review_commit "$1") || return 1
@@ -222,9 +380,10 @@ jig_git_touched_files() {
     printf '%s\n' "$explicit_rows" | sed '/^$/d' | cut -f1 | LC_ALL=C sort -u
     return 0
   fi
-  local base mb out=""
-  base=$(cfg git.base_branch main)
-  if mb=$(git -C "$JIG_PROJECT" merge-base "$base" HEAD 2>/dev/null); then
+  local ref mb out=""
+  [ -n "$base" ] || base=$(cfg git.base_branch main)
+  ref=$(jig_base_ref "$base")
+  if [ -n "$ref" ] && mb=$(git -C "$JIG_PROJECT" merge-base "$ref" HEAD 2>/dev/null); then
     out="$out
 $(git -C "$JIG_PROJECT" diff --name-only "$mb" 2>/dev/null)"
   fi

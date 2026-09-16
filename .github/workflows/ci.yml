@@ -13,7 +13,10 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # An epic branch (epic/<id>, .ai/specs/epic-branches/spec.md) is kept
+    # current by merging `main` into it directly, without a pull request, so
+    # a push is the only moment its own tests ever run.
+    branches: [main, 'epic/**']
   pull_request:
   workflow_dispatch:
 
@@ -108,3 +111,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           .github/scripts/release-tag.sh
+
+  # Gates a pull request from an epic branch into main (spec.md, failure
+  # modes 6 and 7): such a merge must not land a version already released
+  # from elsewhere (the release job would then find its tag and tag
+  # nothing), and must not land before the epic's roadmap says it is
+  # finished. The decision lives in .github/scripts/epic-pr-check.sh, which
+  # has tests; this job only runs it. head_ref is passed through env, never
+  # interpolated into the shell script, because it is attacker-controlled on
+  # a pull request from a fork.
+  epic-pr:
+    needs: test
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'epic/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the epic is finished and its version is new
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: .github/scripts/epic-pr-check.sh "$HEAD_REF"

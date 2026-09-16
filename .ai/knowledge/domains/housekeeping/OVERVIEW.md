@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-16
 ---
 # Housekeeping
 
@@ -37,6 +37,12 @@ evidence it inferred itself.
   one deletion outside `.ai/`, and git performs it: `git worktree remove`, never with
   `--force`. A worktree that has to stay keeps the workspace with it, flagged
   `worktree-kept`, and `jig status` counts it.
+- Judging each task against **its own base** (`jig_task_base`, ADR-0038): ancestry, the
+  "branch is the base" rule, the unknown reason and the reflog of own work all use it, bases
+  resolved origin first. Work merged into another branch is flagged `wrong-base` beside
+  `unknown` — kept, exit 3, counted by `jig status`. A closed task merged into a base that has
+  not reached the default branch — a phase of an open epic — is kept with `base-unreleased`
+  until it has (ADR-0039).
 
 ## What governs it
 
@@ -65,8 +71,9 @@ Read these before changing anything here; each is a rule someone paid for.
   work waits there** (ADR-0029 as amended): uncommitted changes or a lock keep it;
   otherwise it is left in place and the workspace goes. The checkout housekeeping runs in
   gets the same uncommitted-changes guard when the task's branch is checked out there.
-- **Exit 3 means "a human must consolidate"**; 1 is a real error, 2 belongs to
-  `task current`. A trigger has to be able to tell those apart.
+- **Exit 3 means "a human must act"** — consolidate, or look at work flagged `wrong-base`;
+  1 is a real error, 2 belongs to `task current`. `base-unreleased` needs nobody and does not
+  set it. A trigger has to be able to tell those apart.
 - **`needs-consolidation` is the expected signal to close a task, not an anomaly**
   (ADR-0030). Every task on a branch other than the base branch reaches `ready:merged` with its knowledge
   decision already recorded, and waits there for a human to close it. A merge never closes
@@ -112,7 +119,7 @@ an LLM (ADR-0001).
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
   `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
   `_hk_worktree_retire`, `_hk_record` and `_hk_print_report` (the grouped report),
-  `_hk_unknown_reason`.
+  `_hk_unknown_reason`, `_hk_released`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six
   merge topologies (fast-forward, merge commit, squash, rebase, open, deleted branch).
@@ -120,6 +127,7 @@ an LLM (ADR-0001).
 ## Known gap
 
 The GitLab tier has no test: `glab` was not available when it was written, and its
-output is parsed with `sed` rather than a JSON reader (ADR-0002). Its failure direction
+output is parsed with `sed` and `awk` rather than a JSON reader (ADR-0002); each field is
+taken at its first occurrence, because nested objects carry a `state` of their own. Its failure direction
 is safe — it falls through to ancestry and never fabricates `merged` — but it is
 unverified against a real `glab`.

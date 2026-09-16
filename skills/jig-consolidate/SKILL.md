@@ -107,6 +107,10 @@ The status stays `ready`: the task is still current, and fixes from review of th
 or PR continue in it. If review changes the implementation, update the same documents; do
 not start a new task document for it.
 
+A task cut from an epic (`base_branch: epic/…`) lands when its pull request is merged into the
+epic, and closes then like any other. Housekeeping keeps its workspace until the epic reaches the
+default branch, so the final review can still read it.
+
 A task whose landing cannot be observed closes now, in §6: `jig task list` shows no
 `branch` for it, or the base branch. Housekeeping never sees such a task land (ADR-0025).
 

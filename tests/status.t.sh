@@ -667,6 +667,84 @@ test_status_does_not_count_invalid_id_spec_directories() {
   assert_contains "$OUT" "specs: 1 (jig spec list)"
 }
 
+# --- status: open epics (ADR-0039) ---------------------------------------------
+# One line per spec with an open epic, right after the specs: line: how far
+# behind the default branch it has fallen. A clean tree is needed throughout,
+# for the same reason as spec.t.sh's epic_setup: `jig spec epic` checks out
+# and branches.
+
+status_epic_setup() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  git add -A
+  git commit -q -m "jig init snapshot"
+}
+
+test_status_shows_open_epic_with_commits_behind() {
+  status_epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+  # Advance main two commits past the epic's fork point.
+  printf 'a\n' > a.txt
+  git add a.txt
+  git commit -q -m "a"
+  printf 'b\n' > b.txt
+  git add b.txt
+  git commit -q -m "b"
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "epic: idea-x on epic/idea-x, 2 commits behind main"
+}
+
+test_status_shows_epic_branch_missing() {
+  status_epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  # The Epic: line reached main, but the branch itself was never cut.
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "epic: idea-x on epic/idea-x, branch missing"
+}
+
+test_status_finished_epic_has_no_epic_line() {
+  status_epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+  git checkout -q epic/idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "epic: idea-x"
+}
+
+test_status_no_epic_has_no_epic_line() {
+  status_epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "epic:"
+}
+
 # --- task worktrees (ADR-0029) -------------------------------------------------
 
 test_status_shows_where_a_task_started_in_a_worktree_is() {

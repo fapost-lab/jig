@@ -97,7 +97,9 @@ ctx_stateless() {
   elif [ -n "$files_arg" ]; then
     files=$(printf '%s' "$files_arg" | tr ',' '\n')
   else
-    files=$(jig_git_touched_files)
+    # Against the selected task's own base (ADR-0038); with no task,
+    # jig_task_base answers with the configured one.
+    files=$(jig_git_touched_files --base-branch "$(jig_task_base "$task_id")")
   fi
 
   # --- domains --------------------------------------------------------------------
@@ -322,7 +324,7 @@ _ctx_parse_selectors() {
   elif [ -n "$files_arg" ]; then
     CTX_FILES=$(printf '%s' "$files_arg" | tr ',' '\n')
   else
-    CTX_FILES=$(jig_git_touched_files)
+    CTX_FILES=$(jig_git_touched_files --base-branch "$(jig_task_base "$CTX_TASK")")
   fi
 
   if [ -n "$domains_arg" ]; then

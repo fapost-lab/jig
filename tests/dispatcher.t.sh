@@ -179,3 +179,200 @@ test_jig_trash_dest_creates_nothing() {
   assert_eq 0 "$RC"
   assert_no_file .ai/runtime/trash
 }
+
+# --- jig_task_base / jig_base_ref (ADR-0038) ----------------------------------
+# The one answer `task`, `housekeeping`, `context` and `knowledge` must never
+# disagree about: the branch a task was cut from and has to land on.
+
+# base_run <shell code> — like lib_run, but with config.sh also sourced:
+# jig_task_base reads the configured fallback through `cfg`.
+base_run() {
+  run bash -c 'JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"; '"$1"
+}
+
+test_jig_task_base_reads_the_state_field() {
+  fixture_repo
+  mkdir -p .ai
+  printf 'profiles: [generic]\n' > .ai/config.yaml
+  mkdir -p .ai/workspace/tasks/T-1
+  printf 'task_id: T-1\nbranch: task/T-1\nbase_branch: epic/x\n' > .ai/workspace/tasks/T-1/state
+
+  base_run 'jig_require_repo; jig_task_base T-1'
+  assert_eq 0 "$RC"
+  assert_eq "epic/x" "$OUT"
+}
+
+test_jig_task_base_falls_back_to_configured_base_without_the_field() {
+  # A workspace started before base_branch existed carries no such line, and
+  # a project can also configure a base other than main.
+  fixture_repo
+  mkdir -p .ai
+  printf 'profiles: [generic]\ngit.base_branch: develop\n' > .ai/config.yaml
+  mkdir -p .ai/workspace/tasks/T-1
+  printf 'task_id: T-1\nbranch: task/T-1\n' > .ai/workspace/tasks/T-1/state
+
+  base_run 'jig_require_repo; jig_task_base T-1'
+  assert_eq 0 "$RC"
+  assert_eq "develop" "$OUT"
+}
+
+test_jig_task_base_falls_back_when_the_state_file_is_missing() {
+  fixture_repo
+  mkdir -p .ai
+  printf 'profiles: [generic]\n' > .ai/config.yaml
+
+  base_run 'jig_require_repo; jig_task_base no-such-task'
+  assert_eq 0 "$RC"
+  assert_eq "main" "$OUT"
+}
+
+test_jig_task_base_invalid_id_uses_the_configured_base() {
+  # An id jig_valid_id rejects (empty, leading dash, leading dot) must never
+  # be built into a path under .ai/workspace/tasks/ — only the fallback.
+  fixture_repo
+  mkdir -p .ai
+  printf 'profiles: [generic]\n' > .ai/config.yaml
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  base_run 'jig_require_repo; for id in "" "-x" "../etc"; do printf "%s=%s " "$id" "$(jig_task_base "$id")"; done'
+  assert_eq 0 "$RC"
+  assert_eq "=main -x=main ../etc=main " "$OUT"
+}
+
+test_jig_base_ref_prefers_the_remote_tracking_ref() {
+  # Landed means landed on the remote (a local base can be behind or ahead of
+  # it). Faked without a real remote: jig_base_ref only asks whether the ref
+  # resolves to a commit.
+  fixture_repo
+  git branch feature
+  git update-ref refs/remotes/origin/feature "$(git rev-parse HEAD)"
+
+  base_run 'jig_require_repo; jig_base_ref feature'
+  assert_eq 0 "$RC"
+  assert_eq "refs/remotes/origin/feature" "$OUT"
+}
+
+test_jig_base_ref_falls_back_to_the_local_branch() {
+  fixture_repo
+  git branch feature
+
+  base_run 'jig_require_repo; jig_base_ref feature'
+  assert_eq 0 "$RC"
+  assert_eq "refs/heads/feature" "$OUT"
+}
+
+test_jig_base_ref_prints_nothing_when_neither_resolves() {
+  fixture_repo
+
+  base_run 'jig_require_repo; jig_base_ref does-not-exist; printf "rc=%s" "$?"'
+  assert_eq 0 "$RC"
+  assert_eq "rc=0" "$OUT"
+}
+
+test_jig_base_ref_empty_name_prints_nothing() {
+  fixture_repo
+
+  base_run 'jig_require_repo; jig_base_ref; printf "rc=%s" "$?"'
+  assert_eq 0 "$RC"
+  assert_eq "rc=0" "$OUT"
+}
+
+# --- jig_spec_epic (ADR-0039) --------------------------------------------------
+# Parses the roadmap's Epic: line; moved to common.sh so both spec.sh and
+# task.sh can read it without one command library sourcing another.
+
+test_jig_spec_epic_open_line() {
+  printf 'Destination: x\n\nEpic: epic/alpha\n' > roadmap.md
+  lib_run 'jig_spec_epic roadmap.md'
+  assert_eq 0 "$RC"
+  assert_eq "epic/alpha open" "$OUT"
+}
+
+test_jig_spec_epic_finished_line() {
+  printf 'Destination: x\n\nEpic: epic/alpha — finished\n' > roadmap.md
+  lib_run 'jig_spec_epic roadmap.md'
+  assert_eq 0 "$RC"
+  assert_eq "epic/alpha finished" "$OUT"
+}
+
+test_jig_spec_epic_dash_variants_before_finished() {
+  local sep
+  for sep in '—' '-' '--'; do
+    printf 'Destination: x\n\nEpic: epic/alpha %s finished\n' "$sep" > roadmap.md
+    lib_run 'jig_spec_epic roadmap.md'
+    assert_eq 0 "$RC" "separator [$sep]"
+    assert_eq "epic/alpha finished" "$OUT" "separator [$sep]"
+  done
+}
+
+test_jig_spec_epic_no_line_prints_nothing() {
+  printf 'Destination: x\n\nNothing here.\n' > roadmap.md
+  lib_run 'jig_spec_epic roadmap.md; printf "rc=%s" "$?"'
+  assert_eq 0 "$RC"
+  assert_eq "rc=0" "$OUT"
+}
+
+test_jig_spec_epic_two_conflicting_lines_fails() {
+  printf 'Destination: x\n\nEpic: epic/alpha\nEpic: epic/beta\n' > roadmap.md
+  lib_run 'jig_spec_epic roadmap.md; printf "rc=%s" "$?"'
+  assert_eq "rc=2" "$OUT"
+}
+
+test_jig_spec_epic_two_lines_disagreeing_only_on_state_fails() {
+  # Same branch, different state — still a guess about which base a task is
+  # cut from, so it is refused exactly like a disagreement on the branch.
+  printf 'Destination: x\n\nEpic: epic/alpha\nEpic: epic/alpha — finished\n' > roadmap.md
+  lib_run 'jig_spec_epic roadmap.md; printf "rc=%s" "$?"'
+  assert_eq "rc=2" "$OUT"
+}
+
+test_jig_spec_epic_same_line_repeated_is_fine() {
+  printf 'Destination: x\n\nEpic: epic/alpha\nEpic: epic/alpha\n' > roadmap.md
+  lib_run 'jig_spec_epic roadmap.md'
+  assert_eq 0 "$RC"
+  assert_eq "epic/alpha open" "$OUT"
+}
+
+test_jig_spec_epic_reads_stdin_as_dash() {
+  # spec_epic_declare pipes `git show <ref>:<roadmap>` into it as `-`.
+  lib_run 'printf "Destination: x\n\nEpic: epic/alpha\n" | jig_spec_epic -'
+  assert_eq 0 "$RC"
+  assert_eq "epic/alpha open" "$OUT"
+}
+
+# --- jig_fetch_branches (ADR-0039) ---------------------------------------------
+
+test_jig_fetch_branches_without_origin_is_a_noop() {
+  fixture_repo
+  base_run 'jig_require_repo; jig_fetch_branches "who" main; printf "rc=%s" "$?"'
+  assert_eq 0 "$RC"
+  assert_eq "rc=0" "$OUT"
+}
+
+test_jig_fetch_branches_failure_warns_and_is_not_fatal() {
+  fixture_repo
+  git remote add origin "$PWD/no-such-remote"
+  base_run 'jig_require_repo; jig_fetch_branches "spec epic" main; printf "rc=%s" "$?"'
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec epic: could not fetch main from origin; using the refs this checkout has"
+  assert_contains "$OUT" "rc=0"
+}
+
+test_jig_fetch_branches_one_bad_branch_does_not_stop_the_others() {
+  # Each branch is fetched on its own so that one origin does not have does
+  # not take the rest down with it.
+  fixture_repo
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git branch real-branch
+  git push -q origin real-branch
+  # Never fetched generically: refs/remotes/origin/real-branch does not exist
+  # here yet, so it can only appear through jig_fetch_branches's own fetch.
+
+  base_run 'jig_require_repo; jig_fetch_branches "who" no-such-branch real-branch'
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "who: could not fetch no-such-branch from origin"
+
+  base_run 'jig_require_repo; jig_base_ref real-branch'
+  assert_eq "refs/remotes/origin/real-branch" "$OUT"
+}

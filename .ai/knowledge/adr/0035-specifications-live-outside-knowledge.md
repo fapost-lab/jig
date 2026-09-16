@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-16
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -109,3 +109,10 @@ so it cannot live where everything is read as describing it.
 > alone; and moves the directory to trash. **Carrying a spec into a new project is a plain copy of
 > its directory**, decided by the maintainer: the new project's Jig tracks it from there, so no
 > mechanism or pointer was built.
+
+> **Amendment (2026-09-16).** A spec released once, at the end, declares an epic branch with an
+> `Epic: epic/<spec-id>` line in `roadmap.md`; `jig spec epic <id>` declares, cuts, `--finish`es and
+> `--reopen`s it, `jig task start` cuts its tasks from it, and `jig spec list` off the epic shows where
+> progress is instead of the stale roadmap (ADR-0039). `Spec:` parsing moved to `common.sh`
+> (`jig_spec_link`) so that `task start` can read it. Still no field in `state` carries the link; the
+> task's `base_branch` records only where it was cut.

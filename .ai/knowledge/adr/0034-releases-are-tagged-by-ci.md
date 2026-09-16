@@ -8,8 +8,9 @@ domains:
 paths:
   - .github/scripts/release-tag.sh
   - .github/workflows/ci.yml
+  - .github/scripts/release-lib.sh
 summary: Why a release tag is created only by CI after the tests pass, from a tested script under .github, and how the version is raised.
-reviewed_at: 2026-09-14
+reviewed_at: 2026-09-16
 ---
 # ADR-0034: A release is tagged by CI after the tests pass, from a tested script, never by hand
 
@@ -88,3 +89,8 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
   skips the jobs that need it, and that a raw URL serves a file at a tag. The first release run
   proves or refutes them.
 - A tag pushed with `GITHUB_TOKEN` starts no workflow, and nothing depends on one starting.
+
+> **Amendment (2026-09-16).** CI also runs the tests on every push to `epic/**`, and a pull request
+> from `epic/*` into `main` runs the `epic-pr` job: it fails when `JIG_VERSION` is already released or
+> the epic's roadmap line is not `— finished` (ADR-0039). The "already released" rule is shared with
+> `release-tag.sh` through `.github/scripts/release-lib.sh`. The `release` job is unchanged.
