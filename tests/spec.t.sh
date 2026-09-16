@@ -1238,6 +1238,35 @@ test_spec_epic_declares_the_line_and_stops() {
   fi
 }
 
+test_spec_epic_declare_puts_the_line_after_a_wrapped_destination() {
+  # A destination sentence wraps over several lines; the Epic: line must not
+  # land inside it (found declaring knowledge-adoption's epic, 2026-09-16).
+  epic_setup
+  jig spec new idea-x >/dev/null
+  printf '# Roadmap\n\nDestination: one sentence\nthat wraps\nover three lines.\n\n## Phase 1\n' \
+    > .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_eq "$(printf '# Roadmap\n\nDestination: one sentence\nthat wraps\nover three lines.\n\nEpic: epic/idea-x\n\n## Phase 1')" \
+    "$(cat .ai/specs/idea-x/roadmap.md)"
+}
+
+test_spec_epic_declare_after_a_destination_that_ends_the_file() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  printf '# Roadmap\n\nDestination: the last\nparagraph.\n' > .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_eq "$(printf '# Roadmap\n\nDestination: the last\nparagraph.\n\nEpic: epic/idea-x')" \
+    "$(cat .ai/specs/idea-x/roadmap.md)"
+}
+
 test_spec_epic_roadmap_without_destination_dies() {
   epic_setup
   mkdir -p .ai/specs/bare
