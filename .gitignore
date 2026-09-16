@@ -1,6 +1,8 @@
 # agent-sdlc: transient workspace and runtime state are local-only
 .ai/workspace/
 .ai/runtime/
+# jig: settings for one clone only (ADR-0038)
+.ai/config.local.yaml
 
 .idea/
 .DS_Store

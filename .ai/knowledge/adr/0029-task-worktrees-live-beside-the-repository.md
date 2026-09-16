@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-16
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -140,3 +140,12 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 >
 > The checkout housekeeping runs in now gets the same guard as a task worktree: a task whose
 > branch is checked out there, with uncommitted changes, keeps its workspace (ADR-0032).
+
+> **Amendment (2026-09-16).** The workspace link is made by `jig_link_dir`: a symlink where one can be
+> made, an NTFS junction where it cannot — Git Bash on Windows copies on `ln -s` — and `task start
+> --worktree` refuses before `git worktree add` when neither can (ADR-0037). A junction passes every check
+> above (`-L`, `find -type l`, `cd -P`), and removing it never touches the workspace. On Windows `git
+> worktree remove` can succeed and leave the worktree's directory behind with those links in it;
+> housekeeping then removes only links and empty directories there, with `rmdir`, and anything else keeps
+> the task under `worktree-kept` with reason `leftover`. The claim above that "every framework symlink
+> is relative and committed" holds for link mode only, which still needs real symlinks.

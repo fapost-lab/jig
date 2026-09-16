@@ -23,6 +23,7 @@ cmd_status() {
     return 0
   fi
   printf '%s\n' "initialised: yes"
+  _status_config_local
 
   if manifest_exists; then
     local proj_version
@@ -40,21 +41,21 @@ cmd_status() {
   local modified="" missing="" mcount=0 xcount=0 line rel mhash lhash drift_tmp
   drift_tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-drift.XXXXXX")
   : > "$drift_tmp/present"
-  : > "$drift_tmp/abs"
+  : > "$drift_tmp/rel"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     mhash=${line%% *}
     rel=${line#* }
     if [ -f "$JIG_PROJECT/$rel" ]; then
       printf '%s %s\n' "$mhash" "$rel" >> "$drift_tmp/present"
-      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$drift_tmp/abs"
+      printf '%s\n' "$rel" >> "$drift_tmp/rel"
     else
       missing="$missing
 $rel"
       xcount=$((xcount + 1))
     fi
   done < <(manifest_entries)
-  jig_hash_list "$drift_tmp/abs" > "$drift_tmp/hashes" \
+  jig_hash_list "$JIG_PROJECT" "$drift_tmp/rel" > "$drift_tmp/hashes" \
     || jig_die "status: could not hash the installed files"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -286,6 +287,30 @@ _status_flagged() {
     }
     END { print n + 0 }
   ' "$1"
+}
+
+# What .ai/config.local.yaml changes, and why a value in it does nothing
+# (ADR-0038). Silent when there is no local file anywhere. The answers come
+# from config.sh, so this report and cfg cannot disagree about a key.
+_status_config_local() {
+  local file own key value kind
+  file=$(jig_config_local_file)
+  own="$JIG_PROJECT/$JIG_AI_DIR/config.local.yaml"
+  if [ "$own" != "$file" ] && [ -f "$own" ]; then
+    printf 'config.local: ignored %s (a worktree reads %s)\n' "$own" "$file"
+  fi
+  [ -f "$file" ] || return 0
+  while IFS="$(printf '\t')" read -r key value kind; do
+    if [ "$kind" = local ]; then
+      printf 'config.local: %s=%s\n' "$key" "$value"
+    else
+      printf 'config.local: ignored %s (not a local key)\n' "$key"
+    fi
+  done < <(jig_config_local_entries)
+  if ! jig_config_local_ignored; then
+    printf 'config.local: %s is not ignored by git and can be committed (fix: jig init)\n' \
+      "$JIG_AI_DIR/config.local.yaml"
+  fi
 }
 
 # Whether the housekeeping trigger is wired up for the installed runtimes.

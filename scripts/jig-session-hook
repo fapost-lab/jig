@@ -37,12 +37,25 @@ main() {
   # .ai/scripts/jig-session-hook -> the project root is two levels up.
   project=$(cd "$dir/../.." && pwd) || return 0
   [ -f "$project/.ai/config.yaml" ] || return 0
-  [ -x "$project/.ai/scripts/jig" ] || return 0
+  # -f, not -x, and `bash` below: a project committed from Windows records
+  # .ai/scripts/jig without the executable bit, and the hook then skipped
+  # housekeeping for every teammate on macOS and Linux, silently.
+  [ -f "$project/.ai/scripts/jig" ] || return 0
 
   stamp="$project/.ai/runtime/last-housekeeping"
-  cadence=$(sed -n 's/^housekeeping.cadence:[[:space:]]*//p' "$project/.ai/config.yaml" \
-    | sed 's/[[:space:]]*#.*//' | head -n 1)
-  [ -n "$cadence" ] || cadence="1d"
+  # The dispatcher's own reader, so a cadence set in .ai/config.local.yaml
+  # counts here as it does in housekeeping (ADR-0038). It reads files only:
+  # no git on the idle path.
+  [ -f "$dir/lib/config.sh" ] || return 0
+  # Read by config.sh; deliberately not exported, so the detached jig below
+  # resolves its own project.
+  # shellcheck disable=SC2034
+  JIG_PROJECT="$project"
+  # shellcheck disable=SC2034
+  JIG_AI_DIR=".ai"
+  # shellcheck source=lib/config.sh
+  . "$dir/lib/config.sh" || return 0
+  cadence=$(cfg housekeeping.cadence 1d)
 
   cadence_days=${cadence%d}
   case "$cadence_days" in
@@ -59,7 +72,7 @@ main() {
   mkdir -p "$project/.ai/runtime" 2>/dev/null || return 0
   (
     cd "$project" || exit 0
-    "$project/.ai/scripts/jig" housekeeping \
+    bash "$project/.ai/scripts/jig" housekeeping \
       >> "$project/.ai/runtime/housekeeping.log" 2>&1 </dev/null
   ) &
   return 0

@@ -21,6 +21,7 @@ test_unknown_command_fails() {
 }
 
 test_symlinked_dispatcher_resolves_lib() {
+  skip_unless_symlinks
   mkdir -p bin
   ln -s "$JIG_BIN" bin/jig
   run bin/jig version
@@ -46,6 +47,107 @@ EOF
   '
   assert_eq 0 "$RC"
   assert_eq "7d|generic php|dflt|[generic, php]|TF" "$OUT"
+}
+
+# --- .ai/config.local.yaml (ADR-0038) ----------------------------------------
+
+test_cfg_local_value_wins_for_a_whitelisted_key() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+housekeeping.cadence: 1d
+housekeeping.fetch: true
+EOF
+  cat > .ai/config.local.yaml <<'EOF'
+housekeeping.cadence: 9d
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    printf "%s|%s|%s" "$(cfg housekeeping.cadence)" "$(cfg housekeeping.fetch)" "$(cfg housekeeping.trash_ttl dflt)"
+  '
+  assert_eq 0 "$RC"
+  # cadence: local overrides project. fetch: absent locally, project answers.
+  # trash_ttl: absent from both, the default is used.
+  assert_eq "9d|true|dflt" "$OUT"
+}
+
+test_cfg_ignores_a_non_whitelisted_key_in_the_local_file() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+git.base_branch: main
+EOF
+  cat > .ai/config.local.yaml <<'EOF'
+git.base_branch: other
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    cfg git.base_branch
+  '
+  assert_eq 0 "$RC"
+  assert_eq "main" "$OUT"
+}
+
+test_cfg_empty_local_value_falls_through_to_project() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+housekeeping.cadence: 3d
+EOF
+  cat > .ai/config.local.yaml <<'EOF'
+housekeeping.cadence:
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    cfg housekeeping.cadence
+  '
+  assert_eq 0 "$RC"
+  assert_eq "3d" "$OUT"
+}
+
+test_cfg_in_a_worktree_reads_the_main_checkouts_local_file() {
+  mkdir repo
+  cd repo || fail "setup"
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+housekeeping.cadence: 1d
+EOF
+  cat > .ai/config.local.yaml <<'EOF'
+housekeeping.cadence: 9d
+EOF
+  local main_root
+  main_root=$(pwd -P)
+
+  git worktree add -q ../wt -b wtbranch >/dev/null
+
+  # A local file placed inside the worktree itself must not be read: one
+  # local file serves every worktree of a clone (ADR-0038).
+  mkdir -p ../wt/.ai
+  cat > ../wt/.ai/config.local.yaml <<'EOF'
+housekeeping.cadence: 5d
+EOF
+
+  # A plain checkout's clone root is itself.
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_config_clone_root
+  '
+  assert_eq 0 "$RC"
+  assert_eq "$main_root" "$OUT"
+
+  run bash -c '
+    cd ../wt || exit 1
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    printf "%s|%s" "$(cfg housekeeping.cadence)" "$(jig_config_clone_root)"
+  '
+  assert_eq 0 "$RC"
+  assert_eq "9d|$main_root" "$OUT"
 }
 
 test_duration_seconds() {
@@ -147,9 +249,10 @@ test_jig_trash_dest_no_collision() {
   fixture_repo
   local today root
   today=$(date +%Y-%m-%d)
-  # jig_repo_root (git rev-parse --show-toplevel) resolves symlinks in the
-  # path (e.g. macOS's /tmp -> /private/tmp), which plain $PWD does not.
-  root=$(git rev-parse --show-toplevel)
+  # JIG_PROJECT is the physical path in bash's own spelling (jig_require_repo):
+  # `pwd -P` matches it, where plain $PWD keeps macOS's /tmp -> /private/tmp
+  # link and git's --show-toplevel prints C:/... on Windows.
+  root=$(pwd -P)
   lib_run 'jig_require_repo; jig_trash_dest foo'
   assert_eq 0 "$RC"
   assert_eq "$root/.ai/runtime/trash/$today/foo" "$OUT"
@@ -159,7 +262,7 @@ test_jig_trash_dest_appends_suffix_on_collision() {
   fixture_repo
   local today root
   today=$(date +%Y-%m-%d)
-  root=$(git rev-parse --show-toplevel)
+  root=$(pwd -P)
   mkdir -p ".ai/runtime/trash/$today"
   touch ".ai/runtime/trash/$today/foo"
 

@@ -10,7 +10,7 @@ paths:
   - templates/AGENTS.md
   - .ai/config.yaml
 summary: Why the agent's language is stated in AGENTS.md rather than configured, and why interaction language is personal, not project-level.
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-16
 ---
 # ADR-0023: Agent language is prose in AGENTS.md, not configuration
 
@@ -85,6 +85,9 @@ the individual's own runtime-local instruction file, where it already works.
   Note also that `.gitignore` is created once from `templates/gitignore` and then owned by
   the project, so a new ignored path would not reach projects that installed Jig earlier —
   their user settings would be committed, which is the leak such a file exists to prevent.
+  *(Revisited in ADR-0038: housekeeping retention is a per-user setting a script acts on, so
+  `.ai/config.local.yaml` now exists for a whitelist of such keys. Language is still not one
+  of them, and the decision above stands.)*
 - **A separate value for code comments.** Rejected: `jig-implement` already says "write
   like the codebase, not like yourself", so a Russian-commented codebase keeps its Russian
   comments with no setting. A third value would only add a way to contradict the

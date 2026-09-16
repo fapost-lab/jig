@@ -54,8 +54,16 @@ artifacts and `state`. Informal synonyms: task dir, scratch.
 
 A git worktree created by `jig task start --worktree`, beside the repository under
 `git.worktree_root`, with the task's branch checked out. It borrows the task's Workspace
-through a link and owns none; Housekeeping removes it through git when it purges that
+through a Directory Link and owns none; Housekeeping removes it through git when it purges that
 Workspace (ADR-0029). Informal synonyms: agent tree, sandbox.
+
+## Directory Link
+
+A link from one directory to another that bash sees as a symlink (`-L`, `find -type l`): a
+symbolic link where the machine can make one, an NTFS junction where it cannot. Made only by
+`jig_link_dir`; `jig doctor` reports which kind this machine makes, or `none` (ADR-0037).
+A task worktree's workspace link is one. Link mode's links are not: they must be relative
+symbolic links. Informal synonyms: link, junction, symlink.
 
 ## State
 

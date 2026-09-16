@@ -2,6 +2,10 @@
 # Flat YAML subset: `section.key: value`, inline lists only, no nesting.
 # Paths are NOT configurable: .ai/knowledge, .ai/workspace, .ai/runtime are fixed.
 # Any key that is absent takes the default built into the scripts.
+#
+# Settings that are yours alone (the housekeeping.* keys and git.worktree_root)
+# go in .ai/config.local.yaml: same format, gitignored, one file per clone. It
+# wins over this file for those keys only; `jig status` shows what it changes.
 
 profiles: [generic]                   # generic is always active
 adapters: [claude, codex]

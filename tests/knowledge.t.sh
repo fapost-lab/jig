@@ -853,6 +853,7 @@ test_new_proposed_refuses_paths_item_with_hash_and_leaves_no_leftover_file() {
 test_new_unwritable_directory_fails_with_message_and_leaves_nothing() {
   # Before the build file, `cp` wrote straight to the document's path, and a
   # failing `cp` ended the command under `set -e` with no message of its own.
+  skip_unless_readonly_dirs
   km_setup
   mkdir -p .ai/knowledge/features
   chmod 555 .ai/knowledge/features
@@ -2580,6 +2581,8 @@ test_new_source_rejects_a_deleted_but_still_indexed_file() {
 }
 
 test_new_source_rejects_a_tracked_symlink() {
+  # A tracked symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
   km_setup
   mkdir -p docs
   (cd docs && ln -s ../README.md link.md)
@@ -2642,6 +2645,8 @@ test_check_fails_when_a_stub_source_becomes_untracked() {
 }
 
 test_check_fails_when_a_stub_source_is_a_tracked_symlink() {
+  # A tracked symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
   km_setup
   mkdir -p docs
   (cd docs && ln -s ../README.md link.md)
@@ -2842,6 +2847,8 @@ test_inventory_skips_a_candidate_name_containing_a_tab() {
 }
 
 test_inventory_doc_line_for_a_tracked_symlink_has_no_size() {
+  # A tracked symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
   km_setup
   mkdir -p docs
   (cd docs && ln -s ../README.md link.md)

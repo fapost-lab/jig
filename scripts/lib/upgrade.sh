@@ -172,22 +172,20 @@ $manifest_hash $rel"
 # whitespace and would collapse two adjacent separators into one.
 _upgrade_hash_table() {
   local union="$1" stage="$2" work="$3" rel
-  : > "$work/local.paths"; : > "$work/local.abs"
-  : > "$work/staged.paths"; : > "$work/staged.abs"
+  : > "$work/local.paths"
+  : > "$work/staged.paths"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     if [ -f "$JIG_PROJECT/$rel" ]; then
       printf '%s\n' "$rel" >> "$work/local.paths"
-      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$work/local.abs"
     fi
     if [ -f "$stage/$rel" ]; then
       printf '%s\n' "$rel" >> "$work/staged.paths"
-      printf '%s/%s\n' "$stage" "$rel" >> "$work/staged.abs"
     fi
   done < "$union"
-  jig_hash_list "$work/local.abs" > "$work/local.hashes" \
+  jig_hash_list "$JIG_PROJECT" "$work/local.paths" > "$work/local.hashes" \
     || jig_die "upgrade: could not hash the installed files"
-  jig_hash_list "$work/staged.abs" > "$work/staged.hashes" \
+  jig_hash_list "$stage" "$work/staged.paths" > "$work/staged.hashes" \
     || jig_die "upgrade: could not hash the staged files"
 
   # Tagged streams in one awk: a per-file `NR == FNR` join goes wrong as soon
@@ -350,6 +348,11 @@ cmd_upgrade() {
   local mode
   mode=$(manifest_header_get jig.mode)
   if [ "$mode" = "link" ]; then
+    # The same refusal as `init --link`, for the same reason: where `ln -s`
+    # copies, every "missing link" would be placed as a copy of the source.
+    jig_link_detect
+    [ "$_JIG_LINK_KIND" = symlink ] \
+      || jig_die "upgrade: this project is installed in link mode, which needs symbolic links, and they cannot be made here"
     _upgrade_link "$source" "$active_profiles" "$active_adapters" "$dry_run"
     return 0
   fi

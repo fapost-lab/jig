@@ -209,7 +209,14 @@ _init_place_symlink() {
   target_rel=$(_init_relpath "$(dirname "$link_abs")" "$target_abs")
   if [ -L "$link_abs" ]; then
     current=$(readlink "$link_abs")
-    if [ "$current" = "$target_rel" ]; then
+    # The text is the fast answer, not the only one: Cygwin reads a relative
+    # link back through a different spelling of the same directory (an 8.3
+    # short name), so a link this function made reads as foreign on Windows.
+    # Where the text differs, the link is still ours when it resolves to the
+    # same physical directory.
+    if [ "$current" = "$target_rel" ] \
+       || { [ -d "$link_abs" ] \
+            && [ "$(cd -P "$link_abs" 2>/dev/null && pwd -P)" = "$(cd -P "$target_abs" 2>/dev/null && pwd -P)" ]; }; then
       kept_count=$((kept_count + 1))
     else
       conflict_count=$((conflict_count + 1))
@@ -293,6 +300,16 @@ cmd_init() {
   # inferred). A first run (no manifest yet) keeps the flag's default (copy).
   if [ "$link_given" = 0 ] && manifest_exists; then
     if [ "$(manifest_header_get jig.mode)" = "link" ]; then link=1; else link=0; fi
+  fi
+
+  # Link mode is a tree of relative symlinks. A junction cannot stand in for
+  # them: it has no relative target and git does not store it. Where `ln -s`
+  # copies instead (Git Bash by default), step 7 failed after config and
+  # knowledge were already written, so this is refused before the first write.
+  if [ "$link" = 1 ]; then
+    jig_link_detect
+    [ "$_JIG_LINK_KIND" = symlink ] \
+      || jig_die "init: --link needs symbolic links, which cannot be made here; use copy mode (without --link)"
   fi
 
   # Profiles/adapters: an explicit flag always wins. Otherwise, on a re-run
@@ -429,6 +446,23 @@ cmd_init() {
   done < "$source/templates/gitignore"
   [ "$gi_added" = 1 ] && created_count=$((created_count + 1))
 
+  # 6b. .gitattributes --------------------------------------------------------
+  # Line endings of the framework's own files, appended line by line like
+  # .gitignore and never parsed. A clone made by Git for Windows
+  # (core.autocrlf=true) otherwise checks .ai/scripts out with CRLF — Git Bash
+  # tolerates that, Linux bash in WSL on the same checkout does not. Every
+  # framework file is LF, jig.cmd included: upgrade hashes source files as raw
+  # bytes, so a CRLF source would read as changed on every run.
+  local ga_dest="$JIG_PROJECT/.gitattributes" ga_line ga_added=0
+  [ -f "$ga_dest" ] || : > "$ga_dest"
+  while IFS= read -r ga_line; do
+    case "$ga_line" in
+      ''|'#'*) continue ;;
+    esac
+    grep -qxF "$ga_line" "$ga_dest" || { printf '%s\n' "$ga_line" >> "$ga_dest"; ga_added=1; }
+  done < "$source/templates/gitattributes"
+  [ "$ga_added" = 1 ] && created_count=$((created_count + 1))
+
   # 7. framework-owned files: scripts, profiles, skills ----------------------
   local p skill_dir sname sdir pdir dest_pdir
   if [ "$link" = 1 ]; then
@@ -522,8 +556,9 @@ cmd_init() {
     # ~13 ms each, which measured as the single largest cost of `jig init`.
     # Batch output is byte-identical to per-file hashing (verified), and
     # `paste` re-pairs it with the paths in the order they were sent.
-    # Absolute paths are built by plain concatenation, never by `sed`: the
-    # project root comes from `git rev-parse --show-toplevel`, so it is an
+    # Paths go to git relative to the project root (jig_hash_list), and no
+    # path is ever built with `sed`: the project root comes from
+    # `git rev-parse --show-toplevel`, so it is an
     # arbitrary user path, and an `&` in a sed replacement means "the text
     # that matched". A project under `R&D/` silently lost that segment from
     # every path, and the run then died inside git with a raw error, having
@@ -534,11 +569,10 @@ cmd_init() {
     # manifest_write_entries only once it is complete, so a failure anywhere
     # in the batch leaves the previous manifest untouched instead of
     # replacing it with a truncated one.
-    local rel
     _INIT_HASH_TMP=$(mktemp -d "${TMPDIR:-/tmp}/jig-init-hash.XXXXXX")
-    local need_file="$_INIT_HASH_TMP/rel" abs_file="$_INIT_HASH_TMP/abs"
+    local need_file="$_INIT_HASH_TMP/rel"
     local hash_file="$_INIT_HASH_TMP/hash" entries="$_INIT_HASH_TMP/entries"
-    : > "$need_file"; : > "$abs_file"; : > "$entries"
+    : > "$need_file"; : > "$entries"
 
     # Known hashes come from one pass over the manifest joined in one awk,
     # not a manifest_hash_of per path, which rereads the file every time.
@@ -554,10 +588,6 @@ cmd_init() {
       ($0 in known) { print known[$0] " " $0 > ENVIRON["JIG_INIT_ENTRIES"]; next }
       { print > ENVIRON["JIG_INIT_NEED"] }
     ' "$known" "$all"
-    while IFS= read -r rel; do
-      [ -n "$rel" ] || continue
-      printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$abs_file"
-    done < "$need_file"
 
     if [ -s "$need_file" ]; then
       # One git startup for the whole install instead of one per path.
@@ -565,7 +595,7 @@ cmd_init() {
       # order, so `paste` re-pairs them; a path containing a newline would
       # desync that, which the newline-delimited framework_paths accumulator
       # already rules out.
-      jig_hash_list "$abs_file" > "$hash_file" \
+      jig_hash_list "$JIG_PROJECT" "$need_file" > "$hash_file" \
         || jig_die "init: could not hash installed files"
       paste -d' ' "$hash_file" "$need_file" >> "$entries"
     fi

@@ -23,6 +23,41 @@ test_status_initialised_no_drift_no_tasks() {
   assert_contains "$OUT" "housekeeping: never"
 }
 
+# --- config.local (ADR-0038) --------------------------------------------------
+
+test_status_omits_config_local_lines_when_there_is_no_local_file() {
+  fixture_jig_repo
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "config.local:"
+}
+
+test_status_reports_local_config_keys_when_gitignored() {
+  fixture_jig_repo
+  cat > .ai/config.local.yaml <<'EOF'
+housekeeping.cadence: 3d
+git.base_branch: other
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config.local: housekeeping.cadence=3d"
+  assert_contains "$OUT" "config.local: ignored git.base_branch (not a local key)"
+  assert_not_contains "$OUT" "not ignored by git"
+}
+
+test_status_warns_when_local_config_is_not_gitignored() {
+  fixture_jig_repo
+  printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml
+  grep -v 'config.local.yaml' .gitignore > .gitignore.tmp
+  mv .gitignore.tmp .gitignore
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: .ai/config.local.yaml is not ignored by git and can be committed (fix: jig init)"
+}
+
 test_status_reports_drift() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
@@ -274,6 +309,7 @@ EOF
 # "0 modified, 0 missing" throughout since link mode's manifest carries no
 # path lines to drift against at all).
 test_status_link_mode_reports_pending_after_skill_added_to_source() {
+  skip_unless_symlinks
   fixture_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
@@ -359,10 +395,15 @@ _status_path_without_jig() {
 
 # _status_make_stub_global <root-dir> <bin-dir> <version-file> — a fixture
 # "global framework": a directory shaped like a source checkout (skills/,
-# templates/, scripts/jig — jig_is_source_root's test), symlinked into
-# <bin-dir> as `jig` the way the installer places it (design.md §1).
-# <version-file> is written verbatim to scripts/lib/version.sh, so a caller can
-# declare a well-formed `JIG_VERSION="X.Y.Z"` or a deliberately broken file.
+# templates/, scripts/jig — jig_is_source_root's test). Prints the directory
+# a caller must put on PATH to reach it: <bin-dir>, symlinked to
+# <root-dir>/scripts/jig the way the installer places it (design.md §1), when
+# `ln -s` makes a real link here; <root-dir>/scripts directly when it does
+# not (Windows Git Bash copies instead of linking, and jig_global_executable
+# only ever recognises a path ending in /scripts/jig — install.sh's own PATH
+# fallback exists for the same reason). <version-file> is written verbatim to
+# scripts/lib/version.sh, so a caller can declare a well-formed
+# `JIG_VERSION="X.Y.Z"` or a deliberately broken file.
 #
 # `status` reads that file and must never run the executable (design.md §3):
 # the stub's scripts/jig leaves an `executed` marker and prints a version that
@@ -377,7 +418,12 @@ _status_make_stub_global() {
 printf 'jig 0.0.0-from-running\n'
 EOF
   chmod +x "$root/scripts/jig"
-  ln -s "$root/scripts/jig" "$bin/jig"
+  if ln -s "$root/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
+    printf '%s\n' "$bin"
+  else
+    rm -f "$bin/jig"
+    printf '%s\n' "$root/scripts"
+  fi
 }
 
 # The project's own installed version, read from the real JIG_VERSION rather
@@ -398,13 +444,13 @@ _status_project_hash() {
 test_status_framework_versions_current() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
-  local version stub_root stub_bin
+  local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
-  _status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\""
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\"")
 
-  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "framework versions: project=$version global=$version current"
   assert_not_contains "$OUT" "hint: "
@@ -417,13 +463,13 @@ test_status_framework_versions_current() {
 test_status_framework_versions_mismatch_global_newer() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
-  local version stub_root stub_bin
+  local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
-  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"'
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"')
 
-  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "framework versions: project=$version global=9.0.0 mismatch"
   # shellcheck disable=SC2016
@@ -435,13 +481,13 @@ test_status_framework_versions_mismatch_global_newer() {
 test_status_framework_versions_mismatch_project_newer() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
-  local version stub_root stub_bin
+  local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
-  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.0.1"'
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.0.1"')
 
-  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "framework versions: project=$version global=0.0.1 mismatch"
   # shellcheck disable=SC2016
@@ -453,13 +499,13 @@ test_status_framework_versions_mismatch_project_newer() {
 test_status_framework_versions_non_release_global_gets_generic_hint() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
-  local version stub_root stub_bin
+  local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
-  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="dev"'
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="dev"')
 
-  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "framework versions: project=$version global=dev mismatch"
   # shellcheck disable=SC2016
@@ -541,6 +587,7 @@ test_status_framework_versions_malformed_version_file_is_unavailable() {
 # AC-11: in link mode the global executable can be the very checkout this
 # project links against; that is a normal "current", not a missing global.
 test_status_framework_versions_link_mode_reports_current() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   local version stub_bin
@@ -559,13 +606,13 @@ test_status_framework_versions_link_mode_reports_current() {
 test_status_framework_versions_mismatch_causes_no_project_mutation() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
-  local stub_root stub_bin before after
+  local stub_root stub_bin path_dir before after
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
-  _status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"'
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"')
 
   before=$(_status_project_hash)
-  run env PATH="$(_status_path_without_jig "$stub_bin")" "$JIG_BIN" status
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "mismatch"
   after=$(_status_project_hash)

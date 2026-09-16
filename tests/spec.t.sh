@@ -279,13 +279,10 @@ test_spec_new_dies_when_no_template_is_resolvable() {
 # Runs through the installed dispatcher (as test_spec_new_dies_when_no_template_is_resolvable
 # does) so no framework-checkout fallback can mask the forced failure.
 test_spec_new_rolls_back_and_dies_when_a_template_copy_fails() {
+  # The copy this test forces to fail succeeds wherever chmod 000 does not
+  # block reads: as root, and in Git Bash on NTFS.
+  skip_unless_unreadable_files
   fixture_jig_repo
-  if [ "$(id -u)" -eq 0 ]; then
-    # chmod 000 does not block a root reader, so the copy this test forces to
-    # fail would succeed instead; nothing meaningful to assert as root.
-    printf 'skip: running as root, chmod 000 does not block reads\n'
-    return 0
-  fi
   chmod 000 .ai/templates/spec/roadmap.md
 
   run jig_installed spec new partial
@@ -674,7 +671,7 @@ test_spec_remove_missing_spec_directory_fails() {
 test_spec_remove_refuses_a_symlink_resolving_outside_specs() {
   fixture_jig_repo
   mkdir -p outside/evil-target .ai/specs
-  ln -s "$(cd outside/evil-target && pwd -P)" .ai/specs/evil
+  plant_dir_link "$(cd outside/evil-target && pwd -P)" .ai/specs/evil
 
   run jig spec remove evil
   assert_eq 1 "$RC"
@@ -863,7 +860,9 @@ test_spec_remove_skips_symlinked_workspace() {
 Spec: .ai/specs/alpha/
 EOF
   mkdir -p .ai/workspace/tasks
-  ln -s "$(cd ../elsewhere-tasks/T-1 && pwd -P)" .ai/workspace/tasks/T-1
+  # The way a task worktree borrows a workspace (ADR-0029): a symbolic link,
+  # or a junction where symbolic links cannot be made.
+  plant_dir_link "$(cd ../elsewhere-tasks/T-1 && pwd -P)" .ai/workspace/tasks/T-1
   cp ../elsewhere-tasks/T-1/task.md linked.before
 
   run jig spec remove alpha
@@ -1012,13 +1011,10 @@ unlinked       T-abandon"
 # permission that blocks *creating* state.tmp.$$ belongs to the directory).
 
 test_spec_remove_abandon_failure_leaves_the_spec_line_and_is_retryable() {
+  # The abandon this test forces to fail succeeds wherever a read-only
+  # directory does not block writes: as root, and in Git Bash on NTFS.
+  skip_unless_readonly_dirs
   fixture_jig_repo
-  if [ "$(id -u)" -eq 0 ]; then
-    # A read-only directory does not block a root writer, so the abandon
-    # this test forces to fail would succeed instead.
-    printf 'skip: running as root, a read-only directory does not block writes\n'
-    return 0
-  fi
   mkdir -p .ai/specs/alpha
   printf '# Alpha\n' > .ai/specs/alpha/spec.md
   printf '%s\n' '- [ ] `T-1` — item' > .ai/specs/alpha/roadmap.md

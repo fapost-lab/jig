@@ -8,6 +8,7 @@ paths:
   - "scripts/**"
   - "tests/**"
 summary: Why Jig is bash 3.2 with git as its only mandatory dependency.
+reviewed_at: 2026-09-16
 ---
 # ADR-0002: Scripts are POSIX/bash-3.2 shell with no mandatory dependencies
 
@@ -41,3 +42,10 @@ The executable surface is small (init, upgrade, task state, context, verify, hou
 - Anyone can read what a command does; agents can too.
 - Destructive operations must be written defensively (see ADR-0006).
 - A `shellcheck` pass and the test suite are the quality gates for scripts.
+
+> **Amendment (2026-09-16).** Windows gets bash from Git for Windows, which git already requires
+> there, so the decision stands on every platform (ADR-0037). Two narrow exceptions exist because
+> nothing else runs before bash is on the machine or where only PowerShell can call in:
+> `install.ps1`, the Windows bootstrapper, with its test `tests/install.t.ps1`, and `scripts/jig.cmd`,
+> a batch wrapper that hands its arguments to bash. Neither contains jig behaviour: a change to what a
+> command does is still one bash change.

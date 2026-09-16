@@ -90,6 +90,107 @@ jobs:
           .ai/scripts/jig verify
           .ai/scripts/jig housekeeping
 
+  # The whole suite on Windows under Git Bash, with the git settings a Windows
+  # user gets out of the box: core.autocrlf=true and no native symlinks, so
+  # `ln -s` copies and links fall back to junctions. It takes about 25 minutes,
+  # so it runs on main (a release waits for it) and by hand, not on every pull
+  # request; smoke-windows below covers those.
+  test-windows:
+    name: windows-latest (Git Bash)
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          bash --version | head -n 1
+          git --version
+          git config --get core.autocrlf || true
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version | sed -n 's/^version: /shellcheck /p'
+          else
+            echo "shellcheck: not installed"
+          fi
+
+      - name: Tests
+        run: tests/run.sh
+
+  # What a Windows user runs, on every pull request: the installer end to end
+  # (tests/install.t.ps1, in Windows PowerShell 5.1, which every Windows has)
+  # and the everyday commands in a project, including a worktree whose
+  # workspace link has to be a junction here.
+  smoke-windows:
+    name: windows-latest smoke (install.ps1)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer tests
+        shell: powershell
+        run: ./tests/install.t.ps1
+
+      - name: Everyday commands in Git Bash
+        shell: bash
+        run: |
+          set -eu
+          work=$(mktemp -d)
+          git -C "$work" init -q .
+          git -C "$work" config user.name jig
+          git -C "$work" config user.email jig@example.com
+          git -C "$work" symbolic-ref HEAD refs/heads/main
+          printf '# ci\n' > "$work/README.md"
+          git -C "$work" add README.md
+          git -C "$work" commit -q -m init
+          cd "$work"
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          git add -A
+          git commit -q -m "jig init"
+          .ai/scripts/jig doctor
+          .ai/scripts/jig upgrade --dry-run
+          .ai/scripts/jig task new ci-demo --class T1 --domains core
+          wt=$(.ai/scripts/jig task start ci-demo --worktree)
+          .ai/scripts/jig task list
+          # The worktree's workspace is a junction here: a landed, closed task
+          # must leave neither the worktree directory nor its workspace behind.
+          # Ancestry tells the branch's own commit from the base's by when each
+          # ref moved, to the second, and a tie goes to the base (ADR-0032):
+          # a script that starts, commits and merges within one second reads
+          # its own work as foreign. tests/housekeeping.t.sh uses hk_tick.
+          sleep 2
+          printf 'work\n' > "$wt/ci-demo.txt"
+          git -C "$wt" add ci-demo.txt
+          git -C "$wt" commit -q -m "work for ci-demo"
+          sleep 2
+          git merge -q --ff-only task/ci-demo
+          .ai/scripts/jig task set ci-demo knowledge_consolidated true
+          .ai/scripts/jig task set ci-demo status consolidated
+          .ai/scripts/jig housekeeping --verbose
+          if [ -e "$wt" ]; then
+            echo "worktree directory left behind: $wt"
+            ls -la "$wt"
+            exit 1
+          fi
+          test ! -e .ai/workspace/tasks/ci-demo
+          echo "JIG_SMOKE_PROJECT=$(cygpath -w "$work")" >> "$GITHUB_ENV"
+
+      # The native Codex path (REQ-5): jig from PowerShell through jig.cmd.
+      - name: jig.cmd from PowerShell
+        shell: powershell
+        run: |
+          Set-Location $env:JIG_SMOKE_PROJECT
+          & .ai\scripts\jig.cmd status
+          if ($LASTEXITCODE -ne 0) { throw "jig.cmd status exited $LASTEXITCODE" }
+          & .ai\scripts\jig.cmd doctor
+          if ($LASTEXITCODE -ne 0) { throw "jig.cmd doctor exited $LASTEXITCODE" }
+
   # Tags a release once the tests passed on every platform (ADR-0033). The tag
   # is v<JIG_VERSION>; a merge that did not bump the version finds its tag
   # already there and does nothing. The decision lives in
@@ -98,7 +199,7 @@ jobs:
   # Write access is granted to this job alone: the rest of the workflow keeps
   # `contents: read`. Pull requests and manual runs never tag.
   release:
-    needs: test
+    needs: [test, test-windows, smoke-windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

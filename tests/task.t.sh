@@ -1109,6 +1109,7 @@ test_sdd_changes_rejects_missing_invalid_base_and_paths() {
 }
 
 test_sdd_changes_rejects_control_names_and_git_failures() {
+  skip_unless_control_char_names
   sdd_task_setup
   local name
   name=$(printf 'bad\tname')
@@ -1192,6 +1193,7 @@ test_sdd_artifacts_routes_and_conversation_claims() {
 }
 
 test_sdd_artifacts_empty_external_and_internal_links() {
+  skip_unless_symlinks
   sdd_task_setup
   local root
   root=.ai/workspace/tasks/scoped
@@ -1859,6 +1861,45 @@ test_task_start_worktree_refuses_a_shared_branch() {
   assert_no_file ../repo.worktrees/T-1
 }
 
+# --- start --worktree on a machine where `ln -s` copies (Windows Git Bash) ----
+
+test_task_start_worktree_refuses_when_only_copying_links_are_available() {
+  skip_unless_link_simulation
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local lndir
+  lndir=$(stub_ln_copy_dir)
+  export PATH="$lndir:$PATH"
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--worktree needs a directory link"
+  assert_no_file ../repo.worktrees/T-1
+  if git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null; then
+    fail "the branch of a refused start was left behind"
+  fi
+  if grep -q '^branch:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded a branch"
+  fi
+}
+
+test_task_start_worktree_links_via_a_junction_when_symlinks_copy() {
+  skip_unless_link_simulation
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local lndir jdir owner wt
+  lndir=$(stub_ln_copy_dir)
+  jdir=$(stub_junction_dir)
+  owner=$(cd .ai/workspace/tasks/T-1 && pwd -P)
+  export PATH="$jdir:$lndir:$PATH"
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC" "task start should succeed: $ERR"
+  wt="$OUT"
+  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the worktree has no link to the workspace"
+  assert_eq "$owner" "$(cd "$wt/.ai/workspace/tasks/T-1" && pwd -P)"
+}
+
 test_task_start_dirty_refusal_offers_the_worktree() {
   task_setup_clean
   printf 'dirty\n' >> README.md
@@ -1913,6 +1954,7 @@ test_task_artifacts_reads_the_borrowed_workspace() {
 test_task_artifacts_refuses_a_link_to_anywhere_else() {
   # The one link accepted is to this task's own workspace in another worktree
   # of this repository; a link elsewhere could point at anything.
+  skip_unless_symlinks
   task_setup
   mkdir -p elsewhere/T-1
   printf 'task_id: T-1\nclass: T2\nstatus: active\n' > elsewhere/T-1/state
@@ -1928,6 +1970,7 @@ test_task_start_worktree_failure_leaves_nothing_behind() {
   # `git worktree add -b` creates the branch before the directory. Without an
   # undo, a failed start left the branch behind and every retry died with
   # "branch already exists".
+  skip_unless_readonly_dirs
   task_setup_nested
   mkdir ../repo.worktrees
   chmod 555 ../repo.worktrees

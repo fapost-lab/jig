@@ -16,6 +16,19 @@ hk_cfg() {
   mv .ai/config.yaml.tmp .ai/config.yaml
 }
 
+# hk_cfg_local <key> <value> — set one key in .ai/config.local.yaml (ADR-0038),
+# creating the file or appending the key when it is not there yet.
+hk_cfg_local() {
+  local file=".ai/config.local.yaml"
+  touch "$file"
+  if grep -q "^$1:" "$file"; then
+    sed "s|^$1:.*|$1: $2|" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  else
+    printf '%s: %s\n' "$1" "$2" >> "$file"
+  fi
+}
+
 # hk_tick — move git's clock ten seconds past the previous tick, starting from
 # now. Ancestry tells a branch's own commit from one the base already had by
 # when each ref moved, and a tie goes to the base (ADR-0032), so a test that
@@ -53,6 +66,27 @@ hk_decide() {
     housekeeping_decide "$@"
   ' _ "$@"
 }
+
+# hk_leftover <path> — call _hk_worktree_leftover directly, the same way
+# hk_decide calls housekeeping_decide: source the libraries in a subshell and
+# invoke the function under test, so its exit code is the caller's.
+hk_leftover() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/housekeeping.sh"
+    _hk_worktree_leftover "$@"
+  ' _ "$@"
+}
+
+# hk_link <target-abs> <link-abs> — plant a directory link the same way the
+# framework itself would (jig_link_dir, common.sh): a real symlink on
+# macOS/Linux, an NTFS junction on Windows Git Bash, where plain `ln -s`
+# copies instead of linking -- exactly the case `_hk_worktree_leftover`
+# exists to clean up (its own comment: "measured on windows-latest"). Skips
+# the calling test when neither kind of link can be made here.
+hk_link() { plant_dir_link "$1" "$2"; }
 
 # --- policy table (domains/housekeeping) -------------------------------------------------
 
@@ -452,6 +486,16 @@ test_housekeeping_rejects_an_invalid_ttl() {
   assert_contains "$OUT" "invalid duration"
 }
 
+test_housekeeping_rejects_an_invalid_ttl_from_the_local_config() {
+  # Same failure, but the bad value lives in .ai/config.local.yaml (ADR-0038):
+  # the local layer must be validated exactly like the project one.
+  hk_setup
+  hk_cfg_local housekeeping.trash_ttl "7 days"
+  run jig housekeeping
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid duration"
+}
+
 test_housekeeping_skips_a_directory_that_is_not_a_task_id() {
   hk_setup
   mkdir -p ".ai/workspace/tasks/.hidden"
@@ -637,6 +681,19 @@ test_session_hook_runs_housekeeping_when_due() {
     || fail "hook did not run housekeeping"
 }
 
+test_session_hook_runs_housekeeping_when_jig_lost_its_executable_bit() {
+  # A project committed from Windows records .ai/scripts/jig as 100644, so a
+  # teammate's checkout has no executable bit. The hook tested -x and gave up
+  # silently: housekeeping never ran for anyone on macOS or Linux.
+  hk_setup
+  [ ! -L .ai/scripts ] || fail "fixture must be a copy install to change a file mode"
+  chmod -x .ai/scripts/jig
+  run .ai/scripts/jig-session-hook
+  assert_eq 0 "$RC"
+  hk_wait_for .ai/runtime/last-housekeeping \
+    || fail "hook did not run housekeeping for a jig without the executable bit"
+}
+
 test_session_hook_is_a_noop_before_the_cadence_elapses() {
   hk_setup
   jig housekeeping >/dev/null
@@ -649,6 +706,25 @@ test_session_hook_is_a_noop_before_the_cadence_elapses() {
   sleep 0.5
   assert_eq "$before" "$(wc -c < .ai/runtime/housekeeping.log)" \
     "hook ran housekeeping again inside the cadence"
+}
+
+test_session_hook_honours_the_cadence_from_the_local_config() {
+  # The project cadence (0d) would make the hook run again immediately; a
+  # local override (ADR-0038) of 30d must still make it a noop, proving the
+  # hook reads .ai/config.local.yaml rather than only .ai/config.yaml.
+  hk_setup
+  hk_cfg housekeeping.cadence 0d
+  jig housekeeping >/dev/null
+  assert_file .ai/runtime/last-housekeeping
+  hk_cfg_local housekeeping.cadence 30d
+  local before
+  before=$(wc -c < .ai/runtime/housekeeping.log)
+
+  run .ai/scripts/jig-session-hook
+  assert_eq 0 "$RC"
+  sleep 0.5
+  assert_eq "$before" "$(wc -c < .ai/runtime/housekeeping.log)" \
+    "hook ignored the local cadence override"
 }
 
 test_session_hook_exits_0_when_the_project_is_not_initialised() {
@@ -1640,7 +1716,13 @@ test_housekeeping_guard_keeps_this_checkout_with_uncommitted_changes_on_the_purg
   hk_setup
   local fork proj
   fork=$(git rev-parse HEAD)
-  proj=$(git rev-parse --show-toplevel)
+  # Not `git rev-parse --show-toplevel`: Git for Windows prints it in
+  # Windows form (`C:/Users/...`), while the code under test builds
+  # JIG_PROJECT with `cd -P && pwd -P` and logs it in bash form
+  # (`/c/Users/...`) on purpose. This test runs at the repo root (hk_setup
+  # does not `cd repo` the way hk_worktree_setup does), so `pwd -P` here is
+  # the same directory `jig housekeeping` reports.
+  proj=$(pwd -P)
   hk_tick
   git checkout -q -b task/here
   printf 'own\n' > own.txt
@@ -1835,5 +1917,112 @@ test_housekeeping_report_appended_to_the_log_changes_no_count() {
   run jig measure
   # Counted once: the report line in the log carries no `task=` field.
   assert_contains "$OUT" "2 tasks (1 live, 1 recorded at purge)"
+}
+
+# --- _hk_worktree_leftover (Windows leftover cleanup) -------------------------------------------------
+# On Windows, `git worktree remove` (no --force) has been seen to exit 0 and
+# leave the worktree directory behind, junction included (measured on
+# windows-latest, 2026-09-14). `_hk_worktree_retire` calls this function only
+# after git reported success and the path still exists. It must remove
+# nothing but links and the now-empty directories, and never touch what a
+# link points at: the borrowed task workspace lives outside the worktree, and
+# is the one thing here it would be catastrophic to delete (RULES.md).
+# git is not exercised: macOS/Linux git removes the directory outright, so
+# these call _hk_worktree_leftover directly on a hand-built leftover, the way
+# hk_decide calls housekeeping_decide.
+
+# hk_leftover_owner <dir> — build a workspace a leftover's junction borrows
+# from: a `state` file, a doc with real content, and a nested subdirectory
+# with a file of its own, so a test can tell "moved/renamed" from "untouched".
+hk_leftover_owner() {
+  local dir="$1"
+  mkdir -p "$dir/nested"
+  printf 'task_id: T-1\nstatus: active\n' > "$dir/state"
+  printf '# Design\n\nSome real content, byte for byte.\n' > "$dir/design.md"
+  printf 'nested file content\n' > "$dir/nested/note.txt"
+}
+
+# hk_leftover_assert_owner_intact <dir> — the owner's files and their content
+# are exactly what hk_leftover_owner wrote, nothing added or missing.
+hk_leftover_assert_owner_intact() {
+  local dir="$1"
+  assert_file_contains "$dir/state" "task_id: T-1"
+  assert_file_contains "$dir/design.md" "Some real content, byte for byte."
+  assert_file_contains "$dir/nested/note.txt" "nested file content"
+}
+
+test_hk_worktree_leftover_removes_links_and_empty_dirs_keeps_owner_content() {
+  mkdir owner
+  hk_leftover_owner "$(pwd)/owner"
+  local owner_abs wt_abs
+  owner_abs=$(cd owner && pwd)
+
+  mkdir -p wt/.ai/workspace/tasks
+  hk_link "$owner_abs" wt/.ai/workspace/tasks/T-1
+  # Extra empty directories a leftover can carry alongside the junction.
+  mkdir -p wt/.ai/runtime/empty-a/empty-b
+  mkdir -p wt/empty-top
+  wt_abs=$(cd wt && pwd)
+
+  run hk_leftover "$wt_abs"
+  assert_eq 0 "$RC"
+  assert_no_file "$wt_abs"
+  hk_leftover_assert_owner_intact "$owner_abs"
+}
+
+test_hk_worktree_leftover_keeps_a_leftover_that_still_holds_a_file() {
+  mkdir owner
+  hk_leftover_owner "$(pwd)/owner"
+  local owner_abs wt_abs
+  owner_abs=$(cd owner && pwd)
+
+  mkdir -p wt/.ai/workspace/tasks
+  hk_link "$owner_abs" wt/.ai/workspace/tasks/T-1
+  printf 'meeting notes\n' > wt/notes.txt
+  wt_abs=$(cd wt && pwd)
+
+  run hk_leftover "$wt_abs"
+  [ "$RC" -ne 0 ] || fail "expected a non-zero exit: a regular file remained in $wt_abs"
+  assert_dir "$wt_abs"
+  assert_file "$wt_abs/notes.txt"
+  assert_no_file "$wt_abs/.ai/workspace/tasks/T-1"
+  hk_leftover_assert_owner_intact "$owner_abs"
+}
+
+test_hk_worktree_leftover_does_not_descend_into_a_linked_directory() {
+  # find does not follow links (domains/housekeeping): a link inside the
+  # leftover that points at a directory which itself holds a link and a file
+  # must be left exactly as it is — only the link at the top is ever seen.
+  mkdir target
+  printf 'target data\n' > target/data.txt
+  hk_link /nonexistent-leftover-probe target/inner-link
+  local target_abs wt_abs
+  target_abs=$(cd target && pwd)
+
+  mkdir -p wt/.ai/workspace/tasks
+  hk_link "$target_abs" wt/.ai/workspace/tasks/T-1
+  wt_abs=$(cd wt && pwd)
+
+  run hk_leftover "$wt_abs"
+  assert_eq 0 "$RC"
+  assert_no_file "$wt_abs"
+  assert_file_contains "$target_abs/data.txt" "target data"
+  [ -L "$target_abs/inner-link" ] || fail "a link inside the linked-to directory must survive untouched"
+}
+
+test_hk_worktree_leftover_handles_a_path_with_spaces() {
+  mkdir "owner with spaces"
+  hk_leftover_owner "$(pwd)/owner with spaces"
+  local owner_abs wt_abs
+  owner_abs=$(cd "owner with spaces" && pwd)
+
+  mkdir -p "wt with spaces/.ai/workspace/tasks"
+  hk_link "$owner_abs" "wt with spaces/.ai/workspace/tasks/T-1"
+  wt_abs=$(cd "wt with spaces" && pwd)
+
+  run hk_leftover "$wt_abs"
+  assert_eq 0 "$RC"
+  assert_no_file "$wt_abs"
+  hk_leftover_assert_owner_intact "$owner_abs"
 }
 

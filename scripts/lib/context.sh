@@ -681,19 +681,19 @@ ctx_acknowledge() {
   # git process (jig_hash_list) and paired back by position — `paste` joins
   # with a tab, which is the ledger's own separator.
   count=0
-  : > "$tmp.abs"
+  : > "$tmp.rel"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     _ctx_check_knowledge_path "$rel"
-    printf '%s/%s\n' "$JIG_PROJECT" "$rel" >> "$tmp.abs"
+    printf '%s\n' "$rel" >> "$tmp.rel"
     count=$((count + 1))
   done < <(printf '%s\n' "$files")
-  if ! jig_hash_list "$tmp.abs" > "$tmp.hash"; then
-    rm -f "$tmp" "$tmp.abs" "$tmp.hash"
+  if ! jig_hash_list "$JIG_PROJECT" "$tmp.rel" > "$tmp.hash"; then
+    rm -f "$tmp" "$tmp.rel" "$tmp.hash"
     jig_die "context acknowledge: could not hash the documents"
   fi
   paste "$tmp.hash" <(printf '%s\n' "$files") >> "$tmp"
-  rm -f "$tmp.abs" "$tmp.hash"
+  rm -f "$tmp.rel" "$tmp.hash"
 
   sort -o "$tmp" "$tmp"
   mv "$tmp" "$ledger"
@@ -724,9 +724,9 @@ _ctx_pending_paths() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-context-pending.XXXXXX")
   while IFS= read -r relpath; do
     [ -n "$relpath" ] || continue
-    printf '%s/%s\n' "$JIG_PROJECT" "$relpath"
+    printf '%s\n' "$relpath"
   done > "$tmp" < <(printf '%s\n' "$paths")
-  if ! jig_hash_list "$tmp" > "$tmp.hash"; then
+  if ! jig_hash_list "$JIG_PROJECT" "$tmp" > "$tmp.hash"; then
     rm -f "$tmp" "$tmp.hash"
     jig_die "context: could not hash the tracked documents"
   fi
