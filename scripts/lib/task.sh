@@ -399,17 +399,18 @@ _task_days_since() {
   printf '%d\n' $(( (now - ts) / 86400 ))
 }
 
-# Files this task changed that were also changed on the configured base
-# branch since the merge base (design §5: overlap, not distance). Empty,
-# rather than an error, when the base branch or the merge base is missing —
+# _task_resume_overlap <id> — files this task changed that were also changed
+# on the task's base since the merge base (design §5: overlap, not distance).
+# Empty, rather than an error, when the base or the merge base is missing —
 # the resume report simply omits the section then.
 _task_resume_overlap() {
-  local base mb task_files base_files
-  base=$(cfg git.base_branch main)
-  git -C "$JIG_PROJECT" rev-parse --verify "$base" >/dev/null 2>&1 || return 0
-  mb=$(git -C "$JIG_PROJECT" merge-base "$base" HEAD 2>/dev/null) || return 0
-  task_files=$(jig_git_touched_files)
-  base_files=$(git -C "$JIG_PROJECT" diff --name-only "$mb" "$base" 2>/dev/null)
+  local base ref mb task_files base_files
+  base=$(jig_task_base "$1")
+  ref=$(jig_base_ref "$base")
+  [ -n "$ref" ] || return 0
+  mb=$(git -C "$JIG_PROJECT" merge-base "$ref" HEAD 2>/dev/null) || return 0
+  task_files=$(jig_git_touched_files --base-branch "$base")
+  base_files=$(git -C "$JIG_PROJECT" diff --name-only "$mb" "$ref" 2>/dev/null)
   comm -12 \
     <(printf '%s\n' "$task_files" | sed '/^$/d' | sort -u) \
     <(printf '%s\n' "$base_files" | sed '/^$/d' | sort -u)
@@ -567,8 +568,14 @@ task_start() {
     jig_info "task start: $id recorded $existing when it was filed, with no fork point; starting it now"
   fi
 
+  # The base the task is cut from and has to land on, recorded beside the
+  # fork point so that everything judging the task later reads the same
+  # answer (ADR-0039). Checked before anything is created.
+  local base
+  base=$(_task_start_base "$id") || exit 1
+
   if [ "$worktree" -eq 1 ]; then
-    _task_start_in_worktree "$id" "$dir"
+    _task_start_in_worktree "$id" "$dir" "$base"
     return 0
   fi
 
@@ -580,7 +587,7 @@ task_start() {
   local branch base_commit
   if cfg_bool git.branch_per_task true; then
     branch=$(_task_branch_name "$id")
-    base_commit=$(_task_start_branch "$branch") \
+    base_commit=$(_task_start_branch "$branch" "$base") \
       || jig_die "task start: could not create branch $branch"
   else
     # A project that works on one branch by choice still gets a start: the
@@ -593,6 +600,8 @@ task_start() {
 
   _task_rewrite_state "$dir" branch "$branch"
   _task_rewrite_state "$dir" base_commit "$base_commit"
+  _task_rewrite_state "$dir" base_branch "$base"
+  _task_base_hint "$id" "$base"
   _task_paused_hint "$id" ""
   printf '%s\n' "$branch"
 }
@@ -612,7 +621,7 @@ task_start() {
 # switching one there, where the runtime allows it, or opening a new one — is
 # the agent's and the human's step, not jig's (ADR-0029 as amended).
 _task_start_in_worktree() {
-  local id="$1" dir="$2" branch path owner base_commit
+  local id="$1" dir="$2" base="$3" branch path owner base_commit
   cfg_bool git.branch_per_task true \
     || jig_die "task start: --worktree needs git.branch_per_task: true (one branch cannot be checked out in two worktrees)"
   branch=$(_task_branch_name "$id")
@@ -629,7 +638,7 @@ _task_start_in_worktree() {
     || jig_die "task start: --worktree needs a directory link, and neither a symlink nor a junction can be made here; start the task in this checkout instead"
 
   local start
-  start=$(_task_fresh_base) || exit 1
+  start=$(jig_fresh_base_ref "$base" "task start") || exit 1
   base_commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) \
     || jig_die "task start: cannot resolve $start"
 
@@ -646,9 +655,20 @@ _task_start_in_worktree() {
 
   _task_rewrite_state "$dir" branch "$branch"
   _task_rewrite_state "$dir" base_commit "$base_commit"
+  _task_rewrite_state "$dir" base_branch "$base"
+  _task_base_hint "$id" "$base"
   _task_paused_hint "$id" " there"
   jig_info "task start: $id is on $branch in its own worktree; open a new agent session in $path"
   printf '%s\n' "$path"
+}
+
+# _task_base_hint <id> <base> — a task cut from anything but the project's base
+# says where its pull request goes, at the moment nobody has opened it yet.
+# A pull request into the default branch would read, to housekeeping, as work
+# in the wrong place (wrong-base), long after it could have been prevented.
+_task_base_hint() {
+  [ "$2" != "$(cfg git.base_branch main)" ] || return 0
+  jig_info "task start: $1 is cut from $2; open its pull request into $2"
 }
 
 # _task_paused_hint <id> <where> — starting is not resuming (a task can be
@@ -658,55 +678,58 @@ _task_paused_hint() {
   jig_info "task start: $1 is paused; run \`jig task resume $1\`$2 to make it current"
 }
 
-# _task_fresh_base — the ref a task's branch is cut from: the freshest base.
+# _task_start_base <id> — the base a task being started is cut from, after
+# refreshing it from origin (ADR-0040).
 #
-# Freshest, not nearest: resolving refs/heads/<base> first meant a local base
-# that had fallen behind produced a stale branch *and* a stale base_commit,
-# silently. That happened on 2026-09-11 — a branch was cut from the previous
-# merge and the work done on it was missing a command merged an hour earlier.
-# Diverged bases are refused rather than guessed: picking either surprises
-# somebody, and the surprise surfaces far from its cause.
-_task_fresh_base() {
-  local base local_ref remote_ref
-  base=$(cfg git.base_branch main)
-  local_ref="refs/heads/$base"
-  remote_ref="refs/remotes/origin/$base"
-
-  local has_local=0 has_remote=0
-  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$local_ref" >/dev/null 2>&1 && has_local=1
-  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$remote_ref" >/dev/null 2>&1 && has_remote=1
-
-  if [ "$has_local" = 1 ] && [ "$has_remote" = 1 ]; then
-    if git -C "$JIG_PROJECT" merge-base --is-ancestor "$local_ref" "$remote_ref" 2>/dev/null; then
-      if ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$remote_ref" "$local_ref" 2>/dev/null; then
-        jig_info "task start: local $base is behind origin/$base; branching from origin/$base"
-        printf '%s\n' "$remote_ref"
-      else
-        printf '%s\n' "$local_ref"
-      fi
-    elif git -C "$JIG_PROJECT" merge-base --is-ancestor "$remote_ref" "$local_ref" 2>/dev/null; then
-      printf '%s\n' "$local_ref"
-    else
-      jig_die "task start: $base and origin/$base have diverged; reconcile them first"
-    fi
-  elif [ "$has_local" = 1 ]; then
-    printf '%s\n' "$local_ref"
-  elif [ "$has_remote" = 1 ]; then
-    printf '%s\n' "$remote_ref"
-  else
-    printf 'HEAD\n'
+# A task linked to a spec whose roadmap declares an open epic is cut from the
+# epic; every other task from `git.base_branch`. Each way a phase could end up
+# on `main` without anyone noticing is refused instead of falling back: a spec
+# this checkout does not have, an epic branch that exists nowhere, an epic
+# already finished. The fetch runs for every task: a stale local `main` cuts a
+# stale branch just as surely as a missing epic does.
+_task_start_base() {
+  local id="$1" default base spec="" line="" rc=0 roadmap
+  default=$(cfg git.base_branch main)
+  base=$default
+  if [ -f "$(task_dir "$id")/task.md" ]; then
+    spec=$(jig_spec_link "$(task_dir "$id")/task.md") || rc=$?
+    [ "$rc" -ne 2 ] || jig_die "task start: $id links to more than one spec; keep one Spec: line"
   fi
+  if [ -n "$spec" ]; then
+    roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
+    [ -f "$roadmap" ] \
+      || jig_die "task start: $id links to spec $spec, which this checkout does not have; switch to a branch that has it"
+    rc=0
+    line=$(jig_spec_epic "$roadmap") || rc=$?
+    [ "$rc" -ne 2 ] || jig_die "task start: spec $spec declares more than one epic; keep one Epic: line"
+    if [ -n "$line" ]; then
+      base=${line% *}
+      [ "${line##* }" = open ] \
+        || jig_die "task start: epic $base of spec $spec is finished; reopen it with \`jig spec epic $spec --reopen\` for a fix, or link the task to another spec"
+    fi
+  fi
+  git check-ref-format --branch "$base" >/dev/null 2>&1 \
+    || jig_die "task start: git rejects the base branch name: $base"
+
+  if [ "$base" = "$default" ]; then
+    jig_fetch_branches "task start" "$default"
+  else
+    jig_fetch_branches "task start" "$default" "$base"
+    [ -n "$(jig_base_ref "$base")" ] \
+      || jig_die "task start: epic $base of spec $spec exists neither here nor on origin; push it, or create it with \`jig spec epic $spec\`"
+  fi
+  printf '%s\n' "$base"
 }
 
-# _task_start_branch <name> — create <name> off the freshest base, check it out
-# here, and print the commit it starts from.
+# _task_start_branch <name> <base> — create <name> off the freshest <base>,
+# check it out here, and print the commit it starts from.
 #
 # Cut from the commit, not the ref: a branch started from origin/<base> would
 # otherwise get origin/<base> as its upstream, and `git status` would report
 # the task as "ahead of origin/main" — a branch that is never pushed there.
 _task_start_branch() {
-  local name="$1" start commit
-  start=$(_task_fresh_base) || exit 1
+  local name="$1" base="$2" start commit
+  start=$(jig_fresh_base_ref "$base" "task start") || exit 1
   commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) || return 1
   git -C "$JIG_PROJECT" checkout -q -b "$name" "$commit" >/dev/null 2>&1 || return 1
   printf '%s\n' "$commit"
@@ -745,7 +768,7 @@ task_set() {
     status) _task_valid_status "$value" || jig_die "task set: invalid status: $value" ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
-    task_id | branch | base_commit | created_at | updated_at | paused | paused_at | paused_reason | paused_stash)
+    task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -888,10 +911,10 @@ task_resume() {
   [ -z "$stash_line" ] || printf '%s\n' "$stash_line"
 
   local overlap k base
-  overlap=$(_task_resume_overlap)
+  overlap=$(_task_resume_overlap "$id")
   k=$(_task_count_lines "$overlap")
   if [ "$k" -gt 0 ]; then
-    base=$(cfg git.base_branch main)
+    base=$(jig_task_base "$id")
     printf 'overlap: %s files you changed also changed on %s\n' "$k" "$base"
     printf '%s\n' "$overlap" | sed 's/^/  /'
   fi
@@ -926,8 +949,11 @@ task_list() {
   done
 
   local base="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  local dir id class status branch paused line lines="" hidden=0 worktrees wt
+  local dir id class status branch base_branch default_base paused line lines="" hidden=0 worktrees wt
   worktrees=$(_task_worktrees)
+  # The base is shown only where it is not the project's: a listing where
+  # every line says base=main says nothing.
+  default_base=$(cfg git.base_branch main)
   for dir in "$base"/*/; do
     [ -f "${dir}state" ] || continue
     id=$(basename "$dir")
@@ -954,6 +980,10 @@ task_list() {
       [ -z "$wt" ] || line="$line $(_task_worktree_note "$wt")"
     else
       line="$id class=$class status=$status not-started"
+    fi
+    base_branch=$(task_state_get "$id" base_branch)
+    if [ -n "$base_branch" ] && [ "$base_branch" != "$default_base" ]; then
+      line="$line base=$base_branch"
     fi
     [ "$paused" = "true" ] && line="$line paused"
     lines="$lines

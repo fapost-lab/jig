@@ -1004,6 +1004,33 @@ test_paths_report_with_valid_task_succeeds() {
   assert_contains "$OUT" "knowledge paths: 0 uncovered directories, 0 unmatched globs"
 }
 
+test_paths_report_task_is_judged_against_its_own_base() {
+  # A task cut from an epic branch (ADR-0039): the epic's own earlier commit,
+  # never on main, must not count as this task's touched files; without a
+  # task the old main-relative answer covers both.
+  km_setup
+  git checkout -q -b epic/y
+  touch epic.sh
+  git add epic.sh
+  git commit -q -m "epic work"
+
+  git checkout -q -b task/kp epic/y
+  touch own.sh
+  git add own.sh
+  git commit -q -m "own work"
+
+  jig task new kp >/dev/null
+  printf 'base_branch: epic/y\n' >> .ai/workspace/tasks/kp/state
+
+  run jig knowledge paths --task kp
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "uncovered: ./  (1 file)"
+
+  run jig knowledge paths
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "uncovered: ./  (2 files)"
+}
+
 # --- knowledge stale -------------------------------------------------------------
 
 test_stale_reports_orphaned_when_reviewed_document_lost_its_code() {

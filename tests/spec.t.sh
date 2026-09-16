@@ -1109,3 +1109,393 @@ EOF
   assert_not_contains "$OUT" ".bad"
   assert_contains "$OUT" "not-here       T-9 (named in the roadmap, no workspace in this checkout)"
 }
+
+# --- spec epic (ADR-0040) ------------------------------------------------------
+# The epic branch a spec released once, at the end, is released from. Every
+# scenario needs a clean tree (git checkout/branch refuse a dirty one), so the
+# setup mirrors task.t.sh's task_setup_clean: commit everything `jig init`
+# left untracked before doing any git plumbing of our own.
+
+epic_setup() {
+  fixture_jig_repo
+  git add -A
+  git commit -q -m "jig init snapshot"
+}
+
+# epic_ready_to_finish <id> — a spec with an open epic, created and checked
+# out, ready for `--finish`: the roadmap's Epic: line has reached main and the
+# branch exists locally, exactly what `spec epic <id>` twice in a row builds.
+epic_ready_to_finish() {
+  local id="$1"
+  epic_setup
+  jig spec new "$id" >/dev/null
+  git add -A
+  git commit -q -m "add spec $id"
+  jig spec epic "$id" >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic "$id" >/dev/null
+  git checkout -q "epic/$id"
+}
+
+# --- spec epic: argument handling ----------------------------------------------
+
+test_spec_epic_missing_id_fails() {
+  fixture_jig_repo
+  run jig spec epic
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec epic: missing spec id"
+}
+
+test_spec_epic_invalid_id_fails() {
+  fixture_jig_repo
+  run jig spec epic "-bad"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec epic: invalid spec id: -bad"
+}
+
+test_spec_epic_invalid_id_checked_before_init() {
+  fixture_repo
+  run jig spec epic "-bad"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid spec id"
+  assert_not_contains "$OUT" "not initialised"
+}
+
+test_spec_epic_requires_initialised_project() {
+  fixture_repo
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not initialised"
+}
+
+test_spec_epic_unknown_spec_fails() {
+  fixture_jig_repo
+  run jig spec epic no-such-spec
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no such spec, or it has no roadmap: .ai/specs/no-such-spec/roadmap.md"
+}
+
+test_spec_epic_rejects_unexpected_argument() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x --wat
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unexpected argument: --wat"
+}
+
+test_spec_epic_finish_and_reopen_exclude_each_other() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x --finish --reopen
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--finish and --reopen exclude each other"
+
+  run jig spec epic idea-x --reopen --finish
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--finish and --reopen exclude each other"
+}
+
+test_spec_epic_two_conflicting_epic_lines_fails() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  printf 'Epic: epic/a\nEpic: epic/b\n' >> .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declares more than one epic; keep one Epic: line"
+}
+
+# --- spec epic: declare --------------------------------------------------------
+
+test_spec_epic_declares_the_line_and_stops() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/specs/idea-x/roadmap.md: Epic: epic/idea-x"
+  assert_contains "$OUT" "commit .ai/specs/idea-x/roadmap.md and merge it into main"
+  assert_contains "$OUT" 'run `jig spec epic idea-x` again to cut epic/idea-x'
+  grep -qx 'Epic: epic/idea-x' .ai/specs/idea-x/roadmap.md \
+    || fail "Epic: line missing from the roadmap"
+  # Right after Destination:, with a blank line between them.
+  awk '/^Destination:/{getline a; getline b; if (a == "" && b == "Epic: epic/idea-x") found=1} END{exit !found}' \
+    .ai/specs/idea-x/roadmap.md || fail "Epic: line not placed after Destination: with a blank line"
+  # The branch is not cut yet: the line has to reach main first.
+  if git rev-parse --verify --quiet epic/idea-x >/dev/null; then
+    fail "branch created before the Epic: line reached main"
+  fi
+}
+
+test_spec_epic_roadmap_without_destination_dies() {
+  epic_setup
+  mkdir -p .ai/specs/bare
+  printf '# Bare\n' > .ai/specs/bare/spec.md
+  printf 'Nothing here.\n' > .ai/specs/bare/roadmap.md
+  git add -A
+  git commit -q -m "add bare spec"
+
+  run jig spec epic bare
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "has no Destination: line to put the Epic: line after"
+  assert_not_contains "$(cat .ai/specs/bare/roadmap.md)" "Epic:"
+}
+
+test_spec_epic_refuses_before_the_line_reaches_main() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  # Declares the line in the working copy only — deliberately left uncommitted.
+  jig spec epic idea-x >/dev/null
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the Epic: line of .ai/specs/idea-x/roadmap.md is not on main yet; merge it into main first"
+}
+
+test_spec_epic_creates_branch_on_freshest_main_without_checkout() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  local sha
+  sha=$(git rev-parse main)
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "created: epic/idea-x at $sha"
+  assert_contains "$OUT" 'push it with `git push -u origin epic/idea-x`'
+  assert_eq "$sha" "$(git rev-parse epic/idea-x)"
+  # No checkout: still on main.
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_epic_repeat_after_creation_says_exists() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_eq "exists: epic/idea-x" "$OUT"
+}
+
+test_spec_epic_exists_only_on_origin_is_found_via_fetch() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git push -q origin main epic/idea-x
+  git branch -D epic/idea-x
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_eq "exists: epic/idea-x" "$OUT"
+}
+
+test_spec_epic_declare_on_finished_epic_suggests_reopen() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+  git checkout -q main
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'epic epic/idea-x is finished; `jig spec epic idea-x --reopen` on it takes that back'
+}
+
+# --- spec epic --finish --------------------------------------------------------
+
+test_spec_epic_finish_no_epic_declared_dies() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x --finish
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declares no epic"
+}
+
+test_spec_epic_finish_requires_being_on_the_epic_branch() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+
+  run jig spec epic idea-x --finish
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--finish runs on epic/idea-x; switch to it first"
+}
+
+test_spec_epic_finish_requires_main_merged_in() {
+  epic_ready_to_finish idea-x
+  git checkout -q main
+  printf 'new\n' > new.txt
+  git add new.txt
+  git commit -q -m "new work on main"
+  git checkout -q epic/idea-x
+
+  run jig spec epic idea-x --finish
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic/idea-x does not contain the latest main; merge main into it first"
+}
+
+test_spec_epic_finish_warns_about_unchecked_items_but_does_not_refuse() {
+  # The template roadmap ships with unfinished items in both phases; --finish
+  # reports them rather than refusing (a later phase may be deferred on
+  # purpose), and fog items are never counted as unfinished work.
+  epic_ready_to_finish idea-x
+
+  run jig spec epic idea-x --finish
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "still has unchecked items"
+  assert_contains "$OUT" "<task-id>"
+  assert_not_contains "$OUT" "why it cannot be stated precisely yet"
+}
+
+test_spec_epic_finish_rewrites_the_line() {
+  epic_ready_to_finish idea-x
+
+  run jig spec epic idea-x --finish
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/specs/idea-x/roadmap.md: Epic: epic/idea-x — finished"
+  assert_contains "$OUT" "commit it with the version bump, then open the pull request from epic/idea-x into main"
+  grep -qx 'Epic: epic/idea-x — finished' .ai/specs/idea-x/roadmap.md \
+    || fail "line was not rewritten to finished"
+}
+
+test_spec_epic_finish_already_finished_dies() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+
+  run jig spec epic idea-x --finish
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic epic/idea-x is already finished"
+}
+
+# --- spec epic --reopen --------------------------------------------------------
+
+test_spec_epic_reopen_rewrites_the_line() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+
+  run jig spec epic idea-x --reopen
+  assert_eq 0 "$RC"
+  assert_eq ".ai/specs/idea-x/roadmap.md: Epic: epic/idea-x" "$OUT"
+  grep -qx 'Epic: epic/idea-x' .ai/specs/idea-x/roadmap.md \
+    || fail "line was not reopened"
+}
+
+test_spec_epic_reopen_requires_being_on_the_epic() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+  git checkout -q main
+
+  run jig spec epic idea-x --reopen
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reopen runs on epic/idea-x; switch to it first"
+}
+
+test_spec_epic_reopen_requires_a_finished_line() {
+  epic_ready_to_finish idea-x
+
+  run jig spec epic idea-x --reopen
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic epic/idea-x is not finished"
+}
+
+test_spec_epic_reopen_no_epic_declared_dies() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+
+  run jig spec epic idea-x --reopen
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declares no epic"
+}
+
+# --- spec list: epic states (ADR-0040) -----------------------------------------
+
+test_spec_list_on_the_epic_shows_progress_with_suffix() {
+  epic_ready_to_finish idea-x
+
+  run jig spec list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "(on epic/idea-x)"
+}
+
+test_spec_list_off_the_epic_says_progress_is_on_the_epic() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+  # Stays on main: the branch exists, but progress is read on the epic.
+
+  run jig spec list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "epic/idea-x — progress is on the epic"
+}
+
+test_spec_list_epic_branch_missing() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  # The Epic: line has reached main, but the branch itself was never cut.
+
+  run jig spec list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "epic/idea-x — branch missing"
+}
+
+test_spec_list_finished_epic_shows_normal_progress() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish >/dev/null 2>&1
+  # Still on the epic branch: its own roadmap now says finished, and a
+  # finished epic reads like no epic at all.
+
+  run jig spec list
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "on epic/idea-x"
+  assert_not_contains "$OUT" "progress is on the epic"
+  assert_not_contains "$OUT" "branch missing"
+}

@@ -9,7 +9,7 @@ domains:
 paths:
   - scripts/lib/housekeeping.sh
 summary: Why git ancestry answers merged only for a branch with a reflog position of its own, and why a fast-forward onto the base is unknown.
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-16
 ---
 # ADR-0032: Ancestry answers `merged` only for a branch with work of its own, proven by the reflog
 
@@ -92,3 +92,8 @@ which worktrees share.
 - Tests that commit and merge within one second must move git's clock (`hk_tick`).
 - A branch whose own work was squashed or rebased onto the base still lands as before: its own
   position is contained in the tip, and the squash and rebase shapes decide from there.
+
+> **Amendment (2026-09-16).** The base reflogs are read for every distinct task base, not for
+> `git.base_branch` alone, and a task's own work is judged only against its own base's reflog
+> (ADR-0039). Against `main`'s reflog, every commit an epic gained would count as a phase branch's
+> own.

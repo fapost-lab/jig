@@ -78,6 +78,13 @@ intent: no branch, no checkout change. `task start` cuts the branch and records 
 it forked from, which is why it belongs at the moment work actually begins — a fork point
 recorded weeks earlier is wrong by the time anything reads it.
 
+**The base is chosen for you.** `task start` fetches, then cuts the branch from the default
+branch — or, for a task linked to a spec with an open epic, from the epic — and records it as
+`base_branch` (`jig task show <id>`). The task's pull request goes into that base; one merged
+anywhere else is flagged `wrong-base` and kept. When start refuses because the spec is not in
+this checkout, the epic branch exists nowhere, or the epic is finished, tell the user what it
+said and ask. Never edit the `Spec:` line or create the branch just to get past it.
+
 **File without starting when the work is for later.** A task with no branch is listed as
 `not-started` and never becomes an ambiguous `task current` candidate, so parking an idea
 costs nothing and does not need a pause to stay out of the way. Pause means "was being

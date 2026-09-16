@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-16
 ---
 # Task
 
@@ -81,6 +81,13 @@ gets a branch of its own — but at `jig task start`, not at `jig task new`.
   one — legacy or unstarted — is one housekeeping must judge the old, weaker way.
 - `paused` means "was being worked on, set aside". It is not the way to say "not begun";
   that is what the missing `branch` says.
+
+**Where a task is cut from is recorded too** (ADR-0039, ADR-0040). `task start` writes
+`base_branch`: the default branch, or the open epic of the spec its `task.md` links to. It fetches
+first and refuses, rather than falling back to the default branch, when the spec is not in this
+checkout, the epic exists nowhere, or the epic is finished. Every judgement against a base —
+housekeeping, `task resume`, touched files for `context` and `knowledge paths` — reads it through
+`jig_task_base`; renaming it sends every epic task back to `main` in all of them at once.
 
 **Where a started task runs is a second, independent choice** (ADR-0029). `task start`
 checks the branch out here. `task start --worktree` checks it out in a Task Worktree beside

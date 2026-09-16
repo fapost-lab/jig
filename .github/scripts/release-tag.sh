@@ -26,12 +26,15 @@ set -o pipefail
 
 _release_die() { printf 'release: error: %s\n' "$*" >&2; exit 1; }
 
-RELEASE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts/lib" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELEASE_LIB="$(cd "$SCRIPT_DIR/../../scripts/lib" && pwd)"
 # shellcheck source=../../scripts/lib/common.sh
 . "$RELEASE_LIB/common.sh"
+# shellcheck source=release-lib.sh
+. "$SCRIPT_DIR/release-lib.sh"
 
 main() {
-  local dry=0 repo version tag remote_tags newest newest_version head
+  local dry=0 repo version tag remote_tags existing newest newest_version head
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) dry=1; shift ;;
@@ -63,22 +66,14 @@ main() {
   remote_tags=$(git -C "$repo" ls-remote --tags origin 2>/dev/null) \
     || _release_die "cannot list the tags of origin"
 
-  # Already released means a release tag with the same version number, not the
-  # same spelling: a tag name compared as a string would miss v01.0.0 and
-  # publish v1.0.0 as a second tag for one release.
-  local line ref ref_version
-  while IFS= read -r line; do
-    ref=${line##*refs/tags/}
-    ref=${ref%'^{}'}
-    ref_version=$(jig_release_version "$ref") || continue
-    if ! jig_version_newer "$ref_version" "$version" \
-       && ! jig_version_newer "$version" "$ref_version"; then
-      printf 'release: %s already exists, nothing to do\n' "$ref"
-      return 0
-    fi
-  done <<EOF
-$remote_tags
-EOF
+  # Already released means a release tag with the same version number, not
+  # the same spelling (release_existing_tag, release-lib.sh): a tag name
+  # compared as a string would miss v01.0.0 and publish v1.0.0 as a second
+  # tag for one release.
+  if existing=$(release_existing_tag "$version" "$remote_tags"); then
+    printf 'release: %s already exists, nothing to do\n' "$existing"
+    return 0
+  fi
 
   if newest=$(printf '%s\n' "$remote_tags" | jig_newest_release); then
     newest_version=$(jig_release_version "$newest")

@@ -94,3 +94,36 @@ links are skipped. `--dry-run` prints the same lines as `would-abandon`, `would-
 `would-move` and changes nothing. Git is not touched.
 
 A copy of a spec directory in another project is a separate spec; nothing links the two.
+
+## The `Epic:` line in `roadmap.md`
+
+A spec released once, at the end, declares its epic branch (ADR-0040) with one whole line, written
+after `Destination:`:
+
+| Line | Meaning |
+|---|---|
+| none | tasks are cut from `git.base_branch` |
+| `Epic: epic/<spec-id>` | open: `jig task start` cuts linked tasks from the branch |
+| `Epic: epic/<spec-id> — finished` | closed before the final pull request (`—`, `-` or `--`) |
+
+Parsed by `jig_spec_epic` in `common.sh`. Two lines that disagree on the branch or its state are a
+conflict: `task start` and `spec epic` refuse. Any branch name is read; a caller checks it with
+`git check-ref-format --branch` before building a ref.
+
+`jig spec list` shows, for an open epic: the usual progress and `(on <branch>)` when the checkout is
+on the epic; `<branch> — progress is on the epic` elsewhere; `<branch> — branch missing` when neither
+the local nor the origin ref exists. A finished epic shows the usual progress. `jig status` prints
+`epic: <id> on <branch>, <n> commits behind <default>` or `epic: <id> on <branch>, branch missing`
+for each open epic.
+
+## `jig spec epic <spec-id> [--finish | --reopen]`
+
+| Situation | Result |
+|---|---|
+| no `Epic:` line | the line is inserted after `Destination:` (error without one); commit it and merge it into the default branch |
+| open line, branch exists locally or on origin (after a fetch) | `exists: <branch>`, exit 0 |
+| open line, not yet on the freshest default branch's committed roadmap | error |
+| open line, on the default branch | `created: <branch> at <sha>` — a local branch, no checkout; pushing is the human's step |
+| finished line | error, naming `--reopen` |
+| `--finish` | on the epic only, which must contain the freshest default branch; unchecked non-`fog:` items are warned about; the line becomes `— finished` |
+| `--reopen` | on the epic only, finished line only; the line becomes open again |

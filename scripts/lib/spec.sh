@@ -7,11 +7,12 @@
 #
 # A task links to a spec through one `Spec: .ai/specs/<id>/ — Phase <n>` line in
 # its task.md. `new` creates a spec, `done` checks a linked task's roadmap
-# items, `remove` unlinks a spec's open tasks and moves the spec to trash;
+# items, `remove` unlinks a spec's open tasks and moves the spec to trash,
+# `epic` declares, cuts, finishes and reopens a spec's epic branch (ADR-0040);
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec remove <id> [--dry-run] [--abandon-unstarted]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish | --reopen]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -21,6 +22,7 @@ cmd_spec() {
     list) spec_list "$@" ;;
     done) spec_done "$@" ;;
     remove) spec_remove "$@" ;;
+    epic) spec_epic "$@" ;;
     -h | --help)
       printf '%s\n' "$SPEC_USAGE" >&2
       return 0
@@ -164,7 +166,7 @@ spec_list() {
     if [ -n "$missing" ]; then
       state="incomplete (no $missing)"
     else
-      state=$(spec_progress "$root/$id/roadmap.md")
+      state=$(spec_list_state "$root/$id/roadmap.md")
     fi
     [ -n "$title" ] || title="-"
     # A tab cannot occur in any field: ids exclude it, and a heading is one
@@ -185,6 +187,213 @@ spec_list() {
   '
 }
 
+# spec_list_state <roadmap.md> — what `spec list` says about a spec's progress.
+#
+# The roadmap of a spec with an open epic is edited only on the epic, so its
+# copy anywhere else is stale by design: off the epic the line names where
+# progress is instead of showing old checkmarks as current. A finished epic's
+# roadmap reaches the default branch with the epic, current again (ADR-0040).
+spec_list_state() {
+  local roadmap="$1" line branch here
+  line=$(jig_spec_epic "$roadmap" 2>/dev/null) || line=""
+  if [ -z "$line" ] || [ "${line##* }" = finished ]; then
+    spec_progress "$roadmap"
+    return 0
+  fi
+  branch=${line% *}
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ "$here" = "$branch" ]; then
+    printf '%s (on %s)\n' "$(spec_progress "$roadmap")" "$branch"
+  elif ! git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+       || [ -z "$(jig_base_ref "$branch")" ]; then
+    printf '%s — branch missing\n' "$branch"
+  else
+    printf '%s — progress is on the epic\n' "$branch"
+  fi
+}
+
+# spec_epic_status — one line per spec with an open epic, for `jig status`:
+# where its work is, and how far the epic has fallen behind the default
+# branch it is kept current with by merging (ADR-0040). Read-only; the refs
+# are whatever this checkout last fetched.
+spec_epic_status() {
+  local root id line branch default base_ref epic_ref behind
+  root=$(spec_dir)
+  default=$(cfg git.base_branch main)
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    [ -f "$root/$id/roadmap.md" ] || continue
+    line=$(jig_spec_epic "$root/$id/roadmap.md" 2>/dev/null) || continue
+    [ -n "$line" ] && [ "${line##* }" = open ] || continue
+    branch=${line% *}
+    epic_ref=""
+    if git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+      epic_ref=$(jig_base_ref "$branch")
+    fi
+    if [ -z "$epic_ref" ]; then
+      printf 'epic: %s on %s, branch missing\n' "$id" "$branch"
+      continue
+    fi
+    base_ref=$(jig_base_ref "$default")
+    if [ -z "$base_ref" ]; then
+      printf 'epic: %s on %s\n' "$id" "$branch"
+      continue
+    fi
+    behind=$(git -C "$JIG_PROJECT" rev-list --count "$epic_ref..$base_ref" 2>/dev/null) || behind=""
+    if [ -n "$behind" ]; then
+      printf 'epic: %s on %s, %s commits behind %s\n' "$id" "$branch" "$behind" "$default"
+    else
+      printf 'epic: %s on %s\n' "$id" "$branch"
+    fi
+  done < <(spec_ids)
+}
+
+# --- epic branches ---------------------------------------------------------------
+
+# spec_epic <id> [--finish | --reopen] — the epic branch of a spec released
+# once, at the end (ADR-0040).
+#
+# Without a flag: declare the epic with an `Epic: epic/<id>` line when the
+# roadmap has none, and stop — the line has to reach the default branch before
+# the epic is cut from it, or neither the epic nor a checkout of the default
+# branch would know where the spec's tasks go. With the line on the freshest
+# default branch, cut `epic/<id>` there, without a checkout; pushing it is the
+# human's step. `--finish`, on the epic after the default branch was merged
+# into it, closes the line before the final pull request; `--reopen` takes
+# that back when review of the final pull request needs a fix.
+spec_epic() {
+  [ $# -ge 1 ] || jig_die "spec epic: missing spec id (usage: jig spec epic <id> [--finish | --reopen])"
+  local id="$1" mode=declare
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --finish) [ "$mode" = declare ] || jig_die "spec epic: --finish and --reopen exclude each other"; mode=finish ;;
+      --reopen) [ "$mode" = declare ] || jig_die "spec epic: --finish and --reopen exclude each other"; mode=reopen ;;
+      *) jig_die "spec epic: unexpected argument: $1" ;;
+    esac
+    shift
+  done
+  spec_valid_id "$id" || jig_die "spec epic: invalid spec id: $id"
+  jig_require_init
+  local roadmap rel line rc=0
+  roadmap="$(spec_dir)/$id/roadmap.md"
+  rel="$JIG_AI_DIR/specs/$id/roadmap.md"
+  [ -f "$roadmap" ] || jig_die "spec epic: no such spec, or it has no roadmap: $rel"
+  line=$(jig_spec_epic "$roadmap") || rc=$?
+  [ "$rc" -ne 2 ] || jig_die "spec epic: $rel declares more than one epic; keep one Epic: line"
+
+  case "$mode" in
+    declare) spec_epic_declare "$id" "$roadmap" "$rel" "$line" ;;
+    finish) spec_epic_finish "$id" "$roadmap" "$rel" "$line" ;;
+    reopen) spec_epic_reopen "$id" "$roadmap" "$rel" "$line" ;;
+  esac
+}
+
+spec_epic_declare() {
+  local id="$1" roadmap="$2" rel="$3" line="$4" branch default start commit on_default rc=0
+  if [ -z "$line" ]; then
+    branch="epic/$id"
+    git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+      || jig_die "spec epic: git rejects the branch name: $branch"
+    spec_epic_write "$roadmap" "declare" "$branch"
+    printf '%s: Epic: %s\n' "$rel" "$branch"
+    jig_info "spec epic: commit $rel and merge it into $(cfg git.base_branch main), then run \`jig spec epic $id\` again to cut $branch"
+    return 0
+  fi
+  branch=${line% *}
+  [ "${line##* }" = open ] || jig_die "spec epic: epic $branch is finished; \`jig spec epic $id --reopen\` on it takes that back"
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+    || jig_die "spec epic: git rejects the branch name: $branch"
+  if [ -n "$(jig_base_ref "$branch")" ]; then
+    printf 'exists: %s\n' "$branch"
+    return 0
+  fi
+
+  default=$(cfg git.base_branch main)
+  jig_fetch_branches "spec epic" "$default"
+  # Checked again after the fetch: the epic may have been pushed by somebody
+  # else since this checkout last looked.
+  jig_fetch_branches "spec epic" "$branch" 2>/dev/null
+  if [ -n "$(jig_base_ref "$branch")" ]; then
+    printf 'exists: %s\n' "$branch"
+    return 0
+  fi
+  start=$(jig_fresh_base_ref "$default" "spec epic") || exit 1
+  [ "$start" != HEAD ] || jig_die "spec epic: $default exists neither here nor on origin"
+  commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) \
+    || jig_die "spec epic: cannot resolve $start"
+  on_default=$(git -C "$JIG_PROJECT" show "$commit:$rel" 2>/dev/null | jig_spec_epic -) || rc=$?
+  [ "$rc" -eq 0 ] && [ "$on_default" = "$branch open" ] \
+    || jig_die "spec epic: the Epic: line of $rel is not on $default yet; merge it into $default first"
+  git -C "$JIG_PROJECT" branch "$branch" "$commit" >/dev/null 2>&1 \
+    || jig_die "spec epic: could not create $branch"
+  printf 'created: %s at %s\n' "$branch" "$commit"
+  jig_info "spec epic: push it with \`git push -u origin $branch\`"
+}
+
+spec_epic_finish() {
+  local id="$1" roadmap="$2" rel="$3" line="$4" branch here default start open_items
+  [ -n "$line" ] || jig_die "spec epic: $rel declares no epic"
+  branch=${line% *}
+  [ "${line##* }" = open ] || jig_die "spec epic: epic $branch is already finished"
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$here" = "$branch" ] || jig_die "spec epic: --finish runs on $branch; switch to it first"
+  default=$(cfg git.base_branch main)
+  jig_fetch_branches "spec epic" "$default"
+  start=$(jig_fresh_base_ref "$default" "spec epic") || exit 1
+  if [ "$start" != HEAD ] \
+     && ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$start" HEAD 2>/dev/null; then
+    jig_die "spec epic: $branch does not contain the latest $default; merge $default into it first"
+  fi
+  # Unchecked items are reported, not refused: a later phase may have been
+  # set aside on purpose. Fog is never counted as unfinished work.
+  open_items=$(awk '/^[[:space:]]*- \[ \] / && !/^[[:space:]]*- \[ \] fog:/' "$roadmap")
+  if [ -n "$open_items" ]; then
+    jig_warn "spec epic: $rel still has unchecked items:"
+    printf '%s\n' "$open_items" | sed 's/^[[:space:]]*/  /' >&2
+  fi
+  spec_epic_write "$roadmap" finish "$branch"
+  printf '%s: Epic: %s — finished\n' "$rel" "$branch"
+  jig_info "spec epic: commit it with the version bump, then open the pull request from $branch into $default"
+}
+
+spec_epic_reopen() {
+  local id="$1" roadmap="$2" rel="$3" line="$4" branch here
+  [ -n "$line" ] || jig_die "spec epic: $rel declares no epic"
+  branch=${line% *}
+  [ "${line##* }" = finished ] || jig_die "spec epic: epic $branch is not finished"
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$here" = "$branch" ] || jig_die "spec epic: --reopen runs on $branch; switch to it first"
+  spec_epic_write "$roadmap" reopen "$branch"
+  printf '%s: Epic: %s\n' "$rel" "$branch"
+}
+
+# spec_epic_write <roadmap> <declare|finish|reopen> <branch> — rewrite the
+# Epic: line in place, atomically. `declare` puts it after the Destination:
+# line and refuses a roadmap without one.
+spec_epic_write() {
+  local roadmap="$1" op="$2" branch="$3" tmp
+  tmp="$roadmap.tmp.$$"
+  awk -v op="$op" -v b="$branch" '
+    function epic_line(l) { return l ~ /^Epic:[[:space:]]+[^[:space:]]+([[:space:]]+(—|-|--)[[:space:]]+finished)?[[:space:]]*$/ }
+    op == "declare" {
+      print
+      if (!done && $0 ~ /^Destination:/) { print ""; print "Epic: " b; done = 1 }
+      next
+    }
+    epic_line($0) { print (op == "finish" ? "Epic: " b " — finished" : "Epic: " b); next }
+    { print }
+    END { if (op == "declare" && !done) exit 3 }
+  ' "$roadmap" > "$tmp" || {
+    rm -f "$tmp"
+    if [ "$op" = declare ]; then
+      jig_die "spec epic: $roadmap has no Destination: line to put the Epic: line after"
+    fi
+    jig_die "spec epic: could not rewrite $roadmap"
+  }
+  mv "$tmp" "$roadmap" || jig_die "spec epic: could not write $roadmap"
+}
+
 # --- task links ----------------------------------------------------------------
 
 # spec_task_dir <task-id> — a task workspace in this checkout. The one place
@@ -195,29 +404,6 @@ spec_list() {
 spec_task_dir() {
   jig_valid_id "$1" || return 1
   printf '%s/%s/workspace/tasks/%s\n' "$JIG_PROJECT" "$JIG_AI_DIR" "$1"
-}
-
-# spec_link_of <task.md> — the spec id the task links to, or nothing.
-#
-# A link is a whole line `Spec: .ai/specs/<id>/`, optionally followed by a
-# dash and `Phase <n>`. A line whose id breaks the id grammar links to
-# nothing. Exits 2 when the file links to two different specs: which roadmap
-# to mark would be a guess.
-spec_link_of() {
-  awk '
-    /^Spec: \.ai\/specs\/[A-Za-z0-9._-]+\/([[:space:]]+(—|-|--)[[:space:]]+Phase[[:space:]]+[0-9]+)?[[:space:]]*$/ {
-      id = $0
-      sub(/^Spec: \.ai\/specs\//, "", id)
-      sub(/\/.*$/, "", id)
-      if (id ~ /^[.-]/) next
-      if (found == "") found = id
-      else if (found != id) conflict = 1
-    }
-    END {
-      if (conflict) exit 2
-      if (found != "") print found
-    }
-  ' "$1"
 }
 
 # spec_task_state <task-dir> <key> — one key of a task's state file, or
@@ -240,7 +426,7 @@ spec_done() {
   jig_require_init
   tdir=$(spec_task_dir "$tid") || jig_die "spec done: invalid task id: $tid"
   [ -f "$tdir/task.md" ] || jig_die "spec done: unknown task: $tid (no $JIG_AI_DIR/workspace/tasks/$tid/task.md)"
-  sid=$(spec_link_of "$tdir/task.md") || rc=$?
+  sid=$(jig_spec_link "$tdir/task.md") || rc=$?
   [ "$rc" = 0 ] || jig_die "spec done: $tid links to more than one spec in its task.md"
   if [ -z "$sid" ]; then
     printf 'spec done: %s is not linked to a spec\n' "$tid"
@@ -373,7 +559,7 @@ spec_remove() {
     local_ids="$local_ids $tid "
     [ -f "$d/task.md" ] || continue
     lrc=0
-    link=$(spec_link_of "$d/task.md") || lrc=$?
+    link=$(jig_spec_link "$d/task.md") || lrc=$?
     if [ "$lrc" != 0 ]; then
       # A task that links to two specs cannot be unlinked by guessing which
       # line is meant; it is left alone and named when one of them is this

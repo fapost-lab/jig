@@ -118,14 +118,16 @@ $rel"
   specs=$(spec_count)
   if [ "$specs" -gt 0 ]; then
     printf 'specs: %s (jig spec list)\n' "$specs"
+    spec_epic_status
   else
     printf 'specs: none\n'
   fi
 
   # shellcheck source=lib/task.sh
   . "$JIG_LIB/task.sh"
-  local found=0 finished=0 state_file tid class st paused reason line branch worktrees wt
+  local found=0 finished=0 state_file tid class st paused reason line branch base_branch default_base worktrees wt
   worktrees=$(_task_worktrees)
+  default_base=$(cfg git.base_branch main)
   for state_file in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
     [ -f "$state_file" ] || continue
     tid=$(sed -n 's/^task_id:[[:space:]]*//p' "$state_file" | head -n 1)
@@ -147,6 +149,11 @@ $rel"
     if [ -n "$branch" ]; then
       wt=$(_task_worktree_for "$branch" "$worktrees")
       [ -z "$wt" ] || line="$line $(_task_worktree_note "$wt")"
+    fi
+    # Same rule as `jig task list`: the base only where it is not the project's.
+    base_branch=$(sed -n 's/^base_branch:[[:space:]]*//p' "$state_file" | head -n 1)
+    if [ -n "$base_branch" ] && [ "$base_branch" != "$default_base" ]; then
+      line="$line base=$base_branch"
     fi
     if [ "$paused" = "true" ]; then
       reason=$(sed -n 's/^paused_reason:[[:space:]]*//p' "$state_file" | head -n 1)
@@ -198,7 +205,7 @@ $rel"
   # Both halves matter: the log is append-only, so scanning all of it reports
   # a task flagged on three consecutive days as three tasks, and keeps
   # reporting one that was consolidated months ago.
-  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log" nc kept
+  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log" nc kept wrong
   if [ -f "$hk_log" ]; then
     nc=$(_status_flagged "$hk_log" needs-consolidation)
     if [ "$nc" != "0" ]; then
@@ -210,6 +217,12 @@ $rel"
     kept=$(_status_flagged "$hk_log" worktree-kept)
     if [ "$kept" != "0" ]; then
       printf '%s\n' "worktrees kept: $kept task(s) (see .ai/runtime/housekeeping.log)"
+    fi
+    # Work that landed somewhere other than the task's base: kept, and only a
+    # person can say where it should have gone (ADR-0039).
+    wrong=$(_status_flagged "$hk_log" wrong-base)
+    if [ "$wrong" != "0" ]; then
+      printf '%s\n' "wrong base: $wrong task(s) (see .ai/runtime/housekeeping.log)"
     fi
   fi
 

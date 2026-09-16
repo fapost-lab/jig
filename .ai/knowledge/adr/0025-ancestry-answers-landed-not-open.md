@@ -9,7 +9,7 @@ domains:
 paths:
   - scripts/lib/housekeeping.sh
 summary: Why git ancestry may only answer merged-or-unknown, and why a task on the base branch is unknown.
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-16
 ---
 # ADR-0025: Git ancestry answers "did it land", never "is it open"
 
@@ -80,3 +80,9 @@ exit code 3 meaningless from the first day.
 > fork are all commits the base already had — a task branch fast-forwarded onto a newer base.
 > "Positive evidence" for the fast-forward shape now includes a reflog position of the
 > branch's own. See ADR-0032.
+
+> **Amendment (2026-09-16).** "The base branch" is now the task's own base, `base_branch` in its
+> state, falling back to `git.base_branch` (ADR-0039): a task whose branch equals its own base is
+> `unknown`, and ancestry is judged against that base resolved origin first. Work merged into
+> another branch than the task's base is not `merged`: remote state stays `unknown` and the task is
+> flagged `wrong-base`. The vocabulary of four states is unchanged.

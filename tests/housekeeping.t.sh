@@ -94,6 +94,37 @@ test_housekeeping_decide_consolidated_merged_purges() {
   assert_eq "purge" "$(hk_decide consolidated merged "" 1 14 60)"
 }
 
+# --- released (ADR-0040): a phase merged into an epic that has not itself ----
+# reached the default branch is kept, not purged, until it has.
+
+test_housekeeping_decide_consolidated_merged_released_true_purges() {
+  # Explicit true is the same as the default omitted above.
+  assert_eq "purge" "$(hk_decide consolidated merged "" 1 14 60 true)"
+}
+
+test_housekeeping_decide_consolidated_merged_released_false_preserves_flagged() {
+  assert_eq "preserve base-unreleased" "$(hk_decide consolidated merged "" 1 14 60 false)"
+}
+
+test_housekeeping_decide_active_merged_ignores_released() {
+  # A phase still active or ready needs a human regardless of where its base
+  # stands: needs-consolidation is unaffected by released.
+  assert_eq "preserve needs-consolidation" "$(hk_decide active merged "" 1 14 60 false)"
+  assert_eq "preserve needs-consolidation" "$(hk_decide ready merged "" 1 14 60 false)"
+}
+
+test_housekeeping_decide_released_only_matters_for_consolidated_merged() {
+  # Every other status:remote pair is unaffected by released, false or true.
+  local st remote
+  for st in active ready consolidated abandoned; do
+    for remote in open closed unknown; do
+      [ "$st:$remote" = "consolidated:merged" ] && continue
+      assert_eq "$(hk_decide "$st" "$remote" "" 1 14 60 true)" \
+        "$(hk_decide "$st" "$remote" "" 1 14 60 false)" "released changed $st/$remote"
+    done
+  done
+}
+
 test_housekeeping_decide_active_merged_needs_consolidation() {
   assert_eq "preserve needs-consolidation" "$(hk_decide active merged "" 1 14 60)"
 }
@@ -498,7 +529,7 @@ test_housekeeping_forge_state_wins_over_ancestry() {
   hk_cfg forge github
   fixture_merge_repo
   # The branch is unmerged locally; the forge says it was merged.
-  hk_stub_gh "still-open$(printf '\t')MERGED"
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')MERGED"
   fixture_task op "still-open" consolidated
 
   run jig housekeeping --verbose
@@ -510,7 +541,7 @@ test_housekeeping_forge_reports_closed_which_ancestry_cannot() {
   hk_setup
   hk_cfg forge github
   fixture_merge_repo
-  hk_stub_gh "still-open$(printf '\t')CLOSED"
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')CLOSED"
   fixture_task op "still-open" active
 
   run jig housekeeping --verbose
@@ -524,7 +555,7 @@ test_housekeeping_forge_none_skips_the_tier_entirely() {
   hk_setup
   hk_cfg forge none
   fixture_merge_repo
-  hk_stub_gh "still-open$(printf '\t')MERGED"
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')MERGED"
   fixture_task op "still-open" consolidated
 
   run jig housekeeping --verbose
@@ -537,7 +568,7 @@ test_housekeeping_branch_without_a_pull_request_falls_through_to_ancestry() {
   hk_setup
   hk_cfg forge github
   fixture_merge_repo
-  hk_stub_gh "some-other-branch$(printf '\t')MERGED"
+  hk_stub_gh "some-other-branch$(printf '\t')main$(printf '\t')MERGED"
   fixture_task ff "ff-merged" consolidated
 
   run jig housekeeping --verbose
@@ -550,6 +581,74 @@ test_housekeeping_rejects_an_invalid_forge_value() {
   run jig housekeeping
   assert_eq 1 "$RC"
   assert_contains "$OUT" "invalid forge"
+}
+
+# --- forge wrong-base (ADR-0039) -----------------------------------------------
+# A pull request into a branch other than the task's own base is not the
+# task's landing: a phase merged into `main` instead of its epic, or stacked
+# on another phase's branch, must not read as done.
+
+test_housekeeping_forge_pr_into_a_non_default_task_base_decides_as_before() {
+  hk_setup
+  hk_cfg forge github
+  git branch epic/x
+  git branch op
+  hk_stub_gh "op$(printf '\t')epic/x$(printf '\t')MERGED"
+  fixture_task op "op" consolidated "base_branch:epic/x"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remote=merged via=forge"
+  assert_not_contains "$OUT" "flags=wrong-base"
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/op/state"
+}
+
+test_housekeeping_forge_merged_into_another_base_flags_wrong_base() {
+  hk_setup
+  hk_cfg forge github
+  git branch op
+  hk_stub_gh "op$(printf '\t')release$(printf '\t')MERGED"
+  fixture_task op "op" consolidated
+
+  run jig housekeeping --verbose
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "remote=unknown via=forge"
+  assert_contains "$OUT" "flags=wrong-base"
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "  pull request merged into release, not main: op"
+  assert_dir .ai/workspace/tasks/op
+
+  run jig status
+  assert_contains "$OUT" "wrong base: 1 task(s)"
+}
+
+test_housekeeping_forge_stacked_pr_into_another_task_branch_flags_wrong_base() {
+  # "Another base" need not be the project's default: a phase stacked on
+  # another task's branch is just as much a wrong landing.
+  hk_setup
+  hk_cfg forge github
+  git branch op
+  hk_stub_gh "op$(printf '\t')task/phase1$(printf '\t')MERGED"
+  fixture_task op "op" active
+
+  run jig housekeeping --verbose
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "flags=wrong-base"
+  assert_contains "$OUT" "  pull request merged into task/phase1, not main: op"
+}
+
+test_housekeeping_forge_newer_open_pr_into_task_base_beats_older_merged_elsewhere() {
+  hk_setup
+  hk_cfg forge github
+  git branch op
+  hk_stub_gh "op$(printf '\t')release$(printf '\t')MERGED
+op$(printf '\t')main$(printf '\t')OPEN"
+  fixture_task op "op" active
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remote=open via=forge"
+  assert_not_contains "$OUT" "flags=wrong-base"
 }
 
 # --- session hook (domains/housekeeping) -------------------------------------------------
@@ -1088,6 +1187,273 @@ test_housekeeping_no_reflog_for_branch_stays_unknown() {
   assert_contains "$OUT" "noreflog status=consolidated remote=unknown"
   assert_contains "$OUT" \
     "no reflog for its branch, so its own commits cannot be told from main's: noreflog"
+}
+
+# --- tasks cut from a base other than the project's default (ADR-0039) --------
+
+test_housekeeping_two_task_bases_in_one_run_both_merged_by_ancestry() {
+  # Task a lands on the project's default base; task b lands on its own
+  # epic base. Neither is main, so each has to be judged against its own.
+  hk_setup
+  local fork_main fork_epic
+  fork_main=$(git rev-parse HEAD)
+  hk_tick
+  git branch epic/x
+  fork_epic=$(git rev-parse epic/x)
+
+  hk_tick
+  git checkout -q -b task/a
+  printf 'a\n' > a.txt
+  git add a.txt
+  hk_tick
+  git commit -q -m "task a work"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/a" task/a
+
+  hk_tick
+  git checkout -q -b task/b epic/x
+  printf 'b\n' > b.txt
+  git add b.txt
+  hk_tick
+  git commit -q -m "task b work"
+  hk_tick
+  git checkout -q epic/x
+  git merge -q --no-ff -m "merge task/b into epic/x" task/b
+  git checkout -q main
+
+  fixture_task a "task/a" consolidated "base_commit:$fork_main"
+  fixture_task b "task/b" consolidated "base_branch:epic/x" "base_commit:$fork_epic"
+
+  # a lands on main, the project's default base, and is purged as before; b
+  # lands on epic/x, which has not itself reached main, so it is judged
+  # merged against its own base (the purpose of this test) but kept rather
+  # than purged (ADR-0040: a phase's workspace survives until its epic does).
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "a status=consolidated remote=merged via=ancestry action=purge"
+  assert_contains "$OUT" "b status=consolidated remote=merged via=ancestry action=preserve flags=base-unreleased"
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/a/state"
+  assert_dir .ai/workspace/tasks/b
+}
+
+# --- released: a phase's workspace waits for its epic to reach main (ADR-0040) -
+
+test_housekeeping_phase_merged_into_epic_only_waits_for_the_epic_to_reach_main() {
+  hk_setup
+  local fork_epic
+  git branch epic/x
+  fork_epic=$(git rev-parse epic/x)
+  hk_tick
+  git checkout -q -b task/b epic/x
+  printf 'b\n' > b.txt
+  git add b.txt
+  hk_tick
+  git commit -q -m "task b work"
+  hk_tick
+  git checkout -q epic/x
+  git merge -q --no-ff -m "merge task/b into epic/x" task/b
+  git checkout -q main
+
+  fixture_task b "task/b" consolidated "base_branch:epic/x" "base_commit:$fork_epic"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "waiting for merge (1): consolidated, pull request still open"
+  assert_contains "$OUT" "waiting for epic/x to reach main: b"
+  assert_dir .ai/workspace/tasks/b
+}
+
+test_housekeeping_phase_merged_into_epic_purges_once_the_epic_reaches_main_by_ancestry() {
+  hk_setup
+  local fork_epic
+  git branch epic/x
+  fork_epic=$(git rev-parse epic/x)
+  hk_tick
+  git checkout -q -b task/b epic/x
+  printf 'b\n' > b.txt
+  git add b.txt
+  hk_tick
+  git commit -q -m "task b work"
+  hk_tick
+  git checkout -q epic/x
+  git merge -q --no-ff -m "merge task/b into epic/x" task/b
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge epic/x into main" epic/x
+
+  fixture_task b "task/b" consolidated "base_branch:epic/x" "base_commit:$fork_epic"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "b status=consolidated remote=merged via=ancestry action=purge"
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/b/state"
+}
+
+test_housekeeping_forge_merged_pr_from_epic_to_main_purges_the_phase() {
+  hk_setup
+  hk_cfg forge github
+  local fork_epic
+  git branch epic/x
+  fork_epic=$(git rev-parse epic/x)
+  hk_tick
+  git checkout -q -b task/b epic/x
+  printf 'b\n' > b.txt
+  git add b.txt
+  hk_tick
+  git commit -q -m "task b work"
+  hk_tick
+  git checkout -q epic/x
+  git merge -q --no-ff -m "merge task/b into epic/x" task/b
+  git checkout -q main
+  # Only the epic's own pull request into main is in the forge listing; the
+  # task's branch has no pull request of its own, so it reads as merged by
+  # ancestry into the epic, and released comes from the epic's forge PR.
+  hk_stub_gh "epic/x$(printf '\t')main$(printf '\t')MERGED"
+  fixture_task b "task/b" consolidated "base_branch:epic/x" "base_commit:$fork_epic"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "b status=consolidated remote=merged via=ancestry action=purge"
+  assert_file ".ai/runtime/trash/$(date +%Y-%m-%d)/b/state"
+}
+
+test_housekeeping_forge_configured_without_the_epic_pr_and_no_ancestry_keeps_the_phase() {
+  hk_setup
+  hk_cfg forge github
+  local fork_epic
+  git branch epic/x
+  fork_epic=$(git rev-parse epic/x)
+  hk_tick
+  git checkout -q -b task/b epic/x
+  printf 'b\n' > b.txt
+  git add b.txt
+  hk_tick
+  git commit -q -m "task b work"
+  hk_tick
+  git checkout -q epic/x
+  git merge -q --no-ff -m "merge task/b into epic/x" task/b
+  git checkout -q main
+  # A forge is configured, but neither the epic's pull request nor its
+  # ancestry into main answers "released" — kept rather than guessed.
+  hk_stub_gh "unrelated$(printf '\t')main$(printf '\t')MERGED"
+  fixture_task b "task/b" consolidated "base_branch:epic/x" "base_commit:$fork_epic"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "b status=consolidated remote=merged via=ancestry action=preserve flags=base-unreleased"
+  assert_dir .ai/workspace/tasks/b
+}
+
+test_housekeeping_branch_equals_its_own_non_default_base_is_unknown() {
+  # The same tautology test_housekeeping_task_on_the_base_branch_is_unknown_
+  # not_merged guards against for main, for a task whose base is an epic.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  git branch epic/x
+  fixture_task onepic "epic/x" consolidated "base_branch:epic/x" "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "onepic status=consolidated remote=unknown via=none action=preserve"
+  assert_not_contains "$OUT" "flags=wrong-base"
+  assert_dir .ai/workspace/tasks/onepic
+}
+
+test_housekeeping_own_work_reflog_uses_the_tasks_base_not_main() {
+  # ADR-0032's own-work guard, now per base: a branch fast-forwarded onto its
+  # epic with no commits of its own must stay unknown, even though main's
+  # reflog — the only one the old, single-base code read — knows nothing
+  # about the epic's commits at all.
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git branch epic/x
+  hk_tick
+  git checkout -q -b task/ff epic/x
+  hk_tick
+  git checkout -q epic/x
+  printf 'epic work\n' > epic-work.txt
+  git add epic-work.txt
+  hk_tick
+  git commit -q -m "epic moves on"
+  hk_tick
+  git checkout -q task/ff
+  git merge -q --ff-only epic/x
+  git checkout -q main
+  fixture_task ff "task/ff" ready "base_branch:epic/x" "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ff status=ready remote=unknown"
+  assert_not_contains "$OUT" "flags=needs-consolidation"
+}
+
+test_housekeeping_ancestry_merged_into_default_base_flags_wrong_base() {
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git branch epic/x
+  hk_tick
+  git checkout -q -b task/wb epic/x
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/wb into main" task/wb
+  fixture_task wb "task/wb" consolidated "base_branch:epic/x" "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "remote=unknown via=ancestry"
+  assert_contains "$OUT" "flags=wrong-base"
+  assert_contains "$OUT" "  its branch is merged into main, not epic/x: wb"
+  assert_dir .ai/workspace/tasks/wb
+
+  run jig status
+  assert_contains "$OUT" "wrong base: 1 task(s)"
+}
+
+test_housekeeping_ancestry_no_wrong_base_when_the_epic_ref_is_gone() {
+  # Asked only while the task's own base still resolves: with it gone, "not
+  # on the base" is nothing more than "the base is not here".
+  hk_setup
+  local fork
+  fork=$(git rev-parse HEAD)
+  hk_tick
+  git checkout -q -b task/gone
+  printf 'own\n' > own.txt
+  git add own.txt
+  hk_tick
+  git commit -q -m "own work"
+  hk_tick
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/gone into main" task/gone
+  fixture_task gone "task/gone" consolidated "base_branch:epic/nonexistent" "base_commit:$fork"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remote=unknown via=none"
+  assert_not_contains "$OUT" "flags=wrong-base"
+}
+
+test_housekeeping_task_without_a_base_branch_field_never_flags_wrong_base() {
+  # Every workspace from before this field existed carries no base_branch
+  # line; jig_task_base falls back to the configured base and nothing here
+  # is new behaviour.
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ff status=consolidated remote=merged via=ancestry action=purge"
+  assert_not_contains "$OUT" "flags=wrong-base"
 }
 
 # --- what a purged task leaves behind ----------------------------------------

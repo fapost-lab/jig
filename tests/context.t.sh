@@ -314,6 +314,56 @@ EOF
   assert_contains "$OUT" ".ai/knowledge/features/untracked.md"
 }
 
+test_context_git_derived_respects_the_tasks_own_base() {
+  # A task cut from an epic branch, not from main (ADR-0039). Its own commit
+  # must be seen; the epic's earlier commit, which never touched main, must
+  # not — until the task base is dropped, when the old main-relative answer
+  # returns.
+  ctx_setup
+  cat > .ai/knowledge/features/epiconly.md <<'EOF'
+---
+id: feature-epiconly
+type: feature
+status: active
+paths:
+  - "epic.php"
+---
+EOF
+  cat > .ai/knowledge/features/ownonly.md <<'EOF'
+---
+id: feature-ownonly
+type: feature
+status: active
+paths:
+  - "own.php"
+---
+EOF
+  git checkout -q -b epic/x
+  printf '<?php\n' > epic.php
+  git add epic.php
+  git commit -q -m "epic work"
+
+  git checkout -q -b task/kt epic/x
+  printf '<?php\n' > own.php
+  git add own.php
+  git commit -q -m "own work"
+
+  jig task new T-1 >/dev/null
+  printf 'base_branch: epic/x\n' >> .ai/workspace/tasks/T-1/state
+
+  run jig context --task T-1 --format paths
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ownonly.md"
+  assert_not_contains "$OUT" "epiconly.md"
+
+  # No task named: jig_task_base answers with the configured base (main), and
+  # the epic's own commit — never on main — is touched again.
+  run jig context --format paths
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ownonly.md"
+  assert_contains "$OUT" "epiconly.md"
+}
+
 # --- status filtering ------------------------------------------------------------------
 
 test_context_skips_superseded_deprecated_rejected_unless_all() {

@@ -116,6 +116,10 @@ comment repeats these rules.
 - Waves group items that can run at the same time, in separate worktrees (ADR-0029). Wave N
   depends only on earlier waves.
 - No dates and no point estimates: order is the priority.
+- **Released once, at the end?** When no phase gives a user anything on its own, the spec gets
+  an epic branch (ADR-0040): write `Epic: epic/<id>` on its own line after `Destination:`. The
+  line reaches the default branch with the spec; then `jig spec epic <id>` cuts the branch and
+  the human pushes it. A spec whose phases each ship on their own gets no line — ask when unsure.
 
 Look up the facts the cut depends on ("where does this live", "is this one part of the
 code") yourself, in parallel subagents where possible, each with its source. Decide the cut
@@ -156,10 +160,19 @@ Check the result:
 3. Rewrite the item in `roadmap.md` to start with the id: ``- [ ] `<task-id>` — <goal>``. One task
    may cover several items; each of them then names it. Show the changed phase verbatim.
 
+A spec with an open epic is edited only on the epic — filing included: switch to the epic
+first. Anywhere else `jig spec list` says `progress is on the epic`.
+
 The tasks are filed, not started. When the human wants to begin one, hand it to `jig-task`. The
 item is checked later by `jig spec done`, called from consolidation — never by hand.
 
 ## 11. Moving or dropping a spec
+
+- **Finishing an epic**, when the human says every phase is in: merge the latest default branch
+  into the epic, run `jig spec epic <id> --finish` on it and commit that together with the version
+  bump, then the human opens the pull request from the epic into the default branch. If review
+  of that pull request needs a fix, `jig spec epic <id> --reopen` on the epic, fix it as an
+  ordinary task, and finish again.
 
 - **Starting a new project from a spec**: copy `.ai/specs/<id>/` into that project, which needs
   Jig 0.3.0 or later. From then on its own Jig tracks the spec; nothing links the two copies.

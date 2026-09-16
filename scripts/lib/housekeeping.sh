@@ -14,13 +14,15 @@
 # it lives in these run-scoped globals and in the log.
 _HK_VIA=""          # tier that decided the last remote state: forge|ancestry|none
 _HK_FORGE_KIND=""   # github|gitlab|none — resolved once per run
-_HK_FORGE_PRS=""    # "<branch><TAB><state>" lines, fetched once per run (C1)
+_HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state>" lines, fetched once per run (C1)
 _HK_STALE_REMOTE=0  # 1 when the fetch or the forge tier could not answer
 _HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
 _HK_ROWS=""         # "<group>\t<task>\t<note>" per task, printed as the report
 _HK_WT_LINE=""      # what _hk_worktree_retire did, as a --verbose line
 _HK_WT_NOTE=""      # ... and as a note in the grouped report
-_HK_BASE_LOG=""     # "<ref>\t<epoch>\t<sha>" reflog of the base refs, newest first, read once per run
+_HK_BASE_LOG=""     # "<base>\t<ref>\t<epoch>\t<sha>" reflog of every task base's refs, newest first, read once per run
+_HK_WRONG_NOTE=""   # why the last task was flagged wrong-base, as a note in the grouped report
+_HK_DEFAULT_BASE="" # git.base_branch, read once per run
 
 cmd_housekeeping() {
   jig_require_init
@@ -55,9 +57,10 @@ cmd_housekeeping() {
   abandoned_ttl_days=$(( $(jig_duration_seconds "$abandoned_ttl") / 86400 ))
   stale_after_days=$(( $(jig_duration_seconds "$stale_after") / 86400 ))
 
+  _HK_DEFAULT_BASE=$(cfg git.base_branch main)
   _hk_fetch "$dry"
   _hk_forge_init
-  _hk_base_reflog_init
+  _hk_base_reflog_init "$tasks_dir"
 
   # A run boundary in the log. Without it the log is an undifferentiated
   # append-only history, and any reader asking "what does the latest run say"
@@ -67,8 +70,8 @@ cmd_housekeeping() {
     _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   fi
 
-  local needs_consolidation=0 found=0
-  local state_file tid st paused age branch base_commit remote remote_pair decision action flags dest facts wt
+  local needs_consolidation=0 wrong_base=0 found=0
+  local state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt
 
   # Worktrees tasks were started in, from git's own list, read once per run.
   # A task's worktree goes when its workspace goes (ADR-0029).
@@ -97,15 +100,41 @@ cmd_housekeeping() {
       age=$(_hk_task_age_days "$tid")
 
       base_commit=$(task_state_get "$tid" base_commit)
-      remote_pair=$(_hk_remote_state "$branch" "$base_commit")
-      remote=${remote_pair%% *}
-      _HK_VIA=${remote_pair#* }
+      task_base=$(jig_task_base "$tid")
+      remote_pair=$(_hk_remote_state "$branch" "$base_commit" "$task_base")
+      read -r remote via landed <<EOF
+$remote_pair
+EOF
+      _HK_VIA=$via
+
+      # A task of an epic that landed on its epic has not reached the default
+      # branch yet; its records are kept for the epic's final review
+      # (ADR-0040). Asked only where it could matter: a merged task whose base
+      # is not the project's.
+      released=true
+      if [ "$remote" = merged ] && [ "$task_base" != "$_HK_DEFAULT_BASE" ]; then
+        released=$(_hk_released "$branch" "$base_commit" "$task_base")
+      fi
 
       decision=$(housekeeping_decide \
-        "$st" "$remote" "$paused" "$age" "$abandoned_ttl_days" "$stale_after_days")
+        "$st" "$remote" "$paused" "$age" "$abandoned_ttl_days" "$stale_after_days" "$released")
       action=${decision%% *}
       flags=${decision#* }
       [ "$flags" = "$decision" ] && flags=""
+
+      # Work that landed on another branch than the task's base. The remote
+      # state stays `unknown`, so the policy keeps the workspace; the flag is
+      # what tells a person why (ADR-0039).
+      _HK_WRONG_NOTE=""
+      if [ -n "$landed" ]; then
+        flags="${flags:+$flags,}wrong-base"
+        wrong_base=1
+        if [ "$via" = "forge" ]; then
+          _HK_WRONG_NOTE="pull request merged into $landed, not $task_base"
+        else
+          _HK_WRONG_NOTE="its branch is merged into $landed, not $task_base"
+        fi
+      fi
 
       case "$flags" in
         *needs-consolidation*) needs_consolidation=1 ;;
@@ -146,7 +175,7 @@ cmd_housekeeping() {
 
       _hk_report "$dry" "$tid" "$st" "$remote" "$action" "$flags" "$dest" "$facts"
       _hk_record "$tid" "$st" "$remote" "$action" "$flags" "$age" \
-        "$abandoned_ttl_days" "$branch" "$base_commit"
+        "$abandoned_ttl_days" "$branch" "$base_commit" "$task_base"
     done < <(find "$tasks_dir" -mindepth 2 -maxdepth 2 -name state -type f 2>/dev/null | LC_ALL=C sort)
   fi
 
@@ -174,6 +203,11 @@ cmd_housekeeping() {
   # already `task current`'s ambiguity code (domains/housekeeping).
   if [ "$needs_consolidation" = 1 ]; then
     printf 'action needed: consolidate the tasks flagged needs-consolidation\n'
+  fi
+  if [ "$wrong_base" = 1 ]; then
+    printf 'action needed: check the tasks flagged wrong-base; their work landed outside their base\n'
+  fi
+  if [ "$needs_consolidation" = 1 ] || [ "$wrong_base" = 1 ]; then
     return 3
   fi
   return 0
@@ -182,20 +216,28 @@ cmd_housekeeping() {
 # --- policy ------------------------------------------------------------------
 
 # housekeeping_decide <status> <remote> <paused> <age_days> <abandoned_ttl_days>
-#                     <stale_after_days>
+#                     <stale_after_days> [released]
 # Print "<action> [flags]" where action is purge|preserve and flags is a
-# comma-separated subset of needs-consolidation, abandoned?, STALE_CANDIDATE.
+# comma-separated subset of needs-consolidation, abandoned?, base-unreleased,
+# STALE_CANDIDATE. `released` (default true) is false for a task merged into a
+# base that has not reached the default branch yet — a phase of an open epic:
+# closed and merged, it is kept rather than purged (ADR-0040).
 #
 # A pure function of six strings: no filesystem, no git, no config. That is
 # what makes the domains/housekeeping policy table exhaustively testable, and it is the reason
 # the destructive decision is separated from the destructive act.
 housekeeping_decide() {
   local status="$1" remote="$2" paused="$3" age="$4" abandoned_ttl="$5" stale_after="$6"
+  local released="${7:-true}"
   local action="preserve" flags=""
 
   case "$status:$remote" in
     consolidated:merged)
-      action="purge"
+      if [ "$released" = true ]; then
+        action="purge"
+      else
+        flags="base-unreleased"
+      fi
       ;;
     active:merged|ready:merged)
       flags="needs-consolidation"
@@ -246,14 +288,18 @@ housekeeping_decide() {
 
 # --- remote state ------------------------------------------------------------
 
-# _hk_remote_state <branch> — print "<state> <via>" where state is
-# merged|open|closed|unknown and via is the tier that decided it (domains/housekeeping).
+# _hk_remote_state <branch> <base_commit> <base> — print "<state> <via>
+# [<landed-on>]" where state is merged|open|closed|unknown, via is the tier that
+# decided it (domains/housekeeping), and <landed-on> — present only with
+# `unknown` — names the branch the work was merged into instead of <base>
+# (the wrong-base flag, ADR-0039). There is no fifth state: work in the wrong
+# place is as unknown to the policy as work nowhere.
 #
 # Both values are printed rather than one of them assigned to a global,
 # because every caller reads this through `$(...)` and a subshell would
 # discard the assignment — the log would then report a tier that never ran.
 _hk_remote_state() {
-  local branch="$1" base_commit="${2:-}" state
+  local branch="$1" base_commit="${2:-}" base="${3:-}" state default
 
   if [ -z "$branch" ] || [ "$branch" = "detached" ]; then
     # `detached` is task.sh:100's fallback when HEAD is not on a branch, not a
@@ -262,19 +308,68 @@ _hk_remote_state() {
     return 0
   fi
 
-  state=$(_hk_forge_state "$branch")
-  if [ -n "$state" ]; then
-    printf '%s forge\n' "$state"
-    return 0
-  fi
+  [ -n "$base" ] || base=$(cfg git.base_branch main)
 
-  state=$(_hk_ancestry_state "$branch" "$base_commit")
+  state=$(_hk_forge_state "$branch" "$base")
+  case "$state" in
+    '') ;;
+    wrong-base\ *)
+      printf 'unknown forge %s\n' "${state#wrong-base }"
+      return 0
+      ;;
+    *)
+      printf '%s forge\n' "$state"
+      return 0
+      ;;
+  esac
+
+  state=$(_hk_ancestry_state "$branch" "$base_commit" "$base")
   if [ "$state" = "merged" ]; then
     printf 'merged ancestry\n'
     return 0
   fi
 
+  # Without a forge the one wrong place git can show is the project's base: a
+  # task of another base whose branch is merged there. Asked only while the
+  # task's own base still resolves — with it gone, "not on the base" is
+  # nothing more than "the base is not here". And only with a fork point: without
+  # one, a branch that never moved reads as merged into anything it came from.
+  default=$(cfg git.base_branch main)
+  if [ -n "$base_commit" ] && [ "$base" != "$default" ] && [ -n "$(jig_base_ref "$base")" ] \
+     && [ "$(_hk_ancestry_state "$branch" "$base_commit" "$default")" = "merged" ]; then
+    printf 'unknown ancestry %s\n' "$default"
+    return 0
+  fi
+
   printf 'unknown none\n'
+}
+
+# _hk_released <branch> <base_commit> <base> — true|false: whether the work of a
+# task merged into <base> has also reached the default branch. Forge first: a
+# merged pull request from <base> into the default branch. Then ancestry of the
+# task's own branch against the default branch, which sees a merge commit and
+# a rebase of the epic but not a squash — a squashed epic reads as not
+# released, and its phases' workspaces stay (ADR-0040; when uncertain,
+# preserve).
+_hk_released() {
+  local branch="$1" base_commit="$2" base="$3" default="$_HK_DEFAULT_BASE"
+  [ -n "$default" ] || default=$(cfg git.base_branch main)
+  if [ "$base" = "$default" ]; then
+    printf 'true\n'
+    return 0
+  fi
+  if [ "$_HK_FORGE_KIND" != none ] && [ -n "$_HK_FORGE_PRS" ] \
+     && printf '%s\n' "$_HK_FORGE_PRS" | awk -F '\t' -v h="$base" -v b="$default" '
+          $1 == h && $2 == b && tolower($3) == "merged" { found = 1; exit }
+          END { exit !found }'; then
+    printf 'true\n'
+    return 0
+  fi
+  if [ "$(_hk_ancestry_state "$branch" "$base_commit" "$default")" = merged ]; then
+    printf 'true\n'
+    return 0
+  fi
+  printf 'false\n'
 }
 
 # _hk_fetch <dry> — refresh remote refs once per run when allowed. A failure
@@ -330,19 +425,30 @@ _hk_forge_init() {
       command -v gh >/dev/null 2>&1 || return 0
       gh auth status >/dev/null 2>&1 || return 0
       _HK_FORGE_PRS=$(gh pr list --state all --limit 200 \
-        --json headRefName,state \
-        --jq '.[] | "\(.headRefName)\t\(.state)"' 2>/dev/null || printf '__failed__')
+        --json headRefName,baseRefName,state \
+        --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)"' 2>/dev/null || printf '__failed__')
       ;;
     gitlab)
       command -v glab >/dev/null 2>&1 || return 0
       glab auth status >/dev/null 2>&1 || return 0
       # One JSON object per line first: `glab` returns a compact single-line
       # array, and a greedy `.*` across the whole line would keep only the
-      # last merge request and silently drop every other one.
+      # last merge request and silently drop every other one. Each field is
+      # then taken at its first occurrence, whatever the key order: nested
+      # objects (author, assignees) carry a `state` of their own, later on.
       _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
         | sed 's/},[[:space:]]*{/}\
 {/g' \
-        | sed -n 's/.*"source_branch":"\([^"]*\)".*"state":"\([^"]*\)".*/\1	\2/p' \
+        | awk '
+            function field(key,   k) {
+              k = "\"" key "\":\""
+              if (!match($0, k "[^\"]*\"")) return ""
+              return substr($0, RSTART + length(k), RLENGTH - length(k) - 1)
+            }
+            {
+              h = field("source_branch"); b = field("target_branch"); st = field("state")
+              if (h != "" && st != "") print h "\t" b "\t" st
+            }' \
         || printf '__failed__')
       ;;
   esac
@@ -358,15 +464,25 @@ _hk_forge_init() {
   return 0
 }
 
-# _hk_forge_state <branch> — merged|open|closed from the cached listing, or
-# nothing when this branch has no pull request (fall through to ancestry).
+# _hk_forge_state <branch> <base> — merged|open|closed from the newest pull
+# request of <branch> into <base>; `wrong-base <other>` when there is none but
+# one into another branch was merged; nothing otherwise (fall through to
+# ancestry). A pull request into another base is not the task's landing —
+# that is how a phase merged into `main` instead of its epic, or stacked on
+# another phase's branch, would read as done (ADR-0039).
 _hk_forge_state() {
-  local branch="$1" line raw
+  local branch="$1" base="$2" line raw
   [ "$_HK_FORGE_KIND" = "none" ] && return 0
   [ -n "$_HK_FORGE_PRS" ] || return 0
 
-  line=$(printf '%s\n' "$_HK_FORGE_PRS" | awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }')
+  line=$(printf '%s\n' "$_HK_FORGE_PRS" | awk -F'\t' -v b="$branch" -v base="$base" '
+    $1 == b && $2 == base { print $3; found = 1; exit }
+    $1 == b && other == "" && tolower($3) == "merged" { other = $2 }
+    END { if (!found && other != "") print "wrong-base " other }')
   [ -n "$line" ] || return 0
+  case "$line" in
+    wrong-base\ *) printf '%s\n' "$line"; return 0 ;;
+  esac
 
   raw=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
   case "$raw" in
@@ -377,15 +493,16 @@ _hk_forge_state() {
   esac
 }
 
-# _hk_ancestry_state <branch> — merged|unknown.
+# _hk_ancestry_state <branch> <base_commit> <base> — merged|unknown, judged
+# against <base> as jig_base_ref resolves it.
 #
 # Deliberately narrower than domains/housekeeping (design.md §2): git knows whether work
 # landed and knows nothing about pull requests, so "not an ancestor" is not
 # evidence of an open PR. The housekeeping policy gives `open` and `unknown` the same
 # action, so this costs no behaviour and keeps the report honest.
 _hk_ancestry_state() {
-  local branch="$1" base_commit="${2:-}" base tip mb combined c base_name
-  base_name=$(cfg git.base_branch main)
+  local branch="$1" base_commit="${2:-}" base_name="${3:-}" base tip mb combined c
+  [ -n "$base_name" ] || base_name=$(cfg git.base_branch main)
 
   # The task never had a branch of its own: it was worked on directly on the
   # base branch. "Did it merge?" is then unanswerable locally, because
@@ -404,7 +521,7 @@ _hk_ancestry_state() {
     return 0
   fi
 
-  base=$(_hk_base_ref) || return 0
+  base=$(jig_base_ref "$base_name")
   [ -n "$base" ] || { printf 'unknown\n'; return 0; }
 
   tip=$(_hk_resolve_ref "$branch")
@@ -437,7 +554,7 @@ _hk_ancestry_state() {
     # an ancestor of the base, and step 1 would call it merged. Observed on
     # 2026-09-13: `merge origin/main` onto a task branch with no commits of its
     # own, and housekeeping flagged the task for closing (ADR-0032).
-    if [ "$(_hk_own_work "$tip" "$base_commit")" != "own" ]; then
+    if [ "$(_hk_own_work "$tip" "$base_commit" "$base_name")" != "own" ]; then
       printf 'unknown\n'
       return 0
     fi
@@ -496,24 +613,43 @@ _hk_reflog() {
   [ -z "$out" ] || printf '%s\n' "$out"
 }
 
-# _hk_base_reflog_init — read the reflog of the local and the remote-tracking
-# base once per run into _HK_BASE_LOG. `_hk_own_work` runs inside `$(...)` for
-# every task, and a cache filled there would be discarded with the subshell.
+# _hk_base_reflog_init <tasks-dir> — read the reflog of the local and the
+# remote-tracking ref of every distinct task base, and of the configured base,
+# once per run into _HK_BASE_LOG, each line tagged with its base.
+# `_hk_own_work` runs inside `$(...)` for every task, and a cache filled there
+# would be discarded with the subshell. Per base, never `main` alone: judged
+# against `main`'s reflog, every commit an epic gained would count as a task
+# branch's own work (ADR-0032, ADR-0039).
 _hk_base_reflog_init() {
-  local base ref lines
+  local tasks_dir="${1:-}" bases base ref lines tid state_file
   _HK_BASE_LOG=""
-  base=$(cfg git.base_branch main)
-  for ref in "refs/heads/$base" "refs/remotes/origin/$base"; do
-    lines=$(_hk_reflog "$ref")
-    [ -n "$lines" ] || continue
-    _HK_BASE_LOG="$_HK_BASE_LOG$(printf '%s\n' "$lines" | awk -v r="$ref" '{ print r "\t" $1 "\t" $2 }')
+  bases=$(cfg git.base_branch main)
+  if [ -n "$tasks_dir" ] && [ -d "$tasks_dir" ]; then
+    while IFS= read -r state_file; do
+      [ -n "$state_file" ] || continue
+      tid=$(basename "$(dirname "$state_file")")
+      jig_valid_id "$tid" || continue
+      bases="$bases
+$(jig_task_base "$tid")"
+    done < <(find "$tasks_dir" -mindepth 2 -maxdepth 2 -name state -type f 2>/dev/null)
+  fi
+  while IFS= read -r base; do
+    [ -n "$base" ] || continue
+    for ref in "refs/heads/$base" "refs/remotes/origin/$base"; do
+      lines=$(_hk_reflog "$ref")
+      [ -n "$lines" ] || continue
+      _HK_BASE_LOG="$_HK_BASE_LOG$(printf '%s\n' "$lines" | awk -v b="$base" -v r="$ref" '{ print b "\t" r "\t" $1 "\t" $2 }')
 "
-  done
+    done
+  done <<EOF
+$(printf '%s\n' "$bases" | LC_ALL=C sort -u)
+EOF
   return 0
 }
 
-# _hk_own_work <tip-ref> <base_commit> — own|none|nolog: whether the branch
-# holds a commit of its own, one the base did not have when the branch took it.
+# _hk_own_work <tip-ref> <base_commit> <base> — own|none|nolog: whether the
+# branch holds a commit of its own, one <base> did not have when the branch
+# took it. Only <base>'s reflog lines are read.
 #
 # Git's refs cannot tell "merged by fast-forward" from "fast-forwarded onto the
 # base with nothing of its own": in both, the tip is an ancestor of the base
@@ -530,9 +666,11 @@ _hk_base_reflog_init() {
 # judged, and it is not counted — every uncertainty here resolves to
 # `unknown` (RULES.md).
 _hk_own_work() {
-  local tip="$1" fork="$2" log t p bases b foreign undecided=0
+  local tip="$1" fork="$2" base="${3:-}" log t p bases b foreign undecided=0 base_log
+  [ -n "$base" ] || base=$(cfg git.base_branch main)
+  base_log=$(printf '%s' "$_HK_BASE_LOG" | awk -F '\t' -v b="$base" '$1 == b { print $2 "\t" $3 "\t" $4 }')
   log=$(_hk_reflog "$tip")
-  if [ -z "$log" ] || [ -z "$_HK_BASE_LOG" ]; then
+  if [ -z "$log" ] || [ -z "$base_log" ]; then
     printf 'nolog\n'
     return 0
   fi
@@ -541,7 +679,7 @@ _hk_own_work() {
     [ "$p" != "$fork" ] || continue
     ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$fork" 2>/dev/null || continue
     git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$tip" 2>/dev/null || continue
-    bases=$(printf '%s' "$_HK_BASE_LOG" \
+    bases=$(printf '%s\n' "$base_log" \
       | awk -F '\t' -v t="$t" '$2 <= t && !($1 in seen) { seen[$1] = 1; print $3 }')
     if [ -z "$bases" ]; then
       undecided=1
@@ -576,14 +714,6 @@ _hk_base_patch_ids() {
     [ -z "$sha" ] && continue
     git -C "$JIG_PROJECT" show "$sha" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1
   done < <(git -C "$JIG_PROJECT" rev-list "$mb..$base" 2>/dev/null)
-}
-
-# _hk_base_ref — the ref merges land on: origin/<base_branch> when it exists,
-# else the local branch. Empty when neither resolves.
-_hk_base_ref() {
-  local base
-  base=$(cfg git.base_branch main)
-  _hk_resolve_ref "$base"
 }
 
 # _hk_resolve_ref <name> — print the first of <name> / origin/<name> that
@@ -826,7 +956,7 @@ _hk_report() {
 }
 
 # _hk_record <task> <status> <remote> <action> <flags> <age_days>
-#            <abandoned_ttl_days> <branch> <base_commit>
+#            <abandoned_ttl_days> <branch> <base_commit> <base>
 # File one task under the report group its outcome belongs to, with a note a
 # person can act on. Groups: needs (something only a human can do), removed,
 # waiting (consolidated, pull request open), progress, unknown (kept because
@@ -834,7 +964,7 @@ _hk_report() {
 # skipped.
 _hk_record() {
   local tid="$1" st="$2" remote="$3" action="$4" flags="$5" age="$6" ttl="$7"
-  local branch="$8" base_commit="$9" group note=""
+  local branch="$8" base_commit="$9" base="${10:-}" group note=""
 
   if [ "$action" = "purge" ]; then
     group="removed"
@@ -842,6 +972,8 @@ _hk_record() {
   else
     case ",$flags," in
       *,worktree-kept,*) group="needs"; note="$_HK_WT_NOTE" ;;
+      *,wrong-base,*) group="needs"; note="$_HK_WRONG_NOTE" ;;
+      *,base-unreleased,*) group="waiting"; note="waiting for $base to reach $_HK_DEFAULT_BASE" ;;
       *,needs-consolidation,*) group="needs"; note="merged but not consolidated, run jig-consolidate" ;;
       *,abandoned?,*) group="needs"; note="pull request closed, run jig task abandon or reopen it" ;;
       *)
@@ -852,7 +984,7 @@ _hk_record() {
               group="waiting"
             else
               group="unknown"
-              note=$(_hk_unknown_reason "$branch" "$base_commit")
+              note=$(_hk_unknown_reason "$branch" "$base_commit" "$base")
             fi
             ;;
           *)
@@ -869,13 +1001,13 @@ _hk_record() {
   printf '%s\t%s\t%s\n' "$group" "$tid" "$note" >> "$_HK_ROWS"
 }
 
-# _hk_unknown_reason <branch> <base_commit> — why the remote state of a
+# _hk_unknown_reason <branch> <base_commit> <base> — why the remote state of a
 # consolidated task came out `unknown`, in words. It answers the question the
 # report exists for: this workspace is kept, so what would it take for it not
 # to be? Mirrors the order _hk_ancestry_state gives up in.
 _hk_unknown_reason() {
-  local branch="$1" base_commit="$2" base tip
-  base=$(cfg git.base_branch main)
+  local branch="$1" base_commit="$2" base="${3:-}" tip
+  [ -n "$base" ] || base=$(cfg git.base_branch main)
   case "$branch" in
     '') printf 'never started, so there is no branch to check\n'; return 0 ;;
     detached) printf 'recorded on a detached HEAD, so there is no branch to check\n'; return 0 ;;
@@ -897,7 +1029,7 @@ _hk_unknown_reason() {
   fi
   if [ -n "$base_commit" ] \
      && git -C "$JIG_PROJECT" cat-file -e "$base_commit^{commit}" 2>/dev/null; then
-    case "$(_hk_own_work "$tip" "$base_commit")" in
+    case "$(_hk_own_work "$tip" "$base_commit" "$base")" in
       none)
         printf 'its branch has no commits of its own (only commits %s already had)\n' "$base"
         return 0

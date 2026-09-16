@@ -239,6 +239,45 @@ test_measure_reports_the_median_of_several_tasks() {
 
 # --- the seam between the two commands ---------------------------------------
 
+test_measure_a_wrong_base_log_line_does_not_break_measure() {
+  # housekeeping keeps the workspace and logs flags=wrong-base for it
+  # (ADR-0039); measure only ever reads action=purge lines from the log, so
+  # this must change nothing about what it counts.
+  fixture_jig_repo
+  sed 's|^forge:.*|forge: none|' .ai/config.yaml > .ai/config.tmp
+  mv .ai/config.tmp .ai/config.yaml
+  sed 's|^housekeeping.fetch:.*|housekeeping.fetch: false|' .ai/config.yaml > .ai/config.tmp
+  mv .ai/config.tmp .ai/config.yaml
+
+  # Reflog-timestamped, like tests/housekeeping.t.sh's hk_tick: the own-work
+  # check (ADR-0032) tells a branch's own commit from the base's by when each
+  # ref moved, and commits made within the same second read as ambiguous.
+  local fork now
+  fork=$(git rev-parse HEAD)
+  git branch epic/x
+  now=$(($(date +%s) + 10))
+  export GIT_COMMITTER_DATE="@$now +0000" GIT_AUTHOR_DATE="@$now +0000"
+  git checkout -q -b task/wb epic/x
+  printf 'own\n' > own.txt
+  git add own.txt
+  git commit -q -m "own work"
+  now=$((now + 10))
+  export GIT_COMMITTER_DATE="@$now +0000" GIT_AUTHOR_DATE="@$now +0000"
+  git checkout -q main
+  git merge -q --no-ff -m "merge task/wb into main" task/wb
+  git checkout -q task/wb
+  fixture_task wb "task/wb" active class:T2 "base_branch:epic/x" "base_commit:$fork"
+
+  jig housekeeping >/dev/null || true
+  assert_file_contains .ai/runtime/housekeeping.log "flags=wrong-base"
+  assert_dir .ai/workspace/tasks/wb
+
+  run jig measure
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "process:    1 tasks (1 live, 0 recorded at purge)"
+  assert_contains "$OUT" "class: T0 0, T1 0, T2 1, T3 0, T4 0, unclassified 0"
+}
+
 test_measure_counts_a_task_housekeeping_actually_purged() {
   # The half neither command can prove alone: housekeeping writes the facts as
   # it destroys the workspace, and measure reads them back afterwards.

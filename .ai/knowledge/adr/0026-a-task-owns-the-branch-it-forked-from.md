@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - schemas/state.md
 summary: Why task new creates its own branch, and why the fork point must be recorded before ancestry can be trusted.
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-16
 ---
 # ADR-0026: A task creates its own branch and records where it forked from
 
@@ -141,3 +141,10 @@ this feature does not repair housekeeping; it arms it.
 - Existing tests that needed two tasks on one branch — candidate ambiguity, detached HEAD —
   now say `--no-branch` explicitly, which documents that those behaviours survive only
   where branch-per-task is off.
+
+> **Amendment (2026-09-16).** `task start` also records `base_branch`, the branch it cut from, and
+> every later judgement against a base reads it (ADR-0039). The base is `git.base_branch`, or the
+> open epic of the spec the task links to (ADR-0040). Before cutting, `task start` fetches the
+> default branch and the epic from origin, so "freshest" compares against what origin has now,
+> not what this checkout last fetched; the freshest-ref rule itself moved to `common.sh` as
+> `jig_fresh_base_ref`.
