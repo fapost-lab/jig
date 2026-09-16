@@ -285,6 +285,29 @@ test_doctor_session_hook_codex_not_applicable() {
   assert_contains "$OUT" "ok    session hook (codex): not applicable to this runtime"
 }
 
+# --- config.local (mirrors status.sh's _status_config_local contract) -------
+
+test_doctor_config_local_ok_when_gitignored() {
+  fixture_jig_repo
+  printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml
+
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    config.local: ignored by git"
+}
+
+test_doctor_config_local_warns_when_not_gitignored() {
+  fixture_jig_repo
+  printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml
+  grep -v 'config.local.yaml' .gitignore > .gitignore.tmp
+  mv .gitignore.tmp .gitignore
+
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  config.local: not ignored by git, can be committed"
+  assert_contains "$OUT" "fix: jig init"
+}
+
 # --- final tally line -----------------------------------------------------------
 
 test_doctor_tally_counts_every_line() {

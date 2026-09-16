@@ -116,6 +116,11 @@ Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/kn
 The split matters to `upgrade`, which carries framework-owned files forward and never
 touches the rest (ADR-0011).
 
+A third owner sits outside the split: `.ai/config.local.yaml` belongs to the person whose
+clone it is. It is gitignored, created by nobody but them, and never touched by `init` or
+`upgrade`; `cfg` reads it before `.ai/config.yaml`, for a fixed list of keys only
+(ADR-0038).
+
 `copy` (default): framework files are copied into the project and hashed in
 `.ai/manifest`. `link` (developing the framework itself): `.ai/scripts`, profiles,
 templates and skills are relative symlinks into the source checkout, the manifest has no hash lines

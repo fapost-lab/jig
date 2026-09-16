@@ -16,6 +16,19 @@ hk_cfg() {
   mv .ai/config.yaml.tmp .ai/config.yaml
 }
 
+# hk_cfg_local <key> <value> — set one key in .ai/config.local.yaml (ADR-0038),
+# creating the file or appending the key when it is not there yet.
+hk_cfg_local() {
+  local file=".ai/config.local.yaml"
+  touch "$file"
+  if grep -q "^$1:" "$file"; then
+    sed "s|^$1:.*|$1: $2|" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  else
+    printf '%s: %s\n' "$1" "$2" >> "$file"
+  fi
+}
+
 # hk_tick — move git's clock ten seconds past the previous tick, starting from
 # now. Ancestry tells a branch's own commit from one the base already had by
 # when each ref moved, and a tie goes to the base (ADR-0032), so a test that
@@ -442,6 +455,16 @@ test_housekeeping_rejects_an_invalid_ttl() {
   assert_contains "$OUT" "invalid duration"
 }
 
+test_housekeeping_rejects_an_invalid_ttl_from_the_local_config() {
+  # Same failure, but the bad value lives in .ai/config.local.yaml (ADR-0038):
+  # the local layer must be validated exactly like the project one.
+  hk_setup
+  hk_cfg_local housekeeping.trash_ttl "7 days"
+  run jig housekeeping
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid duration"
+}
+
 test_housekeeping_skips_a_directory_that_is_not_a_task_id() {
   hk_setup
   mkdir -p ".ai/workspace/tasks/.hidden"
@@ -584,6 +607,25 @@ test_session_hook_is_a_noop_before_the_cadence_elapses() {
   sleep 0.5
   assert_eq "$before" "$(wc -c < .ai/runtime/housekeeping.log)" \
     "hook ran housekeeping again inside the cadence"
+}
+
+test_session_hook_honours_the_cadence_from_the_local_config() {
+  # The project cadence (0d) would make the hook run again immediately; a
+  # local override (ADR-0038) of 30d must still make it a noop, proving the
+  # hook reads .ai/config.local.yaml rather than only .ai/config.yaml.
+  hk_setup
+  hk_cfg housekeeping.cadence 0d
+  jig housekeeping >/dev/null
+  assert_file .ai/runtime/last-housekeeping
+  hk_cfg_local housekeeping.cadence 30d
+  local before
+  before=$(wc -c < .ai/runtime/housekeeping.log)
+
+  run .ai/scripts/jig-session-hook
+  assert_eq 0 "$RC"
+  sleep 0.5
+  assert_eq "$before" "$(wc -c < .ai/runtime/housekeeping.log)" \
+    "hook ignored the local cadence override"
 }
 
 test_session_hook_exits_0_when_the_project_is_not_initialised() {

@@ -5,11 +5,12 @@ status: accepted
 date: 2026-09-08
 domains: [workspace, lifecycle]
 paths:
-  - "scripts/lib/task.sh"
-  - "scripts/lib/context.sh"
-  - "schemas/state.md"
+  - scripts/lib/task.sh
+  - scripts/lib/context.sh
+  - schemas/state.md
+  - scripts/lib/config.sh
 summary: Why a workspace belongs to its checkout and state is written atomically without locks.
-reviewed_at: 2026-09-11
+reviewed_at: 2026-09-16
 ---
 # ADR-0008: Task workspaces are per checkout; state writes are atomic, last-write-wins
 
@@ -57,3 +58,9 @@ write the same `state` file.
 > consequence above about `git worktree remove` taking the workspaces with it still holds
 > for a workspace filed inside a worktree. That is why housekeeping never removes a
 > worktree that holds one.
+
+> **Amendment (2026-09-16).** A second named exception, and the only one that is looked up
+> rather than given: every checkout reads `.ai/config.local.yaml` from the main checkout of
+> its clone, found through git's own `.git` and `commondir` files (ADR-0038). It is a setting
+> of the clone, not task data, and it is only read — nothing is written, moved or owned
+> through that path. Workspaces stay exactly as above: no lookup, no shared location.

@@ -288,6 +288,19 @@ _doctor_check_session_hooks() {
   done
 }
 
+# Only when a local config file exists: whether git keeps it out of commits.
+# config.sh answers (jig_config_local_ignored), as it does for status.
+_doctor_check_config_local() {
+  local file
+  file=$(jig_config_local_file)
+  [ -f "$file" ] || return 0
+  if jig_config_local_ignored; then
+    _doctor_ok "config.local" "ignored by git"
+  else
+    _doctor_warn "config.local" "not ignored by git, can be committed" "jig init"
+  fi
+}
+
 # --- cmd_doctor ---------------------------------------------------------------
 
 cmd_doctor() {
@@ -321,6 +334,7 @@ cmd_doctor() {
       _doctor_check_executable_bits
       _doctor_check_jigcmd_project
       _doctor_check_session_hooks
+      _doctor_check_config_local
     else
       _doctor_warn "project" "not initialised" "jig init"
     fi
