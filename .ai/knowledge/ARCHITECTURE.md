@@ -28,9 +28,9 @@ file per command (`tests/<command>.t.sh`). Shared parsers live in their own libr
 (`lib/frontmatter.sh`, `lib/manifest.sh`) and are sourced by the commands that need them.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_knowledge_docs` and
-`jig_knowledge_is_global` ("which files are knowledge documents"), `jig_valid_id` ("which
-name may become a task or spec directory" — a roadmap names task ids, so the two grammars
-may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
+`jig_knowledge_is_global` ("which files are knowledge documents"), `jig_knowledge_source`
+("is this document a stub for an existing file"), `jig_valid_id` ("which name may become a
+task or spec directory" — a roadmap names task ids, so the two grammars may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
 `jig spec remove` both put things there). One command library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 

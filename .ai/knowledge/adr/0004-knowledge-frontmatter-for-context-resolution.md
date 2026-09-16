@@ -10,7 +10,7 @@ paths:
   - "scripts/lib/frontmatter.sh"
   - "scripts/lib/knowledge.sh"
   - "templates/knowledge/**"
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-15
 summary: "Why knowledge carries frontmatter: it makes context resolution deterministic without an LLM."
 ---
 # ADR-0004: Knowledge documents carry frontmatter so context resolution is deterministic
@@ -63,3 +63,6 @@ one-level lists (see ADR-0002).
   *how* a document applies, and domain directories were added without giving directories
   any authority. The rejection of "directory-per-domain layout instead of metadata"
   above still stands and is what ADR-0014 enforces.
+
+> **Amendment (2026-09-15).** Frontmatter gains `source: <path>`: the document is a stub for an
+> existing tracked file that holds the rules, and carries only metadata itself. See ADR-0036.

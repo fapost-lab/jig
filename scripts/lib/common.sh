@@ -365,6 +365,15 @@ jig_knowledge_status_resolvable() {
   esac
 }
 
+# jig_knowledge_source <doc> — the `source:` a document links, or nothing.
+# A document with one is a stub for an existing file (ADR-0036). `knowledge`
+# validates and refuses to accept stubs, `context` refuses to resolve them, and
+# the two must agree on what a stub is — so the question is asked here, once.
+# Callers have sourced frontmatter.sh, as both commands do.
+jig_knowledge_source() {
+  fm_get "$1" source
+}
+
 # Translate a frontmatter `paths` glob into a pattern usable both with
 # `find -path` and with a bash `case`: `**` (any depth, including zero
 # directories) collapses to a single `*`. BSD and GNU `find -path` match `*`

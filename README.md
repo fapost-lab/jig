@@ -460,6 +460,18 @@ A domain pack can contain an overview, glossary and rules. Proposed documents li
 at their real paths and are validated, but do not reach an agent's resolved context
 until accepted. Rejection is recorded rather than erasing the proposal.
 
+A project that already keeps rules in `docs/`, its own ADRs or another tool's
+instruction files is adopted first: `jig knowledge inventory` lists those candidates,
+and `jig-map` links each rule document in place with a proposed stub rather than
+copying it, and reports the duplicates and contradictions it finds. A stub lives in
+`.ai/knowledge/sources/` and names its file with `source:`. Stubs can be reviewed and
+rejected now; they cannot be accepted until `jig context` resolves them to their
+sources.
+
+```sh
+.ai/scripts/jig knowledge new convention coding-style --source docs/coding-style.md --proposed
+```
+
 ```sh
 .ai/scripts/jig knowledge proposed
 .ai/scripts/jig knowledge check
