@@ -994,13 +994,18 @@ test_context_resolve_unknown_id_dies() {
   assert_contains "$OUT" "jig: error: context: no active document with id: no-such-id"
 }
 
-# --- resolve: linked-source stubs are never resolved before phase 2 (ADR-0036) ---
+# --- resolve: linked-source stubs resolve to their source (ADR-0036 amended
+# by linked-sources-reach-agents) ---
 
 # A stub under .ai/knowledge/sources/ links an existing document with
-# `source:`. `knowledge check` fails one whose status is anything but
-# `proposed` (km_check_source), but a hand-edited file on disk can say
-# whatever it likes, so `_ctx_active_docs` excludes a `source:` document on
-# its own, independent of what `check` would say about it.
+# `source:`. Once it is resolvable (`active`/`accepted`), `jig context` hands
+# an agent the source path in the stub's place, with "linked by <id>" naming
+# which stub selected it — required, catalog, the stateless `matched:` form
+# and `--format paths` all go through the same `jig_knowledge_read_path`
+# (common.sh). A stub still `proposed` stays invisible, exactly like any
+# other proposed document (ADR-0016): `_ctx_active_docs` filters a stub on
+# status the same way it filters anything else, independent of what
+# `knowledge check` would say about a hand-edited file on disk.
 ctx_source_stub_setup() {
   ctx_setup
   mkdir -p docs
@@ -1010,14 +1015,22 @@ ctx_source_stub_setup() {
   jig knowledge new convention style --source docs/style.md --proposed --domains stubdomain >/dev/null
 }
 
+# ctx_source_stub_accept — ctx_source_stub_setup, then accepted the way a
+# human would through `jig-accept`: status active, source_hash recorded.
+ctx_source_stub_accept() {
+  ctx_source_stub_setup
+  jig knowledge accept convention-style >/dev/null
+}
+
 test_context_resolve_never_lists_a_proposed_source_stub() {
   ctx_source_stub_setup
   run jig context resolve --no-task --catalog --domains stubdomain --files - < /dev/null
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" ".ai/knowledge/sources/style.md"
+  assert_not_contains "$OUT" "docs/style.md"
 }
 
-test_context_resolve_never_lists_a_hand_edited_active_source_stub() {
+test_context_resolve_resolves_a_hand_edited_active_source_stub_to_its_source() {
   ctx_source_stub_setup
   sed 's/^status: proposed/status: active/' .ai/knowledge/sources/style.md \
     > .ai/knowledge/sources/style.md.new
@@ -1025,39 +1038,94 @@ test_context_resolve_never_lists_a_hand_edited_active_source_stub() {
 
   run jig context resolve --no-task --catalog --domains stubdomain --files - < /dev/null
   assert_eq 0 "$RC"
-  assert_not_contains "$OUT" ".ai/knowledge/sources/style.md"
+  assert_contains "$OUT" "catalog:   docs/style.md  [convention-style] (no summary)"
+  assert_not_contains "$OUT" "sources/style.md"
 }
 
-test_context_resolve_ids_refuses_a_source_stub() {
+test_context_resolve_ids_refuses_a_still_proposed_source_stub() {
   ctx_source_stub_setup
   run jig context resolve --no-task --ids convention-style --files - < /dev/null
   assert_eq 1 "$RC"
   assert_contains "$OUT" "jig: error: context: no active document with id: convention-style"
 }
 
-# --all bypasses the source exclusion along with the status filter it shares
-# an `if` with (_ctx_active_docs) — both forms this task's design calls out.
-test_context_resolve_all_includes_a_source_stub_in_the_catalog() {
+test_context_resolve_ids_selects_an_accepted_source_stub_to_its_source() {
+  ctx_source_stub_accept
+  run jig context resolve --no-task --ids convention-style --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  docs/style.md  (id: convention-style; linked by convention-style)"
+}
+
+test_context_resolve_required_via_paths_shows_source_with_linked_by() {
+  ctx_source_stub_accept
+  jig knowledge paths add convention-style "docs/**" >/dev/null
+
+  run jig context resolve --no-task --files docs/other.md
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  docs/style.md  (paths: docs/**; linked by convention-style)"
+}
+
+test_context_resolve_requires_closure_pulls_in_a_stub_by_its_source() {
+  ctx_source_stub_accept
+  cat > .ai/knowledge/features/needer.md <<'EOF'
+---
+id: feature-needer
+type: feature
+status: active
+load: always
+requires: [convention-style]
+---
+Body.
+EOF
+
+  run jig context resolve --no-task --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  docs/style.md  (requires: feature-needer; linked by convention-style)"
+}
+
+# An ADR stub is created with no `paths` (spec decision, template default);
+# `load` defaults to `matched`, so ADR-0014's own rules keep it out of
+# `required` on a bare domain match — it surfaces in the catalog only, no new
+# code needed for this case.
+test_context_resolve_adr_stub_without_paths_is_catalog_only() {
+  ctx_setup
+  mkdir -p docs/adr
+  printf '# adr\n' > docs/adr/0099-thing.md
+  git add docs/adr/0099-thing.md
+  git commit -q -m "add adr source"
+  jig knowledge new adr thing --source docs/adr/0099-thing.md --proposed --domains stubdomain >/dev/null
+  jig knowledge accept adr-thing >/dev/null
+
+  run jig context resolve --no-task --catalog --domains stubdomain --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   docs/adr/0099-thing.md  [adr-thing]"
+  assert_not_contains "$OUT" "required:"
+}
+
+# --all bypasses the resolvable-status filter (_ctx_active_docs); the source
+# is still resolved for every document it lets through, proposed included.
+test_context_resolve_all_resolves_a_still_proposed_source_stub_in_the_catalog() {
   ctx_source_stub_setup
   run jig context resolve --no-task --catalog --all --domains stubdomain --files - < /dev/null
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "catalog:   .ai/knowledge/sources/style.md  [convention-style]"
+  assert_contains "$OUT" "catalog:   docs/style.md  [convention-style]"
+  assert_not_contains "$OUT" "sources/style.md"
 }
 
-test_context_resolve_all_lets_ids_select_a_source_stub() {
+test_context_resolve_all_lets_ids_select_a_still_proposed_source_stub_to_its_source() {
   ctx_source_stub_setup
   run jig context resolve --no-task --ids convention-style --all --files - < /dev/null
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "required:  .ai/knowledge/sources/style.md  (id: convention-style)"
+  assert_contains "$OUT" "required:  docs/style.md  (id: convention-style; linked by convention-style)"
 }
 
-# The stateless form (no subcommand) shares the same exclusion, via
-# jig_knowledge_source in common.sh (_ctx_matched_docs).
-test_context_stateless_never_lists_a_source_stub_even_hand_edited_active() {
+# The stateless form (no subcommand) shares the same resolution, via
+# jig_knowledge_read_path in common.sh (_ctx_matched_docs).
+test_context_stateless_resolves_an_active_source_stub_to_its_source_in_matched() {
   ctx_source_stub_setup
   run jig context --no-task --domains stubdomain --files - < /dev/null
   assert_eq 0 "$RC"
-  assert_not_contains "$OUT" ".ai/knowledge/sources/style.md"
+  assert_not_contains "$OUT" "docs/style.md"
 
   sed 's/^status: proposed/status: active/' .ai/knowledge/sources/style.md \
     > .ai/knowledge/sources/style.md.new
@@ -1065,11 +1133,69 @@ test_context_stateless_never_lists_a_source_stub_even_hand_edited_active() {
 
   run jig context --no-task --domains stubdomain --files - < /dev/null
   assert_eq 0 "$RC"
-  assert_not_contains "$OUT" ".ai/knowledge/sources/style.md"
+  assert_contains "$OUT" "matched:   docs/style.md  (domains: stubdomain; linked by convention-style)"
+  assert_not_contains "$OUT" "sources/style.md"
+}
 
-  run jig context --no-task --domains stubdomain --all --files - < /dev/null
+test_context_stateless_format_paths_shows_the_source_path() {
+  ctx_source_stub_accept
+  run jig context --no-task --domains stubdomain --files - --format paths < /dev/null
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "matched:   .ai/knowledge/sources/style.md  (domains: stubdomain)"
+  assert_contains "$OUT" "docs/style.md"
+  assert_not_contains "$OUT" "sources/style.md"
+}
+
+# --- resolve: a linked-source stub whose source is missing (ADR-0014 amended) ---
+# The `[ -f ]` check alone stops only the task that selects the stub; other
+# tasks, and a catalog listing nobody selected, are unaffected (design.md §2).
+
+test_context_resolve_catalog_shows_missing_source() {
+  ctx_source_stub_accept
+  rm docs/style.md
+
+  run jig context resolve --no-task --catalog --domains stubdomain --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   .ai/knowledge/sources/style.md  [convention-style] missing source: docs/style.md"
+}
+
+test_context_resolve_does_not_die_when_an_unselected_stub_source_is_missing() {
+  ctx_source_stub_accept
+  rm docs/style.md
+
+  run jig context resolve --no-task --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "docs/style.md"
+}
+
+test_context_resolve_ids_dies_when_the_selected_stub_source_is_missing() {
+  ctx_source_stub_accept
+  rm docs/style.md
+
+  run jig context resolve --no-task --ids convention-style --files - < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "jig: error: context: .ai/knowledge/sources/style.md is selected but its source docs/style.md is missing; fix the link or reject the stub"
+}
+
+test_context_resolve_required_via_paths_dies_when_the_selected_stub_source_is_missing() {
+  ctx_source_stub_accept
+  jig knowledge paths add convention-style "docs/**" >/dev/null
+  rm docs/style.md
+
+  run jig context resolve --no-task --files docs/other.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "jig: error: context: .ai/knowledge/sources/style.md is selected but its source docs/style.md is missing; fix the link or reject the stub"
+}
+
+test_context_stateless_dies_when_a_matched_stub_source_is_missing() {
+  ctx_source_stub_accept
+  rm docs/style.md
+
+  run jig context --no-task --domains stubdomain --files - < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "jig: error: context: .ai/knowledge/sources/style.md is selected but its source docs/style.md is missing; fix the link or reject the stub"
 }
 
 # --- context ledger: guard / pending / acknowledge --------------------------------------
@@ -1202,7 +1328,7 @@ test_context_acknowledge_rejects_path_outside_knowledge_dir() {
   jig task new T-1 >/dev/null
   run jig context acknowledge --task T-1 --files "README.md"
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "not a knowledge document:"
+  assert_contains "$OUT" "not a knowledge document or a linked source: README.md"
 }
 
 test_context_acknowledge_rejects_nonexistent_document() {
@@ -1211,6 +1337,117 @@ test_context_acknowledge_rejects_nonexistent_document() {
   run jig context acknowledge --task T-1 --files ".ai/knowledge/features/ghost.md"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "no such document:"
+}
+
+# --- acknowledge: a linked source is acknowledged in its stub's place ----------
+# (ADR-0015 amended by linked-sources-reach-agents): the tracked path is the
+# source, so a path outside .ai/knowledge/ is accepted only when it is the
+# `source:` of a resolvable stub — never any file in the repository.
+
+test_context_acknowledge_accepts_the_source_of_an_accepted_stub() {
+  ctx_source_stub_accept
+  jig task new T-1 >/dev/null
+
+  run jig context acknowledge --task T-1 --files docs/style.md
+  assert_eq 0 "$RC"
+  assert_file .ai/workspace/tasks/T-1/context
+  local expected_hash line
+  expected_hash=$(git hash-object docs/style.md)
+  line=$(grep "docs/style.md" .ai/workspace/tasks/T-1/context)
+  assert_eq "$(printf '%s\t%s' "$expected_hash" "docs/style.md")" "$line"
+}
+
+# A source replaced by a symlink after acceptance, without touching the stub,
+# must not hand an agent a file outside the repository (architecture review).
+test_context_resolve_treats_a_source_swapped_for_a_symlink_as_missing() {
+  ctx_source_stub_accept
+  rm docs/style.md
+  ln -s /etc/hosts docs/style.md
+
+  run jig context resolve --no-task --catalog --domains stubdomain --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "[convention-style] missing source: docs/style.md"
+
+  run jig context resolve --no-task --ids convention-style --files - < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is selected but its source docs/style.md is missing"
+}
+
+test_context_resolve_treats_a_source_under_a_symlinked_directory_as_missing() {
+  ctx_source_stub_accept
+  local outside
+  outside=$(mktemp -d "${TMPDIR:-/tmp}/jig-outside.XXXXXX")
+  printf '# style\n' > "$outside/style.md"
+  rm -rf docs
+  ln -s "$outside" docs
+
+  run jig context resolve --no-task --ids convention-style --files - < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is selected but its source docs/style.md is missing"
+  rm -rf "$outside"
+}
+
+test_context_acknowledge_refuses_a_linked_source_swapped_for_a_symlink() {
+  ctx_source_stub_accept
+  jig task new T-1 >/dev/null
+  rm docs/style.md
+  ln -s /etc/hosts docs/style.md
+
+  run jig context acknowledge --task T-1 --files docs/style.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context acknowledge: no such document: docs/style.md"
+  assert_no_file .ai/workspace/tasks/T-1/context
+}
+
+test_context_stateless_all_resolves_a_proposed_stub_to_its_source() {
+  ctx_source_stub_setup
+  run jig context --no-task --all --domains stubdomain --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "matched:   docs/style.md  (domains: stubdomain; linked by convention-style)"
+}
+
+test_context_acknowledge_refuses_the_source_of_a_still_proposed_stub() {
+  ctx_source_stub_setup
+  jig task new T-1 >/dev/null
+
+  run jig context acknowledge --task T-1 --files docs/style.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a knowledge document or a linked source: docs/style.md"
+}
+
+test_context_pending_tracks_the_source_editing_the_source_reopens_it_editing_the_stub_metadata_does_not() {
+  ctx_source_stub_accept
+  # `load: always` keeps the stub required regardless of --files/--domains
+  # churn below, so only the ledger hash — not the selection — is under test.
+  sed 's/^source_hash:.*/&\nload: always/' .ai/knowledge/sources/style.md \
+    > .ai/knowledge/sources/style.md.new
+  mv .ai/knowledge/sources/style.md.new .ai/knowledge/sources/style.md
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1 --files docs/style.md
+  assert_eq 0 "$RC"
+
+  run jig context pending --task T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "docs/style.md"
+
+  # Editing the source makes the acknowledgement stale again: the tracked
+  # path (and its hash in the ledger) is the source, not the stub.
+  printf 'extra rule\n' >> docs/style.md
+  run jig context pending --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "docs/style.md"
+
+  # Re-acknowledge, then edit only the stub's own metadata — the ledger
+  # never hashed the stub, so this must not reopen the acknowledgement.
+  run jig context acknowledge --task T-1 --files docs/style.md
+  assert_eq 0 "$RC"
+  sed 's/^source_hash:.*/&\nsummary: "updated summary"/' .ai/knowledge/sources/style.md \
+    > .ai/knowledge/sources/style.md.new
+  mv .ai/knowledge/sources/style.md.new .ai/knowledge/sources/style.md
+
+  run jig context pending --task T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "docs/style.md"
 }
 
 test_context_acknowledge_requires_task() {

@@ -156,8 +156,8 @@ the roadmap. Informal synonyms: epic, feature branch.
 
 A knowledge document whose frontmatter names an existing tracked file with `source:`, so a project's own
 rule document is adopted without being copied. It lives in `.ai/knowledge/sources/` and holds only
-metadata; the source owns the rules. Until `jig context` resolves stubs to their sources, a stub stays
-proposed and reaches no agent (ADR-0036). Informal synonyms: link, pointer, adopted document.
+metadata; the source owns the rules. Once accepted, `jig context` hands an agent the source in the
+stub's place, and `source_hash` records the text a human approved (ADR-0036). Informal synonyms: link, pointer, adopted document.
 
 ## Load Policy
 

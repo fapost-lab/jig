@@ -526,11 +526,41 @@ jig_knowledge_status_resolvable() {
 
 # jig_knowledge_source <doc> — the `source:` a document links, or nothing.
 # A document with one is a stub for an existing file (ADR-0036). `knowledge`
-# validates and refuses to accept stubs, `context` refuses to resolve them, and
-# the two must agree on what a stub is — so the question is asked here, once.
+# validates stubs and `context` resolves them to their sources, and the two
+# must agree on what a stub is — so the question is asked here, once.
 # Callers have sourced frontmatter.sh, as both commands do.
 jig_knowledge_source() {
   fm_get "$1" source
+}
+
+# jig_knowledge_read_path <doc> — the repository-relative path an agent reads
+# for <doc>: the source of a stub, the document itself otherwise. Exit 3, with
+# the source path still printed, when a stub's source is not a regular file
+# inside the repository — a path that could leave it, a symlink, or a file
+# reached through a symlinked directory. Checked on every resolution, not only
+# at acceptance: a hand-edited stub is not validated before it is resolved, and
+# a source can be swapped for a link to `/etc/passwd` after it was accepted
+# without touching the stub. Whether git tracks the file with this exact case
+# is `knowledge check`'s question, not this one's.
+jig_knowledge_read_path() {
+  local src
+  src=$(jig_knowledge_source "$1")
+  if [ -z "$src" ]; then
+    jig_relpath "$1" "$JIG_PROJECT"
+    return 0
+  fi
+  printf '%s\n' "$src"
+  case "$src" in
+    /* | ../* | */../* | *.. ) return 3 ;;
+  esac
+  [ -f "$JIG_PROJECT/$src" ] && [ ! -L "$JIG_PROJECT/$src" ] || return 3
+  local root dir
+  root=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 3
+  dir=$(cd -P "$(dirname "$JIG_PROJECT/$src")" 2>/dev/null && pwd -P) || return 3
+  case "$dir/" in
+    "$root/"*) return 0 ;;
+    *) return 3 ;;
+  esac
 }
 
 # Translate a frontmatter `paths` glob into a pattern usable both with

@@ -136,6 +136,44 @@ test_status_proposal_count_matches_knowledge_proposed_listing() {
   assert_eq "$status_count" "$listed_count" "status count vs knowledge proposed listing"
 }
 
+# --- sources changed: a linked source edited after acceptance (linked-sources-
+# reach-agents, amending ADR-0036) --------------------------------------------
+# An accepted stub hands agents whatever its source says now; a source edited
+# since acceptance is still read, but nobody has approved that text for
+# agents yet. Without this line `proposals: none` would be the only signal
+# `jig status` gives that something in .ai/knowledge/ needs a human.
+
+test_status_omits_sources_changed_line_when_nothing_changed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p docs
+  printf 'line one\n' > docs/x.md
+  git add docs/x.md
+  git commit -q -m "add docs/x.md"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "sources changed:"
+}
+
+test_status_reports_sources_changed_count() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p docs
+  printf 'line one\n' > docs/x.md
+  git add docs/x.md
+  git commit -q -m "add docs/x.md"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "sources changed: 1 (jig knowledge sources)"
+}
+
 test_status_lists_active_tasks() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null

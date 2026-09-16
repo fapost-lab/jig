@@ -13,7 +13,7 @@ paths:
   - "skills/jig-map/**"
   - schemas/frontmatter.md
 summary: Why a proposal is a status on the real document, and why resolution filters by an allowlist.
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-16
 ---
 # ADR-0016: Proposed knowledge is a lifecycle state, and resolution filters by an allowlist
 
@@ -90,3 +90,10 @@ about how to ask the same question, and the safe form was already the one in use
 > `proposed` yet: `jig knowledge accept` refuses a batch that contains one, and `knowledge check` fails
 > a stub that is `active` or `accepted`. An accepted stub would resolve to its two-line body instead of
 > the rules it points at. Reject works as for any proposal. The refusal is lifted when sources resolve.
+
+> **Amendment (2026-09-16).** The hold on stubs is lifted: `jig knowledge accept` accepts a stub whose
+> source git tracks with exact case, refuses the batch otherwise, and records `source_hash`. A stub is
+> still created only `proposed` (`--source` requires `--proposed`), so a human decides every link. A
+> source edited after acceptance keeps reaching agents — it changed through the team's own reviewed
+> commit, and this gate exists for an agent's inferences — and is reported for a human's look instead
+> (ADR-0036 as amended).

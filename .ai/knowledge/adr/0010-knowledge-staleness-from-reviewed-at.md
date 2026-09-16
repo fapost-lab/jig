@@ -10,7 +10,7 @@ paths:
   - scripts/lib/knowledge.sh
   - schemas/frontmatter.md
   - "skills/jig-consolidate/**"
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-16
 summary: Why staleness is derived from a reviewed_at stamp, and how rot is told apart from foresight.
 ---
 # ADR-0010: Knowledge staleness is a `reviewed_at` date compared against git history
@@ -90,3 +90,9 @@ aging.
   is `unreviewed`. That is the honest state of such a project; `--strict` is opt-in.
 - The field is optional and additive. `knowledge check` validates its format when
   present, and documents without it stay valid.
+
+> **Amendment (2026-09-16).** A linked source is judged by content, not by date: `jig knowledge stale`
+> lists a stub whose source no longer hashes to its `source_hash` — or has none recorded — as `changed:`,
+> counts it last on its summary line (`jig measure` reads the line by position), and `--strict` fails
+> on it. A squash merge or an unstamped human edit would make dates noise. `jig knowledge reviewed` on
+> a stub records the source's current hash along with `reviewed_at`.

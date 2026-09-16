@@ -29,11 +29,11 @@ Goal: an accepted stub puts its source in front of the agent and keeps that hone
 task touching a linked source's `paths` is required to read the source, a changed source is owed a
 new reading and is counted in `jig status`, and a missing one stops only the tasks that need it.
 
-- [ ] `linked-sources-reach-agents` — `jig context` resolves an accepted stub to its source, catalog-only ADR stubs, "missing
+- [x] `linked-sources-reach-agents` — `jig context` resolves an accepted stub to its source, catalog-only ADR stubs, "missing
   source" in the catalog and a failure only when selected; acknowledgements hash the source; lifts
   the phase-1 accept refusal, check and the `jig context` skip of stubs — amendments to ADR-0014 and ADR-0015 (after: phase 1 —
   needs stubs to resolve)
-- [ ] `linked-sources-reach-agents` — `source_hash` at acceptance and review: `jig status` counts changed sources, `jig-accept`
+- [x] `linked-sources-reach-agents` — `source_hash` at acceptance and review: `jig status` counts changed sources, `jig-accept`
   shows the diff for re-approval, `jig knowledge stale` reports them (after: stubs with `source:` —
   the hash lives in their frontmatter)
 
