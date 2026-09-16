@@ -1,5 +1,5 @@
 ---
-id: adr-0039-epic-branches-release-a-feature-once
+id: adr-0040-epic-branches-release-a-feature-once
 type: adr
 status: accepted
 date: 2026-09-16
@@ -17,7 +17,7 @@ paths:
 summary: Why a feature released once lives on an epic branch, how a spec declares, cuts and finishes it, and why phase workspaces wait for the epic to reach main.
 reviewed_at: 2026-09-16
 ---
-# ADR-0039: A feature released once lives on an epic branch until it is finished
+# ADR-0040: A feature released once lives on an epic branch until it is finished
 
 ## Context
 
@@ -30,7 +30,7 @@ version bump was rejected too: half a feature on `main` blocks a patch release f
 unrelated pull request that raises the version ships it.
 
 The specification `.ai/specs/epic-branches/` settles the shape and records the failure hunt its
-decisions answer. It stands on a base per task (ADR-0038).
+decisions answer. It stands on a base per task (ADR-0039).
 
 ## Decision
 

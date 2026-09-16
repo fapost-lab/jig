@@ -117,7 +117,7 @@ comment repeats these rules.
   depends only on earlier waves.
 - No dates and no point estimates: order is the priority.
 - **Released once, at the end?** When no phase gives a user anything on its own, the spec gets
-  an epic branch (ADR-0039): write `Epic: epic/<id>` on its own line after `Destination:`. The
+  an epic branch (ADR-0040): write `Epic: epic/<id>` on its own line after `Destination:`. The
   line reaches the default branch with the spec; then `jig spec epic <id>` cuts the branch and
   the human pushes it. A spec whose phases each ship on their own gets no line — ask when unsure.
 

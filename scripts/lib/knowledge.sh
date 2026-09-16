@@ -1572,7 +1572,7 @@ km_paths_report() {
     fi
     files=$(printf '%s\n' "$files" | sed '/^$/d' | sort -u)
   else
-    # A named task is judged against its own base (ADR-0038); without one,
+    # A named task is judged against its own base (ADR-0039); without one,
     # jig_task_base answers with the configured base.
     files=$(jig_git_touched_files --base-branch "$(jig_task_base "$task")")
   fi

@@ -714,7 +714,7 @@ test_status_does_not_count_invalid_id_spec_directories() {
   assert_contains "$OUT" "specs: 1 (jig spec list)"
 }
 
-# --- status: open epics (ADR-0039) ---------------------------------------------
+# --- status: open epics (ADR-0040) ---------------------------------------------
 # One line per spec with an open epic, right after the specs: line: how far
 # behind the default branch it has fallen. A clean tree is needed throughout,
 # for the same reason as spec.t.sh's epic_setup: `jig spec epic` checks out

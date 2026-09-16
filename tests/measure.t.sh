@@ -241,7 +241,7 @@ test_measure_reports_the_median_of_several_tasks() {
 
 test_measure_a_wrong_base_log_line_does_not_break_measure() {
   # housekeeping keeps the workspace and logs flags=wrong-base for it
-  # (ADR-0038); measure only ever reads action=purge lines from the log, so
+  # (ADR-0039); measure only ever reads action=purge lines from the log, so
   # this must change nothing about what it counts.
   fixture_jig_repo
   sed 's|^forge:.*|forge: none|' .ai/config.yaml > .ai/config.tmp

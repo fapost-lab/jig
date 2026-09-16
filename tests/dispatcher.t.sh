@@ -283,7 +283,7 @@ test_jig_trash_dest_creates_nothing() {
   assert_no_file .ai/runtime/trash
 }
 
-# --- jig_task_base / jig_base_ref (ADR-0038) ----------------------------------
+# --- jig_task_base / jig_base_ref (ADR-0039) ----------------------------------
 # The one answer `task`, `housekeeping`, `context` and `knowledge` must never
 # disagree about: the branch a task was cut from and has to land on.
 
@@ -380,7 +380,7 @@ test_jig_base_ref_empty_name_prints_nothing() {
   assert_eq "rc=0" "$OUT"
 }
 
-# --- jig_spec_epic (ADR-0039) --------------------------------------------------
+# --- jig_spec_epic (ADR-0040) --------------------------------------------------
 # Parses the roadmap's Epic: line; moved to common.sh so both spec.sh and
 # task.sh can read it without one command library sourcing another.
 
@@ -443,7 +443,7 @@ test_jig_spec_epic_reads_stdin_as_dash() {
   assert_eq "epic/alpha open" "$OUT"
 }
 
-# --- jig_fetch_branches (ADR-0039) ---------------------------------------------
+# --- jig_fetch_branches (ADR-0040) ---------------------------------------------
 
 test_jig_fetch_branches_without_origin_is_a_noop() {
   fixture_repo

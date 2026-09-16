@@ -92,5 +92,5 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
 
 > **Amendment (2026-09-16).** CI also runs the tests on every push to `epic/**`, and a pull request
 > from `epic/*` into `main` runs the `epic-pr` job: it fails when `JIG_VERSION` is already released or
-> the epic's roadmap line is not `— finished` (ADR-0039). The "already released" rule is shared with
+> the epic's roadmap line is not `— finished` (ADR-0040). The "already released" rule is shared with
 > `release-tag.sh` through `.github/scripts/release-lib.sh`. The `release` job is unchanged.

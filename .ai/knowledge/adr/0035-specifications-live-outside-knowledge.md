@@ -113,6 +113,6 @@ so it cannot live where everything is read as describing it.
 > **Amendment (2026-09-16).** A spec released once, at the end, declares an epic branch with an
 > `Epic: epic/<spec-id>` line in `roadmap.md`; `jig spec epic <id>` declares, cuts, `--finish`es and
 > `--reopen`s it, `jig task start` cuts its tasks from it, and `jig spec list` off the epic shows where
-> progress is instead of the stale roadmap (ADR-0039). `Spec:` parsing moved to `common.sh`
+> progress is instead of the stale roadmap (ADR-0040). `Spec:` parsing moved to `common.sh`
 > (`jig_spec_link`) so that `task start` can read it. Still no field in `state` carries the link; the
 > task's `base_branch` records only where it was cut.

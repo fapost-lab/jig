@@ -82,7 +82,7 @@ gets a branch of its own — but at `jig task start`, not at `jig task new`.
 - `paused` means "was being worked on, set aside". It is not the way to say "not begun";
   that is what the missing `branch` says.
 
-**Where a task is cut from is recorded too** (ADR-0038, ADR-0039). `task start` writes
+**Where a task is cut from is recorded too** (ADR-0039, ADR-0040). `task start` writes
 `base_branch`: the default branch, or the open epic of the spec its `task.md` links to. It fetches
 first and refuses, rather than falling back to the default branch, when the spec is not in this
 checkout, the epic exists nowhere, or the epic is finished. Every judgement against a base —

@@ -315,7 +315,7 @@ EOF
 }
 
 test_context_git_derived_respects_the_tasks_own_base() {
-  # A task cut from an epic branch, not from main (ADR-0038). Its own commit
+  # A task cut from an epic branch, not from main (ADR-0039). Its own commit
   # must be seen; the epic's earlier commit, which never touched main, must
   # not — until the task base is dropped, when the old main-relative answer
   # returns.

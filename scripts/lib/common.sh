@@ -272,7 +272,7 @@ jig_physical_path() {
 # `base_branch` from its state file, or `git.base_branch` when the task never
 # recorded one (not started, or started before the field existed). One answer
 # for `task`, `housekeeping`, `context` and `knowledge`, which must never
-# disagree about what a task is judged against (ADR-0038). The state file is
+# disagree about what a task is judged against (ADR-0039). The state file is
 # the task domain's; reading it here is allowed, writing it is not. An id that
 # is not a task id gets the configured base, never a path built from it.
 jig_task_base() {
@@ -390,7 +390,7 @@ jig_spec_link() {
 }
 
 # jig_spec_epic <roadmap.md|-> — "<branch> open" or "<branch> finished" when
-# the roadmap declares an epic branch, nothing when it does not (ADR-0039).
+# the roadmap declares an epic branch, nothing when it does not (ADR-0040).
 #
 # The declaration is a whole line `Epic: <branch>`, closed before the epic's
 # final pull request as `Epic: <branch> — finished`. Exits 2 when two lines

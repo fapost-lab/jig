@@ -1,5 +1,5 @@
 ---
-id: adr-0038-task-has-its-own-base
+id: adr-0039-task-has-its-own-base
 type: adr
 status: accepted
 date: 2026-09-16
@@ -15,7 +15,7 @@ paths:
 summary: Why every task records its own base branch, why bases resolve origin first, and why work merged elsewhere is flagged wrong-base rather than merged.
 reviewed_at: 2026-09-16
 ---
-# ADR-0038: A task records the branch it is cut from and has to land on
+# ADR-0039: A task records the branch it is cut from and has to land on
 
 ## Context
 
@@ -25,7 +25,7 @@ Every judgement Jig makes about a task against a base read one project setting,
 in housekeeping — the ancestry tiers, the "branch is the base" rule (ADR-0025), the reason printed
 for `unknown`, and the base reflog that tells a branch's own work from the base's (ADR-0032).
 
-That holds while every task is cut from `main` and lands in `main`. Epic branches (ADR-0039) and,
+That holds while every task is cut from `main` and lands in `main`. Epic branches (ADR-0040) and,
 later, maintenance lines break it: a phase's task is cut from `epic/<spec-id>` and lands there.
 Judged against `main`, such a task never lands, every commit the epic gained reads as the branch's
 own work, and a phase merged into `main` by mistake reads as done. The specification
@@ -59,7 +59,7 @@ never read a pull request's base.
 ## Alternatives
 
 - **A `--base` flag on `task start`.** Rejected: easy to forget, and a forgotten flag sends a phase
-  to `main` silently. The base is decided by the spec the task links to (ADR-0039).
+  to `main` silently. The base is decided by the spec the task links to (ADR-0040).
 - **Infer the base from history** (the nearest branch containing `base_commit`). Rejected: a commit
   on both `main` and an epic is ambiguous, and where the work must land is not recorded in git.
 - **A fifth remote state `wrong-base`.** Rejected: it changes ADR-0025's vocabulary and the log that

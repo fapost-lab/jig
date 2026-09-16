@@ -143,8 +143,8 @@ this feature does not repair housekeeping; it arms it.
   where branch-per-task is off.
 
 > **Amendment (2026-09-16).** `task start` also records `base_branch`, the branch it cut from, and
-> every later judgement against a base reads it (ADR-0038). The base is `git.base_branch`, or the
-> open epic of the spec the task links to (ADR-0039). Before cutting, `task start` fetches the
+> every later judgement against a base reads it (ADR-0039). The base is `git.base_branch`, or the
+> open epic of the spec the task links to (ADR-0040). Before cutting, `task start` fetches the
 > default branch and the epic from origin, so "freshest" compares against what origin has now,
 > not what this checkout last fetched; the freshest-ref rule itself moved to `common.sh` as
 > `jig_fresh_base_ref`.

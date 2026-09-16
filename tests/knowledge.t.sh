@@ -1005,7 +1005,7 @@ test_paths_report_with_valid_task_succeeds() {
 }
 
 test_paths_report_task_is_judged_against_its_own_base() {
-  # A task cut from an epic branch (ADR-0038): the epic's own earlier commit,
+  # A task cut from an epic branch (ADR-0039): the epic's own earlier commit,
   # never on main, must not count as this task's touched files; without a
   # task the old main-relative answer covers both.
   km_setup

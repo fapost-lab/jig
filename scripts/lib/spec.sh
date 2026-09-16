@@ -8,7 +8,7 @@
 # A task links to a spec through one `Spec: .ai/specs/<id>/ — Phase <n>` line in
 # its task.md. `new` creates a spec, `done` checks a linked task's roadmap
 # items, `remove` unlinks a spec's open tasks and moves the spec to trash,
-# `epic` declares, cuts, finishes and reopens a spec's epic branch (ADR-0039);
+# `epic` declares, cuts, finishes and reopens a spec's epic branch (ADR-0040);
 # `list` only reads.
 # shellcheck shell=bash
 
@@ -192,7 +192,7 @@ spec_list() {
 # The roadmap of a spec with an open epic is edited only on the epic, so its
 # copy anywhere else is stale by design: off the epic the line names where
 # progress is instead of showing old checkmarks as current. A finished epic's
-# roadmap reaches the default branch with the epic, current again (ADR-0039).
+# roadmap reaches the default branch with the epic, current again (ADR-0040).
 spec_list_state() {
   local roadmap="$1" line branch here
   line=$(jig_spec_epic "$roadmap" 2>/dev/null) || line=""
@@ -214,7 +214,7 @@ spec_list_state() {
 
 # spec_epic_status — one line per spec with an open epic, for `jig status`:
 # where its work is, and how far the epic has fallen behind the default
-# branch it is kept current with by merging (ADR-0039). Read-only; the refs
+# branch it is kept current with by merging (ADR-0040). Read-only; the refs
 # are whatever this checkout last fetched.
 spec_epic_status() {
   local root id line branch default base_ref epic_ref behind
@@ -251,7 +251,7 @@ spec_epic_status() {
 # --- epic branches ---------------------------------------------------------------
 
 # spec_epic <id> [--finish | --reopen] — the epic branch of a spec released
-# once, at the end (ADR-0039).
+# once, at the end (ADR-0040).
 #
 # Without a flag: declare the epic with an `Epic: epic/<id>` line when the
 # roadmap has none, and stop — the line has to reach the default branch before

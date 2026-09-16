@@ -1110,7 +1110,7 @@ EOF
   assert_contains "$OUT" "not-here       T-9 (named in the roadmap, no workspace in this checkout)"
 }
 
-# --- spec epic (ADR-0039) ------------------------------------------------------
+# --- spec epic (ADR-0040) ------------------------------------------------------
 # The epic branch a spec released once, at the end, is released from. Every
 # scenario needs a clean tree (git checkout/branch refuse a dirty one), so the
 # setup mirrors task.t.sh's task_setup_clean: commit everything `jig init`
@@ -1446,7 +1446,7 @@ test_spec_epic_reopen_no_epic_declared_dies() {
   assert_contains "$OUT" "declares no epic"
 }
 
-# --- spec list: epic states (ADR-0039) -----------------------------------------
+# --- spec list: epic states (ADR-0040) -----------------------------------------
 
 test_spec_list_on_the_epic_shows_progress_with_suffix() {
   epic_ready_to_finish idea-x

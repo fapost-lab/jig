@@ -570,7 +570,7 @@ task_start() {
 
   # The base the task is cut from and has to land on, recorded beside the
   # fork point so that everything judging the task later reads the same
-  # answer (ADR-0038). Checked before anything is created.
+  # answer (ADR-0039). Checked before anything is created.
   local base
   base=$(_task_start_base "$id") || exit 1
 
@@ -679,7 +679,7 @@ _task_paused_hint() {
 }
 
 # _task_start_base <id> — the base a task being started is cut from, after
-# refreshing it from origin (ADR-0039).
+# refreshing it from origin (ADR-0040).
 #
 # A task linked to a spec whose roadmap declares an open epic is cut from the
 # epic; every other task from `git.base_branch`. Each way a phase could end up

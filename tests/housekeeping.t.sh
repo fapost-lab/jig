@@ -94,7 +94,7 @@ test_housekeeping_decide_consolidated_merged_purges() {
   assert_eq "purge" "$(hk_decide consolidated merged "" 1 14 60)"
 }
 
-# --- released (ADR-0039): a phase merged into an epic that has not itself ----
+# --- released (ADR-0040): a phase merged into an epic that has not itself ----
 # reached the default branch is kept, not purged, until it has.
 
 test_housekeeping_decide_consolidated_merged_released_true_purges() {
@@ -583,7 +583,7 @@ test_housekeeping_rejects_an_invalid_forge_value() {
   assert_contains "$OUT" "invalid forge"
 }
 
-# --- forge wrong-base (ADR-0038) -----------------------------------------------
+# --- forge wrong-base (ADR-0039) -----------------------------------------------
 # A pull request into a branch other than the task's own base is not the
 # task's landing: a phase merged into `main` instead of its epic, or stacked
 # on another phase's branch, must not read as done.
@@ -1189,7 +1189,7 @@ test_housekeeping_no_reflog_for_branch_stays_unknown() {
     "no reflog for its branch, so its own commits cannot be told from main's: noreflog"
 }
 
-# --- tasks cut from a base other than the project's default (ADR-0038) --------
+# --- tasks cut from a base other than the project's default (ADR-0039) --------
 
 test_housekeeping_two_task_bases_in_one_run_both_merged_by_ancestry() {
   # Task a lands on the project's default base; task b lands on its own
@@ -1228,7 +1228,7 @@ test_housekeeping_two_task_bases_in_one_run_both_merged_by_ancestry() {
   # a lands on main, the project's default base, and is purged as before; b
   # lands on epic/x, which has not itself reached main, so it is judged
   # merged against its own base (the purpose of this test) but kept rather
-  # than purged (ADR-0039: a phase's workspace survives until its epic does).
+  # than purged (ADR-0040: a phase's workspace survives until its epic does).
   run jig housekeeping --verbose
   assert_eq 0 "$RC"
   assert_contains "$OUT" "a status=consolidated remote=merged via=ancestry action=purge"
@@ -1237,7 +1237,7 @@ test_housekeeping_two_task_bases_in_one_run_both_merged_by_ancestry() {
   assert_dir .ai/workspace/tasks/b
 }
 
-# --- released: a phase's workspace waits for its epic to reach main (ADR-0039) -
+# --- released: a phase's workspace waits for its epic to reach main (ADR-0040) -
 
 test_housekeeping_phase_merged_into_epic_only_waits_for_the_epic_to_reach_main() {
   hk_setup

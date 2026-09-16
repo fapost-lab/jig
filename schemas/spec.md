@@ -97,7 +97,7 @@ A copy of a spec directory in another project is a separate spec; nothing links 
 
 ## The `Epic:` line in `roadmap.md`
 
-A spec released once, at the end, declares its epic branch (ADR-0039) with one whole line, written
+A spec released once, at the end, declares its epic branch (ADR-0040) with one whole line, written
 after `Destination:`:
 
 | Line | Meaning |

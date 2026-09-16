@@ -143,13 +143,13 @@ Informal synonyms: plan, roadmap, design doc.
 The branch a task was cut from and has to land on, recorded as `base_branch` in its State by
 `jig task start`: `git.base_branch`, or the Epic Branch of the spec the task links to. Every
 judgement of whether a task landed is made against it; work merged anywhere else is flagged
-`wrong-base` (ADR-0038). Informal synonyms: base, target branch.
+`wrong-base` (ADR-0039). Informal synonyms: base, target branch.
 
 ## Epic Branch
 
 `epic/<spec-id>`: the branch a Specification released once, at the end, is built on. Its phases'
 tasks are cut from it and merged into it; it reaches the default branch in one pull request with
-the version raised, after `jig spec epic <id> --finish` (ADR-0039). Declared by the `Epic:` line of
+the version raised, after `jig spec epic <id> --finish` (ADR-0040). Declared by the `Epic:` line of
 the roadmap. Informal synonyms: epic, feature branch.
 
 ## Linked Source (Stub)

@@ -27,7 +27,7 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   derived from files alone — a spec has no status.
 - The `jig-idea` conversation: understand the idea, put weight on it, offer other shapes,
   record decisions, build the roadmap, and file a phase's tasks when asked.
-- The epic branch of a spec released once (ADR-0039): the `Epic:` line, `jig spec epic` to declare,
+- The epic branch of a spec released once (ADR-0040): the `Epic:` line, `jig spec epic` to declare,
   cut, finish and reopen it, and how `spec list` and `jig status` show it.
 - The link between a task and its spec: the `Spec:` line in the task's `task.md`, checking its
   roadmap items at the knowledge decision (`jig spec done`), and taking a spec out with its links

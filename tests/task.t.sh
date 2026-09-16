@@ -805,7 +805,7 @@ test_task_resume_failed_apply_leaves_paused_set_and_exits_nonzero() {
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
 }
 
-# --- resume overlap is computed against the task's own base (ADR-0038) --------
+# --- resume overlap is computed against the task's own base (ADR-0039) --------
 
 test_task_resume_overlap_computed_against_task_base() {
   # A task cut from an epic branch, not from main. A file the epic branch
@@ -1309,7 +1309,7 @@ test_task_start_respects_branch_per_task_false() {
   assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: "
 }
 
-# --- base_branch recorded at start (ADR-0038) ---------------------------------
+# --- base_branch recorded at start (ADR-0039) ---------------------------------
 # Everything that later judges a task against its base — housekeeping,
 # context, knowledge paths, resume overlap — reads this one field, so it has
 # to land beside branch/base_commit in every path task start takes.
@@ -1534,7 +1534,7 @@ test_task_start_unreachable_origin_warns_and_succeeds() {
   assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
 }
 
-# --- start from a spec's epic (ADR-0039) ---------------------------------------
+# --- start from a spec's epic (ADR-0040) ---------------------------------------
 # A task linked to a spec whose roadmap declares an open epic is cut from the
 # epic instead of the project's configured base.
 

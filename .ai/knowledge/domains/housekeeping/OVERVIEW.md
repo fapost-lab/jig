@@ -39,12 +39,12 @@ evidence it inferred itself.
   `worktree-kept`, and `jig status` counts it. When git succeeds but the directory remains —
   Windows leaves the Directory Links in it — only links and empty directories are removed
   there; anything else is reason `leftover` (ADR-0037).
-- Judging each task against **its own base** (`jig_task_base`, ADR-0038): ancestry, the
+- Judging each task against **its own base** (`jig_task_base`, ADR-0039): ancestry, the
   "branch is the base" rule, the unknown reason and the reflog of own work all use it, bases
   resolved origin first. Work merged into another branch is flagged `wrong-base` beside
   `unknown` — kept, exit 3, counted by `jig status`. A closed task merged into a base that has
   not reached the default branch — a phase of an open epic — is kept with `base-unreleased`
-  until it has (ADR-0039).
+  until it has (ADR-0040).
 
 ## What governs it
 

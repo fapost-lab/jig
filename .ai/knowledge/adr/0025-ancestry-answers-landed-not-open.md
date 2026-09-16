@@ -82,7 +82,7 @@ exit code 3 meaningless from the first day.
 > branch's own. See ADR-0032.
 
 > **Amendment (2026-09-16).** "The base branch" is now the task's own base, `base_branch` in its
-> state, falling back to `git.base_branch` (ADR-0038): a task whose branch equals its own base is
+> state, falling back to `git.base_branch` (ADR-0039): a task whose branch equals its own base is
 > `unknown`, and ancestry is judged against that base resolved origin first. Work merged into
 > another branch than the task's base is not `merged`: remote state stays `unknown` and the task is
 > flagged `wrong-base`. The vocabulary of four states is unchanged.

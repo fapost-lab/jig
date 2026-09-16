@@ -109,7 +109,7 @@ EOF
 
       # A task of an epic that landed on its epic has not reached the default
       # branch yet; its records are kept for the epic's final review
-      # (ADR-0039). Asked only where it could matter: a merged task whose base
+      # (ADR-0040). Asked only where it could matter: a merged task whose base
       # is not the project's.
       released=true
       if [ "$remote" = merged ] && [ "$task_base" != "$_HK_DEFAULT_BASE" ]; then
@@ -124,7 +124,7 @@ EOF
 
       # Work that landed on another branch than the task's base. The remote
       # state stays `unknown`, so the policy keeps the workspace; the flag is
-      # what tells a person why (ADR-0038).
+      # what tells a person why (ADR-0039).
       _HK_WRONG_NOTE=""
       if [ -n "$landed" ]; then
         flags="${flags:+$flags,}wrong-base"
@@ -221,7 +221,7 @@ EOF
 # comma-separated subset of needs-consolidation, abandoned?, base-unreleased,
 # STALE_CANDIDATE. `released` (default true) is false for a task merged into a
 # base that has not reached the default branch yet — a phase of an open epic:
-# closed and merged, it is kept rather than purged (ADR-0039).
+# closed and merged, it is kept rather than purged (ADR-0040).
 #
 # A pure function of six strings: no filesystem, no git, no config. That is
 # what makes the domains/housekeeping policy table exhaustively testable, and it is the reason
@@ -292,7 +292,7 @@ housekeeping_decide() {
 # [<landed-on>]" where state is merged|open|closed|unknown, via is the tier that
 # decided it (domains/housekeeping), and <landed-on> — present only with
 # `unknown` — names the branch the work was merged into instead of <base>
-# (the wrong-base flag, ADR-0038). There is no fifth state: work in the wrong
+# (the wrong-base flag, ADR-0039). There is no fifth state: work in the wrong
 # place is as unknown to the policy as work nowhere.
 #
 # Both values are printed rather than one of them assigned to a global,
@@ -349,7 +349,7 @@ _hk_remote_state() {
 # merged pull request from <base> into the default branch. Then ancestry of the
 # task's own branch against the default branch, which sees a merge commit and
 # a rebase of the epic but not a squash — a squashed epic reads as not
-# released, and its phases' workspaces stay (ADR-0039; when uncertain,
+# released, and its phases' workspaces stay (ADR-0040; when uncertain,
 # preserve).
 _hk_released() {
   local branch="$1" base_commit="$2" base="$3" default="$_HK_DEFAULT_BASE"
@@ -469,7 +469,7 @@ _hk_forge_init() {
 # one into another branch was merged; nothing otherwise (fall through to
 # ancestry). A pull request into another base is not the task's landing —
 # that is how a phase merged into `main` instead of its epic, or stacked on
-# another phase's branch, would read as done (ADR-0038).
+# another phase's branch, would read as done (ADR-0039).
 _hk_forge_state() {
   local branch="$1" base="$2" line raw
   [ "$_HK_FORGE_KIND" = "none" ] && return 0
@@ -619,7 +619,7 @@ _hk_reflog() {
 # `_hk_own_work` runs inside `$(...)` for every task, and a cache filled there
 # would be discarded with the subshell. Per base, never `main` alone: judged
 # against `main`'s reflog, every commit an epic gained would count as a task
-# branch's own work (ADR-0032, ADR-0038).
+# branch's own work (ADR-0032, ADR-0039).
 _hk_base_reflog_init() {
   local tasks_dir="${1:-}" bases base ref lines tid state_file
   _HK_BASE_LOG=""

@@ -95,5 +95,5 @@ which worktrees share.
 
 > **Amendment (2026-09-16).** The base reflogs are read for every distinct task base, not for
 > `git.base_branch` alone, and a task's own work is judged only against its own base's reflog
-> (ADR-0038). Against `main`'s reflog, every commit an epic gained would count as a phase branch's
+> (ADR-0039). Against `main`'s reflog, every commit an epic gained would count as a phase branch's
 > own.

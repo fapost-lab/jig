@@ -219,7 +219,7 @@ $rel"
       printf '%s\n' "worktrees kept: $kept task(s) (see .ai/runtime/housekeeping.log)"
     fi
     # Work that landed somewhere other than the task's base: kept, and only a
-    # person can say where it should have gone (ADR-0038).
+    # person can say where it should have gone (ADR-0039).
     wrong=$(_status_flagged "$hk_log" wrong-base)
     if [ "$wrong" != "0" ]; then
       printf '%s\n' "wrong base: $wrong task(s) (see .ai/runtime/housekeeping.log)"
