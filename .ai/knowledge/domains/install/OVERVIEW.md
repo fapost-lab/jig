@@ -32,7 +32,11 @@ project owns.
   `.ai/templates/knowledge/`, `.ai/templates/scheduler/`, `.ai/templates/spec/` and the
   installed skills are carried forward by upgrade; `.ai/knowledge/`, `.ai/specs/`,
   `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
-  ADR-0011).
+  ADR-0011). Neither is `.ai/config.local.yaml`, which is not the project's either: it
+  belongs to the clone's owner and is never created by `init` (ADR-0038). `init` does write
+  its line into `.gitignore`, through the same append-missing-lines merge as every other
+  `templates/gitignore` line; `upgrade` never touches `.gitignore`, so an older project
+  gets the line only from a repeated `init`, and `status`/`doctor` warn until it has it.
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).
 - The upgrade decision table: install, replace, keep-modified, delete — decided per path

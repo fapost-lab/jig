@@ -1,6 +1,8 @@
 # jig: transient workspace and runtime state are local-only
 .ai/workspace/
 .ai/runtime/
+# jig: settings for one clone only (ADR-0038)
+.ai/config.local.yaml
 
 # Test-run output. Logs belong outside the repository (conventions/shell.md);
 # this is the net under that rule, because one of them reached the index once.

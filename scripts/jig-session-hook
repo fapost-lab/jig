@@ -43,9 +43,19 @@ main() {
   [ -f "$project/.ai/scripts/jig" ] || return 0
 
   stamp="$project/.ai/runtime/last-housekeeping"
-  cadence=$(sed -n 's/^housekeeping.cadence:[[:space:]]*//p' "$project/.ai/config.yaml" \
-    | sed 's/[[:space:]]*#.*//' | head -n 1)
-  [ -n "$cadence" ] || cadence="1d"
+  # The dispatcher's own reader, so a cadence set in .ai/config.local.yaml
+  # counts here as it does in housekeeping (ADR-0038). It reads files only:
+  # no git on the idle path.
+  [ -f "$dir/lib/config.sh" ] || return 0
+  # Read by config.sh; deliberately not exported, so the detached jig below
+  # resolves its own project.
+  # shellcheck disable=SC2034
+  JIG_PROJECT="$project"
+  # shellcheck disable=SC2034
+  JIG_AI_DIR=".ai"
+  # shellcheck source=lib/config.sh
+  . "$dir/lib/config.sh" || return 0
+  cadence=$(cfg housekeeping.cadence 1d)
 
   cadence_days=${cadence%d}
   case "$cadence_days" in

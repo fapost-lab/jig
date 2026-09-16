@@ -23,6 +23,41 @@ test_status_initialised_no_drift_no_tasks() {
   assert_contains "$OUT" "housekeeping: never"
 }
 
+# --- config.local (ADR-0038) --------------------------------------------------
+
+test_status_omits_config_local_lines_when_there_is_no_local_file() {
+  fixture_jig_repo
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "config.local:"
+}
+
+test_status_reports_local_config_keys_when_gitignored() {
+  fixture_jig_repo
+  cat > .ai/config.local.yaml <<'EOF'
+housekeeping.cadence: 3d
+git.base_branch: other
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config.local: housekeeping.cadence=3d"
+  assert_contains "$OUT" "config.local: ignored git.base_branch (not a local key)"
+  assert_not_contains "$OUT" "not ignored by git"
+}
+
+test_status_warns_when_local_config_is_not_gitignored() {
+  fixture_jig_repo
+  printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml
+  grep -v 'config.local.yaml' .gitignore > .gitignore.tmp
+  mv .gitignore.tmp .gitignore
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: .ai/config.local.yaml is not ignored by git and can be committed (fix: jig init)"
+}
+
 test_status_reports_drift() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null

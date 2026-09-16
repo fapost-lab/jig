@@ -331,6 +331,27 @@ test_init_gitignore_merges_without_duplicating() {
   assert_eq 1 "$count"
 }
 
+test_init_gitignore_appends_config_local_entry_once_across_reruns() {
+  # .ai/config.local.yaml (ADR-0038) must end up ignored, including on a
+  # project whose .gitignore predates the line: an existing install that
+  # upgrades into this feature must not need to edit .gitignore by hand.
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  grep -v 'config.local.yaml' .gitignore > .gitignore.tmp
+  mv .gitignore.tmp .gitignore
+  assert_not_contains "$(cat .gitignore)" ".ai/config.local.yaml"
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_file_contains .gitignore ".ai/config.local.yaml"
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  local count
+  count=$(grep -c '^\.ai/config\.local\.yaml$' .gitignore)
+  assert_eq 1 "$count"
+}
+
 test_init_gitattributes_merges_without_duplicating() {
   # Line endings of the framework's own files are pinned per project: a clone
   # made by Git for Windows (core.autocrlf=true) must still check .ai/scripts

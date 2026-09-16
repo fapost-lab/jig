@@ -23,6 +23,7 @@ cmd_status() {
     return 0
   fi
   printf '%s\n' "initialised: yes"
+  _status_config_local
 
   if manifest_exists; then
     local proj_version
@@ -273,6 +274,30 @@ _status_flagged() {
     }
     END { print n + 0 }
   ' "$1"
+}
+
+# What .ai/config.local.yaml changes, and why a value in it does nothing
+# (ADR-0038). Silent when there is no local file anywhere. The answers come
+# from config.sh, so this report and cfg cannot disagree about a key.
+_status_config_local() {
+  local file own key value kind
+  file=$(jig_config_local_file)
+  own="$JIG_PROJECT/$JIG_AI_DIR/config.local.yaml"
+  if [ "$own" != "$file" ] && [ -f "$own" ]; then
+    printf 'config.local: ignored %s (a worktree reads %s)\n' "$own" "$file"
+  fi
+  [ -f "$file" ] || return 0
+  while IFS="$(printf '\t')" read -r key value kind; do
+    if [ "$kind" = local ]; then
+      printf 'config.local: %s=%s\n' "$key" "$value"
+    else
+      printf 'config.local: ignored %s (not a local key)\n' "$key"
+    fi
+  done < <(jig_config_local_entries)
+  if ! jig_config_local_ignored; then
+    printf 'config.local: %s is not ignored by git and can be committed (fix: jig init)\n' \
+      "$JIG_AI_DIR/config.local.yaml"
+  fi
 }
 
 # Whether the housekeeping trigger is wired up for the installed runtimes.
