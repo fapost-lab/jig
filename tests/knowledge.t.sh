@@ -2554,6 +2554,8 @@ test_new_source_rejects_a_deleted_but_still_indexed_file() {
 }
 
 test_new_source_rejects_a_tracked_symlink() {
+  # A tracked symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
   km_setup
   mkdir -p docs
   (cd docs && ln -s ../README.md link.md)
@@ -2616,6 +2618,8 @@ test_check_fails_when_a_stub_source_becomes_untracked() {
 }
 
 test_check_fails_when_a_stub_source_is_a_tracked_symlink() {
+  # A tracked symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
   km_setup
   mkdir -p docs
   (cd docs && ln -s ../README.md link.md)
@@ -2816,6 +2820,8 @@ test_inventory_skips_a_candidate_name_containing_a_tab() {
 }
 
 test_inventory_doc_line_for_a_tracked_symlink_has_no_size() {
+  # A tracked symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
   km_setup
   mkdir -p docs
   (cd docs && ln -s ../README.md link.md)
