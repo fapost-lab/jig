@@ -124,7 +124,7 @@ global${t}${JIG_AI_DIR}/knowledge/${g}${t}"
   done
 
   local matched
-  matched=$(_ctx_matched_docs "$files" "$domains" "$show_all")
+  matched=$(_ctx_matched_docs "$files" "$domains" "$show_all") || exit 1
   if [ -n "$matched" ]; then
     rows="$rows
 $(printf '%s\n' "$matched" | sed "s/^/matched${t}/")"
@@ -239,13 +239,11 @@ _ctx_matched_docs() {
     if [ "$show_all" -ne 1 ]; then
       status=$(fm_get "$doc" status)
       jig_knowledge_status_resolvable "$status" || continue
-      # A stub for an existing document is not resolved yet (ADR-0036), in this
-      # form as in the progressive one (_ctx_active_docs).
-      [ -z "$(jig_knowledge_source "$doc")" ] || continue
     fi
 
     reason=$(_ctx_doc_reason "$doc" "$files" "$domains") || continue
-    relpath=$(jig_relpath "$doc" "$JIG_PROJECT")
+    relpath=$(_ctx_read_path "$doc") || exit 1
+    [ -z "$(jig_knowledge_source "$doc")" ] || reason="$reason; linked by $(fm_get "$doc" id)"
     out="$out
 ${relpath}${t}${reason}"
   done < <(jig_knowledge_docs)
@@ -352,11 +350,6 @@ _ctx_active_docs() {
     if [ "$CTX_ALL" -ne 1 ]; then
       status=$(fm_get "$doc" status)
       jig_knowledge_status_resolvable "$status" || continue
-      # A stub linking an existing document (ADR-0036) is not resolved until
-      # context can hand the agent its source: resolving it now would give the
-      # agent two lines of body instead of the rules. `knowledge check` fails an
-      # active stub; this keeps a hand-edited one from reaching an agent anyway.
-      [ -z "$(jig_knowledge_source "$doc")" ] || continue
     fi
     printf '%s\n' "$doc"
   done < <(jig_knowledge_docs)
@@ -471,6 +464,50 @@ _ctx_required_rows() {
   rm -f "$idmap"
 
   sort -o "$rows" "$rows"
+  _ctx_check_selected_sources "$rows"
+}
+
+# _ctx_read_path <doc> — what the agent reads for <doc> (jig_knowledge_read_path),
+# or death when <doc> is a stub whose source is missing. Only a selected
+# document comes here: a stub nobody selected is listed in the catalog as
+# "missing source" instead, so that someone else's reorganisation of `docs/`
+# stops only the tasks the rule applies to (ADR-0014 as amended).
+_ctx_read_path() {
+  local doc="$1" readp rc=0
+  readp=$(jig_knowledge_read_path "$doc") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jig_die "context: $(jig_relpath "$doc" "$JIG_PROJECT") is selected but its source $readp is missing; fix the link or reject the stub"
+  fi
+  printf '%s\n' "$readp"
+}
+
+# _ctx_check_selected_sources <rows-file> — die on the first required stub
+# whose source is missing. Run where the rows are built, in the calling shell:
+# the readers below run inside $(...), where jig_die would end only a subshell.
+_ctx_check_selected_sources() {
+  local relpath reason
+  while IFS="$(printf '\t')" read -r relpath reason; do
+    [ -n "$relpath" ] || continue
+    _ctx_read_path "$JIG_PROJECT/$relpath" >/dev/null
+  done < "$1"
+}
+
+# _ctx_read_rows <rows-file> — the required rows as the agent reads them: a
+# stub's row names its source, and its reason says which stub linked it. The
+# rows themselves keep document paths, which `requires` closure and the
+# catalog's de-duplication read frontmatter from.
+_ctx_read_rows() {
+  local relpath reason doc t
+  t=$(printf '\t')
+  while IFS="$t" read -r relpath reason; do
+    [ -n "$relpath" ] || continue
+    doc="$JIG_PROJECT/$relpath"
+    if [ -n "$(jig_knowledge_source "$doc")" ]; then
+      printf '%s%s%s; linked by %s\n' "$(jig_knowledge_read_path "$doc")" "$t" "$reason" "$(fm_get "$doc" id)"
+    else
+      printf '%s%s%s\n' "$relpath" "$t" "$reason"
+    fi
+  done < "$1"
 }
 
 # _ctx_close_requires <rows-file> <id-map> — add the transitive `requires`
@@ -540,7 +577,7 @@ _ctx_global_rows() {
 # agent decides whether to pull one in with --ids, and no body is loaded
 # merely because it shares a domain.
 _ctx_catalog_rows() {
-  local rows="$1" t doc relpath id summary dom hit
+  local rows="$1" t doc relpath id summary dom hit readp read_rc
   t=$(printf '\t')
   [ -n "$CTX_DOMAINS" ] || return 0
 
@@ -556,6 +593,15 @@ _ctx_catalog_rows() {
     id=$(fm_get "$doc" id)
     summary=$(fm_get "$doc" summary)
     [ -n "$summary" ] || summary="(no summary)"
+    if [ -n "$(jig_knowledge_source "$doc")" ]; then
+      read_rc=0
+      readp=$(jig_knowledge_read_path "$doc") || read_rc=$?
+      if [ "$read_rc" -eq 0 ]; then
+        relpath=$readp
+      else
+        summary="missing source: $readp"
+      fi
+    fi
     printf '%s%s%s%s%s\n' "$relpath" "$t" "$id" "$t" "$summary"
   done < <(_ctx_active_docs) | sort
 }
@@ -588,7 +634,7 @@ ctx_resolve() {
   while IFS="$(printf '\t')" read -r relpath reason; do
     [ -n "$relpath" ] || continue
     printf '%-10s %s  (%s)\n' "required:" "$relpath" "$reason"
-  done < "$rows"
+  done < <(_ctx_read_rows "$rows")
 
   if [ "$CTX_CATALOG" -eq 1 ]; then
     while IFS="$(printf '\t')" read -r relpath id summary; do
@@ -629,9 +675,44 @@ _ctx_check_knowledge_path() {
   esac
   case "$rel" in
     "$JIG_AI_DIR/knowledge/"*.md) ;;
-    *) jig_die "context acknowledge: not a knowledge document: $rel" ;;
+    *)
+      # A source an accepted stub links is read in the stub's place, so its
+      # reading is acknowledged too — that file, not any file (ADR-0015 as
+      # amended).
+      _ctx_is_linked_source "$rel" \
+        || jig_die "context acknowledge: not a knowledge document or a linked source: $rel"
+      ;;
+  esac
+  case "$rel" in
+    "$JIG_AI_DIR/knowledge/"*.md) ;;
+    *)
+      # The same test resolution applies: no symlink, nothing outside the
+      # repository (jig_knowledge_read_path).
+      [ -f "$JIG_PROJECT/$rel" ] && [ ! -L "$JIG_PROJECT/$rel" ] \
+        || jig_die "context acknowledge: no such document: $rel"
+      local root dir
+      root=$(cd -P "$JIG_PROJECT" && pwd -P)
+      dir=$(cd -P "$(dirname "$JIG_PROJECT/$rel")" 2>/dev/null && pwd -P) \
+        || jig_die "context acknowledge: no such document: $rel"
+      case "$dir/" in
+        "$root/"*) ;;
+        *) jig_die "context acknowledge: linked source leaves the repository: $rel" ;;
+      esac
+      ;;
   esac
   [ -f "$JIG_PROJECT/$rel" ] || jig_die "context acknowledge: no such document: $rel"
+}
+
+# _ctx_is_linked_source <relpath> — true when a resolvable stub links <relpath>.
+_ctx_is_linked_source() {
+  local want="$1" doc
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    fm_has "$doc" || continue
+    [ "$(jig_knowledge_source "$doc")" = "$want" ] || continue
+    jig_knowledge_status_resolvable "$(fm_get "$doc" status)" && return 0
+  done < <(jig_knowledge_docs)
+  return 1
 }
 
 ctx_acknowledge() {
@@ -705,7 +786,7 @@ ctx_acknowledge() {
 # but never acknowledged; they are the task's own output, not knowledge it owes
 # a reading of.
 _ctx_tracked_paths() {
-  { _ctx_global_rows | cut -f1; cut -f1 "$1"; } | sort -u
+  { _ctx_global_rows | cut -f1; _ctx_read_rows "$1" | cut -f1; } | sort -u
 }
 
 # _ctx_pending_paths <rows-file> <ledger> — tracked documents with no

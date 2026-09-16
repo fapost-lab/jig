@@ -32,7 +32,8 @@ A helper that two commands must never disagree about lives in `lib/common.sh` in
 ("which spec does this task follow, and is it on an epic" — `task start` and `spec` both read them),
 `jig_fresh_base_ref` ("which commit is the freshest base to cut from"), `jig_knowledge_docs` and
 `jig_knowledge_is_global` ("which files are knowledge documents"), `jig_knowledge_source`
-("is this document a stub for an existing file"), `jig_valid_id` ("which name may become a
+("is this document a stub for an existing file") and `jig_knowledge_read_path` ("which file does an agent
+read for it"), `jig_valid_id` ("which name may become a
 task or spec directory" — a roadmap names task ids, so the two grammars may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
 `jig spec remove` both put things there). One command library never sources another: `context`
 and `knowledge` share code only through `common.sh`.

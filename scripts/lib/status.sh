@@ -109,6 +109,16 @@ $rel"
     printf 'proposals: none\n'
   fi
 
+  # An accepted stub hands agents whatever its source says now. A source edited
+  # after acceptance is still read — a merged edit went through the team's own
+  # review — but a human has not approved it for agents, and without this line
+  # `proposals: none` would be the only thing anyone saw (ADR-0036 as amended).
+  local sources_changed
+  sources_changed=$(km_changed_sources_count)
+  if [ "$sources_changed" -gt 0 ]; then
+    printf 'sources changed: %s (jig knowledge sources)\n' "$sources_changed"
+  fi
+
   # Specifications (jig-idea). A spec is a plan outside .ai/knowledge/, so no
   # `jig context` call ever surfaces it; this line is how an agent starting a
   # session learns that one exists. Counted, not listed: `jig spec list` lists.

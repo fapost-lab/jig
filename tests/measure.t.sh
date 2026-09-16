@@ -95,6 +95,31 @@ test_measure_counts_unreviewed_knowledge() {
   assert_contains "$OUT" "1 with paths, 0 stale, 1 unreviewed"
 }
 
+# `knowledge stale`'s own summary line now ends with a sixth number, "N
+# changed sources" (linked-sources-reach-agents), appended after `planned` so
+# as not to shift anything `measure` already reads by position
+# (_measure_num). This pins that a changed source's extra trailing count
+# does not perturb the first five numbers `jig measure` extracts.
+test_measure_stale_counts_unaffected_by_a_trailing_changed_sources_count() {
+  fixture_jig_repo
+  jig knowledge new feature alpha >/dev/null
+  jig knowledge paths add feature-alpha "README.md" >/dev/null
+
+  mkdir -p docs
+  printf 'line one\n' > docs/x.md
+  git add docs/x.md
+  git commit -q -m "add docs/x.md"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig knowledge stale
+  assert_contains "$OUT" ", 1 changed sources"
+
+  run jig measure
+  assert_contains "$OUT" "1 with paths, 0 stale, 1 unreviewed, 0 orphaned, 0 planned"
+}
+
 # --- process -----------------------------------------------------------------
 
 test_measure_reports_no_tasks() {

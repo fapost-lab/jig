@@ -66,16 +66,17 @@ could hold rules (`notes/`, `docs-private/`), never dependency or build director
   or contributing code — architecture and layering documents included — are `convention`; how
   one part of the product behaves is `feature`. A team's ADR keeps its own number in the slug
   and gets no `paths`: it stays in the catalog. Give `--domains` and `--paths` only when the
-  source really is limited to them; a project-wide document gets neither, and `knowledge check`
-  warning about it is expected until linked sources resolve. Replace the stub's placeholder
+  source really is limited to them; a project-wide document gets neither, so it reaches an agent
+  only through `--ids` or `load: always`, and `knowledge check` warns about it. Propose
+  `load: always` only with the source's size in front of the human. Replace the stub's placeholder
   heading with the source's title and give it a summary. Write the size of every source into
   `knowledge-map.md` (`doc:` lines carry it; for an instruction file, `wc -c`). A line saying
   `linked by` already has a stub — do not propose it again.
 - **Untracked and ignored candidates** are listed in `knowledge-map.md` as "copy later"; do
   nothing with them yet.
 
-A stub cannot be accepted yet: `jig context` does not resolve linked sources, and an accepted
-stub would give an agent its two-line body instead of the rules. Say so at the gate.
+An accepted stub hands agents its source, whole, wherever the stub is selected: at the gate,
+put each source's size next to what its `paths` and `domains` would make required.
 
 ## 3. Separate what you saw from what you concluded
 

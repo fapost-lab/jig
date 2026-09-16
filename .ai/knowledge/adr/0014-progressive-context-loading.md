@@ -11,7 +11,7 @@ paths:
   - scripts/lib/context.sh
   - scripts/lib/knowledge.sh
   - "templates/knowledge/**"
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-16
 summary: Why knowledge declares how it should be loaded, and why directories never decide applicability.
 ---
 # ADR-0014: Knowledge declares how it should be loaded, and directories never decide
@@ -115,3 +115,13 @@ it from validation and hidden it from every consumer, silently.
 > **Amendment (2026-09-15).** `.ai/knowledge/sources/` holds stubs that link existing documents
 > (ADR-0036). Like `domains/`, the directory is navigation only. Until resolution can hand an agent
 > the source, both forms of `jig context` skip any document with `source:`, whatever its status.
+
+> **Amendment (2026-09-16).** Both forms of `jig context` resolve an active or accepted stub: it is
+> selected by its own `paths`, `domains`, `load`, `topics` and `stages`, and every row names **its
+> source** as the path to read, with `linked by <id>` in the reason (`jig_knowledge_read_path` in
+> `common.sh`). A stub whose source is missing is listed in the catalog as `missing source: <path>`,
+> and resolution fails only when that stub is selected — required, `--ids`, `requires`, or matched in
+> the stateless form — so a reorganised `docs/` stops only the tasks its rules apply to. A linked team
+> ADR without `paths` stays catalog-only in `resolve` by the existing rules; the stateless form still
+> promotes a domain match. Whether a source is tracked with exact case stays `knowledge check`'s
+> question.

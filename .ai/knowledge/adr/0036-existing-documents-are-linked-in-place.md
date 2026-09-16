@@ -12,7 +12,7 @@ paths:
   - templates/knowledge/source.md
   - "skills/jig-map/**"
 summary: Why a project's existing rule documents are adopted through proposed stubs that link them in place, and why no stub reaches an agent yet.
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-16
 ---
 # ADR-0036: A project's existing rule documents are linked in place by proposed stubs
 
@@ -92,3 +92,18 @@ collides with the project's own. On a case-insensitive filesystem `[ -f docs/x.m
   may lie outside the repository.
 - Sizes in the inventory are matched to files by order, because `wc` in the C locale prints every
   non-ASCII byte of a name as `?`; when the counts disagree, no size is printed.
+
+> **Amendment (2026-09-16).** Sources resolve, and the four holds are lifted together, as this decision
+> required: `accept` takes a stub with a working link, `knowledge check` no longer fails an active one,
+> and both forms of `jig context` resolve it to its source (ADR-0014, ADR-0015 as amended). The fifth
+> — `--source` only with `--proposed` — stays. A stub records the text a human approved as
+> `source_hash`, written by `accept` and `reviewed`. One definition, `km_source_states`, names each
+> stub's source `ok`, `changed`, `unrecorded` (no hash — counted as changed, since nothing approved the
+> current text) or `missing`; `jig status` counts changed and unrecorded on a `sources changed:` line,
+> `knowledge stale` lists them, and `jig knowledge sources [--diff <id>]` shows every link with its size
+> and the difference from the approved text when git still holds it. No copy of an approved text is
+> stored: without it the source is reviewed whole. Resolution and acknowledgement re-check the source
+> every time — a regular file, not a symlink, not under a symlinked directory leading outside the
+> repository — because a source can be swapped after acceptance without the stub changing; such a source
+> is `missing`. Re-approval is `jig knowledge reviewed`, dropping the
+> link is `reject`; agents read the current text meanwhile.

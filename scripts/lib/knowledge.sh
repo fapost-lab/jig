@@ -17,6 +17,7 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge inventory [--scope <dir>]
        jig knowledge stale [--strict]
        jig knowledge reviewed <id> [--date YYYY-MM-DD]
+       jig knowledge sources [--diff <id>]
        jig knowledge changed --base <ref> | --task <id>"
 
 # Directory holding the project's knowledge; set once by cmd_knowledge so
@@ -27,7 +28,7 @@ cmd_knowledge() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed) ;;
+    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed | sources) ;;
     *) jig_die "$KM_USAGE" ;;
   esac
 
@@ -47,6 +48,7 @@ cmd_knowledge() {
     stages) km_stages "$@" ;;
     inventory) km_inventory "$@" ;;
     changed) km_changed "$@" ;;
+    sources) km_sources "$@" ;;
   esac
 }
 
@@ -354,11 +356,6 @@ km_check_source() {
       printf '%s\t%s\n' "$src" "${id:-$relpath}" >> "$KM_SOURCES_FILE"
     fi
   fi
-  # Temporary, until jig context resolves a stub to its source: an active stub
-  # would hand an agent its two-line body instead of the rules.
-  if jig_knowledge_status_resolvable "$status"; then
-    km_fail "$relpath" "a linked source cannot be $status yet: jig context does not resolve linked sources"
-  fi
   return 0
 }
 
@@ -479,21 +476,30 @@ km_dedupe_ids() {
 # nine documents and dies on the tenth must not leave the batch half-applied.
 km_accept() {
   [ $# -ge 1 ] || jig_die "usage: jig knowledge accept <id>..."
-  local id doc type target count=0 ids src
+  local id doc type target count=0 ids src tracked=""
   ids=$(km_dedupe_ids "$@")
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     doc=$(km_require_proposed "$id") || exit 1
-    # A stub cannot be accepted until jig context resolves it to its source
-    # (ADR-0036); refused before anything in the batch is written.
+    # A stub is accepted only with a link that works: an accepted stub whose
+    # source is missing would stop every task that selects it. Checked against
+    # the index with exact case, as `knowledge check` does, before anything in
+    # the batch is written.
     src=$(jig_knowledge_source "$doc")
-    if [ -n "$src" ]; then
-      jig_die "knowledge accept: $id links $src; jig context does not resolve linked sources yet — review it, or reject it"
+    [ -n "$src" ] || continue
+    if [ -z "$tracked" ]; then
+      tracked=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-tracked.XXXXXX")
+      km_tracked_list "$tracked" || { rm -f "$tracked"; jig_die "knowledge accept: could not list the files git tracks"; }
+    fi
+    if [ -n "$(km_source_problem "$src")" ] || ! km_source_tracked "$src" "$tracked"; then
+      rm -f "$tracked"
+      jig_die "knowledge accept: $id links $src, which is missing, invalid or not tracked by git with this exact case; fix the link or reject it"
     fi
   done <<EOF
 $ids
 EOF
+  [ -z "$tracked" ] || rm -f "$tracked"
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -502,6 +508,13 @@ EOF
     if [ "$type" = adr ]; then target=accepted; else target=active; fi
     fm_set "$doc" status "$target" \
       || jig_die "knowledge accept: could not write: $id"
+    # The text a human approved, by content: a later edit to the source makes
+    # the stub `changed` until someone reviews it again (ADR-0036 as amended).
+    src=$(jig_knowledge_source "$doc")
+    if [ -n "$src" ]; then
+      fm_set "$doc" source_hash "$(jig_hash "$JIG_PROJECT/$src")" \
+        || jig_die "knowledge accept: could not record the source hash of: $id"
+    fi
     printf 'accepted   %s  (status: %s)\n' "$(km_rel "$doc")" "$target"
     count=$((count + 1))
   done <<EOF
@@ -1373,10 +1386,11 @@ km_new() {
       adr | convention | feature) ;;
       *) jig_die "knowledge new: --source links adr, convention or feature documents, not: $type" ;;
     esac
-    # Until jig context resolves a stub to its source, an active stub would put
-    # its two-line body in front of an agent instead of the rules it points at.
+    # A stub is written by a skill, and what a skill writes is proposed until a
+    # human accepts it (ADR-0016): every link a stub hands agents is a human's
+    # decision.
     [ "$proposed" -eq 1 ] \
-      || jig_die "knowledge new: --source requires --proposed; jig context does not resolve linked sources yet"
+      || jig_die "knowledge new: --source requires --proposed; a human accepts every link with jig knowledge accept"
     problem=$(km_source_problem "$source")
     [ -z "$problem" ] || jig_die "knowledge new: invalid --source '$source': $problem"
     tracked=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-tracked.XXXXXX")
@@ -1642,8 +1656,8 @@ km_stale() {
     esac
   done
 
-  local doc rel status reviewed glob any_match last
-  local docs=0 stale=0 unreviewed=0 orphaned=0 planned=0 first_unmatched
+  local doc rel status reviewed glob any_match last src state
+  local docs=0 stale=0 unreviewed=0 orphaned=0 planned=0 changed=0 first_unmatched
 
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
@@ -1704,13 +1718,29 @@ km_stale() {
     fi
   done < <(km_docs)
 
-  printf 'knowledge stale: %d documents with paths, %d stale, %d unreviewed, %d orphaned, %d planned\n' \
-    "$docs" "$stale" "$unreviewed" "$orphaned" "$planned"
+  # A linked source drifts by content, not by date: a squash merge or an
+  # unstamped human edit would make dates noise (ADR-0036 as amended).
+  while IFS="$(printf '\t')" read -r state doc src; do
+    case "$state" in
+      changed)
+        changed=$((changed + 1))
+        printf 'changed:    %s  (source %s differs from the approved text)\n' "$(km_rel "$doc")" "$src"
+        ;;
+      unrecorded)
+        changed=$((changed + 1))
+        printf 'changed:    %s  (source %s has no approved text recorded)\n' "$(km_rel "$doc")" "$src"
+        ;;
+    esac
+  done < <(km_source_states)
+
+  # The new count goes last: `jig measure` reads this line's numbers by position.
+  printf 'knowledge stale: %d documents with paths, %d stale, %d unreviewed, %d orphaned, %d planned, %d changed sources\n' \
+    "$docs" "$stale" "$unreviewed" "$orphaned" "$planned" "$changed"
 
   # `planned` is not a defect: the document is ahead of the code on purpose, so
   # --strict does not fail on it.
   [ "$strict" -eq 0 ] && return 0
-  [ $((stale + unreviewed + orphaned)) -eq 0 ]
+  [ $((stale + unreviewed + orphaned + changed)) -eq 0 ]
 }
 
 # --- reviewed ------------------------------------------------------------------
@@ -1737,12 +1767,151 @@ km_reviewed() {
     *) jig_die "knowledge reviewed: invalid date '$date' (expected YYYY-MM-DD)" ;;
   esac
 
-  local file rel
+  local file rel src
   file=$(km_doc_by_id "$id")
   rel=$(km_rel "$file")
+  # Reviewing a stub approves its source as it is now: the recorded hash moves
+  # with the stamp, so a changed source stops being reported.
+  src=$(jig_knowledge_source "$file")
+  if [ -n "$src" ]; then
+    jig_knowledge_read_path "$file" >/dev/null \
+      || jig_die "knowledge reviewed: $id links $src, which is missing; fix the link or reject it"
+    fm_set "$file" source_hash "$(jig_hash "$JIG_PROJECT/$src")" \
+      || jig_die "knowledge reviewed: failed to write $rel"
+  fi
   fm_set "$file" reviewed_at "$date" \
     || jig_die "knowledge reviewed: failed to write $rel"
   printf 'reviewed   %s  %s\n' "$rel" "$date"
+}
+
+# --- linked sources ----------------------------------------------------------
+
+# km_source_states — "<state><TAB><doc><TAB><source>" for every stub, in
+# document order. For a resolvable stub the state is `ok` when its source
+# hashes to `source_hash`, `changed` when it does not, `unrecorded` when no
+# hash was ever recorded — nothing approved the current text, so it counts as
+# changed — and `missing` when the source is not there. Any other stub is
+# `proposed` or its own status. One git process hashes every present source.
+#
+# The one definition of "changed", because three commands report it: `jig
+# status` counts, `knowledge stale` lists and `knowledge sources` shows.
+km_source_states() {
+  local doc src status rows paths hashes t
+  t=$(printf '\t')
+  rows=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-sources.XXXXXX")
+  paths="$rows.paths"
+  hashes="$rows.hashes"
+  : > "$paths"
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    fm_has "$doc" || continue
+    src=$(jig_knowledge_source "$doc")
+    [ -n "$src" ] || continue
+    status=$(fm_get "$doc" status)
+    if ! jig_knowledge_status_resolvable "$status"; then
+      printf '%s%s%s%s%s\n' "${status:-unknown}" "$t" "$doc" "$t" "$src" >> "$rows"
+    elif ! jig_knowledge_read_path "$doc" >/dev/null; then
+      printf 'missing%s%s%s%s\n' "$t" "$doc" "$t" "$src" >> "$rows"
+    else
+      printf 'hash%s%s%s%s\n' "$t" "$doc" "$t" "$src" >> "$rows"
+      printf '%s\n' "$src" >> "$paths"
+    fi
+  done < <(km_docs)
+  if ! jig_hash_list "$JIG_PROJECT" "$paths" > "$hashes"; then
+    rm -f "$rows" "$paths" "$hashes"
+    jig_die "knowledge: could not hash the linked sources"
+  fi
+  local state recorded current
+  exec 3< "$hashes"
+  while IFS="$t" read -r state doc src; do
+    [ -n "$doc" ] || continue
+    if [ "$state" = hash ]; then
+      IFS= read -r current <&3 || current=""
+      recorded=$(fm_get "$doc" source_hash)
+      if [ -z "$recorded" ]; then
+        state=unrecorded
+      elif [ "$recorded" = "$current" ]; then
+        state=ok
+      else
+        state=changed
+      fi
+    fi
+    printf '%s%s%s%s%s\n' "$state" "$t" "$doc" "$t" "$src"
+  done < "$rows"
+  exec 3<&-
+  rm -f "$rows" "$paths" "$hashes"
+}
+
+# km_changed_sources_count — accepted stubs whose source text nobody approved:
+# `changed` and `unrecorded`. A bare number, for `jig status`.
+km_changed_sources_count() {
+  km_source_states | awk -F '\t' '$1 == "changed" || $1 == "unrecorded" { n++ } END { print n + 0 }'
+}
+
+# km_sources [--diff <id>] — every stub with the state of its source, or the
+# difference between the text accepted for one stub and its source now. The
+# mechanics `jig-accept` needs to put a changed source in front of a human
+# (ADR-0001); the decision is theirs: `knowledge reviewed <id>` approves the
+# current text, `knowledge reject <id>` drops the link.
+km_sources() {
+  if [ $# -eq 0 ]; then
+    km_sources_list
+    return 0
+  fi
+  [ "$1" = --diff ] && [ $# -eq 2 ] || jig_die "usage: jig knowledge sources [--diff <id>]"
+  km_sources_diff "$2"
+}
+
+km_sources_list() {
+  local state doc src size n=0 changed=0 unrecorded=0 missing=0 t
+  t=$(printf '\t')
+  while IFS="$t" read -r state doc src; do
+    [ -n "$doc" ] || continue
+    n=$((n + 1))
+    case "$state" in
+      changed) changed=$((changed + 1)) ;;
+      unrecorded) unrecorded=$((unrecorded + 1)) ;;
+      missing) missing=$((missing + 1)) ;;
+    esac
+    if [ "$state" != missing ] && [ -f "$JIG_PROJECT/$src" ]; then
+      size=$(wc -c < "$JIG_PROJECT/$src" | tr -d ' ')
+      printf '%-11s %s -> %s (%s bytes)\n' "$state" "$(km_rel "$doc")" "$src" "$size"
+    else
+      printf '%-11s %s -> %s\n' "$state" "$(km_rel "$doc")" "$src"
+    fi
+  done < <(km_source_states)
+  printf 'knowledge sources: %d linked, %d changed, %d unrecorded, %d missing\n' \
+    "$n" "$changed" "$unrecorded" "$missing"
+}
+
+km_sources_diff() {
+  local id="$1" doc src hash old
+  doc=$(km_doc_by_id "$id")
+  src=$(jig_knowledge_source "$doc")
+  [ -n "$src" ] || jig_die "knowledge sources: $id links no source"
+  jig_knowledge_read_path "$doc" >/dev/null \
+    || jig_die "knowledge sources: $id links $src, which is missing"
+  hash=$(fm_get "$doc" source_hash)
+  if [ -z "$hash" ]; then
+    printf 'knowledge sources: %s has no recorded source_hash; review %s whole\n' "$id" "$src"
+    return 0
+  fi
+  if [ "$(jig_hash "$JIG_PROJECT/$src")" = "$hash" ]; then
+    printf 'knowledge sources: %s is unchanged since it was approved\n' "$src"
+    return 0
+  fi
+  # The approved text exists only if git still has that blob: a source
+  # committed at that version does, one accepted uncommitted may not. Nothing
+  # is stored to make up for it — the current text is then reviewed whole.
+  if ! git -C "$JIG_PROJECT" cat-file -e "$hash^{blob}" 2>/dev/null; then
+    printf 'knowledge sources: no stored text for %s; review %s whole\n' "$hash" "$src"
+    return 0
+  fi
+  old=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-approved.XXXXXX")
+  git -C "$JIG_PROJECT" cat-file -p "$hash" > "$old" \
+    || { rm -f "$old"; jig_die "knowledge sources: could not read $hash"; }
+  diff -u --label "$src (approved)" --label "$src" "$old" "$JIG_PROJECT/$src" || true
+  rm -f "$old"
 }
 
 # Stages are optional relevance metadata; never task state or a filtering policy.

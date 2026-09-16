@@ -2483,7 +2483,7 @@ test_new_source_without_proposed_is_refused() {
   km_track_file docs/coding-style.md
   run jig knowledge new convention coding-style --source docs/coding-style.md --domains a
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "knowledge new: --source requires --proposed; jig context does not resolve linked sources yet"
+  assert_contains "$OUT" "knowledge new: --source requires --proposed; a human accepts every link with jig knowledge accept"
   assert_no_file .ai/knowledge/sources/coding-style.md
 }
 
@@ -2688,7 +2688,10 @@ test_check_fails_when_two_stubs_link_the_same_source() {
     "FAIL .ai/knowledge/sources/second.md: source already linked by convention-first: docs/shared.md"
 }
 
-test_check_fails_when_a_stub_is_hand_edited_to_active() {
+# jig context now resolves a linked source (linked-sources-reach-agents), so
+# an active/accepted stub is no longer a defect on its own; only the other
+# source checks (tracked, exact case, not shared, not a symlink) still apply.
+test_check_passes_when_a_stub_is_hand_edited_to_active() {
   km_setup
   km_track_file docs/x.md
   jig knowledge new convention x --source docs/x.md --proposed --domains a >/dev/null
@@ -2696,9 +2699,8 @@ test_check_fails_when_a_stub_is_hand_edited_to_active() {
   mv .ai/knowledge/sources/x.md.new .ai/knowledge/sources/x.md
 
   run jig knowledge check
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" \
-    "FAIL .ai/knowledge/sources/x.md: a linked source cannot be active yet: jig context does not resolve linked sources"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
 }
 
 test_check_fails_when_a_stub_has_type_rule() {
@@ -2734,21 +2736,75 @@ test_check_passes_a_proposed_adr_stub_without_date() {
   assert_contains "$OUT" "0 failures"
 }
 
-# --- knowledge accept/reject/proposed: linked-source stubs (ADR-0036) -----------
+# --- knowledge accept/reject/proposed: linked-source stubs (ADR-0036 amended
+# by linked-sources-reach-agents) -----------
 
-test_accept_refuses_a_batch_containing_a_stub_and_changes_neither() {
+test_accept_accepts_a_batch_containing_a_stub_and_writes_source_hash() {
   km_setup
   km_track_file docs/x.md
   jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
   jig knowledge new feature normal --proposed --domains a >/dev/null
 
   run jig knowledge accept convention-stub feature-normal
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "accepted   .ai/knowledge/sources/stub.md  (status: active)"
+  assert_contains "$OUT" "accepted   .ai/knowledge/features/normal.md  (status: active)"
+  assert_file_contains .ai/knowledge/sources/stub.md "status: active"
+  assert_file_contains .ai/knowledge/features/normal.md "status: active"
+  local expected_hash
+  expected_hash=$(git hash-object docs/x.md)
+  assert_file_contains .ai/knowledge/sources/stub.md "source_hash: $expected_hash"
+}
+
+# A batch is all-or-nothing: `km_accept` checks every stub's source against
+# the index before writing anything, so one broken link refuses the whole
+# batch, including the well-formed document beside it.
+
+test_accept_refuses_a_batch_when_a_stubs_source_is_missing() {
+  km_setup
+  km_track_file docs/gone.md
+  jig knowledge new convention gone --source docs/gone.md --proposed --domains a >/dev/null
+  jig knowledge new feature normal --proposed --domains a >/dev/null
+  git rm -q docs/gone.md
+  git commit -q -m "remove source"
+
+  run jig knowledge accept convention-gone feature-normal
   assert_eq 1 "$RC"
-  # A stable substring rather than the full sentence, which also names the id
-  # and the source and could be reworded around them independently.
-  assert_contains "$OUT" "knowledge accept: convention-stub links docs/x.md"
-  assert_contains "$OUT" "does not resolve linked sources"
+  assert_contains "$OUT" \
+    "knowledge accept: convention-gone links docs/gone.md, which is missing, invalid or not tracked by git with this exact case; fix the link or reject it"
+  assert_file_contains .ai/knowledge/sources/gone.md "status: proposed"
+  assert_file_contains .ai/knowledge/features/normal.md "status: proposed"
+}
+
+test_accept_refuses_a_batch_when_a_stubs_source_becomes_untracked() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge new feature normal --proposed --domains a >/dev/null
+  git rm -q --cached docs/x.md
+
+  run jig knowledge accept convention-stub feature-normal
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "knowledge accept: convention-stub links docs/x.md, which is missing, invalid or not tracked by git with this exact case; fix the link or reject it"
   assert_file_contains .ai/knowledge/sources/stub.md "status: proposed"
+  assert_file_contains .ai/knowledge/features/normal.md "status: proposed"
+}
+
+test_accept_refuses_a_batch_when_a_stubs_source_case_no_longer_matches() {
+  km_setup
+  km_track_file Docs/a.md
+  jig knowledge new convention casey --source Docs/a.md --proposed --domains a >/dev/null
+  jig knowledge new feature normal --proposed --domains a >/dev/null
+  sed 's#^source: Docs/a.md#source: docs/a.md#' .ai/knowledge/sources/casey.md \
+    > .ai/knowledge/sources/casey.md.new
+  mv .ai/knowledge/sources/casey.md.new .ai/knowledge/sources/casey.md
+
+  run jig knowledge accept convention-casey feature-normal
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "knowledge accept: convention-casey links docs/a.md, which is missing, invalid or not tracked by git with this exact case; fix the link or reject it"
+  assert_file_contains .ai/knowledge/sources/casey.md "status: proposed"
   assert_file_contains .ai/knowledge/features/normal.md "status: proposed"
 }
 
@@ -2771,6 +2827,242 @@ test_proposed_shows_the_source_for_a_stub() {
   run jig knowledge proposed
   assert_eq 0 "$RC"
   assert_contains "$OUT" "proposed:  convention-stub  (convention)  .ai/knowledge/sources/stub.md  -> docs/x.md"
+}
+
+# --- knowledge reviewed: rewrites a stub's source_hash (ADR-0036 amended) -------
+
+test_reviewed_rewrites_source_hash_of_a_stub_to_the_current_source() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig knowledge reviewed convention-stub --date 2026-01-01
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "reviewed   .ai/knowledge/sources/stub.md  2026-01-01"
+  local expected_hash
+  expected_hash=$(git hash-object docs/x.md)
+  assert_file_contains .ai/knowledge/sources/stub.md "source_hash: $expected_hash"
+  assert_file_contains .ai/knowledge/sources/stub.md "reviewed_at: 2026-01-01"
+}
+
+test_reviewed_dies_when_a_stubs_source_is_missing() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  rm docs/x.md
+
+  run jig knowledge reviewed convention-stub
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge reviewed: convention-stub links docs/x.md, which is missing; fix the link or reject it"
+}
+
+# --- knowledge sources: state of every linked source (ADR-0036 amended) --------
+
+test_sources_lists_proposed_for_a_not_yet_accepted_stub() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+
+  run jig knowledge sources
+  assert_eq 0 "$RC"
+  local size
+  size=$(wc -c < docs/x.md | tr -d ' ')
+  assert_contains "$OUT" "proposed    .ai/knowledge/sources/stub.md -> docs/x.md ($size bytes)"
+  assert_contains "$OUT" "knowledge sources: 1 linked, 0 changed, 0 unrecorded, 0 missing"
+}
+
+test_sources_lists_ok_for_an_accepted_stub_whose_source_is_unchanged() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+
+  run jig knowledge sources
+  assert_eq 0 "$RC"
+  local size
+  size=$(wc -c < docs/x.md | tr -d ' ')
+  assert_contains "$OUT" "ok          .ai/knowledge/sources/stub.md -> docs/x.md ($size bytes)"
+  assert_contains "$OUT" "knowledge sources: 1 linked, 0 changed, 0 unrecorded, 0 missing"
+}
+
+test_sources_lists_changed_when_the_source_was_edited_after_accept() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig knowledge sources
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "changed     .ai/knowledge/sources/stub.md -> docs/x.md"
+  assert_contains "$OUT" "knowledge sources: 1 linked, 1 changed, 0 unrecorded, 0 missing"
+}
+
+test_sources_lists_unrecorded_when_source_hash_is_hand_removed() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  grep -v '^source_hash:' .ai/knowledge/sources/stub.md > .ai/knowledge/sources/stub.md.new
+  mv .ai/knowledge/sources/stub.md.new .ai/knowledge/sources/stub.md
+
+  run jig knowledge sources
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "unrecorded  .ai/knowledge/sources/stub.md -> docs/x.md"
+  assert_contains "$OUT" "knowledge sources: 1 linked, 0 changed, 1 unrecorded, 0 missing"
+}
+
+test_sources_lists_missing_with_no_size_when_the_source_is_gone() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  rm docs/x.md
+
+  run jig knowledge sources
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "missing     .ai/knowledge/sources/stub.md -> docs/x.md"
+  assert_not_contains "$OUT" "docs/x.md ("
+  assert_contains "$OUT" "knowledge sources: 1 linked, 0 changed, 0 unrecorded, 1 missing"
+}
+
+test_sources_usage_dies_on_bad_arguments() {
+  km_setup
+  run jig knowledge sources --diff
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge sources [--diff <id>]"
+
+  run jig knowledge sources bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge sources [--diff <id>]"
+}
+
+# --- knowledge sources --diff: the approved text against the source now --------
+
+test_sources_diff_shows_a_unified_diff_against_the_approved_text() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig knowledge sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "--- docs/x.md (approved)"
+  assert_contains "$OUT" "+++ docs/x.md"
+  assert_contains "$OUT" "+line two"
+}
+
+test_sources_diff_reports_unchanged_since_approved() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+
+  run jig knowledge sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq "knowledge sources: docs/x.md is unchanged since it was approved" "$OUT"
+}
+
+test_sources_diff_reports_no_recorded_source_hash() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  grep -v '^source_hash:' .ai/knowledge/sources/stub.md > .ai/knowledge/sources/stub.md.new
+  mv .ai/knowledge/sources/stub.md.new .ai/knowledge/sources/stub.md
+
+  run jig knowledge sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq "knowledge sources: convention-stub has no recorded source_hash; review docs/x.md whole" "$OUT"
+}
+
+# The recorded hash may name a blob git no longer has — e.g. a stub accepted
+# while its source was uncommitted, whose blob a later `git gc` pruned. Set by
+# hand here, since reproducing that sequence for real depends on gc timing.
+test_sources_diff_reports_no_stored_text_when_the_blob_is_not_in_git() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  sed 's/^source_hash:.*/source_hash: 0000000000000000000000000000000000000000/' \
+    .ai/knowledge/sources/stub.md > .ai/knowledge/sources/stub.md.new
+  mv .ai/knowledge/sources/stub.md.new .ai/knowledge/sources/stub.md
+
+  run jig knowledge sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq \
+    "knowledge sources: no stored text for 0000000000000000000000000000000000000000; review docs/x.md whole" \
+    "$OUT"
+}
+
+test_sources_diff_dies_for_a_document_that_links_no_source() {
+  km_setup
+  jig knowledge new feature plain --proposed --domains a >/dev/null
+
+  run jig knowledge sources --diff feature-plain
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge sources: feature-plain links no source"
+}
+
+# --- knowledge stale: changed sources (ADR-0036 amended) ------------------------
+
+test_stale_lists_a_changed_source_and_counts_it() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig knowledge stale
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "changed:    .ai/knowledge/sources/stub.md  (source docs/x.md differs from the approved text)"
+  assert_contains "$OUT" \
+    "knowledge stale: 0 documents with paths, 0 stale, 0 unreviewed, 0 orphaned, 0 planned, 1 changed sources"
+}
+
+test_stale_lists_an_unrecorded_source_as_changed() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  grep -v '^source_hash:' .ai/knowledge/sources/stub.md > .ai/knowledge/sources/stub.md.new
+  mv .ai/knowledge/sources/stub.md.new .ai/knowledge/sources/stub.md
+
+  run jig knowledge stale
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "changed:    .ai/knowledge/sources/stub.md  (source docs/x.md has no approved text recorded)"
+  assert_contains "$OUT" ", 1 changed sources"
+}
+
+test_stale_strict_fails_on_a_changed_source() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+
+  run jig knowledge stale --strict
+  assert_eq 1 "$RC"
+}
+
+test_stale_does_not_count_a_missing_source_as_changed() {
+  # `knowledge check` already fails a missing source; `stale` is not the
+  # second place that reports it, and --strict must not fail on it here.
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  rm docs/x.md
+
+  run jig knowledge stale --strict
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "changed:"
+  assert_contains "$OUT" ", 0 changed sources"
 }
 
 # --- knowledge inventory: instructions from other tools (ADR-0036) --------------
