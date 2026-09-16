@@ -170,14 +170,18 @@ cmd_verify() {
     # verify.sh kept by `upgrade` as keep-modified must not read a scope it
     # was never written to honour.
     set +e
+    # Run through `bash`, never exec the file directly: a profile committed
+    # from Windows (or by any checkout that lost the executable bit, e.g.
+    # `upgrade`'s keep-modified path copying a user file) has mode 100644,
+    # and the result of a check must not depend on file mode.
     if [ "$scope_ok" = 1 ]; then
       ( cd "$JIG_PROJECT" \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
-           "$pdir/verify.sh" )
+           bash "$pdir/verify.sh" )
     else
       ( cd "$JIG_PROJECT" \
         && unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES \
-        && "$pdir/verify.sh" )
+        && bash "$pdir/verify.sh" )
     fi
     rc=$?
     set -e

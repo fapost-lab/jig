@@ -39,6 +39,7 @@ test_upgrade_from_without_value_dies() {
 }
 
 test_upgrade_link_mode_is_noop_when_everything_already_linked() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   run jig upgrade --from "$JIG_HOME"
@@ -51,6 +52,7 @@ test_upgrade_link_mode_is_noop_when_everything_already_linked() {
 # left `jig upgrade` a pure no-op, so `jig verify`'s "run jig upgrade" hint
 # was a dead end (domains/install).
 test_upgrade_link_mode_creates_missing_profile_symlink() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   assert_no_file .ai/profiles/shell
@@ -78,6 +80,7 @@ EOF
 }
 
 test_upgrade_link_mode_reports_conflict_and_keeps_existing_file() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   cat > .ai/config.yaml <<'EOF'
@@ -92,6 +95,36 @@ EOF
   assert_contains "$OUT" "keep-conflict .ai/profiles/shell"
   assert_no_file .ai/profiles/shell/profile.yaml
   assert_file_contains .ai/profiles/shell/verify.sh "pre-existing, not a symlink"
+}
+
+# Reproduces the Windows Git Bash gap: `ln -s` copies instead of linking, so
+# a link-mode project must refuse rather than silently place a copy where the
+# manifest expects a symlink (jig_link_detect, common.sh).
+test_upgrade_link_mode_refuses_when_only_copying_links_are_available() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
+  assert_no_file .ai/profiles/shell
+  cat > .ai/config.yaml <<'EOF'
+profiles: [generic, shell]
+adapters: [claude, codex]
+EOF
+  local before lndir
+  before=$(git status --porcelain)
+  lndir=$(stub_ln_copy_dir)
+  export PATH="$lndir:$PATH"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "installed in link mode, which needs symbolic links"
+  assert_no_file .ai/profiles/shell
+  assert_eq "$before" "$(git status --porcelain)" "a refused upgrade must change nothing"
+
+  run jig upgrade --from "$JIG_HOME" --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "installed in link mode, which needs symbolic links"
+  assert_no_file .ai/profiles/shell
+  assert_eq "$before" "$(git status --porcelain)" "a refused dry-run must change nothing"
 }
 
 test_upgrade_dry_run_makes_no_changes() {
@@ -230,6 +263,7 @@ EOF
 }
 
 test_upgrade_link_mode_rejects_config_path_traversal_profile() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   cat > .ai/config.yaml <<'EOF'
@@ -315,6 +349,7 @@ test_upgrade_installs_spec_templates_for_a_pre_spec_install_copy_mode() {
 }
 
 test_upgrade_link_mode_links_spec_templates_for_a_pre_spec_install() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   rm -f .ai/templates/spec
@@ -394,6 +429,7 @@ test_sdd_upgrade_adds_references_and_preserves_modified_consumers() {
 }
 
 test_sdd_upgrade_link_mode_exposes_references_in_both_adapters() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   rm .codex/skills/jig-task

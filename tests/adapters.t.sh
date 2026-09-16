@@ -161,6 +161,7 @@ test_adapter_claude_declines_for_a_dangling_symlink() {
   # `-e` is false for a dangling symlink and `>` writes straight through it,
   # so this path once reported success while the bytes landed outside the
   # project entirely.
+  skip_unless_symlinks
   fixture_repo
   mkdir -p .claude outside
   ln -s "$PWD/outside/elsewhere.json" .claude/settings.json

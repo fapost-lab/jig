@@ -159,9 +159,184 @@ jig() { "$JIG_BIN" "$@"; }
 # Run jig from the copy installed into the current project.
 jig_installed() { ".ai/scripts/jig" "$@"; }
 
+# --- directory-link stubs (Windows Git Bash simulation) -----------------------
+#
+# On Windows Git Bash `ln -s` silently copies instead of linking, so
+# jig_link_detect/jig_link_dir (common.sh) and install.sh's
+# _install_symlinks_work never see a real symlink there and fall back to an
+# NTFS junction or a physical PATH entry. Neither code path runs naturally on
+# macOS/Linux, so tests simulate the Windows toolchain with stubs on PATH.
+# Callers build the stub dir(s) they need, then prepend them to PATH only for
+# the one invocation under test (conventions/shell.md: "a test decides its
+# own environment") -- never for the fixture setup that runs before it.
+
+# stub_ln_copy_dir -- prints a directory holding an `ln` that, for
+# `-s TARGET LINK`, copies TARGET to LINK (an empty directory when TARGET
+# does not exist) and exits 0, instead of linking. Any other invocation falls
+# through to the real `ln`, resolved once here, before this directory is ever
+# put on PATH. Side of $JIG_TEST_TMP, never inside it, so it never shows up
+# in a `git status` a test asserts on (same reason install.t.sh's gitstub
+# dir and _run_out live beside the test directory, not in it).
+stub_ln_copy_dir() {
+  local dir="${JIG_TEST_TMP}.lnstub" real_ln
+  real_ln=$(command -v ln) || fail "stub_ln_copy_dir: no real ln on PATH to wrap"
+  mkdir -p "$dir"
+  cat > "$dir/ln" <<STUB
+#!/bin/sh
+if [ "\$1" = "-s" ]; then
+  target="\$2"
+  link="\$3"
+  if [ -d "\$target" ]; then
+    cp -R "\$target" "\$link"
+  elif [ -e "\$target" ]; then
+    cp "\$target" "\$link"
+  else
+    mkdir -p "\$link"
+  fi
+  exit 0
+fi
+exec "$real_ln" "\$@"
+STUB
+  chmod +x "$dir/ln"
+  printf '%s\n' "$dir"
+}
+
+# stub_junction_dir -- prints a directory holding `cmd` and `cygpath` stubs
+# that simulate an NTFS junction (_jig_junction, common.sh) with a real
+# symlink: `cygpath -w X` prints X unchanged (these tests only ever pass
+# already-POSIX paths through it), and `cmd /c mklink /J LINK TARGET` makes a
+# real symlink at LINK with the true `ln`, resolved once here before any stub
+# reaches PATH -- so it works even when this directory is combined with
+# stub_ln_copy_dir's, whose own `ln -s` copies. bash reads a symlink as a
+# link (`-L`), which is what a real junction would give jig_link_detect too.
+# Combine with stub_ln_copy_dir on PATH (that one first) to reproduce a
+# machine where plain `ln -s` copies but a junction is available.
+stub_junction_dir() {
+  local dir="${JIG_TEST_TMP}.junctionstub" real_ln
+  real_ln=$(command -v ln) || fail "stub_junction_dir: no real ln on PATH to wrap"
+  mkdir -p "$dir"
+  cat > "$dir/cygpath" <<'STUB'
+#!/bin/sh
+shift
+printf '%s\n' "$1"
+STUB
+  chmod +x "$dir/cygpath"
+  cat > "$dir/cmd" <<STUB
+#!/bin/sh
+# \$1=/c \$2=mklink \$3=/J \$4=link \$5=target
+"$real_ln" -s "\$5" "\$4"
+STUB
+  chmod +x "$dir/cmd"
+  printf '%s\n' "$dir"
+}
+
 # --- assertions --------------------------------------------------------------
 
 fail() { printf 'ASSERT FAIL: %s\n' "$*"; exit 1; }
+
+# skip <reason> — mark the running test skipped rather than passed or
+# failed: print "SKIP: <reason>" and exit 77, the code tests/run.sh treats
+# as a skip. A skip is not a pass (RULES.md, ADR-0013): it must stay
+# distinguishable in the tally, the same invariant verify.sh already
+# applies to a profile's exit code 2.
+skip() {
+  printf 'SKIP: %s\n' "$1"
+  exit 77
+}
+
+# skip_unless_readonly_dirs — skip the calling test unless `chmod 555` on a
+# directory actually blocks creating a file inside it on this filesystem.
+# Windows/MSYS was seen to ignore the read-only bit for a directory owned by
+# the running user, so a negative-path test that depends on the write
+# failing must confirm the guarantee itself rather than assume POSIX
+# permission semantics everywhere.
+skip_unless_readonly_dirs() {
+  local dir blocked=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-ro-check.XXXXXX") || return 1
+  chmod 555 "$dir"
+  ( : > "$dir/probe" ) 2>/dev/null || blocked=1
+  chmod 755 "$dir"
+  rm -rf "$dir"
+  [ "$blocked" -eq 1 ] || skip "chmod 555 does not make a directory read-only here"
+}
+
+# skip_unless_unreadable_files — skip the calling test unless `chmod 000` on a
+# file actually blocks reading it. The same two gaps as a read-only directory:
+# root reads anyway, and Git Bash on NTFS keeps the file readable.
+skip_unless_unreadable_files() {
+  local dir blocked=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-unreadable-check.XXXXXX") || return 1
+  printf 'probe\n' > "$dir/probe"
+  chmod 000 "$dir/probe"
+  cat "$dir/probe" >/dev/null 2>&1 || blocked=1
+  chmod 644 "$dir/probe"
+  rm -rf "$dir"
+  [ "$blocked" -eq 1 ] || skip "chmod 000 does not make a file unreadable here"
+}
+
+# plant_dir_link <target> <link> — a directory link made the way jig makes
+# one (jig_link_dir: a symbolic link, else an NTFS junction), for a test that
+# needs a linked directory as its fixture. bash sees either as `-L`. Skips
+# when this machine can make neither.
+plant_dir_link() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"
+    jig_link_dir "$1" "$2"
+  ' _ "$1" "$2" || skip "no directory link can be made here"
+}
+
+# skip_unless_control_char_names — skip the calling test unless a file name
+# containing a tab round-trips through `git status --porcelain`, which
+# quotes such names as "bad\tname". NTFS under MSYS maps a tab in a file
+# name to a private-use Unicode character instead of keeping the byte, so a
+# test that plants a tab and expects to see it quoted back must confirm
+# this filesystem can represent it at all.
+skip_unless_control_char_names() {
+  local dir name status
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-ctrl-check.XXXXXX") || return 1
+  name=$(printf 'bad\tname')
+  status=$(
+    cd "$dir" || exit 1
+    git init -q .
+    : > "$name" 2>/dev/null
+    git status --porcelain 2>/dev/null
+  )
+  rm -rf "$dir"
+  case "$status" in
+    *'bad\tname'*) ;;
+    *) skip "this filesystem cannot represent a tab in a file name" ;;
+  esac
+}
+
+# skip_unless_symlinks — skip the calling test unless `ln -s` makes a real
+# symbolic link here. Git Bash on Windows copies instead, by default. A test
+# that is about symbolic links themselves (link mode, a link the test plants)
+# has nothing to check without them; a test that merely *uses* a link as a
+# fixture should build its fixture another way rather than skip.
+skip_unless_symlinks() {
+  local dir linked=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-symlink-check.XXXXXX") || return 1
+  mkdir "$dir/target"
+  if ln -s "$dir/target" "$dir/link" 2>/dev/null && [ -L "$dir/link" ]; then
+    linked=1
+  fi
+  rm -rf "$dir"
+  [ "$linked" -eq 1 ] || skip "symbolic links cannot be made here"
+}
+
+# skip_unless_link_simulation — skip the calling test unless stubs on PATH can
+# stand for "this machine cannot link": real `ln -s` must work (the junction
+# stub makes its "junction" with it) and no real `cmd` may be reachable, or a
+# genuine junction gets made instead. On Windows the cases these tests
+# simulate are the real machine, and other tests exercise them for real.
+skip_unless_link_simulation() {
+  skip_unless_symlinks
+  if command -v cmd >/dev/null 2>&1; then
+    skip "cmd is on PATH, so link failures cannot be simulated here"
+  fi
+}
 
 assert_eq() {
   # assert_eq <expected> <actual> [message]

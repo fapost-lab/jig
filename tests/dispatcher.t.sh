@@ -21,6 +21,7 @@ test_unknown_command_fails() {
 }
 
 test_symlinked_dispatcher_resolves_lib() {
+  skip_unless_symlinks
   mkdir -p bin
   ln -s "$JIG_BIN" bin/jig
   run bin/jig version
@@ -147,9 +148,10 @@ test_jig_trash_dest_no_collision() {
   fixture_repo
   local today root
   today=$(date +%Y-%m-%d)
-  # jig_repo_root (git rev-parse --show-toplevel) resolves symlinks in the
-  # path (e.g. macOS's /tmp -> /private/tmp), which plain $PWD does not.
-  root=$(git rev-parse --show-toplevel)
+  # JIG_PROJECT is the physical path in bash's own spelling (jig_require_repo):
+  # `pwd -P` matches it, where plain $PWD keeps macOS's /tmp -> /private/tmp
+  # link and git's --show-toplevel prints C:/... on Windows.
+  root=$(pwd -P)
   lib_run 'jig_require_repo; jig_trash_dest foo'
   assert_eq 0 "$RC"
   assert_eq "$root/.ai/runtime/trash/$today/foo" "$OUT"
@@ -159,7 +161,7 @@ test_jig_trash_dest_appends_suffix_on_collision() {
   fixture_repo
   local today root
   today=$(date +%Y-%m-%d)
-  root=$(git rev-parse --show-toplevel)
+  root=$(pwd -P)
   mkdir -p ".ai/runtime/trash/$today"
   touch ".ai/runtime/trash/$today/foo"
 

@@ -85,6 +85,7 @@ test_init_installs_document_templates_in_copy_mode() {
 }
 
 test_init_link_mode_symlinks_templates_knowledge_directory() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"
@@ -129,7 +130,27 @@ test_init_manifest_format_and_hashes() {
   assert_eq "$want" "$got"
 }
 
+# The whole scripts/ tree is copied by _init_copy_tree with no per-file
+# allowlist (domains/install), so jig.cmd needs no code of its own to reach
+# a copy-mode install: this pins that it actually does, byte for byte, and
+# is recorded on the manifest the same way every other framework file is.
+test_init_installs_windows_entry_point_in_copy_mode() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+
+  assert_file .ai/scripts/jig.cmd
+  cmp -s "$JIG_HOME/scripts/jig.cmd" .ai/scripts/jig.cmd \
+    || fail "installed jig.cmd is not byte-identical to source"
+
+  local want got
+  want=$(git -C "$JIG_HOME" hash-object scripts/jig.cmd)
+  got=$(sed -n 's/^\(.*\) \.ai\/scripts\/jig\.cmd$/\1/p' .ai/manifest)
+  assert_eq "$want" "$got"
+}
+
 test_init_self_install_writes_dot_source() {
+  skip_unless_symlinks
   fixture_repo
   # Make the fixture repository itself a framework source root, and run its
   # own dispatcher with no --from so it self-detects (dogfooding/--link).
@@ -184,6 +205,7 @@ EOF
 }
 
 test_init_rerun_picks_up_profiles_from_config_link_mode() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link --profiles generic >/dev/null
   assert_no_file .ai/profiles/shell
@@ -309,6 +331,26 @@ test_init_gitignore_merges_without_duplicating() {
   assert_eq 1 "$count"
 }
 
+test_init_gitattributes_merges_without_duplicating() {
+  # Line endings of the framework's own files are pinned per project: a clone
+  # made by Git for Windows (core.autocrlf=true) must still check .ai/scripts
+  # out LF, which Linux bash in WSL needs. Rules the project had stay.
+  fixture_repo
+  printf '*.png binary\n.ai/scripts/** text eol=lf\n' > .gitattributes
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  grep -qxF '*.png binary' .gitattributes || fail "an existing rule was lost"
+  grep -qxF '.ai/profiles/**/*.sh text eol=lf' .gitattributes || fail "the profile rule was not added"
+  assert_eq 1 "$(grep -cxF '.ai/scripts/** text eol=lf' .gitattributes)"
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(grep -cxF '.ai/scripts/** text eol=lf' .gitattributes)" \
+    "a repeat init must not duplicate a rule"
+  assert_eq "lf" "$(git check-attr eol -- .ai/scripts/jig | sed 's/.*: //')"
+}
+
 test_init_respects_adapters_flag() {
   fixture_repo
   run jig init --from "$JIG_HOME" --adapters claude
@@ -412,7 +454,24 @@ test_init_via_installed_copy_without_from_dies() {
   assert_contains "$OUT" "cannot determine the framework source root"
 }
 
+test_init_link_mode_refuses_before_writing_when_symlinks_copy() {
+  # Where `ln -s` copies instead of linking (Git Bash by default), link mode
+  # failed in step 7, after config and knowledge had already been written.
+  fixture_repo
+  local before lndir
+  before=$(git status --porcelain)
+  lndir=$(stub_ln_copy_dir)
+  export PATH="$lndir:$PATH"
+
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--link needs symbolic links"
+  assert_no_file .ai/config.yaml
+  assert_eq "$before" "$(git status --porcelain)" "a refused init must write nothing"
+}
+
 test_init_link_mode_creates_relative_symlinks() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"
@@ -437,12 +496,59 @@ test_init_link_mode_creates_relative_symlinks() {
 }
 
 test_init_link_mode_is_idempotent() {
+  skip_unless_symlinks
   fixture_repo
   jig init --from "$JIG_HOME" --link >/dev/null
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"
   assert_contains "$OUT" "0 created"
   assert_contains "$OUT" "0 conflict(s)"
+}
+
+test_init_link_mode_keeps_a_link_that_resolves_to_the_same_directory_with_different_text() {
+  # _init_place_symlink's fallback (scripts/lib/init.sh): Cygwin reads a
+  # relative link back with a different spelling of the same directory, so
+  # the function also accepts a link whose *text* differs as long as it
+  # resolves, physically, to the same target. An absolute symlink to the
+  # same directory is the platform-independent way to get different text
+  # for an identical target on macOS/Linux too.
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local target
+  target=$(cd -P "$JIG_HOME/scripts" && pwd -P)
+  rm .ai/scripts
+  ln -s "$target" .ai/scripts
+  case "$(readlink .ai/scripts)" in
+    /*) ;;
+    *) fail "test setup: expected an absolute (thus differently-spelled) link" ;;
+  esac
+
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 created"
+  assert_contains "$OUT" "0 conflict(s)"
+  assert_eq "$target" "$(readlink .ai/scripts)" \
+    "a link already kept must not be rewritten"
+}
+
+test_init_link_mode_flags_a_link_to_a_different_directory_as_conflict() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local other
+  other=$(mktemp -d "${TMPDIR:-/tmp}/jig-other-dir.XXXXXX")
+  rm .ai/scripts
+  ln -s "$other" .ai/scripts
+
+  run jig init --from "$JIG_HOME" --link
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "1 conflict(s)"
+  assert_contains "$OUT" "conflicts (kept existing content, did not overwrite):"
+  assert_contains "$OUT" ".ai/scripts"
+  assert_eq "$other" "$(readlink .ai/scripts)" \
+    "a conflicting link must be left exactly as it was, never overwritten"
+  rm -rf "$other"
 }
 
 test_init_codex_transform_end_to_end() {
@@ -487,6 +593,7 @@ test_init_installs_scheduler_templates_in_copy_mode() {
 }
 
 test_init_link_mode_symlinks_templates_scheduler_directory() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"
@@ -505,6 +612,7 @@ test_init_installs_spec_templates_in_copy_mode() {
 }
 
 test_init_link_mode_symlinks_templates_spec_directory() {
+  skip_unless_symlinks
   fixture_repo
   run jig init --from "$JIG_HOME" --link
   assert_eq 0 "$RC"

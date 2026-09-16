@@ -7,10 +7,16 @@
   like a workspace or trash entry. (ADR-0006) The one exception is a task worktree, and
   git deletes it, not the script. It is removed only by `git worktree remove` without
   `--force`, only when git lists it with the task's branch, it lies under
-  `git.worktree_root`, and it holds no workspace of its own. (ADR-0029) The installer,
+  `git.worktree_root`, and it holds no workspace of its own. (ADR-0029) When git removed
+  it and its directory is still there — Windows leaves the links behind — housekeeping
+  deletes only links (`find -type l`, never followed) and empty directories (`rmdir`) inside
+  that path, and leaves anything else. (ADR-0037) The installer,
   `install.sh`, is the other: on a failed run it removes only the install directory it
   created with a plain `mkdir` in that same run and the `jig` link it created, never a path
-  that existed before. (ADR-0033) `jig spec new` is the third: when a template copy fails it
+  that existed before. (ADR-0033) Its Windows bootstrapper, `install.ps1`, removes only the
+  Git installer it downloaded in that run; with `-Uninstall` it removes the `jig` link only
+  when it points into the install directory, and that directory only when it is a jig source
+  tree whose `git status` is clean. (ADR-0033, ADR-0037) `jig spec new` is the third: when a template copy fails it
   removes only the two temporary files it named in `.ai/specs/<id>/` and then `rmdir`s the
   directory it created with a plain `mkdir` in that run; `rmdir` refuses anything that is
   not empty. (ADR-0035) Moving to trash is not deleting, and it has two users: housekeeping moves

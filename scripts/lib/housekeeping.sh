@@ -677,6 +677,9 @@ _hk_worktree_retire() {
   fi
   if [ -z "$reason" ] && [ "$ours" = 1 ] && [ "$dry" != 1 ]; then
     git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || reason="git-refused"
+    if [ -z "$reason" ] && [ -e "$path" ]; then
+      _hk_worktree_leftover "$path" || reason="leftover"
+    fi
   fi
 
   # Recorded, not printed: the caller shows it as a --verbose line and as a
@@ -687,6 +690,7 @@ _hk_worktree_retire() {
       own-workspace) _HK_WT_NOTE="worktree kept, it holds a task workspace of its own ($path)" ;;
       uncommitted-changes) _HK_WT_NOTE="worktree kept, it has uncommitted changes ($path)" ;;
       locked) _HK_WT_NOTE="worktree kept, it is locked, a session may still be using it ($path)" ;;
+      leftover) _HK_WT_NOTE="worktree removed by git, but files remain in its directory ($path)" ;;
       *) _HK_WT_NOTE="worktree kept, git refused to remove it ($path)" ;;
     esac
     [ "$dry" = 1 ] || _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=keep reason=$reason"
@@ -707,6 +711,24 @@ _hk_worktree_retire() {
     _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=remove"
   fi
   return 0
+}
+
+# _hk_worktree_leftover <path> — clear what `git worktree remove` leaves behind
+# on Windows. There git removed the tracked files but left the directory, with
+# `.ai/…` and the junction that borrowed the workspace still in it (measured on
+# windows-latest, 2026-09-14). Removes links only, never what they point at —
+# `find` does not follow them — and then empty directories, deepest first;
+# `rmdir` cannot remove a directory that still holds anything. Non-zero when
+# anything else remains, which stays where it is. Called only after git
+# removed the worktree, on a path `_hk_worktree_retire` already proved is ours.
+_hk_worktree_leftover() {
+  local path="$1" entry
+  while IFS= read -r entry; do
+    [ -L "$entry" ] || continue
+    rm -f "$entry" 2>/dev/null || rmdir "$entry" 2>/dev/null || true
+  done < <(find "$path" -type l 2>/dev/null)
+  find "$path" -depth -type d -exec rmdir {} \; 2>/dev/null || true
+  [ ! -e "$path" ]
 }
 
 # _hk_worktree_locked <path> — true when git lists the worktree at <path> as
