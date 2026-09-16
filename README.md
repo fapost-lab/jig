@@ -9,7 +9,8 @@ decisions; scripts never call an LLM.
 
 ### 1. Make `jig` available from any directory
 
-Jig runs on macOS and Linux with Bash 3.2 or newer, Git, and standard Unix tools.
+Jig runs on macOS and Linux with Bash 3.2 or newer, Git, and standard Unix tools, and on
+Windows through Git Bash, which the Windows installer brings along ([On Windows](#on-windows)).
 It needs no Node.js, Python, package manager, or build step. Using its skills also
 requires a supported coding runtime. Project verification needs the tools used by
 the selected technology profiles.
@@ -64,6 +65,54 @@ cloning again. For future terminals, add `export PATH="$HOME/.local/bin:$PATH"` 
 way sits on `main`, the development channel.
 
 </details>
+
+#### On Windows
+
+Open **Windows PowerShell** and paste one line. You do not need to run it as administrator,
+and you do not need Git beforehand:
+
+```powershell
+irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1 | iex
+```
+
+It does, and says as it goes:
+
+1. **Git for Windows**, only when it is missing: through winget, or the official installer
+   when winget is not there. Windows asks for permission once; if you decline, it tries an
+   install for your user only.
+2. **Jig** itself, into `%USERPROFILE%\.local\share\jig` at the newest release, with its
+   `scripts` folder added to your user `PATH`. No link is needed, so Developer Mode is not either.
+3. **Your project**, if you agree — at most four questions: which folder (the current one by
+   default), whether to make it a Git repository, your name and e-mail for Git (only when Git has
+   none), and whether to set up Jig there. A folder it turned into a repository gets one first
+   commit; an existing repository gets no commit.
+4. **`jig doctor`**, which checks everything above, and the sentence to say to your agent.
+
+Everything it prints also goes to `%LOCALAPPDATA%\jig\install.log`. Running the line again is
+safe: what is already there is kept. Open a new terminal afterwards so `PATH` is picked up.
+
+Claude Code runs Jig through Git Bash. Codex, which runs PowerShell, calls
+`.ai\scripts\jig.cmd`, which hands the command to Git Bash; inner double quotes in its arguments
+are lost on the way, spaces and other characters are not. `jig doctor` can be run again at any time.
+
+To pass options, run the downloaded script as a block — for example, to remove Jig again (your
+`PATH` entry and `%USERPROFILE%\.local\share\jig`, only when it holds no local changes; Git for
+Windows stays):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1))) -Uninstall
+```
+
+Other options: `-Project <folder>`, `-Yes` (no questions, defaults), `-GitName`, `-GitEmail`,
+`-NoInit` (no project step), `-Ref vX.Y.Z` or `-Ref main`.
+
+What differs from macOS and Linux: `jig task start --worktree` links the task's workspace with an
+NTFS junction instead of a symbolic link, which needs no rights. `jig init --link` — developing
+Jig itself — needs real symbolic links, so on Windows only with Developer Mode on.
+
+WSL2 works too, for those who already use it: install Jig inside the Linux distribution with the
+`curl` line above and run your agent there. Keep the project on the Linux filesystem, not under
+`/mnt/c`.
 
 ### 2. Install Jig into a project
 
@@ -719,7 +768,9 @@ reader to assume the numbers are complete.
 
 | Symptom | Action |
 |---|---|
-| `jig: command not found` | Check `PATH`, open a new shell, and verify the symlink target still exists. |
+| `jig: command not found` | Check `PATH`, open a new shell, and verify the symlink target still exists. On Windows, open a new terminal: the installer's `PATH` change reaches only new ones. |
+| Something does not work on Windows | Run `jig doctor` in Git Bash, or `.ai\scripts\jig.cmd doctor` in PowerShell, and follow each `fix:` line; the installer's log is `%LOCALAPPDATA%\jig\install.log`. |
+| `task start: --worktree needs a directory link` | The disk holds neither a symbolic link nor an NTFS junction (a network or FAT drive). Keep the project on a local NTFS disk, or start the task in this checkout. |
 | The installer says there is no release yet | Install the development channel with `--ref main`, or wait for the first release tag. |
 | `self-update` refuses the checkout | Commit or stash its changes; a developer checkout on a task branch has no upstream and is updated with Git directly. |
 | `framework versions: ... global=unavailable` | No global `jig` on `PATH`, or it is not a framework checkout. Harmless in CI; install it where you run `self-update`. |

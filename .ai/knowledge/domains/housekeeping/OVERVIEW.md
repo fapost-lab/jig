@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-13
+reviewed_at: 2026-09-16
 ---
 # Housekeeping
 
@@ -36,7 +36,9 @@ evidence it inferred itself.
 - Removing a **Task Worktree** when the task's workspace is purged (ADR-0029). This is the
   one deletion outside `.ai/`, and git performs it: `git worktree remove`, never with
   `--force`. A worktree that has to stay keeps the workspace with it, flagged
-  `worktree-kept`, and `jig status` counts it.
+  `worktree-kept`, and `jig status` counts it. When git succeeds but the directory remains —
+  Windows leaves the Directory Links in it — only links and empty directories are removed
+  there; anything else is reason `leftover` (ADR-0037).
 
 ## What governs it
 
@@ -111,7 +113,7 @@ an LLM (ADR-0001).
 
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
   `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
-  `_hk_worktree_retire`, `_hk_record` and `_hk_print_report` (the grouped report),
+  `_hk_worktree_retire` and `_hk_worktree_leftover`, `_hk_record` and `_hk_print_report` (the grouped report),
   `_hk_unknown_reason`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six

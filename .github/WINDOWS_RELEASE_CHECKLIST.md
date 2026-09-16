@@ -51,5 +51,7 @@ item that did not pass.
 ## Repeat and remove
 
 12. Paste the install line again: nothing is reinstalled, no second PATH entry, no new commit.
-13. `install.ps1 -Uninstall`: the jig PATH entry and `%USERPROFILE%\.local\share\jig` are
-    gone; Git for Windows is still installed.
+13. The `-Uninstall` line from README, exactly as written there
+    (`& ([scriptblock]::Create((irm …/install.ps1))) -Uninstall`): the jig PATH entry and
+    `%USERPROFILE%\.local\share\jig` are gone; Git for Windows is still installed. CI runs
+    `-Uninstall` only as `-File`, so this is the one check of the README form.

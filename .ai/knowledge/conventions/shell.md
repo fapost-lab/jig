@@ -8,7 +8,7 @@ paths:
   - "adapters/**"
   - "profiles/**"
   - "tests/**"
-reviewed_at: 2026-09-14
+reviewed_at: 2026-09-16
 summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
@@ -24,7 +24,10 @@ bug during Phase 1; the rationale column says which.
 | Validate before `shift`: `[ $# -ge 2 ] \|\| jig_die "cmd: --flag requires a value"`. | A bare `shift 2` with one argument left kills the process under `set -e` with no message. |
 | Never pipe into `while read`; use `while read ...; done < <(cmd)`. | A piped loop runs in a subshell and every counter or accumulator set inside it is lost. |
 | Variables referenced from an `EXIT` trap are script-global, never `local`. | The trap runs after the function returned and `set -u` reports an unbound variable. |
-| Compare directories with `pwd -P` output, not raw strings. | `git rev-parse --show-toplevel` resolves symlinks and macOS maps `/var` to `/private/var`. |
+| Compare directories with `pwd -P` output, not raw strings. | `git rev-parse --show-toplevel` resolves symlinks and macOS maps `/var` to `/private/var`. In Git Bash `git.exe` prints `C:/…` and `pwd -P` prints `/c/…` for the same directory; `jig_require_repo` sets `JIG_PROJECT` through `cd -P … && pwd -P` for that reason, and a test compares against `pwd -P`, never against `--show-toplevel`. |
+| Hand a path to native git as an argument, or relative to a directory the command `cd`s into — never an absolute path through stdin. | MSYS converts `/c/…` to `C:\…` in arguments only. `upgrade` piped absolute paths into `git hash-object --stdin-paths`, and on every Windows machine git could not find one of them. `jig_hash_list <base> <file>` takes paths relative to `<base>` (ADR-0037). |
+| Make a directory link with `jig_link_dir`, never `ln -s`. | Git Bash copies on `ln -s` unless Developer Mode is on, and exits 0: a worktree's workspace silently became a second copy with its own `state`. `jig_link_dir` makes a symlink or an NTFS junction and fails when it can make neither; code that needs a real symlink (link mode) checks `jig_link_detect` first (ADR-0037). |
+| Run a framework script as `bash <file>`, never through its executable bit. | Git on Windows checks files out as `100644` in a repository whose index says so, and a colleague's clone inherits it. The session hook tested `-x .ai/scripts/jig` and silently never ran housekeeping for them. |
 | Write files atomically: write `file.tmp.$$`, then `mv`. | A crash mid-write must not leave a half-written manifest or config. |
 | Untrusted names (task ids, profile and adapter names, from flags *and* from config) are validated at the one function that builds the path, before any filesystem access or `sed`. | Validating at call sites leaves gaps: `jig verify --profile ../../x` executed a foreign script, `jig init --profiles ..` copied a whole tree into `.ai/`, and `--profiles ../x` reached a `sed` substitution and broke it. |
 | A walk over existing directories (`workspace/tasks/*/`) checks each name with the same validator and skips the ones that fail; it never hands them to the path builder, which dies. | Names on disk predate the current grammar. `jig task new --help` filed a workspace named `--help`; once ids could no longer start with `-`, `task list` and `task current` would have died on that directory, while `measure` and `housekeeping`, which already skipped, kept working. |
@@ -34,7 +37,7 @@ bug during Phase 1; the rationale column says which.
 | Never build a path by substituting a variable into a `sed` replacement. Concatenate in the shell. | `&` in a sed replacement means "the text that matched", and `\\` escapes. `init` prefixed the project root onto relative paths with `sed "s\|^\|$JIG_PROJECT/\|"`; under a project named `R&D/` every path silently lost that segment, git died with a raw error after the framework was already copied in, and `.ai/manifest` was left with a header and no body — an install `upgrade` and `status` no longer recognised. The project root comes from `git rev-parse --show-toplevel`, so it is always an arbitrary user path. |
 | Build a file the next command consumes in full before handing it over, when the consumer replaces something. | The same manifest write streamed entries through a pipe into `manifest_write_entries`, so a failure mid-batch still replaced the manifest with a truncated one. Assembling the entries in a file first costs ~100 ms on an install and leaves the previous manifest untouched on any failure. |
 | A test that asserts a tool is **absent** controls `PATH` by enumerating the tools it needs, never by listing directories it believes are tool-free. | `run_no_tools` set `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and called that "no toolchain". That is only true where development tools live elsewhere: on macOS php and go come from `/opt/homebrew/bin` and fall away, on a Linux runner they sit in `/usr/bin` and stayed fully visible. Three "skips without toolchain" tests passed locally and failed in CI, and the bug was **unreproducible on macOS by construction** — `/usr/bin` is read-only under SIP, so no local test could plant a tool there to catch it. |
-| Build such a `PATH` by resolving each tool through `env -i /bin/sh -c "command -v X"`, and keep only absolute answers. | A bare `command -v` answers from the developer's shell. On a machine where `grep` is aliased to ugrep it returns the string `grep`, which became a self-referential symlink and a `grep: command not found` in the middle of a run. A helper written to remove environment dependence must not inherit any. |
+| Build such a `PATH` by resolving each tool through `env -i PATH="$PATH" /bin/sh -c "command -v X"`, keep only absolute answers, and put a wrapper script that `exec`s each one in the directory, never a symlink. | A bare `command -v` answers from the developer's shell. On a machine where `grep` is aliased to ugrep it returns the string `grep`, which became a self-referential symlink and a `grep: command not found` in the middle of a run. A helper written to remove environment dependence must not inherit any. In Git Bash `ln -s` copies, and a copied `bash.exe` or `env.exe`, moved away from `msys-2.0.dll`, cannot start: every no-tools test died with exit 127. And `env -i` without `PATH` resets it to a default that leaves out `/mingw64/bin`, where git lives there, so the directory had no git at all. |
 | A list of files is hashed by one `git hash-object --stdin-paths` (`jig_hash_list`), the manifest is read once (`manifest_entries`), and a scratch tree is copied one `cp` per directory (`jig_copy_tree`). Never loop over `jig_hash`, `manifest_hash_of` or a per-file `cp`. | Every one of those is a process start per file, and they were almost all of what `jig status` cost: 1.5 s on drift and 3.5 s asking `upgrade` whether anything was pending, on a 72-file install. On 65 files the hashing loop took 0.879 s, one call 0.013 s, with identical hashes. Batching took `jig status` on a copy install from ~4 s to ~0.6 s. `jig verify` asks the same pending question (ADR-0017), so the `status` and `verify` tests alone were 47% of the suite's wall-clock time. |
 | Measure shell benchmarks under `bash`, not the interactive shell. | zsh does not word-split an unquoted parameter, so `for f in $files` runs **once** over the whole multi-line string. That turned "35 files hashed in 45 ms" into a measurement of one call, and led to the wrong conclusion that `git hash-object` was cheap; under `bash` it is ~13.6 ms per call and was the largest single cost of `jig init`. |
 | Glob matching against the tree uses `find -path` with `**` collapsed to `*`. | BSD and GNU `find -path` both match `*` across `/`, so one substitution covers any-depth and single-segment globs without `globstar`. |
@@ -79,10 +82,19 @@ cmd_example() {
   the rest from the workers.
 - **A test never assumes it runs alone.** Anything shared between tests — the fixture
   cache, the no-tools `PATH` directory — is built complete and then published atomically
-  (`ln -s`, or built by the runner before any test starts), never filled in place and
+  (`mv` of the finished directory, or built by the runner before any test starts), never filled in place and
   taken as ready by a marker inside it. `_no_tools_bin` did the latter: `git` is third on
   its list, so a test running alongside the builder saw `git` before `sed` and failed its
   `jig verify` — 2 to 4 failures in every `verify::` run at 32 workers until it was fixed.
+- **A test that needs something a filesystem may not give checks for it, and skips with the
+  reason** — `skip_unless_symlinks`, `skip_unless_readonly_dirs`, `skip_unless_unreadable_files`,
+  `skip_unless_control_char_names` in `tests/lib/assert.sh`, never a test of the OS name. `skip`
+  exits 77 and the runner counts it apart from passes and failures (ADR-0013: a skip is not a
+  pass). A test *about* symlinks skips without them; a test that only uses a linked directory as
+  a fixture plants it with `plant_dir_link`, which makes a junction where it must. On
+  `windows-latest` Git Bash `chmod 555` leaves a directory writable, `chmod 000` leaves a file
+  readable, and a tab cannot be part of a file name — each once failed a test for reasons that
+  had nothing to do with the code under test.
 - **A wait on something a test cannot `wait` for has a wall-clock deadline sized for a
   loaded machine** (`hk_wait_for`). A passing test leaves at the first poll that succeeds,
   so a generous deadline costs only a real failure. The session-hook test gave the

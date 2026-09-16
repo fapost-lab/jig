@@ -11,7 +11,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/common.sh
 summary: Why release tags, not main, are what installs and updates the global framework, and why moving it never changes a project.
-reviewed_at: 2026-09-14
+reviewed_at: 2026-09-16
 ---
 # ADR-0033: Release tags are the update channel; the installer and `self-update` move the global framework, and only `upgrade` moves a project
 
@@ -112,3 +112,11 @@ projects.
 > **Amendment (2026-09-14).** "How tags are made belongs to the release process" is settled by
 > ADR-0034: the `release` job in CI tags `v<JIG_VERSION>` after the tests pass on a merge that
 > raises the version, and a tag name is always canonical — no leading zeros.
+
+> **Amendment (2026-09-16).** On Windows the entry point is `install.ps1` (ADR-0037), which installs Git
+> for Windows when it is missing and then runs this same `install.sh --no-path`, so the release-tag
+> channel is one on every platform. Where symlinks cannot be made, `install.sh` places no link in
+> `~/.local/bin`: `scripts/` of the checkout goes on `PATH` instead, and `install.ps1` writes it to the
+> user `PATH`. `install.ps1 -Uninstall` removes those `PATH` entries, the `jig` link only when it points
+> into the checkout, and the checkout only when it is a jig source tree with a clean `git status`; a
+> failed install run deletes nothing but the Git installer it downloaded in that run.
