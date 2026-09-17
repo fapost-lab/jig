@@ -788,7 +788,7 @@ test_status_finished_epic_has_no_epic_line() {
   git commit -q -m "declare epic"
   jig spec epic idea-x >/dev/null
   git checkout -q epic/idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
 
   run jig status
   assert_eq 0 "$RC"
