@@ -12,7 +12,7 @@ paths:
   - templates/knowledge/source.md
   - "skills/jig-map/**"
 summary: Why a project's existing rule documents are adopted through proposed stubs that link them in place, and why no stub reaches an agent yet.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # ADR-0036: A project's existing rule documents are linked in place by proposed stubs
 
@@ -107,3 +107,24 @@ collides with the project's own. On a case-insensitive filesystem `[ -f docs/x.m
 > repository — because a source can be swapped after acceptance without the stub changing; such a source
 > is `missing`. Re-approval is `jig knowledge reviewed`, dropping the
 > link is `reject`; agents read the current text meanwhile.
+
+> **Amendment (2026-09-17).** After adoption the source owns its rules, in practice as well as in
+> principle. `jig-consolidate` edits the source a task was given `linked by <id>`, never the stub,
+> and `jig knowledge changed` reports edits to every non-retired stub's source — `source of <id>`,
+> marked `a decision record` for an ADR stub — with their count last on its summary line. A team's
+> decision record is never edited, typo included; a new decision follows the project's own
+> convention, read by `jig knowledge adr-convention` from the directories its ADR stubs link (next
+> number, width, the newest record as the example): the agent writes the record after that example,
+> stages that file alone, and links it with a proposed stub. An agent never approves its own edit
+> to a source: `jig knowledge reviewed <id>` follows only a human's yes, shown the changed section.
+> An untracked or ignored rule file is copied by `jig knowledge new <type> <slug> --copy <path>`: the
+> path is checked like a source's — never inside `.git/`, in any case, whose remote URLs can carry
+> credentials no pattern recognises — and must be a regular file with one link (a hard link can be a
+> file outside the repository), under no symlinked directory, and not tracked; a pattern scan for obvious secrets reports only `line <n>: <kind>` and refuses until
+> `--secrets-reviewed`; another tool's frontmatter is dropped and printed; the copy is always
+> proposed; the original is never written or deleted, and the command says another tool may still
+> load it. The scan is a prompt for a human reading the file, not a guarantee: a secret split across
+> lines, or without a recognisable shape, passes it. `adr-convention` checks every stored source like
+> any other before reading its directory, and never lists one outside the repository — rejected: external
+> scanners (a mandatory dependency, ADR-0002), entropy checks (noise on hashes and URLs), and
+> mapping Cursor's `globs`/`alwaysApply` onto `paths`/`load`, whose meanings differ.

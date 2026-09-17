@@ -6,6 +6,7 @@
 KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge new <feature|adr|convention> <slug> [--domains a,b] [--paths g,g] [--proposed]
        jig knowledge new <feature|adr|convention> <slug> --source <path> --proposed [--domains a,b] [--paths g,g]
+       jig knowledge new <feature|adr|convention> <slug> --copy <path> [--secrets-reviewed] [--domains a,b] [--paths g,g]
        jig knowledge new <domain|glossary|rule> <domain> [--paths g,g] [--proposed]
        jig knowledge paths [--task <id>] [--files <list>|-]
        jig knowledge paths add|remove <id> <glob>
@@ -18,6 +19,7 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge stale [--strict]
        jig knowledge reviewed <id> [--date YYYY-MM-DD]
        jig knowledge sources [--diff <id>]
+       jig knowledge adr-convention
        jig knowledge changed --base <ref> | --task <id>"
 
 # Directory holding the project's knowledge; set once by cmd_knowledge so
@@ -28,7 +30,7 @@ cmd_knowledge() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed | sources) ;;
+    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed | sources | adr-convention) ;;
     *) jig_die "$KM_USAGE" ;;
   esac
 
@@ -49,6 +51,7 @@ cmd_knowledge() {
     inventory) km_inventory "$@" ;;
     changed) km_changed "$@" ;;
     sources) km_sources "$@" ;;
+    adr-convention) km_adr_convention "$@" ;;
   esac
 }
 
@@ -1168,11 +1171,148 @@ $rel"*) continue ;; esac
     created=$((created + 1))
   done < <(git -C "$JIG_PROJECT" ls-files --others --exclude-standard -- "$kdir" 2>/dev/null | LC_ALL=C sort)
 
+  # Sources of stubs: consolidation edits the rule where it lives, and a report
+  # blind to that file would say "0 changed" for a task that changed a team's
+  # rules (ADR-0036 as amended). Only files a stub names — nothing else outside
+  # .ai/knowledge/ is reported. A renamed source reads as deleted here; the stub
+  # it leaves behind is `missing` in `jig knowledge sources`.
+  local sources edits=0 note src_list src_seen=""
+  sources=$(km_stub_sources)
+  if [ -n "$sources" ]; then
+    src_list=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-changed.XXXXXX")
+    printf '%s\n' "$sources" | awk -F '\t' '{ print ":(literal)" $1 }' > "$src_list"
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      status=${line%%	*}
+      rel=${line#*	}
+      note=$(km_source_note "$rel" "$sources")
+      case "$status" in
+        A*) printf 'created    %s  (%s)\n' "$rel" "$note" ;;
+        D*) printf 'deleted    %s  (%s)\n' "$rel" "$note" ;;
+        *)  printf 'modified   %s  (%s)\n' "$rel" "$note" ;;
+      esac
+      src_seen="$src_seen
+$rel"
+      edits=$((edits + 1))
+    done < <(tr '\n' '\0' < "$src_list" | xargs -0 git -C "$JIG_PROJECT" diff --no-renames --name-status "$base" -- 2>/dev/null | LC_ALL=C sort -k2,2)
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      # As for documents above: a source removed from the index but kept on
+      # disk is both "deleted" and untracked; it is one edit.
+      case "
+$src_seen
+" in *"
+$rel
+"*) continue ;; esac
+      printf 'created    %s  (%s)\n' "$rel" "$(km_source_note "$rel" "$sources")"
+      edits=$((edits + 1))
+    done < <(tr '\n' '\0' < "$src_list" | xargs -0 git -C "$JIG_PROJECT" ls-files --others --exclude-standard -- 2>/dev/null | LC_ALL=C sort)
+    rm -f "$src_list"
+  fi
+
   # Filter is "*.md under .ai/knowledge/", not jig_knowledge_docs: that helper
   # deliberately omits the three global documents, and a consolidation that
-  # edits RULES.md is exactly what this report must not hide.
-  printf 'knowledge changed: %d created, %d modified, %d renamed, %d deleted\n' \
-    "$created" "$modified" "$renamed" "$deleted"
+  # edits RULES.md is exactly what this report must not hide. The source count
+  # goes last, so every earlier number keeps its position.
+  printf 'knowledge changed: %d created, %d modified, %d renamed, %d deleted, %d source edits\n' \
+    "$created" "$modified" "$renamed" "$deleted" "$edits"
+}
+
+# km_stub_sources — "<source><TAB><id><TAB><type>" for every stub that is not
+# retired: proposed, active or accepted. One line per source, in document order.
+km_stub_sources() {
+  local doc src status
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    fm_has "$doc" || continue
+    src=$(jig_knowledge_source "$doc")
+    [ -n "$src" ] || continue
+    status=$(fm_get "$doc" status)
+    case "$status" in
+      proposed | active | accepted) ;;
+      *) continue ;;
+    esac
+    printf '%s\t%s\t%s\n' "$src" "$(fm_get "$doc" id)" "$(fm_get "$doc" type)"
+  done < <(km_docs)
+}
+
+# km_source_note <source> <km_stub_sources output> — "source of <id>", and
+# ", a decision record" when the stub is an ADR: a team's accepted decision
+# is never edited in place, so an edit to one must stand out in the report.
+km_source_note() {
+  printf '%s\n' "$2" | awk -F '\t' -v s="$1" '$1 == s {
+    printf "source of %s%s\n", $2, ($3 == "adr" ? ", a decision record" : ""); exit }'
+}
+
+# km_adr_convention — where a project keeps its own decision records, and how it
+# numbers them, read from the sources its ADR stubs link: one line per
+# directory. The numbering is the leading digits of every file there, linked or
+# not; the width is the most common digit count; the example is the highest
+# numbered file, which a new record is written after. Facts only: the new file
+# is written by an agent after that example, never from Jig's template
+# (ADR-0036 as amended).
+km_adr_convention() {
+  [ $# -eq 0 ] || jig_die "usage: jig knowledge adr-convention"
+  local dirs dir src root real
+  # A stub's `source:` is read from a file anyone can edit, and a source can be
+  # swapped after acceptance: every directory is checked like any other stored
+  # source before it is listed (RULES.md), never enumerated outside the
+  # repository.
+  root=$(cd -P "$JIG_PROJECT" && pwd -P) || jig_die "knowledge adr-convention: cannot resolve the repository root"
+  dirs=$(km_stub_sources | awk -F '\t' '$3 == "adr" { print $1 }' | while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    if [ -n "$(km_source_problem "$src")" ]; then
+      printf 'invalid\t%s\n' "$src"
+      continue
+    fi
+    # No `case` here: bash 3.2 misreads its `)` inside a command substitution.
+    if [ "${src#*/}" != "$src" ]; then dir=${src%/*}; else dir=.; fi
+    printf 'dir\t%s\n' "$dir"
+  done | LC_ALL=C sort -u)
+  if [ -z "$dirs" ]; then
+    printf 'adr-dir: none (use jig knowledge new adr)\n'
+    return 0
+  fi
+  local kind
+  while IFS='	' read -r kind dir; do
+    [ -n "$dir" ] || continue
+    if [ "$kind" = invalid ]; then
+      printf 'adr-dir: none for %s  (invalid source path, not read)\n' "$dir"
+      continue
+    fi
+    if [ ! -d "$JIG_PROJECT/$dir" ] || [ -L "$JIG_PROJECT/$dir" ]; then
+      printf 'adr-dir: %s  (missing)\n' "$dir"
+      continue
+    fi
+    real=$(cd -P "$JIG_PROJECT/$dir" 2>/dev/null && pwd -P) || real=""
+    case "$real/" in
+      "$root/"*) ;;
+      *) printf 'adr-dir: %s  (outside the repository, not read)\n' "$dir"; continue ;;
+    esac
+    find "$JIG_PROJECT/$dir" -maxdepth 1 -type f 2>/dev/null \
+      | sed 's|.*/||' | LC_ALL=C sort \
+      | awk -v dir="$dir" '
+          # More than nine digits is not a numbering anyone uses, and would
+          # overflow into a nonsense "next".
+          match($0, /^[0-9]+/) && RLENGTH <= 9 {
+            digits = substr($0, 1, RLENGTH); n = digits + 0; w = RLENGTH
+            widths[w]++
+            if (n > max || !seen) { max = n; example = $0; seen = 1 }
+            next
+          }
+          { if (plain == "") plain = $0 }
+          END {
+            if (!seen) {
+              printf "adr-dir: %s  unnumbered  example %s/%s\n", dir, dir, plain
+              exit
+            }
+            best = 0
+            for (k in widths) if (widths[k] > best || (widths[k] == best && k + 0 > bw)) { best = widths[k]; bw = k + 0 }
+            printf "adr-dir: %s  next %0" bw "d  width %d  example %s/%s\n", dir, max + 1, bw, dir, example
+          }'
+  done <<EOF
+$dirs
+EOF
 }
 
 km_rel() { jig_relpath "$1" "$JIG_PROJECT"; }
@@ -1269,6 +1409,12 @@ km_source_problem() {
   case "$src" in
     "$JIG_AI_DIR" | "$JIG_AI_DIR"/*) printf 'may not point inside %s/' "$JIG_AI_DIR"; return 0 ;;
   esac
+  # git's own directory, a submodule's included, in any case: a case-insensitive
+  # filesystem opens `.GIT/config` as `.git/config`, and its remote URLs can
+  # carry credentials no secret pattern recognises.
+  case "/$(printf '%s' "$src" | tr '[:upper:]' '[:lower:]')/" in
+    */.git/*) printf 'may not point inside .git/'; return 0 ;;
+  esac
   base=${src##*/}
   lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
   if [ "$lower" = claude.local.md ]; then
@@ -1357,7 +1503,7 @@ km_new_abandon() {
 # `--status <s>` because `proposed` is the only other status a document can
 # sensibly be born with; the template supplies the resolvable one.
 km_new() {
-  local type="" slug="" domains="" paths_in="" proposed=0 source="" has_source=0
+  local type="" slug="" domains="" paths_in="" proposed=0 source="" has_source=0 copy="" has_copy=0 secrets_reviewed=0
   [ $# -ge 2 ] || jig_die "$KM_USAGE"
   type="$1"
   slug="$2"
@@ -1370,6 +1516,9 @@ km_new() {
         paths_in="$2"; shift 2 ;;
       --source) [ $# -ge 2 ] || jig_die "knowledge new: --source requires a value"
         source="$2"; has_source=1; shift 2 ;;
+      --copy) [ $# -ge 2 ] || jig_die "knowledge new: --copy requires a value"
+        copy="$2"; has_copy=1; shift 2 ;;
+      --secrets-reviewed) secrets_reviewed=1; shift ;;
       --proposed) proposed=1; shift ;;
       *) jig_die "knowledge new: unknown argument: $1" ;;
     esac
@@ -1379,6 +1528,19 @@ km_new() {
   # unknown type is reported as an unknown type rather than as a missing
   # template.
   local dir template file id number rel build problem linked tracked
+  [ "$has_source" -eq 0 ] || [ "$has_copy" -eq 0 ] \
+    || jig_die "knowledge new: --source links a tracked file and --copy copies an untracked one; give one of them"
+  [ "$secrets_reviewed" -eq 0 ] || [ "$has_copy" -eq 1 ] \
+    || jig_die "knowledge new: --secrets-reviewed goes with --copy"
+  if [ "$has_copy" -eq 1 ]; then
+    case "$type" in
+      adr | convention | feature) ;;
+      *) jig_die "knowledge new: --copy makes adr, convention or feature documents, not: $type" ;;
+    esac
+    km_copy_check "$copy" "$secrets_reviewed"
+    # What a skill writes is proposed until a human accepts it (ADR-0016).
+    proposed=1
+  fi
   if [ "$has_source" -eq 1 ]; then
     # A stub linking an existing document (ADR-0036). Everything that can refuse
     # refuses before anything is written.
@@ -1444,7 +1606,14 @@ km_new() {
   # in `.md`, so nothing that walks knowledge documents can see it.
   mkdir -p "$(dirname "$file")"
   build="$file.new.$$"
-  cp "$template" "$build" || km_new_abandon "$build" "knowledge new: could not write $(km_rel "$file")"
+  if [ "$has_copy" -eq 1 ]; then
+    # The template's frontmatter, then the copied file's body in place of the
+    # template's: the original is only ever read.
+    km_copy_build "$template" "$JIG_PROJECT/$copy" > "$build" \
+      || km_new_abandon "$build" "knowledge new: could not write $(km_rel "$file")"
+  else
+    cp "$template" "$build" || km_new_abandon "$build" "knowledge new: could not write $(km_rel "$file")"
+  fi
 
   fm_set "$build" id "$id" || km_new_abandon "$build" "knowledge new: could not write id: $id"
   if [ "$has_source" -eq 1 ]; then
@@ -1452,6 +1621,9 @@ km_new() {
     fm_set "$build" source "$source" || km_new_abandon "$build" "knowledge new: could not write source"
     km_source_link_body "$build" "$source" \
       || km_new_abandon "$build" "knowledge new: could not write the link to $source"
+  elif [ "$type" = adr ] && [ "$has_copy" -eq 1 ]; then
+    fm_set "$build" date "$(jig_today)" \
+      || km_new_abandon "$build" "knowledge new: could not write date"
   elif [ "$type" = adr ]; then
     fm_set "$build" date "$(jig_today)" \
       || km_new_abandon "$build" "knowledge new: could not write date"
@@ -1477,7 +1649,107 @@ km_new() {
   mv "$build" "$file" || km_new_abandon "$build" "knowledge new: could not move the finished document into place: $(km_rel "$file")"
 
   rel=$(km_rel "$file")
+  if [ "$has_copy" -eq 1 ]; then
+    printf 'copied %s -> %s (proposed)\n' "$copy" "$rel"
+    jig_info "the original $copy stays where it is; another tool may still load it, and jig never deletes it"
+    return 0
+  fi
   printf '%s\n' "$rel"
+}
+
+# km_copy_check <path> <secrets-reviewed> — everything that can refuse a copy,
+# before anything is written. The path is caller-supplied: its shape is checked
+# like a linked source's, then it must be a regular file, not a symlink, inside
+# the repository once symlinked directories are resolved, and not tracked by
+# git — a tracked file is linked in place, never copied (ADR-0036).
+km_copy_check() {
+  local src="$1" reviewed="$2" problem root dir hits
+  problem=$(km_source_problem "$src")
+  [ -z "$problem" ] || jig_die "knowledge new: invalid --copy '$src': $problem"
+  if [ ! -f "$JIG_PROJECT/$src" ] || [ -L "$JIG_PROJECT/$src" ]; then
+    jig_die "knowledge new: --copy is not a regular file (symlinks are refused): $src"
+  fi
+  root=$(cd -P "$JIG_PROJECT" && pwd -P) || jig_die "knowledge new: cannot resolve the repository root"
+  dir=$(cd -P "$(dirname "$JIG_PROJECT/$src")" 2>/dev/null && pwd -P) \
+    || jig_die "knowledge new: cannot resolve the directory of $src"
+  case "$dir/" in
+    "$root/"*) ;;
+    *) jig_die "knowledge new: --copy leaves the repository through a symlinked directory: $src" ;;
+  esac
+  # A hard link is the same file as another path, possibly outside the
+  # repository, and no -L or cd -P can tell: a file with more than one link is
+  # refused. GNU `stat -c` first — BSD `stat -f %l` means something else to GNU
+  # stat and would succeed with the wrong number.
+  local links
+  links=$(stat -c %h "$JIG_PROJECT/$src" 2>/dev/null) || links=$(stat -f %l "$JIG_PROJECT/$src" 2>/dev/null) || links=""
+  case "$links" in
+    1) ;;
+    '' | *[!0-9]*) jig_die "knowledge new: cannot tell whether $src is a hard link; copy refused" ;;
+    *) jig_die "knowledge new: --copy is a hard link ($links links); a hard link can be a file outside the repository: $src" ;;
+  esac
+  if [ -n "$(git -C "$JIG_PROJECT" ls-files -- ":(literal)$src" 2>/dev/null)" ]; then
+    jig_die "knowledge new: $src is tracked by git; link it in place with --source instead"
+  fi
+  hits=$(km_secret_scan "$JIG_PROJECT/$src" | LC_ALL=C sort -t ' ' -k2,2n -u)
+  if [ -n "$hits" ]; then
+    printf '%s\n' "$hits" | sed 's/^/  /' >&2
+    if [ "$reviewed" -ne 1 ]; then
+      jig_die "knowledge new: possible secrets in $src (above); look at those lines, remove real secrets from the file, then run again with --secrets-reviewed"
+    fi
+    jig_warn "knowledge new: copying $src with the possible secrets above marked reviewed"
+  else
+    jig_warn "knowledge new: no obvious secrets in $src; the check finds obvious ones only, so read the file before it is committed"
+  fi
+}
+
+# km_secret_scan <file> — "line <n>: <kind>" for every line that looks like it
+# holds a secret. Never the matched text: a scan whose report carries the
+# secret has copied it into a log, a terminal and an agent's context. Obvious
+# shapes only — known token prefixes, key blocks, credential assignments — and
+# a pattern check is no proof of absence; the human reading the file is.
+km_secret_scan() {
+  local file="$1" kind pat flags
+  # grep exits 1 on no match; under pipefail that would be the function's
+  # status, and a clean file would fail the caller's assignment.
+  while IFS='	' read -r kind flags pat; do
+    [ -n "$kind" ] || continue
+    if [ "$flags" = i ]; then
+      grep -niE -e "$pat" "$file" 2>/dev/null || true
+    else
+      grep -nE -e "$pat" "$file" 2>/dev/null || true
+    fi | cut -d: -f1 | while IFS= read -r n; do
+      printf 'line %s: %s\n' "$n" "$kind"
+    done
+  done <<'EOF'
+aws-access-key	-	AKIA[0-9A-Z]{16}
+private-key	-	-----BEGIN [A-Z ]*PRIVATE KEY-----
+github-token	-	gh[pousr]_[A-Za-z0-9]{36,}
+github-token	-	github_pat_[A-Za-z0-9_]{20,}
+slack-token	-	xox[baprs]-[A-Za-z0-9-]{10,}
+openai-anthropic-key	-	sk-(ant-)?[A-Za-z0-9_-]{20,}
+jwt	-	eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.
+assignment	i	(api[_-]?key|secret|token|passw(or)?d)[A-Za-z0-9_]*["' ]*[:=][ "']*[^ "'<>$]{8,}
+EOF
+}
+
+# km_copy_build <template> <file> — the template's frontmatter followed by the
+# copied file's body. Another tool's frontmatter at the top of the file (Cursor
+# `.mdc`) is dropped and printed on stderr: its fields mean something else, and
+# Jig's own come from the flags a human agreed to.
+km_copy_build() {
+  local template="$1" file="$2"
+  awk '
+    NR == 1 && $0 == "---" { infm = 1; print; next }
+    infm { print; if ($0 == "---") exit }
+  ' "$template"
+  printf '\n'
+  awk '
+    NR == 1 && $0 == "---" { buf = $0 "\n"; infm = 1; next }
+    infm && $0 == "---" { infm = 0; dropped = 1; printf "removed frontmatter:\n%s---\n", buf > "/dev/stderr"; next }
+    infm { buf = buf $0 "\n"; next }
+    { print }
+    END { if (infm) { printf "%s", buf } }
+  ' "$file"
 }
 
 # --- paths ---------------------------------------------------------------------
