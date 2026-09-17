@@ -9,7 +9,7 @@ domains:
 paths:
   - scripts/lib/verify.sh
   - "profiles/**"
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-16
 summary: Why a verify scope is a file list at the profile boundary, and why an ignored scope is reported.
 ---
 # ADR-0013: `jig verify` narrows by changed files, and every profile declares whether it understands the scope
@@ -103,3 +103,9 @@ is the load-bearing part of the design and must survive edits to the table.
 Only the shell profile implements the mapping today. The other five declare no support
 and are reported as ignoring the scope, which is the intended honest behaviour, not a
 gap to be hidden.
+
+> **Amendment (2026-09-16).** "The evidence that a task is done is an unscoped run" no longer holds
+> for a project that declares `verify.full_run: ci`: there a flag-less `jig verify` narrows to what
+> changed since the merge base, and CI proves the full set. Profiles gain a second capability, `map`,
+> and a project-owned map decides paths a shipped profile cannot know. The shell profile's table no
+> longer carries this repository's layout. See ADR-0041.

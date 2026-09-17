@@ -1,0 +1,38 @@
+# Which tests a changed path needs in this repository, for the shell profile.
+# Read by `jig verify` when it narrows (ADR-0041; schemas/verify-map.md).
+#
+#   <glob>  <decision>
+#
+# The first line whose glob matches a path decides it. A decision is `-`
+# (the path affects no test), `ALL` (run everything), or tests/run.sh
+# filters. `**` and `*` both match across `/`. A path no line matches is
+# decided by the profile's built-in rules: a script maps to the test file
+# named after it, anything else runs everything.
+
+# The session hook has no test file of its own; its tests live with the
+# command it triggers.
+scripts/jig-session-hook        housekeeping::
+# The dispatcher: argument routing, --help, version. Commands are tested in
+# their own files.
+scripts/jig                     dispatcher::
+scripts/jig.cmd                 init:: install::
+
+adapters/**                     adapters::
+profiles/**                     profiles:: verify::
+templates/**                    init:: upgrade::
+
+# A library of one script is tested through that script.
+.github/scripts/release-lib.sh  release-tag::
+# CI configuration is exercised by CI itself, not by tests/run.sh.
+.github/workflows/**            -
+
+install.ps1                     install::
+tests/*.t.ps1                   install::
+
+# Tests run in their own temporary repositories with their own files; this
+# repository's settings never reach them.
+.gitignore                      -
+.gitattributes                  -
+.claude/settings.json           -
+.ai/config.yaml                 -
+.ai/verify/**                   -

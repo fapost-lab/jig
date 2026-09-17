@@ -1,4 +1,4 @@
 # Framework software version (semver). Independent of the spec document version.
 # shellcheck shell=bash
-JIG_VERSION="0.7.2"
+JIG_VERSION="0.8.0"
 export JIG_VERSION

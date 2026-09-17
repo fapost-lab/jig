@@ -58,6 +58,11 @@ enter_test_env() {
   export HOME="$1"
   export JIG_TEST_TMP="$1"
   export GIT_CONFIG_NOSYSTEM=1
+  # A run started by a narrowed `jig verify` carries the scope it was given,
+  # and CI sets CI: neither describes the project a test builds. A test that
+  # runs a profile directly inherited JIG_VERIFY_FILES naming this
+  # repository's changes and took the scoped path (ADR-0041).
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED CI
   export GIT_AUTHOR_NAME=jig GIT_AUTHOR_EMAIL=jig@test
   export GIT_COMMITTER_NAME=jig GIT_COMMITTER_EMAIL=jig@test
   # shellcheck disable=SC1090,SC1091

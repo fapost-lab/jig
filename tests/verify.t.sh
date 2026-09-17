@@ -154,9 +154,45 @@ if [ -n "\${JIG_VERIFY_FILES:-}" ] && [ -f "\${JIG_VERIFY_FILES:-}" ]; then
 else
   echo "$name: files-unset"
 fi
+if [ -n "\${JIG_VERIFY_MAPPED:-}" ] && [ -f "\${JIG_VERIFY_MAPPED:-}" ]; then
+  echo "$name: mapped-set"
+  cat "\$JIG_VERIFY_MAPPED"
+else
+  echo "$name: mapped-unset"
+fi
 exit 0
 EOF
   chmod +x ".ai/profiles/$name/verify.sh"
+}
+
+# _map_check <map-file> — validate a project map exactly the way `jig verify`
+# does, without an installed project: source the framework's own
+# scripts/lib/verify.sh in a throwaway subshell and call `_verify_map_check`
+# directly. Prints its `<line>: <reason>` output; returns its exit code.
+_map_check() {
+  bash -c '
+    set -eu
+    . "$JIG_HOME/scripts/lib/verify.sh"
+    _verify_map_check "$1"
+  ' _ "$1"
+}
+
+# _map_apply <map-file> <path...> — the `_verify_map_apply` decision for each
+# path, sourcing the framework's own scripts/lib/verify.sh directly rather
+# than going through `jig verify`, so the map protocol's own mechanics
+# (precedence, `-`/ALL, `**`/`*`, no filesystem glob expansion, CRLF) are
+# tested in isolation from the CLI and from any one profile.
+_map_apply() {
+  local map="$1" files
+  shift
+  files=$(_run_out .maplist)
+  printf '%s\n' "$@" > "$files"
+  bash -c '
+    set -eu
+    . "$JIG_HOME/scripts/lib/verify.sh"
+    _verify_map_apply "$1" "$2"
+  ' _ "$map" "$files"
+  rm -f "$files"
 }
 
 # --- shell profile -----------------------------------------------------------
@@ -907,4 +943,626 @@ test_verify_survives_a_shellcheck_that_cannot_report_its_version() {
   # still report both of its checks rather than dying silently.
   assert_contains "$OUT" "shell: shellcheck: fail (shellcheck unknown)"
   assert_contains "$OUT" "shell: tests/run.sh:"
+}
+
+# --- CI-backed projects: verify.full_run (ADR-0041) -------------------------
+# `verify.full_run: ci` in .ai/config.yaml is the project's claim that CI runs
+# the full set; a flag-less `jig verify` then narrows to what changed since
+# the merge base with git.base_branch, unless CI is set or --full is given.
+
+test_verify_full_run_local_explicit_has_no_scope_text() {
+  fixture_jig_repo
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: local
+EOF
+
+  run jig verify
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "scope"
+  assert_not_contains "$OUT" "verify: full run"
+}
+
+test_verify_full_flag_in_local_mode_runs_with_no_header() {
+  fixture_jig_repo
+
+  run jig verify --full
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "generic: ok"
+  assert_not_contains "$OUT" "scope"
+  assert_not_contains "$OUT" "verify: full run"
+}
+
+test_verify_ci_mode_scopes_files_committed_on_branch_and_unstaged() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile, enable ci mode"
+
+  git checkout -q -b work
+  echo committed-on-branch > branch-file.txt
+  git add branch-file.txt
+  git commit -q -m "branch work"
+  echo unstaged-change >> README.md
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "probe: scope=changed"
+  assert_contains "$OUT" "probe: files-set"
+  assert_contains "$OUT" "branch-file.txt"
+  assert_contains "$OUT" "README.md"
+}
+
+test_verify_ci_mode_no_merge_base_scopes_working_tree_only() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  # The template already sets git.base_branch (its first line always wins,
+  # config.sh's _cfg_read), so it is replaced rather than shadowed by a
+  # second, later line for the same key.
+  sed 's/^git\.base_branch:.*/git.base_branch: nosuch/' .ai/config.yaml \
+    > .ai/config.yaml.new && mv .ai/config.yaml.new .ai/config.yaml
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+  echo unstaged-change >> README.md
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed in the working tree only, no merge base with nosuch (verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "probe: files-set"
+  assert_contains "$OUT" "README.md"
+  assert_contains "$OUT" "RESULT probe: pass (scope: changed, 1 files)"
+}
+
+test_verify_ci_mode_header_names_local_only_base_branch() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+  local expect_sha
+  expect_sha=$(git rev-parse --short HEAD)
+
+  git checkout -q -b work
+  echo change > work.txt
+  git add work.txt
+  git commit -q -m "work"
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+}
+
+test_verify_ci_mode_with_ci_env_set_runs_full_and_clears_scope() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+
+  CI=true
+  export CI
+  run jig verify --profile probe
+  unset CI
+
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: full run (CI is set)"
+  assert_contains "$OUT" "probe: scope=<unset>"
+  assert_contains "$OUT" "probe: files-unset"
+}
+
+test_verify_ci_mode_with_ci_env_and_explicit_changed_still_scopes() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+  echo unstaged-change >> README.md
+
+  CI=true
+  export CI
+  run jig verify --changed --profile probe
+  unset CI
+
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "probe: scope=changed"
+  assert_not_contains "$OUT" "verify: full run"
+}
+
+test_verify_ci_mode_base_flag_without_changed_is_accepted_and_scoped() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+  local base
+  base=$(git rev-parse HEAD)
+  echo committed-after-base > after-base.txt
+  git add after-base.txt
+  git commit -q -m "second commit"
+
+  unset CI
+  run jig verify --base "$base" --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: scope changed since $base (--base)"
+  assert_contains "$OUT" "probe: scope=changed"
+  assert_contains "$OUT" "after-base.txt"
+}
+
+test_verify_ci_mode_full_flag_runs_unscoped() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+
+  unset CI
+  run jig verify --full --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: full run (--full)"
+  assert_contains "$OUT" "probe: scope=<unset>"
+}
+
+test_verify_full_with_changed_dies() {
+  fixture_jig_repo
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+
+  run jig verify --full --changed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "verify: --full cannot be combined with --changed or --base"
+}
+
+test_verify_full_with_base_dies() {
+  fixture_jig_repo
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+
+  run jig verify --full --base HEAD
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "verify: --full cannot be combined with --changed or --base"
+}
+
+test_verify_invalid_full_run_value_dies() {
+  fixture_jig_repo
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: sometimes
+EOF
+
+  run jig verify
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "verify: invalid verify.full_run: sometimes (expected local or ci)"
+}
+
+# verify.full_run is not in JIG_CFG_LOCAL_KEYS (config.sh, ADR-0038): a value
+# set only in .ai/config.local.yaml must never narrow or widen a run, and
+# `jig status` must name it as ignored (see also tests/status.t.sh).
+test_verify_full_run_in_local_config_is_not_honoured() {
+  fixture_jig_repo
+  cat > .ai/config.local.yaml <<'EOF'
+verify.full_run: ci
+EOF
+
+  unset CI
+  run jig verify
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: scope"
+  assert_not_contains "$OUT" "verify: full run"
+}
+
+# --- project map: JIG_VERIFY_MAPPED protocol (ADR-0041) --------------------
+# `.ai/verify/<profile>.map` is parsed once by `jig verify` itself and handed
+# to a profile declaring `scope: [changed, map]` as JIG_VERIFY_MAPPED; a
+# profile that only declares `scope: [changed]` must never see it, even when
+# a map file happens to exist on disk.
+
+test_verify_map_scope_reports_mapped_file_to_profile() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed, map]"
+  mkdir -p .ai/verify
+  printf 'README.md fixture-filter::\n' > .ai/verify/probe.map
+  git add -A
+  git commit -q -m "add probe profile with a map"
+  echo unstaged-change >> README.md
+
+  run jig verify --changed --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "probe: mapped-set"
+  assert_contains "$OUT" "$(printf 'README.md\tfixture-filter::')"
+  assert_contains "$OUT" "RESULT probe: pass (scope: changed, 1 files, map .ai/verify/probe.map)"
+}
+
+test_verify_scope_changed_only_never_gets_mapped_even_when_exported() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  mkdir -p .ai/verify
+  printf 'README.md fixture-filter::\n' > .ai/verify/probe.map
+  git add -A
+  git commit -q -m "add probe profile (scope: changed only) with a map on disk"
+  echo unstaged-change >> README.md
+
+  JIG_VERIFY_MAPPED=/tmp/should-not-leak
+  export JIG_VERIFY_MAPPED
+  run jig verify --changed --profile probe
+  unset JIG_VERIFY_MAPPED
+
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "probe: mapped-unset"
+  assert_not_contains "$OUT" "map .ai/verify/probe.map"
+}
+
+test_verify_map_scope_without_map_file_is_unset() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed, map]"
+  git add -A
+  git commit -q -m "add probe profile with map scope, no map file present"
+  echo unstaged-change >> README.md
+
+  run jig verify --changed --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "probe: mapped-unset"
+  assert_not_contains "$OUT" "map .ai/verify/probe.map"
+}
+
+# An empty changed-file list is decided before the map is ever read: the
+# "no changed files" skip (cmd_verify) comes first, so a broken map sitting
+# on disk must never turn a skip into a fail.
+test_verify_map_scope_empty_changed_file_list_skips_before_reading_the_map() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed, map]"
+  mkdir -p .ai/verify
+  # Deliberately broken (no decision for the glob): if the skip-before-map
+  # ordering ever regressed, this would surface as a `fail`, not a `skip`.
+  printf 'README.md\n' > .ai/verify/probe.map
+  git add -A
+  git commit -q -m "add probe profile with a broken map, nothing left uncommitted"
+
+  run jig verify --changed --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
+  assert_not_contains "$OUT" "RESULT probe: fail"
+  assert_no_file probe.ran
+}
+
+# A broken map fails the one profile that reads it, without running its
+# verify.sh at all — a line silently skipped would narrow the wrong way —
+# while other, unrelated profiles still run.
+test_verify_map_line_with_no_decision_fails_the_profile_without_running_it() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed, map]"
+  _fixture_probe_profile other "scope: [changed]"
+  mkdir -p .ai/verify
+  printf 'README.md\n' > .ai/verify/probe.map
+  git add -A
+  git commit -q -m "add probe profiles with a broken map (no decision)"
+  echo unstaged-change >> README.md
+
+  run jig verify --changed --profile probe,other
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "RESULT probe: fail (map .ai/verify/probe.map:1: no decision for README.md)"
+  assert_no_file probe.ran
+  assert_file other.ran
+  assert_contains "$OUT" "RESULT other: pass"
+}
+
+test_verify_map_dash_mixed_with_filters_fails_the_profile() {
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed, map]"
+  mkdir -p .ai/verify
+  printf 'README.md - some::\n' > .ai/verify/probe.map
+  git add -A
+  git commit -q -m "add probe profile with a broken map (- mixed with filters)"
+  echo unstaged-change >> README.md
+
+  run jig verify --changed --profile probe
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "RESULT probe: fail (map .ai/verify/probe.map:1: '-' and 'ALL' stand alone: - some::)"
+  assert_no_file probe.ran
+}
+
+# --- map protocol mechanics (_verify_map_check / _verify_map_apply) --------
+# Exercised directly against the framework's own functions, without an
+# installed project or a call to `jig verify`, so the map's own precedence
+# and glob rules are pinned down in isolation (ADR-0041; schemas/verify-map.md).
+
+test_verify_map_apply_first_matching_line_wins() {
+  local map out
+  map=$(_run_out .map)
+  cat > "$map" <<'EOF'
+foo.sh first::
+*.sh second::
+EOF
+  out=$(_map_apply "$map" "foo.sh")
+  assert_eq "$(printf 'foo.sh\tfirst::')" "$out"
+  rm -f "$map"
+}
+
+test_verify_map_apply_dash_means_no_test() {
+  local map out
+  map=$(_run_out .map)
+  printf 'docs/** -\n' > "$map"
+  out=$(_map_apply "$map" "docs/readme.md")
+  assert_eq "$(printf 'docs/readme.md\t-')" "$out"
+  rm -f "$map"
+}
+
+test_verify_map_apply_all_means_everything() {
+  local map out
+  map=$(_run_out .map)
+  printf 'tests/run.sh ALL\n' > "$map"
+  out=$(_map_apply "$map" "tests/run.sh")
+  assert_eq "$(printf 'tests/run.sh\tALL')" "$out"
+  rm -f "$map"
+}
+
+test_verify_map_apply_multiple_filters() {
+  local map out
+  map=$(_run_out .map)
+  printf 'adapters/** adapters:: verify::\n' > "$map"
+  out=$(_map_apply "$map" "adapters/claude/adapter.sh")
+  assert_eq "$(printf 'adapters/claude/adapter.sh\tadapters:: verify::')" "$out"
+  rm -f "$map"
+}
+
+test_verify_map_apply_unmatched_path_gets_question_mark() {
+  local map out
+  map=$(_run_out .map)
+  printf 'docs/** -\n' > "$map"
+  out=$(_map_apply "$map" "scripts/lib/task.sh")
+  assert_eq "$(printf 'scripts/lib/task.sh\t?')" "$out"
+  rm -f "$map"
+}
+
+test_verify_map_apply_double_star_and_star_match_across_slash() {
+  local map out
+  map=$(_run_out .map)
+  cat > "$map" <<'EOF'
+adapters/** wide::
+scripts/*.sh single::
+EOF
+  out=$(_map_apply "$map" "adapters/claude/deep/nested.sh" "scripts/jig.sh")
+  assert_contains "$out" "$(printf 'adapters/claude/deep/nested.sh\twide::')"
+  assert_contains "$out" "$(printf 'scripts/jig.sh\tsingle::')"
+  rm -f "$map"
+}
+
+# Files sitting in the working directory that happen to match the map's own
+# glob token would, without `set -f` around the word-split, turn that token
+# into their names instead of leaving it as a literal pattern.
+test_verify_map_check_and_apply_do_not_expand_glob_against_filesystem() {
+  printf 'x\n' > a.txt
+  printf 'y\n' > b.txt
+  local map out
+  map=$(_run_out .map)
+  printf '*.txt matched::\n' > "$map"
+
+  assert_exit 0 _map_check "$map"
+
+  out=$(_map_apply "$map" "sample.txt")
+  assert_eq "$(printf 'sample.txt\tmatched::')" "$out"
+  rm -f "$map" a.txt b.txt
+}
+
+# A map saved on Windows ends its lines in CRLF; both functions must strip
+# the CR before splitting or matching, so neither the validation nor the
+# decision it produces ever carries one.
+test_verify_map_check_and_apply_strip_crlf_line_endings() {
+  local map out
+  map=$(_run_out .map)
+  printf 'a/** x::\r\n' > "$map"
+
+  assert_exit 0 _map_check "$map"
+
+  out=$(_map_apply "$map" "a/b.sh")
+  assert_eq "$(printf 'a/b.sh\tx::')" "$out"
+  rm -f "$map"
+}
+
+# --- own map: this repository's .ai/verify/shell.map (ADR-0041) ------------
+
+test_verify_own_shell_map_is_valid() {
+  assert_exit 0 _map_check "$JIG_HOME/.ai/verify/shell.map"
+}
+
+test_verify_own_shell_map_decides_known_paths() {
+  local out
+  out=$(_map_apply "$JIG_HOME/.ai/verify/shell.map" \
+    "scripts/jig-session-hook" \
+    "adapters/claude/adapter.sh" \
+    "profiles/shell/verify.sh" \
+    "scripts/jig" \
+    "templates/gitignore" \
+    "scripts/lib/task.sh")
+  assert_contains "$out" "$(printf 'scripts/jig-session-hook\thousekeeping::')"
+  assert_contains "$out" "$(printf 'adapters/claude/adapter.sh\tadapters::')"
+  assert_contains "$out" "$(printf 'profiles/shell/verify.sh\tprofiles:: verify::')"
+  assert_contains "$out" "$(printf 'scripts/jig\tdispatcher::')"
+  assert_contains "$out" "$(printf 'templates/gitignore\tinit:: upgrade::')"
+  assert_contains "$out" "$(printf 'scripts/lib/task.sh\t?')"
+}
+
+# --- shell profile: map-driven and unmatched-filter narrowing --------------
+
+# A tiny project with its own executable tests/run.sh stub, so a test can
+# assert exactly which filter(s) the shell profile narrowed to without
+# invoking this repository's own (heavy) test runner recursively. Logs each
+# invocation's arguments to run-log, one call per line; "(full)" for a call
+# with none.
+_fixture_shell_scope_project() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  mkdir -p tests
+  cat > tests/run.sh <<'EOF'
+#!/usr/bin/env bash
+if [ $# -eq 0 ]; then
+  echo "(full)" >> run-log
+else
+  printf '%s\n' "$@" >> run-log
+fi
+exit 0
+EOF
+  chmod +x tests/run.sh
+}
+
+test_verify_shell_profile_map_dash_skips_the_narrowed_run() {
+  _fixture_shell_scope_project
+  mkdir -p .ai/verify
+  printf 'skip.sh -\n' > .ai/verify/shell.map
+  printf '#!/usr/bin/env bash\necho hi\n' > skip.sh
+  chmod +x skip.sh
+  # The stub lands in $PWD (tests/lib/assert.sh): committed with everything
+  # else so it is not itself a "changed" file the profile has to narrow on.
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+  printf '#!/usr/bin/env bash\necho hi2\n' > skip.sh
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: skip (scope: no changed file maps to a test)"
+  assert_no_file run-log
+}
+
+test_verify_shell_profile_map_question_mark_falls_back_to_builtin_rule() {
+  _fixture_shell_scope_project
+  mkdir -p .ai/verify
+  printf 'irrelevant/** -\n' > .ai/verify/shell.map
+  printf '#!/usr/bin/env bash\necho hi\n' > foo.sh
+  chmod +x foo.sh
+  printf 'test_something() { :; }\n' > tests/foo.t.sh
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+  printf '#!/usr/bin/env bash\necho hi2\n' > foo.sh
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: 1 filters)"
+  assert_file_contains run-log "foo::"
+}
+
+test_verify_shell_profile_full_run_when_filter_selects_no_tests() {
+  _fixture_shell_scope_project
+  printf '# placeholder, no test functions in this file\n' > tests/foo.t.sh
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+  printf '# still no test functions\n' >> tests/foo.t.sh
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "shell: tests/run.sh: pass (scope: filter 'foo::' selects no tests, ran full set)"
+  assert_file_contains run-log "(full)"
+}
+
+test_verify_shell_profile_full_run_when_script_has_no_matching_test_file() {
+  _fixture_shell_scope_project
+  printf '#!/usr/bin/env bash\necho hi\n' > lonely.sh
+  chmod +x lonely.sh
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+  printf '#!/usr/bin/env bash\necho hi2\n' > lonely.sh
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: not narrowable, ran full set)"
+  assert_file_contains run-log "(full)"
+}
+
+# _shell_test_names also recognises `function test_x` with the brace on its
+# own line (not only `test_x()` or `function test_x() {` on one line): the
+# function name is captured off the `function test_x` line itself, so where
+# the brace lands does not matter.
+test_verify_shell_profile_recognises_function_test_without_parens_across_lines() {
+  _fixture_shell_scope_project
+  mkdir -p .ai/verify
+  printf 'trigger.sh foo::test_bar\n' > .ai/verify/shell.map
+  cat > tests/foo.t.sh <<'EOF'
+function test_bar
+{
+  :
+}
+EOF
+  printf '#!/usr/bin/env bash\necho hi\n' > trigger.sh
+  chmod +x trigger.sh
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+  printf '#!/usr/bin/env bash\necho hi2\n' > trigger.sh
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: 1 filters)"
+  assert_not_contains "$OUT" "selects no tests"
+  assert_file_contains run-log "foo::test_bar"
+}
+
+# A map decision is a hand-edited string, so `_shell_test_filters` must
+# word-split it under `set -f`: without that, an unquoted `for tok in
+# $decision` also pathname-expands the token against files sitting in the
+# project root, turning a literal `a*` filter into the names of files that
+# happen to match it.
+test_verify_shell_profile_map_decision_glob_token_is_not_expanded_against_files() {
+  _fixture_shell_scope_project
+  : > a1
+  : > a2
+  mkdir -p .ai/verify
+  printf 'trigger.sh a*\n' > .ai/verify/shell.map
+  printf '#!/usr/bin/env bash\necho hi\n' > trigger.sh
+  chmod +x trigger.sh
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+  printf '#!/usr/bin/env bash\necho hi2\n' > trigger.sh
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "shell: tests/run.sh: pass (scope: filter 'a*' selects no tests, ran full set)"
+  assert_not_contains "$OUT" "filter 'a1'"
+  assert_not_contains "$OUT" "filter 'a2'"
+}
+
+# --- shell profile: .shellcheckrc widens the lint to the whole tree --------
+
+test_verify_shell_profile_widens_lint_to_whole_tree_when_shellcheckrc_changes() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  printf '#!/usr/bin/env bash\necho tracked\n' > tracked.sh
+  chmod +x tracked.sh
+  printf '# shellcheck config\n' > .shellcheckrc
+  git add -A
+  git commit -q -m "baseline with a tracked script and .shellcheckrc"
+
+  printf '# widened\n' >> .shellcheckrc
+  sc_stub_logging 1.0.0
+
+  run jig verify --changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "scope: .shellcheckrc changed, whole tree"
+  assert_file_contains sc-linted.log tracked.sh
 }
