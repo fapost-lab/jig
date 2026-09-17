@@ -15,7 +15,7 @@ paths:
   - AGENTS.md
   - templates/AGENTS.md
 summary: Why every task route ends in consolidation, and why the knowledge decision is recorded before the commit but the task closes only after it lands.
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-17
 ---
 # ADR-0030: Every route ends in consolidation; a task closes after it lands
 
@@ -107,3 +107,8 @@ both were written together at the end of `jig-consolidate`, before the commit.
 > decision includes checking its roadmap items (`jig spec done`), before the commit, for the reason
 > this ADR records the decision there at all: what the task leaves behind enters the repository with
 > the code. The close stays after the landing. See ADR-0035.
+
+> **Amendment (2026-09-17).** When consolidation edits the source of a linked document, the
+> knowledge decision includes a human's yes to that edit before `jig knowledge reviewed <stub>`
+> records the new text as approved; without it the source stays counted as changed and is
+> re-approved through `jig-accept` (ADR-0036 as amended).

@@ -41,12 +41,20 @@ once, and read the map's own
 uncertainty behind each proposal, which is exactly what the decision needs.
 
 **A stub that links an existing document** — `jig knowledge proposed` shows it with
-`-> <source>` — has no rules in its body. Show the source's path and size instead, and the source
-itself when the human asks. It cannot be accepted yet: `jig context` does not resolve linked
-sources, so `accept` refuses it. Offer to reject it or leave it proposed.
+`-> <source>` — has no rules in its body. Show the source's path and size
+(`jig knowledge sources`) instead, and the source itself when the human asks. Accepting it hands
+that file to every agent the stub selects, whole: say what its `paths`, `domains` and `load` make
+required, and how large that is. `accept` refuses a stub whose source is missing or not tracked.
 
 Say plainly which proposals you are least confident in. A skill that presents its own
 guesses with uniform confidence has hidden the only thing the human is there to judge.
+
+**A linked source changed since it was approved** — `jig status` counts it on its
+`sources changed:` line. Agents already read the new text; what is missing is a human's look at it.
+For each `changed` or `unrecorded` line of `jig knowledge sources`, show
+`jig knowledge sources --diff <id>` (or the source whole when no approved text is stored) and ask:
+keep it, which is `jig knowledge reviewed <id>`, or drop the link, which is
+`jig knowledge reject <id>`. A `missing` source is fixed by moving the link, not reviewed.
 
 ## 3. Ask, and wait
 

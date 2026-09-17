@@ -50,8 +50,8 @@ could hold rules (`notes/`, `docs-private/`), never dependency or build director
   configured runtime loads on its own is not linked — it would be read twice. `CLAUDE.md` in a
   project that also runs Codex is linked, unless it only points at `AGENTS.md`. Another tool's
   file (`.cursorrules`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`) is linked.
-  Only a tracked file can be linked: an instruction file marked `(untracked)` or `(ignored)` goes
-  to "copy later" like any other. `CLAUDE.local.md` is never touched.
+  Only a tracked file can be linked: an instruction file marked `(untracked)` or `(ignored)` is
+  copied like any other untracked candidate. `CLAUDE.local.md` is never touched.
 - **Duplicates and contradictions** get their own section in `knowledge-map.md`: the rule, where
   each version is written, how they differ, and how you would reconcile them. Settle nothing
   silently — existing rules keep their authority until the human decides.
@@ -66,16 +66,28 @@ could hold rules (`notes/`, `docs-private/`), never dependency or build director
   or contributing code — architecture and layering documents included — are `convention`; how
   one part of the product behaves is `feature`. A team's ADR keeps its own number in the slug
   and gets no `paths`: it stays in the catalog. Give `--domains` and `--paths` only when the
-  source really is limited to them; a project-wide document gets neither, and `knowledge check`
-  warning about it is expected until linked sources resolve. Replace the stub's placeholder
+  source really is limited to them; a project-wide document gets neither, so it reaches an agent
+  only through `--ids` or `load: always`, and `knowledge check` warns about it. Propose
+  `load: always` only with the source's size in front of the human. Replace the stub's placeholder
   heading with the source's title and give it a summary. Write the size of every source into
   `knowledge-map.md` (`doc:` lines carry it; for an instruction file, `wc -c`). A line saying
   `linked by` already has a stub — do not propose it again.
-- **Untracked and ignored candidates** are listed in `knowledge-map.md` as "copy later"; do
-  nothing with them yet.
+- **Untracked and ignored candidates** are copied, one at a time, when the human wants the file:
+  show it whole first — it may be a private note, and it may hold a secret. Then
 
-A stub cannot be accepted yet: `jig context` does not resolve linked sources, and an accepted
-stub would give an agent its two-line body instead of the rules. Say so at the gate.
+  ```
+  .ai/scripts/jig knowledge new <adr|convention|feature> <slug> --copy <path> [--domains <a,b>] [--paths <globs>]
+  ```
+
+  It refuses a tracked file, prints another tool's frontmatter it dropped, and lists `line <n>:
+  <kind>` for anything that looks like a secret, never the value. On that refusal show those lines
+  to the human; real secrets are removed from the file by them, then run it again with
+  `--secrets-reviewed`. The copy is proposed. Say that the original stays where it is and that the
+  other tool may keep loading it; Jig never deletes it. Run `jig knowledge check`: relative links in
+  a copied body may no longer resolve.
+
+An accepted stub hands agents its source, whole, wherever the stub is selected: at the gate,
+put each source's size next to what its `paths` and `domains` would make required.
 
 ## 3. Separate what you saw from what you concluded
 

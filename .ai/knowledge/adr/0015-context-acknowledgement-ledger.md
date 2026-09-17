@@ -7,7 +7,7 @@ domains:
   - context
 paths:
   - scripts/lib/context.sh
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-16
 summary: Why reading knowledge is acknowledged per task, and what that ledger does not prove.
 ---
 # ADR-0015: Reading knowledge is acknowledged in a per-task ledger, and the ledger claims nothing more
@@ -85,3 +85,10 @@ anyone reports it as more than one.
   guard's own output is written so that quoting it cannot overstate what it proves.
 - Re-resolution during a task is now meaningful: an agent that reaches a new domain runs
   `resolve` again and the guard tells it what it newly owes.
+
+> **Amendment (2026-09-16).** The tracked path of a stub is its source, so the ledger records the
+> source's hash: an edited source is owed a new reading, and an edit to the stub's metadata alone is
+> not (accepted in the specification `knowledge-adoption`). `jig context acknowledge` takes a path
+> outside `.ai/knowledge/` only when it is the `source:` of an active or accepted stub — never any
+> file of the repository. A selected stub with a missing source fails resolution before anything is
+> hashed, so one missing file cannot fail the batch hash of every tracked document.

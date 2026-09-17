@@ -56,6 +56,7 @@ key:
 | `supersedes` | no | id of the document this one replaces |
 | `reviewed_at` | no | `YYYY-MM-DD`, when the document was last reconciled with the code it describes; read by `jig knowledge stale` (ADR-0010) |
 | `source` | no | repository-relative path of an existing tracked file this document links; makes it a stub (see below, ADR-0036) |
+| `source_hash` | no | git blob hash of the source as a human approved it; written by `jig knowledge accept` and `jig knowledge reviewed` on a stub, never by hand |
 
 ## Linked sources
 
@@ -68,10 +69,32 @@ and a relative link to the source.
 dot segments, not under `.ai/`, without `#`, `"`, a backslash, brackets, parentheses, a tab or a newline,
 and never `CLAUDE.local.md`. One source has at most one stub.
 
-**A stub reaches no agent yet.** It is created `proposed`, `jig knowledge accept` refuses it, `knowledge
-check` fails it when `active` or `accepted`, and both forms of `jig context` skip any document with
-`source:` whatever its status (`--all` still shows it). These hold until `jig context` resolves a stub
-to its source.
+**An accepted stub hands agents its source.** A stub is created `proposed` (`--source` requires
+`--proposed`); `jig knowledge accept` takes it only while git tracks the source with exact case, and
+records `source_hash`. Both forms of `jig context` select it by its own fields and name the source as
+the path to read, with `linked by <id>`; the context ledger hashes the source. A missing source is
+listed in the catalog as `missing source: <path>` and fails resolution only when the stub is selected.
+
+A source is `ok` when it hashes to `source_hash`, `changed` when it does not, `unrecorded` when no hash
+is recorded (counted as changed) and `missing` when it is gone. `jig status` prints
+`sources changed: N` when N > 0, `jig knowledge stale` lists `changed:` lines, and
+`jig knowledge sources [--diff <id>]` shows each link and the difference from the approved text.
+`jig knowledge reviewed <id>` approves the current text.
+
+`jig knowledge changed` lists edits to the sources of non-retired stubs as `source of <id>` (`, a decision
+record` for an ADR stub). `jig knowledge adr-convention` prints, for every directory that holds an ADR stub's
+source, `adr-dir: <dir>  next <n>  width <w>  example <file>`, or `unnumbered`, `(missing)`, `none`.
+
+## Copied documents
+
+An untracked or ignored rule file is copied, not linked: `jig knowledge new <adr|convention|feature> <slug>
+--copy <path> [--secrets-reviewed]`. The path follows the `source` shape rules — which refuse anything inside
+a `.git/` directory, in any case — and must be a regular file with one link, not a symlink, under no
+symlinked directory leading outside the repository, and not tracked by git. Lines
+that look like secrets are reported as `line <n>: <kind>` — never the value — and refuse the copy until
+`--secrets-reviewed`. The document gets its type's frontmatter with `status: proposed`, and the file's
+content as its body; another tool's leading `---` block is dropped and printed. The original is never
+written or deleted. A copy carries no `source`: it is an ordinary document from then on.
 
 ## Proposed knowledge
 
@@ -155,7 +178,6 @@ domain just as well.
 | `source` absent, a symlink, untracked, or tracked with different case | fail |
 | `source` path breaks the rules in "Linked sources", or `type` is not `adr`/`convention`/`feature` | fail |
 | two documents with the same `source` | fail |
-| document with `source` that is `active` or `accepted` | fail |
 | `paths` glob that matches no file in the repository | warn |
 | resolvable document (`active`/`accepted`) with no `summary` | warn |
 | document without `domains` and without `paths` | warn |

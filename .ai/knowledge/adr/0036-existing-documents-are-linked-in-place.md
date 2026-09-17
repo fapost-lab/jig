@@ -12,7 +12,7 @@ paths:
   - templates/knowledge/source.md
   - "skills/jig-map/**"
 summary: Why a project's existing rule documents are adopted through proposed stubs that link them in place, and why no stub reaches an agent yet.
-reviewed_at: 2026-09-15
+reviewed_at: 2026-09-17
 ---
 # ADR-0036: A project's existing rule documents are linked in place by proposed stubs
 
@@ -22,7 +22,7 @@ A team that adopts Jig usually keeps its rules already: `docs/`, its own ADRs, `
 instruction files of other tools. `jig-map` proposed new documents under `.ai/knowledge/` and knew
 nothing about those, so every rule risked two copies that drift apart, or never reached an agent
 through `jig context`. The plan for adopting them is the specification
-`.ai/specs/knowledge-adoption/`; this decision is its first phase.
+`knowledge-adoption` (removed when finished; in git history); this decision is its first phase.
 
 Checking the plan against the code changed two of its premises. An accepted stub would be resolved
 like any document, so an agent would receive its two-line body — a pointer — and acknowledge it by
@@ -92,3 +92,39 @@ collides with the project's own. On a case-insensitive filesystem `[ -f docs/x.m
   may lie outside the repository.
 - Sizes in the inventory are matched to files by order, because `wc` in the C locale prints every
   non-ASCII byte of a name as `?`; when the counts disagree, no size is printed.
+
+> **Amendment (2026-09-16).** Sources resolve, and the four holds are lifted together, as this decision
+> required: `accept` takes a stub with a working link, `knowledge check` no longer fails an active one,
+> and both forms of `jig context` resolve it to its source (ADR-0014, ADR-0015 as amended). The fifth
+> — `--source` only with `--proposed` — stays. A stub records the text a human approved as
+> `source_hash`, written by `accept` and `reviewed`. One definition, `km_source_states`, names each
+> stub's source `ok`, `changed`, `unrecorded` (no hash — counted as changed, since nothing approved the
+> current text) or `missing`; `jig status` counts changed and unrecorded on a `sources changed:` line,
+> `knowledge stale` lists them, and `jig knowledge sources [--diff <id>]` shows every link with its size
+> and the difference from the approved text when git still holds it. No copy of an approved text is
+> stored: without it the source is reviewed whole. Resolution and acknowledgement re-check the source
+> every time — a regular file, not a symlink, not under a symlinked directory leading outside the
+> repository — because a source can be swapped after acceptance without the stub changing; such a source
+> is `missing`. Re-approval is `jig knowledge reviewed`, dropping the
+> link is `reject`; agents read the current text meanwhile.
+
+> **Amendment (2026-09-17).** After adoption the source owns its rules, in practice as well as in
+> principle. `jig-consolidate` edits the source a task was given `linked by <id>`, never the stub,
+> and `jig knowledge changed` reports edits to every non-retired stub's source — `source of <id>`,
+> marked `a decision record` for an ADR stub — with their count last on its summary line. A team's
+> decision record is never edited, typo included; a new decision follows the project's own
+> convention, read by `jig knowledge adr-convention` from the directories its ADR stubs link (next
+> number, width, the newest record as the example): the agent writes the record after that example,
+> stages that file alone, and links it with a proposed stub. An agent never approves its own edit
+> to a source: `jig knowledge reviewed <id>` follows only a human's yes, shown the changed section.
+> An untracked or ignored rule file is copied by `jig knowledge new <type> <slug> --copy <path>`: the
+> path is checked like a source's — never inside `.git/`, in any case, whose remote URLs can carry
+> credentials no pattern recognises — and must be a regular file with one link (a hard link can be a
+> file outside the repository), under no symlinked directory, and not tracked; a pattern scan for obvious secrets reports only `line <n>: <kind>` and refuses until
+> `--secrets-reviewed`; another tool's frontmatter is dropped and printed; the copy is always
+> proposed; the original is never written or deleted, and the command says another tool may still
+> load it. The scan is a prompt for a human reading the file, not a guarantee: a secret split across
+> lines, or without a recognisable shape, passes it. `adr-convention` checks every stored source like
+> any other before reading its directory, and never lists one outside the repository — rejected: external
+> scanners (a mandatory dependency, ADR-0002), entropy checks (noise on hashes and URLs), and
+> mapping Cursor's `globs`/`alwaysApply` onto `paths`/`load`, whose meanings differ.
