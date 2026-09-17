@@ -224,7 +224,8 @@ spec_epic_status() {
     [ -n "$id" ] || continue
     [ -f "$root/$id/roadmap.md" ] || continue
     line=$(jig_spec_epic "$root/$id/roadmap.md" 2>/dev/null) || continue
-    [ -n "$line" ] && [ "${line##* }" = open ] || continue
+    [ -n "$line" ] || continue
+    [ "${line##* }" = open ] || continue
     branch=${line% *}
     epic_ref=""
     if git check-ref-format --branch "$branch" >/dev/null 2>&1; then
@@ -323,8 +324,9 @@ spec_epic_declare() {
   commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) \
     || jig_die "spec epic: cannot resolve $start"
   on_default=$(git -C "$JIG_PROJECT" show "$commit:$rel" 2>/dev/null | jig_spec_epic -) || rc=$?
-  [ "$rc" -eq 0 ] && [ "$on_default" = "$branch open" ] \
-    || jig_die "spec epic: the Epic: line of $rel is not on $default yet; merge it into $default first"
+  if [ "$rc" -ne 0 ] || [ "$on_default" != "$branch open" ]; then
+    jig_die "spec epic: the Epic: line of $rel is not on $default yet; merge it into $default first"
+  fi
   git -C "$JIG_PROJECT" branch "$branch" "$commit" >/dev/null 2>&1 \
     || jig_die "spec epic: could not create $branch"
   printf 'created: %s at %s\n' "$branch" "$commit"
