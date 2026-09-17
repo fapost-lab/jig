@@ -43,10 +43,10 @@ Goal: work after adoption edits the rules where they live, and untracked rules j
 when: consolidation edits a source and reports it, never rewrites a team's accepted decision, and
 an untracked rule file is copied only after a secret check and a human's look.
 
-- [ ] Consolidation into sources: `jig-consolidate` edits the source, follows the project's own ADR
+- [ ] `adopted-rules-stay-current` — Consolidation into sources: `jig-consolidate` edits the source, follows the project's own ADR
   convention for new decisions, `jig knowledge changed` reports source edits (after: `jig context`
   resolves stubs — consolidation must find the owner the agent was given)
-- [ ] Copying untracked rule files: secret check that refuses until confirmed, the file shown
+- [ ] `adopted-rules-stay-current` — Copying untracked rule files: secret check that refuses until confirmed, the file shown
   whole, another tool's frontmatter replaced, a reminder that the original remains (after: stubs
   with `source:` — shares the inventory)
 
