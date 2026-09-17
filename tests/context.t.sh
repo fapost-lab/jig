@@ -1360,6 +1360,7 @@ test_context_acknowledge_accepts_the_source_of_an_accepted_stub() {
 # A source replaced by a symlink after acceptance, without touching the stub,
 # must not hand an agent a file outside the repository (architecture review).
 test_context_resolve_treats_a_source_swapped_for_a_symlink_as_missing() {
+  skip_unless_symlinks
   ctx_source_stub_accept
   rm docs/style.md
   ln -s /etc/hosts docs/style.md
@@ -1374,6 +1375,7 @@ test_context_resolve_treats_a_source_swapped_for_a_symlink_as_missing() {
 }
 
 test_context_resolve_treats_a_source_under_a_symlinked_directory_as_missing() {
+  skip_unless_symlinks
   ctx_source_stub_accept
   local outside
   outside=$(mktemp -d "${TMPDIR:-/tmp}/jig-outside.XXXXXX")
@@ -1388,6 +1390,7 @@ test_context_resolve_treats_a_source_under_a_symlinked_directory_as_missing() {
 }
 
 test_context_acknowledge_refuses_a_linked_source_swapped_for_a_symlink() {
+  skip_unless_symlinks
   ctx_source_stub_accept
   jig task new T-1 >/dev/null
   rm docs/style.md

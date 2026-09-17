@@ -688,8 +688,9 @@ _ctx_check_knowledge_path() {
     *)
       # The same test resolution applies: no symlink, nothing outside the
       # repository (jig_knowledge_read_path).
-      [ -f "$JIG_PROJECT/$rel" ] && [ ! -L "$JIG_PROJECT/$rel" ] \
-        || jig_die "context acknowledge: no such document: $rel"
+      if [ ! -f "$JIG_PROJECT/$rel" ] || [ -L "$JIG_PROJECT/$rel" ]; then
+        jig_die "context acknowledge: no such document: $rel"
+      fi
       local root dir
       root=$(cd -P "$JIG_PROJECT" && pwd -P)
       dir=$(cd -P "$(dirname "$JIG_PROJECT/$rel")" 2>/dev/null && pwd -P) \
