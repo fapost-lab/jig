@@ -1,4 +1,4 @@
-# Tests for `.github/scripts/epic-pr-check.sh` (.ai/specs/epic-branches/spec.md,
+# Tests for `.github/scripts/epic-pr-check.sh` (ADR-0040,
 # task task-base-and-epics). shellcheck shell=bash
 #
 # Modelled on tests/release-tag.t.sh: no network, every "remote" is a local
@@ -66,30 +66,85 @@ ec_check() {
   (cd "$dir" && "$JIG_HOME/.github/scripts/epic-pr-check.sh" "$@")
 }
 
-# --- pass: finished epic, unreleased version -> exit 0 ----------------------
+# --- pass: no roadmap declares the epic, unreleased version -> exit 0 -------
+# `jig spec epic <id> --finish` removes the epic's spec outright (ADR-0040 as
+# amended); a final pull request passes once no roadmap names the head ref at
+# all, whether because the spec is gone or it never named this epic.
 
-test_epic_pr_check_finished_and_unreleased_passes() {
+test_epic_pr_check_no_specs_at_all_passes() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" epic/epic-branches
+  assert_eq 0 "$RC" "epic-pr-check should succeed when the spec was removed: $OUT"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+}
+
+test_epic_pr_check_roadmap_with_no_epic_line_passes() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_write_roadmap "$repo" epic-branches "Destination: ship it."
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" epic/epic-branches
+  assert_eq 0 "$RC" "epic-pr-check should succeed when no roadmap declares the epic: $OUT"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+}
+
+test_epic_pr_check_line_for_another_epic_only_passes() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_write_roadmap "$repo" other "Epic: epic/other"
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" epic/epic-branches
+  assert_eq 0 "$RC" "epic-pr-check should not care about another epic's line: $OUT"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+}
+
+# --- fail: a roadmap still declares the epic, open or finished --------------
+# Any Epic: line naming the head ref means the epic was not finished the way
+# this jig finishes one (removing the spec) — including a legacy
+# "— finished" line an older jig, or a hand edit, left behind (section 4 of
+# the design; ADR-0040 as amended).
+
+test_epic_pr_check_open_line_fails() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_write_roadmap "$repo" epic-branches "  Epic:   epic/epic-branches   "
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" epic/epic-branches
+  [ "$RC" != 0 ] || fail "epic-pr-check must refuse an open Epic: line: $OUT"
+  assert_contains "$OUT" \
+    "epic-pr-check: error: .ai/specs/epic-branches/roadmap.md still declares epic/epic-branches; run 'jig spec epic epic-branches --finish' on the epic before merging"
+}
+
+test_epic_pr_check_legacy_finished_line_fails() {
   local repo="$PWD/repo" bare="$PWD/origin.git"
   ec_new_repo "$repo" 0.5.0
   ec_write_roadmap "$repo" epic-branches "Epic: epic/epic-branches — finished"
   ec_build_origin "$repo" "$bare"
 
   run ec_check "$repo" epic/epic-branches
-  assert_eq 0 "$RC" "epic-pr-check should succeed: $OUT"
-  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+  [ "$RC" != 0 ] || fail "epic-pr-check must refuse a legacy finished line too: $OUT"
+  assert_contains "$OUT" \
+    "epic-pr-check: error: .ai/specs/epic-branches/roadmap.md still declares epic/epic-branches; run 'jig spec epic epic-branches --finish' on the epic before merging"
 }
 
 # A dash or a double dash in place of the em dash, and extra surrounding
-# whitespace, must still count as "finished".
-test_epic_pr_check_accepts_dash_variants_and_extra_whitespace() {
+# whitespace, must still count as declaring the epic.
+test_epic_pr_check_legacy_finished_dash_variants_and_whitespace_fail() {
   local repo="$PWD/repo" bare="$PWD/origin.git"
   ec_new_repo "$repo" 0.5.0
   ec_write_roadmap "$repo" epic-branches "  Epic:   epic/epic-branches   --   finished   "
   ec_build_origin "$repo" "$bare"
 
   run ec_check "$repo" epic/epic-branches
-  assert_eq 0 "$RC" "epic-pr-check should accept -- and loose whitespace: $OUT"
-  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+  [ "$RC" != 0 ] || fail "epic-pr-check must refuse -- and loose whitespace on a finished line: $OUT"
+  assert_contains "$OUT" \
+    "epic-pr-check: error: .ai/specs/epic-branches/roadmap.md still declares epic/epic-branches; run 'jig spec epic epic-branches --finish' on the epic before merging"
 }
 
 # --- version already released -> exit 1 -------------------------------------
@@ -106,34 +161,6 @@ test_epic_pr_check_version_already_released_fails() {
   [ "$RC" != 0 ] || fail "epic-pr-check must refuse an already-released version: $OUT"
   assert_contains "$OUT" \
     "epic-pr-check: error: JIG_VERSION 0.5.0 is already released as v0.5.0; raise the version on epic/epic-branches before merging"
-}
-
-# --- epic declared but not finished -> exit 1 -------------------------------
-
-test_epic_pr_check_epic_not_finished_fails() {
-  local repo="$PWD/repo" bare="$PWD/origin.git"
-  ec_new_repo "$repo" 0.5.0
-  ec_write_roadmap "$repo" epic-branches "Epic: epic/epic-branches"
-  ec_build_origin "$repo" "$bare"
-
-  run ec_check "$repo" epic/epic-branches
-  [ "$RC" != 0 ] || fail "epic-pr-check must refuse an unfinished epic: $OUT"
-  assert_contains "$OUT" \
-    "epic-pr-check: error: no roadmap marks epic/epic-branches finished; run 'jig spec epic epic-branches --finish' on the epic before merging"
-}
-
-# --- finished line names a different epic -> exit 1 -------------------------
-
-test_epic_pr_check_finished_line_for_other_epic_fails() {
-  local repo="$PWD/repo" bare="$PWD/origin.git"
-  ec_new_repo "$repo" 0.5.0
-  ec_write_roadmap "$repo" other "Epic: epic/other — finished"
-  ec_build_origin "$repo" "$bare"
-
-  run ec_check "$repo" epic/epic-branches
-  [ "$RC" != 0 ] || fail "epic-pr-check must not accept another epic's finished line: $OUT"
-  assert_contains "$OUT" \
-    "epic-pr-check: error: no roadmap marks epic/epic-branches finished; run 'jig spec epic epic-branches --finish' on the epic before merging"
 }
 
 # --- head ref is not an epic branch -> exit 1 -------------------------------
@@ -162,15 +189,29 @@ test_epic_pr_check_missing_head_ref_fails() {
 # --- the ref is matched literally, not as a pattern -------------------------
 
 # A "." in a spec id must not act as a regex wildcard: a roadmap line for
-# `epic/aXb` must not satisfy a head ref of `epic/a.b`.
+# `epic/aXb` must not satisfy a head ref of `epic/a.b` — so the mismatched
+# roadmap does not block this merge either.
 test_epic_pr_check_ref_matched_literally_not_as_pattern() {
   local repo="$PWD/repo" bare="$PWD/origin.git"
   ec_new_repo "$repo" 0.5.0
-  ec_write_roadmap "$repo" aXb "Epic: epic/aXb — finished"
+  ec_write_roadmap "$repo" aXb "Epic: epic/aXb"
   ec_build_origin "$repo" "$bare"
 
   run ec_check "$repo" "epic/a.b"
-  [ "$RC" != 0 ] || fail "epic-pr-check must not treat . as a wildcard: $OUT"
+  assert_eq 0 "$RC" "epic-pr-check must not treat . as a wildcard: $OUT"
+  assert_contains "$OUT" "epic-pr-check: epic/a.b is finished and v0.5.0 is a new version"
+}
+
+# The same literal match must still refuse the merge when the ref really is
+# declared, "." and all.
+test_epic_pr_check_ref_matched_literally_still_fails_a_real_match() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_write_roadmap "$repo" a.b "Epic: epic/a.b"
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" "epic/a.b"
+  [ "$RC" != 0 ] || fail "epic-pr-check must still refuse a real match: $OUT"
   assert_contains "$OUT" \
-    "epic-pr-check: error: no roadmap marks epic/a.b finished; run 'jig spec epic a.b --finish' on the epic before merging"
+    "epic-pr-check: error: .ai/specs/a.b/roadmap.md still declares epic/a.b; run 'jig spec epic a.b --finish' on the epic before merging"
 }

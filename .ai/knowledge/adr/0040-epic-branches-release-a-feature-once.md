@@ -15,7 +15,7 @@ paths:
   - .github/scripts/epic-pr-check.sh
   - schemas/spec.md
 summary: Why a feature released once lives on an epic branch, how a spec declares, cuts and finishes it, and why phase workspaces wait for the epic to reach main.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # ADR-0040: A feature released once lives on an epic branch until it is finished
 
@@ -29,7 +29,7 @@ knowledge decisions, and held weeks of work on one branch. Merging phases into `
 version bump was rejected too: half a feature on `main` blocks a patch release from it, and any
 unrelated pull request that raises the version ships it.
 
-The specification `.ai/specs/epic-branches/` settles the shape and records the failure hunt its
+The specification `epic-branches` (removed when finished; in git history) settled the shape and records the failure hunt its
 decisions answer. It stands on a base per task (ADR-0039).
 
 ## Decision
@@ -102,3 +102,11 @@ decisions answer. It stands on a base per task (ADR-0039).
   item in the specification.
 - The `epic-pr` job and the push trigger are this repository's CI; projects adopting Jig get the
   commands and the housekeeping behaviour, not the CI.
+
+> **Amendment (2026-09-17).** `jig spec epic <id> --finish` no longer writes `— finished`: after the same
+> leftover gate as `jig spec close`, it removes the epic's spec, in the commit that raises the version,
+> and the final pull request carries the removal to `main` (ADR-0035 as amended). `--reopen` restores the
+> spec from git on the epic when review of that pull request needs a fix, so fixes remain ordinary tasks
+> cut from the epic. The `epic-pr` check fails while any roadmap still names the branch in an `Epic:`
+> line. A `— finished` line written by an earlier version is still parsed and refused, never read as "no
+> epic", which would send a task to `main`.

@@ -1631,19 +1631,21 @@ test_task_start_two_epic_lines_in_the_roadmap_dies() {
   assert_contains "$OUT" "task start: spec idea-x declares more than one epic; keep one Epic: line"
 }
 
+# `--finish` removes the spec now, rather than writing a "— finished" line
+# (ADR-0035, ADR-0040 as amended); there is no command left that produces
+# one. A roadmap someone wrote or edited by hand (or one an older jig left
+# behind) can still carry that line, so `task start` still refuses it —
+# simulated here directly, the way spec.t.sh's epic_legacy_finish_line does.
 test_task_start_finished_epic_dies() {
   task_setup_clean
-  task_open_epic idea-x
-  git checkout -q epic/idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
-  git checkout -q main
+  mkdir -p .ai/specs/idea-x
+  printf 'Epic: epic/idea-x — finished\n' > .ai/specs/idea-x/roadmap.md
   jig task new T-1 >/dev/null
   task_link_spec T-1 idea-x
 
   run jig task start T-1
   assert_eq 1 "$RC"
-  # shellcheck disable=SC2016 # backticks are part of the message
-  assert_contains "$OUT" 'task start: epic epic/idea-x of spec idea-x is finished; reopen it with `jig spec epic idea-x --reopen` for a fix, or link the task to another spec'
+  assert_contains "$OUT" 'task start: spec idea-x marks epic epic/idea-x finished; drop "— finished" from its Epic: line to cut tasks from it, or link the task to another spec'
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "branch:"
 }
 

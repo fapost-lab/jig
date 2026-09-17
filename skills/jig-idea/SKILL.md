@@ -169,10 +169,13 @@ item is checked later by `jig spec done`, called from consolidation — never by
 ## 11. Moving or dropping a spec
 
 - **Finishing an epic**, when the human says every phase is in: merge the latest default branch
-  into the epic, run `jig spec epic <id> --finish` on it and commit that together with the version
-  bump, then the human opens the pull request from the epic into the default branch. If review
-  of that pull request needs a fix, `jig spec epic <id> --reopen` on the epic, fix it as an
-  ordinary task, and finish again.
+  into the epic and run `jig spec epic <id> --finish` on it. It removes the spec — its decisions are
+  knowledge by now — and first lists what knowledge does not hold: unchecked items, fog, open
+  questions, untested assumptions. Ask the human about each: move it to another spec or a task, or
+  drop it; then run `--finish --leftovers-handled`. The removal is committed with the version bump,
+  and the human opens the pull request from the epic into the default branch. If review of that pull
+  request needs a fix, `jig spec epic <id> --reopen` on the epic brings the spec back from git; fix it
+  as an ordinary task, and finish again.
 
 - **Starting a new project from a spec**: copy `.ai/specs/<id>/` into that project, which needs
   Jig 0.3.0 or later. From then on its own Jig tracks the spec; nothing links the two copies.
