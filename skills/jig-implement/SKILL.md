@@ -55,7 +55,7 @@ those separately and let the user decide.
 Every change carries its evidence: a test for new behaviour, a failing-then-passing test
 for a defect, a check that the build still runs. During implementation, run the smallest
 relevant checks provided by the project.
-Run the required full checks once against the final change in `jig-verify`; do not run
+Run the checks `jig verify` runs once against the final change in `jig-verify`; do not run
 the whole suite after each edit or start another copy while a run is still active.
 
 An unproven claim is not done. If a check cannot run, say so plainly instead of

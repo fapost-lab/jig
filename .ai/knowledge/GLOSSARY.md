@@ -183,7 +183,15 @@ Informal synonyms: acknowledgements, read tracking.
 A narrowing passed to `jig verify`, expressed as a list of changed files rather than a
 filter string, because a file list means the same thing in every stack. A Profile
 receives it only if it declares support, and the report always says whether it was
-honoured (ADR-0013). Informal synonyms: filter, narrowing.
+honoured (ADR-0013). With `verify.full_run: ci` a flag-less `jig verify` narrows by default,
+to what changed since the merge base (ADR-0041). Informal synonyms: filter, narrowing.
+
+## Verify Map
+
+`.ai/verify/<profile>.map`: a project's own rules for which changed path affects which of a
+Profile's checks — `<glob> <decision>`, first match wins. Project-owned; parsed by
+`jig verify` and handed to a profile that declares `map`, never read by the profile itself
+(ADR-0041). Informal synonyms: scope map, test map.
 
 ## Task Class
 

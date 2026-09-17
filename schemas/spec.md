@@ -104,7 +104,7 @@ after `Destination:`:
 |---|---|
 | none | tasks are cut from `git.base_branch` |
 | `Epic: epic/<spec-id>` | open: `jig task start` cuts linked tasks from the branch |
-| `Epic: epic/<spec-id> — finished` | closed before the final pull request (`—`, `-` or `--`) |
+| `Epic: epic/<spec-id> — finished` | written by earlier versions of jig (`—`, `-` or `--`); refused by `task start` and `spec epic` — a finished epic's spec is removed now |
 
 Parsed by `jig_spec_epic` in `common.sh`. Two lines that disagree on the branch or its state are a
 conflict: `task start` and `spec epic` refuse. Any branch name is read; a caller checks it with
@@ -112,11 +112,24 @@ conflict: `task start` and `spec epic` refuse. Any branch name is read; a caller
 
 `jig spec list` shows, for an open epic: the usual progress and `(on <branch>)` when the checkout is
 on the epic; `<branch> — progress is on the epic` elsewhere; `<branch> — branch missing` when neither
-the local nor the origin ref exists. A finished epic shows the usual progress. `jig status` prints
+the local nor the origin ref exists. A legacy finished line shows the usual progress. `jig status` prints
 `epic: <id> on <branch>, <n> commits behind <default>` or `epic: <id> on <branch>, branch missing`
 for each open epic.
 
-## `jig spec epic <spec-id> [--finish | --reopen]`
+## Leftovers and closing a spec
+
+A spec lives while it holds work not yet done (ADR-0035 as amended). Its leftovers are what removing it
+would lose: every unchecked roadmap item, `fog:` included, and every entry of the "Open questions" and
+"Assumptions left untested" sections of `spec.md`; the template's `<placeholder>` entries are not
+leftovers. A human decides each one — moved to another spec or task, or dropped — before the spec goes.
+
+When `jig spec done` leaves no planned item unchecked it prints `roadmap complete` and the command that
+closes the spec. `jig spec close <spec-id> [--leftovers-handled]` closes a spec without an epic: it lists
+the leftovers and refuses until `--leftovers-handled` confirms the decision, then moves the directory to
+`.ai/runtime/trash/<date>/spec-<id>` without touching any task's `Spec:` line. The removal is committed
+with the change that finished the spec. A spec with an `Epic:` line is refused: its epic closes it.
+
+## `jig spec epic <spec-id> [--finish [--leftovers-handled] | --reopen]`
 
 | Situation | Result |
 |---|---|
@@ -124,6 +137,6 @@ for each open epic.
 | open line, branch exists locally or on origin (after a fetch) | `exists: <branch>`, exit 0 |
 | open line, not yet on the freshest default branch's committed roadmap | error |
 | open line, on the default branch | `created: <branch> at <sha>` — a local branch, no checkout; pushing is the human's step |
-| finished line | error, naming `--reopen` |
-| `--finish` | on the epic only, which must contain the freshest default branch; unchecked non-`fog:` items are warned about; the line becomes `— finished` |
-| `--reopen` | on the epic only, finished line only; the line becomes open again |
+| legacy finished line | error |
+| `--finish` | on the epic only, which must contain the freshest default branch; the leftover gate of `spec close`, then the spec directory is removed — committed with the version bump, carried to the default branch by the epic's final pull request |
+| `--reopen` | spec absent, on the epic it declared: restores the directory from git — from `HEAD` while the removal is uncommitted, else from before the commit that deleted its roadmap — without touching the index |

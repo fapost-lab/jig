@@ -705,7 +705,7 @@ _task_start_base() {
     if [ -n "$line" ]; then
       base=${line% *}
       [ "${line##* }" = open ] \
-        || jig_die "task start: epic $base of spec $spec is finished; reopen it with \`jig spec epic $spec --reopen\` for a fix, or link the task to another spec"
+        || jig_die "task start: spec $spec marks epic $base finished; drop \"— finished\" from its Epic: line to cut tasks from it, or link the task to another spec"
     fi
   fi
   git check-ref-format --branch "$base" >/dev/null 2>&1 \

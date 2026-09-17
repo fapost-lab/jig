@@ -19,9 +19,17 @@ full code suite. Keep required regression coverage for behavioral changes.
 .ai/scripts/jig verify
 ```
 
-While iterating, `jig verify --changed` narrows the run to what the diff touches, and
-each profile reports whether it honoured the scope or ran everything anyway. It is not
-evidence that the task is done: the run above, unscoped, is.
+`jig verify` above is the evidence, run as the project configured it (`verify.full_run`
+in `.ai/config.yaml`, schemas/config.md). With the default `local` it runs everything.
+With `verify.full_run: ci` — the project's claim that CI runs every check on each pull
+request — it narrows itself to what changed since `git.base_branch` and prints a header
+naming the mode; that narrowed report is sufficient evidence here as long as it names the
+mode, because the full set is proven by CI on the pull request, and a red CI sends the
+task back to verify.
+
+`jig verify --changed` stays the tool for iteration: it narrows the run to what the diff
+touches regardless of `verify.full_run`, and each profile reports whether it honoured the
+scope or ran everything anyway.
 
 Wait on the run's own handle and read that exit code: `.ai/scripts/jig verify >verify.log
 2>&1 & wait $!` in plain shell, or the completion signal of the tracked background job if

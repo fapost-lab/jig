@@ -100,7 +100,7 @@ never assumed" rule the profile contract below states.
 - `detect` — globs whose presence means this stack is here, or `always`. This is the one
   place the mapping "manifest → stack" is written down; no command re-derives it.
 - `requires` — another profile this one implies;
-- `scope` — capabilities the profile understands, today only `[changed]` (ADR-0013).
+- `scope` — capabilities the profile understands: `changed` (ADR-0013) and `map` (ADR-0041).
 
 `profiles/<stack>/verify.sh` is run from the repository root and exits 0 pass, 1 fail,
 **2 skip**. It prints one line per check, because a profile runs several (shellcheck and
@@ -111,12 +111,16 @@ Capabilities are granted, never assumed. `jig verify` passes `JIG_VERIFY_SCOPE` 
 *unsets* both for every other profile rather than leaving whatever the caller's
 environment held — profiles are copied into projects and `upgrade` preserves
 user-modified ones, so a script written before a capability existed will meet a framework
-that has it.
+that has it. `JIG_VERIFY_MAPPED` follows the same rule for `map`.
+
+A shipped profile carries only rules true for any project of its stack. Which path affects
+which check in one project is that project's `.ai/verify/<profile>.map`, and `jig verify`
+parses it — never the profile — so every profile reads the same decisions (ADR-0041).
 
 ## Install modes
 
 Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/knowledge/`,
-`.ai/templates/scheduler/`, `.ai/templates/spec/` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/specs/`, `.ai/config.yaml`, `AGENTS.md`.
+`.ai/templates/scheduler/`, `.ai/templates/spec/` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/specs/`, `.ai/verify/`, `.ai/config.yaml`, `AGENTS.md`.
 The split matters to `upgrade`, which carries framework-owned files forward and never
 touches the rest (ADR-0011).
 

@@ -31,8 +31,9 @@ project owns.
 - The framework-owned / project-owned split: `.ai/scripts/`, `.ai/profiles/`,
   `.ai/templates/knowledge/`, `.ai/templates/scheduler/`, `.ai/templates/spec/` and the
   installed skills are carried forward by upgrade; `.ai/knowledge/`, `.ai/specs/`,
-  `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
-  ADR-0011). Neither is `.ai/config.local.yaml`, which is not the project's either: it
+  `.ai/verify/`, `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
+  ADR-0011, ADR-0041). `init` does not create `.ai/verify/` either: a project that wants a
+  map writes it. Neither is `.ai/config.local.yaml`, which is not the project's either: it
   belongs to the clone's owner and is never created by `init` (ADR-0038). `init` does write
   its line into `.gitignore`, through the same append-missing-lines merge as every other
   `templates/gitignore` line; `upgrade` never touches `.gitignore`, so an older project

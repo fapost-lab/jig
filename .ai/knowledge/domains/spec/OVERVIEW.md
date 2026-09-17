@@ -11,7 +11,7 @@ paths:
   - scripts/lib/spec.sh
   - "templates/spec/**"
   - "skills/jig-idea/**"
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # Spec
 
@@ -29,6 +29,9 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   record decisions, build the roadmap, and file a phase's tasks when asked.
 - The epic branch of a spec released once (ADR-0040): the `Epic:` line, `jig spec epic` to declare,
   cut, finish and reopen it, and how `spec list` and `jig status` show it.
+- Closing a spec whose work is done (ADR-0035 as amended): its leftovers (`spec_leftovers`), the
+  `roadmap complete` line of `spec done`, and the removal by `spec close` or `spec epic --finish`, in
+  the change that finished it.
 - The link between a task and its spec: the `Spec:` line in the task's `task.md`, checking its
   roadmap items at the knowledge decision (`jig spec done`), and taking a spec out with its links
   (`jig spec remove`).
@@ -60,7 +63,7 @@ live in `spec_progress` only.
 
 - `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`,
   `spec_progress`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
-  `spec_epic_status`.
+  `spec_epic_status`, `spec_close`, `spec_leftovers`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`.
 - `.github/scripts/epic-pr-check.sh` — this repository's CI check of an epic's final pull request.

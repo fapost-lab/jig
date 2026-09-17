@@ -13,7 +13,7 @@ name: ci
 
 on:
   push:
-    # An epic branch (epic/<id>, .ai/specs/epic-branches/spec.md) is kept
+    # An epic branch (epic/<id>, ADR-0040) is kept
     # current by merging `main` into it directly, without a pull request, so
     # a push is the only moment its own tests ever run.
     branches: [main, 'epic/**']
