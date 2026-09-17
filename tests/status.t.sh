@@ -46,6 +46,20 @@ EOF
   assert_not_contains "$OUT" "not ignored by git"
 }
 
+# verify.full_run is not in JIG_CFG_LOCAL_KEYS (config.sh, ADR-0038): a
+# contributor cannot flip the CI-backed narrowing mode for themselves alone,
+# and `jig status` must name it as ignored, like any other non-local key.
+test_status_reports_verify_full_run_in_local_config_as_ignored() {
+  fixture_jig_repo
+  cat > .ai/config.local.yaml <<'EOF'
+verify.full_run: ci
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config.local: ignored verify.full_run (not a local key)"
+}
+
 test_status_warns_when_local_config_is_not_gitignored() {
   fixture_jig_repo
   printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml

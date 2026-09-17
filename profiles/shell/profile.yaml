@@ -2,4 +2,4 @@
 name: shell
 description: Shell scripts and libraries (shellcheck + tests/run.sh).
 detect: [scripts/**/*.sh, **/*.sh, scripts/jig]
-scope: [changed]
+scope: [changed, map]

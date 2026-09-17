@@ -12,7 +12,8 @@ paths:
   - scripts/lib/verify.sh
   - scripts/lib/profiles.sh
   - "profiles/**"
-reviewed_at: 2026-09-10
+  - tests/run.sh
+reviewed_at: 2026-09-16
 ---
 # Verify rules
 
@@ -36,6 +37,17 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 - A new capability gets a name in `profile.yaml`'s `scope` list and is passed only to
   profiles that name it. Adding a capability that older profiles could observe by default
   would break profiles written before it existed.
+- **A narrowing that selects nothing is not a pass.** A profile that narrows its tests
+  confirms every filter selects at least one test before running it; one that selects none
+  runs the full set and says why. A runner reports an empty selection as `0 passed`, exit 0,
+  and a pass nothing produced is the defect the scope protocol exists to prevent (ADR-0041).
+- **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
+  one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
+  parsed in `cmd_verify` alone; a profile reads decisions, never the map file.
+- **A test suite run by a narrowed profile must not pass the scope on.** `tests/run.sh`
+  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED` and `CI` for every test:
+  a test that runs a profile directly otherwise takes the scope of the run that started the
+  suite.
 - `detect` globs live in `profile.yaml` and nowhere else. No command re-derives the
   mapping from root manifest to stack.
 - A profile's `verify.sh` prints one line per check it ran, because a profile runs

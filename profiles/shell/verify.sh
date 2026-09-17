@@ -10,6 +10,10 @@
 # A changed path the mapping does not recognise means the profile cannot
 # narrow safely, so it runs the full set and says so — narrowing to the
 # wrong subset is how a green verify stops meaning anything.
+#
+# Map (ADR-0041): when the project has .ai/verify/shell.map, JIG_VERIFY_MAPPED
+# carries the decision `jig verify` read from it for each changed path; the
+# built-in rules answer only for paths the map does not name.
 set -eu
 set -o pipefail
 
@@ -82,43 +86,93 @@ _shell_changed_scripts() {
   return 0
 }
 
+# _shell_builtin_filters <path> — the profile's own answer for one path, true
+# for any project: a tests/run.sh filter per line, ALL for "run everything",
+# nothing when the path cannot affect a test. Anything specific to one
+# project's layout belongs in its map (.ai/verify/shell.map, ADR-0041), never
+# here: this file is copied into every project that uses the profile.
+_shell_builtin_filters() {
+  local f="$1" base
+  case "$f" in
+    # Documentation, knowledge and plans carry no shell behaviour.
+    *.md|docs/*|.ai/knowledge/*|.ai/workspace/*|.ai/specs/*) return 0 ;;
+    # Linter configuration changes lint verdicts, not tests (see shellcheck).
+    .shellcheckrc|*/.shellcheckrc) return 0 ;;
+    # The harness itself: any change to it can affect every test.
+    tests/run.sh|tests/lib/*) printf 'ALL\n' ;;
+    # A test file tests its own command.
+    tests/*.t.sh)
+      base=${f#tests/}
+      printf '%s::\n' "${base%.t.sh}"
+      ;;
+    # A script maps to the test file named after it, when there is one.
+    *.sh)
+      base=${f##*/}
+      base=${base%.sh}
+      if [ -f "tests/$base.t.sh" ]; then
+        printf '%s::\n' "$base"
+      else
+        printf 'ALL\n'
+      fi
+      ;;
+    *) printf 'ALL\n' ;;
+  esac
+}
+
 # _shell_test_filters — map every changed path to a tests/run.sh filter, one
-# per line. Prints the single token ALL when some path cannot be mapped,
-# which the caller treats as "run everything". Prints nothing when every
-# path is irrelevant to tests (documentation, knowledge).
+# per line. Prints ALL when some path cannot be mapped, which the caller
+# treats as "run everything". Prints nothing when every path is irrelevant to
+# tests. With a project map, `jig verify` has already decided each path
+# (JIG_VERIFY_MAPPED: `<path><TAB><decision>`); `?` means the map had no line
+# for it and the built-in rules answer.
 _shell_test_filters() {
-  local f base
+  local f decision tok
+  if [ -n "${JIG_VERIFY_MAPPED:-}" ] && [ -f "${JIG_VERIFY_MAPPED:-}" ]; then
+    while IFS="$(printf '\t')" read -r f decision; do
+      [ -n "$f" ] || continue
+      case "$decision" in
+        '?') _shell_builtin_filters "$f" ;;
+        -) ;;
+        *)
+          # The decision comes from a hand-edited file: a token must never
+          # expand against the files in the project root.
+          set -f
+          for tok in $decision; do
+            printf '%s\n' "$tok"
+          done
+          set +f
+          ;;
+      esac
+    done < "$JIG_VERIFY_MAPPED"
+    return 0
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    case "$f" in
-      # Documentation and knowledge carry no shell behaviour.
-      *.md|docs/*|.ai/knowledge/*|.ai/workspace/*) continue ;;
-      # The harness itself: any change to it can affect every test.
-      tests/run.sh|tests/lib/*) printf 'ALL\n'; return 0 ;;
-      # A test file tests its own command.
-      tests/*.t.sh)
-        base=${f#tests/}
-        printf '%s::\n' "${base%.t.sh}"
-        ;;
-      # A library maps to the test file named after it, when there is one.
-      scripts/lib/*.sh)
-        base=${f#scripts/lib/}
-        base=${base%.sh}
-        if [ -f "tests/$base.t.sh" ]; then
-          printf '%s::\n' "$base"
-        else
-          printf 'ALL\n'
-          return 0
-        fi
-        ;;
-      # The session hook is not a command library, so it has no test file of
-      # its own; its tests live with the command it triggers.
-      scripts/jig-session-hook) printf 'housekeeping::\n' ;;
-      adapters/*) printf 'adapters::\n' ;;
-      profiles/*) printf 'profiles::\n'; printf 'verify::\n' ;;
-      *) printf 'ALL\n'; return 0 ;;
-    esac
+    _shell_builtin_filters "$f"
   done < "$JIG_VERIFY_FILES"
+  return 0
+}
+
+# _shell_test_names — the tests tests/run.sh would discover, as
+# `<file>::<function>`, one per line: the names the runner matches a filter
+# against, so a filter that selects none of them is caught before the runner
+# reports `0 passed` as a pass. Read from the text, not by sourcing the files
+# as the runner does — a profile must not execute a project's test files to
+# decide what to run. `test_x()` and `function test_x` are both recognised; a
+# definition the patterns miss can only make a filter look empty, which runs
+# the full set: the mismatch costs time, never coverage.
+_shell_test_names() {
+  local t base
+  for t in tests/*.t.sh; do
+    [ -f "$t" ] || continue
+    base=${t#tests/}
+    base=${base%.t.sh}
+    sed -n \
+      -e 's/^[[:space:]]*\(function[[:space:]][[:space:]]*\)\{0,1\}\(test_[A-Za-z0-9_]*\)[[:space:]]*().*/\2/p' \
+      -e 's/^[[:space:]]*function[[:space:]][[:space:]]*\(test_[A-Za-z0-9_]*\)[[:space:]]*\({.*\)\{0,1\}$/\1/p' \
+      "$t" \
+      | while IFS= read -r fn; do printf '%s::%s\n' "$base" "$fn"; done
+  done
   return 0
 }
 
@@ -148,7 +202,14 @@ if command -v shellcheck >/dev/null 2>&1; then
   list=$(mktemp "${TMPDIR:-/tmp}/jig-shell-verify.XXXXXX")
   trap 'rm -f "$list"' EXIT INT TERM
 
-  if [ "$scoped" = 1 ]; then
+  # A changed .shellcheckrc changes the verdict for every script, not only
+  # the changed ones, so it widens the lint to the whole tree.
+  sc_wide=0
+  if [ "$scoped" = 1 ] && grep -qE '(^|/)\.shellcheckrc$' "$JIG_VERIFY_FILES"; then
+    sc_wide=1
+  fi
+
+  if [ "$scoped" = 1 ] && [ "$sc_wide" = 0 ]; then
     _shell_changed_scripts > "$list"
   else
     _shell_all_scripts > "$list"
@@ -170,7 +231,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   trap - EXIT INT TERM
 
   if [ "$sc_checked" -eq 0 ]; then
-    if [ "$scoped" = 1 ]; then
+    if [ "$scoped" = 1 ] && [ "$sc_wide" = 0 ]; then
       echo "shell: shellcheck: skip (scope: no changed shell scripts)"
     else
       echo "shell: shellcheck: skip (no shell scripts found)"
@@ -181,7 +242,9 @@ if command -v shellcheck >/dev/null 2>&1; then
       echo "shell: shellcheck: fail (shellcheck $sc_version)"
       status=1
     else
-      if [ "$scoped" = 1 ]; then
+      if [ "$sc_wide" = 1 ]; then
+        echo "shell: shellcheck: pass (shellcheck $sc_version, scope: .shellcheckrc changed, whole tree)"
+      elif [ "$scoped" = 1 ]; then
         echo "shell: shellcheck: pass (shellcheck $sc_version, scope: $sc_checked files)"
       else
         echo "shell: shellcheck: pass (shellcheck $sc_version)"
@@ -197,13 +260,31 @@ fi
 if [ -x tests/run.sh ]; then
   if [ "$scoped" = 1 ]; then
     filters=$(_shell_test_filters | LC_ALL=C sort -u)
+    reason="not narrowable"
+
+    # A filter that selects no test is not a narrowing: tests/run.sh reports
+    # `0 passed` and exits 0, and a pass nothing produced is the defect this
+    # check exists to prevent (ADR-0041). Such a filter runs the full set.
+    if [ -n "$filters" ] && ! printf '%s\n' "$filters" | grep -qx 'ALL'; then
+      names=$(_shell_test_names)
+      while IFS= read -r filter; do
+        [ -n "$filter" ] || continue
+        if ! printf '%s\n' "$names" | grep -qF -- "$filter"; then
+          reason="filter '$filter' selects no tests"
+          filters="ALL"
+          break
+        fi
+      done <<EOF
+$filters
+EOF
+    fi
 
     if printf '%s\n' "$filters" | grep -qx 'ALL'; then
       ran_any=1
       if tests/run.sh; then
-        echo "shell: tests/run.sh: pass (scope: not narrowable, ran full set)"
+        echo "shell: tests/run.sh: pass (scope: $reason, ran full set)"
       else
-        echo "shell: tests/run.sh: fail (scope: not narrowable, ran full set)"
+        echo "shell: tests/run.sh: fail (scope: $reason, ran full set)"
         status=1
       fi
     elif [ -z "$filters" ]; then

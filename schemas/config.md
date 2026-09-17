@@ -19,6 +19,7 @@ Absent keys take the default. Paths are not configurable.
 | `housekeeping.abandoned_ttl` | `14d` | yes | abandoned workspaces are purged after this |
 | `housekeeping.stale_after` | `60d` | yes | older active tasks are reported as `STALE_CANDIDATE` |
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
+| `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 
 Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 

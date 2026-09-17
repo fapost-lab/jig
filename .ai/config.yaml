@@ -23,3 +23,7 @@ housekeeping.abandoned_ttl: 14d       # abandoned workspaces are purged after th
 housekeeping.stale_after: 60d         # older active tasks are reported as STALE_CANDIDATE
 
 knowledge.require_frontmatter: true   # `jig knowledge check` fails on missing frontmatter
+
+# CI runs tests/run.sh on Linux and macOS for every pull request (.github/workflows/ci.yml),
+# so a local `jig verify` checks what changed; .ai/verify/shell.map says which tests that is.
+verify.full_run: ci

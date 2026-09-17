@@ -11,7 +11,9 @@ paths:
   - scripts/lib/verify.sh
   - scripts/lib/profiles.sh
   - "profiles/**"
-reviewed_at: 2026-09-13
+  - schemas/verify-map.md
+  - ".ai/verify/**"
+reviewed_at: 2026-09-16
 ---
 # Verify
 
@@ -27,6 +29,11 @@ it actually did.
 - The scope protocol: computing the changed-file list once and handing it to profiles
   that declared they understand it, via `JIG_VERIFY_SCOPE` and `JIG_VERIFY_FILES`
   (ADR-0013).
+- The CI-backed mode (ADR-0041): with `verify.full_run: ci` a flag-less run narrows to what
+  changed since the merge base with `git.base_branch`, and `--full` or a non-empty `CI`
+  restore the full set. The mode and its reason are printed in a header line.
+- The project map `.ai/verify/<profile>.map` (`schemas/verify-map.md`): parsed and validated
+  here, handed as `JIG_VERIFY_MAPPED` to profiles declaring `scope: [changed, map]`.
 - Honest reporting: a narrowed run says what it narrowed to, and an ignored scope is
   printed rather than dropped.
 
@@ -48,7 +55,10 @@ contract. A change to how profiles are *copied* still belongs to `install`.
 
 ## Entry points
 
-- `scripts/lib/verify.sh` — `cmd_verify`, `_verify_changed_files`.
+- `scripts/lib/verify.sh` — `cmd_verify`, `_verify_changed_files`, `_verify_map_check`,
+  `_verify_map_apply`.
+- `profiles/shell/verify.sh` — `_shell_builtin_filters`, the reference for what a shipped
+  profile may know about a project (nothing beyond its stack's conventions).
 - `scripts/lib/profiles.sh` — `profiles_active`, `profiles_detect`, `profiles_supports`,
   `profiles_check_requires`.
 - `profiles/<stack>/profile.yaml` — the one place the mapping "root manifest → stack" is

@@ -556,9 +556,32 @@ pass or evidence that the application works.
 ```
 
 Use scoped runs while iterating. Profiles that cannot narrow their checks run in
-full and say so. Finish behavioral work with the required full checks; documentation
+full and say so. Finish behavioral work with a plain `jig verify`; documentation
 changes need relevant document checks. Jig refuses verification while it can detect
 framework files pending installation: run `jig upgrade`, review the result, then retry.
+
+### Scoping a flag-less run
+
+`verify.full_run` in `.ai/config.yaml` decides what a plain `jig verify` (no flags) does.
+The default, `local`, runs everything. `ci` is the project's claim that its
+CI runs every check on each pull request; a plain `jig verify` then narrows to files
+changed since `git.base_branch`'s merge base — staged, unstaged and untracked included —
+and prints a header naming the base and why it narrowed:
+
+```
+verify: scope changed since main@a1b2c3d (verify.full_run: ci, full set runs in CI)
+```
+
+A full run still happens on request: `--full` (`verify: full run (--full)`), or whenever
+the `CI` environment variable is non-empty (`verify: full run (CI is set)`), so the same
+command run by a human and by the pipeline behaves correctly in each place. Explicit
+`--changed`/`--base` win over `CI`; `--full` cannot be combined with either. `--changed`
+without `--base` keeps its existing meaning: diff against `HEAD`, for iteration, in any
+mode.
+
+Each profile still decides for itself how to turn changed files into a narrower check
+(ADR-0013). A project can steer that mapping without touching the profile, through a
+project-owned map at `.ai/verify/<profile>.map` — see [schemas/verify-map.md](schemas/verify-map.md).
 
 Activate another profile or adapter by editing the inline lists in `.ai/config.yaml`
 and running `jig upgrade`, or re-run `jig init` with explicit selections. Custom
