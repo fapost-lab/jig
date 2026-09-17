@@ -1858,7 +1858,9 @@ km_sources() {
     km_sources_list
     return 0
   fi
-  [ "$1" = --diff ] && [ $# -eq 2 ] || jig_die "usage: jig knowledge sources [--diff <id>]"
+  if [ "$1" != --diff ] || [ $# -ne 2 ]; then
+    jig_die "usage: jig knowledge sources [--diff <id>]"
+  fi
   km_sources_diff "$2"
 }
 
