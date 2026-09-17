@@ -3259,3 +3259,626 @@ test_inventory_instructions_line_names_the_stub_that_links_it() {
   assert_contains "$OUT" "instructions:  AGENTS.md"
   assert_not_contains "$OUT" "instructions:  AGENTS.md  (linked by"
 }
+
+# --- knowledge changed: source edits (adopted-rules-stay-current, AC-01) --------
+
+test_knowledge_changed_reports_a_modified_source() {
+  kmc_setup
+  km_track_file docs/style.md "line one"
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new convention style --source docs/style.md --proposed --domains a >/dev/null
+  printf 'line two\n' >> docs/style.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "modified   docs/style.md  (source of convention-style)"
+  assert_contains "$OUT" ", 1 source edits"
+}
+
+test_knowledge_changed_reports_a_deleted_source() {
+  kmc_setup
+  km_track_file docs/style.md
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new convention style --source docs/style.md --proposed --domains a >/dev/null
+  rm docs/style.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "deleted    docs/style.md  (source of convention-style)"
+  assert_contains "$OUT" ", 1 source edits"
+}
+
+test_knowledge_changed_reports_an_untracked_source_as_created() {
+  # A stub's source is not required to still be tracked for the report to see
+  # it: only `--source` at creation time demands that (ADR-0036).
+  kmc_setup
+  mkdir -p .ai/knowledge/sources docs
+  cat > .ai/knowledge/sources/newsrc.md <<'EOF'
+---
+id: convention-newsrc
+type: convention
+status: proposed
+source: docs/new.md
+domains: [a]
+---
+# New source stub
+
+Linked source: [docs/new.md](../../../docs/new.md).
+EOF
+  printf 'brand new file\n' > docs/new.md
+
+  run jig knowledge changed --base HEAD
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "created    docs/new.md  (source of convention-newsrc)"
+  assert_contains "$OUT" ", 1 source edits"
+}
+
+test_knowledge_changed_marks_an_adr_source_as_a_decision_record() {
+  kmc_setup
+  km_track_file docs/adr/0009-thing.md
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new adr thing --source docs/adr/0009-thing.md --proposed --domains a >/dev/null
+  printf 'amended decision\n' >> docs/adr/0009-thing.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "modified   docs/adr/0009-thing.md  (source of adr-thing, a decision record)"
+}
+
+test_knowledge_changed_ignores_a_rejected_stub_source() {
+  kmc_setup
+  km_track_file docs/x.md
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new convention x --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge reject convention-x >/dev/null
+  printf 'edit\n' >> docs/x.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "docs/x.md"
+  assert_contains "$OUT" ", 0 source edits"
+}
+
+test_knowledge_changed_ignores_a_superseded_stub_source() {
+  kmc_setup
+  km_track_file docs/adr/0010-old.md
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new adr old --source docs/adr/0010-old.md --proposed --domains a >/dev/null
+  sed 's/^status: proposed/status: superseded/' .ai/knowledge/sources/old.md \
+    > .ai/knowledge/sources/old.md.new
+  mv .ai/knowledge/sources/old.md.new .ai/knowledge/sources/old.md
+  printf 'edit\n' >> docs/adr/0010-old.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "docs/adr/0010-old.md"
+  assert_contains "$OUT" ", 0 source edits"
+}
+
+test_knowledge_changed_does_not_report_a_tracked_file_that_is_nobodys_source() {
+  kmc_setup
+  km_track_file docs/unrelated.md "line one"
+  local base
+  base=$(git rev-parse HEAD)
+  printf 'line two\n' >> docs/unrelated.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "docs/unrelated.md"
+  assert_contains "$OUT" ", 0 source edits"
+}
+
+test_knowledge_changed_reports_a_renamed_source_as_deleted() {
+  # design.md §1: a renamed source reads as deleted here; the stub is
+  # `missing` in `jig knowledge sources` until a human fixes the link.
+  kmc_setup
+  km_track_file docs/old.md
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new convention old --source docs/old.md --proposed --domains a >/dev/null
+  git mv docs/old.md docs/renamed.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "deleted    docs/old.md  (source of convention-old)"
+  assert_not_contains "$OUT" "docs/renamed.md"
+  assert_contains "$OUT" ", 1 source edits"
+}
+
+test_knowledge_changed_summary_line_has_source_edits_last() {
+  kmc_setup
+  km_track_file docs/x.md
+  jig knowledge new convention x --source docs/x.md --proposed --domains a >/dev/null
+
+  run jig knowledge changed --base HEAD
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "knowledge changed: 1 created, 0 modified, 0 renamed, 0 deleted, 0 source edits"
+}
+
+# The tracked diff and the untracked listing are not disjoint for sources
+# either: a source removed from the index but left in the worktree is
+# "deleted" to `git diff` and untracked to `git ls-files --others` at once.
+# The main-document loop above dedupes this exact case (see
+# test_knowledge_changed_counts_a_file_once_when_both_layers_see_it); this
+# checks whether the source loop does too.
+test_knowledge_changed_counts_a_source_once_when_both_layers_see_it() {
+  kmc_setup
+  km_track_file docs/x.md
+  local base
+  base=$(git rev-parse HEAD)
+  jig knowledge new convention x --source docs/x.md --proposed --domains a >/dev/null
+  git rm -q --cached docs/x.md
+
+  run jig knowledge changed --base "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "deleted    docs/x.md  (source of convention-x)"
+  assert_not_contains "$OUT" "created    docs/x.md"
+  assert_contains "$OUT" ", 1 source edits"
+}
+
+# --- knowledge adr-convention (adopted-rules-stay-current, AC-02) ---------------
+
+test_adr_convention_reports_none_without_adr_stubs() {
+  km_setup
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_eq "adr-dir: none (use jig knowledge new adr)" "$OUT"
+}
+
+test_adr_convention_refuses_extra_arguments() {
+  km_setup
+  run jig knowledge adr-convention extra
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig knowledge adr-convention"
+}
+
+test_adr_convention_reports_next_number_width_and_example() {
+  km_setup
+  km_track_file docs/adr/0001-a.md
+  jig knowledge new adr linkme --source docs/adr/0001-a.md --proposed --domains x >/dev/null
+  printf 'b\n' > docs/adr/0002-b.md
+  printf 'c\n' > docs/adr/0012-c.md
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/adr  next 0013  width 4  example docs/adr/0012-c.md"
+}
+
+test_adr_convention_tie_break_picks_the_larger_width() {
+  km_setup
+  km_track_file docs/adr2/007-x.md
+  jig knowledge new adr tieme --source docs/adr2/007-x.md --proposed --domains x >/dev/null
+  printf 'y\n' > docs/adr2/0100-y.md
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/adr2  next 0101  width 4  example docs/adr2/0100-y.md"
+}
+
+test_adr_convention_reports_unnumbered_when_no_file_starts_with_a_digit() {
+  km_setup
+  km_track_file docs/unnumbered/readme.md
+  jig knowledge new adr unnum --source docs/unnumbered/readme.md --proposed --domains x >/dev/null
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/unnumbered  unnumbered  example docs/unnumbered/readme.md"
+}
+
+test_adr_convention_reports_missing_when_the_directory_is_gone() {
+  km_setup
+  km_track_file docs/gone/note.md
+  jig knowledge new adr gone --source docs/gone/note.md --proposed --domains x >/dev/null
+  rm -rf docs/gone
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/gone  (missing)"
+}
+
+test_adr_convention_reports_dot_for_a_source_at_the_repository_root() {
+  km_setup
+  km_track_file 0001-root.md
+  jig knowledge new adr root --source 0001-root.md --proposed --domains x >/dev/null
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: .  next 0002  width 4  example ./0001-root.md"
+}
+
+test_adr_convention_lists_multiple_directories_one_line_each() {
+  km_setup
+  km_track_file docs/zzz/0001-a.md
+  jig knowledge new adr za --source docs/zzz/0001-a.md --proposed --domains x >/dev/null
+  km_track_file docs/aaa/0001-b.md
+  jig knowledge new adr ab --source docs/aaa/0001-b.md --proposed --domains x >/dev/null
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/aaa"
+  assert_contains "$OUT" "adr-dir: docs/zzz"
+  local a_line z_line
+  a_line=$(printf '%s\n' "$OUT" | grep -n "^adr-dir: docs/aaa" | cut -d: -f1)
+  z_line=$(printf '%s\n' "$OUT" | grep -n "^adr-dir: docs/zzz" | cut -d: -f1)
+  [ "$a_line" -lt "$z_line" ] || fail "expected docs/aaa before docs/zzz: $OUT"
+}
+
+# --- knowledge new: --copy refusals (adopted-rules-stay-current, AC-03) --------
+
+test_new_copy_refuses_source_and_copy_together() {
+  km_setup
+  run jig knowledge new convention both --source docs/tracked.md --copy docs/plain.md --proposed --domains a
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "knowledge new: --source links a tracked file and --copy copies an untracked one; give one of them"
+}
+
+test_new_copy_refuses_secrets_reviewed_without_copy() {
+  km_setup
+  run jig knowledge new convention x --source docs/tracked.md --proposed --secrets-reviewed --domains a
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge new: --secrets-reviewed goes with --copy"
+}
+
+test_new_copy_refuses_domain_glossary_rule_types() {
+  km_setup
+  local t
+  for t in domain glossary rule; do
+    run jig knowledge new "$t" plain --copy docs/plain.md
+    assert_eq 1 "$RC" "type: $t"
+    assert_contains "$OUT" "knowledge new: --copy makes adr, convention or feature documents, not: $t" "type: $t"
+  done
+}
+
+# km_assert_copy_refused <path> [expected substring] — mirrors
+# km_assert_source_refused: every case reuses the same stub slug because a
+# refused call never reaches the point of building a file.
+km_assert_copy_refused() {
+  local src="$1" expect="${2:-}"
+  run jig knowledge new convention copystub --copy "$src" --domains a
+  assert_eq 1 "$RC" "copy: $src"
+  [ -z "$expect" ] || assert_contains "$OUT" "$expect" "copy: $src"
+  assert_no_file .ai/knowledge/conventions/copystub.md
+}
+
+test_new_copy_rejects_absolute_dotdot_dot_and_double_slash_paths() {
+  km_setup
+  km_assert_copy_refused "/docs/plain.md" "must be repository-relative"
+  km_assert_copy_refused "docs/../plain.md" "must be a plain file path without dot segments"
+  km_assert_copy_refused "docs/./plain.md" "must be a plain file path without dot segments"
+  km_assert_copy_refused "docs//plain.md" "must be a plain file path without dot segments"
+}
+
+test_new_copy_rejects_paths_under_the_ai_directory() {
+  km_setup
+  km_assert_copy_refused ".ai/notes.md" "may not point inside .ai/"
+}
+
+test_new_copy_rejects_claude_local_md_basename_in_any_case() {
+  km_setup
+  km_assert_copy_refused "CLAUDE.local.md" "CLAUDE.local.md is never linked"
+  km_assert_copy_refused "docs/claude.local.md" "CLAUDE.local.md is never linked"
+}
+
+test_new_copy_rejects_a_missing_path() {
+  km_setup
+  km_assert_copy_refused "docs/missing.md" "not a regular file (symlinks are refused): docs/missing.md"
+}
+
+test_new_copy_rejects_a_directory() {
+  km_setup
+  mkdir -p docs/sub
+  printf 'x\n' > docs/sub/inner.md
+  km_assert_copy_refused "docs/sub" "not a regular file (symlinks are refused): docs/sub"
+}
+
+test_new_copy_rejects_a_symlink() {
+  # A symlink is the subject: where ln -s copies, there is none to refuse.
+  skip_unless_symlinks
+  km_setup
+  mkdir -p docs
+  printf 'target\n' > docs/target.md
+  (cd docs && ln -s target.md link.md)
+  km_assert_copy_refused "docs/link.md" "not a regular file (symlinks are refused): docs/link.md"
+}
+
+test_new_copy_rejects_a_file_reached_through_a_symlinked_directory() {
+  skip_unless_symlinks
+  km_setup
+  local extdir
+  extdir="${JIG_TEST_TMP}.copy-outside"
+  mkdir -p "$extdir"
+  printf 'x\n' > "$extdir/inside.md"
+  ln -s "$extdir" outside
+  km_assert_copy_refused "outside/inside.md" \
+    "leaves the repository through a symlinked directory: outside/inside.md"
+}
+
+test_new_copy_rejects_a_tracked_file() {
+  km_setup
+  km_track_file docs/tracked.md
+  km_assert_copy_refused "docs/tracked.md" \
+    "docs/tracked.md is tracked by git; link it in place with --source instead"
+}
+
+test_new_copy_refuses_when_the_document_already_exists() {
+  km_setup
+  mkdir -p docs .ai/knowledge/conventions
+  printf 'body\n' > docs/plain.md
+  printf '# existing\n' > .ai/knowledge/conventions/copystub.md
+
+  run jig knowledge new convention copystub --copy docs/plain.md --domains a
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: document already exists: .ai/knowledge/conventions/copystub.md"
+}
+
+# --- knowledge new: --copy secret scan (adopted-rules-stay-current, AC-04) -----
+
+# km_assert_copy_secret_detected <kind> <value> — a doc whose second line is
+# exactly <value> is refused for lacking --secrets-reviewed, the refusal
+# names the pattern by <kind> and the line number, and the matched value
+# itself never appears anywhere in the command's own output.
+km_assert_copy_secret_detected() {
+  local kind="$1" value="$2"
+  mkdir -p docs
+  printf 'harmless line one\n%s\nharmless line three\n' "$value" > docs/secret.md
+
+  run jig knowledge new convention "secret-$kind" --copy docs/secret.md --domains a
+  assert_eq 1 "$RC" "kind: $kind"
+  assert_contains "$OUT" "line 2: $kind" "kind: $kind"
+  assert_not_contains "$OUT" "$value" "kind: $kind (value leaked into output)"
+  rm -f docs/secret.md
+}
+
+test_new_copy_detects_aws_access_key() {
+  km_setup
+  km_assert_copy_secret_detected aws-access-key "AKIAABCDEFGHIJKLMNOP"
+}
+
+test_new_copy_detects_private_key() {
+  km_setup
+  km_assert_copy_secret_detected private-key "-----BEGIN RSA PRIVATE KEY-----"
+}
+
+test_new_copy_detects_github_token() {
+  km_setup
+  km_assert_copy_secret_detected github-token "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+test_new_copy_detects_slack_token() {
+  km_setup
+  km_assert_copy_secret_detected slack-token "xoxb-0000000000"
+}
+
+test_new_copy_detects_openai_anthropic_key() {
+  km_setup
+  km_assert_copy_secret_detected openai-anthropic-key "sk-ant-ABCDEFGHIJKLMNOPQRSTUVWX"
+}
+
+test_new_copy_detects_jwt() {
+  km_setup
+  km_assert_copy_secret_detected jwt "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwZmFrZQ."
+}
+
+test_new_copy_detects_assignment_style_secret() {
+  km_setup
+  km_assert_copy_secret_detected assignment "password = fakepassword123"
+}
+
+test_new_copy_refuses_without_secrets_reviewed_when_a_secret_is_found() {
+  km_setup
+  mkdir -p docs
+  printf 'harmless\nAKIAABCDEFGHIJKLMNOP\nharmless\n' > docs/secret.md
+
+  run jig knowledge new convention secretdoc --copy docs/secret.md --domains a
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "possible secrets in docs/secret.md (above)"
+  assert_contains "$OUT" "--secrets-reviewed"
+  assert_not_contains "$OUT" "AKIAABCDEFGHIJKLMNOP"
+  assert_no_file .ai/knowledge/conventions/secretdoc.md
+}
+
+test_new_copy_with_secrets_reviewed_warns_and_copies() {
+  km_setup
+  mkdir -p docs
+  printf 'harmless\nAKIAABCDEFGHIJKLMNOP\nharmless\n' > docs/secret.md
+
+  run jig knowledge new convention secretdoc --copy docs/secret.md --secrets-reviewed --domains a
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "copying docs/secret.md with the possible secrets above marked reviewed"
+  assert_not_contains "$OUT" "AKIAABCDEFGHIJKLMNOP"
+  assert_file .ai/knowledge/conventions/secretdoc.md
+  assert_file_contains .ai/knowledge/conventions/secretdoc.md "status: proposed"
+}
+
+test_new_copy_warns_and_copies_when_no_secrets_found() {
+  km_setup
+  mkdir -p docs
+  printf '# Coding Style\n\nUse tabs.\n' > docs/style.md
+
+  run jig knowledge new convention style --copy docs/style.md --domains a
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "copied docs/style.md -> .ai/knowledge/conventions/style.md (proposed)"
+  assert_contains "$OUT" "no obvious secrets in docs/style.md; the check finds obvious ones only"
+  assert_file .ai/knowledge/conventions/style.md
+  assert_file_contains .ai/knowledge/conventions/style.md "status: proposed"
+}
+
+# --- knowledge new: --copy writes the document (adopted-rules-stay-current, AC-05) -
+
+test_new_copy_creates_a_proposed_document_with_the_files_body() {
+  km_setup
+  mkdir -p docs
+  printf '# House Style\n\nAlways write tests first.\n' > docs/house-style.md
+
+  run jig knowledge new convention house-style --copy docs/house-style.md --domains a
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "copied docs/house-style.md -> .ai/knowledge/conventions/house-style.md (proposed)"
+  assert_contains "$OUT" \
+    "jig: the original docs/house-style.md stays where it is; another tool may still load it, and jig never deletes it"
+  assert_file_contains .ai/knowledge/conventions/house-style.md "id: convention-house-style"
+  assert_file_contains .ai/knowledge/conventions/house-style.md "type: convention"
+  assert_file_contains .ai/knowledge/conventions/house-style.md "status: proposed"
+  assert_file_contains .ai/knowledge/conventions/house-style.md "Always write tests first."
+  local body
+  body=$(cat .ai/knowledge/conventions/house-style.md)
+  assert_not_contains "$body" "<!-- A stable engineering practice"
+}
+
+test_new_copy_leaves_the_original_file_unchanged() {
+  km_setup
+  mkdir -p docs
+  printf '# Original\n\nDo not touch me.\n' > docs/original.md
+  local before after
+  before=$(git hash-object docs/original.md)
+
+  run jig knowledge new convention original --copy docs/original.md --domains a
+  assert_eq 0 "$RC"
+
+  after=$(git hash-object docs/original.md)
+  assert_eq "$before" "$after"
+  assert_file docs/original.md
+}
+
+test_new_copy_strips_foreign_frontmatter_and_prints_it_on_stderr() {
+  km_setup
+  mkdir -p docs
+  cat > docs/cursor-rule.mdc <<'EOF'
+---
+description: Cursor rule
+globs: "**/*.ts"
+---
+# TypeScript Style
+
+Prefer const over let.
+EOF
+
+  run jig knowledge new convention ts-style --copy docs/cursor-rule.mdc --domains a
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "removed frontmatter:"
+  assert_contains "$OUT" "description: Cursor rule"
+  assert_contains "$OUT" 'globs: "**/*.ts"'
+  # .mdc origin becomes a .md document, at the normal path for its type.
+  assert_file .ai/knowledge/conventions/ts-style.md
+  assert_file_contains .ai/knowledge/conventions/ts-style.md "Prefer const over let."
+  local body
+  body=$(cat .ai/knowledge/conventions/ts-style.md)
+  assert_not_contains "$body" "description: Cursor rule"
+}
+
+test_new_copy_works_for_a_gitignored_file() {
+  km_setup
+  mkdir -p docs
+  printf 'docs/ignored.md\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "ignore docs/ignored.md"
+  printf '# Ignored Rule\n\nStay off main.\n' > docs/ignored.md
+
+  run jig knowledge new convention ignored-rule --copy docs/ignored.md --domains a
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "copied docs/ignored.md -> .ai/knowledge/conventions/ignored-rule.md (proposed)"
+  assert_file_contains .ai/knowledge/conventions/ignored-rule.md "Stay off main."
+}
+
+test_new_copy_passes_knowledge_check_with_domains() {
+  km_setup
+  mkdir -p docs
+  printf '# Clean Convention\n\nNothing sensitive in here.\n' > docs/clean.md
+
+  run jig knowledge new convention clean --copy docs/clean.md --domains core
+  assert_eq 0 "$RC"
+
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 failures"
+}
+
+# jig context resolve must never surface a copied document until a human
+# accepts it, exactly like --proposed and --source stubs (ADR-0016).
+test_new_copy_not_resolved_by_context_until_accepted() {
+  km_setup
+  for global in GLOSSARY ARCHITECTURE RULES; do
+    printf '# %s\n' "$global" > ".ai/knowledge/$global.md"
+  done
+  mkdir -p docs
+  printf '# House Rule\n\nAlways review before merge.\n' > docs/house-rule.md
+
+  run jig knowledge new convention house-rule --copy docs/house-rule.md --domains core
+  assert_eq 0 "$RC"
+
+  run jig context resolve --no-task --domains core --catalog
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" ".ai/knowledge/conventions/house-rule.md"
+
+  run jig knowledge accept convention-house-rule
+  assert_eq 0 "$RC"
+
+  run jig context resolve --no-task --domains core --catalog
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   .ai/knowledge/conventions/house-rule.md"
+}
+
+# --- independent review of adopted-rules-stay-current: fixes ---------------------
+
+test_new_copy_rejects_paths_inside_git_directories_in_any_case() {
+  km_setup
+  km_assert_copy_refused ".git/config" "may not point inside .git/"
+  km_assert_copy_refused ".GIT/config" "may not point inside .git/"
+  km_assert_copy_refused "vendor/lib/.git/config" "may not point inside .git/"
+}
+
+test_new_copy_rejects_a_hard_link() {
+  km_setup
+  mkdir -p notes
+  printf 'rules\n' > notes/rules.md
+  ln notes/rules.md notes/twin.md
+  km_assert_copy_refused "notes/twin.md" "is a hard link (2 links)"
+}
+
+test_adr_convention_never_reads_a_hand_edited_source_outside_the_repository() {
+  km_setup
+  km_track_file docs/adr/0001-a.md
+  jig knowledge new adr linkme --source docs/adr/0001-a.md --proposed --domains x >/dev/null
+  sed 's|^source: .*|source: ../outside/0099-x.md|' .ai/knowledge/sources/linkme.md > .ai/knowledge/sources/linkme.md.new
+  mv .ai/knowledge/sources/linkme.md.new .ai/knowledge/sources/linkme.md
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: none for ../outside/0099-x.md  (invalid source path, not read)"
+  assert_not_contains "$OUT" "next"
+}
+
+test_adr_convention_never_reads_a_directory_symlinked_outside_the_repository() {
+  skip_unless_symlinks
+  km_setup
+  km_track_file docs/adr/0001-a.md
+  jig knowledge new adr linkme --source docs/adr/0001-a.md --proposed --domains x >/dev/null
+  local outside
+  outside=$(mktemp -d "${TMPDIR:-/tmp}/jig-outside-adr.XXXXXX")
+  printf 'x\n' > "$outside/0042-secret-name.md"
+  rm -rf docs/adr
+  ln -s "$outside" docs/adr
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/adr  (missing)"
+  assert_not_contains "$OUT" "0042"
+  rm -rf "$outside"
+}
+
+test_adr_convention_ignores_implausibly_long_digit_runs() {
+  km_setup
+  km_track_file docs/adr/0001-a.md
+  jig knowledge new adr linkme --source docs/adr/0001-a.md --proposed --domains x >/dev/null
+  printf 'x\n' > docs/adr/12345678901234567890123456789-junk.md
+
+  run jig knowledge adr-convention
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "adr-dir: docs/adr  next 0002  width 4  example docs/adr/0001-a.md"
+}

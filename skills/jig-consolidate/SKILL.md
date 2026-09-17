@@ -56,6 +56,25 @@ Update the document that owns the topic instead of adding a parallel one. Severa
 over time shape one feature document. When a decision replaces an earlier one, mark the
 old ADR `superseded` rather than editing history.
 
+**A rule adopted from the project lives in its source.** When `jig context` gave you a file
+`linked by <id>`, that file owns the topic: edit it, and leave the stub its metadata. Then show
+the changed section verbatim and ask; only on the human's yes run
+`.ai/scripts/jig knowledge reviewed <id>`, which records the new text as approved. Without that
+yes, record nothing: the source stays counted under `sources changed:` for `jig-accept`. An agent
+never approves its own edit.
+
+**A team's decision record is never edited** — the source of a stub with `type: adr`, typo
+included. A changed decision is a new one. Where the project keeps its own:
+
+```
+.ai/scripts/jig knowledge adr-convention
+```
+
+For an `adr-dir:` line (ask which, if several), write the new record in that directory with the
+`next` number, following the structure and language of the `example`, `git add` that file, then
+`.ai/scripts/jig knowledge new adr <slug> --source <file> --proposed`. With `adr-dir: none`, use
+`jig knowledge new adr` as always.
+
 ## 4. Keep the frontmatter true
 
 `paths` and `domains` are how `jig context` finds a document later; a document nobody can
@@ -149,8 +168,9 @@ Ask the repository what changed, rather than reporting from memory:
 ```
 
 It lists the documents created, modified and deleted since the task forked, untracked ones
-included — a document written minutes ago is usually not committed yet. Pass `--base <ref>`
-instead when the task has no fork point.
+included — a document written minutes ago is usually not committed yet — and the sources of
+linked documents, marked `source of <id>`; `a decision record` on one of those means a rule
+above was broken. Pass `--base <ref>` instead when the task has no fork point.
 
 The command supplies the facts; you supply the meaning. Show what was written — each new
 document, and each changed section of an existing one — verbatim, as

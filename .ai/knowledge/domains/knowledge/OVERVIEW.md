@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # Knowledge
 
@@ -34,7 +34,9 @@ them an agent has to read.
 - Adopting a project's existing documents: stubs in `sources/` that link a tracked file with
   `source:`, the checks on that path, and the inventory of candidates (ADR-0036). An accepted stub
   resolves to its source, and its `source_hash` tells a source edited since approval apart
-  (`jig knowledge sources`, `sources changed:` in `jig status`).
+  (`jig knowledge sources`, `sources changed:` in `jig status`). Consolidation edits the source,
+  `knowledge changed` reports it, a team's decision record is never edited (`adr-convention` for a
+  new one), and an untracked rule file is copied with a secret scan (`new --copy`).
 - Which documents a task must read, how much of each, and the record that it did:
   resolution by selectors, the catalog, and the context ledger (ADR-0014, ADR-0015).
 

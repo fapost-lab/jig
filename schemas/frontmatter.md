@@ -81,6 +81,21 @@ is recorded (counted as changed) and `missing` when it is gone. `jig status` pri
 `jig knowledge sources [--diff <id>]` shows each link and the difference from the approved text.
 `jig knowledge reviewed <id>` approves the current text.
 
+`jig knowledge changed` lists edits to the sources of non-retired stubs as `source of <id>` (`, a decision
+record` for an ADR stub). `jig knowledge adr-convention` prints, for every directory that holds an ADR stub's
+source, `adr-dir: <dir>  next <n>  width <w>  example <file>`, or `unnumbered`, `(missing)`, `none`.
+
+## Copied documents
+
+An untracked or ignored rule file is copied, not linked: `jig knowledge new <adr|convention|feature> <slug>
+--copy <path> [--secrets-reviewed]`. The path follows the `source` shape rules — which refuse anything inside
+a `.git/` directory, in any case — and must be a regular file with one link, not a symlink, under no
+symlinked directory leading outside the repository, and not tracked by git. Lines
+that look like secrets are reported as `line <n>: <kind>` — never the value — and refuse the copy until
+`--secrets-reviewed`. The document gets its type's frontmatter with `status: proposed`, and the file's
+content as its body; another tool's leading `---` block is dropped and printed. The original is never
+written or deleted. A copy carries no `source`: it is an ordinary document from then on.
+
 ## Proposed knowledge
 
 `status: proposed` is knowledge that has been written but not agreed to. The document
