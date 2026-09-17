@@ -22,7 +22,7 @@ A team that adopts Jig usually keeps its rules already: `docs/`, its own ADRs, `
 instruction files of other tools. `jig-map` proposed new documents under `.ai/knowledge/` and knew
 nothing about those, so every rule risked two copies that drift apart, or never reached an agent
 through `jig context`. The plan for adopting them is the specification
-`.ai/specs/knowledge-adoption/`; this decision is its first phase.
+`knowledge-adoption` (removed when finished; in git history); this decision is its first phase.
 
 Checking the plan against the code changed two of its premises. An accepted stub would be resolved
 like any document, so an agent would receive its two-line body — a pointer — and acknowledge it by
