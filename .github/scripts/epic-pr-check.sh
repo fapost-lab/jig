@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # epic-pr-check.sh — gate a pull request from an epic branch into main
-# (.ai/specs/epic-branches/spec.md, task task-base-and-epics). Run by the
+# (ADR-0040). Run by the
 # `epic-pr` job of .github/workflows/ci.yml, on the pull_request merge
 # commit, in the root of the checkout.
 #
@@ -13,15 +13,15 @@
 #     was in flight (a patch release, or another epic finishing first). The
 #     release job then finds its tag already there and exits 0, so this
 #     merge would land a feature and tag nothing;
-#   - the epic is merged before `jig spec epic <id> --finish` records it, so
-#     `main` gains the feature's code while its roadmap still reads as work
-#     in progress, with no task left open to say otherwise.
+#   - the epic is merged before `jig spec epic <id> --finish` removes its
+#     spec, so `main` gains the feature's code while a spec still declares the
+#     epic open, with no task left to close it.
 #
 # This script fails the pull request in either case, before it can be merged:
 #
 #   - the head ref is missing or is not an epic branch  → fail;
 #   - JIG_VERSION already has a release tag on origin    → fail;
-#   - no roadmap marks the epic finished                → fail;
+#   - a roadmap still declares the epic in an Epic: line → fail;
 #   - otherwise                                          → exit 0.
 #
 # It never creates or pushes anything; release-tag.sh remains the only
@@ -71,29 +71,30 @@ main() {
     _epic_die "JIG_VERSION $version is already released as $existing; raise the version on $head_ref before merging"
   fi
 
-  # A roadmap marks its epic finished with a line "Epic: <ref> — finished"
-  # (jig spec epic <id> --finish), written on the epic itself and carried to
-  # `main` by this very pull request. Whitespace around the fields and the
-  # dash spelling (—, -, --) vary by how the line was typed or re-wrapped;
-  # the ref is matched as a literal string, never as a pattern, because a
-  # spec id may contain a "." that a regex would read as "any character".
+  # `jig spec epic <id> --finish` removes the epic's spec on the epic itself,
+  # and this very pull request carries the removal to `main` (ADR-0040 as
+  # amended). A roadmap that still names the branch in an Epic: line — open,
+  # or marked finished the way an older jig did — means the epic was not
+  # finished. Whitespace and the dash spelling vary by how the line was typed;
+  # the ref is matched as a literal string, never as a pattern, because a spec
+  # id may contain a "." that a regex would read as "any character".
   for roadmap in "$repo"/.ai/specs/*/roadmap.md; do
     [ -e "$roadmap" ] || continue
     while IFS= read -r line || [ -n "$line" ]; do
       norm=$(printf '%s' "$line" \
         | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[[:space:]]\{1,\}/ /g')
-      if [ "$norm" = "Epic: $head_ref — finished" ] \
+      if [ "$norm" = "Epic: $head_ref" ] \
+        || [ "$norm" = "Epic: $head_ref — finished" ] \
         || [ "$norm" = "Epic: $head_ref - finished" ] \
         || [ "$norm" = "Epic: $head_ref -- finished" ]; then
         found=1
         break
       fi
     done < "$roadmap"
-    [ "$found" = 1 ] && break
+    if [ "$found" = 1 ]; then
+      _epic_die "${roadmap#"$repo"/} still declares $head_ref; run 'jig spec epic $epic_id --finish' on the epic before merging"
+    fi
   done
-
-  [ "$found" = 1 ] \
-    || _epic_die "no roadmap marks $head_ref finished; run 'jig spec epic $epic_id --finish' on the epic before merging"
 
   printf 'epic-pr-check: %s is finished and v%s is a new version\n' "$head_ref" "$version"
 }

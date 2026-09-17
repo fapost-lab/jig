@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -89,7 +89,7 @@ so it cannot live where everything is read as describing it.
   read before work, and a finished roadmap is history — but nothing checks it.
 - Filed tasks and roadmap checkboxes can drift apart: task workspaces are local, the roadmap
   is shared. Linking tasks to their spec and checking items at consolidation are the next
-  phase of this work (`.ai/specs/idea-workflow/roadmap.md`), not part of this decision.
+  phase of this work (the specification `idea-workflow`, removed when finished; in git history), not part of this decision.
 - `.ai/templates/spec/` is new framework-owned content: copy-mode projects see it as pending
   until `jig upgrade` (ADR-0017).
 - `jig spec new` is a third deletion outside a workspace or trash entry, named in RULES.md:
@@ -116,3 +116,14 @@ so it cannot live where everything is read as describing it.
 > progress is instead of the stale roadmap (ADR-0040). `Spec:` parsing moved to `common.sh`
 > (`jig_spec_link`) so that `task start` can read it. Still no field in `state` carries the link; the
 > task's `base_branch` records only where it was cut.
+
+> **Amendment (2026-09-17).** A spec is temporary: it lives while it holds work not yet done, and is
+> removed by the change that finishes it — for a spec with an epic, the epic's final pull request; for
+> any other, the pull request of the task whose knowledge decision checked the last planned item. By
+> then its decisions are knowledge, recorded by the consolidation of every task it filed. What
+> knowledge does not hold — unchecked items, fog included, open questions and untested assumptions — is
+> decided by a human first: moved to another spec or task, or dropped. `jig spec done` says when a
+> roadmap is complete, `jig spec close <id> [--leftovers-handled]` removes a spec without an epic, and
+> git keeps the history. `jig spec remove` stays the command for a spec abandoned before its work was
+> done — decided by the maintainer on 2026-09-16 — rejected: keeping finished specs beside open ones,
+> where they repeat the knowledge and drift from it, and archiving them behind `--all`.

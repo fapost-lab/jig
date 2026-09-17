@@ -103,6 +103,12 @@ line, so the checkmark reaches the base branch in the same change as the work; f
 no link it says so and changes nothing. If it reports that no roadmap item names the task, the
 roadmap and the task disagree: ask the human, and do not edit the roadmap by hand.
 
+When it prints `roadmap complete`, the spec is closed in this same change: its decisions are knowledge
+now. Run the command it names. It first lists what knowledge does not hold — unchecked items, fog,
+open questions, untested assumptions; ask the human about each one, move it where they say (another
+spec through `jig-idea`, or a task) or drop it, and run it again with `--leftovers-handled`. A spec on
+an epic is closed on the epic by `--finish`, not here.
+
 The status stays `ready`: the task is still current, and fixes from review of the commit
 or PR continue in it. If review changes the implementation, update the same documents; do
 not start a new task document for it.

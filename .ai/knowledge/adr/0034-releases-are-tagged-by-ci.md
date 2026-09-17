@@ -10,7 +10,7 @@ paths:
   - .github/workflows/ci.yml
   - .github/scripts/release-lib.sh
 summary: Why a release tag is created only by CI after the tests pass, from a tested script under .github, and how the version is raised.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # ADR-0034: A release is tagged by CI after the tests pass, from a tested script, never by hand
 
@@ -94,3 +94,7 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
 > from `epic/*` into `main` runs the `epic-pr` job: it fails when `JIG_VERSION` is already released or
 > the epic's roadmap line is not `— finished` (ADR-0040). The "already released" rule is shared with
 > `release-tag.sh` through `.github/scripts/release-lib.sh`. The `release` job is unchanged.
+
+> **Amendment (2026-09-17).** The `epic-pr` job now fails while any `.ai/specs/*/roadmap.md` still names
+> the head branch in an `Epic:` line, open or finished: finishing an epic removes its spec (ADR-0040 as
+> amended).

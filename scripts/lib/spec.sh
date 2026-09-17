@@ -8,11 +8,12 @@
 # A task links to a spec through one `Spec: .ai/specs/<id>/ — Phase <n>` line in
 # its task.md. `new` creates a spec, `done` checks a linked task's roadmap
 # items, `remove` unlinks a spec's open tasks and moves the spec to trash,
-# `epic` declares, cuts, finishes and reopens a spec's epic branch (ADR-0040);
+# `close` removes a spec whose roadmap is complete, and `epic` declares, cuts,
+# finishes and reopens a spec's epic branch (ADR-0035, ADR-0040 as amended);
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish | --reopen]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -22,6 +23,7 @@ cmd_spec() {
     list) spec_list "$@" ;;
     done) spec_done "$@" ;;
     remove) spec_remove "$@" ;;
+    close) spec_close "$@" ;;
     epic) spec_epic "$@" ;;
     -h | --help)
       printf '%s\n' "$SPEC_USAGE" >&2
@@ -264,18 +266,24 @@ spec_epic_status() {
 # that back when review of the final pull request needs a fix.
 spec_epic() {
   [ $# -ge 1 ] || jig_die "spec epic: missing spec id (usage: jig spec epic <id> [--finish | --reopen])"
-  local id="$1" mode=declare
+  local id="$1" mode=declare handled=0
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --finish) [ "$mode" = declare ] || jig_die "spec epic: --finish and --reopen exclude each other"; mode=finish ;;
       --reopen) [ "$mode" = declare ] || jig_die "spec epic: --finish and --reopen exclude each other"; mode=reopen ;;
+      --leftovers-handled) handled=1 ;;
       *) jig_die "spec epic: unexpected argument: $1" ;;
     esac
     shift
   done
   spec_valid_id "$id" || jig_die "spec epic: invalid spec id: $id"
+  [ "$handled" -eq 0 ] || [ "$mode" = finish ] || jig_die "spec epic: --leftovers-handled goes with --finish"
   jig_require_init
+  if [ "$mode" = reopen ]; then
+    spec_epic_reopen "$id"
+    return 0
+  fi
   local roadmap rel line rc=0
   roadmap="$(spec_dir)/$id/roadmap.md"
   rel="$JIG_AI_DIR/specs/$id/roadmap.md"
@@ -285,8 +293,7 @@ spec_epic() {
 
   case "$mode" in
     declare) spec_epic_declare "$id" "$roadmap" "$rel" "$line" ;;
-    finish) spec_epic_finish "$id" "$roadmap" "$rel" "$line" ;;
-    reopen) spec_epic_reopen "$id" "$roadmap" "$rel" "$line" ;;
+    finish) spec_epic_finish "$id" "$roadmap" "$rel" "$line" "$handled" ;;
   esac
 }
 
@@ -302,7 +309,7 @@ spec_epic_declare() {
     return 0
   fi
   branch=${line% *}
-  [ "${line##* }" = open ] || jig_die "spec epic: epic $branch is finished; \`jig spec epic $id --reopen\` on it takes that back"
+  [ "${line##* }" = open ] || jig_die "spec epic: $rel marks epic $branch finished, as an older jig did; a finished epic's spec is removed now — delete the spec, or drop \"— finished\" to reopen it"
   git check-ref-format --branch "$branch" >/dev/null 2>&1 \
     || jig_die "spec epic: git rejects the branch name: $branch"
   if [ -n "$(jig_base_ref "$branch")" ]; then
@@ -334,10 +341,10 @@ spec_epic_declare() {
 }
 
 spec_epic_finish() {
-  local id="$1" roadmap="$2" rel="$3" line="$4" branch here default start open_items
+  local id="$1" roadmap="$2" rel="$3" line="$4" handled="$5" branch here default start
   [ -n "$line" ] || jig_die "spec epic: $rel declares no epic"
   branch=${line% *}
-  [ "${line##* }" = open ] || jig_die "spec epic: epic $branch is already finished"
+  [ "${line##* }" = open ] || jig_die "spec epic: $rel marks epic $branch finished, as an older jig did; drop \"— finished\" from the line, then run --finish again"
   here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [ "$here" = "$branch" ] || jig_die "spec epic: --finish runs on $branch; switch to it first"
   default=$(cfg git.base_branch main)
@@ -347,58 +354,168 @@ spec_epic_finish() {
      && ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$start" HEAD 2>/dev/null; then
     jig_die "spec epic: $branch does not contain the latest $default; merge $default into it first"
   fi
-  # Unchecked items are reported, not refused: a later phase may have been
-  # set aside on purpose. Fog is never counted as unfinished work.
-  open_items=$(awk '/^[[:space:]]*- \[ \] / && !/^[[:space:]]*- \[ \] fog:/' "$roadmap")
-  if [ -n "$open_items" ]; then
-    jig_warn "spec epic: $rel still has unchecked items:"
-    printf '%s\n' "$open_items" | sed 's/^[[:space:]]*/  /' >&2
-  fi
-  spec_epic_write "$roadmap" finish "$branch"
-  printf '%s: Epic: %s — finished\n' "$rel" "$branch"
-  jig_info "spec epic: commit it with the version bump, then open the pull request from $branch into $default"
+  # The spec leaves with the epic's final pull request: its decisions are in
+  # knowledge by now, and what is not is decided by a human first.
+  spec_close_dir "$id" "spec epic" "$handled"
+  jig_info "spec epic: commit the removal with the version bump, then open the pull request from $branch into $default"
 }
 
+# spec_epic_reopen <id> — bring back the spec `--finish` removed, on its epic,
+# when review of the final pull request needs a fix: fixes are ordinary tasks,
+# and a task finds its epic through the spec. Restored from git, never from
+# trash, which is local and expires: from HEAD while the removal is not
+# committed, else from the commit before the one that deleted the roadmap.
+# Files are written with `git show`, so the index is left alone.
 spec_epic_reopen() {
-  local id="$1" roadmap="$2" rel="$3" line="$4" branch here
-  [ -n "$line" ] || jig_die "spec epic: $rel declares no epic"
+  local id="$1" dir rel roadmap src del line rc=0 branch here path
+  dir="$(spec_dir)/$id"
+  rel="$JIG_AI_DIR/specs/$id"
+  roadmap="$rel/roadmap.md"
+  [ ! -e "$dir" ] || jig_die "spec epic: $rel is here; --reopen restores a spec that --finish removed"
+  if git -C "$JIG_PROJECT" cat-file -e "HEAD:$roadmap" 2>/dev/null; then
+    src=HEAD
+  else
+    del=$(git -C "$JIG_PROJECT" log -1 --diff-filter=D --format=%H -- "$roadmap" 2>/dev/null) || del=""
+    [ -n "$del" ] || jig_die "spec epic: no removed spec $id in the history of this branch"
+    src="$del^"
+  fi
+  line=$(git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$line" ]; then
+    jig_die "spec epic: the removed $roadmap declares no epic"
+  fi
   branch=${line% *}
-  [ "${line##* }" = finished ] || jig_die "spec epic: epic $branch is not finished"
   here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [ "$here" = "$branch" ] || jig_die "spec epic: --reopen runs on $branch; switch to it first"
-  spec_epic_write "$roadmap" reopen "$branch"
-  printf '%s: Epic: %s\n' "$rel" "$branch"
+  # Restored into a directory of its own first and moved into place whole: a
+  # failure halfway must not leave a partial spec that the "is here" check
+  # would then refuse to restore over. A partial copy goes to trash, not to
+  # `rm`: scripts delete nothing outside workspaces and trash (RULES.md). Only
+  # paths under the spec's own directory are listed, so none lands elsewhere.
+  local tmp sub
+  tmp="$dir.restore.$$"
+  mkdir "$tmp" || jig_die "spec epic: cannot create $tmp"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    sub=${path#"$rel/"}
+    if ! mkdir -p "$tmp/$(dirname "$sub")" \
+       || ! git -C "$JIG_PROJECT" show "$src:$path" > "$tmp/$sub"; then
+      spec_trash_partial "$tmp" "$id"
+      jig_die "spec epic: could not restore $path"
+    fi
+  done < <(git -C "$JIG_PROJECT" ls-tree -r --name-only "$src" -- "$rel/")
+  if ! mv "$tmp" "$dir"; then
+    spec_trash_partial "$tmp" "$id"
+    jig_die "spec epic: could not move the restored spec into $rel"
+  fi
+  printf 'restored: %s from %s\n' "$rel" "$(git -C "$JIG_PROJECT" rev-parse --short "$src")"
+  jig_info "spec epic: fix it with ordinary tasks, then run \`jig spec epic $id --finish\` again"
 }
 
-# spec_epic_write <roadmap> <declare|finish|reopen> <branch> — rewrite the
-# Epic: line in place, atomically. `declare` puts it after the Destination:
-# paragraph and refuses a roadmap without one.
+# spec_trash_partial <dir> <id> — move a partial restore out of the way, to
+# trash; best effort, the caller dies either way.
+spec_trash_partial() {
+  local dest
+  dest=$(jig_trash_dest "spec-$2-restore")
+  if mkdir -p "${dest%/*}" 2>/dev/null; then
+    mv "$1" "$dest" 2>/dev/null || true
+  fi
+}
+
+# --- closing a spec --------------------------------------------------------------
+
+# spec_leftovers <spec-dir> — what removing the spec would lose, one line each:
+# `item: <text>` for every unchecked roadmap item, fog included, and
+# `question: <text>` / `assumption: <text>` for every entry of the spec's
+# "Open questions" and "Assumptions left untested" sections. The template's own
+# `<placeholder>` entries are not leftovers. Only the first line of a wrapped
+# entry is printed: enough to name it.
+spec_leftovers() {
+  local dir="$1"
+  if [ -f "$dir/roadmap.md" ]; then
+    awk '/^[[:space:]]*[-*][[:space:]]+\[ \]/ {
+      t = $0; sub(/^[[:space:]]*[-*][[:space:]]+\[ \][[:space:]]*/, "", t)
+      if (t !~ /^</) print "item: " t
+    }' "$dir/roadmap.md"
+  fi
+  if [ -f "$dir/spec.md" ]; then
+    awk '
+      /^## / { kind = ""; if ($0 ~ /^## Open questions[[:space:]]*$/) kind = "question"
+               else if ($0 ~ /^## Assumptions left untested[[:space:]]*$/) kind = "assumption"; next }
+      kind != "" && /^[-*][[:space:]]+/ {
+        t = $0; sub(/^[-*][[:space:]]+/, "", t)
+        if (t !~ /^</ && t != "") print kind ": " t
+      }' "$dir/spec.md"
+  fi
+}
+
+# spec_close_dir <id> <who> <handled> — the removal both `spec close` and
+# `spec epic --finish` end in: refuse while leftovers are undecided, then move
+# the spec to trash like `spec remove` — without unlinking any task: they are
+# closed, or the one closing the spec has not landed yet and keeps its link.
+spec_close_dir() {
+  local id="$1" who="$2" handled="$3" dir leftovers dest rel_dest
+  dir="$(spec_dir)/$id"
+  leftovers=$(spec_leftovers "$dir")
+  if [ -n "$leftovers" ] && [ "$handled" -ne 1 ]; then
+    printf '%s\n' "$leftovers" | sed 's/^/  /' >&2
+    jig_die "$who: $JIG_AI_DIR/specs/$id still holds what knowledge does not (above); move each one to another spec or task, or drop it, then run again with --leftovers-handled"
+  fi
+  dest=$(jig_trash_dest "spec-$id")
+  rel_dest=${dest#"$JIG_PROJECT"/}
+  mkdir -p "${dest%/*}" || jig_die "$who: cannot create ${rel_dest%/*}"
+  mv "$dir" "$dest" || jig_die "$who: could not move $JIG_AI_DIR/specs/$id to $rel_dest"
+  printf 'removed: %s/specs/%s -> %s\n' "$JIG_AI_DIR" "$id" "$rel_dest"
+}
+
+# spec_close <id> [--leftovers-handled] — remove a spec whose work is done, in
+# the change that finished it (ADR-0035 as amended). A spec built on an epic is
+# closed by `spec epic --finish`, on the epic.
+spec_close() {
+  [ $# -ge 1 ] || jig_die "spec close: missing spec id (usage: jig spec close <id> [--leftovers-handled])"
+  local id="$1" handled=0 dir line rc=0
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --leftovers-handled) handled=1 ;;
+      *) jig_die "spec close: unexpected argument: $1" ;;
+    esac
+    shift
+  done
+  spec_valid_id "$id" || jig_die "spec close: invalid spec id: $id"
+  jig_require_init
+  dir="$(spec_dir)/$id"
+  [ -d "$dir" ] || jig_die "spec close: no such spec: $JIG_AI_DIR/specs/$id"
+  if [ -f "$dir/roadmap.md" ]; then
+    line=$(jig_spec_epic "$dir/roadmap.md") || rc=$?
+    if [ "$rc" -eq 2 ] || [ -n "$line" ]; then
+      jig_die "spec close: $id is built on an epic; close it with \`jig spec epic $id --finish\` on the epic"
+    fi
+  fi
+  spec_close_dir "$id" "spec close" "$handled"
+  jig_info "spec close: commit the removal together with the change that finished the spec"
+}
+
+# spec_epic_write <roadmap> declare <branch> — add the Epic: line, atomically,
+# after the Destination: paragraph; refuses a roadmap without one.
 spec_epic_write() {
-  local roadmap="$1" op="$2" branch="$3" tmp
+  local roadmap="$1" branch="$3" tmp
   tmp="$roadmap.tmp.$$"
-  awk -v op="$op" -v b="$branch" '
-    function epic_line(l) { return l ~ /^Epic:[[:space:]]+[^[:space:]]+([[:space:]]+(—|-|--)[[:space:]]+finished)?[[:space:]]*$/ }
-    # The destination is a paragraph and may wrap: the line goes after the
-    # paragraph ends, never inside the sentence.
-    op == "declare" {
+  # The destination is a paragraph and may wrap: the line goes after the
+  # paragraph ends, never inside the sentence.
+  awk -v b="$branch" '
+    {
       if (pending && !done && $0 ~ /^[[:space:]]*$/) { print ""; print "Epic: " b; done = 1 }
       print
       if (!pending && $0 ~ /^Destination:/) pending = 1
-      next
     }
-    epic_line($0) { print (op == "finish" ? "Epic: " b " — finished" : "Epic: " b); next }
-    { print }
     END {
-      if (op != "declare" || done) exit 0
+      if (done) exit 0
       if (!pending) exit 3
       print ""; print "Epic: " b
     }
   ' "$roadmap" > "$tmp" || {
     rm -f "$tmp"
-    if [ "$op" = declare ]; then
-      jig_die "spec epic: $roadmap has no Destination: line to put the Epic: line after"
-    fi
-    jig_die "spec epic: could not rewrite $roadmap"
+    jig_die "spec epic: $roadmap has no Destination: line to put the Epic: line after"
   }
   mv "$tmp" "$roadmap" || jig_die "spec epic: could not write $roadmap"
 }
@@ -480,6 +597,7 @@ spec_done() {
       mv "$tmp" "$roadmap" || jig_die "spec done: could not write $JIG_AI_DIR/specs/$sid/roadmap.md"
       printf 'spec done: %s checked in %s/specs/%s/roadmap.md\n' "$tid" "$JIG_AI_DIR" "$sid"
       printf '%s\n' "$out" | sed 's/^/  /'
+      spec_done_complete_hint "$sid" "$roadmap"
       ;;
     3)
       rm -f "$tmp"
@@ -494,6 +612,22 @@ spec_done() {
       jig_die "spec done: could not read $JIG_AI_DIR/specs/$sid/roadmap.md"
       ;;
   esac
+}
+
+# spec_done_complete_hint <spec-id> <roadmap> — say so when no planned item is
+# left unchecked: the spec is closed in the change that finished it, and fog
+# alone does not keep it open (ADR-0035 as amended).
+spec_done_complete_hint() {
+  local sid="$1" roadmap="$2" epic
+  if awk '/^[[:space:]]*[-*][[:space:]]+\[ \][[:space:]]+/ && !/\[ \][[:space:]]+fog:/ { found = 1 } END { exit !found }' "$roadmap"; then
+    return 0
+  fi
+  epic=$(jig_spec_epic "$roadmap" 2>/dev/null) || epic=""
+  if [ -n "$epic" ]; then
+    printf 'spec done: %s roadmap complete; close it with %s on %s\n' "$sid" "\`jig spec epic $sid --finish\`" "${epic% *}"
+  else
+    printf 'spec done: %s roadmap complete; close it with %s\n' "$sid" "\`jig spec close $sid\`"
+  fi
 }
 
 # spec_roadmap_ids <roadmap.md> — task ids named by unchecked items, one per

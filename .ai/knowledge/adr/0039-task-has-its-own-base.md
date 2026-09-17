@@ -13,7 +13,7 @@ paths:
   - scripts/lib/common.sh
   - schemas/state.md
 summary: Why every task records its own base branch, why bases resolve origin first, and why work merged elsewhere is flagged wrong-base rather than merged.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # ADR-0039: A task records the branch it is cut from and has to land on
 
@@ -29,7 +29,7 @@ That holds while every task is cut from `main` and lands in `main`. Epic branche
 later, maintenance lines break it: a phase's task is cut from `epic/<spec-id>` and lands there.
 Judged against `main`, such a task never lands, every commit the epic gained reads as the branch's
 own work, and a phase merged into `main` by mistake reads as done. The specification
-`.ai/specs/epic-branches/` found three more ways the single setting fails: a base resolved by bare
+`epic-branches` (removed when finished; in git history) found three more ways the single setting fails: a base resolved by bare
 name picks a stale or missing local ref, a reflog cache kept for `main` alone, and a forge tier that
 never read a pull request's base.
 

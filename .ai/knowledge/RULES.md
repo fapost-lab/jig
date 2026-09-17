@@ -20,8 +20,9 @@
   removes only the two temporary files it named in `.ai/specs/<id>/` and then `rmdir`s the
   directory it created with a plain `mkdir` in that run; `rmdir` refuses anything that is
   not empty. (ADR-0035) Moving to trash is not deleting, and it has two users: housekeeping moves
-  a workspace, and `jig spec remove` moves `.ai/specs/<id>/` only after checking that the id is
-  valid and the directory resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)
+  a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish`, and a
+  partial restore of `epic --reopen` — only after checking that the id is valid and the directory
+  resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)
 - Housekeeping never destroys a workspace whose remote state is `unknown`.
   (`domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.

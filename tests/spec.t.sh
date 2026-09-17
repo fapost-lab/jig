@@ -309,7 +309,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec remove <id> [--dry-run] [--abandon-unstarted]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -323,7 +323,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec remove <id> [--dry-run] [--abandon-unstarted]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -616,6 +616,73 @@ EOF
     || fail "roadmap.md was changed although no item named the task"
   [ -z "$(find .ai/specs/alpha -maxdepth 1 -name 'roadmap.md.tmp.*')" ] \
     || fail "leftover tmp file when no item named the task"
+}
+
+# --- spec done: the "roadmap complete" hint (ADR-0035 as amended) -------------
+# Printed once no planned (non-fog) item is left unchecked, pointing at
+# `spec close` for a spec with no epic and at `spec epic --finish` for one
+# with an open Epic: line. Fog alone never keeps a roadmap "incomplete".
+
+test_spec_done_complete_hint_without_epic_when_only_fog_is_left() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+- [ ] `T-1` — last item
+- [ ] fog: leftover direction
+EOF
+
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: alpha roadmap complete; close it with \`jig spec close alpha\`"
+}
+
+test_spec_done_complete_hint_names_epic_finish_when_an_epic_is_declared() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+Destination: ship it.
+
+Epic: epic/alpha
+
+- [ ] `T-1` — last item
+EOF
+
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: alpha roadmap complete; close it with \`jig spec epic alpha --finish\` on epic/alpha"
+}
+
+test_spec_done_complete_hint_absent_while_a_planned_item_is_unchecked() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+- [ ] `T-1` — first item
+- [ ] `T-2` — still open item
+EOF
+
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "roadmap complete"
+}
+
+test_spec_done_complete_hint_absent_when_already_done() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-1/task.md
+  printf -- '- [ ] `T-1` — only item\n' > .ai/specs/alpha/roadmap.md
+  jig spec "done" T-1 >/dev/null
+
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_eq "spec done: T-1 already done in .ai/specs/alpha/roadmap.md" "$OUT"
+  assert_not_contains "$OUT" "roadmap complete"
 }
 
 # --- spec remove: argument handling and preconditions --------------------------
@@ -1110,6 +1177,185 @@ EOF
   assert_contains "$OUT" "not-here       T-9 (named in the roadmap, no workspace in this checkout)"
 }
 
+# --- spec close (ADR-0035 as amended) ------------------------------------------
+# Removes a spec whose work is done, in the change that finished it. Its
+# leftover gate (spec_leftovers) is exercised here too, since `spec close`
+# and `spec epic --finish` share the same underlying spec_close_dir.
+
+test_spec_close_missing_id_fails() {
+  fixture_jig_repo
+  run jig spec close
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec close: missing spec id"
+}
+
+test_spec_close_invalid_id_fails() {
+  fixture_jig_repo
+  run jig spec close ".bad"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec close: invalid spec id: .bad"
+}
+
+test_spec_close_invalid_id_checked_before_init() {
+  fixture_repo
+  run jig spec close "-bad"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid spec id"
+  assert_not_contains "$OUT" "not initialised"
+}
+
+test_spec_close_rejects_unexpected_argument() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  run jig spec close alpha extra
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec close: unexpected argument: extra"
+  assert_dir .ai/specs/alpha
+}
+
+test_spec_close_requires_initialised_project() {
+  fixture_repo
+  run jig spec close alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not initialised"
+}
+
+test_spec_close_missing_spec_directory_fails() {
+  fixture_jig_repo
+  run jig spec close ghost
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec close: no such spec: .ai/specs/ghost"
+}
+
+test_spec_close_refuses_a_spec_built_on_an_open_epic() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf 'Destination: ship it.\n\nEpic: epic/alpha\n' > .ai/specs/alpha/roadmap.md
+
+  run jig spec close alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec close: alpha is built on an epic; close it with \`jig spec epic alpha --finish\` on the epic"
+  assert_dir .ai/specs/alpha
+}
+
+# Two conflicting Epic: lines (jig_spec_epic exits 2): still refused as
+# "built on an epic" rather than a separate conflict message — spec close
+# only needs to know whether an epic is involved, not which one.
+test_spec_close_refuses_a_spec_with_conflicting_epic_lines() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf 'Epic: epic/a\nEpic: epic/b\n' > .ai/specs/alpha/roadmap.md
+
+  run jig spec close alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec close: alpha is built on an epic; close it with \`jig spec epic alpha --finish\` on the epic"
+  assert_dir .ai/specs/alpha
+}
+
+# spec_leftovers (AC-01): unchecked roadmap items, fog included, and the
+# spec's own Open questions / Assumptions left untested bullets; the
+# template's `<placeholder>` bullets are never leftovers, and bullets under
+# any other heading (e.g. Decisions) are never counted.
+test_spec_close_lists_leftovers_including_fog_and_skips_placeholders() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+# Roadmap
+
+Destination: ship it.
+
+## Phase 1
+
+- [ ] `T-1` — do the thing
+- [ ] plain item not filed
+- [ ] fog: something uncertain
+- [x] `T-0` — already done
+- [ ] <placeholder item>
+EOF
+  cat > .ai/specs/alpha/spec.md <<'EOF'
+# Alpha
+
+## Decisions
+
+- Not a leftover — decided already.
+
+## Open questions
+
+- Real open question — what depends on it.
+- <placeholder question> — what depends on it.
+
+## Assumptions left untested
+
+- Real assumption — untested.
+- <placeholder assumption>
+EOF
+
+  run jig spec close alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "  item: \`T-1\` — do the thing"
+  assert_contains "$OUT" "  item: plain item not filed"
+  assert_contains "$OUT" "  item: fog: something uncertain"
+  assert_contains "$OUT" "  question: Real open question — what depends on it."
+  assert_contains "$OUT" "  assumption: Real assumption — untested."
+  assert_not_contains "$OUT" "placeholder item"
+  assert_not_contains "$OUT" "placeholder question"
+  assert_not_contains "$OUT" "placeholder assumption"
+  assert_not_contains "$OUT" "Not a leftover"
+  assert_not_contains "$OUT" "T-0"
+  assert_contains "$OUT" "spec close: .ai/specs/alpha still holds what knowledge does not (above); move each one to another spec or task, or drop it, then run again with --leftovers-handled"
+  assert_dir .ai/specs/alpha
+}
+
+test_spec_close_leftovers_handled_removes_the_spec_and_leaves_task_spec_lines_untouched() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf -- '- [ ] `T-1` — item\n' > .ai/specs/alpha/roadmap.md
+  jig task new T-1 >/dev/null
+  cat >> .ai/workspace/tasks/T-1/task.md <<'EOF'
+Spec: .ai/specs/alpha/ — Phase 1
+EOF
+  cp .ai/workspace/tasks/T-1/task.md task.before
+  local today dest
+  today=$(date +%Y-%m-%d)
+  dest=".ai/runtime/trash/$today/spec-alpha"
+
+  run jig spec close alpha --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "removed: .ai/specs/alpha -> $dest"
+  assert_contains "$OUT" "commit the removal together with the change that finished the spec"
+  assert_no_file .ai/specs/alpha
+  assert_dir "$dest"
+  assert_file "$dest/roadmap.md"
+  cmp -s .ai/workspace/tasks/T-1/task.md task.before \
+    || fail "spec close touched the task's Spec: line"
+}
+
+test_spec_close_without_leftovers_succeeds_without_the_flag() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf -- '- [x] `T-1` — done already\n' > .ai/specs/alpha/roadmap.md
+
+  run jig spec close alpha
+  assert_eq 0 "$RC"
+  assert_no_file .ai/specs/alpha
+}
+
+# An empty spec directory (neither file present) has nothing to lose either:
+# spec_leftovers tolerates both files missing, and there is no roadmap to
+# read an Epic: line from.
+test_spec_close_succeeds_on_an_empty_spec_directory() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+
+  run jig spec close alpha
+  assert_eq 0 "$RC"
+  assert_no_file .ai/specs/alpha
+}
+
 # --- spec epic (ADR-0040) ------------------------------------------------------
 # The epic branch a spec released once, at the end, is released from. Every
 # scenario needs a clean tree (git checkout/branch refuse a dirty one), so the
@@ -1349,14 +1595,23 @@ test_spec_epic_exists_only_on_origin_is_found_via_fetch() {
   assert_eq "exists: epic/idea-x" "$OUT"
 }
 
+# `--finish` removes the spec now; there is no command left that writes a
+# legacy "— finished" line. Simulated by editing the roadmap directly, the
+# way an older jig (or a hand edit) would have left it.
+epic_legacy_finish_line() {
+  local id="$1" branch="$2"
+  sed "s|^Epic: $branch\$|Epic: $branch — finished|" ".ai/specs/$id/roadmap.md" > roadmap.tmp
+  mv roadmap.tmp ".ai/specs/$id/roadmap.md"
+}
+
 test_spec_epic_declare_on_finished_epic_suggests_reopen() {
   epic_ready_to_finish idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
+  epic_legacy_finish_line idea-x epic/idea-x
   git checkout -q main
 
   run jig spec epic idea-x
   assert_eq 1 "$RC"
-  assert_contains "$OUT" 'epic epic/idea-x is finished; `jig spec epic idea-x --reopen` on it takes that back'
+  assert_contains "$OUT" "spec epic: .ai/specs/idea-x/roadmap.md marks epic epic/idea-x finished, as an older jig did; a finished epic's spec is removed now — delete the spec, or drop \"— finished\" to reopen it"
 }
 
 # --- spec epic --finish --------------------------------------------------------
@@ -1400,79 +1655,131 @@ test_spec_epic_finish_requires_main_merged_in() {
   assert_contains "$OUT" "epic/idea-x does not contain the latest main; merge main into it first"
 }
 
-test_spec_epic_finish_warns_about_unchecked_items_but_does_not_refuse() {
-  # The template roadmap ships with unfinished items in both phases; --finish
-  # reports them rather than refusing (a later phase may be deferred on
-  # purpose), and fog items are never counted as unfinished work.
+# The template roadmap ships with unfinished items in both phases (leftovers,
+# section 2 of the design); --finish now refuses instead of only warning,
+# exactly like `spec close`.
+test_spec_epic_finish_refuses_leftovers_without_flag() {
   epic_ready_to_finish idea-x
 
   run jig spec epic idea-x --finish
-  assert_eq 0 "$RC"
-  assert_contains "$OUT" "still has unchecked items"
-  assert_contains "$OUT" "<task-id>"
-  assert_not_contains "$OUT" "why it cannot be stated precisely yet"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec epic: .ai/specs/idea-x still holds what knowledge does not (above); move each one to another spec or task, or drop it, then run again with --leftovers-handled"
+  assert_contains "$OUT" "  item: \`<task-id>\`"
+  assert_contains "$OUT" "  item: fog:"
+  assert_dir .ai/specs/idea-x
 }
 
-test_spec_epic_finish_rewrites_the_line() {
+test_spec_epic_finish_with_leftovers_handled_removes_the_spec_directory() {
   epic_ready_to_finish idea-x
+  local today dest
+  today=$(date +%Y-%m-%d)
+  dest=".ai/runtime/trash/$today/spec-idea-x"
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "removed: .ai/specs/idea-x -> $dest"
+  assert_contains "$OUT" "commit the removal with the version bump, then open the pull request from epic/idea-x into main"
+  assert_no_file .ai/specs/idea-x
+  assert_dir "$dest"
+  assert_file "$dest/roadmap.md"
+}
+
+# A legacy "— finished" line (section 4 of the design): --finish still
+# refuses it, pointing at dropping the line rather than at --reopen (which
+# only restores a spec that this jig's own --finish removed).
+test_spec_epic_finish_legacy_finished_line_dies() {
+  epic_ready_to_finish idea-x
+  epic_legacy_finish_line idea-x epic/idea-x
 
   run jig spec epic idea-x --finish
-  assert_eq 0 "$RC"
-  assert_contains "$OUT" ".ai/specs/idea-x/roadmap.md: Epic: epic/idea-x — finished"
-  assert_contains "$OUT" "commit it with the version bump, then open the pull request from epic/idea-x into main"
-  grep -qx 'Epic: epic/idea-x — finished' .ai/specs/idea-x/roadmap.md \
-    || fail "line was not rewritten to finished"
-}
-
-test_spec_epic_finish_already_finished_dies() {
-  epic_ready_to_finish idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
-
-  run jig spec epic idea-x --finish
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "epic epic/idea-x is already finished"
+  assert_contains "$OUT" 'spec epic: .ai/specs/idea-x/roadmap.md marks epic epic/idea-x finished, as an older jig did; drop "— finished" from the line, then run --finish again'
+  assert_dir .ai/specs/idea-x
 }
 
-# --- spec epic --reopen --------------------------------------------------------
-
-test_spec_epic_reopen_rewrites_the_line() {
-  epic_ready_to_finish idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
-
-  run jig spec epic idea-x --reopen
-  assert_eq 0 "$RC"
-  assert_eq ".ai/specs/idea-x/roadmap.md: Epic: epic/idea-x" "$OUT"
-  grep -qx 'Epic: epic/idea-x' .ai/specs/idea-x/roadmap.md \
-    || fail "line was not reopened"
-}
-
-test_spec_epic_reopen_requires_being_on_the_epic() {
-  epic_ready_to_finish idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
-  git checkout -q main
-
-  run jig spec epic idea-x --reopen
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" "--reopen runs on epic/idea-x; switch to it first"
-}
-
-test_spec_epic_reopen_requires_a_finished_line() {
-  epic_ready_to_finish idea-x
-
-  run jig spec epic idea-x --reopen
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" "epic epic/idea-x is not finished"
-}
-
-test_spec_epic_reopen_no_epic_declared_dies() {
+test_spec_epic_finish_leftovers_handled_without_finish_dies() {
   epic_setup
   jig spec new idea-x >/dev/null
   git add -A
   git commit -q -m "add spec idea-x"
 
+  run jig spec epic idea-x --leftovers-handled
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec epic: --leftovers-handled goes with --finish"
+  assert_no_file .ai/runtime/trash
+}
+
+# --- spec epic --reopen --------------------------------------------------------
+
+# --reopen restores from git, never rewrites a line in place: the spec is
+# gone from the working tree after --finish, so it has to be re-created.
+
+test_spec_epic_reopen_restores_from_head_when_removal_is_uncommitted() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
+  local sha
+  sha=$(git rev-parse --short HEAD)
+
+  run jig spec epic idea-x --reopen
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "restored: .ai/specs/idea-x from $sha"
+  assert_contains "$OUT" "fix it with ordinary tasks, then run \`jig spec epic idea-x --finish\` again"
+  assert_file .ai/specs/idea-x/roadmap.md
+  assert_file .ai/specs/idea-x/spec.md
+  grep -qx 'Epic: epic/idea-x' .ai/specs/idea-x/roadmap.md \
+    || fail "restored roadmap lost its open Epic: line"
+  git diff --cached --quiet || fail "reopen staged something; the index must stay untouched"
+}
+
+# A committed removal, with an unrelated commit landing on the epic
+# afterwards: the deletion commit found by --diff-filter=D must still be the
+# one that removed the spec, not the later unrelated one.
+test_spec_epic_reopen_restores_from_history_after_a_later_unrelated_commit() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
+  git add -A
+  git commit -q -m "finish epic idea-x"
+  local del_sha
+  del_sha=$(git rev-parse HEAD)
+  printf 'unrelated\n' > unrelated.txt
+  git add unrelated.txt
+  git commit -q -m "unrelated work on the epic"
+
+  run jig spec epic idea-x --reopen
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "restored: .ai/specs/idea-x from $(git rev-parse --short "$del_sha^")"
+  assert_file .ai/specs/idea-x/roadmap.md
+  grep -qx 'Epic: epic/idea-x' .ai/specs/idea-x/roadmap.md \
+    || fail "restored roadmap lost its open Epic: line"
+  git diff --cached --quiet || fail "reopen staged something; the index must stay untouched"
+}
+
+test_spec_epic_reopen_refuses_when_the_spec_is_present() {
+  epic_ready_to_finish idea-x
+
   run jig spec epic idea-x --reopen
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "declares no epic"
+  assert_contains "$OUT" "spec epic: .ai/specs/idea-x is here; --reopen restores a spec that --finish removed"
+}
+
+test_spec_epic_reopen_requires_being_on_the_epic() {
+  epic_ready_to_finish idea-x
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
+  git add -A
+  git commit -q -m "finish epic idea-x"
+  git checkout -q -b other-branch
+
+  run jig spec epic idea-x --reopen
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec epic: --reopen runs on epic/idea-x; switch to it first"
+}
+
+test_spec_epic_reopen_no_removed_spec_in_history_dies() {
+  epic_setup
+
+  run jig spec epic never-existed --reopen
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec epic: no removed spec never-existed in the history of this branch"
 }
 
 # --- spec list: epic states (ADR-0040) -----------------------------------------
@@ -1516,15 +1823,13 @@ test_spec_list_epic_branch_missing() {
   assert_contains "$OUT" "epic/idea-x — branch missing"
 }
 
-test_spec_list_finished_epic_shows_normal_progress() {
+test_spec_list_after_epic_finish_no_longer_lists_the_spec() {
   epic_ready_to_finish idea-x
-  jig spec epic idea-x --finish >/dev/null 2>&1
-  # Still on the epic branch: its own roadmap now says finished, and a
-  # finished epic reads like no epic at all.
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
+  # Still on the epic branch: --finish removed the spec directory outright,
+  # so there is nothing left for `spec list` to report at all.
 
   run jig spec list
   assert_eq 0 "$RC"
-  assert_not_contains "$OUT" "on epic/idea-x"
-  assert_not_contains "$OUT" "progress is on the epic"
-  assert_not_contains "$OUT" "branch missing"
+  assert_eq "" "$OUT"
 }
