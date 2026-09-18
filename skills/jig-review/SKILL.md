@@ -35,6 +35,8 @@ subagent that has not seen the implementation being defended.
   cases. State a concrete input that breaks it, or it is not a finding.
 - **Rule and ADR violations.** Quote the rule. An accepted ADR contradicted silently is a
   blocking finding: either the change is wrong or the ADR is stale, and both need saying.
+  A MUST NOT in a resolved [boundary document](../jig-task/references/component-boundaries.md)
+  is a rule: an implementation that does it is a blocking finding.
 - **Contract drift.** Callers, tests and docs that the change invalidated.
 - **Evidence gaps.** Behaviour claimed but not covered by a check.
 - **Scope creep.** Changes unrelated to the task.

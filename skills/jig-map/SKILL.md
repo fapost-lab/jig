@@ -124,6 +124,11 @@ project knowledge.
 Give every document a `summary`. It is the one line an agent reads in the catalog when
 deciding whether to open the document; without it the catalog says nothing.
 
+An interface with several implementations is a boundary. Propose its MAY / MUST / MUST NOT as a
+`convention` ([boundaries](../jig-task/references/component-boundaries.md)), `--proposed`, every
+line a question for the human — "promised, or incidental?" — and keep only what they confirm:
+the code shows what implementations do, not what they are allowed to do.
+
 Do not write to `GLOSSARY.md`, `ARCHITECTURE.md` or `RULES.md`. Those are the project's
 own, and a map proposes domains, not project-wide law.
 

@@ -25,7 +25,9 @@ or rejected decisions matter; diagnostic history is not binding accepted knowled
 ## 2. Check five things
 
 - **Boundaries.** Does any component now know about something it must not? Domain code
-  reaching into infrastructure, a module importing across a documented boundary.
+  reaching into infrastructure, a module importing across a documented boundary, an
+  implementation doing what its [boundary document](../jig-task/references/component-boundaries.md)
+  says it MUST NOT.
 - **Dependency direction.** Does every new dependency point the way `ARCHITECTURE.md`
   says it may?
 - **Invariants.** Does the change preserve every invariant in `RULES.md`? Name the ones

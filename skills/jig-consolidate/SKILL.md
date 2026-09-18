@@ -40,7 +40,8 @@ Found nothing? That is `NO_DURABLE_KNOWLEDGE`: skip to §5.
 |---|---|
 | A decision with real alternatives and consequences | `jig knowledge new adr <slug>` |
 | Why a feature is shaped this way; its constraints | `jig knowledge new feature <slug>`, or the document that already owns it |
-| A boundary, dependency direction or system-wide rule | `ARCHITECTURE.md` |
+| A dependency direction or system-wide rule | `ARCHITECTURE.md` |
+| What implementations of a component boundary may, must and must not do | a `convention` on the interface and its implementations ([boundaries](../jig-task/references/component-boundaries.md)) |
 | Something that must always hold | `RULES.md` invariants |
 | A practice the project now follows | `jig knowledge new convention <slug>` |
 | A term used for a core concept | `GLOSSARY.md` |

@@ -172,7 +172,9 @@ waiting, and do not treat silence or a general "ok, go on" from an earlier messa
 approval.
 
 For T2+, follow [requirements and planning](references/requirements-and-planning.md).
-Design UI changes with [applicable states](references/ui-states.md). At pause/resume or
+Design UI changes with [applicable states](references/ui-states.md), and a new or changed
+boundary between components with its
+[MAY / MUST / MUST NOT](references/component-boundaries.md). At pause/resume or
 this gate use the [handoff](references/handoff.md); continuous work needs no extra stop.
 `jig task artifacts <id>` reports input facts, not approval or the next stage. If an input
 lives in conversation, locate/read it before using `--provided <kind>`; never invent a
