@@ -98,3 +98,10 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
 > **Amendment (2026-09-17).** The `epic-pr` job now fails while any `.ai/specs/*/roadmap.md` still names
 > the head branch in an `Epic:` line, open or finished: finishing an epic removes its spec (ADR-0040 as
 > amended).
+
+> **Amendment (2026-09-17).** A push to `main` no longer cancels the run already in progress there
+> (`cancel-in-progress` is false for `main` only): on 2026-09-17 a merge cancelled the previous merge's
+> run, and with it the release of 0.7.2. GitHub keeps one pending run per concurrency group, so a third
+> merge during a run replaces the pending one; that run tags the version then current, and a release
+> comes later rather than never. Checkout is `actions/checkout@v7` (Node 24); the release job's tag push
+> uses the credentials it persists, as before.

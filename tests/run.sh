@@ -16,6 +16,12 @@
 # failure count, because a check that quietly stopped running must stay
 # visible as something other than green (RULES.md, ADR-0013).
 #
+# JIG_TEST_SHARD=<i>/<n> runs one share of the suite: every n-th test in
+# discovery order, starting at the i-th, so the slow tests of one file spread
+# across shares. JIG_TEST_SKIP=<file::test>[,...] reports the named tests as
+# skipped without running them — for a check that says nothing new on a given
+# platform; a skip stays visible, never a pass.
+#
 # Usage: tests/run.sh [name-filter]
 set -u
 
@@ -32,6 +38,23 @@ trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"' EXIT
 trap 'kill $(jobs -p) 2>/dev/null; exit 130' INT TERM
 
 filter="${1:-}"
+
+shard_i=1
+shard_n=1
+if [ -n "${JIG_TEST_SHARD:-}" ]; then
+  shard_i=${JIG_TEST_SHARD%%/*}
+  shard_n=${JIG_TEST_SHARD#*/}
+  case "$shard_i:$shard_n" in
+    # Nine digits and more are refused too: `[ -lt ]` on a number past the
+    # integer range fails as an error, which reads as "not less" and let it by.
+    *[!0-9:]* | :* | *: | 0* | *:0* | ?????????*:* | *:?????????*) shard_n=0 ;;
+  esac
+  if [ "$JIG_TEST_SHARD" = "$shard_i" ] || [ "$shard_n" -lt 1 ] || [ "$shard_i" -gt "$shard_n" ]; then
+    printf 'tests/run.sh: JIG_TEST_SHARD must be <i>/<n> with 1 <= i <= n: %s\n' "$JIG_TEST_SHARD" >&2
+    exit 2
+  fi
+fi
+skip_list=",${JIG_TEST_SKIP:-},"
 
 jobs="${JIG_TEST_JOBS:-}"
 [ -n "$jobs" ] || jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || jobs=1
@@ -76,6 +99,14 @@ enter_test_env() {
 # child of this shell is still running when it writes.
 run_test() {
   local idx="$1" file="$2" name="$3" full="$4" tmp rc=0 start
+  case "$skip_list" in
+    *",$full,"*)
+      printf '77\t0\t%s\n' "$full" > "$RESULTS/$idx.result"
+      printf 'SKIP: JIG_TEST_SKIP\n' > "$RESULTS/$idx.log"
+      printf 'skip %s (JIG_TEST_SKIP)\n' "$full"
+      return 0
+      ;;
+  esac
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-test.XXXXXX") || return 1
   start=$SECONDS
   (
@@ -110,12 +141,15 @@ run_test() {
 list="$RESULTS/list"
 : > "$list"
 idx=0
+seq=0
 for file in "$ROOT"/tests/*.t.sh; do
   [ -e "$file" ] || continue
   base=$(basename "$file" .t.sh)
   for name in $(list_tests "$file"); do
     full="$base::$name"
     case "$full" in *"$filter"*) ;; *) continue ;; esac
+    seq=$((seq + 1))
+    [ $(( (seq - 1) % shard_n )) -eq $((shard_i - 1)) ] || continue
     idx=$((idx + 1))
     printf '%s\t%s\t%s\t%s\n' "$idx" "$file" "$name" "$full" >> "$list"
   done

@@ -14,7 +14,7 @@ paths:
   - templates/gitattributes
   - .github/WINDOWS_RELEASE_CHECKLIST.md
 summary: Why Windows support is Git Bash plus a PowerShell bootstrapper, with junctions where symlinks cannot be made, instead of a port.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-17
 ---
 # ADR-0037: Windows runs jig through Git Bash, bootstrapped by install.ps1
 
@@ -139,3 +139,10 @@ Developer Mode, and administrator rights only where nothing else works.
   it stays for a human, like every other `worktree-kept`.
 - Installing Git without administrator rights (`/CURRENTUSER`) and the Claude Code hook on
   Windows are verified only by the release checklist.
+
+> **Amendment (2026-09-17).** The full Windows suite runs in three parallel shares (`JIG_TEST_SHARD=<i>/3`,
+> every third test in discovery order, so a slow file spreads across shares), with Defender real-time
+> scanning paused for the job — every process start is scanned, and the suite starts tens of thousands —
+> and skips `knowledge::test_real_repository_knowledge_passes_with_no_failures` (`JIG_TEST_SKIP`), which
+> reads only this repository's knowledge and still runs on Linux and macOS. A skip stays a skip
+> (ADR-0013). The release waits for every share.
