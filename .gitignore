@@ -7,6 +7,8 @@
 .idea/
 .DS_Store
 CLAUDE.local.md
+# Claude Code settings of one user (permissions and the like).
+.claude/settings.local.json
 
 # Test-run output. Logs belong outside the repository (conventions/shell.md);
 # this is the net under that rule, because one of them reached the index once.
