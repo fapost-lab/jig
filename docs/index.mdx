@@ -1,6 +1,62 @@
 ---
 title: "Introduction"
-description: "What Jig is, who it is for, and how it works."
+description: "What Jig is, who it is for, and how working with it looks."
 ---
 
-This page is being written.
+Jig is a framework for building software with an AI coding agent — Claude Code or Codex. You
+describe what you want in plain words; the agent decides how careful the work has to be, keeps
+the project's knowledge up to date, and stops to ask you where a human decision matters.
+
+Jig lives inside your project. It adds a folder of project knowledge, a set of skills your agent
+uses, and a small command-line tool the agent runs for the mechanical parts. Nothing is hosted,
+there is no telemetry, and no script ever calls an AI model: the agent makes the engineering
+decisions, the scripts only keep records straight.
+
+## How working with Jig looks
+
+You do not need to learn commands or skill names. You talk to your agent:
+
+> **You:** Add CSV export to the reports page.
+>
+> **Agent:** This touches the report pipeline and the download endpoint, so I classify it as
+> structural (T2): analyze, plan, implement, review, verify. I have created the task
+> `csv-export` on its own branch. Here is what I found in the code and the plan …
+
+Behind that answer, the agent picked the `jig-task` skill, looked at the risk of the change,
+chose a route, created a task workspace and loaded only the project knowledge relevant to
+reports. The agent usually picks the right skill from what you say; when it does not, name it —
+`/jig-task` in Claude Code, `$jig-task` in Codex. A one-line typo fix gets a three-step route; a change to authentication gets design, your
+approval and an independent review.
+
+## What you get
+
+<CardGroup cols={2}>
+  <Card title="Work sized by risk" icon="scale-balanced">
+    Five classes, from a typo to a change that touches security or money. The route grows with
+    the risk, never with habit.
+  </Card>
+  <Card title="Knowledge that stays true" icon="book">
+    Terms, architecture, rules and decisions live in `.ai/knowledge/` next to the code. Every task
+    ends by deciding what it taught the project.
+  </Card>
+  <Card title="You decide where it matters" icon="user-check">
+    At a human gate the agent shows you the design itself — not a summary — and waits.
+  </Card>
+  <Card title="Your existing docs, adopted" icon="link">
+    Rules you already keep in `docs/`, your own ADRs or another tool's instruction files are linked
+    in place, not copied.
+  </Card>
+</CardGroup>
+
+## Where to start
+
+<CardGroup cols={2}>
+  <Card title="New project" icon="seedling" href="/greenfield">
+    Start from an idea: specification, architecture, rules, then the first tasks.
+  </Card>
+  <Card title="Existing project" icon="building" href="/brownfield">
+    Bring Jig into a codebase you already have, and adopt the documentation it keeps.
+  </Card>
+</CardGroup>
+
+Jig runs on macOS, Linux and Windows. [Install it](/install) first — one line in a terminal.

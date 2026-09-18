@@ -278,3 +278,14 @@ test_jig_init_agents_section_matches_the_template() {
     "$JIG_HOME/templates/AGENTS.md")
   assert_eq "$expected" "$(cat "$JIG_HOME/skills/jig-init/references/agents-section.md")"
 }
+
+# The user documentation prints the same section for pasting by hand, between
+# MDX comment markers and inside a four-backtick fence; it must not drift
+# from what jig-init merges either.
+test_docs_agents_section_matches_the_jig_init_reference() {
+  local doc="$JIG_HOME/docs/install.mdx" shown
+  assert_file "$doc"
+  shown=$(awk '/^\{\/\* \/jig:agents-section \*\/\}$/{f=0} f{print} /^\{\/\* jig:agents-section \*\/\}$/{f=1}' "$doc" \
+    | sed '1d;$d')
+  assert_eq "$(cat "$JIG_HOME/skills/jig-init/references/agents-section.md")" "$shown"
+}

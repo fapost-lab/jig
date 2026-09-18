@@ -1,6 +1,215 @@
 ---
 title: "Install"
-description: "Install Jig on macOS, Linux or Windows and connect it to a project."
+description: "Install Jig on macOS, Linux or Windows, connect it to a project and keep both up to date."
 ---
 
-This page is being written.
+Installing Jig is two steps: put the `jig` tool on your machine once, then set up each project
+that should use it. Jig needs Git and a coding agent — [Claude Code](https://claude.com/claude-code)
+or Codex. It needs no Node.js, Python, package manager or build step.
+
+## 1. Install Jig on your machine
+
+<Tabs>
+  <Tab title="macOS and Linux">
+    Paste one line into a terminal:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh | bash
+    ```
+
+    The installer:
+
+    - clones Jig into `~/.local/share/jig`, at the newest release;
+    - links `~/.local/bin/jig` to it;
+    - only when `~/.local/bin` is not on your `PATH` yet, adds one marked line to `~/.zshrc`,
+      `~/.bashrc` or `~/.profile`.
+
+    It needs no `sudo` and does not touch the folder you ran it from. Open a new terminal
+    afterwards so the new `PATH` is picked up. Running the line again is safe: it moves a clean
+    installation forward and refuses to overwrite anything it did not create.
+
+    Jig needs Bash 3.2 or newer, Git and the standard Unix tools, all of which macOS and Linux have.
+    WSL2 works as Linux; keep the project on the Linux filesystem, not under `/mnt/c`.
+  </Tab>
+  <Tab title="Windows">
+    Open **Windows PowerShell** and paste one line. You do not need administrator rights or Git
+    beforehand:
+
+    ```powershell
+    irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1 | iex
+    ```
+
+    It says what it does as it goes:
+
+    1. **Git for Windows**, only when it is missing — through winget (it tells you this accepts
+       the winget source and package agreements for you), or the official installer when winget
+       is not there.
+    2. **Jig** into `%USERPROFILE%\.local\share\jig`, at the newest release, with its `scripts`
+       folder added to your user `PATH`.
+    3. **Your first project**, if you agree — at most four questions: which folder, whether to make
+       it a Git repository, your name and e-mail for Git (only when Git has none; they are set
+       globally, for every repository), and whether to set up Jig there. Before that last question
+       it tells you what setup adds, including a Claude Code session hook that tidies up finished
+       task workspaces in the background. A folder it turned into a repository gets one first
+       commit of everything in it; an existing repository gets no commit.
+    4. **`jig doctor`**, which checks everything above.
+
+    Everything it prints also goes to `%LOCALAPPDATA%\jig\install.log`. Open a new terminal
+    afterwards so `PATH` is picked up.
+
+    To pass options, run the downloaded script as a block — for example `-NoSessionHook` to leave
+    the session hook out, or `-Uninstall` to remove Jig again:
+
+    ```powershell
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1))) -NoSessionHook
+    ```
+
+    Other options: `-Project <folder>`, `-Yes` (no questions, defaults), `-GitName`, `-GitEmail`,
+    `-NoInit` (no project step), `-Ref vX.Y.Z` or `-Ref main`. `-Uninstall` removes the `PATH` entry
+    and the Jig folder only when it holds no local changes; Git for Windows stays.
+
+    Claude Code runs Jig through Git Bash; Codex, which runs PowerShell, calls
+    `.ai\scripts\jig.cmd`, which hands the command to Git Bash.
+  </Tab>
+</Tabs>
+
+<Accordion title="Read the script before running it, or install without it">
+  To read the macOS/Linux installer first:
+
+  ```bash
+  curl -fsSLo /tmp/jig-install.sh https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh
+  less /tmp/jig-install.sh
+  bash /tmp/jig-install.sh
+  ```
+
+  Its options: `--ref main` installs the development channel instead of a release, `--ref vX.Y.Z`
+  a specific release; `--install-dir`, `--bin-dir` and `--no-path` change where things go and skip
+  the startup-file line.
+
+  Without the installer, clone Jig into a permanent folder and put its executable on `PATH`:
+
+  ```bash
+  git clone https://github.com/fapost-lab/jig.git "$HOME/.local/share/jig"
+  ln -s "$HOME/.local/share/jig/scripts/jig" "$HOME/.local/bin/jig"
+  ```
+
+  A clone made this way follows `main`, the development channel.
+</Accordion>
+
+## 2. Set up a project
+
+In your project folder — a Git repository — run once:
+
+```bash
+jig init
+```
+
+It adds:
+
+- `.ai/` — project knowledge, configuration and Jig's scripts (so a teammate needs no global
+  install);
+- `AGENTS.md` and `CLAUDE.md` — the instructions your agent reads, **when they do not exist yet**;
+- the Jig skills for Claude Code (`.claude/skills/`) and Codex (`.codex/skills/`);
+- a few lines in `.gitignore` and `.gitattributes`.
+
+It detects your stack from its manifests (`package.json`, `composer.json`, `pyproject.toml` …) and
+turns on the matching verification profiles. Nothing is committed: review the change and commit
+it, so everyone who clones the project gets the same setup.
+
+**Commit right after `jig init`.** A task starts on its own branch, and Git cannot branch from a
+repository with no commits yet.
+
+<Warning>
+  **Already have your own `AGENTS.md` or `CLAUDE.md`?** `jig init` never changes them. Until they
+  carry the Jig section, your agent does not know Jig's workflow and will not use its skills by
+  itself. `jig init`, `jig status` and `jig doctor` all tell you when this is the case.
+
+  The easy way: ask your agent *"connect Jig to my AGENTS.md"*. The `jig-init` skill shows you the
+  section and adds it once you agree. To do it by hand, append the section below to `AGENTS.md`;
+  for `CLAUDE.md`, add the line `@AGENTS.md` (or the same section, if your `CLAUDE.md` does not
+  import `AGENTS.md`).
+</Warning>
+
+<Accordion title="The Jig section for AGENTS.md">
+{/* jig:agents-section */}
+````markdown
+## Read first
+
+- `.ai/knowledge/GLOSSARY.md` — canonical terms; use them in code and docs.
+- `.ai/knowledge/RULES.md` — rules and invariants; never violate them.
+- `.ai/knowledge/ARCHITECTURE.md` — domains, boundaries, dependency directions.
+- `.ai/knowledge/adr/` — accepted decisions; propose a new ADR instead of silently
+  contradicting one.
+
+Do not read all of `.ai/knowledge/` up front. Ask the scripts for what is relevant:
+
+```
+.ai/scripts/jig context --files <changed files>
+```
+
+## Workflow
+
+Start work with the `jig-task` skill; it classifies the task by risk and names the route.
+Stage skills can also be used directly: `jig-analyze`, `jig-implement`, `jig-review`,
+`jig-verify`, `jig-consolidate`, `jig-architecture-review`.
+
+Three skills sit outside the task routes. Two populate knowledge rather than change
+code: `jig-map` proposes per-domain knowledge, and `jig-accept` decides what is proposed.
+A proposed document is invisible to `jig context` until a human accepts it, so knowledge
+someone wrote but nobody agreed to reaches no agent — `jig status` reports the count on
+its `proposals:` line, and `jig knowledge proposed` lists it. The third, `jig-idea`, works
+before a route: it stress-tests an idea and keeps the result as a specification with a
+roadmap under `.ai/specs/<id>/`. A specification is a plan, not knowledge, so `jig context`
+never resolves it — `jig status` counts specs on its `specs:` line, and `jig spec list`
+lists them with their roadmap progress.
+
+| Class | Route |
+|---|---|
+| T0 trivial | implement, verify, consolidate |
+| T1 local | analyze, implement, verify, consolidate |
+| T2 structural | analyze, plan, implement, review, verify, consolidate |
+| T3 architectural | discover, design, human gate, implement, architecture review, verify, consolidate |
+| T4 critical | discover, specify, alternatives, design, human gate, implement, independent review, verify, consolidate |
+
+Every route ends in consolidation, and a task with a workspace ends it in two records.
+Before the commit, the knowledge decision — `NO_DURABLE_KNOWLEDGE` included — is recorded
+with `jig task set <id> knowledge_consolidated true`. After the change has landed, when
+`jig status` counts it under `needs consolidation`, the task is closed with
+`jig task set <id> status consolidated`. A merge alone never closes a task.
+
+Risk sets the floor: a one-line change to authentication is not trivial. When a task
+turns out bigger, re-classify with `jig task set <id> class Tn` and run the stages the
+new class requires.
+````
+{/* /jig:agents-section */}
+</Accordion>
+
+## 3. Let the agent learn the project
+
+Open the project in your agent and say *"set up Jig for this project"* (or name the skill:
+`/jig-init` in Claude Code, `$jig-init` in Codex). The agent studies the code and writes the
+project's glossary, architecture and rules into `.ai/knowledge/`, shows you each document in
+full, and asks where a term or a boundary is ambiguous.
+
+What happens next depends on where you start: a [new project](/greenfield) begins with an idea, an
+[existing project](/brownfield) with the documentation it already has.
+
+## Keep Jig up to date
+
+Updating is two separate steps, because updating the tool on your machine must never change a
+project behind your back.
+
+```bash
+jig self-update          # the tool on your machine: to the newest release, never backwards
+jig upgrade --dry-run    # in a project: what would change
+jig upgrade              # in a project: update its copy of Jig
+```
+
+`self-update` refuses a checkout with uncommitted changes and changes no project. `upgrade` fetches
+nothing: it copies from the Jig on your machine, updates only files Jig installed and you did not
+edit, removes the ones Jig no longer ships unless you edited them, keeps and reports the edited ones, and never touches project knowledge, configuration or
+your `AGENTS.md`. `jig status` tells you when the project's copy is older than the tool. Review the
+diff and commit it.
+
+Run `jig doctor` any time something seems off: it checks the tool, the project and the agent
+instructions, one line each, with a fix for every warning.
