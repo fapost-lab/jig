@@ -1,6 +1,117 @@
 ---
 title: "New project"
-description: "Start a project from an idea: specification, architecture, rules and the first tasks."
+description: "Start a project from an idea: a tested specification, architecture and rules, then the first tasks."
 ---
 
-This page is being written.
+A new project has no code to learn from, so Jig starts one step earlier: with the idea. The agent
+questions it until what is left is worth building, writes it down as a specification with a
+roadmap, turns the decisions into the project's architecture and rules, and only then starts the
+first tasks — each already knowing what was decided.
+
+Each step reads: **you say** → **the agent does** → **under the hood** → **where you are needed**.
+You never have to name a skill; the agent picks it from what you ask. If it ever does not, name it:
+`/jig-idea` in Claude Code, `$jig-idea` in Codex.
+
+## 1. Create the folder and install
+
+[Install Jig](/install) on your machine. Then create an empty folder, make it a Git repository, run
+`jig init`, and **commit** — a task starts on its own branch, and Git cannot branch from a
+repository with no commits. On Windows, the installer does all of this for you when you let it set
+up your first project.
+
+With no code yet, `jig init` cannot tell your stack, so only the basic `generic` profile is on; the
+right ones are switched on in step 3. The three knowledge documents it creates are empty templates
+until then.
+
+## 2. Test the idea
+
+**You say:** *"I have an idea: a booking app for small yoga studios. Poke holes in it."*
+
+**The agent does:** works in three phases, in order. First it makes sure it understands — the idea
+in one sentence, who is worse off without it, what success looks like. Then it puts weight on it:
+the assumptions it rests on, the trade-offs, the vague words, the cost of being wrong. Then it
+offers two or three other shapes — a different audience, scale or form — each with its
+recommendation. For a new project those shapes include the **architecture**: a plain layered
+application, modules by domain, ports and adapters, or what you name, with what each costs and
+pays back at the size you expect, the lightest always among them. And the **stack**.
+
+Every question comes with the agent's recommended answer and what follows from each option. You
+choose how deep to go — easy, normal or deep; on deep (and on normal, if you accept the offer), a
+second agent with a clean context hunts for the ways the idea fails.
+
+**Under the hood:** the `jig-idea` skill. Everything decided is written down as it happens, into
+`.ai/specs/<id>/`:
+
+- `spec.md` — the idea in your words, the goal, the stress test, scope, decisions with the rejected
+  options and why, open questions;
+- `architecture.md` and `stack.md` — for a new project;
+- `roadmap.md` — the destination, phases, items with their dependencies, `fog:` for what cannot
+  be stated precisely yet, and waves of items that can run in parallel.
+
+A specification is committed like any file, but it is a plan, not knowledge: no agent working on
+the code reads tomorrow's plan as a description of today's system.
+
+**Where you are needed:** every decision is yours. The agent shows each written section verbatim,
+and the roadmap's cut — what goes in which phase — is settled with you.
+
+## 3. Turn decisions into architecture and rules
+
+**You say:** *"Set up the project's knowledge from the spec."* (The agent offers this itself once the
+decisions are settled.)
+
+**The agent does:** carries the spec's **decisions** — not its plans — into `.ai/knowledge/`:
+
+| In the spec | Becomes |
+|---|---|
+| What the system is and for whom | the opening of `ARCHITECTURE.md` |
+| Modules, layers, which way dependencies may point | `ARCHITECTURE.md`, under **Intended — not built yet** |
+| What each implementation of a component boundary may, must and must not do | a convention for that boundary |
+| A decision with rejected alternatives, the stack included | a decision record (ADR) citing the spec |
+| An invariant with a way to check it | `RULES.md`, with its source and how it is checked |
+| A term a newcomer would get wrong | `GLOSSARY.md` |
+| The stack | the verification profiles, switched on |
+
+**Under the hood:** the `jig-init` skill, on its path for a project without code. The intended
+architecture is written as an intention: the task that builds a part moves it out of *Intended*.
+Profiles for the chosen stack report their checks as skipped — never passed — until the project's
+own tools and manifests exist.
+
+**Where you are needed:** the agent shows every document in full before anyone relies on it.
+
+## 4. Choose how the work is released
+
+**You say:** nothing, usually — the agent asks while cutting the roadmap: does each phase give a user
+something on its own, or is the product released once, at the end?
+
+- **Each phase ships on its own:** tasks branch from your main branch as usual.
+- **Released once:** the spec gets an **epic branch**. The spec's tasks branch from the epic and their
+  pull requests go into it; the main branch sees the feature in one piece when the epic is finished.
+
+**Under the hood:** `jig spec epic <id>` creates the epic branch once the spec is on the main
+branch; you push it. When every phase is in, finishing the epic lists what is still open in the
+spec — unchecked items, fog, open questions — and asks you about each before the spec is retired.
+
+## 5. Start the first tasks
+
+**You say:** *"File the tasks for phase 1."*
+
+**The agent does:** turns each item of the phase into a task, classifies it by risk, and links it
+to the spec. Filing starts nothing — no branch, no checkout change.
+
+**You say:** *"Start the first one."*
+
+**The agent does:** starts the task on its own branch — from the epic, if there is one — reads the
+knowledge from step 3, and follows the route its class requires. When the task records what it
+taught the project, the roadmap item is checked in the same pull request.
+
+**Where you are needed:** wherever the task's route puts a human gate, and at the end of every task,
+when the change is yours to review and merge. [Working with tasks](/working-with-tasks) covers the
+rest: several agents at once, pausing, resuming.
+
+## Things to know
+
+- **Commit before starting a task.** Without a first commit Git has nothing to branch from.
+- **Replace the roadmap's example lines.** A fresh `roadmap.md` holds example items, and they count
+  as items until the agent replaces them.
+- **A spec can move.** To start a new project from a spec written elsewhere, copy its
+  `.ai/specs/<id>/` folder into the new project; from then on that project's Jig tracks it.

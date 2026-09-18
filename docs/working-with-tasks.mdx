@@ -1,6 +1,91 @@
 ---
 title: "Working with tasks"
-description: "A task's life: start, pause, resume, abandon, finish; several agents at once."
+description: "A task's life: starting, pausing, resuming, abandoning, finishing — and several agents at once."
 ---
 
-This page is being written.
+A task is one piece of work with its own branch and a private workspace for its notes. You rarely
+manage tasks by hand: you say what you want, and the agent files, starts, pauses and closes them.
+This page explains what is going on, so you know what to ask for.
+
+## What a task is
+
+When the agent starts a task it creates:
+
+- **a branch** of its own, cut from your main branch — or from an epic branch, when the task belongs
+  to a specification that is released at once ([New project](/greenfield));
+- **a workspace** in `.ai/workspace/tasks/<id>/` — the task description, analysis, plan or design,
+  whatever its route needs. Workspaces are local to your machine and never committed: they are
+  notes for the people and agents working on the task, not documentation.
+
+Durable knowledge the task produces goes to `.ai/knowledge/` and is committed with the code.
+
+Small work — a typo, a one-file fix that fits in one session — needs no workspace at all.
+
+## Talking about tasks
+
+You do not need commands; these are the kinds of things you say:
+
+| You say | The agent |
+|---|---|
+| *"Add CSV export to the reports."* | Classifies the work, files a task and starts it. |
+| *"Note for later: we should cache the exchange rates."* | Files a task without starting it — no branch, nothing in the way. |
+| *"What's in progress?"* | Lists the live tasks and what state each is in. |
+| *"Continue the CSV export."* | Reads the task's workspace and picks up where it stopped. |
+| *"Pause this, the export format isn't decided yet."* | Pauses the task with your reason, optionally stashing the uncommitted work. |
+| *"Drop the caching task."* | Abandons it. |
+| *"Close what's merged."* | Asks you about each merged task, then closes the ones you confirm. |
+
+## A task's states
+
+| State | Meaning |
+|---|---|
+| **not started** | Filed, no branch yet. Filing something for next month costs nothing. |
+| **active** | Being worked on. |
+| **ready** | Checked: tests pass and the goal is met. Waiting to be merged. |
+| **consolidated** | Closed: merged, and what it taught the project is recorded. |
+| **abandoned** | Stopped for good. |
+
+**Paused** is a mark on an active or ready task, not a state of its own: it says the work was
+set aside, with a reason, and it comes back where it was.
+
+## How a task ends
+
+Every task ends with the question *what should the project remember?* — a new decision record, an
+updated rule, or explicitly nothing. The agent records that answer **before** the commit, so the
+knowledge travels in the same pull request as the code.
+
+A merge alone does not close a task: a fix can still follow it. At the start of a session the agent
+checks which of your tasks were merged, names each one and asks whether it can be closed. Nothing
+is closed without your yes.
+
+What is left behind is cleaned up automatically. The workspace of a closed task is moved to a trash
+folder, and deleted from there after a week. A task whose remote state cannot be determined keeps its
+workspace. An abandoned task's workspace goes to the trash after two weeks, whatever its
+remote state. The trigger is a Claude Code session hook
+or a scheduler you choose ([Configuration](/configuration)).
+
+## Several agents at once
+
+One checkout holds one piece of uncommitted work. When an agent is already working and you want to
+start something else, say *"start the caching task in a separate worktree"*. The agent creates a
+second working copy of the repository next to it (in `../<project>.worktrees/<id>` by default), cut
+from the freshest main branch, and leaves the current work alone. Open a new agent session in that
+folder — the agent tells you the path; some runtimes can switch there on their own.
+
+Each worktree has its own branch and its own uncommitted changes; the task list in the original
+checkout still shows every task and where it runs. Review and commit in the worktree as you would
+anywhere. When the task is closed, the worktree is removed with it — but only if it has no
+uncommitted changes. Worktrees you or your agent created by hand are never removed.
+
+## When the work turns out bigger
+
+A task starts with a class the agent chose from the risk it saw. When the work turns out bigger — a
+"local fix" that touches an interface other parts depend on — the agent re-classifies it and runs
+the stages the new class requires, including your approval where the new route has a human gate.
+Risk sets the floor: a one-line change to authentication is never trivial.
+
+## Who commits
+
+Jig's scripts never push, and never commit — apart from the one first commit the Windows installer
+makes in a repository it created itself. Whether the agent may commit, push or open pull
+requests is your project's rule, written in your `AGENTS.md` or your runtime's settings — not Jig's.
