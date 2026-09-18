@@ -304,6 +304,7 @@ function Test-GitPresentFreshInstall {
         'User PATH should contain the installed jig scripts directory'
 
     Assert-JigContains $result.Output 'doctor:' 'jig doctor output should be shown'
+    Assert-JigContains $result.Output 'Claude Code session hook' 'the session hook should be disclosed before it is installed'
 
     $script:FreshProjectDir = $projectDir
 }
@@ -350,6 +351,20 @@ function Test-ExistingRepositoryGetsNoCommit {
 
     $commitsAfter = (& git -C $projectDir rev-list --count HEAD).Trim()
     Assert-JigEqual $commitsBefore $commitsAfter 'installing into an existing repository must not add a commit'
+}
+
+function Test-NoSessionHookLeavesSettingsOut {
+    $projectDir = New-JigTempDir -Prefix 'nohook'
+    $result = Invoke-JigInstaller -InstallerArgs @(
+        '-Yes', '-NoSessionHook', '-Project', $projectDir,
+        '-GitName', 't', '-GitEmail', 't@example.com',
+        '-InstallSh', $script:InstallShPath,
+        '-Repository', $script:RemoteDir
+    )
+    Assert-JigEqual 0 $result.ExitCode "-NoSessionHook install should succeed:`n$($result.Output)"
+    Assert-JigTrue (Test-Path (Join-Path $projectDir '.ai\config.yaml')) '.ai\config.yaml should exist'
+    Assert-JigTrue (-not (Test-Path (Join-Path $projectDir '.claude\settings.json'))) `
+        '-NoSessionHook must not create .claude\settings.json'
 }
 
 function Test-NoInitSkipsProject {
@@ -494,6 +509,7 @@ try {
     Invoke-JigTest 'RepeatRunIsIdempotent' { Test-RepeatRunIsIdempotent }
     Invoke-JigTest 'ExistingRepositoryGetsNoCommit' { Test-ExistingRepositoryGetsNoCommit }
     Invoke-JigTest 'NoInitSkipsProject' { Test-NoInitSkipsProject }
+    Invoke-JigTest 'NoSessionHookLeavesSettingsOut' { Test-NoSessionHookLeavesSettingsOut }
     Invoke-JigTest 'UninstallRemovesPathAndCheckout' { Test-UninstallRemovesPathAndCheckout }
     Invoke-JigTest 'MissingGitFails' { Test-MissingGitFails }
 }
