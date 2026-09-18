@@ -159,11 +159,16 @@ _profiles_glob_to_findpath() {
 }
 
 # _profiles_glob_matches <glob> — exit 0 when <glob> matches at least one
-# path in JIG_PROJECT (excluding .git/).
+# path in JIG_PROJECT. .git/ and the directories other stacks install their
+# dependencies into are not searched: `jig init` activates what it detects
+# (adr-20260918-init-activates-detected-profiles), and a .sh file inside node_modules/ or a .csproj inside a
+# vendored package is not what the project is written in.
 _profiles_glob_matches() {
   local glob="$1" pattern hit
   pattern=$(_profiles_glob_to_findpath "$glob")
-  hit=$(find "$JIG_PROJECT" -path "$JIG_PROJECT/.git" -prune -o \
+  hit=$(find "$JIG_PROJECT" \
+    \( -path "$JIG_PROJECT/.git" -o -name node_modules -o -name vendor \
+       -o -name .venv -o -name venv -o -name .dart_tool -o -name .ai \) -prune -o \
     -path "$JIG_PROJECT/$pattern" -print 2>/dev/null | head -n 1)
   [ -n "$hit" ]
 }

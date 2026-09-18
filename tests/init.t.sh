@@ -2,18 +2,95 @@
 # the framework source checkout ($JIG_HOME) against a fixture repository.
 # shellcheck shell=bash
 
-test_init_suggests_detected_profile_but_only_installs_selection() {
+# adr-20260918-init-activates-detected-profiles: a first init without --profiles activates what it detects.
+test_init_first_run_activates_detected_profiles() {
   fixture_repo
+  printf '{}\n' > composer.json
+  printf '[project]\nname = "x"\n' > pyproject.toml
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "detected profiles: php python"
+  assert_not_contains "$OUT" "suggested profiles:"
+
+  local cfg_profiles
+  cfg_profiles=$(sed -n 's/^profiles: //p' .ai/config.yaml)
+  assert_eq "[generic, php, python]" "$cfg_profiles"
+  assert_file .ai/profiles/php/profile.yaml
+  assert_file .ai/profiles/python/profile.yaml
+}
+
+# requires closure (adr-20260918-init-activates-detected-profiles, profiles_detect): laravel's own detect glob
+# (artisan) matches, and it requires php, which pulls php in even though
+# nothing here matches php's own detect glob (no composer.json). Order
+# matters: laravel is found first (its own detect matched), php second (add
+# by the requires closure) — assert both, and the order the code actually
+# prints them in.
+test_init_first_run_with_artisan_detects_laravel_and_pulls_in_php() {
+  fixture_repo
+  : > artisan
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "detected profiles: laravel php"
+  assert_not_contains "$OUT" "suggested profiles:"
+
+  local cfg_profiles
+  cfg_profiles=$(sed -n 's/^profiles: //p' .ai/config.yaml)
+  assert_eq "[generic, laravel, php]" "$cfg_profiles"
+  assert_file .ai/profiles/laravel/profile.yaml
+  assert_file .ai/profiles/php/profile.yaml
+}
+
+test_init_first_run_with_nothing_detected_is_generic_and_silent() {
+  fixture_repo
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "detected profiles:"
+  assert_eq "[generic]" "$(sed -n 's/^profiles: //p' .ai/config.yaml)"
+}
+
+# An explicit flag is a choice: detection only suggests.
+test_init_explicit_profiles_flag_only_suggests_detected() {
+  fixture_repo
+  printf '{}\n' > composer.json
+
+  run jig init --from "$JIG_HOME" --profiles generic
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "suggested profiles: php (run again with --profiles php or edit .ai/config.yaml)"
+  assert_not_contains "$OUT" "detected profiles:"
+  assert_eq "[generic]" "$(sed -n 's/^profiles: //p' .ai/config.yaml)"
+  assert_no_file .ai/profiles/php
+}
+
+# A config that exists is a choice too: a re-run never adds to it.
+test_init_rerun_with_existing_config_only_suggests_detected() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
   printf '{}\n' > composer.json
 
   run jig init --from "$JIG_HOME"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "suggested profiles: php (run again with --profiles php or edit .ai/config.yaml)"
+  assert_contains "$OUT" "suggested profiles: php"
+  assert_not_contains "$OUT" "detected profiles:"
+  assert_eq "[generic]" "$(sed -n 's/^profiles: //p' .ai/config.yaml)"
+}
 
-  local cfg_profiles
-  cfg_profiles=$(sed -n 's/^profiles: //p' .ai/config.yaml)
-  assert_eq "[generic]" "$cfg_profiles"
-  assert_no_file .ai/profiles/php
+# Dependency directories and jig's own installed scripts are not the
+# project's stack: a .sh file under node_modules/ or .ai/ detects nothing.
+test_init_detection_ignores_dependency_and_jig_directories() {
+  fixture_repo
+  mkdir -p node_modules/pkg vendor/bin
+  printf '#!/bin/sh\n' > node_modules/pkg/build.sh
+  printf '#!/bin/sh\n' > vendor/bin/tool.sh
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "[generic]" "$(sed -n 's/^profiles: //p' .ai/config.yaml)"
+
+  run jig init --from "$JIG_HOME"
+  assert_not_contains "$OUT" "suggested profiles: shell"
 }
 
 test_init_no_suggestion_when_selection_already_covers_detection() {

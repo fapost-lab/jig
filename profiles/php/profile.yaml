@@ -2,3 +2,4 @@
 name: php
 description: PHP projects using Composer.
 detect: [composer.json]
+scope: [changed, map]

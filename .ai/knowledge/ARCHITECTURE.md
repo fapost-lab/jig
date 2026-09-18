@@ -113,6 +113,14 @@ environment held — profiles are copied into projects and `upgrade` preserves
 user-modified ones, so a script written before a capability existed will meet a framework
 that has it. `JIG_VERIFY_MAPPED` follows the same rule for `map`.
 
+Profiles share `scripts/lib/profile.sh` (`jp_*`), sourced as
+`$(dirname "$0")/../../scripts/lib/profile.sh`: profiles and scripts sit at the same depth in
+the source and in both install modes, so the path is the contract and no capability is needed.
+It is the one dependency from profile content into the scripts layer, and its functions are a
+distributed interface — never renamed, never given a new meaning — because a user-modified
+profile meets whatever library the upgrade installed
+(adr-20260918-profiles-narrow-per-check-with-project-tools).
+
 A shipped profile carries only rules true for any project of its stack. Which path affects
 which check in one project is that project's `.ai/verify/<profile>.map`, and `jig verify`
 parses it — never the profile — so every profile reads the same decisions (ADR-0041).

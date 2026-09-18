@@ -1,0 +1,5 @@
+# Profile manifest. Flat YAML subset, same reader as .ai/config.yaml.
+name: dart
+description: Dart and Flutter projects (analyze, format, test, from PATH).
+detect: [pubspec.yaml]
+scope: [changed, map]

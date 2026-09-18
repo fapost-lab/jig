@@ -1,0 +1,5 @@
+# Profile manifest. Flat YAML subset, same reader as .ai/config.yaml.
+name: dotnet
+description: .NET projects (dotnet format, dotnet test from PATH).
+detect: [*.sln, *.csproj, *.fsproj]
+scope: [changed, map]

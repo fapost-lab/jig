@@ -13,7 +13,8 @@ paths:
   - "profiles/**"
   - schemas/verify-map.md
   - ".ai/verify/**"
-reviewed_at: 2026-09-16
+  - scripts/lib/profile.sh
+reviewed_at: 2026-09-18
 ---
 # Verify
 
@@ -25,7 +26,12 @@ it actually did.
 - The profile contract: `profile.yaml` (`name`, `description`, `detect`, `requires`,
   `scope`) and `verify.sh` with its three exit codes — 0 pass, 1 fail, **2 skip**.
 - Which profiles are active: explicit activation in `.ai/config.yaml`, and detection from
-  root manifests when none is given (`profiles_detect`).
+  root manifests (`profiles_detect`), which a first `jig init` turns into activation
+  (adr-20260918-init-activates-detected-profiles). Detection skips dependency directories
+  and `.ai/`.
+- The profile library `scripts/lib/profile.sh` and the thirteen shipped profiles: where each
+  finds its tools and how it narrows each check
+  (adr-20260918-profiles-narrow-per-check-with-project-tools).
 - The scope protocol: computing the changed-file list once and handing it to profiles
   that declared they understand it, via `JIG_VERIFY_SCOPE` and `JIG_VERIFY_FILES`
   (ADR-0013).
@@ -57,6 +63,11 @@ contract. A change to how profiles are *copied* still belongs to `install`.
 
 - `scripts/lib/verify.sh` — `cmd_verify`, `_verify_changed_files`, `_verify_map_check`,
   `_verify_map_apply`.
+- `scripts/lib/profile.sh` — `jp_begin`, `jp_changed`, `jp_changed_any`, `jp_decide`,
+  `jp_path_matches`, `jp_is_doc`, `jp_first_missing`, `jp_files`, `jp_version`, `jp_run`,
+  `jp_skip`, `jp_end`.
+- `profiles/python/verify.sh` — the reference profile on the library; each profile's header
+  comment states where its tools come from and how it narrows.
 - `profiles/shell/verify.sh` — `_shell_builtin_filters`, the reference for what a shipped
   profile may know about a project (nothing beyond its stack's conventions).
 - `scripts/lib/profiles.sh` — `profiles_active`, `profiles_detect`, `profiles_supports`,

@@ -1,0 +1,5 @@
+# Profile manifest. Flat YAML subset, same reader as .ai/config.yaml.
+name: python
+description: Python projects (ruff, mypy, pytest from the project's own environment).
+detect: [pyproject.toml, requirements.txt, setup.py, setup.cfg, Pipfile]
+scope: [changed, map]
