@@ -25,10 +25,15 @@ on:
 permissions:
   contents: read
 
-# A new push to the same branch makes the previous run's answer irrelevant.
+# A new push to the same branch makes the previous run's answer irrelevant —
+# except on main, where a run ends in a release: two pull requests merged one
+# after the other each get their tag, instead of the second cancelling the
+# first one's release (it happened to 0.7.2). GitHub keeps one run pending per
+# group; a third merge meanwhile replaces the pending one, and its own run tags
+# the version then current, so a release comes later but is not lost.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -42,7 +47,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Printed, not asserted. The point is that a disagreement between
       # platforms is legible in the log rather than being a mystery — pinning
@@ -92,20 +97,27 @@ jobs:
 
   # The whole suite on Windows under Git Bash, with the git settings a Windows
   # user gets out of the box: core.autocrlf=true and no native symlinks, so
-  # `ln -s` copies and links fall back to junctions. It takes about 25 minutes,
-  # so it runs on main (a release waits for it) and by hand, not on every pull
-  # request; smoke-windows below covers those.
+  # `ln -s` copies and links fall back to junctions. Every process start is
+  # slow there, so the suite runs in three shares at once (JIG_TEST_SHARD) and
+  # skips the one check that reads only this repository's own knowledge and says
+  # nothing about the platform (JIG_TEST_SKIP; it still runs on Linux and macOS).
+  # It runs on main (a release waits for every share) and by hand, not on every
+  # pull request; smoke-windows below covers those.
   test-windows:
-    name: windows-latest (Git Bash)
+    name: windows-latest (Git Bash) ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     defaults:
       run:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Toolchain versions
         run: |
@@ -118,7 +130,19 @@ jobs:
             echo "shellcheck: not installed"
           fi
 
+      # Real-time scanning inspects every process the suite starts, and it
+      # starts tens of thousands. The runner is disposable; a runner image that
+      # refuses the change only loses the speed-up, so it is not a failure.
+      - name: Pause Defender real-time scanning
+        shell: powershell
+        run: |
+          try { Set-MpPreference -DisableRealtimeMonitoring $true; Write-Output "Defender real-time scanning paused" }
+          catch { Write-Output "Defender not paused: $($_.Exception.Message)" }
+
       - name: Tests
+        env:
+          JIG_TEST_SHARD: ${{ matrix.shard }}/3
+          JIG_TEST_SKIP: knowledge::test_real_repository_knowledge_passes_with_no_failures
         run: tests/run.sh
 
   # What a Windows user runs, on every pull request: the installer end to end
@@ -131,7 +155,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Installer tests
         shell: powershell
@@ -205,7 +229,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tag the release if JIG_VERSION is new
         run: |
@@ -226,7 +250,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'epic/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the epic is finished and its version is new
         env:

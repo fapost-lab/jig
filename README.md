@@ -821,7 +821,9 @@ bash tests/run.sh
 
 `tests/run.sh` runs the tests in parallel, one per CPU; set `JIG_TEST_JOBS=1` to run them
 one at a time, or any other number to choose the width. A name filter narrows the run:
-`tests/run.sh knowledge::`.
+`tests/run.sh knowledge::`. `JIG_TEST_SHARD=2/3` runs every third test starting with the second, so a
+slow platform can split the suite across machines; `JIG_TEST_SKIP=file::test,...` reports the named
+tests as skipped without running them.
 
 To release a new version, raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request
 that should become the release: `major.minor.patch` without leading zeros, where patch is a fix, minor a new
