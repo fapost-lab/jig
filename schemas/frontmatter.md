@@ -42,7 +42,7 @@ key:
 
 | Field | Required | Values |
 |---|---|---|
-| `id` | yes | `^[a-z0-9-]+$`, unique across `.ai/knowledge/`; prefix with the type: `feature-`, `adr-NNNN-`, `convention-`, `domain-`, `glossary-`, `rule-` |
+| `id` | yes | `^[a-z0-9-]+$`, unique across `.ai/knowledge/`; prefix with the type: `feature-`, `adr-YYYYMMDD-` (legacy `adr-NNNN-`), `convention-`, `domain-`, `glossary-`, `rule-` |
 | `type` | yes | `feature`, `adr`, `convention`, `domain`, `glossary`, `rule` |
 | `status` | yes | `proposed` for any type; then everything except adr: `active`, `deprecated`, `superseded`, `rejected`; adr: `accepted`, `superseded`, `deprecated`, `rejected` |
 | `date` | adr only | `YYYY-MM-DD` |
@@ -170,7 +170,7 @@ domain just as well.
 | `requires` naming a document that is not active | fail |
 | a cycle in the `requires` graph | fail |
 | duplicate `id` | fail |
-| ADR file name not `NNNN-<slug>.md` or duplicate number | fail |
+| ADR file name not `YYYYMMDD-<slug>.md` (or a legacy `NNNN-<slug>.md`), an invalid date, a date other than `date:`, or a duplicate legacy number | fail |
 | relative markdown link to a missing file | fail |
 | `supersedes` pointing to an unknown id | fail |
 | invalid `reviewed_at` (not `YYYY-MM-DD`) | fail |

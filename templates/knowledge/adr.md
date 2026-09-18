@@ -1,12 +1,12 @@
 ---
-id: adr-NNNN-<slug>
+id: adr-YYYYMMDD-<slug>
 type: adr
 status: accepted
 date: YYYY-MM-DD
 domains: []
 paths: []
 ---
-# ADR-NNNN: <Decision in one sentence>
+# <Decision in one sentence>
 
 ## Context
 

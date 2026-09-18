@@ -26,7 +26,7 @@ Depth: <easy | normal | deep> — <why this level>
 
 ## Decisions
 
-- <Decision> — rejected: <option> because <reason>. (or: see ADR-NNNN)
+- <Decision> — rejected: <option> because <reason>. (or: see adr-YYYYMMDD-<slug>)
 
 ## Open questions
 

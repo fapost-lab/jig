@@ -9,7 +9,7 @@ paths:
   - scripts/lib/knowledge.sh
   - "skills/jig-accept/**"
 summary: Why a domain pack cannot be rejected and replaced, and why a nearly-right draft is revised in place instead.
-reviewed_at: 2026-09-09
+reviewed_at: 2026-09-18
 ---
 # ADR-0019: A domain pack has one slot, so a draft is revised in place and rejection means "not this domain"
 
@@ -71,3 +71,7 @@ exactly right.
   `jig knowledge proposed`.
 - The `jig-accept` skill gains the distinction explicitly, because it is the skill holding
   the conversation where the question gets asked.
+
+> **Amendment (2026-09-18).** A new ADR no longer gets the next number; it is named by its day and slug
+> (adr-20260918-adr-names-are-dated). A better ADR still sits beside a rejected one, under a different
+> slug or on a later day: the same slug on the same day is the same path, and `knowledge new` refuses it.

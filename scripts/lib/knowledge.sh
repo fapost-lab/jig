@@ -206,7 +206,7 @@ km_check_doc() {
 km_check_doc_frontmatter() {
   local file="$1" relpath="$2" ids_file="$3" ids_all_file="$4" adr_nums_file="$5"
   local id type status date supersedes domains paths_out reviewed source
-  local reldir under_adr base num slug
+  local reldir under_adr base num slug stamp day_ok
 
   id=$(fm_get "$file" id)
   type=$(fm_get "$file" type)
@@ -261,11 +261,35 @@ km_check_doc_frontmatter() {
   if [ "$under_adr" -eq 1 ]; then
     base=$(basename "$file")
     case "$base" in
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*.md)
+        # Named by the day it was written (adr-20260918-adr-names-are-dated).
+        # The name's day is its `date:`: a record copied under another's name
+        # would otherwise carry a day nobody wrote it on.
+        stamp=$(printf '%s' "$base" | cut -c1-8)
+        slug=$(printf '%s' "$base" | sed 's/^[0-9]\{8\}-//; s/\.md$//')
+        case "$stamp" in
+          ????0[1-9][0-3][0-9] | ????1[0-2][0-3][0-9]) day_ok=1 ;;
+          *) day_ok=0 ;;
+        esac
+        case "$stamp" in ??????00 | ??????3[2-9]) day_ok=0 ;; esac
+        if [ "$day_ok" -eq 0 ]; then
+          km_fail "$relpath" "ADR file name starts with an invalid date: $stamp"
+        else
+          case "$slug" in
+            '' | *[!a-z0-9-]*) km_fail "$relpath" "ADR file name must match YYYYMMDD-<slug>.md (or a legacy NNNN-<slug>.md)" ;;
+          esac
+          date=$(fm_get "$file" date)
+          if [ -z "$source" ] && [ "$stamp" != "$(printf '%s' "$date" | tr -d -)" ]; then
+            km_fail "$relpath" "ADR file date $stamp does not match date: ${date:-none}"
+          fi
+        fi
+        ;;
       [0-9][0-9][0-9][0-9]-*.md)
+        # A legacy numbered record: valid for good, its number never reused.
         num=$(printf '%s' "$base" | cut -c1-4)
         slug=$(printf '%s' "$base" | sed 's/^[0-9]\{4\}-//; s/\.md$//')
         case "$slug" in
-          '' | *[!a-z0-9-]*) km_fail "$relpath" "ADR file name must match NNNN-<slug>.md" ;;
+          '' | *[!a-z0-9-]*) km_fail "$relpath" "ADR file name must match YYYYMMDD-<slug>.md (or a legacy NNNN-<slug>.md)" ;;
           *)
             if km_id_known "$num" "$adr_nums_file"; then
               km_fail "$relpath" "duplicate ADR number: $num"
@@ -275,7 +299,7 @@ km_check_doc_frontmatter() {
             ;;
         esac
         ;;
-      *) km_fail "$relpath" "ADR file name must match NNNN-<slug>.md" ;;
+      *) km_fail "$relpath" "ADR file name must match YYYYMMDD-<slug>.md (or a legacy NNNN-<slug>.md)" ;;
     esac
 
     # Only flag a *valid-but-wrong* type here; an already-invalid type was
@@ -1324,26 +1348,6 @@ km_files_word() {
 
 # --- new -----------------------------------------------------------------------
 
-# km_next_adr — the next ADR number: highest existing + 1, four digits.
-# Numbers are never reused, so this deliberately does not fill gaps (RULES.md).
-km_next_adr() {
-  local f base num max=0
-  if [ -d "$KM_DIR/adr" ]; then
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      base=$(basename "$f")
-      case "$base" in
-        [0-9][0-9][0-9][0-9]-*.md) ;;
-        *) continue ;;
-      esac
-      # 10# keeps 0009 decimal; bare $((0009)) is an invalid octal literal.
-      num=$((10#$(printf '%s' "$base" | cut -c1-4)))
-      [ "$num" -gt "$max" ] && max="$num"
-    done < <(find "$KM_DIR/adr" -type f -name '*.md')
-  fi
-  printf '%04d\n' $((max + 1))
-}
-
 # km_template_rel <type> — the template's path under templates/knowledge/.
 #
 # The three domain-pack templates live in a `domain/` subdirectory shaped like
@@ -1527,7 +1531,7 @@ km_new() {
   # The type is resolved to a path before the template is looked up, so an
   # unknown type is reported as an unknown type rather than as a missing
   # template.
-  local dir template file id number rel build problem linked tracked
+  local dir template file id stamp rel build problem linked tracked
   [ "$has_source" -eq 0 ] || [ "$has_copy" -eq 0 ] \
     || jig_die "knowledge new: --source links a tracked file and --copy copies an untracked one; give one of them"
   [ "$secrets_reviewed" -eq 0 ] || [ "$has_copy" -eq 1 ] \
@@ -1583,10 +1587,13 @@ km_new() {
         [ -n "$domains" ] || domains="$slug"
         ;;
       adr)
+        # Named by the day it is written, not by a running number: two
+        # branches cut from one main used to take the same next number
+        # (adr-20260918-adr-names-are-dated). The day is the one `date:` gets.
         dir=$(km_type_dir "$type")
-        number=$(km_next_adr)
-        file=$(km_doc_file "$dir" "$number-$slug")
-        id="adr-$number-$slug"
+        stamp=$(jig_today | tr -d -)
+        file=$(km_doc_file "$dir" "$stamp-$slug")
+        id="adr-$stamp-$slug"
         ;;
       *)
         dir=$(km_type_dir "$type")
@@ -1627,12 +1634,6 @@ km_new() {
   elif [ "$type" = adr ]; then
     fm_set "$build" date "$(jig_today)" \
       || km_new_abandon "$build" "knowledge new: could not write date"
-    # The heading placeholder carries the number too. `number` is four digits
-    # by construction, so it is safe on the right-hand side of a substitution.
-    if ! sed "s/ADR-NNNN/ADR-$number/g" "$build" > "$build.tmp" || ! mv "$build.tmp" "$build"; then
-      rm -f "$build.tmp"
-      km_new_abandon "$build" "knowledge new: could not write the ADR heading"
-    fi
   fi
   if [ "$proposed" -eq 1 ]; then
     fm_set "$build" status proposed \

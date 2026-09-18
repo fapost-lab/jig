@@ -73,7 +73,8 @@ of the form "while we're at it, let's also…" break against.
 - Shell code targets POSIX sh / bash 3.2; run `shellcheck` before committing. (ADR-0002)
 - Knowledge documents under `features/`, `adr/`, `conventions/` carry frontmatter with
   `id`, `type`, `status`; `domains`/`paths` when applicable. (ADR-0004)
-- ADR numbering is sequential, four digits, never reused.
+- An ADR is named `YYYYMMDD-<slug>` by the day it was written, and cited by its id; legacy
+  `NNNN-` names stay valid and their numbers are never reused. (adr-20260918-adr-names-are-dated)
 - Knowledge frontmatter is written through `jig knowledge new|paths|reviewed`, never by
   hand: `paths` items are globs and hand-editing them is how they rot. (ADR-0001)
 - Consolidation stamps `reviewed_at` on every knowledge document it edits, so
