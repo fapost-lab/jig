@@ -1,6 +1,109 @@
 ---
 title: "Concepts"
-description: "Risk classes, knowledge and its acceptance, specifications and epics, cleanup, measurement."
+description: "Risk classes and routes, project knowledge and its acceptance, specifications and epics, cleanup and measurement."
 ---
 
-This page is being written.
+## Risk classes and routes
+
+Every piece of work gets a class from its risk — what it could break and how hard that is to undo
+— never from how much typing it takes. The class decides the route.
+
+| Class | Typical work | Route |
+|---|---|---|
+| **T0** trivial | Wording, formatting, an obvious documentation edit | implement → verify → consolidate |
+| **T1** local | A contained change with an obvious solution | analyze → implement → verify → consolidate |
+| **T2** structural | Several components, or an internal contract | analyze → plan → implement → review → verify → consolidate |
+| **T3** architectural | Boundaries, dependencies, lifecycle semantics | discover → design → **human gate** → implement → architecture review → verify → consolidate |
+| **T4** critical | Security, secrets, destructive operations, money | discover → specify → alternatives → design → **human gate** → implement → independent review → verify → consolidate |
+
+**Risk sets the floor.** A one-line change to authentication is never T0. When work turns out bigger
+than it looked, the agent re-classifies it and runs the stages the new class requires.
+
+**At a human gate** the agent shows you the document itself — the design, and for T4 the
+specification and the alternatives — word for word, with its own objections after it. It records
+what you decided and does not implement until you approve. A summary is never what gets approved.
+
+**Every route ends in consolidation**, even a typo fix: the task decides what the project should
+remember, and records "nothing" explicitly when that is the answer.
+
+## Project knowledge
+
+`.ai/knowledge/` holds what an agent must know to change the project well — the *why* that the code
+cannot say. It is committed with the code and reviewed in pull requests.
+
+| Document | Holds |
+|---|---|
+| `GLOSSARY.md` | Canonical terms — the words a newcomer would get wrong. |
+| `ARCHITECTURE.md` | Domains, boundaries, which way dependencies may point, key flows. |
+| `RULES.md` | Invariants and rules, each with its source. |
+| `adr/` | Decision records: what was decided, which alternatives lost, and why. |
+| `conventions/` | How code is written in a part of the project — including what the implementations of a component boundary may, must and must not do. |
+| `features/` | How a part of the product behaves. |
+| `domains/<name>/` | Knowledge packs for one domain: overview, glossary, rules. |
+| `sources/` | Pointers to documents the project already had, linked in place ([Existing project](/brownfield)). |
+
+### Only what is relevant reaches the agent
+
+An agent never reads all of it. Each document declares in a few lines of metadata where it applies —
+file paths, domains, topics, stages — and the agent asks Jig for what applies to the files it is
+about to change. The answer comes in two parts:
+
+- **required** — documents the agent must read, because they govern the files or the stage;
+- **catalog** — one line per other document that may matter: the documents of the domains the work
+  is in, and every project-wide document. The agent opens one when it decides it is relevant.
+
+The three global documents are always required.
+
+### Proposed knowledge waits for a human
+
+Knowledge an agent inferred — a domain map, a linked document, a copied rule file — is created as
+**proposed**. It sits at its real path and shows in the diff, but no agent receives it until a human
+accepts it. Rejecting records the decision rather than deleting the document. Knowledge an agent
+writes at the end of a task is reviewed in the pull request like the code.
+
+### Knowledge that drifted
+
+Each document records when it was last reconciled with the code. When the files it describes changed
+after that, it is reported as stale; when a linked document of your own changed since it was
+approved, `jig status` says so until a human has looked at the change.
+
+## Specifications
+
+A specification is a plan for work bigger than one task — a feature of tens of tasks, or a new
+project. It lives in `.ai/specs/<id>/`: the idea, the stress test it went through, the decisions,
+open questions, and a roadmap of phases and items. It is committed and reviewed like any file, but it
+is **not knowledge**: no agent working on the code reads tomorrow's plan as a description of today's
+system. Its progress is its roadmap's checkboxes, checked by the tasks that deliver the items.
+
+### Epics
+
+A specification whose phases give a user nothing on their own is released once, at the end. It gets
+an **epic branch**: its tasks branch from the epic and their pull requests go into it, and the main
+branch receives the whole feature in one pull request. Finishing the epic lists what is still open in
+the specification and asks about each item before the specification is retired.
+
+## Cleanup
+
+Task workspaces are temporary and are cleaned up without anyone remembering to:
+
+- a task whose change was merged is flagged until it is closed; once closed, its workspace moves to
+  `.ai/runtime/trash/`, and is deleted from there after a retention period (7 days by default);
+- a task whose remote state cannot be determined keeps its workspace;
+- an abandoned task's workspace goes to the trash after 14 days, whatever its remote state;
+- old active tasks are only reported, never deleted for their age.
+
+Housekeeping is started by a Claude Code session hook or a scheduler you choose
+([Configuration](/configuration#when-housekeeping-runs)); the agent also shows you, at the start of
+a session, which merged tasks wait to be closed.
+
+## Measurement
+
+`jig measure` reports, when you ask:
+
+- **knowledge** — how many documents, how many stale, unreviewed or without code to describe;
+- **process** — how many tasks of each class, and how they ended;
+- **change** — how big the change each class produced was.
+
+Everything is derived from what is already in the repository and the local task records; nothing is
+sent anywhere. It cannot price the work: tokens, time and whether a human gate was passed are not
+recorded anywhere, and the report says so.

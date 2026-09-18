@@ -1,6 +1,173 @@
 ---
 title: "Under the hood"
-description: "How the agent works with Jig's scripts, and what Jig guarantees — for a security review."
+description: "How the agent works with Jig's scripts, what each step does to your disk, Git and network, and the exact limits of what Jig guarantees."
 ---
 
-This page is being written.
+This page is for whoever has to decide whether Jig is safe to run in a repository — a security
+review, a lead, a careful user. It describes how the agent interacts with the system and what every
+part may and may not do. The rest of the documentation deliberately shows no commands; this page
+shows a few, and `jig help` lists them all.
+
+## Two layers
+
+Jig splits the work in two:
+
+- **Skills** are instructions in Markdown. The agent reads them and makes every judgement: what a
+  change touches, how risky it is, what the design should be, what the project should remember.
+- **Scripts** are POSIX shell (`bash` 3.2+) in `.ai/scripts/`, with Git as the only requirement. They
+  keep records straight: task state, which knowledge applies, running checks, installing and
+  cleaning up. **No script calls an AI model**, and nothing is sent to any service run by Jig —
+  there is none, and there is no telemetry.
+
+The agent runs the scripts through its normal shell tool, so everything it does is visible in your
+runtime and subject to your runtime's permission settings. A typical exchange:
+
+```bash
+.ai/scripts/jig context resolve --task csv-export --stage analyze --catalog
+```
+
+```text
+global:    .ai/knowledge/GLOSSARY.md
+global:    .ai/knowledge/ARCHITECTURE.md
+global:    .ai/knowledge/RULES.md
+required:  .ai/knowledge/domains/reporting/OVERVIEW.md  (domains: reporting)
+catalog:   .ai/knowledge/adr/20260912-export-formats.md  [adr-20260912-export-formats] Why exports are streamed.
+workspace: .ai/workspace/tasks/csv-export/task.md
+```
+
+The script answers from file metadata alone; the agent then reads the listed files itself.
+
+## What lives where
+
+| Path | Committed | Written by |
+|---|---|---|
+| `.ai/knowledge/` | yes | the agent, through `jig knowledge` for metadata; reviewed in pull requests |
+| `.ai/specs/` | yes | the agent (`jig-idea`) |
+| `.ai/config.yaml`, `.ai/verify/*.map` | yes | you, or the agent at your request |
+| `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/`, `.ai/manifest` | yes | `jig init` and `jig upgrade` only |
+| `.claude/skills/`, `.codex/skills/` | yes | `jig init` and `jig upgrade` only |
+| `AGENTS.md`, `CLAUDE.md` | yes | `jig init` creates them only when absent; never edited by a script afterwards |
+| `.ai/workspace/tasks/` | **no** — ignored | task scripts and the agent; local notes and task state |
+| `.ai/runtime/` | **no** — ignored | housekeeping: reports, timestamps, trash |
+| `.ai/config.local.yaml` | **no** — ignored | you |
+
+## What each part does to your machine
+
+### Installers
+
+- **`install.sh`** (macOS, Linux): clones Jig into `~/.local/share/jig` at the newest release tag,
+  links `~/.local/bin/jig`, and adds one marked `PATH` line to your shell startup file only when that
+  folder is not already on `PATH`. No `sudo`. It never touches the directory you run it from. On a
+  failed run it removes only the install directory it created in that same run and the link it
+  created. It refuses to overwrite anything it did not create.
+- **`install.ps1`** (Windows) additionally, and says so before doing it:
+  - installs Git for Windows when missing — through winget, which it runs with the source and package
+    agreements accepted for you, or by downloading the official installer. **The download is not
+    checked against a hash or signature.**
+  - sets `user.name` and `user.email` **globally** when Git has none (with `-Yes`, the e-mail defaults
+    to `<username>@example.com`);
+  - in a folder it turned into a repository, makes one first commit of everything in it — including
+    files that were already there (it lists the first few);
+  - runs `jig init --session-hook` unless you pass `-NoSessionHook`.
+
+  It deletes only the Git installer it downloaded in that run. `-Uninstall` removes the `PATH` entry,
+  the `jig` link only when it points into the install folder, and the install folder only when it is
+  a Jig checkout with no local changes.
+- **`jig self-update`** moves the Jig on your machine to the newest release tag, never backwards, and
+  refuses a checkout with local changes. Release tags are not signature-verified. It changes no
+  project.
+
+### In a project
+
+- **`jig init`** creates what it needs and never overwrites existing knowledge, configuration or a
+  file you changed. It appends missing lines to `.gitignore` (`.ai/workspace/`, `.ai/runtime/`,
+  `.ai/config.local.yaml`, `*.log`, `.claude/worktrees/`) and `.gitattributes`. With
+  `--session-hook` it creates `.claude/settings.json` only when that file does not exist; an existing
+  one is never edited. It asks nothing and commits nothing.
+- **`jig upgrade`** fetches nothing: it copies from the Jig on your machine. It replaces framework
+  files you have not edited, keeps and reports the ones you have, and deletes a file the new version
+  no longer ships only when you have not edited it — this can be outside `.ai/`, for example an old
+  skill under `.claude/skills/`. It never touches knowledge, specifications, configuration or
+  `AGENTS.md`.
+- **`jig verify`** runs your project's own tools — test scripts, linters, `php artisan test`, Gradle
+  or Maven wrappers. **That is running your project's code**, with whatever that code does; some
+  toolchains download dependencies by themselves. Jig installs nothing. A missing tool is a skip,
+  never a pass; when every check is skipped, the run still exits successfully, and the report says
+  what was skipped.
+
+### Git
+
+| Operation | When |
+|---|---|
+| `git fetch origin` | starting a task; creating an epic branch; housekeeping when `housekeeping.fetch` is on; `self-update` |
+| create a branch and switch to it | starting a task (unless `git.branch_per_task: false`) |
+| create a branch without switching | creating an epic branch |
+| `git worktree add` | starting a task in a separate worktree |
+| `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
+| delete a branch | only when starting a worktree fails, and only the branch that attempt just created, while it still points where it was created |
+| `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, and it has no uncommitted changes or lock |
+
+**No script pushes. No script commits** — the only commit is the Windows installer's first commit in
+a repository it created. Starting a task refuses when tracked files have uncommitted changes (untracked
+files do not block it), so one task's work cannot become another's first commit. Whether the *agent*
+may commit, push or open pull requests is your project's rule and your runtime's permission, not
+Jig's.
+
+### Network
+
+Jig's scripts talk only to your own Git remote and, for housekeeping, to your forge's command-line
+tool: with `forge: auto` and `gh` or `glab` installed and signed in, housekeeping lists pull requests
+to learn whether a task was merged — also during a dry run, which otherwise skips `git fetch`.
+`forge: none` turns that off.
+
+## Deletion
+
+Everything a script deletes, it first proves is its own:
+
+- **Workspaces** are never deleted directly. Housekeeping moves one to `.ai/runtime/trash/` when its
+  task is closed after a confirmed merge, or when the task was abandoned more than
+  `housekeeping.abandoned_ttl` (14 days) ago — **an abandoned task goes to the trash whatever its
+  remote state**. A task whose remote state cannot be determined is otherwise always kept. Trash
+  entries are deleted after `housekeeping.trash_ttl` (7 days). Age alone never removes an active task.
+- **Paths** are deleted only after being checked to lie inside `.ai/` and to look like a workspace or
+  a trash entry. Task, spec, profile, adapter and domain names are validated before any path is built
+  from them.
+- **Worktrees** are removed by Git, never by a script, under the conditions above; on Windows,
+  leftover links and empty folders inside that path are then removed, never followed.
+- **Specifications** removed, closed or finished go to the trash, not straight to deletion.
+- **Branches** are never deleted, apart from the failed-worktree case above.
+
+The session hook, when you installed it, starts `jig housekeeping` — the real one, not a dry run — in
+the background at most once per `housekeeping.cadence`.
+
+## Knowledge and what an agent reads
+
+- **Proposed knowledge reaches no agent.** Documents an agent inferred — a domain map, a linked or
+  copied document — are created as `proposed` and are left out of every answer `jig context` gives
+  until they are accepted.
+- **Acceptance is the skill's discipline, not a script's check.** `jig knowledge accept` cannot tell
+  who ran it. The `jig-accept` skill requires a human's yes to each document; nothing technical stops
+  an agent from running the command itself. Review knowledge changes in pull requests.
+- **Knowledge written at the end of a task is active immediately**, like any file the agent edits:
+  its check is your review of the pull request.
+- **Linked documents** (`.ai/knowledge/sources/`) must be regular files Git tracks, inside the
+  repository, not symlinks. The check is repeated every time one is resolved, because a file can be
+  swapped after it was accepted. Changes after acceptance are reported until a human reviews them.
+- **Copied rule files** are scanned for obvious secrets before the copy; a hit names the line and the
+  kind, never the value, and the copy waits for explicit confirmation. The scan catches the obvious
+  only.
+- **Reading is recorded, not proven.** The agent records which documents it has read per task, so a
+  changed document becomes unread again. That record says the agent claimed to read it — nothing
+  more.
+
+## Measurement
+
+`jig measure` derives everything it reports when you run it, from knowledge metadata, local task
+state, Git history and the housekeeping log (where housekeeping records a task's class and dates
+when it cleans the workspace up). Nothing is sent anywhere.
+
+## More
+
+`jig help` lists every command; `jig doctor` checks the machine and the project and prints a fix
+for each problem. The accepted design decisions behind all of the above are in the repository's
+[`.ai/knowledge/adr/`](https://github.com/fapost-lab/jig/tree/main/.ai/knowledge/adr).

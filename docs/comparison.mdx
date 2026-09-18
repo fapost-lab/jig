@@ -3,4 +3,43 @@ title: "Comparison"
 description: "How Jig differs from Spec Kit, OpenSpec and BMad."
 ---
 
-This page is being written.
+Jig's unit is a project's engineering lifecycle — from project knowledge and sizing the work, through
+implementation and evidence, to deciding what the project should remember and cleaning up after.
+It is not a specification format, a prompt collection or a team of agents.
+
+## Five choices that shape it
+
+1. **Judgement and mechanics are separate.** The agent analyzes, designs, reviews and decides what to
+   remember, guided by skills. Shell scripts keep state, pick the relevant knowledge, run checks,
+   install and clean up — without calling an AI model, so they are testable and cost nothing to run.
+2. **Process follows risk.** Trivial and local work finishes without ceremony; architectural and
+   critical work needs an approved design and a stronger review. A change that is small to type but
+   dangerous to undo still takes the heavier route.
+3. **Knowledge has authority and a lifecycle.** Durable knowledge is selected by path, domain, topic
+   and stage. What an agent inferred stays proposed, and reaches no other agent until a human accepts
+   it.
+4. **Task notes are temporary.** Plans and investigation notes stay in a local, ignored workspace.
+   Only what should outlive the task becomes knowledge; the workspace is cleaned up after the merge.
+5. **The process is installed like code.** Skills, scripts and profiles are committed with the
+   project. Upgrades replace what the framework owns and keep what the project changed.
+
+## Next to similar tools
+
+These overlap with Jig but center on different things. The comparison reflects their public
+documentation as of 2026-09-10; it is not a feature checklist.
+
+| Tool | Its center of gravity | Where it fits better, and how Jig differs |
+|---|---|---|
+| [GitHub Spec Kit](https://github.github.com/spec-kit/) | An extensible, intent-driven process whose default is spec → plan → tasks → implement, with a large ecosystem of integrations and extensions. | The better fit when broad runtime coverage, reusable process extensions or spec-driven artifacts come first. Jig supports fewer runtimes and concentrates on one project-local lifecycle: risk classes, knowledge authority, deterministic state and cleanup. |
+| [OpenSpec](https://openspec.dev/docs/schemas/spec-driven) | Proposals, behaviour delta specs, design and tasks; archiving merges the deltas into canonical specs and keeps the history of changes. | The better fit when behavioural specifications are the source of truth. Jig keeps a broader set of engineering knowledge, and deliberately lets task notes disappear once what matters is recorded. |
+| [BMad Method](https://docs.bmad-method.org/) | An agile, AI-driven method with thinking, planning, build and review skills, project context and agent-oriented workflows. | The better fit when rich role-based planning and agent workflows are wanted. Jig does not orchestrate agents; it pairs runtime-independent skills with a deterministic control layer owned by the repository. |
+
+## When Jig fits
+
+Jig fits a team that wants the same process committed with the repository, cheap handling of routine
+changes, explicit human gates where mistakes are costly, knowledge that is accepted rather than
+assumed, and mechanics that can be tested without an AI model.
+
+Its scope is deliberately narrow, and so is its reach: it supports two runtimes, Claude Code and
+Codex, and its measurement stops where telemetry would begin — it can tell how much process a change
+asked for, never what the agent's work cost.

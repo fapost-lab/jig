@@ -1,6 +1,159 @@
 ---
 title: "Configuration"
-description: "config.yaml, verification profiles, housekeeping and scheduling."
+description: "Every setting in .ai/config.yaml, personal settings, verification profiles and maps, and when housekeeping runs."
 ---
 
-This page is being written.
+Jig works without configuration: `jig init` writes `.ai/config.yaml` with sensible values, and any
+setting that is missing takes the default built into Jig. This page lists every setting, so you can
+tell your agent what to change — or change it yourself.
+
+The file uses a flat subset of YAML: `section.key: value`, lists written inline, no nesting.
+Where project knowledge, task workspaces and runtime files live is fixed and cannot be configured.
+
+## Project settings — `.ai/config.yaml`
+
+The project's file is committed: everyone who clones the project gets the same settings.
+
+### Runtimes and stacks
+
+| Setting | Default | What it does |
+|---|---|---|
+| `adapters` | `[claude, codex]` | The coding runtimes Jig installs its skills and instructions for. |
+| `profiles` | `[generic]` plus what `jig init` detected | The verification profiles to run. `generic` is always active. See [profiles](#verification-profiles). |
+
+After changing either list, run `jig upgrade` (or ask your agent to): it installs what is newly
+selected.
+
+### Git and branches
+
+| Setting | Default | What it does |
+|---|---|---|
+| `git.base_branch` | detected by `jig init` | The main branch: where tasks branch from, and where Jig looks to see whether a task's work has landed. `jig init` reads it from the remote's default branch, else `main` or `master`. |
+| `git.branch_per_task` | `true` | Starting a task creates and switches to its own branch. With `false`, a task records the branch you are on instead — for projects that work on one branch by choice. |
+| `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id. |
+| `git.worktree_root` | `../<project>.worktrees` | Where a task started in a separate worktree is placed ([several agents at once](/working-with-tasks#several-agents-at-once)). |
+| `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address. Without the tool, or with `none`, Jig falls back to what Git itself can show. |
+
+### Housekeeping
+
+| Setting | Default | What it does |
+|---|---|---|
+| `housekeeping.cadence` | `1d` | How often the session hook starts housekeeping: only when the last run is older than this. |
+| `housekeeping.fetch` | `true` | Whether housekeeping may run `git fetch` to see the latest remote state. |
+| `housekeeping.trash_ttl` | `7d` | How long a cleaned-up workspace stays in `.ai/runtime/trash/` before it is deleted. |
+| `housekeeping.abandoned_ttl` | `14d` | How long an abandoned task's workspace is kept before it goes to the trash. |
+| `housekeeping.stale_after` | `60d` | An active task older than this is reported as possibly stale — reported, never deleted. |
+
+### Knowledge
+
+| Setting | Default | What it does |
+|---|---|---|
+| `knowledge.require_frontmatter` | `true` | `jig knowledge check` fails a knowledge document without its metadata block. |
+
+### Verification
+
+| Setting | Default | What it does |
+|---|---|---|
+| `verify.full_run` | `local` | What a plain `jig verify` runs. `local`: every check, every time. `ci`: only what the change touches — see below. |
+
+#### `verify.full_run: ci`
+
+Set it **only when your CI runs every check on every pull request**. Jig takes your word for it; it
+does not check.
+
+With `ci`, a plain `jig verify` — the one the agent runs before declaring work done — checks only
+what changed since the branch left `git.base_branch`: committed, staged, unstaged and untracked
+changes. It prints why:
+
+```text
+verify: scope changed since main@a1b2c3d (verify.full_run: ci, full set runs in CI)
+```
+
+The full set still runs whenever it should:
+
+- **in CI** — whenever the `CI` environment variable is set, which every CI service does, so the same
+  command runs everything there;
+- **on request** — `jig verify --full`.
+
+This saves the agent from running the whole suite after every small change, while CI still proves
+everything before a merge. A red CI run sends the task back to verification.
+
+## Personal settings — `.ai/config.local.yaml`
+
+Some settings are a matter of personal taste rather than project policy. Put them in
+`.ai/config.local.yaml` — the same format, one file per clone, ignored by Git (`jig init` adds it to
+`.gitignore`). It overrides the project's file **only** for:
+
+- `housekeeping.cadence`, `housekeeping.fetch`, `housekeeping.trash_ttl`,
+  `housekeeping.abandoned_ttl`, `housekeeping.stale_after`;
+- `git.worktree_root`.
+
+Any other key in it is ignored. `jig status` shows what your local file changes, and warns if Git
+does not ignore it.
+
+## Verification profiles
+
+A profile knows how to check one stack. Jig runs the tools your project already uses, from the
+project's own environment — `vendor/bin`, `node_modules/.bin`, `.venv`, `bundle exec` — never a global
+copy with another version. The stack's own toolchain (`go`, `cargo`, `dotnet`, `composer`, your
+package manager) comes from `PATH`. Jig installs nothing: a missing tool is reported as a skip, and a
+skip is never a pass.
+
+| Profile | Detected by | Checks, when available |
+|---|---|---|
+| `generic` | always | The folder is a Git repository. |
+| `shell` | `*.sh` | ShellCheck, and an executable `tests/run.sh`. |
+| `php` | `composer.json` | PHPUnit or Pest, PHPStan, Pint, `composer validate`. |
+| `laravel` | `artisan` | The PHP checks, plus `php artisan test`. |
+| `node` | `package.json` | Your `test`, `lint` and `typecheck` scripts, run by your package manager (npm, pnpm, yarn or bun). |
+| `go` | `go.mod` | `go vet`, `go test`. |
+| `python` | `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, `Pipfile` | ruff, mypy (when configured), pytest. |
+| `rust` | `Cargo.toml` | `cargo fmt --check`, `cargo clippy`, `cargo test`. |
+| `dotnet` | `*.sln`, `*.csproj`, `*.fsproj` | `dotnet format --verify-no-changes`, `dotnet test`. |
+| `jvm` | Gradle or Maven build files | Gradle `check` or Maven `test`, through the project's wrapper when present. |
+| `ruby` | `Gemfile` | RuboCop, RSpec or Minitest, through `bundle exec`. |
+| `dart` | `pubspec.yaml` | analyze, format and test, with `flutter` or `dart`. |
+| `swift` | `Package.swift` | `swift build`, `swift test`. |
+
+When only part of a project changed, every profile except `generic` and `swift` narrows its checks:
+a linter gets the changed files, and tests are narrowed where the stack ties a source file to its
+tests (`foo.py` → `test_foo.py`, a Go package and its importers, a Rust crate). Anything it cannot
+narrow runs in full, with the reason printed.
+
+Checks of your own belong in the project's installed profile under `.ai/profiles/`; `jig upgrade`
+keeps a profile you edited.
+
+### A verification map for your project
+
+A profile only knows rules that are true for every project of its stack. When your project has its
+own — *"changes under `docs/` affect no test"*, *"anything in `src/Billing/` runs the billing
+tests"* — write them into `.ai/verify/<profile>.map`. The file is yours: `jig init` and
+`jig upgrade` never create or touch it.
+
+```text
+# glob            decision
+docs/**           -
+src/Billing/**    tests/BillingTest.php
+composer.lock     ALL
+```
+
+Each line is a path pattern and a decision: `-` (affects no check), `ALL` (run everything), or a
+filter the profile understands — a test file for PHP, Python, Ruby, Dart and Node, a package for Go,
+a crate for Rust, a test project for .NET, a module for Gradle and Maven, a test-name filter for
+shell. The first matching line wins; a path no line matches is left to the profile's own rules. A
+broken line fails that profile with the file and line named, rather than narrowing the wrong way.
+
+## When housekeeping runs
+
+Housekeeping — noticing merged tasks and cleaning up workspaces — needs a trigger. Jig does not run
+a scheduler of its own. Pick one, or both; running it twice is harmless.
+
+- **Claude Code session hook.** At the start of each session it starts housekeeping in the
+  background, only when the last run is older than `housekeeping.cadence`. `jig init --session-hook`
+  creates `.claude/settings.json` with the hook when the file does not exist yet; an existing file is
+  never edited — `jig init` prints the lines to add by hand. The Windows installer turns the hook on
+  unless you pass `-NoSessionHook`.
+- **A scheduler.** Codex has no session hook. Examples for cron, macOS launchd and Linux systemd are
+  in `.ai/templates/scheduler/`; use the project's absolute path in them.
+
+`jig status` reports whether the session hook is installed.

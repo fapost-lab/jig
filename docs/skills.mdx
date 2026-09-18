@@ -1,6 +1,48 @@
 ---
 title: "Skills"
-description: "Every Jig skill: when it is used, what it does, what it asks you."
+description: "Every Jig skill: when the agent uses it, what it does, and what it asks you."
 ---
 
-This page is being written.
+A skill is a set of instructions your agent follows for one kind of work. Jig installs its skills
+into your project for each runtime you use — `.claude/skills/` for Claude Code, `.codex/skills/`
+for Codex — so everyone who clones the project gets the same ones.
+
+You rarely call a skill by name. The agent sees each skill's description and picks the one that
+fits what you asked; your `AGENTS.md` tells it to start work with `jig-task`. When it picks the
+wrong one or none, name it: `/jig-task` in Claude Code, `$jig-task` in Codex, and so on for every
+skill below.
+
+## Starting and shaping work
+
+| Skill | When | What it does | What it asks you |
+|---|---|---|---|
+| `jig-task` | You describe work to do, or ask to continue something | Finds an existing task or classifies the new one by risk (T0–T4), creates its workspace and branch when the work needs them (small work that fits one session needs neither), names the route and starts the first stage. At session start, lists merged tasks waiting to be closed. | Which task, when several are live on the branch; whether each merged task can be closed. |
+| `jig-idea` | An idea that is not settled yet, work too big for one task, or a new project's architecture and stack | Questions the idea, stresses it, offers other shapes, and writes what survives as a specification with a roadmap in `.ai/specs/`. Starts no task and changes no code. Files a phase's tasks when asked. | Every decision, one at a time, each with its recommendation. |
+
+## The stages of a route
+
+Each class of task runs some of these, in order ([Concepts](/concepts#risk-classes-and-routes)).
+
+| Skill | When | What it does | What it asks you |
+|---|---|---|---|
+| `jig-analyze` | Before a local or structural change; to investigate a problem | Establishes the cause, what the change touches, which rules and decisions bind it, and the real options. | One question when something is ambiguous. |
+| `jig-implement` | After analysis, or after you approved a design | Loads the knowledge the change must respect, makes the change and collects evidence that it works. | Nothing, unless the design turns out wrong. |
+| `jig-review` | After implementation of structural or bigger work | Reviews the actual diff against the requirements, the rules, the project's contracts and the evidence. | Nothing; reports findings. |
+| `jig-architecture-review` | Architectural and critical work, or on request | Checks the change against the system's boundaries, dependency directions, invariants and accepted decisions. | Nothing; reports findings. |
+| `jig-verify` | Before anything is declared done | Runs the project's checks and confirms the goal is actually met, not just that the tests are green. | Nothing; a red result sends the work back. |
+| `jig-consolidate` | At the end of every route, before the commit; again after the change is merged | Decides what the project should remember — updates knowledge or records that there is nothing — and closes the task once its change has landed. | Whether a merged task can be closed. |
+
+Discovery, specification, alternatives, design and planning are stages of the larger routes, not
+separate skills: the agent writes those documents inside the task's workspace, and shows you the
+design at the human gate.
+
+## Knowledge
+
+| Skill | When | What it does | What it asks you |
+|---|---|---|---|
+| `jig-init` | Setting Jig up in a project, or when the project knowledge is empty or stale | Writes the glossary, architecture and rules — from the code, or from a specification when there is no code yet. Offers to add the Jig section to your own `AGENTS.md`. | Ambiguous terms and boundaries; consent before touching your `AGENTS.md`. |
+| `jig-map` | After `jig-init`, when three documents cannot describe the project honestly | Adopts the documentation the project already has and proposes knowledge per domain — all of it proposed, none of it binding until accepted. | Everything it proposes waits for `jig-accept`. |
+| `jig-accept` | Proposals are waiting, or a linked document changed since it was approved | Shows each proposal verbatim with what accepting it would cause, and records your decisions. | Accept or reject each one — by number, never by id. |
+
+See [Existing project](/brownfield) for `jig-init`, `jig-map` and `jig-accept` in a real flow, and
+[New project](/greenfield) for `jig-idea`.
