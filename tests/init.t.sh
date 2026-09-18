@@ -836,3 +836,27 @@ test_init_works_under_a_project_path_with_shell_metacharacters() {
   done < <(sed -n '/^---$/,$p' .ai/manifest | tail -n +2)
   assert_eq 0 "$bad" "manifest entries whose hash does not match the file"
 }
+
+# --- instruction files the project already had (ADR-0003) --------------------
+
+test_init_warns_when_an_existing_agents_md_lacks_jig() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warning: instructions: AGENTS.md does not mention Jig"
+  assert_eq "# Our own rules" "$(cat AGENTS.md)"
+}
+
+test_init_warns_even_when_quiet() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  run jig init --from "$JIG_HOME" --quiet
+  assert_contains "$OUT" "AGENTS.md does not mention Jig"
+}
+
+test_init_fresh_project_prints_no_instructions_warning() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_not_contains "$OUT" "warning: instructions"
+}

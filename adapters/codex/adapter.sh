@@ -63,6 +63,38 @@ adapter_codex_install_instructions() {
   :
 }
 
+# adapter_codex_instructions_hint <project-root>
+# Advisory only; writes no file. Prints what is missing and how to fix it, or
+# nothing when the instructions Codex reads already carry Jig's workflow.
+#
+# Codex reads AGENTS.md. A project that had its own AGENTS.md before `jig init`
+# keeps it untouched (ADR-0003), so the agent may never hear of the routes: the
+# skills are installed, but nothing tells the agent to start with `jig-task`.
+# The mention of `jig-task` is the marker: it is what the Workflow section of
+# templates/AGENTS.md exists to say. Editing the file is the agent's job, with
+# the human's consent (the jig-init skill), never a script's.
+# adapter_codex_instructions_file
+# Prints the project-relative instruction file this runtime reads, so reports
+# can name it without parsing the hint's prose.
+adapter_codex_instructions_file() {
+  printf '%s\n' "AGENTS.md"
+}
+
+adapter_codex_instructions_hint() {
+  local project="$1"
+  if [ -f "$project/AGENTS.md" ] && grep -q 'jig-task' "$project/AGENTS.md"; then
+    return 0
+  fi
+  if [ -f "$project/AGENTS.md" ]; then
+    printf 'instructions: AGENTS.md does not mention Jig, so Codex will not follow its workflow.\n'
+  else
+    printf 'instructions: AGENTS.md is missing, so Codex will not follow the Jig workflow.\n'
+  fi
+  # shellcheck disable=SC2016  # `$jig-init` is Codex's invocation, not a variable
+  printf '  Run $jig-init to merge the Jig section, or copy it from\n'
+  printf '  .codex/skills/jig-init/references/agents-section.md into AGENTS.md.\n'
+}
+
 # adapter_codex_session_hook_hint <project-root>
 # Advisory only; writes no file.
 #

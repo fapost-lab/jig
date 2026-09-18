@@ -57,6 +57,41 @@ adapter_claude_install_instructions() {
   fi
 }
 
+# adapter_claude_instructions_hint <project-root>
+# Advisory only; writes no file. Prints what is missing and how to fix it, or
+# nothing when the instructions Claude Code reads already carry Jig's workflow.
+#
+# Claude Code reads CLAUDE.md. The template is one line, `@AGENTS.md`, which
+# imports the shared instructions; a project that had its own CLAUDE.md or
+# AGENTS.md before `jig init` keeps them untouched (ADR-0003), so the agent may
+# never hear of the routes. Jig is connected when CLAUDE.md mentions `jig-task`
+# itself, or imports an AGENTS.md that does. The check is a read-only substring
+# test, like the session hook's; the edit is the agent's job, with the human's
+# consent (the jig-init skill), never a script's.
+# adapter_claude_instructions_file
+# Prints the project-relative instruction file this runtime reads, so reports
+# can name it without parsing the hint's prose.
+adapter_claude_instructions_file() {
+  printf '%s\n' "CLAUDE.md"
+}
+
+adapter_claude_instructions_hint() {
+  local project="$1"
+  local claude="$project/CLAUDE.md" agents="$project/AGENTS.md"
+  if [ -f "$claude" ]; then
+    grep -q 'jig-task' "$claude" && return 0
+    if grep -qx '[[:space:]]*@AGENTS\.md[[:space:]]*' "$claude" \
+       && [ -f "$agents" ] && grep -q 'jig-task' "$agents"; then
+      return 0
+    fi
+    printf 'instructions: CLAUDE.md does not mention Jig, so Claude Code will not follow its workflow.\n'
+  else
+    printf 'instructions: CLAUDE.md is missing, so Claude Code will not follow the Jig workflow.\n'
+  fi
+  printf '  Run /jig-init to merge the Jig section, or add the line @AGENTS.md to CLAUDE.md\n'
+  printf '  once AGENTS.md carries .claude/skills/jig-init/references/agents-section.md.\n'
+}
+
 # adapter_claude_session_hook_hint <project-root>
 # Advisory only: prints how to enable the housekeeping trigger, or nothing
 # when it is already enabled. Writes no file. Exit 0 means the answer is

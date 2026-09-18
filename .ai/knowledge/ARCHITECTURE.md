@@ -71,6 +71,13 @@ and version.
 - `adapter_<name>_session_hook_hint <project-root>` — advisory only, writes nothing:
   prints how to enable the housekeeping trigger, prints nothing when it is already
   enabled, and **exits 2 when the runtime has no session hook at all** (ADR-0024).
+- `adapter_<name>_instructions_hint <project-root>` — advisory only, writes nothing:
+  prints what is missing when the instruction file the runtime reads does not carry Jig's
+  workflow (the marker is a mention of `jig-task`; Claude also accepts `@AGENTS.md` when
+  `AGENTS.md` carries it), prints nothing when it does. `init` repeats it as a warning,
+  `status` and `doctor` report it. A project's own `AGENTS.md`/`CLAUDE.md` is never edited
+  by a script (ADR-0003): the `jig-init` skill merges the section with the human's consent.
+  Paired with `adapter_<name>_instructions_file`, which names that file for the reports.
 - `adapter_<name>_install_session_hook <project-root>` — called only by
   `init --session-hook`. Creates the runtime's config file with the hook entry **when
   that file is absent**, printing the created path; exits 2, touching nothing, when a

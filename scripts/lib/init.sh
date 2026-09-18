@@ -680,4 +680,18 @@ cmd_init() {
     fi
   fi
   _init_out "next: run the jig-init skill to populate knowledge; see .ai/scripts/jig status"
+
+  # 10. instruction files ------------------------------------------------------
+  # An AGENTS.md or CLAUDE.md the project already had is kept (step 5,
+  # ADR-0003), and then nothing tells the agent to follow Jig. Each adapter
+  # says whether its runtime's file carries the workflow; init only repeats
+  # the warning, last, where a reader of the summary will see it. Printed
+  # even with --quiet: it is the one thing in this run the user must act on.
+  for a in $adapters_words; do
+    command -v "adapter_${a}_instructions_hint" >/dev/null 2>&1 || continue
+    hint=$("adapter_${a}_instructions_hint" "$JIG_PROJECT") || hint=""
+    if [ -n "$hint" ]; then
+      printf '\nwarning: %s\n' "$hint"
+    fi
+  done
 }

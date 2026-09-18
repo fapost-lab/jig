@@ -237,6 +237,7 @@ $rel"
   fi
 
   _status_session_hook
+  _status_instructions
 }
 
 # _status_framework_versions <project-version> — compares the project's
@@ -355,6 +356,36 @@ _status_session_hook() {
       printf 'session hook (%s): not installed\n' "$a"
     else
       printf 'session hook (%s): installed\n' "$a"
+    fi
+  done
+}
+
+# Whether the instruction file each installed runtime reads carries Jig's
+# workflow. A project that had its own AGENTS.md or CLAUDE.md before `init`
+# keeps it (ADR-0003), and then the agent never hears of `jig-task`; this line
+# is how that stops being silent. The adapter answers (an empty hint means
+# connected), for the same reason as the session hook line above, and the line
+# is omitted when the source checkout holding the adapters is gone.
+_status_instructions() {
+  local source a adir hint file
+  source=$(manifest_source 2>/dev/null) || return 0
+  [ -n "$source" ] || return 0
+  [ -d "$source/adapters" ] || return 0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+
+  for a in $(cfg_list adapters "claude codex"); do
+    adir=$(adapters_dir "$source/adapters" "$a") || continue
+    [ -f "$adir/adapter.sh" ] || continue
+    # shellcheck disable=SC1090
+    . "$adir/adapter.sh"
+    command -v "adapter_${a}_instructions_hint" >/dev/null 2>&1 || continue
+    hint=$("adapter_${a}_instructions_hint" "$JIG_PROJECT") || hint=""
+    if [ -n "$hint" ]; then
+      file=$("adapter_${a}_instructions_file")
+      printf 'instructions (%s): no Jig section in %s (run the jig-init skill)\n' "$a" "$file"
+    else
+      printf 'instructions (%s): ok\n' "$a"
     fi
   done
 }

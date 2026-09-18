@@ -863,3 +863,32 @@ test_status_shows_where_a_task_started_in_a_worktree_is() {
   # It is not current here: its branch is checked out elsewhere.
   assert_contains "$OUT" "current task: none"
 }
+
+# --- instruction files (adapter_<a>_instructions_hint) ------------------------
+
+test_status_instructions_ok_after_fresh_init() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  run jig status
+  assert_contains "$OUT" "instructions (claude): ok"
+  assert_contains "$OUT" "instructions (codex): ok"
+}
+
+test_status_instructions_reports_a_kept_foreign_agents() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  jig init --from "$JIG_HOME" >/dev/null
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions (codex): no Jig section in AGENTS.md"
+  assert_contains "$OUT" "instructions (claude): no Jig section in CLAUDE.md"
+}
+
+test_status_instructions_reports_a_missing_agents_md() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  rm AGENTS.md
+  run jig status
+  assert_contains "$OUT" "instructions (codex): no Jig section in AGENTS.md"
+  assert_contains "$OUT" "instructions (claude): no Jig section in CLAUDE.md"
+}

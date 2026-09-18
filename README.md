@@ -138,7 +138,9 @@ against an existing `.ai/config.yaml`, detected profiles are only suggested: a c
 already made is never widened. `init` is non-interactive. Re-running it preserves existing
 knowledge and modified files; explicit profile/adapter flags update those selections
 in `.ai/config.yaml`. Read any conflict report and inspect the resulting diff.
-Existing `AGENTS.md` or `CLAUDE.md` may need the Jig instructions merged by hand.
+An existing `AGENTS.md` or `CLAUDE.md` is kept as it is; when it does not mention Jig, `init`
+warns and `jig status` and `jig doctor` keep saying so. The `jig-init` skill merges the Jig
+section into it with your consent.
 
 Without a global command, use an absolute path to the source executable:
 
