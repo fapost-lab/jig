@@ -77,6 +77,13 @@ go deeper. Record the level in `spec.md`.
 Do not skip ahead: an alternative offered before the idea is understood answers a question
 nobody asked.
 
+When the spec is for a new project, the shapes include its architecture: two or three
+approaches — a plain layered application, modules by domain, ports and adapters, or what the
+human names — with what each costs and pays back at this size and expected growth, and the
+lightest one always among them. Patterns combine (domain modules with ports at the edges);
+none is right by default. Record the choice and the rejected ones in `architecture.md`, the
+stack in `stack.md`: `jig-init` carries both into knowledge.
+
 ## 5. Independent failure hunt
 
 Always on deep, offered on normal. Give a fresh agent in a clean context — a subagent, if
@@ -131,6 +138,11 @@ and move items between waves.
 The session ends when nothing is left open for the chosen depth, or when the human stops.
 Close with three lines: the idea after testing in one sentence, its weakest point, the next
 step. Leftovers stay in "Open questions"; the next session starts there.
+
+In a project with no code yet whose `ARCHITECTURE.md` and `RULES.md` are still the templates,
+the next step is `jig-init`: it carries the spec's decisions into knowledge and turns on the
+stack's profiles ([from a spec](../jig-init/references/from-a-spec.md)). Offer it once the
+decisions are settled; without it the first tasks start knowing none of them.
 
 Check the result:
 

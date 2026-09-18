@@ -57,6 +57,9 @@ Update the document that owns the topic instead of adding a parallel one. Severa
 over time shape one feature document. When a decision replaces an earlier one, mark the
 old ADR `superseded` rather than editing history.
 
+A part of `ARCHITECTURE.md` under **Intended — not built yet** that this task built moves out
+of that heading and is described as built — as it is, where it differs from the intention.
+
 **A rule adopted from the project lives in its source.** When `jig context` gave you a file
 `linked by <id>`, that file owns the topic: edit it, and leave the stub its metadata. Then show
 the changed section verbatim and ask; only on the human's yes run

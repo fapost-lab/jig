@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-09-18
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -127,3 +127,9 @@ so it cannot live where everything is read as describing it.
 > git keeps the history. `jig spec remove` stays the command for a spec abandoned before its work was
 > done — decided by the maintainer on 2026-09-16 — rejected: keeping finished specs beside open ones,
 > where they repeat the knowledge and drift from it, and archiving them behind `--all`.
+
+> **Amendment (2026-09-18).** A new project's first knowledge can come from its spec. In a project with
+> no code, `jig-init` carries the spec's decisions — not its roadmap, open questions or assumptions — into
+> `ARCHITECTURE.md` (what is not built yet under its own heading), `RULES.md`, ADRs and boundary
+> conventions, and turns on the stack's profiles; `jig-idea` offers that step when it ends a spec in such
+> a project. The spec itself stays a plan and is still never resolved.
