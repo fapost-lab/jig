@@ -35,4 +35,7 @@ tests/*.t.ps1                   install::
 .gitattributes                  -
 .claude/settings.json           -
 .ai/config.yaml                 -
-.ai/verify/**                   -
+
+# Except this map: tests/verify.t.sh checks it, and CI reads it to decide
+# how much of the suite a change needs (.github/scripts/ci-scope.sh).
+.ai/verify/**                   verify::test_verify_own_shell_map

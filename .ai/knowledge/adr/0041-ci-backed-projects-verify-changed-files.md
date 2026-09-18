@@ -14,6 +14,7 @@ paths:
   - "skills/jig-verify/**"
   - tests/run.sh
 summary: Why a project that declares CI runs the full set gets a flag-less jig verify narrowed to changes since the merge base, and why the files-to-checks map is the project's file, parsed by jig verify.
+reviewed_at: 2026-09-18
 ---
 # ADR-0041: A project whose CI runs the full set verifies by changed files, through a project-owned map
 
@@ -119,3 +120,13 @@ This narrows ADR-0013's last sentence for projects that declare `ci`; the rest o
   only make a filter look empty, which runs the full set.
 - This repository's CI does not run shellcheck over the source; narrowed lint covers every changed
   file, but linter-version drift on untouched files is visible only in a full local run.
+
+> **Amendment (2026-09-18).** This repository's CI reads the same map. A `scope` job runs
+> `.github/scripts/ci-scope.sh` on the change (the pull request's base, or the push's previous tip):
+> when every changed path is decided `-` by the map, or is documentation the map names no line for
+> (`*.md`, `docs/`, `.ai/knowledge/`, `.ai/specs/`), the run is `light` — the knowledge check only;
+> anything else, a path under `.github/`, a map that does not parse, or a change that cannot be
+> measured is `full`. There is no partial run: a change to code gets every platform. Skipped jobs,
+> not `paths-ignore`, so a required check reads them as passed. A nightly full run on `main` catches a
+> map line that let a change skip the tests it needed. It was a pull request deleting two spec files
+> that ran the whole suite on three platforms.

@@ -19,6 +19,10 @@ on:
     branches: [main, 'epic/**']
   pull_request:
   workflow_dispatch:
+  # Every night the whole suite runs on main whatever changed: a mistake in the
+  # verify map that lets a change skip the tests it needed shows up within a day.
+  schedule:
+    - cron: '17 3 * * *'
 
 # Least privilege: the suite only reads the checkout. A public repository's
 # workflow token defaults to more than this job needs.
@@ -36,8 +40,58 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # How much of the suite this change needs (ADR-0041 as amended). A change
+  # every path of which the verify map says affects no test — documentation,
+  # knowledge, specs — gets the knowledge check only; anything else, or a
+  # change that cannot be measured, gets everything. The rules live in
+  # .github/scripts/ci-scope.sh, which has tests; this job only runs it.
+  # A skipped job reads as passed to a required check, where `paths-ignore`
+  # would leave the check waiting forever.
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide the scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) line=$(.github/scripts/ci-scope.sh "$PR_BASE") ;;
+            push) line=$(.github/scripts/ci-scope.sh "$PUSH_BEFORE") ;;
+            *) line="full ($EVENT runs everything)" ;;
+          esac
+          echo "scope: $line"
+          case "$line" in
+            light*) echo "full=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "full=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  # The light scope: what a documentation change can still break is the
+  # knowledge, so the repository's own knowledge is checked.
+  knowledge:
+    needs: scope
+    if: needs.scope.outputs.full != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Knowledge check
+        run: |
+          scripts/jig knowledge check
+          tests/run.sh knowledge::test_real_repository_knowledge_passes_with_no_failures
+
   test:
     name: ${{ matrix.os }}
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       # Both platforms always report. A failure on one is information about
@@ -105,7 +159,8 @@ jobs:
   # pull request; smoke-windows below covers those.
   test-windows:
     name: windows-latest (Git Bash) ${{ matrix.shard }}/3
-    if: github.event_name != 'pull_request'
+    needs: scope
+    if: github.event_name != 'pull_request' && needs.scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
@@ -151,6 +206,8 @@ jobs:
   # workspace link has to be a junction here.
   smoke-windows:
     name: windows-latest smoke (install.ps1)
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -222,9 +279,15 @@ jobs:
   #
   # Write access is granted to this job alone: the rest of the workflow keeps
   # `contents: read`. Pull requests and manual runs never tag.
+  #
+  # A light change skips the tests and still reaches this job, which then finds
+  # its tag already there: a version is bumped in scripts/lib/version.sh, and a
+  # change to a script is never light. A failed or cancelled job stops it.
   release:
-    needs: [test, test-windows, smoke-windows]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [scope, knowledge, test, test-windows, smoke-windows]
+    if: >-
+      !cancelled() && !failure()
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -246,8 +309,11 @@ jobs:
   # interpolated into the shell script, because it is attacker-controlled on
   # a pull request from a fork.
   epic-pr:
-    needs: test
-    if: github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'epic/')
+    needs: [scope, test]
+    if: >-
+      !cancelled() && !failure()
+      && github.event_name == 'pull_request' && github.base_ref == 'main'
+      && startsWith(github.head_ref, 'epic/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
