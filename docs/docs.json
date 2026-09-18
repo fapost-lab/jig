@@ -3,6 +3,7 @@
   "theme": "mint",
   "name": "Jig",
   "description": "An agent SDLC framework: your AI agent works through risk-sized routes, with project knowledge and human gates.",
+  "favicon": "/favicon.svg",
   "colors": {
     "primary": "#2563EB"
   },
