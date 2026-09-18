@@ -62,6 +62,12 @@ project owns.
   goes on `PATH`; `init --link` and link-mode `upgrade` refuse before their first write.
   `scripts/jig.cmd` is framework-owned like `scripts/jig`, and `jig init` merges
   `templates/gitattributes` into the project's `.gitattributes`.
+  Whatever the installer does on the user's behalf it says before doing it: that winget accepts
+  its source and package agreements, that the Git identity it sets is global, and, before the
+  "set up jig" question, that `init --session-hook` creates `.claude/settings.json` whose hook
+  runs housekeeping (which moves and later deletes workspaces) at each session start;
+  `-NoSessionHook` leaves the hook out. The Git installer the no-winget path downloads is not
+  checked against a hash or signature — a known gap, not a guarantee.
 - `jig doctor`: whether jig works on this machine and in this project, one line and a `fix:`
   per check. A reporting command — it calls `status`, `upgrade` and `common.sh` functions and
   writes nothing.

@@ -397,6 +397,9 @@ function Install-JigGitForWindows {
     $winget = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue
     if ($winget) {
         Write-JigStep 'Installing Git for Windows via winget...'
+        # Said before it happens: the flags below accept winget's source and
+        # package agreements for the user, who should know they did.
+        Write-Host '  (this accepts the winget source and Git for Windows package agreements for you)'
         $wingetResult = Invoke-JigNative -FilePath 'winget' -NativeArgs @(
             'install', '--id', 'Git.Git', '-e', '--source', 'winget', '--silent',
             '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
@@ -559,6 +562,7 @@ function Initialize-JigProject {
         [bool]$Yes,
         [string]$GitName,
         [string]$GitEmail,
+        [bool]$SessionHook = $true,
         [Parameter(Mandatory)][string]$GitExe,
         [Parameter(Mandatory)][string]$BashExe,
         [Parameter(Mandatory)][string]$JigScriptPath
@@ -614,7 +618,7 @@ function Initialize-JigProject {
     if (-not $name) {
         if ($GitName) { $name = $GitName }
         elseif ($Yes) { $name = $env:USERNAME }
-        else { $name = Read-JigValue -Prompt 'Git user.name' -Default $env:USERNAME }
+        else { $name = Read-JigValue -Prompt 'Git user.name (global, for every repository)' -Default $env:USERNAME }
         if ($name) {
             Invoke-JigGitOrThrow -GitExe $GitExe -Description 'Could not set your global git user.name' `
                 -GitArgs @('config', '--global', 'user.name', $name) | Out-Null
@@ -623,20 +627,33 @@ function Initialize-JigProject {
     if (-not $email) {
         if ($GitEmail) { $email = $GitEmail }
         elseif ($Yes) { $email = "$env:USERNAME@example.com" }
-        else { $email = Read-JigValue -Prompt 'Git user.email' -Default "$env:USERNAME@example.com" }
+        else { $email = Read-JigValue -Prompt 'Git user.email (global, for every repository)' -Default "$env:USERNAME@example.com" }
         if ($email) {
             Invoke-JigGitOrThrow -GitExe $GitExe -Description 'Could not set your global git user.email' `
                 -GitArgs @('config', '--global', 'user.email', $email) | Out-Null
+            Write-JigResult "global git identity: user.email=$email (change with: git config --global user.email <address>)"
         }
     }
 
-    # Q4: set up jig.
+    # Q4: set up jig. What it adds is said before the question, the session
+    # hook above all: it runs `jig housekeeping` -- which can move and later
+    # delete task workspaces -- in the background at every Claude Code
+    # session start, and a user who is not told cannot know to look for it.
     Write-Host ''
+    Write-Host 'Setting up jig adds .ai\, AGENTS.md, CLAUDE.md and the jig skills to this folder.'
+    $initArgs = @('init')
+    if ($SessionHook) {
+        Write-Host 'It also creates .claude\settings.json with a Claude Code session hook: at the start'
+        Write-Host 'of each session it runs `jig housekeeping` in the background, which moves the'
+        Write-Host 'workspaces of merged or long-abandoned tasks to trash and later deletes them.'
+        Write-Host 'Run the installer with -NoSessionHook to leave the hook out.'
+        $initArgs += '--session-hook'
+    }
     if (-not (Read-JigConfirm -Prompt 'Set up jig in this folder?' -Yes $Yes)) {
         return $projectDir
     }
     $initResult = Invoke-JigCommand -BashExe $BashExe -JigScriptPath $JigScriptPath `
-        -WorkingDirectory $projectDir -JigArgs @('init', '--session-hook')
+        -WorkingDirectory $projectDir -JigArgs $initArgs
     $initResult.Output | ForEach-Object { Write-Host $_ }
     if ($initResult.ExitCode -ne 0) {
         throw "jig init failed in $projectDir"
@@ -791,7 +808,8 @@ function Install-Jig {
         [switch]$Uninstall,
         [string]$Repository,
         [string]$InstallSh,
-        [switch]$NoGitInstall
+        [switch]$NoGitInstall,
+        [switch]$NoSessionHook
     )
 
     # `-File install.ps1 ...` runs this from a real script file, so
@@ -892,7 +910,8 @@ function Install-Jig {
             if (-not $NoInit) {
                 Write-JigStep 'Setting up your project...'
                 $projectDir = Initialize-JigProject -Project $Project -Yes $YesBool `
-                    -GitName $GitName -GitEmail $GitEmail -GitExe $gitExe -BashExe $bashExe `
+                    -GitName $GitName -GitEmail $GitEmail -SessionHook (-not $NoSessionHook) `
+                    -GitExe $gitExe -BashExe $bashExe `
                     -JigScriptPath $installResult.JigScript
             }
 

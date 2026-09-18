@@ -77,15 +77,19 @@ irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1 | iex
 
 It does, and says as it goes:
 
-1. **Git for Windows**, only when it is missing: through winget, or the official installer
-   when winget is not there. Windows asks for permission once; if you decline, it tries an
+1. **Git for Windows**, only when it is missing: through winget, which it tells you accepts the
+   winget source and package agreements for you, or the official installer when winget is not
+   there. Windows asks for permission; if you decline the official installer, it tries an
    install for your user only.
 2. **Jig** itself, into `%USERPROFILE%\.local\share\jig` at the newest release, with its
    `scripts` folder added to your user `PATH`. No link is needed, so Developer Mode is not either.
 3. **Your project**, if you agree — at most four questions: which folder (the current one by
    default), whether to make it a Git repository, your name and e-mail for Git (only when Git has
-   none), and whether to set up Jig there. A folder it turned into a repository gets one first
-   commit; an existing repository gets no commit.
+   none; they are set globally, for every repository), and whether to set up Jig there. Before that
+   last question it says what setup adds, including a Claude Code session hook that runs
+   housekeeping in the background at each session start; `-NoSessionHook` leaves it out. A folder
+   it turned into a repository gets one first commit of everything in it; an existing repository
+   gets no commit.
 4. **`jig doctor`**, which checks everything above, and the sentence to say to your agent.
 
 Everything it prints also goes to `%LOCALAPPDATA%\jig\install.log`. Running the line again is
@@ -104,7 +108,7 @@ Windows stays):
 ```
 
 Other options: `-Project <folder>`, `-Yes` (no questions, defaults), `-GitName`, `-GitEmail`,
-`-NoInit` (no project step), `-Ref vX.Y.Z` or `-Ref main`.
+`-NoInit` (no project step), `-NoSessionHook` (no housekeeping hook), `-Ref vX.Y.Z` or `-Ref main`.
 
 What differs from macOS and Linux: `jig task start --worktree` links the task's workspace with an
 NTFS junction instead of a symbolic link, which needs no rights. `jig init --link` — developing
