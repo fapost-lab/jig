@@ -14,6 +14,12 @@ Run `.ai/scripts/jig status`. If it reports the project is not initialised, run
 `.ai/scripts/jig init` (or `<framework>/scripts/jig init` when the scripts are not yet
 installed) and show the user what it created. Never overwrite existing knowledge.
 
+When `jig status` prints `instructions (<runtime>): no Jig section in <file>`, the project
+kept its own `AGENTS.md` or `CLAUDE.md` and the agent there was never told about Jig. Show
+the user the file and [the Jig section](references/agents-section.md) verbatim, and with
+their consent append the section to `AGENTS.md`; for `CLAUDE.md`, add the line `@AGENTS.md`
+unless it should carry the section itself. Never rewrite what the file already says.
+
 ## 2. Choose the path
 
 Knowledge is written from code or from decisions. Say in one line which applies and why:

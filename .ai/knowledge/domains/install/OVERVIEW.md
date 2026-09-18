@@ -40,6 +40,11 @@ project owns.
   its line into `.gitignore`, through the same append-missing-lines merge as every other
   `templates/gitignore` line; `upgrade` never touches `.gitignore`, so an older project
   gets the line only from a repeated `init`, and `status`/`doctor` warn until it has it.
+- A project's own `AGENTS.md` or `CLAUDE.md` is kept by `init`, and then no agent there is
+  told about Jig. `init` warns, `status` and `doctor` keep reporting it, from each adapter's
+  `adapter_<name>_instructions_hint`; the text to merge is
+  `skills/jig-init/references/agents-section.md`, a copy of the template's "Read first" and
+  "Workflow" that a test keeps equal to `templates/AGENTS.md`.
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).
 - The upgrade decision table: install, replace, keep-modified, delete — decided per path

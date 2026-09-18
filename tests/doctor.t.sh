@@ -324,3 +324,28 @@ test_doctor_tally_counts_every_line() {
   fail=$(printf '%s\n' "$OUT" | grep -c '^fail  ')
   assert_contains "$OUT" "doctor: $ok ok, $warn warn, $fail fail"
 }
+
+# --- instruction files (mirrors status.sh's _status_instructions) -------------
+
+test_doctor_instructions_ok_after_fresh_init() {
+  fixture_jig_repo
+  run jig doctor
+  assert_contains "$OUT" "ok    instructions (codex): Jig section present"
+}
+
+test_doctor_instructions_warns_for_a_foreign_agents() {
+  fixture_jig_repo
+  printf '# Our own rules\n' > AGENTS.md
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  instructions (codex): no Jig section in AGENTS.md"
+  assert_contains "$OUT" "fix: run the jig-init skill"
+}
+
+test_doctor_instructions_warns_for_a_foreign_claude_md() {
+  fixture_jig_repo
+  printf '# Notes for Claude\n' > CLAUDE.md
+  run jig doctor
+  assert_contains "$OUT" "warn  instructions (claude): no Jig section in CLAUDE.md"
+  assert_contains "$OUT" "ok    instructions (codex): Jig section present"
+}

@@ -288,6 +288,34 @@ _doctor_check_session_hooks() {
   done
 }
 
+# Whether each installed runtime's instruction file carries Jig's workflow; the
+# adapter answers, as for the session hook. A warn, not a fail: jig itself
+# works, but the agent will not follow its routes until the section is merged.
+_doctor_check_instructions() {
+  local source a adir hint file
+  source=$(manifest_source 2>/dev/null) || return 0
+  [ -n "$source" ] || return 0
+  [ -d "$source/adapters" ] || return 0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+
+  for a in $(_doctor_bracket_list "$(manifest_header_get adapters)"); do
+    adir=$(adapters_dir "$source/adapters" "$a") || continue
+    [ -f "$adir/adapter.sh" ] || continue
+    # shellcheck disable=SC1090
+    . "$adir/adapter.sh"
+    command -v "adapter_${a}_instructions_hint" >/dev/null 2>&1 || continue
+    hint=$("adapter_${a}_instructions_hint" "$JIG_PROJECT") || hint=""
+    if [ -n "$hint" ]; then
+      file=$("adapter_${a}_instructions_file")
+      _doctor_warn "instructions ($a)" "no Jig section in $file" \
+        "run the jig-init skill, which merges the section with your consent"
+    else
+      _doctor_ok "instructions ($a)" "Jig section present"
+    fi
+  done
+}
+
 # Only when a local config file exists: whether git keeps it out of commits.
 # config.sh answers (jig_config_local_ignored), as it does for status.
 _doctor_check_config_local() {
@@ -334,6 +362,7 @@ cmd_doctor() {
       _doctor_check_executable_bits
       _doctor_check_jigcmd_project
       _doctor_check_session_hooks
+      _doctor_check_instructions
       _doctor_check_config_local
     else
       _doctor_warn "project" "not initialised" "jig init"

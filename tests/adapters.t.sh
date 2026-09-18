@@ -205,3 +205,76 @@ test_adapter_claude_leaves_no_temp_file_behind() {
   leftovers=$(find .claude -name '.settings.json.tmp.*' | wc -l | tr -d ' ')
   assert_eq 0 "$leftovers"
 }
+
+# --- instructions hint (does the runtime's instruction file carry Jig?) ------
+
+test_adapter_codex_instructions_hint_silent_with_jig_agents() {
+  fixture_repo
+  cp "$JIG_HOME/templates/AGENTS.md" AGENTS.md
+  adapters_source codex
+  run adapter_codex_instructions_hint "$PWD"
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+test_adapter_codex_instructions_hint_names_a_foreign_agents() {
+  fixture_repo
+  printf '# Our own rules\n\nUse tabs.\n' > AGENTS.md
+  adapters_source codex
+  run adapter_codex_instructions_hint "$PWD"
+  assert_contains "$OUT" "AGENTS.md does not mention Jig"
+  assert_contains "$OUT" ".codex/skills/jig-init/references/agents-section.md"
+  assert_file_contains AGENTS.md "Use tabs."
+}
+
+test_adapter_codex_instructions_hint_names_a_missing_agents() {
+  fixture_repo
+  adapters_source codex
+  run adapter_codex_instructions_hint "$PWD"
+  assert_contains "$OUT" "AGENTS.md is missing"
+}
+
+test_adapter_claude_instructions_hint_silent_when_importing_jig_agents() {
+  fixture_repo
+  cp "$JIG_HOME/templates/AGENTS.md" AGENTS.md
+  cp "$JIG_HOME/templates/CLAUDE.md" CLAUDE.md
+  adapters_source claude
+  run adapter_claude_instructions_hint "$PWD"
+  assert_eq "" "$OUT"
+}
+
+test_adapter_claude_instructions_hint_silent_when_claude_md_carries_jig() {
+  fixture_repo
+  cp "$JIG_HOME/templates/AGENTS.md" CLAUDE.md
+  adapters_source claude
+  run adapter_claude_instructions_hint "$PWD"
+  assert_eq "" "$OUT"
+}
+
+test_adapter_claude_instructions_hint_import_of_foreign_agents_is_not_enough() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  printf '@AGENTS.md\n' > CLAUDE.md
+  adapters_source claude
+  run adapter_claude_instructions_hint "$PWD"
+  assert_contains "$OUT" "CLAUDE.md does not mention Jig"
+}
+
+test_adapter_claude_instructions_hint_names_a_foreign_claude_md() {
+  fixture_repo
+  cp "$JIG_HOME/templates/AGENTS.md" AGENTS.md
+  printf '# Project notes for Claude\n' > CLAUDE.md
+  adapters_source claude
+  run adapter_claude_instructions_hint "$PWD"
+  assert_contains "$OUT" "CLAUDE.md does not mention Jig"
+  assert_contains "$OUT" "/jig-init"
+}
+
+# The section jig-init merges into a project's own AGENTS.md is a copy of the
+# template's "Read first" and "Workflow" sections; the two must not drift.
+test_jig_init_agents_section_matches_the_template() {
+  local expected
+  expected=$(awk '/^## Working rules/{exit} f{print} /^## Read first/{f=1; print}' \
+    "$JIG_HOME/templates/AGENTS.md")
+  assert_eq "$expected" "$(cat "$JIG_HOME/skills/jig-init/references/agents-section.md")"
+}
