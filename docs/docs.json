@@ -1,0 +1,38 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Jig",
+  "description": "An agent SDLC framework: your AI agent works through risk-sized routes, with project knowledge and human gates.",
+  "colors": {
+    "primary": "#2563EB"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get started",
+        "pages": ["index", "install"]
+      },
+      {
+        "group": "Guides",
+        "pages": ["greenfield", "brownfield", "working-with-tasks"]
+      },
+      {
+        "group": "Reference",
+        "pages": ["skills", "concepts", "configuration"]
+      },
+      {
+        "group": "Security and internals",
+        "pages": ["under-the-hood"]
+      },
+      {
+        "group": "More",
+        "pages": ["comparison", "troubleshooting"]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/fapost-lab/jig"
+    }
+  }
+}
