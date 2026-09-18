@@ -19,7 +19,11 @@
   tree whose `git status` is clean. (ADR-0033, ADR-0037) `jig spec new` is the third: when a template copy fails it
   removes only the two temporary files it named in `.ai/specs/<id>/` and then `rmdir`s the
   directory it created with a plain `mkdir` in that run; `rmdir` refuses anything that is
-  not empty. (ADR-0035) Moving to trash is not deleting, and it has two users: housekeeping moves
+  not empty. (ADR-0035) `jig upgrade` is the fourth: in copy mode it deletes a file only when the
+  manifest records it with the hash jig installed, the file is unchanged, the new version no
+  longer ships it, and the path — relative, without `..` — lies under `.ai/` or an adapter's
+  skills directory (`.claude/skills/`, `.codex/skills/`); anything else is kept and reported
+  `keep-outside`. (ADR-0024) Moving to trash is not deleting, and it has two users: housekeeping moves
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish`, and a
   partial restore of `epic --reopen` — only after checking that the id is valid and the directory
   resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)

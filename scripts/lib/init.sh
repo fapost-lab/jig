@@ -52,6 +52,34 @@ _init_update_config_list() {
   mv "$tmp" "$file"
 }
 
+# _init_default_branch — the branch a new config names as `git.base_branch`:
+# the remote's default (origin/HEAD), else `main` or `master` when exactly
+# one of them exists, else the branch HEAD names — in a repository with no
+# commit yet that is git's own default, `master` on an older git. `main`
+# when none answers. A name git would not accept as a branch, or one with a
+# character outside [A-Za-z0-9._/-], falls back to `main` too: it is written
+# into the config through sed. On a feature branch of a repository with no
+# remote and neither `main` nor `master`, the guess is that branch — the
+# config says where to correct it.
+_init_default_branch() {
+  local b=""
+  b=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) \
+    && b=${b#origin/}
+  if [ -z "$b" ]; then
+    if git -C "$JIG_PROJECT" show-ref --verify --quiet refs/heads/main; then
+      git -C "$JIG_PROJECT" show-ref --verify --quiet refs/heads/master || b=main
+    elif git -C "$JIG_PROJECT" show-ref --verify --quiet refs/heads/master; then
+      b=master
+    fi
+  fi
+  [ -n "$b" ] || b=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null) || b=""
+  if [ -z "$b" ] || ! git check-ref-format --branch "$b" >/dev/null 2>&1; then
+    b=main
+  fi
+  case "$b" in *[!A-Za-z0-9._/-]*) b=main ;; esac
+  printf '%s\n' "$b"
+}
+
 # Relative path from directory <from> to path <to> (both absolute, no
 # trailing slash required). Pure string computation, no filesystem access,
 # so it also works for symlink targets that do not exist yet.
@@ -416,12 +444,14 @@ cmd_init() {
       _init_update_config_list "$cfg_dest" adapters "$adapters_words"
     fi
   else
-    local profiles_bracket adapters_bracket tmp_cfg
+    local profiles_bracket adapters_bracket tmp_cfg base_branch
     profiles_bracket="[$(_init_words_to_csv "$profiles_words")]"
     adapters_bracket="[$(_init_words_to_csv "$adapters_words")]"
+    base_branch=$(_init_default_branch)
     tmp_cfg="$cfg_dest.tmp.$$"
     sed -e "s/^profiles:.*/profiles: $profiles_bracket/" \
         -e "s/^adapters:.*/adapters: $adapters_bracket/" \
+        -e "s|^git\.base_branch: main |git.base_branch: $base_branch |" \
         "$source/templates/config.yaml" > "$tmp_cfg"
     mv "$tmp_cfg" "$cfg_dest"
     created_count=$((created_count + 1))

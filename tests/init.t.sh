@@ -77,6 +77,87 @@ test_init_rerun_with_existing_config_only_suggests_detected() {
   assert_eq "[generic]" "$(sed -n 's/^profiles: //p' .ai/config.yaml)"
 }
 
+# --- git.base_branch on a first init (_init_default_branch) -----------------
+
+# _init_cfg_base_branch — the value a fresh .ai/config.yaml declares for
+# git.base_branch (the template's own trailing comment stays on the line, so
+# only the first word after the key is read).
+_init_cfg_base_branch() {
+  sed -n 's/^git\.base_branch: \([^ ]*\).*/\1/p' .ai/config.yaml
+}
+
+# A repository with no commit yet has an unborn HEAD: git itself still names
+# the branch that will exist once something is committed, and that is what a
+# first init must use.
+test_init_default_branch_unborn_master() {
+  git init -q .
+  git symbolic-ref HEAD refs/heads/master
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "master" "$(_init_cfg_base_branch)"
+}
+
+test_init_default_branch_unborn_trunk() {
+  git init -q .
+  git symbolic-ref HEAD refs/heads/trunk
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "trunk" "$(_init_cfg_base_branch)"
+}
+
+test_init_default_branch_main_only() {
+  fixture_repo
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "main" "$(_init_cfg_base_branch)"
+}
+
+test_init_default_branch_master_only() {
+  fixture_repo
+  git branch -m main master
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "master" "$(_init_cfg_base_branch)"
+}
+
+# origin/HEAD outranks the main/master guess: it is the one signal that
+# actually names what the remote calls its default branch.
+test_init_default_branch_follows_origin_head() {
+  fixture_repo
+  local bare
+  bare=$(mktemp -d "${TMPDIR:-/tmp}/jig-origin.XXXXXX")
+  git init -q --bare "$bare"
+  git remote add origin "$bare"
+  git checkout -q -b develop
+  git push -q origin develop
+  git checkout -q main
+  git remote set-head origin develop
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "develop" "$(_init_cfg_base_branch)"
+
+  rm -rf "$bare"
+}
+
+# The config is otherwise never touched on a re-run (domains/install);
+# git.base_branch is no exception, even when the repository's branches would
+# now suggest something else.
+test_init_default_branch_rerun_keeps_existing_value() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  printf 'profiles: [generic]\nadapters: [claude, codex]\ngit.base_branch: custom-base\n' > .ai/config.yaml
+  git checkout -q -b master
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq "custom-base" "$(_init_cfg_base_branch)"
+}
+
 # Dependency directories and jig's own installed scripts are not the
 # project's stack: a .sh file under node_modules/ or .ai/ detects nothing.
 test_init_detection_ignores_dependency_and_jig_directories() {

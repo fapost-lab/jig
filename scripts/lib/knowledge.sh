@@ -1096,16 +1096,28 @@ km_domain_file() {
 
 # km_doc_by_id <id> — path of the document declaring <id>. Duplicate ids are
 # a `knowledge check` failure, so the first match is the only match.
+#
+# An id carries its type (`convention-style`, `adr-20260918-x`), while
+# `knowledge new` prints a path and takes a bare slug: a miss names the ids
+# ending in `-<want>`, so the slug someone just typed leads to the real id.
 km_doc_by_id() {
-  local want="$1" doc found=""
+  local want="$1" doc found="" id near=""
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
     fm_has "$doc" || continue
-    [ "$(fm_get "$doc" id)" = "$want" ] || continue
-    found="$doc"
-    break
+    id=$(fm_get "$doc" id)
+    if [ "$id" = "$want" ]; then
+      found="$doc"
+      break
+    fi
+    case "$id" in
+      *-"$want") near="${near:+$near, }$id" ;;
+    esac
   done < <(km_docs)
-  [ -n "$found" ] || jig_die "knowledge: no document with id: $want"
+  if [ -z "$found" ]; then
+    [ -z "$near" ] || jig_die "knowledge: no document with id: $want (ids carry their type; did you mean: $near?)"
+    jig_die "knowledge: no document with id: $want"
+  fi
   printf '%s\n' "$found"
 }
 

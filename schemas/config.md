@@ -8,7 +8,7 @@ Absent keys take the default. Paths are not configurable.
 |---|---|---|---|
 | `profiles` | `[generic]` | | active profiles; `generic` is always included |
 | `adapters` | `[claude, codex]` | | runtimes to install skills for |
-| `git.base_branch` | `main` | | merge target for ancestry checks |
+| `git.base_branch` | `main` | | merge target for ancestry checks; a new config from `jig init` names the repository's default branch (origin/HEAD, else `main` or `master`, else the current branch) |
 | `git.branch_per_task` | `true` | | `jig task start` creates and checks out a branch |
 | `git.branch_template` | `task/{id}` | | branch name; `{id}` is the task id |
 | `git.worktree_root` | `../<project>.worktrees` | yes | where `jig task start --worktree` puts worktrees |

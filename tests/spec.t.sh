@@ -326,6 +326,14 @@ test_spec_help_exits_zero() {
   assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
 }
 
+# `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
+test_spec_help_subcommand_exits_zero() {
+  fixture_repo
+  run jig spec help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+}
+
 # --- specs are not knowledge --------------------------------------------------
 # A spec is a plan outside .ai/knowledge/ (spec.sh header comment); it must
 # never surface through the knowledge machinery an agent's context is built

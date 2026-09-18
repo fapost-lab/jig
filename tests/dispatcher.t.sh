@@ -243,6 +243,16 @@ test_help_lists_spec_remove() {
   assert_contains "$OUT" "spec remove <id>"
 }
 
+test_help_lists_spec_close() {
+  run jig help
+  assert_contains "$OUT" "spec close <id>"
+}
+
+test_help_lists_spec_epic() {
+  run jig help
+  assert_contains "$OUT" "spec epic <id>"
+}
+
 # --- jig_trash_dest (shared by housekeeping and `jig spec remove`) -----------
 
 test_jig_trash_dest_no_collision() {
