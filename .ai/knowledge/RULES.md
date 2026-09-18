@@ -23,7 +23,12 @@
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish`, and a
   partial restore of `epic --reopen` — only after checking that the id is valid and the directory
   resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)
-- Housekeeping never destroys a workspace whose remote state is `unknown`.
+- Housekeeping never destroys a workspace whose remote state is `unknown`, with one exception
+  decided in ADR-0005: a task a human ended with `jig task abandon` (directly, or through
+  `jig spec remove --abandon-unstarted`) is moved to trash once it is older than
+  `housekeeping.abandoned_ttl`, whatever its remote state — the abandonment answered the question
+  `unknown` leaves open. It goes through trash like any purge (ADR-0006), a worktree only by
+  `git worktree remove` without `--force`, and its branch and commits are never touched.
   (`domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.
 - `init` and `upgrade` never overwrite existing knowledge or user-modified files. (ADR-0003)

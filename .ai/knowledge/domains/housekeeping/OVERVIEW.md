@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-18
 ---
 # Housekeeping
 
@@ -51,7 +51,9 @@ evidence it inferred itself.
 Read these before changing anything here; each is a rule someone paid for.
 
 - **Nothing is destroyed on `unknown`** (RULES.md). Every uncertainty in this
-  domain must resolve *towards* `unknown`, never away from it.
+  domain must resolve *towards* `unknown`, never away from it. The one exception is a
+  task a human abandoned: `housekeeping_decide` purges it after `abandoned_ttl` whatever
+  its remote state (ADR-0005), through trash.
 - **No path is deleted or moved without validation** (RULES.md, ADR-0006). Use
   `task_dir`/`_task_valid_id` — the single choke point — and never transcribe a regex.
   ADR-0006's own text carried a wrong pattern for two phases; the code was right.
