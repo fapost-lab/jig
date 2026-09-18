@@ -10,7 +10,7 @@ paths:
   - .github/workflows/ci.yml
   - .github/scripts/release-lib.sh
 summary: Why a release tag is created only by CI after the tests pass, from a tested script under .github, and how the version is raised.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-09-18
 ---
 # ADR-0034: A release is tagged by CI after the tests pass, from a tested script, never by hand
 
@@ -105,3 +105,8 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
 > merge during a run replaces the pending one; that run tags the version then current, and a release
 > comes later rather than never. Checkout is `actions/checkout@v7` (Node 24); the release job's tag push
 > uses the credentials it persists, as before.
+
+> **Amendment (2026-09-18).** The `release` job runs when no job it needs failed or was cancelled, so a
+> light run (ADR-0041 as amended: documentation only, tests skipped) still reaches it and finds its tag
+> already there. A version bump cannot be light: `scripts/lib/version.sh` is not documentation. The
+> `epic-pr` check runs under the same condition.
