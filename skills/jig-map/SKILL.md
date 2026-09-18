@@ -66,8 +66,8 @@ could hold rules (`notes/`, `docs-private/`), never dependency or build director
   or contributing code — architecture and layering documents included — are `convention`; how
   one part of the product behaves is `feature`. A team's ADR keeps its own number in the slug
   and gets no `paths`: it stays in the catalog. Give `--domains` and `--paths` only when the
-  source really is limited to them; a project-wide document gets neither, so it reaches an agent
-  only through `--ids` or `load: always`, and `knowledge check` warns about it. Propose
+  source really is limited to them; a project-wide document gets neither, so every catalog lists
+  it and it is required only through `--ids` or `load: always`; `knowledge check` warns about it. Propose
   `load: always` only with the source's size in front of the human. Replace the stub's placeholder
   heading with the source's title and give it a summary. Write the size of every source into
   `knowledge-map.md` (`doc:` lines carry it; for an instruction file, `wc -c`). A line saying
