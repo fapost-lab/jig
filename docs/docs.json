@@ -1,11 +1,23 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Jig",
+  "name": "JIG",
   "description": "An agent SDLC framework: your AI agent works through risk-sized routes, with project knowledge and human gates.",
   "favicon": "/favicon.svg",
   "colors": {
-    "primary": "#2563EB"
+    "primary": "#2563EB",
+    "light": "#60A5FA",
+    "dark": "#1D4ED8"
+  },
+  "banner": {
+    "content": "Jig is pre-1.0 and evolving fast: commands and skills may change between releases. [Follow development on GitHub](https://github.com/fapost-lab/jig). [![Latest version](https://img.shields.io/github/v/tag/fapost-lab/jig?sort=semver&label=version&color=93C5FD)](https://github.com/fapost-lab/jig/tags)",
+    "dismissible": false
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/fapost-lab/jig"
+    }
   },
   "navigation": {
     "groups": [
