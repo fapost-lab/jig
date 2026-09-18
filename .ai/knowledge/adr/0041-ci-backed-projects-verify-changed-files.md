@@ -122,7 +122,10 @@ This narrows ADR-0013's last sentence for projects that declare `ci`; the rest o
   file, but linter-version drift on untouched files is visible only in a full local run.
 
 > **Amendment (2026-09-18).** This repository's CI reads the same map. A `scope` job runs
-> `.github/scripts/ci-scope.sh` on the change (the pull request's base, or the push's previous tip):
+> `.github/scripts/ci-scope.sh` on the change — from the pull request's base, or for a push from the
+commit of the last successful run on the branch, never the previous tip: a merge during a run
+replaces the run queued before it, and measured from the previous tip that one's changes would
+never be checked on `main` (it happened on the first day, to the change that introduced this):
 > when every changed path is decided `-` by the map, or is documentation the map names no line for
 > (`*.md`, `docs/`, `.ai/knowledge/`, `.ai/specs/`), the run is `light` — the knowledge check only;
 > anything else, a path under `.github/`, a map that does not parse, or a change that cannot be

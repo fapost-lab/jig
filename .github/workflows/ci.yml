@@ -47,8 +47,18 @@ jobs:
   # .github/scripts/ci-scope.sh, which has tests; this job only runs it.
   # A skipped job reads as passed to a required check, where `paths-ignore`
   # would leave the check waiting forever.
+  #
+  # A push is measured from the commit of the last successful run on its
+  # branch, not from the previous tip: GitHub keeps one pending run per
+  # group, so a merge during a run replaces the one queued before it, and
+  # that one's changes would otherwise never be measured. Every success
+  # covered the changes since the success before it, so nothing falls
+  # between two runs.
   scope:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       full: ${{ steps.scope.outputs.full }}
     steps:
@@ -61,11 +71,21 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           case "$EVENT" in
             pull_request) line=$(.github/scripts/ci-scope.sh "$PR_BASE") ;;
-            push) line=$(.github/scripts/ci-scope.sh "$PUSH_BEFORE") ;;
+            push)
+              # Empty when there is no successful run yet, or the API cannot
+              # answer: ci-scope.sh then runs everything.
+              green=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" \
+                -f branch="$BRANCH" -f status=success -f per_page=1 \
+                --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null) || green=""
+              echo "last successful run on $BRANCH: ${green:-none}"
+              line=$(.github/scripts/ci-scope.sh "$green")
+              ;;
             *) line="full ($EVENT runs everything)" ;;
           esac
           echo "scope: $line"
@@ -280,14 +300,15 @@ jobs:
   # Write access is granted to this job alone: the rest of the workflow keeps
   # `contents: read`. Pull requests and manual runs never tag.
   #
-  # A light change skips the tests and still reaches this job, which then finds
-  # its tag already there: a version is bumped in scripts/lib/version.sh, and a
-  # change to a script is never light. A failed or cancelled job stops it.
+  # Only a full run tags: a light one tested nothing, and a version bump whose
+  # own run was replaced in the queue waits for the next full run — the next
+  # code merge or the nightly one — instead of being tagged untested.
   release:
-    needs: [scope, knowledge, test, test-windows, smoke-windows]
+    needs: [scope, test, test-windows, smoke-windows]
     if: >-
-      !cancelled() && !failure()
-      && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      !cancelled() && !failure() && needs.scope.outputs.full == 'true'
+      && (github.event_name == 'push' || github.event_name == 'schedule')
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
