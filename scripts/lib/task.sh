@@ -574,6 +574,12 @@ task_start() {
   local base
   base=$(_task_start_base "$id") || exit 1
 
+  # A repository with no commit has nothing to fork from: git cannot cut a
+  # branch there, and "could not create branch" named the symptom, not the
+  # cause.
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet HEAD >/dev/null 2>&1 \
+    || jig_die "task start: the repository has no commits yet; commit something first (even a README), then start the task"
+
   if [ "$worktree" -eq 1 ]; then
     _task_start_in_worktree "$id" "$dir" "$base"
     return 0

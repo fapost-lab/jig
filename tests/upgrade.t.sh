@@ -213,6 +213,76 @@ test_upgrade_decision_table_full() {
   rm -rf "$src"
 }
 
+# --- orphan deletion is scoped to `.ai/` and adapter skills dirs (_upgrade_deletable) ---
+
+# The ordinary case the decision table above only exercises inside `.ai/`:
+# a file this framework installed under an adapter's skills directory, later
+# removed from the source, is still deleted once orphaned.
+test_upgrade_deletes_orphaned_skill_under_claude_skills_dir() {
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-orphan.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  mkdir -p "$src/skills/jig-orphantest"
+  cat > "$src/skills/jig-orphantest/SKILL.md" <<'EOF'
+---
+name: jig-orphantest
+description: fixture skill removed again in the next source
+---
+# jig-orphantest
+EOF
+  jig init --from "$src" >/dev/null
+  assert_file .claude/skills/jig-orphantest/SKILL.md
+
+  rm -rf "$src/skills/jig-orphantest"
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "delete .claude/skills/jig-orphantest/SKILL.md"
+  assert_no_file .claude/skills/jig-orphantest/SKILL.md
+
+  rm -rf "$src"
+}
+
+# A manifest entry outside `.ai/` and every adapter's skills directory is not
+# proof the framework may delete it there — only that some earlier version of
+# this file wrote the line. Kept, and reported `keep-outside`, not `delete`
+# (scripts/lib/upgrade.sh, _upgrade_deletable).
+test_upgrade_keeps_manifest_entry_outside_delete_roots() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+
+  mkdir -p docs
+  printf 'not framework-owned\n' > docs/x.md
+  local hash
+  hash=$(git hash-object docs/x.md)
+  printf '%s docs/x.md\n' "$hash" >> .ai/manifest
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-outside docs/x.md"
+  assert_not_contains "$OUT" "delete docs/x.md"
+  assert_file docs/x.md
+  assert_file_contains docs/x.md "not framework-owned"
+  assert_file_contains .ai/manifest "docs/x.md"
+}
+
+# A `..` component makes a manifest path untrustworthy on its own terms,
+# regardless of where it points — refused the same way even without a real
+# file behind it (a project's manifest is not proof of what a path is).
+test_upgrade_keeps_manifest_entry_with_path_traversal() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+
+  printf '%s\n' "0000000000000000000000000000000000000000 ../x" >> .ai/manifest
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-outside ../x"
+  assert_not_contains "$OUT" "delete ../x"
+  assert_file_contains .ai/manifest "../x"
+}
+
 # The staged tree cmd_upgrade builds is derived from the *current*
 # .ai/config.yaml, so activating a profile after init and re-running
 # `jig upgrade` (copy mode) must install it — not just pick up drift in

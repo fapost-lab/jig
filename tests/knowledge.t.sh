@@ -1745,6 +1745,29 @@ test_summary_unknown_id_dies() {
   assert_contains "$OUT" "knowledge: no document with id:"
 }
 
+# An id carries its type (`feature-thing`), so a miss on the bare slug
+# someone actually typed (`thing`) points at the real id (km_doc_by_id).
+test_summary_unknown_id_ending_in_want_suggests_the_real_id() {
+  km_setup
+  jig knowledge new feature thing --domains core >/dev/null
+
+  run jig knowledge summary thing "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id: thing (ids carry their type; did you mean: feature-thing?)"
+}
+
+# A miss with no id ending in `-<want>` keeps the plain message, even when
+# other documents exist.
+test_summary_unknown_id_with_no_near_match_keeps_plain_message() {
+  km_setup
+  jig knowledge new feature thing --domains core >/dev/null
+
+  run jig knowledge summary feature-nope "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: no document with id: feature-nope"
+  assert_not_contains "$OUT" "did you mean"
+}
+
 test_summary_requires_id_and_text() {
   km_setup
   run jig knowledge summary feature-thing

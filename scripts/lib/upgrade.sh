@@ -152,12 +152,38 @@ $manifest_hash $rel"
 $manifest_hash $rel"
       ;;
     delete)
+      # The one deletion outside `.ai/` (RULES.md): a file this framework
+      # installed, recorded in the manifest with the hash it installed and
+      # unchanged since, which the new version no longer ships. Only under
+      # `.ai/` or an adapter's skills directory, and never through `..`: the
+      # manifest is a file in the project, and a path in it is not proof.
+      if ! _upgrade_deletable "$rel"; then
+        _upgrade_out "keep-outside $rel"
+        new_entries="$new_entries
+$manifest_hash $rel"
+        return 0
+      fi
       if [ "$dry_run" != 1 ]; then
         rm -f "$local_abs"
       fi
       _upgrade_out "delete $rel"
       ;;
   esac
+}
+
+# _upgrade_deletable <rel> — true when <rel> is a relative path with no `..`
+# component under one of _UPGRADE_DELETE_ROOTS.
+_upgrade_deletable() {
+  local rel="$1" root
+  case "$rel" in
+    '' | /* | .. | ../* | */.. | */../*) return 1 ;;
+  esac
+  for root in $_UPGRADE_DELETE_ROOTS; do
+    case "$rel" in
+      "$root"/*) return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # _upgrade_hash_table <union-file> <stage-dir> <work-dir>
@@ -295,6 +321,9 @@ _upgrade_link() {
 _UPGRADE_STAGE=""
 _UPGRADE_UNION_FILE=""
 _UPGRADE_WORK=""
+# Where an orphan may be deleted: `.ai/` and every adapter's skills directory,
+# filled in once the adapters are sourced (see _upgrade_deletable).
+_UPGRADE_DELETE_ROOTS=""
 
 cmd_upgrade() {
   local from="" dry_run=0 quiet=0
@@ -339,7 +368,12 @@ cmd_upgrade() {
     [ -f "$adapter_dir/adapter.sh" ] || continue
     # shellcheck disable=SC1090,SC1091
     . "$adapter_dir/adapter.sh"
+    a=$(basename "$adapter_dir")
+    if command -v "adapter_${a}_skills_dir" >/dev/null 2>&1; then
+      _UPGRADE_DELETE_ROOTS="$_UPGRADE_DELETE_ROOTS $("adapter_${a}_skills_dir")"
+    fi
   done
+  _UPGRADE_DELETE_ROOTS=".ai$_UPGRADE_DELETE_ROOTS"
 
   local active_profiles active_adapters
   active_profiles=$(cfg_list profiles generic)

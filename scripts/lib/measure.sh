@@ -34,7 +34,7 @@ cmd_measure() {
   _measure_process
   _measure_change
 
-  printf 'blind spots: stage timing, session count, token and time cost are recorded nowhere\n'
+  printf 'blind spots: stage timing, session count, whether a human gate was passed, token and time cost are recorded nowhere\n'
 }
 
 # --- shared parsing ----------------------------------------------------------

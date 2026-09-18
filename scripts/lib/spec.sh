@@ -25,7 +25,7 @@ cmd_spec() {
     remove) spec_remove "$@" ;;
     close) spec_close "$@" ;;
     epic) spec_epic "$@" ;;
-    -h | --help)
+    help | -h | --help)
       printf '%s\n' "$SPEC_USAGE" >&2
       return 0
       ;;

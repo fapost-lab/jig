@@ -940,6 +940,38 @@ test_task_start_refuses_a_dirty_tree_on_a_shared_branch() {
   fi
 }
 
+test_task_start_dies_naming_the_cause_when_repository_has_no_commits() {
+  # git cannot cut a branch with nothing to fork from; "could not create
+  # branch" would name the symptom, not the cause.
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  # Roll back to before fixture_repo's own commit: an unborn HEAD, the same
+  # as a brand-new repository nobody has committed to yet.
+  git update-ref -d refs/heads/main
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: the repository has no commits yet; commit something first (even a README), then start the task"
+  if grep -q '^base_commit:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded base_commit"
+  fi
+}
+
+test_task_start_worktree_dies_naming_the_cause_when_repository_has_no_commits() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  git update-ref -d refs/heads/main
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: the repository has no commits yet; commit something first (even a README), then start the task"
+  if grep -q '^base_commit:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused start recorded base_commit"
+  fi
+}
+
 test_task_new_untracked_only_does_not_block() {
   task_setup
   printf 'build output\n' > build-output.tmp

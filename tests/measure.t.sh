@@ -34,7 +34,7 @@ test_measure_names_what_it_cannot_measure() {
   fixture_jig_repo
 
   run jig measure
-  assert_contains "$OUT" "stage timing, session count, token and time cost are recorded nowhere"
+  assert_contains "$OUT" "stage timing, session count, whether a human gate was passed, token and time cost are recorded nowhere"
 }
 
 test_measure_rejects_unknown_argument() {
