@@ -13,7 +13,8 @@ paths:
   - scripts/lib/profiles.sh
   - "profiles/**"
   - tests/run.sh
-reviewed_at: 2026-09-16
+  - scripts/lib/profile.sh
+reviewed_at: 2026-09-18
 ---
 # Verify rules
 
@@ -41,6 +42,16 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   confirms every filter selects at least one test before running it; one that selects none
   runs the full set and says why. A runner reports an empty selection as `0 passed`, exit 0,
   and a pass nothing produced is the defect the scope protocol exists to prevent (ADR-0041).
+- **A development tool comes from the project's environment, never from a global
+  install.** pytest, eslint, PHPUnit and the like are read from `vendor/bin`,
+  `node_modules/.bin`, `bundle exec` or the project's virtualenv; only the stack's own
+  toolchain (`go`, `cargo`, `composer`, the package manager) is taken from `PATH`. A global
+  copy checks the project with another version and without its plugins, and a green verdict
+  from it says nothing (adr-20260918-profiles-narrow-per-check-with-project-tools). Missing,
+  the check skips and says where it looked.
+- **A profile narrows each check on its own terms.** Linters by file; tests only where the
+  stack ties a source file to its tests; whole-program analysis (mypy, `typecheck`) never.
+  Documentation and `.ai/` reach no check (`jp_is_doc`).
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.

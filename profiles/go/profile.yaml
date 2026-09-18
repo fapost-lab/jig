@@ -1,4 +1,5 @@
 # Profile manifest. Flat YAML subset, same reader as .ai/config.yaml.
 name: go
-description: Go modules.
+description: Go modules (go vet, go test from the module's own toolchain).
 detect: [go.mod]
+scope: [changed, map]

@@ -52,3 +52,19 @@ profile that does not declare `map`, the variable is unset. The result line name
 ```
 RESULT shell: pass (scope: changed, 7 files, map .ai/verify/shell.map)
 ```
+
+## What a filter means, per profile
+
+A filter narrows the profile's tests; linters are narrowed by the changed files
+themselves. A filter that names nothing (a missing file, an empty package, an unknown
+crate) runs that profile's tests in full and says so.
+
+| Profile | Filter |
+|---|---|
+| `shell` | a `tests/run.sh` name filter (`<file>::`, `<file>::<test>`) |
+| `php`, `laravel`, `python`, `ruby`, `dart`, `node` | a test file path |
+| `go` | a package path, `./internal/foo` |
+| `rust` | a crate name |
+| `dotnet` | a test project file path |
+| `jvm` | a Gradle subproject or Maven module directory |
+| `swift` | none: only `-` and `ALL` mean anything |

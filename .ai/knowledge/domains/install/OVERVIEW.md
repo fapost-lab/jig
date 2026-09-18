@@ -19,7 +19,7 @@ paths:
   - scripts/lib/doctor.sh
   - scripts/jig.cmd
   - templates/gitattributes
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-18
 ---
 # Install
 
@@ -33,7 +33,9 @@ project owns.
   installed skills are carried forward by upgrade; `.ai/knowledge/`, `.ai/specs/`,
   `.ai/verify/`, `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
   ADR-0011, ADR-0041). `init` does not create `.ai/verify/` either: a project that wants a
-  map writes it. Neither is `.ai/config.local.yaml`, which is not the project's either: it
+  map writes it. A first `init` without `--profiles` and without `.ai/config.yaml` writes
+  the detected profiles into the config it creates; with `--profiles`, or when the config
+  exists, detection only suggests (adr-20260918-init-activates-detected-profiles). Neither is `.ai/config.local.yaml`, which is not the project's either: it
   belongs to the clone's owner and is never created by `init` (ADR-0038). `init` does write
   its line into `.gitignore`, through the same append-missing-lines merge as every other
   `templates/gitignore` line; `upgrade` never touches `.gitignore`, so an older project

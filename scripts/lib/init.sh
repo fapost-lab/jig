@@ -347,12 +347,27 @@ cmd_init() {
     _adapters_valid_name "$aw" || jig_die "invalid adapter name: $aw"
   done
 
+  # A first init with no --profiles activates what the project looks like
+  # (adr-20260918-init-activates-detected-profiles): a project nobody configured gets checks for its stack instead
+  # of `generic` alone, which verifies nothing and reports pass. An explicit
+  # flag, and a config that already exists, stay authoritative — there the
+  # detection below is only a suggestion, so init never overrides a choice.
+  local detected_words suggested_words="" w
+  detected_words=$(profiles_detect "$source/profiles")
+  if [ "$profiles_given" = 0 ] && [ ! -f "$JIG_PROJECT/.ai/config.yaml" ]; then
+    profiles_words=$(_init_dedup_words "generic $detected_words")
+    for pw in $profiles_words; do
+      _profiles_valid_name "$pw" || jig_die "invalid profile name: $pw"
+    done
+    if [ "$profiles_words" != generic ]; then
+      _init_out "detected profiles: ${profiles_words#generic }"
+    fi
+  fi
+
   # Suggest profiles the target project looks like it needs but the
   # selection above does not include (domains/install). Advisory only:
   # never changes what gets installed, so init stays non-interactive and
   # predictable.
-  local detected_words suggested_words="" w
-  detected_words=$(profiles_detect "$source/profiles")
   for w in $detected_words; do
     case " $profiles_words " in
       *" $w "*) ;;

@@ -123,8 +123,9 @@ git init
 jig init
 ```
 
-Default installation activates the `generic` profile and both `claude` and `codex`
-adapters. Select a runtime and stack explicitly when needed:
+A first `jig init` activates `generic` plus every profile whose manifest it finds in
+the project root (`composer.json` → `php`, `pyproject.toml` → `python`, …) and both
+`claude` and `codex` adapters. Select a runtime and stack explicitly when needed:
 
 ```sh
 jig init --adapters codex --profiles php
@@ -132,8 +133,9 @@ jig init --adapters codex --profiles php
 jig init --adapters claude,codex --profiles laravel
 ```
 
-`generic` stays active; Laravel also requires PHP. Detected profiles are suggested,
-not silently enabled. `init` is non-interactive. Re-running it preserves existing
+`generic` stays active; Laravel also requires PHP. With `--profiles`, or on a re-run
+against an existing `.ai/config.yaml`, detected profiles are only suggested: a choice
+already made is never widened. `init` is non-interactive. Re-running it preserves existing
 knowledge and modified files; explicit profile/adapter flags update those selections
 in `.ai/config.yaml`. Read any conflict report and inspect the resulting diff.
 Existing `AGENTS.md` or `CLAUDE.md` may need the Jig instructions merged by hand.
@@ -539,14 +541,32 @@ Profiles supply deterministic checks for a stack. Jig does not install their too
 or project dependencies. Missing tools/checks are reported as skips; a skip is not a
 pass or evidence that the application works.
 
-| Profile | Checks when available |
-|---|---|
-| `generic` | Confirms the directory is a Git repository; always active. |
-| `shell` | ShellCheck and executable `tests/run.sh`; supports changed-file scope. |
-| `php` | PHPUnit (or Pest fallback), PHPStan, Pint and `composer validate`. |
-| `laravel` | PHP checks plus `php artisan test`. |
-| `node` | `npm test` and `npm run lint` when scripts exist. |
-| `go` | `go vet ./...` and `go test ./...`. |
+A stack's own toolchain (`go`, `cargo`, `dotnet`, `composer`, the node package
+manager, …) is taken from `PATH`. A project's development tools — pytest, ruff,
+eslint, PHPUnit, RuboCop — are taken only from the project's environment
+(`vendor/bin`, `node_modules/.bin`, `.venv`, `bundle exec`), never a global copy
+with another version and other plugins; when absent, the skip says where it looked.
+
+| Profile | Detected by | Checks when available |
+|---|---|---|
+| `generic` | always | Confirms the directory is a Git repository. |
+| `shell` | `*.sh` | ShellCheck and executable `tests/run.sh`. |
+| `php` | `composer.json` | PHPUnit (or Pest), PHPStan, Pint, `composer validate`. |
+| `laravel` | `artisan` | PHP checks plus `php artisan test`. |
+| `node` | `package.json` | `test`, `lint`, `typecheck` scripts, run by the project's package manager (npm, pnpm, yarn or bun). |
+| `go` | `go.mod` | `go vet` and `go test`. |
+| `python` | `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, `Pipfile` | ruff, mypy (when configured), pytest. |
+| `rust` | `Cargo.toml` | `cargo fmt --check`, `cargo clippy`, `cargo test`. |
+| `dotnet` | `*.sln`, `*.csproj`, `*.fsproj` | `dotnet format --verify-no-changes`, `dotnet test`. |
+| `jvm` | Gradle or Maven build files | Gradle `check` or Maven `test`, through the project's wrapper when present. |
+| `ruby` | `Gemfile` | RuboCop, RSpec or Minitest, through `bundle exec`. |
+| `dart` | `pubspec.yaml` | analyze, format and test, with `flutter` or `dart`. |
+| `swift` | `Package.swift` | `swift build`, `swift test`. |
+
+Every profile except `generic` and `swift` narrows a scoped run check by check: a
+linter gets the changed files, tests are narrowed where the stack's conventions tie a
+source file to its tests (`foo.py` → `test_foo.py`, a Go package and its importers, a
+Rust crate), and anything else runs in full with the reason printed.
 
 ```sh
 .ai/scripts/jig verify --list
