@@ -14,7 +14,19 @@ Run `.ai/scripts/jig status`. If it reports the project is not initialised, run
 `.ai/scripts/jig init` (or `<framework>/scripts/jig init` when the scripts are not yet
 installed) and show the user what it created. Never overwrite existing knowledge.
 
-## 2. Analyze the repository
+## 2. Choose the path
+
+Knowledge is written from code or from decisions. Say in one line which applies and why:
+
+| The repository has | Path |
+|---|---|
+| Application code | analyze it — §3 to §6 |
+| No code yet, and a spec (`.ai/scripts/jig spec list`) | carry its decisions into knowledge — [from a spec](references/from-a-spec.md); with several specs, ask which describe this project |
+| Neither code nor a spec | offer `jig-idea` first: the architecture and the stack are decided there, then this skill returns by the spec path. If the human declines, write only what they told you — purpose, terms — invent no architecture, and ask the stack for the profiles |
+
+"No code" is your judgement: only `.ai/`, a README, docs and configuration.
+
+## 3. Analyze the repository
 
 Read only what is needed to answer the questions below. Prefer manifests, entry points,
 directory names and existing docs over reading source files broadly.
@@ -25,7 +37,7 @@ directory names and existing docs over reading source files broadly.
 - Which words are used for the core concepts, and are they used consistently?
 - Which rules are already enforced (lint config, CI, tests) or clearly assumed?
 
-## 3. Write knowledge
+## 4. Write knowledge
 
 - `GLOSSARY.md`: one entry per core concept; pick the canonical term when the code
   uses several. Keep to terms a newcomer would get wrong.
@@ -39,13 +51,13 @@ directory names and existing docs over reading source files broadly.
 
 Ask the user when a term or boundary is ambiguous; do not guess canonical names.
 
-## 4. Verify
+## 5. Verify
 
 Run `.ai/scripts/jig knowledge check` and fix every failure. Warnings about `paths`
 matching nothing are acceptable only for documents that intentionally have no owning
 files.
 
-## 5. Report
+## 6. Report
 
 Show each document you wrote — `GLOSSARY.md`, `ARCHITECTURE.md`, `RULES.md`, any ADR —
 verbatim, as [show the document](../jig-task/references/show-the-document.md) says: they
