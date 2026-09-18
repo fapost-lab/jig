@@ -11,7 +11,7 @@ paths:
   - scripts/lib/context.sh
   - scripts/lib/knowledge.sh
   - "templates/knowledge/**"
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-18
 summary: Why knowledge declares how it should be loaded, and why directories never decide applicability.
 ---
 # ADR-0014: Knowledge declares how it should be loaded, and directories never decide
@@ -125,3 +125,11 @@ it from validation and hidden it from every consumer, silently.
 > ADR without `paths` stays catalog-only in `resolve` by the existing rules; the stateless form still
 > promotes a domain match. Whether a source is tracked with exact case stays `knowledge check`'s
 > question.
+
+> **Amendment (2026-09-18).** The catalog also lists every active document with neither `domains`
+> nor `paths`, whatever domains were entered, and even when none were. Such a document — a team's
+> own ADR or conventions linked in place (ADR-0036), a project-wide rule — belongs to no domain an
+> agent could enter and matches no file it could touch, so under the rule above an accepted one
+> reached no agent at all, although `jig-map` promised it "stays in the catalog". It is still never
+> required by that alone: listing costs one line, and the agent pulls the body in with `--ids`.
+> `knowledge check` keeps warning about such a document, now saying what the warning means.

@@ -1658,3 +1658,69 @@ test_sdd_stage_and_taskless_argument_validation() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'conflicts'
 }
+
+# --- resolve: catalog lists project-wide documents (ADR-0014 amendment 2026-09-18) ---
+# A document with neither `domains` nor `paths` belongs to no domain an agent
+# can enter and matches no file it can touch; the catalog is the one place it
+# can still be seen, whatever domains were entered.
+
+test_context_resolve_catalog_lists_a_project_wide_document_without_domains() {
+  ctx_setup
+  cat > .ai/knowledge/conventions/team.md <<'EOF2'
+---
+id: convention-team
+type: convention
+status: active
+summary: "How the team writes code."
+---
+EOF2
+  run jig context resolve --no-task --catalog --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   .ai/knowledge/conventions/team.md  [convention-team] How the team writes code."
+  assert_not_contains "$OUT" "required:  .ai/knowledge/conventions/team.md"
+
+  run jig context resolve --domains payments --catalog
+  assert_contains "$OUT" "catalog:   .ai/knowledge/conventions/team.md  [convention-team]"
+}
+
+test_context_resolve_catalog_skips_a_document_with_paths_but_no_domains() {
+  ctx_setup
+  cat > .ai/knowledge/conventions/api.md <<'EOF2'
+---
+id: convention-api
+type: convention
+status: active
+paths:
+  - "src/api/**"
+---
+EOF2
+  run jig context resolve --no-task --catalog --files - < /dev/null
+  assert_not_contains "$OUT" "convention-api"
+}
+
+test_context_resolve_catalog_never_lists_a_proposed_project_wide_document() {
+  ctx_setup
+  cat > .ai/knowledge/conventions/team.md <<'EOF2'
+---
+id: convention-team
+type: convention
+status: proposed
+---
+EOF2
+  run jig context resolve --no-task --catalog --files - < /dev/null
+  assert_not_contains "$OUT" "convention-team"
+}
+
+test_context_resolve_accepted_linked_team_adr_without_domains_is_in_the_catalog() {
+  ctx_setup
+  mkdir -p docs/adr
+  printf '# adr\n' > docs/adr/0001-team.md
+  git add docs/adr/0001-team.md
+  git commit -q -m "add team adr"
+  jig knowledge new adr 0001-team --source docs/adr/0001-team.md --proposed >/dev/null
+  jig knowledge accept adr-0001-team >/dev/null
+
+  run jig context resolve --no-task --catalog --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   docs/adr/0001-team.md  [adr-0001-team]"
+}

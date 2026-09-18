@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-09-17
+reviewed_at: 2026-09-18
 ---
 # Knowledge
 
@@ -54,6 +54,10 @@ reaching across.
 
 `frontmatter.sh` is a parser and writer with no knowledge semantics: it does not know
 what a `load` value means. Keep it that way — semantics belong above it.
+
+The catalog lists the active documents of the entered domains plus every project-wide one —
+neither `domains` nor `paths` — so an accepted team convention or ADR linked in place is seen
+by every agent without being required (ADR-0014 amendment 2026-09-18).
 
 Stage relevance extends resolution additively: optional stages metadata promotes matched
 catalog documents within entered domains, without hiding constraints (ADR-0021). Stage

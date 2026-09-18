@@ -335,7 +335,7 @@ km_check_doc_frontmatter() {
   domains=$(fm_list "$file" domains)
   paths_out=$(fm_list "$file" paths)
   if [ -z "$domains" ] && [ -z "$paths_out" ]; then
-    km_warn "$relpath" "document has neither domains nor paths"
+    km_warn "$relpath" "document has neither domains nor paths: listed in every catalog, never required"
   fi
 
   if [ -n "$paths_out" ]; then

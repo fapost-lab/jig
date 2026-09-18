@@ -573,22 +573,32 @@ _ctx_global_rows() {
 }
 
 # _ctx_catalog_rows <rows-file> — "<relpath><TAB><id><TAB><summary>" for active
-# documents of the entered domains that are NOT required. Metadata only: the
-# agent decides whether to pull one in with --ids, and no body is loaded
-# merely because it shares a domain.
+# documents of the entered domains that are NOT required, plus every active
+# project-wide document — one with neither `domains` nor `paths`, such as a
+# team's own ADR or conventions linked in place (ADR-0036). Such a document
+# belongs to no domain an agent could enter and matches no file it could
+# touch, so without this it would reach no agent at all (ADR-0014 amendment
+# 2026-09-18). Metadata only: the agent decides whether to pull one in with
+# --ids, and no body is loaded merely because it is listed.
 _ctx_catalog_rows() {
-  local rows="$1" t doc relpath id summary dom hit readp read_rc
+  local rows="$1" t doc relpath id summary dom hit readp read_rc doms
   t=$(printf '\t')
-  [ -n "$CTX_DOMAINS" ] || return 0
 
   while IFS= read -r doc; do
     relpath=$(jig_relpath "$doc" "$JIG_PROJECT")
     cut -f1 "$rows" | grep -qxF -- "$relpath" && continue
     hit=0
-    while IFS= read -r dom; do
-      [ -n "$dom" ] || continue
-      _ctx_domain_matches_any "$dom" "$CTX_DOMAINS" && { hit=1; break; }
-    done < <(fm_list "$doc" domains)
+    doms=$(fm_list "$doc" domains)
+    if [ -z "$doms" ]; then
+      [ -z "$(fm_list "$doc" paths)" ] && hit=1
+    elif [ -n "$CTX_DOMAINS" ]; then
+      while IFS= read -r dom; do
+        [ -n "$dom" ] || continue
+        _ctx_domain_matches_any "$dom" "$CTX_DOMAINS" && { hit=1; break; }
+      done <<EOF_DOMS
+$doms
+EOF_DOMS
+    fi
     [ "$hit" -eq 1 ] || continue
     id=$(fm_get "$doc" id)
     summary=$(fm_get "$doc" summary)
