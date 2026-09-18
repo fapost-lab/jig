@@ -15,7 +15,7 @@ paths:
   - .github/scripts/epic-pr-check.sh
   - schemas/spec.md
 summary: Why a feature released once lives on an epic branch, how a spec declares, cuts and finishes it, and why phase workspaces wait for the epic to reach main.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-09-18
 ---
 # ADR-0040: A feature released once lives on an epic branch until it is finished
 
@@ -110,3 +110,6 @@ decisions answer. It stands on a base per task (ADR-0039).
 > cut from the epic. The `epic-pr` check fails while any roadmap still names the branch in an `Epic:`
 > line. A `— finished` line written by an earlier version is still parsed and refused, never read as "no
 > epic", which would send a task to `main`.
+
+> **Amendment (2026-09-18).** The open question of parallel branches picking the same ADR number is
+> answered by adr-20260918-adr-names-are-dated: a new ADR is named by its day and slug, not by a number.

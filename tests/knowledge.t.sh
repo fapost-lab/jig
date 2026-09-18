@@ -152,7 +152,33 @@ domains: [core]
 EOF
   run jig knowledge check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "FAIL .ai/knowledge/adr/decision.md: ADR file name must match NNNN-<slug>.md"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/decision.md: ADR file name must match YYYYMMDD-<slug>.md (or a legacy NNNN-<slug>.md)"
+}
+
+test_adr_filename_other_invalid_shapes_fail() {
+  km_setup
+  cat > .ai/knowledge/adr/12345-x.md <<'EOF'
+---
+id: adr-12345-x
+type: adr
+status: accepted
+date: 2026-01-01
+domains: [core]
+---
+EOF
+  cat > .ai/knowledge/adr/adr-x.md <<'EOF'
+---
+id: adr-adr-x
+type: adr
+status: accepted
+date: 2026-01-01
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/12345-x.md: ADR file name must match YYYYMMDD-<slug>.md (or a legacy NNNN-<slug>.md)"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/adr-x.md: ADR file name must match YYYYMMDD-<slug>.md (or a legacy NNNN-<slug>.md)"
 }
 
 test_adr_filename_matching_pattern_passes() {
@@ -193,6 +219,113 @@ EOF
   run jig knowledge check
   assert_eq 1 "$RC"
   assert_contains "$OUT" "duplicate ADR number: 0001"
+}
+
+test_adr_dated_filename_invalid_month_fails() {
+  km_setup
+  cat > .ai/knowledge/adr/20261301-decision.md <<'EOF'
+---
+id: adr-20261301-decision
+type: adr
+status: accepted
+date: 2026-13-01
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/20261301-decision.md: ADR file name starts with an invalid date: 20261301"
+}
+
+test_adr_dated_filename_invalid_day_zero_fails() {
+  km_setup
+  cat > .ai/knowledge/adr/20260100-decision.md <<'EOF'
+---
+id: adr-20260100-decision
+type: adr
+status: accepted
+date: 2026-01-00
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/20260100-decision.md: ADR file name starts with an invalid date: 20260100"
+}
+
+test_adr_dated_filename_invalid_day_32_fails() {
+  km_setup
+  cat > .ai/knowledge/adr/20260132-decision.md <<'EOF'
+---
+id: adr-20260132-decision
+type: adr
+status: accepted
+date: 2026-01-32
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/20260132-decision.md: ADR file name starts with an invalid date: 20260132"
+}
+
+test_adr_dated_filename_date_mismatch_fails() {
+  km_setup
+  cat > .ai/knowledge/adr/20260115-decision.md <<'EOF'
+---
+id: adr-20260115-decision
+type: adr
+status: accepted
+date: 2026-01-16
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "FAIL .ai/knowledge/adr/20260115-decision.md: ADR file date 20260115 does not match date: 2026-01-16"
+}
+
+test_adr_dated_filename_matching_date_passes() {
+  km_setup
+  cat > .ai/knowledge/adr/20260115-decision.md <<'EOF'
+---
+id: adr-20260115-decision
+type: adr
+status: accepted
+date: 2026-01-15
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+test_check_accepts_mix_of_legacy_and_dated_adr_names() {
+  km_setup
+  cat > .ai/knowledge/adr/0001-legacy.md <<'EOF'
+---
+id: adr-0001-legacy
+type: adr
+status: accepted
+date: 2026-01-01
+domains: [core]
+---
+EOF
+  local stamp today
+  stamp=$(date +%Y%m%d)
+  today=$(date +%Y-%m-%d)
+  cat > ".ai/knowledge/adr/${stamp}-dated.md" <<EOF
+---
+id: adr-${stamp}-dated
+type: adr
+status: accepted
+date: ${today}
+domains: [core]
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge check: 2 documents, 0 failures,"
 }
 
 test_non_adr_type_under_adr_dir_fails() {
@@ -582,33 +715,28 @@ test_new_adr_fills_id_date_and_heading() {
   km_setup
   run jig knowledge new adr my-decision
   assert_eq 0 "$RC"
-  assert_eq ".ai/knowledge/adr/0001-my-decision.md" "$OUT"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "id: adr-0001-my-decision"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "date: $(date +%Y-%m-%d)"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "# ADR-0001: <Decision in one sentence>"
+  local stamp today
+  stamp=$(date +%Y%m%d)
+  today=$(date +%Y-%m-%d)
+  assert_eq ".ai/knowledge/adr/${stamp}-my-decision.md" "$OUT"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "id: adr-${stamp}-my-decision"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "date: $today"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "# <Decision in one sentence>"
 }
 
-test_new_adr_numbering_is_highest_existing_plus_one_and_does_not_fill_gaps() {
+# km_next_adr is gone (adr-20260918-adr-names-are-dated): ADRs are named by the
+# day they are written, not by a running number, so a second `new adr` with the
+# same slug the same day collides on the same file instead of getting the next
+# number.
+test_new_adr_same_day_same_slug_is_refused_as_a_duplicate() {
   km_setup
-  cat > .ai/knowledge/adr/0001-first.md <<'EOF'
----
-id: adr-0001-first
-type: adr
-status: accepted
-date: 2026-01-01
----
-EOF
-  cat > .ai/knowledge/adr/0003-third.md <<'EOF'
----
-id: adr-0003-third
-type: adr
-status: accepted
-date: 2026-01-01
----
-EOF
+  jig knowledge new adr fourth >/dev/null
+
   run jig knowledge new adr fourth
-  assert_eq 0 "$RC"
-  assert_eq ".ai/knowledge/adr/0004-fourth.md" "$OUT"
+  assert_eq 1 "$RC"
+  local stamp
+  stamp=$(date +%Y%m%d)
+  assert_contains "$OUT" "knowledge: document already exists: .ai/knowledge/adr/${stamp}-fourth.md"
 }
 
 test_new_with_domains_and_paths_writes_block_lists_paths_quoted_domains_not() {
@@ -683,13 +811,16 @@ test_new_adr_proposed_sets_status_proposed_not_accepted() {
   km_setup
   run jig knowledge new adr my-decision --proposed
   assert_eq 0 "$RC"
-  assert_eq ".ai/knowledge/adr/0001-my-decision.md" "$OUT"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "id: adr-0001-my-decision"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "status: proposed"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "date: $(date +%Y-%m-%d)"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "# ADR-0001: <Decision in one sentence>"
+  local stamp today
+  stamp=$(date +%Y%m%d)
+  today=$(date +%Y-%m-%d)
+  assert_eq ".ai/knowledge/adr/${stamp}-my-decision.md" "$OUT"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "id: adr-${stamp}-my-decision"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "status: proposed"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "date: $today"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "# <Decision in one sentence>"
   local content
-  content=$(cat .ai/knowledge/adr/0001-my-decision.md)
+  content=$(cat ".ai/knowledge/adr/${stamp}-my-decision.md")
   assert_not_contains "$content" "status: accepted"
 }
 
@@ -739,7 +870,9 @@ test_new_without_proposed_flag_status_comes_from_template() {
 
   run jig knowledge new adr untouched-decision
   assert_eq 0 "$RC"
-  assert_file_contains .ai/knowledge/adr/0001-untouched-decision.md "status: accepted"
+  local stamp
+  stamp=$(date +%Y%m%d)
+  assert_file_contains ".ai/knowledge/adr/${stamp}-untouched-decision.md" "status: accepted"
 }
 
 test_new_feature_proposed_is_listed_checked_and_promoted_by_accept() {
@@ -765,19 +898,21 @@ test_new_adr_proposed_is_listed_checked_and_promoted_to_accepted() {
   km_setup
   run jig knowledge new adr my-decision --proposed --domains core
   assert_eq 0 "$RC"
+  local stamp
+  stamp=$(date +%Y%m%d)
 
   run jig knowledge proposed
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "proposed:  adr-0001-my-decision  (adr)  .ai/knowledge/adr/0001-my-decision.md"
+  assert_contains "$OUT" "proposed:  adr-${stamp}-my-decision  (adr)  .ai/knowledge/adr/${stamp}-my-decision.md"
 
   run jig knowledge check
   assert_eq 0 "$RC"
   assert_contains "$OUT" "0 failures"
 
-  run jig knowledge accept adr-0001-my-decision
+  run jig knowledge accept "adr-${stamp}-my-decision"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "accepted   .ai/knowledge/adr/0001-my-decision.md  (status: accepted)"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "status: accepted"
+  assert_contains "$OUT" "accepted   .ai/knowledge/adr/${stamp}-my-decision.md  (status: accepted)"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "status: accepted"
 }
 
 # jig context resolve must never surface a document created with --proposed,
@@ -1639,12 +1774,14 @@ test_accept_promotes_proposed_feature_to_active() {
 test_accept_promotes_proposed_adr_to_accepted_not_active() {
   km_setup
   jig knowledge new adr my-decision --proposed >/dev/null
+  local stamp
+  stamp=$(date +%Y%m%d)
 
-  run jig knowledge accept adr-0001-my-decision
+  run jig knowledge accept "adr-${stamp}-my-decision"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "accepted   .ai/knowledge/adr/0001-my-decision.md  (status: accepted)"
+  assert_contains "$OUT" "accepted   .ai/knowledge/adr/${stamp}-my-decision.md  (status: accepted)"
   assert_contains "$OUT" "knowledge accept: 1 accepted"
-  assert_file_contains .ai/knowledge/adr/0001-my-decision.md "status: accepted"
+  assert_file_contains ".ai/knowledge/adr/${stamp}-my-decision.md" "status: accepted"
 }
 
 test_accept_twice_fails_on_second_call() {
@@ -1774,10 +1911,12 @@ test_reject_refuses_active_document() {
 test_reject_refuses_accepted_adr() {
   km_setup
   jig knowledge new adr my-decision >/dev/null
+  local stamp
+  stamp=$(date +%Y%m%d)
 
-  run jig knowledge reject adr-0001-my-decision
+  run jig knowledge reject "adr-${stamp}-my-decision"
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: adr-0001-my-decision (status: accepted)"
+  assert_contains "$OUT" "jig: error: knowledge: not a proposed document: adr-${stamp}-my-decision (status: accepted)"
 }
 
 test_reject_requires_id_argument() {

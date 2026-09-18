@@ -54,7 +54,7 @@ new class requires.
   thinks in. They are gitignored and read by the person at the human gate, so English buys
   nothing there and costs them time.
 - Any decision that changes architecture, distribution, lifecycle semantics or safety
-  of destructive operations gets an ADR (`adr/NNNN-<slug>.md`, frontmatter per ADR-0004).
+  of destructive operations gets an ADR (`adr/YYYYMMDD-<slug>.md`, frontmatter per ADR-0004).
 - Scripts: POSIX sh / bash 3.2, no mandatory dependencies besides `git` (ADR-0002).
   Every script command has a test under `tests/`.
 - Skills are short; mechanics go to scripts (ADR-0001).

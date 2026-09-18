@@ -33,7 +33,7 @@ directory names and existing docs over reading source files broadly.
   runtime flows, system-wide invariants. Do not restate implementation.
 - `RULES.md`: enforced or clearly intended rules and invariants, each with its source.
 - If a decision is visible in the code and worth preserving, create an ADR with
-  `.ai/scripts/jig knowledge new adr <slug>` — it allocates the number and writes the id,
+  `.ai/scripts/jig knowledge new adr <slug>` — it names the file by the day, writes the id,
   date and status `accepted` — fill in its body, and give it a one-line summary with
   `.ai/scripts/jig knowledge summary <id> "<text>"`.
 
