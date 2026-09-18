@@ -9,7 +9,9 @@ described in the durable knowledge under `.ai/knowledge/`.
 - `.ai/knowledge/RULES.md` — invariants; do not violate.
 - `.ai/knowledge/adr/` — accepted decisions; propose a new ADR instead of silently
   contradicting one.
-- `README.md` — what Jig is and how it is used (human-facing).
+- `README.md` — what Jig is, in short; `docs/` — the user documentation site
+  (https://jig.fapost.in), where how Jig is used is described; `CONTRIBUTING.md` — how Jig is
+  developed.
 
 ## Workflow
 
@@ -48,7 +50,7 @@ new class requires.
 
 ## Working rules
 
-- Durable artifacts are written in English: `.ai/knowledge/`, `README.md`, this file,
+- Durable artifacts are written in English: `.ai/knowledge/`, `README.md`, `docs/`, this file,
   skills, scripts, code comments and commit messages — everything that leaves the machine.
 - Task artifacts under `.ai/workspace/tasks/` are written in the language their reader
   thinks in. They are gitignored and read by the person at the human gate, so English buys
