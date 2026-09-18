@@ -106,7 +106,7 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
 > comes later rather than never. Checkout is `actions/checkout@v7` (Node 24); the release job's tag push
 > uses the credentials it persists, as before.
 
-> **Amendment (2026-09-18).** The `release` job runs when no job it needs failed or was cancelled, so a
-> light run (ADR-0041 as amended: documentation only, tests skipped) still reaches it and finds its tag
-> already there. A version bump cannot be light: `scripts/lib/version.sh` is not documentation. The
-> `epic-pr` check runs under the same condition.
+> **Amendment (2026-09-18).** Only a full run tags (ADR-0041 as amended): a light run — documentation
+> only, tests skipped — never reaches `release`. A version bump whose own run was replaced in the queue
+> by a light one is tagged by the next full run, on the next code merge or the nightly scheduled run,
+> which may tag as a push does. The `epic-pr` check runs when no job it needs failed or was cancelled.
