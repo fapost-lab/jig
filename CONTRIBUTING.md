@@ -58,6 +58,29 @@ This repository sets `verify.full_run: ci`: a plain `jig verify` checks what cha
 Documentation changes: in `docs/`, run `npx mint broken-links` and `npx mint validate` (Node is a
 maintainer tool here, not a dependency of Jig).
 
+### Routing evals
+
+A runtime picks a skill by its `description:`, so the descriptions have tests of their own.
+`tests/routing/<skill>.cases` holds prompts the skill must win (`+ <prompt>`) and prompts it must not
+(`- <prompt>`, usually a neighbour's); `tests/routing.sh` scores every prompt against every
+description and prints one `ok`/`FAIL` line per case with the scores that decided it:
+
+```bash
+bash tests/routing.sh              # the report
+bash tests/run.sh routing::        # as part of the suite, which is how CI runs it
+```
+
+A prompt is won by the one skill whose description shares the most words with it, each word
+weighted by how few descriptions use it, with a phrase the description quotes (`"review"`) counting
+once more. It is word overlap, not a model: no key, no network, the same answer everywhere.
+
+- A new skill needs a case file with at least one `+` and one `-` line, or the check fails.
+- A changed description runs these tests locally and in CI (`.ai/verify/shell.map` routes
+  `skills/*/SKILL.md` to `routing::`). When it loses a case, reword the description before the case;
+  change the case only when the prompt was ambiguous in the first place.
+- Write most prompts as a user would ask them rather than copying the description's quoted phrases:
+  a case that only repeats the description proves little.
+
 ## Releases
 
 Raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request that should become the release:

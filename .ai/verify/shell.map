@@ -21,6 +21,11 @@ adapters/**                     adapters::
 profiles/**                     profiles:: verify::
 templates/**                    init:: upgrade::
 
+# A skill description is what a runtime routes by, and the routing evals
+# score it: a SKILL.md reads as documentation, which would reach no test.
+skills/*/SKILL.md               routing::
+tests/routing/**                routing::
+
 # A library of one script is tested through that script.
 .github/scripts/release-lib.sh  release-tag::
 # CI configuration is exercised by CI itself, not by tests/run.sh.

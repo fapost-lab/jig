@@ -1,0 +1,8 @@
+# jig-implement: writing the change against the rules and proving it.
++ implement the plan we agreed on
++ write the code for the approved design
++ make the change and prove it works
++ continue implementation where you stopped
+- investigate why this happens only on Windows
+- run the tests and check it works
+- review this change before it ships

@@ -1,0 +1,10 @@
+# jig-task: starting or resuming work, classifying it and choosing the route.
++ add a retry to the webhook sender
++ fix the crash when the config file is empty
++ refactor the billing module into smaller services
++ continue the task I started yesterday
++ classify this change and tell me what process it needs
+# Its neighbours' requests.
+- analyze why the import job fails on large files
+- review this change before it ships
+- write a spec for the new sync engine
