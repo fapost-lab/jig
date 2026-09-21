@@ -123,6 +123,14 @@ never by reading the file. The ledger records claims (ADR-0020): the script cann
 from the author, so who may close or dismiss a finding is a rule of the skills
 (`skills/jig-review/references/findings.md`), not of this code.
 
+**The status page shows this domain's answers verbatim**
+(adr-20260921-the-status-page-is-the-one-file-a-report-writes). `jig status --html` lists each live
+task with the lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`,
+`stale (…)`, `none`, `none (required for T4)`), `_task_worktree_note` and `jig_task_base`. Those strings
+are therefore read by a person on the page as well as by the gates: change one and the page and its
+tests change with it. `status.sh` reads each task's `state` once, in `_status_task_facts`, for the
+text report and the page alike.
+
 **The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
 After the findings check, each gate asks one staleness function whether the working tree, the
 approved design or the ledger moved since the receipt, and a T4 task must have one. The tree is

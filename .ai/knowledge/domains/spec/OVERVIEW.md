@@ -11,7 +11,7 @@ paths:
   - scripts/lib/spec.sh
   - "templates/spec/**"
   - "skills/jig-idea/**"
-reviewed_at: 2026-09-17
+reviewed_at: 2026-09-21
 ---
 # Spec
 
@@ -56,12 +56,13 @@ failed abandon leaves the `Spec:` line that lets a rerun find the task.
 `task start` reads both to choose a task's base. Nothing in housekeeping reads a spec: a phase's link to
 its epic is the task's `base_branch`.
 
-`status.sh` consumes `spec_count` and `spec_epic_status`, never recounts. The counting rules for roadmap lines
-live in `spec_progress` only.
+`status.sh` consumes `spec_count` and `spec_epic_status`, never recounts, and its status page renders
+`spec_list_rows` — the unformatted rows `spec list` aligns — so the page and `spec list` cannot disagree
+about a spec's state. The counting rules for roadmap lines live in `spec_progress` only.
 
 ## Entry points
 
-- `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`,
+- `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`, `spec_list_rows`,
   `spec_progress`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
   `spec_epic_status`, `spec_close`, `spec_leftovers`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
