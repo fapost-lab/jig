@@ -121,6 +121,9 @@ Frontmatter is never hand-edited: the commands above own it (ADR-0001, ADR-0010)
 .ai/scripts/jig task set <id> knowledge_consolidated true
 ```
 
+`task set … knowledge_consolidated true` refuses while a P0 or P1 review finding is unresolved;
+resolve it first ([findings](../jig-review/references/findings.md)).
+
 `spec done` checks the roadmap items that name the task when its `task.md` carries a `Spec:`
 line, so the checkmark reaches the base branch in the same change as the work; for a task with
 no link it says so and changes nothing. If it reports that no roadmap item names the task, the

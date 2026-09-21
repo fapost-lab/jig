@@ -45,6 +45,7 @@ long-lived branch and would otherwise crowd out the work in flight.
 |---|---|---|
 | `state` | `jig task new` | this file |
 | `task.md` | `jig task new`, from `templates/task.md` or from `--from <file>` | goal, scope, notes; context also lists existing known artifacts |
+| `findings` | `jig task finding add` | the review findings ledger: one tab-separated line per finding — `F<n>`, severity `P0`–`P3`, status `open`/`fixed`/`closed`/`dismissed`, where (`path[:line]` or `-`), summary, date of the last change, dismissal reason (empty otherwise). Changed only by `jig task finding add\|set`, written atomically. A P0 or P1 in `open` or `fixed` refuses `status ready`, `knowledge_consolidated true` and `task ship` (adr-20260921-review-findings-block-completion) |
 | `discovery.md`, `spec.md`, `alternatives.md`, `design.md`, `plan.md`, `review.md`, `verification.md`, `handoff.md` | skills, when the task class calls for them | stage artifacts (domains/task) |
 
 ## Artifact input report (ADR-0020)

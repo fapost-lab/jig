@@ -64,6 +64,35 @@ workspace. An abandoned task's workspace goes to the trash after two weeks, what
 remote state. The trigger is a Claude Code session hook
 or a scheduler you choose ([Configuration](/configuration)).
 
+## Review findings
+
+When a task is reviewed, each problem the review finds is written down in the task's workspace with a
+severity:
+
+| | Means | Stops the task |
+|---|---|---|
+| P0 | Breaks data or security, or goes against a rule or decision the project recorded | yes |
+| P1 | Gives a wrong result on a path that will be used | yes |
+| P2 | Worth fixing, but the code works without it | no |
+| P3 | A small thing | no |
+
+A P0 or P1 stops the task from being finished. Until it is resolved, the agent cannot mark the task
+ready, record what the project should remember, or commit and open the pull request
+([Letting the agent ship](/agent-ships)). A fix alone does not resolve it: the agent fixes the
+problem, and a second review confirms the fix and closes the finding.
+
+The other way out is to decide the problem does not need fixing — the review was wrong, or you accept
+it. For a P0 or P1 that decision is yours: the agent shows you the finding and asks, and writes your
+answer down with it. A P2 or P3 the agent may set aside on its own, with a reason.
+
+To see where a task stands, ask *"what did the review find?"*, or run:
+
+```bash
+jig task findings <task-id>
+```
+
+`jig status` marks a task that is stopped this way with `blocking=<n>`.
+
 ## Several agents at once
 
 One checkout holds one piece of uncommitted work. When an agent is already working and you want to

@@ -73,5 +73,10 @@ When everything holds:
 .ai/scripts/jig task set <id> status ready
 ```
 
+It refuses while a P0 or P1 review finding is open or fixed but not re-reviewed
+(`jig task findings <id> --blocking` lists them). That is not a failure to work around: send
+the task back to implementation or to re-review, or ask the human about dismissing it
+([findings](../jig-review/references/findings.md)).
+
 Then run `jig-consolidate`, whatever the class. `ready` is not the end of a route: a task
 left there is never closed, and housekeeping never cleans it up.

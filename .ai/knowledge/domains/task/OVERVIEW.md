@@ -60,8 +60,8 @@ tasks. Rename a field here and `spec.sh` changes with it.
 (ADR-0030). `knowledge_consolidated: true` is written at the end of every route, before the
 commit; `status: consolidated` closes the task after its change has landed, prompted by
 housekeeping's `needs-consolidation`. `task set` refuses the status while the flag is not
-`true`, and refuses `false` on a closed task. This is the only cross-key rule in
-`task_set`: every other key is validated on its own value alone.
+`true`, and refuses `false` on a closed task. Apart from the findings gates below, this is the
+only cross-key rule in `task_set`: every other key is validated on its own value alone.
 
 One consequence lands squarely on this domain, and ADR-0026 is the answer to it.
 Housekeeping can only establish that work landed when the task had a branch of its own: a
@@ -113,3 +113,13 @@ refuses on each before it touches git, so a renamed field turns into a refusal, 
 the wrong branch. How far it goes is `agent.git`, a local-only key of the config layer; the
 forge it opens the pull request on is resolved by `jig_forge_kind` in `common.sh`, the same answer
 housekeeping reads PR state from.
+
+**The findings ledger is this domain's, and it adds two cross-key rules to `task set`**
+(adr-20260921-review-findings-block-completion). `status ready` and `knowledge_consolidated true`
+refuse while `_task_blocking_findings` answers — a P0 or P1 in `open` or `fixed` — and `task ship`
+asks the same function again, since a fix after consolidation can add a finding. That function is
+the single definition of "blocking": `jig status` prints its count as `blocking=<n>` by calling it,
+never by reading the file. The ledger records claims (ADR-0020): the script cannot tell a reviewer
+from the author, so who may close or dismiss a finding is a rule of the skills
+(`skills/jig-review/references/findings.md`), not of this code.
+
