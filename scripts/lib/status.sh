@@ -136,7 +136,7 @@ $rel"
 
   # shellcheck source=lib/task.sh
   . "$JIG_LIB/task.sh"
-  local found=0 finished=0 state_file tid class st paused reason line branch base_branch default_base worktrees wt blocking bcount
+  local found=0 finished=0 state_file tid class st paused reason line branch base_branch default_base worktrees wt blocking bcount receipt_changed
   worktrees=$(_task_worktrees)
   default_base=$(cfg git.base_branch main)
   for state_file in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
@@ -180,6 +180,12 @@ $rel"
     blocking=$(_task_blocking_findings "$tid")
     bcount=$(_task_count_lines "$blocking")
     [ "$bcount" -eq 0 ] || line="$line blocking=$bcount"
+    # Same predicate every gate uses (_task_receipt_changed, task.sh): a
+    # receipt that exists but no longer matches the reviewed state. A task
+    # with no receipt at all is not flagged here — that is "not reviewed yet",
+    # not "stale" (design.md §5).
+    receipt_changed=$(_task_receipt_changed "$tid")
+    [ -z "$receipt_changed" ] || line="$line review=stale"
     printf '%s\n' "$line"
   done
   [ "$found" = 1 ] || printf '%s\n' "no active tasks"

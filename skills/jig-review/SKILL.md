@@ -46,7 +46,8 @@ subagent that has not seen the implementation being defended.
 Findings ordered by severity, each with file and line, one line of description, and a
 concrete fix. Say plainly when there are none. Record each one in the task's ledger with a
 severity, as [findings](references/findings.md) says: a finding only said here blocks nothing.
-On a re-review, close each `fixed` finding that is fixed and reopen the rest.
+On a re-review, close each `fixed` finding that is fixed and reopen the rest. Last, write the
+review's receipt (`jig task receipt <id> --stage review`), which pins what you reviewed.
 
 Then either apply the fixes or hand them back, depending on what the user asked. A review
 that ends without a decision on every finding is unfinished.

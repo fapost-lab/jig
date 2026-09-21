@@ -315,6 +315,70 @@ EOF
   assert_not_contains "$OUT" "blocking="
 }
 
+# review receipt (design.md, review-receipt) ---------------------------------
+
+test_status_marks_review_stale_for_a_task_with_a_stale_receipt() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+  # A receipt whose tree cannot match anything real: any working tree makes
+  # this stale, without depending on hashing the fixture's own files.
+  cat > .ai/workspace/tasks/TASK-1/receipt <<'EOF'
+stage: review
+reviewed_at: 2026-09-08
+tree: 0000000000000000000000000000000000000000
+base_commit: 0000000000000000000000000000000000000000
+head: 0000000000000000000000000000000000000000
+design: -
+findings: -
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active review=stale"
+}
+
+test_status_omits_review_stale_when_the_receipt_is_current() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+  jig task receipt TASK-1 --stage review >/dev/null
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active"
+  assert_not_contains "$OUT" "review=stale"
+}
+
+test_status_omits_review_stale_when_there_is_no_receipt_at_all() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active"
+  assert_not_contains "$OUT" "review=stale"
+}
+
 test_status_housekeeping_age() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null

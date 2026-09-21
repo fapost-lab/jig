@@ -74,7 +74,8 @@ When everything holds:
 ```
 
 It refuses while a P0 or P1 review finding is open or fixed but not re-reviewed
-(`jig task findings <id> --blocking` lists them). That is not a failure to work around: send
+(`jig task findings <id> --blocking` lists them), and when the code, the design or the
+findings changed after the review (`jig task receipt <id> --check` names what). That is not a failure to work around: send
 the task back to implementation or to re-review, or ask the human about dismissing it
 ([findings](../jig-review/references/findings.md)).
 
