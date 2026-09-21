@@ -3150,3 +3150,433 @@ test_task_ship_refuses_stale_receipt_planted_after_consolidation() {
   assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
 }
 
+# --- autopilot (design.md under .ai/workspace/tasks/autopilot-run) -------------
+#
+# `jig task autopilot <id> start|stage|repair|stop|resume|end|report`: a run
+# journal (`.ai/workspace/tasks/<id>/autopilot`) plus two script-owned state
+# keys (`autopilot`, `autopilot_repairs`). The repair limit (2 per run,
+# task.md human gate) is enforced here, not by a skill.
+
+test_task_autopilot_start_writes_state_and_journal() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\t')"
+}
+
+test_task_autopilot_start_already_running_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already running: T-1"
+}
+
+test_task_autopilot_start_on_a_stopped_run_points_to_resume() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "human gate" >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is stopped; run: jig task autopilot T-1 resume"
+}
+
+test_task_autopilot_start_after_done_starts_a_fresh_run() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
+}
+
+test_task_autopilot_start_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_start_invalid_id_dies() {
+  task_setup
+  run jig task autopilot ../nope start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid task id"
+}
+
+test_task_autopilot_start_unknown_argument_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown argument: --bogus"
+}
+
+test_task_autopilot_no_id_dies_with_usage() {
+  task_setup
+  run jig task autopilot
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot"
+}
+
+test_task_autopilot_unknown_action_dies_with_usage() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot"
+}
+
+test_task_autopilot_help_prints_multiline_usage() {
+  task_setup
+  run_split jig task autopilot --help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot <id> start"
+  assert_contains "$OUT" "jig task autopilot <id> stage <name>"
+  assert_contains "$OUT" "jig task autopilot <id> repair --reason <text>"
+  assert_contains "$OUT" "jig task autopilot <id> report"
+  assert_eq "" "$ERR"
+}
+
+test_task_autopilot_stage_logs_name() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage analyze
+  assert_eq 0 "$RC"
+  assert_eq "stage: analyze" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstage\tanalyze')"
+}
+
+test_task_autopilot_stage_invalid_name_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage "Bad Name"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid name: Bad Name"
+}
+
+test_task_autopilot_stage_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 stage analyze
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_stage_missing_name_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot"
+}
+
+test_task_autopilot_stage_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE stage analyze
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_repair_first_and_second_succeed() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason "fix lint"
+  assert_eq 0 "$RC"
+  assert_eq "repair 1/2" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 1"
+  run jig task autopilot T-1 repair --reason "fix test"
+  assert_eq 0 "$RC"
+  assert_eq "repair 2/2" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+}
+
+test_task_autopilot_repair_third_stops_the_run_and_exits_3() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+  run jig task autopilot T-1 repair --reason "r3"
+  assert_eq 3 "$RC"
+  assert_eq "stop: repair limit reached (2)" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstop\trepair limit reached (2): r3')"
+}
+
+test_task_autopilot_repair_requires_reason() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is required"
+}
+
+test_task_autopilot_repair_reason_requires_a_value_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason requires a value"
+}
+
+test_task_autopilot_repair_empty_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must not be empty"
+}
+
+test_task_autopilot_repair_tab_in_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must be a single line with no tab"
+}
+
+test_task_autopilot_repair_unknown_argument_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason x --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown argument: --bogus"
+}
+
+test_task_autopilot_repair_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 repair --reason "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_repair_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE repair --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_stop_requires_reason() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is required"
+}
+
+test_task_autopilot_stop_sets_stopped_and_logs_reason() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop --reason "needs a human decision"
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: stopped" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstop\tneeds a human decision')"
+}
+
+test_task_autopilot_stop_empty_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop --reason ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must not be empty"
+}
+
+test_task_autopilot_stop_tab_in_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must be a single line with no tab"
+}
+
+test_task_autopilot_stop_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 stop --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_stop_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE stop --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_resume_resets_repairs_and_sets_on() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 stop --reason "gate" >/dev/null
+  run jig task autopilot T-1 resume
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tresume\t')"
+  # The reset is real, not cosmetic: two more repairs after resume must not
+  # trip the limit early.
+  run jig task autopilot T-1 repair --reason r2
+  assert_eq 0 "$RC"
+  assert_eq "repair 1/2" "$OUT"
+}
+
+test_task_autopilot_resume_not_stopped_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not stopped: T-1"
+}
+
+test_task_autopilot_resume_never_started_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not stopped: T-1"
+}
+
+test_task_autopilot_resume_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_end_sets_done() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 end
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: done" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: done"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tend\t')"
+}
+
+test_task_autopilot_end_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 end
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_end_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE end
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_report_no_run_exits_0() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_eq "no autopilot run" "$OUT"
+}
+
+test_task_autopilot_report_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE report
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_report_shows_stages_repairs_stop_and_summary() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stage analyze >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+  jig task autopilot T-1 repair --reason "r3" >/dev/null || true
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" " start"
+  assert_contains "$OUT" " stage: analyze"
+  assert_contains "$OUT" " repair: r1"
+  assert_contains "$OUT" " repair: r2"
+  assert_contains "$OUT" " stop: repair limit reached (2): r3"
+  assert_contains "$OUT" "autopilot: stopped, repairs: 2/2"
+}
+
+test_task_autopilot_report_after_resume_and_end() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "gate" >/dev/null
+  jig task autopilot T-1 resume >/dev/null
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" " resume"
+  assert_contains "$OUT" " end"
+  assert_contains "$OUT" "autopilot: done, repairs: 0/2"
+}
+
+# task set (design's script-owned keys, schemas/state.md) --------------------
+
+test_task_set_refuses_autopilot_key() {
+  task_setup
+  task_started T-1
+  run jig task set T-1 autopilot on
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
+test_task_set_refuses_autopilot_repairs_key() {
+  task_setup
+  task_started T-1
+  run jig task set T-1 autopilot_repairs 0
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
+# Autopilot must not weaken the completion gate: a task on autopilot with an
+# open P1 finding still refuses `status ready`, exactly as it would off
+# autopilot (findings-ledger gate, task_set).
+test_task_set_status_ready_still_refuses_with_autopilot_on_and_an_open_p1_finding() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task finding add T-1 --severity P1 --where a.sh:1 --summary "bug" >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "blocking finding"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}

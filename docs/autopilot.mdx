@@ -1,0 +1,80 @@
+---
+title: "Autopilot"
+description: "Hand a task to the agent and get it back finished — what a run does, where it stops, and what to do at each stop."
+---
+
+Normally the agent reports after each stage of a task and waits for you to say "go on". On
+autopilot it goes from stage to stage by itself and comes back only when it is finished, or when it
+needs something only you can give.
+
+## Start a run
+
+Say it the way you would ask for any task:
+
+> *"Take the CSV export on autopilot."*
+> *"Fix the login redirect, end to end, without me."*
+
+The agent sizes the task as usual, says what will happen and where the run will end, and starts.
+Asking for autopilot covers that one task only.
+
+Where the run ends depends on [Letting the agent ship](/agent-ships):
+
+| `agent.git` in your `.ai/config.local.yaml` | The run ends with |
+|---|---|
+| `pr` | an open pull request for you to review and merge |
+| `push` or `commit` | the task's branch pushed or committed; the rest is yours |
+| `none` (default) | the change in your working tree, ready for your review and commit |
+
+The agent never merges. The pull request is where you look at the result.
+
+## What happens during a run
+
+The same steps as without autopilot, in the same order: understanding the task, a plan or a design,
+the change itself, a review, the checks, and recording what the project should remember. Two things
+are different:
+
+- **The review is done by a second agent** that did not write the code, so the author does not
+  review its own work.
+- **Fixing has a limit.** When the review finds a serious problem or the checks fail, the agent
+  fixes it and has it looked at again — at most twice per run. A third attempt is refused by Jig
+  itself, and the run stops instead of going round in circles.
+
+The same rules that stop an ordinary task stop a run: a serious review finding that is not fixed, or
+a change made after its review, keeps the task from being finished ([Working with tasks](/working-with-tasks#review-findings)).
+Autopilot does not relax any of them.
+
+## Where it stops
+
+A run stops only where a human is needed. The agent tells you in plain words what it needs; answer
+it, and it carries on from where it stopped.
+
+| The run stops when | What you do |
+|---|---|
+| The task is risky enough to need your approval of its design (classes T3 and T4) | Read the design it shows you and approve it, ask for changes, or reject it |
+| A problem is still there after two attempts to fix it | Suggest another approach, decide the problem can stay (a serious one only you can wave through), or drop the task |
+| The task turns out bigger and now needs a design approval | The same as the first row |
+| It needs a decision nobody has made — a product choice not written down anywhere | Make the decision |
+| The next step would destroy something — force-push, delete a branch, delete data, rewrite history | Allow it, or ask for another way |
+
+After you answer, the agent continues, and it gets two fresh attempts at fixing: your answer gave
+the run a new direction.
+
+## The report
+
+At the end — or at a stop — the agent shows the run's report: which stages it went through, each
+fixing attempt and why, each stop and its reason, and how it ended. With `agent.git: pr` the report
+is also in the pull request's description. You can see it any time with:
+
+```bash
+jig task autopilot <task-id> report
+```
+
+`jig status` marks a task that is running with `autopilot=on`, and one waiting for you with
+`autopilot=stopped`.
+
+## What autopilot does not protect you from
+
+Jig's scripts cannot see the commands the agent runs. The limit on fixing attempts and the rules
+that keep an unfinished task from being finished are enforced by Jig; the stop before a destructive
+operation is a rule the agent follows. What really prevents a command you did not allow is your
+coding agent's own permission settings — keep them as strict as you are comfortable with.

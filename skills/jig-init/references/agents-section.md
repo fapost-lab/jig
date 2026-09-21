@@ -28,6 +28,9 @@ roadmap under `.ai/specs/<id>/`. A specification is a plan, not knowledge, so `j
 never resolves it — `jig status` counts specs on its `specs:` line, and `jig spec list`
 lists them with their roadmap progress.
 
+`jig-autopilot` runs one task's route without waiting between stages and stops only where a
+human is needed; the route, the gates and `agent.git` stay what they are.
+
 | Class | Route |
 |---|---|
 | T0 trivial | implement, verify, consolidate |

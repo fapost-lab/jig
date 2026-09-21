@@ -136,7 +136,7 @@ $rel"
 
   # shellcheck source=lib/task.sh
   . "$JIG_LIB/task.sh"
-  local found=0 finished=0 state_file tid class st paused reason line branch base_branch default_base worktrees wt blocking bcount receipt_changed
+  local found=0 finished=0 state_file tid class st paused reason line branch base_branch default_base worktrees wt blocking bcount receipt_changed autopilot_note
   worktrees=$(_task_worktrees)
   default_base=$(cfg git.base_branch main)
   for state_file in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
@@ -186,6 +186,11 @@ $rel"
     # not "stale" (design.md §5).
     receipt_changed=$(_task_receipt_changed "$tid")
     [ -z "$receipt_changed" ] || line="$line review=stale"
+    # Same predicate `jig task autopilot report` prints (_task_autopilot_note,
+    # task.sh): a run mid-flight (`on`) or waiting on a human (`stopped`).
+    # `done`, and a task that never ran one, add nothing (design.md, autopilot).
+    autopilot_note=$(_task_autopilot_note "$tid")
+    [ -z "$autopilot_note" ] || line="$line $autopilot_note"
     printf '%s\n' "$line"
   done
   [ "$found" = 1 ] || printf '%s\n' "no active tasks"
