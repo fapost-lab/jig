@@ -39,7 +39,8 @@ Usage: jig <command> [args]
   init [--from <dir>] [--link] [--session-hook]
                                  bootstrap .ai/ in the current repository
   upgrade [--from <dir>]         update framework-owned files (manifest-aware)
-  status                         active tasks, housekeeping flags, drift
+  status [--html]                active tasks, housekeeping flags, drift;
+                                 --html writes the status page to .ai/runtime/status.html
   task new|start|set|abandon ... task workspace and state (new files it, start begins it)
   task changes <id> --base <ref> inventory all change layers; --files and --format paths
   task artifacts <id> [...]      fixed-route inputs; --provided names conversation outputs

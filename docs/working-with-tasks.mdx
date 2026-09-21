@@ -121,6 +121,42 @@ checkout still shows every task and where it runs. Review and commit in the work
 anywhere. When the task is closed, the worktree is removed with it — but only if it has no
 uncommitted changes. Worktrees you or your agent created by hand are never removed.
 
+## Seeing where things stand
+
+`jig status` answers in the terminal. For a view you can read like a web page — or send to someone
+who does not use a terminal — ask the agent to *"make the status page"*, or run:
+
+```bash
+jig status --html
+```
+
+It writes one file, `.ai/runtime/status.html` in your project, and prints its full path. The page
+shows:
+
+- every task in progress: its class, status, the branch it lands on, the worktree it runs in, whether
+  its review still holds (current, stale, or none yet — and whether a T4 task still needs one), and
+  each finding that stops it;
+- how far every specification's roadmap has got;
+- what waits for you: knowledge awaiting a decision, tasks to close after their change landed,
+  worktrees housekeeping had to keep;
+- the complete `jig status` text, folded away at the bottom.
+
+To open it, double-click `status.html` in your file manager — on Windows, in File Explorer, open your
+project folder, then `.ai`, then `runtime`; on macOS, Finder hides folders whose name starts with a
+dot until you press Cmd+Shift+. (period). From a terminal:
+
+| System | Command |
+|---|---|
+| Windows (Git Bash) | `start .ai/runtime/status.html` |
+| Windows (PowerShell) | `Invoke-Item .ai\runtime\status.html` |
+| macOS | `open .ai/runtime/status.html` |
+| Linux | `xdg-open .ai/runtime/status.html` |
+
+The page is a single file with nothing to download: it opens in any browser, offline, and follows your
+system's light or dark theme. It is a snapshot — it shows the moment it was made, printed at the top —
+so run the command again to refresh it. Running it changes nothing else in your project, and the file
+is never committed.
+
 ## When the work turns out bigger
 
 A task starts with a class the agent chose from the risk it saw. When the work turns out bigger — a
