@@ -64,7 +64,7 @@ descriptions are checked for overlap. Done when: `jig status --html` opens offli
 tasks, findings, receipts and spec progress; CI fails on a skill description that stops
 winning its own prompts; the docs describe the status page and how to open it.
 
-- [ ] Routing evals — prompt cases per skill, a shell scorer in `tests/`, run in CI
+- [x] `routing-evals` — Routing evals — prompt cases per skill, a shell scorer in `tests/`, run in CI
 - [ ] Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
   receipts are half of what it shows)
 
