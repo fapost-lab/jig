@@ -1,0 +1,7 @@
+# jig-verify: running the checks and confirming the goal is met.
++ run the tests and check it works
++ verify the task before we call it done
++ are we done here
++ confirm the goal is actually met with evidence
+- review this change before it ships
+- implement the plan we agreed on
