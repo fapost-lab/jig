@@ -24,7 +24,8 @@ queue it is counting.
 
 Goal: completion stops on its own when review found something serious or no longer matches
 the code. Done when: a planted P1 or a commit after review makes `jig verify` and
-consolidation refuse, with a message naming what to do.
+consolidation refuse, with a message naming what to do; the docs say how findings are
+recorded and what to do when completion is refused.
 
 - [ ] Findings ledger — review records findings with severity and status through a `jig task`
   subcommand; open or unre-reviewed P0/P1 refuse completion
@@ -36,7 +37,8 @@ consolidation refuse, with a message naming what to do.
 
 Goal: one task runs from classification to its end state without a human, stopping only on
 the listed stops. Done when: a T1 and a T2 task each reach an open pull request unattended,
-and every stop condition has a test that ends the run.
+and every stop condition has a test that ends the run; an "Autopilot" guide page on the docs
+site says how to start a run, where it stops and what to do at each stop.
 
 - [ ] Autopilot run for a task — entry, stop conditions, repair limit, a run report (after:
   Phase 1 — it ends in a commit or PR; Phase 2 — its stops on findings and stale review are
@@ -48,7 +50,8 @@ and every stop condition has a test that ends the run.
 ## Phase 4 — Autopilot for a roadmap phase
 
 Goal: a filed phase of a spec runs task after task, wave by wave. Done when: a two-task phase
-ends in two pull requests without a human between them.
+ends in two pull requests without a human between them; the "Autopilot" page covers phase
+runs.
 
 - [ ] fog: phase run — ordering across waves, what a stop in one task does to the rest, and
   whether tasks of one wave run in parallel worktrees cannot be stated before single-task
@@ -59,7 +62,7 @@ ends in two pull requests without a human between them.
 Goal: a person who does not live in a terminal can see where things stand, and skill
 descriptions are checked for overlap. Done when: `jig status --html` opens offline and shows
 tasks, findings, receipts and spec progress; CI fails on a skill description that stops
-winning its own prompts.
+winning its own prompts; the docs describe the status page and how to open it.
 
 - [ ] Routing evals — prompt cases per skill, a shell scorer in `tests/`, run in CI
 - [ ] Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
