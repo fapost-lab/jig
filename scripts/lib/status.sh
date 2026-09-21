@@ -158,7 +158,7 @@ $rel"
     printf 'specs: none\n'
   fi
 
-  local found=0 state_file line worktrees default_base blocking bcount receipt_changed
+  local found=0 state_file line worktrees default_base blocking bcount receipt_changed autopilot_note
   _STATUS_FINISHED=0
   worktrees=$(_task_worktrees)
   default_base=$(cfg git.base_branch main)
@@ -191,6 +191,11 @@ $rel"
     # not "stale" (design.md §5).
     receipt_changed=$(_task_receipt_changed "$_ST_ID")
     [ -z "$receipt_changed" ] || line="$line review=stale"
+    # Same predicate `jig task autopilot report` prints (_task_autopilot_note,
+    # task.sh): a run mid-flight (`on`) or waiting on a human (`stopped`).
+    # `done`, and a task that never ran one, add nothing (design.md, autopilot).
+    autopilot_note=$(_task_autopilot_note "$_ST_ID")
+    [ -z "$autopilot_note" ] || line="$line $autopilot_note"
     printf '%s\n' "$line"
   done
   [ "$found" = 1 ] || printf '%s\n' "no active tasks"
@@ -466,7 +471,7 @@ _status_html_summary() {
 }
 
 # _status_html_tasks — one row per live task: the same facts as the text
-# report's task lines, with the blocking findings' own lines
+# report's task lines (autopilot state as a badge beside the status), with the blocking findings' own lines
 # (_task_blocking_findings) and the receipt as `task receipt --check` answers
 # it (task_receipt_check), none included.
 _status_html_tasks() {
@@ -488,6 +493,12 @@ _status_html_tasks() {
       printf ' <span class="badge warn">paused</span>'
       [ -z "$_ST_REASON" ] || printf ' <span class="muted">%s</span>' "$(_status_h "$_ST_REASON")"
     fi
+    # The text report's marker (_task_autopilot_note): a run in flight, or
+    # one waiting on a human, which is the case a reader most needs to see.
+    case "$(_task_autopilot_note "$_ST_ID")" in
+      autopilot=on) printf ' <span class="badge">autopilot</span>' ;;
+      autopilot=stopped) printf ' <span class="badge warn">autopilot stopped</span>' ;;
+    esac
     printf '</td><td>%s</td>' "$(_status_h "$(jig_task_base "$_ST_ID")")"
     if [ -n "$_ST_WT" ]; then
       printf '<td class="path"><code>%s</code><br><span class="muted">%s uncommitted</span></td>' \

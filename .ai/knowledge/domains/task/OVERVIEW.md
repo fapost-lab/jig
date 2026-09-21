@@ -138,3 +138,10 @@ content, built in a temporary index, never the real one, and it leaves out `.ai/
 `.ai/specs/` because consolidation writes them after review. A new path that consolidation starts
 writing must join that exclusion, or every task will read as unreviewed at its last step.
 
+**An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
+`jig task autopilot` owns two state keys, `autopilot` and `autopilot_repairs`, which `task set`
+refuses like every other script-owned key, and a journal file in the workspace. The only rule it
+enforces is the repair limit — two per run, a third refused with exit 3 and the run `stopped`; every
+other stop is `jig-autopilot`'s to take. A run changes none of the completion gates: a task on
+autopilot meets the same findings and receipt checks as any other.
+

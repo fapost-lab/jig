@@ -1064,6 +1064,99 @@ test_status_instructions_reports_a_missing_agents_md() {
   assert_contains "$OUT" "instructions (claude): no Jig section in CLAUDE.md"
 }
 
+# --- autopilot (design.md under .ai/workspace/tasks/autopilot-run) -------------
+
+test_status_marks_autopilot_on_for_a_running_task() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+autopilot: on
+autopilot_repairs: 0
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active autopilot=on"
+}
+
+test_status_marks_autopilot_stopped_for_a_stopped_run() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+autopilot: stopped
+autopilot_repairs: 2
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active autopilot=stopped"
+}
+
+test_status_omits_autopilot_marker_when_the_run_is_done() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+autopilot: done
+autopilot_repairs: 0
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active"
+  assert_not_contains "$OUT" "autopilot="
+}
+
+test_status_omits_autopilot_marker_when_no_run_was_ever_started() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active"
+  assert_not_contains "$OUT" "autopilot="
+}
+
+test_status_reflects_a_real_autopilot_run_through_start_and_stop() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+  jig task autopilot TASK-1 start >/dev/null
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot=on"
+
+  jig task autopilot TASK-1 stop --reason "human gate" >/dev/null
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot=stopped"
+}
+
 # --- the status page: `jig status --html` (.ai/specs/autopilot/, Phase 5) ------
 
 test_status_rejects_an_unknown_argument() {
@@ -1303,4 +1396,21 @@ test_status_html_names_open_epics_as_status_does() {
   page=$(cat .ai/runtime/status.html)
   assert_contains "$page" "<li>epic: idea-x on epic/idea-x, branch missing</li>"
   assert_contains "$page" "<td>epic/idea-x — branch missing</td>"
+}
+
+test_status_html_shows_the_autopilot_state_the_text_report_shows() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+  run jig status --html
+  assert_not_contains "$(cat .ai/runtime/status.html)" ">autopilot"
+
+  jig task autopilot TASK-1 start >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge">autopilot</span>'
+
+  jig task autopilot TASK-1 stop --reason "human gate" >/dev/null
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge warn">autopilot stopped</span>'
 }

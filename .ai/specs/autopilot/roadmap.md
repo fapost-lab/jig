@@ -36,16 +36,21 @@ recorded and what to do when completion is refused.
 ## Phase 3 — Autopilot for one task
 
 Goal: one task runs from classification to its end state without a human, stopping only on
-the listed stops. Done when: a T1 and a T2 task each reach an open pull request unattended,
+the listed stops — or, in unattended mode, not stopping at all and ending in a merge that CI
+deploys. Done when: a T1 and a T2 task each reach an open pull request unattended, an unattended
+run of a T1 task ends merged after green CI,
 and every stop condition has a test that ends the run; an "Autopilot" guide page on the docs
 site says how to start a run, where it stops and what to do at each stop.
 
-- [ ] Autopilot run for a task — entry, stop conditions, repair limit, a run report (after:
+- [x] `autopilot-run` — Autopilot run for a task — entry, stop conditions, repair limit, a run report (after:
   Phase 1 — it ends in a commit or PR; Phase 2 — its stops on findings and stale review are
   those scripts)
-- [ ] Waivable human gate for T3/T4 — the separate opt-in, the record in `task.md`, the design
-  in the pull request body; ADR refining ADR-0009 (after: autopilot run — waiving only means
-  something inside a run)
+- [ ] Unattended mode — a local-only opt-in under which a run asks nothing: every stop becomes a
+  safe default recorded in the pull request in plain words (the gate approved by the agent with the
+  design in the PR, the most reversible option for an unmade decision, no destructive operation
+  ever, a draft PR when repairs run out), and a finished run merges once CI passed, without
+  overriding branch protection, then closes the task; ADR refining ADR-0009 (after: autopilot
+  run — the defaults replace its stops)
 
 ## Phase 4 — Autopilot for a roadmap phase
 
@@ -68,13 +73,27 @@ winning its own prompts; the docs describe the status page and how to open it.
 - [x] `status-page` — Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
   receipts are half of what it shows)
 
+## Phase 6 — Release
+
+Goal: the public documentation tells one story about what this epic gave the user, and the epic
+reaches the default branch as one release. Done when: the docs site's front page, Concepts,
+Comparison, the README and the navigation present agent git rights, review findings and receipts,
+autopilot (attended and unattended), the status page and phase runs as one path — not as pages
+each task added on its own; every page this epic touched is re-read against the shipped behaviour;
+the version is raised in the final pull request from the epic.
+
+- [ ] Public docs pass — read the whole docs site and README as a new user would, bring the
+  shared pages up to the epic's features, fix what the per-task pages say differently from what
+  shipped (after: every other item — it describes what they built)
+
 ## Waves
 
 1. Agent git rights as a local setting; findings ledger; routing evals
 2. Review receipt; status page; agent git rights reach spec work
 3. Autopilot run for a task
-4. Waivable human gate for T3/T4
+4. Unattended mode
 5. fog: phase run
+6. Public docs pass
 
 <!--
 Rules (jig-idea §8):

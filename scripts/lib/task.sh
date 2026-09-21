@@ -36,6 +36,7 @@ cmd_task() {
     findings) task_findings "$@" ;;
     receipt) task_receipt "$@" ;;
     ship) task_ship "$@" ;;
+    autopilot) task_autopilot "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
 }
@@ -45,7 +46,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|receipt|ship ...\n' ;;
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|receipt|ship|autopilot ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree]\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -67,6 +68,15 @@ _task_usage() {
       printf '       jig task receipt <id> --check\n'
       ;;
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>]\n' ;;
+    autopilot)
+      printf 'usage: jig task autopilot <id> start\n'
+      printf '       jig task autopilot <id> stage <name>\n'
+      printf '       jig task autopilot <id> repair --reason <text>\n'
+      printf '       jig task autopilot <id> stop --reason <text>\n'
+      printf '       jig task autopilot <id> resume\n'
+      printf '       jig task autopilot <id> end\n'
+      printf '       jig task autopilot <id> report\n'
+      ;;
     *) return 1 ;;
   esac
 }
@@ -811,7 +821,8 @@ task_set() {
     status) _task_valid_status "$value" || jig_die "task set: invalid status: $value" ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
-    task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash)
+    task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
+      | autopilot | autopilot_repairs)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -855,6 +866,289 @@ task_set() {
 task_abandon() {
   [ $# -eq 1 ] || jig_die "$(_task_usage abandon)"
   task_set "$1" status abandoned
+}
+
+# --- autopilot run (design.md, .ai/workspace/tasks/autopilot-run) --------------
+#
+# `.ai/workspace/tasks/<id>/autopilot` — gitignored workspace file, TSV, one
+# line per event: `<UTC ISO time>\t<event>\t<text>` where event is one of
+# start, stage, repair, stop, resume, end and text is a single line with no
+# tab (validated the same way as a findings-ledger field, _task_finding_valid_field).
+#
+# State: `autopilot: on|stopped|done` (absent before the first `start`),
+# `autopilot_repairs: <n>` (the repair count for the current run, reset to 0
+# by `start` and by `resume`). Both are script-owned, alongside `paused` and
+# the other keys `task set` refuses to write by hand (schemas/state.md).
+#
+# The repair limit (2 per run, design's gate decision) is enforced here, not
+# by the calling skill: a script-side stop is a stop no orchestration prompt
+# can talk its way past.
+
+# _task_autopilot_now — UTC ISO-8601 timestamp for one journal line (same
+# format housekeeping.sh's log lines use, conventions/shell.md).
+_task_autopilot_now() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+# _task_autopilot_valid_stage <name> — same grammar as one item of
+# _task_valid_domains: `[a-z0-9-]+`, nothing else.
+_task_autopilot_valid_stage() {
+  case "$1" in
+    '' | *[!a-z0-9-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# _task_autopilot_repairs <id> — the current run's repair count, "0" when
+# the state key is absent or not a plain integer (a task that never
+# repaired).
+_task_autopilot_repairs() {
+  local n
+  n=$(task_state_get "$1" autopilot_repairs)
+  case "$n" in '' | *[!0-9]*) n=0 ;; esac
+  printf '%s\n' "$n"
+}
+
+# _task_autopilot_log <id> <event> <text> — append one line to the run
+# journal. Atomic the same way task_finding_add's ledger write is
+# (conventions/shell.md): copy the existing journal into a temp file (or
+# start an empty one), append the new line, then `mv` it into place. Chosen
+# over a bare `>>`, which is already "atomic enough" for a single `printf`
+# whose line fits in one write(2) call, because `report` reads this file
+# with a plain `read` loop and a torn write — the one failure `>>` does not
+# rule out on every filesystem — would misalign every line after it, not
+# just the interrupted one; copy-then-`mv` can only ever yield the file
+# exactly as it was before the append, or exactly as it is after.
+_task_autopilot_log() {
+  local id="$1" event="$2" text="$3" dir file tmp
+  dir=$(task_dir "$id")
+  file="$dir/autopilot"
+  tmp="$file.tmp.$$"
+  if [ -f "$file" ]; then
+    cp "$file" "$tmp"
+  else
+    : > "$tmp"
+  fi
+  printf '%s\t%s\t%s\n' "$(_task_autopilot_now)" "$event" "$text" >> "$tmp"
+  mv "$tmp" "$file"
+}
+
+# _task_autopilot_note <id> — "autopilot=on" or "autopilot=stopped" for
+# `jig status`'s task line; empty for `done` or no run at all (same shape as
+# _task_worktree_note — the caller prepends its own separating space).
+_task_autopilot_note() {
+  case "$(task_state_get "$1" autopilot)" in
+    on) printf 'autopilot=on\n' ;;
+    stopped) printf 'autopilot=stopped\n' ;;
+  esac
+}
+
+# jig task autopilot <id> start|stage|repair|stop|resume|end|report —
+# dispatches to the functions below. The task id comes before the action
+# (same order as `task set <id> <key> <value>`), so every action function
+# below takes <id> as its first argument.
+task_autopilot() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage autopilot)"
+  local id="$1"
+  shift
+  local action="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$action" in
+    start) _task_autopilot_start "$id" "$@" ;;
+    stage) _task_autopilot_stage "$id" "$@" ;;
+    repair) _task_autopilot_repair "$id" "$@" ;;
+    stop) _task_autopilot_stop "$id" "$@" ;;
+    resume) _task_autopilot_resume "$id" "$@" ;;
+    end) _task_autopilot_end "$id" "$@" ;;
+    report) _task_autopilot_report "$id" "$@" ;;
+    *) jig_die "$(_task_usage autopilot)" ;;
+  esac
+}
+
+# start: refused while a run is already `on`; on a `stopped` run it points at
+# `resume` rather than silently restarting; after `done`, or on a task that
+# never ran one, it starts a fresh run (design §2 open question 2: `resume`,
+# not `start`, is what resets the count — `start` here resets it too, but
+# only because there is no prior count left to preserve).
+_task_autopilot_start() {
+  local id="$1"
+  shift
+  [ $# -eq 0 ] || jig_die "task autopilot start: unknown argument: $1"
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot start: unknown task: $id"
+  case "$(task_state_get "$id" autopilot)" in
+    on) jig_die "task autopilot start: already running: $id" ;;
+    stopped) jig_die "task autopilot start: $id is stopped; run: jig task autopilot $id resume" ;;
+  esac
+  _task_rewrite_state "$dir" autopilot on
+  _task_rewrite_state "$dir" autopilot_repairs 0
+  _task_autopilot_log "$id" start ""
+  printf 'autopilot: on\n'
+}
+
+# stage <name>: logs which stage the run just reached. Requires an active
+# run — a run only ever moves through stages while `on`.
+_task_autopilot_stage() {
+  local id="$1"
+  shift
+  [ $# -ge 1 ] || jig_die "$(_task_usage autopilot)"
+  local name="$1"
+  shift
+  [ $# -eq 0 ] || jig_die "task autopilot stage: unknown argument: $1"
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot stage: unknown task: $id"
+  [ "$(task_state_get "$id" autopilot)" = "on" ] \
+    || jig_die "task autopilot stage: no active autopilot run: $id; run: jig task autopilot $id start"
+  _task_autopilot_valid_stage "$name" \
+    || jig_die "task autopilot stage: invalid name: $name (expected [a-z0-9-]+)"
+  _task_autopilot_log "$id" stage "$name"
+  printf 'stage: %s\n' "$name"
+}
+
+# repair --reason <text>: one repair attempt, limited to 2 per run (gate
+# decision, task.md human gate). Attempts 1 and 2 increment the count and
+# keep the run `on`; the 3rd does not count as a repair at all — it is the
+# mechanical stop the design calls for, so the skill can never argue its way
+# past the limit. Exit 3 on that stop, distinct from the plain `jig_die`
+# exit 1 every other refusal here uses, so a caller can tell "you gave bad
+# arguments" apart from "the run just stopped".
+_task_autopilot_repair() {
+  local id="$1"
+  shift
+  local reason="" has_reason=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task autopilot repair: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      *) jig_die "task autopilot repair: unknown argument: $1" ;;
+    esac
+  done
+  [ "$has_reason" -eq 1 ] || jig_die "task autopilot repair: --reason is required"
+  [ -n "$reason" ] || jig_die "task autopilot repair: --reason must not be empty"
+  _task_finding_valid_field "$reason" \
+    || jig_die "task autopilot repair: --reason must be a single line with no tab"
+
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot repair: unknown task: $id"
+  [ "$(task_state_get "$id" autopilot)" = "on" ] \
+    || jig_die "task autopilot repair: no active autopilot run: $id; run: jig task autopilot $id start"
+
+  local count
+  count=$(_task_autopilot_repairs "$id")
+  if [ "$count" -lt 2 ]; then
+    count=$((count + 1))
+    _task_rewrite_state "$dir" autopilot_repairs "$count"
+    _task_autopilot_log "$id" repair "$reason"
+    printf 'repair %s/2\n' "$count"
+    return 0
+  fi
+
+  # The 3rd attempt does not increment: the count stays at the limit it
+  # already reached, and the run stops instead.
+  _task_rewrite_state "$dir" autopilot stopped
+  _task_autopilot_log "$id" stop "repair limit reached (2): $reason"
+  printf 'stop: repair limit reached (2)\n'
+  return 3
+}
+
+# stop --reason <text>: the stop an agent notices for itself (design §3's
+# table — the T3/T4 gate, a re-classification, an unowned decision, a
+# destructive operation). Requires an active run, same as repair.
+_task_autopilot_stop() {
+  local id="$1"
+  shift
+  local reason="" has_reason=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task autopilot stop: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      *) jig_die "task autopilot stop: unknown argument: $1" ;;
+    esac
+  done
+  [ "$has_reason" -eq 1 ] || jig_die "task autopilot stop: --reason is required"
+  [ -n "$reason" ] || jig_die "task autopilot stop: --reason must not be empty"
+  _task_finding_valid_field "$reason" \
+    || jig_die "task autopilot stop: --reason must be a single line with no tab"
+
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot stop: unknown task: $id"
+  [ "$(task_state_get "$id" autopilot)" = "on" ] \
+    || jig_die "task autopilot stop: no active autopilot run: $id; run: jig task autopilot $id start"
+
+  _task_rewrite_state "$dir" autopilot stopped
+  _task_autopilot_log "$id" stop "$reason"
+  printf 'autopilot: stopped\n'
+}
+
+# resume: after the human answers a stop. Requires `stopped` and resets the
+# repair count to 0 — the human just gave the run a new direction, so the
+# two repairs already spent no longer count against it (task.md human gate).
+_task_autopilot_resume() {
+  local id="$1"
+  shift
+  [ $# -eq 0 ] || jig_die "task autopilot resume: unknown argument: $1"
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot resume: unknown task: $id"
+  [ "$(task_state_get "$id" autopilot)" = "stopped" ] \
+    || jig_die "task autopilot resume: not stopped: $id"
+
+  _task_rewrite_state "$dir" autopilot on
+  _task_rewrite_state "$dir" autopilot_repairs 0
+  _task_autopilot_log "$id" resume ""
+  printf 'autopilot: on\n'
+}
+
+# end: the run reached the end of its route (design §1 step 5, after
+# consolidation). Requires an active run.
+_task_autopilot_end() {
+  local id="$1"
+  shift
+  [ $# -eq 0 ] || jig_die "task autopilot end: unknown argument: $1"
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot end: unknown task: $id"
+  [ "$(task_state_get "$id" autopilot)" = "on" ] \
+    || jig_die "task autopilot end: no active autopilot run: $id; run: jig task autopilot $id start"
+
+  _task_rewrite_state "$dir" autopilot "done"
+  _task_autopilot_log "$id" end ""
+  printf 'autopilot: done\n'
+}
+
+# report: the journal in readable form, then a final summary line. A task
+# that never ran `start` at all — no journal file — is not an error: "no
+# autopilot run", exit 0.
+_task_autopilot_report() {
+  local id="$1"
+  shift
+  [ $# -eq 0 ] || jig_die "task autopilot report: unknown argument: $1"
+  local dir file
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot report: unknown task: $id"
+  file="$dir/autopilot"
+  if [ ! -f "$file" ]; then
+    printf 'no autopilot run\n'
+    return 0
+  fi
+
+  local ts event text
+  while IFS=$'\t' read -r ts event text; do
+    if [ -n "$text" ]; then
+      printf '%s %s: %s\n' "$ts" "$event" "$text"
+    else
+      printf '%s %s\n' "$ts" "$event"
+    fi
+  done < "$file"
+
+  printf 'autopilot: %s, repairs: %s/2\n' "$(task_state_get "$id" autopilot)" "$(_task_autopilot_repairs "$id")"
 }
 
 # --- findings ledger (design.md, findings-ledger) ------------------------------

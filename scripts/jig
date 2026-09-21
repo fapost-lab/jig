@@ -50,6 +50,9 @@ Usage: jig <command> [args]
                                  commit/push/open a pull request, up to agent.git's level
   task receipt <id> --stage review|architecture-review
                                  pin what was reviewed; --check reports drift, exit 1 if stale
+  task autopilot <id> start|stage|repair|stop|resume|end|report
+                                 run a task's route without stopping between stages;
+                                 repair caps out at 2 and stops the run (exit 3)
   context [...]                  relevant knowledge for a task
   context resolve [...]          required documents; --stage, --no-task, --catalog
   context pending|guard [...]    knowledge required but not yet acknowledged

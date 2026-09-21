@@ -68,9 +68,10 @@ boundaries the user configured.
 - In scope: an opt-in for agent git actions; a findings ledger and a review receipt that
   scripts enforce; autopilot for one task, then for a roadmap phase; routing evals; an HTML
   status page.
-- Not doing: merging. The agent may at most open a pull request; merging and therefore
-  closing the task after landing (ADR-0030) stay with the human. No server for the
-  dashboard, no new runtime dependency (ADR-0002).
+- In scope since 2026-09-21: an unattended mode that asks nothing and ends in a merge, for a
+  user who cannot answer the questions a stop would ask (see Decisions).
+- Not doing: merging past the forge's own protections, or merging anything unfinished. No server
+  for the dashboard, no new runtime dependency (ADR-0002).
 
 ## Decisions
 
@@ -82,16 +83,26 @@ boundaries the user configured.
   read it, both runtimes see it, `jig status` can say what it changes. — rejected: prose in
   `CLAUDE.local.md`, because scripts and Codex cannot read it and `jig status` would keep
   calling uncommitted files the human's queue; both layers, because two sources drift.
-- **Autopilot ends at an open pull request** at most, with `knowledge_consolidated` recorded.
-  Merge is the human's; the task closes after landing as ADR-0030 says. — rejected: an
-  autopilot merge level, because it would bypass the branch ruleset and the only human look
-  at the change.
-- **The T3/T4 human gate can be waived** by a separate opt-in, not implied by git rights. A
-  waived gate is recorded in `task.md`, and the pull request carries the design verbatim with
-  a line saying the gate was waived. Without the opt-in, autopilot runs T3/T4 to the gate,
-  stops, and continues on its own after approval. — rejected: gate always kept, because the
-  user wants full autonomy available; T0–T2 only, same reason. Needs an ADR refining
-  ADR-0009's "human gates are full stops".
+- **An attended autopilot run ends at an open pull request** at most, with
+  `knowledge_consolidated` recorded, and stops to ask a human at each listed stop.
+- **Unattended mode asks nothing and ends in a merge** (changed 2026-09-21; this decision first
+  rejected any merge level, because a merge bypasses the only human look at the change). The
+  maintainer's reason: the users Jig targets — people who build through an agent without being
+  developers — cannot answer the questions a stop asks, and want to see their idea deployed by CI.
+  A separate local-only opt-in (like `agent.git`), off by default. Each stop becomes a safe default
+  recorded in the pull request, in plain words: a T3/T4 gate is approved by the agent and the design
+  goes into the pull request verbatim, marked as approved by the agent, not a human; a decision nobody
+  made takes the most conservative, reversible option; a destructive operation is never performed —
+  the agent finds another way or leaves that part out; a P0/P1 or red verification after two repairs
+  ends the run in a draft pull request saying what is unfinished. The agent merges only when all of
+  these hold: CI ran at least one check and every check passed, no blocking finding, a current
+  receipt, not a draft, into the task's own base, and never past the forge's branch protection
+  (no admin override) — a repository that requires a human review keeps its pull requests open, which
+  is the ceiling a team has over one contributor's local key. After the merge the agent closes the
+  task. — rejected: only waiving the gate, because every other stop would still ask a question the
+  user cannot answer; `gh pr merge --auto`, because with no required checks it merges at once and CI
+  gates nothing. Needs an ADR refining ADR-0009's "human gates are full stops" and superseding the
+  "no level merges" line of adr-20260921-agent-git-rights-are-a-local-setting.
 - **One task first, a roadmap phase later.** The phase run is its own phase of this spec,
   started once single-task runs are proven. — rejected: phase first, because a phase run
   multiplies every flaw of the single run.
