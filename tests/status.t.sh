@@ -272,6 +272,49 @@ EOF
   assert_not_contains "$OUT" "no active tasks"
 }
 
+test_status_appends_blocking_count_for_a_task_with_an_open_p1_finding() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+  printf 'F1\tP1\topen\ta.sh:1\tsomething wrong\t2026-09-08\t\n' \
+    > .ai/workspace/tasks/TASK-1/findings
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active blocking=1"
+}
+
+test_status_omits_blocking_when_findings_do_not_block() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  mkdir -p .ai/workspace/tasks/TASK-1
+  cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
+task_id: TASK-1
+branch: feature/TASK-1
+class: T2
+status: active
+knowledge_consolidated: false
+created_at: 2026-09-08
+updated_at: 2026-09-08
+EOF
+  printf 'F1\tP2\topen\ta.sh:1\tminor\t2026-09-08\t\n' \
+    > .ai/workspace/tasks/TASK-1/findings
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active"
+  assert_not_contains "$OUT" "blocking="
+}
+
 test_status_housekeeping_age() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null

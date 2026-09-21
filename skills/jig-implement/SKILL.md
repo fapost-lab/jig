@@ -68,5 +68,7 @@ retain UI evidence for applicable failure states as well as the happy path.
 
 Update the single acceptance map with real evidence and unresolved checks. Use the
 [handoff](../jig-task/references/handoff.md) when the executor/session changes.
-Say what changed, in which files, and what the evidence is. Then move to review for T2
+Say what changed, in which files, and what the evidence is. For each review finding you
+fixed, set it `fixed` (`jig task finding set <id> <F-id> fixed`); closing it is the
+re-review's, never yours ([findings](../jig-review/references/findings.md)). Then move to review for T2
 and above, or straight to `jig-verify` for T0 and T1.

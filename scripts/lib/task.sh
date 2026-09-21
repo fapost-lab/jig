@@ -32,6 +32,8 @@ cmd_task() {
     current) task_current "$@" ;;
     changes) task_changes "$@" ;;
     artifacts) task_artifacts "$@" ;;
+    finding) task_finding "$@" ;;
+    findings) task_findings "$@" ;;
     ship) task_ship "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
@@ -42,7 +44,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|ship ...\n' ;;
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|ship ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree]\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -54,6 +56,11 @@ _task_usage() {
     current) printf 'usage: jig task current\n' ;;
     changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
     artifacts) printf 'usage: jig task artifacts <id> [--provided discovery,design,...]\n' ;;
+    finding)
+      printf 'usage: jig task finding add <id> --severity P0|P1|P2|P3 --where <path[:line]|-> --summary <text>\n'
+      printf '       jig task finding set <id> <F-id> open|fixed|closed|dismissed [--reason <text>]\n'
+      ;;
+    findings) printf 'usage: jig task findings <id> [--blocking]\n' ;;
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>]\n' ;;
     *) return 1 ;;
   esac
@@ -124,6 +131,27 @@ _task_valid_domains() {
       '' | *[!a-z0-9-]*) return 1 ;;
     esac
   done
+  return 0
+}
+
+# --- findings ledger validation (design §1-2, findings-ledger) -----------------
+
+_task_valid_severity() {
+  case "$1" in P0 | P1 | P2 | P3) return 0 ;; *) return 1 ;; esac
+}
+
+_task_valid_finding_status() {
+  case "$1" in open | fixed | closed | dismissed) return 0 ;; *) return 1 ;; esac
+}
+
+# A ledger field (where, summary, reason) may not contain a tab (the TSV
+# delimiter) or a newline (would split the record across two lines).
+_task_finding_valid_field() {
+  local nl=$'\n' tab
+  tab=$(printf '\t')
+  case "$1" in
+    *"$nl"* | *"$tab"*) return 1 ;;
+  esac
   return 0
 }
 
@@ -796,12 +824,264 @@ task_set() {
     jig_die "task set: knowledge_consolidated cannot be false on a consolidated task: $id"
   fi
 
+  # Completion stops here (design §4): `status ready` is verify's own
+  # sign-off, and `knowledge_consolidated true` is consolidation's. A P0/P1
+  # finding still open, or fixed but not re-reviewed, refuses both.
+  local gate=0
+  case "$key:$value" in
+    status:ready) gate=1 ;;
+    knowledge_consolidated:true) gate=1 ;;
+  esac
+  if [ "$gate" -eq 1 ]; then
+    local blocking
+    blocking=$(_task_blocking_findings "$id")
+    [ -z "$blocking" ] || jig_die "task set: $(_task_gate_blocking_message "$id" "$blocking")"
+  fi
+
   _task_rewrite_state "$dir" "$key" "$value"
 }
 
 task_abandon() {
   [ $# -eq 1 ] || jig_die "$(_task_usage abandon)"
   task_set "$1" status abandoned
+}
+
+# --- findings ledger (design.md, findings-ledger) ------------------------------
+#
+# `.ai/workspace/tasks/<id>/findings` — gitignored workspace file, TSV, one
+# line per finding:
+#   F<n>  P0|P1|P2|P3  open|fixed|closed|dismissed  where  summary  date  reason
+# `where` is `path[:line]` or `-`; `summary` is one line; `date` is the date
+# of the last change to the line; `reason` (7th column) holds the dismissal
+# reason and is empty for every other status. Written atomically
+# (conventions/shell.md: tmp.$$ then mv), and every check on the arguments
+# runs before the file is touched, so a refused call leaves it byte-identical.
+#
+# "Blocking" (severity P0/P1, status open or fixed — fixed still blocks until
+# a re-review closes it) is computed once, in _task_blocking_findings, so
+# `task set`, `task ship` and `jig status` cannot disagree about it
+# (ARCHITECTURE.md, Scripts layout: a reporting command consumes a peer's
+# answer, never recomputes it).
+
+# _task_finding_next_id <file> — "F<n>", n one more than the highest existing
+# F<n> id in <file> ("F1" when <file> is absent). One awk pass rather than a
+# shell loop reading ids one at a time, so a malformed id already on disk
+# cannot desync a hand-kept counter from what gets printed.
+_task_finding_next_id() {
+  local file="$1" max
+  if [ -f "$file" ]; then
+    max=$(awk -F '\t' '{ n = $1; sub(/^F/, "", n); if (n + 0 > max + 0) max = n + 0 } END { print max + 0 }' "$file")
+  else
+    max=0
+  fi
+  printf 'F%d\n' "$((max + 1))"
+}
+
+# _task_blocking_findings <id> — "<F-id> <severity> <status> <where>", one
+# line per P0/P1 finding still open or fixed. Empty, not an error, when the
+# task has no ledger file at all — a task with no findings behaves exactly as
+# it did before this feature existed.
+_task_blocking_findings() {
+  local file
+  file="$(task_dir "$1")/findings"
+  [ -f "$file" ] || return 0
+  awk -F '\t' '
+    ($2 == "P0" || $2 == "P1") && ($3 == "open" || $3 == "fixed") { print $1, $2, $3, $4 }
+  ' "$file"
+}
+
+# _task_gate_blocking_message <id> <blocking-lines> — the refusal text for a
+# gate that found <blocking-lines> (as _task_blocking_findings prints them)
+# non-empty: names every blocking finding and how to clear one (design §4).
+_task_gate_blocking_message() {
+  local id="$1" blocking="$2" n names="" sep="" first_fid="" line
+  n=$(_task_count_lines "$blocking")
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    names="$names$sep$line"
+    sep="; "
+    [ -n "$first_fid" ] || first_fid=${line%% *}
+  done < <(printf '%s\n' "$blocking")
+  if [ "$n" -eq 1 ]; then
+    printf '%s blocking finding (%s); fix it and have a re-review close it (jig task finding set %s %s closed), or dismiss it with the human'"'"'s yes (jig task finding set %s %s dismissed --reason <text>)' \
+      "$n" "$names" "$id" "$first_fid" "$id" "$first_fid"
+  else
+    printf '%s blocking findings (%s); fix each and have a re-review close it (jig task finding set %s <F-id> closed), or dismiss it with the human'"'"'s yes (jig task finding set %s <F-id> dismissed --reason <text>)' \
+      "$n" "$names" "$id" "$id"
+  fi
+}
+
+# jig task finding add|set — dispatches to task_finding_add / task_finding_set.
+task_finding() {
+  jig_require_init
+  local action="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$action" in
+    add) task_finding_add "$@" ;;
+    set) task_finding_set "$@" ;;
+    *) jig_die "$(_task_usage finding)" ;;
+  esac
+}
+
+# task_finding_add <id> --severity P0|P1|P2|P3 --where <path[:line]|->
+# --summary <text> — append a finding in status `open`, printing its new id
+# (F<n>) on stdout.
+task_finding_add() {
+  [ $# -ge 1 ] || jig_die "$(_task_usage finding)"
+  local id="$1"
+  shift
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task finding add: unknown task: $id"
+
+  local severity="" where="" summary="" has_severity=0 has_where=0 has_summary=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --severity)
+        [ $# -ge 2 ] || jig_die "task finding add: --severity requires a value"
+        severity="$2"; has_severity=1; shift 2 ;;
+      --where)
+        [ $# -ge 2 ] || jig_die "task finding add: --where requires a value"
+        where="$2"; has_where=1; shift 2 ;;
+      --summary)
+        [ $# -ge 2 ] || jig_die "task finding add: --summary requires a value"
+        summary="$2"; has_summary=1; shift 2 ;;
+      *) jig_die "task finding add: unknown argument: $1" ;;
+    esac
+  done
+  [ "$has_severity" -eq 1 ] || jig_die "task finding add: --severity is required"
+  [ "$has_where" -eq 1 ] || jig_die "task finding add: --where is required"
+  [ "$has_summary" -eq 1 ] || jig_die "task finding add: --summary is required"
+
+  _task_valid_severity "$severity" || jig_die "task finding add: invalid severity: $severity (expected P0|P1|P2|P3)"
+  [ -n "$summary" ] || jig_die "task finding add: --summary must not be empty"
+  _task_finding_valid_field "$where" || jig_die "task finding add: --where must be a single line with no tab"
+  _task_finding_valid_field "$summary" || jig_die "task finding add: --summary must be a single line with no tab"
+
+  local file fid tmp
+  file="$dir/findings"
+  fid=$(_task_finding_next_id "$file")
+  tmp="$file.tmp.$$"
+  if [ -f "$file" ]; then
+    cp "$file" "$tmp"
+  else
+    : > "$tmp"
+  fi
+  printf '%s\t%s\topen\t%s\t%s\t%s\t\n' "$fid" "$severity" "$where" "$summary" "$(jig_today)" >> "$tmp"
+  mv "$tmp" "$file"
+
+  printf '%s\n' "$fid"
+}
+
+# task_finding_set <id> <F-id> open|fixed|closed|dismissed [--reason <text>]
+# — rewrite one ledger line's status (and, for dismissed, its reason).
+# `closed` and `dismissed` are final except for a return to `open`
+# (regression, design §2); every other listed transition is allowed.
+task_finding_set() {
+  [ $# -ge 3 ] || jig_die "$(_task_usage finding)"
+  local id="$1" fid="$2" new_status="$3"
+  shift 3
+  local reason="" has_reason=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task finding set: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      *) jig_die "task finding set: unknown argument: $1" ;;
+    esac
+  done
+
+  local dir file
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task finding set: unknown task: $id"
+  file="$dir/findings"
+  [ -f "$file" ] || jig_die "task finding set: no findings recorded for task: $id"
+
+  _task_valid_finding_status "$new_status" \
+    || jig_die "task finding set: invalid status: $new_status (expected open|fixed|closed|dismissed)"
+
+  if [ "$new_status" = dismissed ]; then
+    if [ "$has_reason" -eq 0 ] || [ -z "$reason" ]; then
+      jig_die "task finding set: dismissed requires --reason"
+    fi
+    _task_finding_valid_field "$reason" || jig_die "task finding set: --reason must be a single line with no tab"
+  else
+    [ "$has_reason" -eq 0 ] || jig_die "task finding set: --reason is only valid with dismissed"
+  fi
+
+  local cur_status
+  cur_status=$(JIG_F_ID="$fid" awk -F '\t' '$1 == ENVIRON["JIG_F_ID"] { print $3; found = 1 } END { if (!found) exit 1 }' "$file") \
+    || jig_die "task finding set: unknown finding: $fid"
+
+  case "$cur_status" in
+    closed | dismissed)
+      [ "$new_status" = open ] \
+        || jig_die "task finding set: $fid is $cur_status; only \`open\` follows it (regression)"
+      ;;
+  esac
+
+  local tmp today
+  tmp="$file.tmp.$$"
+  today=$(jig_today)
+  # Values reach awk through the environment, not `-v`: awk expands escape
+  # sequences in a `-v` value, so a reason spelling a literal backslash-t
+  # would be written as a tab and split the record the check above allowed.
+  JIG_F_ID="$fid" JIG_F_STATUS="$new_status" JIG_F_TODAY="$today" JIG_F_REASON="$reason" \
+    awk -F '\t' -v OFS='\t' '
+      $1 == ENVIRON["JIG_F_ID"] {
+        $3 = ENVIRON["JIG_F_STATUS"]; $6 = ENVIRON["JIG_F_TODAY"]; $7 = ENVIRON["JIG_F_REASON"]
+      }
+      { print }
+    ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+# jig task findings <id> [--blocking] — a table of every recorded finding,
+# then `blocking: <n>`. --blocking prints only the blocking lines and sets
+# the exit code a script or skill can act on directly: 1 when n > 0, 0
+# otherwise (mirroring `context guard`). A task with no ledger file at all:
+# `no findings`, `blocking: 0`, exit 0.
+task_findings() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage findings)"
+  local id="$1" blocking_only=0
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --blocking) blocking_only=1; shift ;;
+      *) jig_die "task findings: unknown argument: $1" ;;
+    esac
+  done
+
+  local dir file blocking bcount
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task findings: unknown task: $id"
+  file="$dir/findings"
+
+  blocking=$(_task_blocking_findings "$id")
+  bcount=$(_task_count_lines "$blocking")
+
+  if [ "$blocking_only" -eq 1 ]; then
+    [ "$bcount" -eq 0 ] || printf '%s\n' "$blocking"
+    printf 'blocking: %s\n' "$bcount"
+    if [ "$bcount" -eq 0 ]; then
+      return 0
+    else
+      return 1
+    fi
+  fi
+
+  if [ ! -f "$file" ]; then
+    printf 'no findings\n'
+  else
+    awk -F '\t' '{
+      line = $1" "$2" "$3" "$4" "$5" "$6
+      if ($7 != "") line = line" reason="$7
+      print line
+    }' "$file"
+  fi
+  printf 'blocking: %s\n' "$bcount"
+  return 0
 }
 
 # --- pause / resume ---------------------------------------------------------------
@@ -1267,6 +1547,13 @@ task_ship() {
 
   [ "$(task_state_get "$id" knowledge_consolidated)" = "true" ] \
     || jig_die "task ship: requires knowledge_consolidated true; record the knowledge decision first: jig task set $id knowledge_consolidated true"
+
+  # Checked again, independently of knowledge_consolidated above (design §4):
+  # a fix landed after consolidation can plant a new finding, and ADR-0030's
+  # order check alone would not see it.
+  local blocking
+  blocking=$(_task_blocking_findings "$id")
+  [ -z "$blocking" ] || jig_die "task ship: $(_task_gate_blocking_message "$id" "$blocking")"
 
   local branch base cur
   branch=$(task_state_get "$id" branch)

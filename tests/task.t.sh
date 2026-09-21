@@ -2454,3 +2454,322 @@ test_task_ship_unknown_task_dies() {
   assert_contains "$OUT" "unknown task: NOPE"
 }
 
+# --- findings ledger (design.md, findings-ledger) ------------------------------
+
+test_task_finding_add_assigns_ids_in_order() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:10 --summary "first"
+  assert_eq 0 "$RC"
+  assert_eq "F1" "$OUT"
+  run jig task finding add T-1 --severity P2 --where - --summary "second"
+  assert_eq 0 "$RC"
+  assert_eq "F2" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf 'F1\tP1\topen')"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf 'F2\tP2\topen')"
+}
+
+test_task_finding_add_invalid_severity_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P9 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid severity: P9"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_empty_summary_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where - --summary ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--summary must not be empty"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_tab_in_summary_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where - --summary "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--summary must be a single line with no tab"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_tab_in_where_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where "$(printf 'a\tb')" --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--where must be a single line with no tab"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_missing_flags_die() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--severity is required"
+  run jig task finding add T-1 --severity P1 --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--where is required"
+  run jig task finding add T-1 --severity P1 --where -
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--summary is required"
+}
+
+test_task_finding_add_unknown_task_dies() {
+  task_setup
+  run jig task finding add NOPE --severity P1 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+# Validation runs before the ledger file is touched (conventions/shell.md,
+# atomic writes): a refused call leaves an existing ledger byte-identical.
+test_task_finding_add_failed_validation_leaves_file_unchanged() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where - --summary "first" >/dev/null
+  local before
+  before=$(cat .ai/workspace/tasks/T-1/findings)
+  run jig task finding add T-1 --severity P9 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/T-1/findings)"
+  if ls .ai/workspace/tasks/T-1/findings.tmp.* >/dev/null 2>&1; then
+    fail "a failed validation left a tmp file behind"
+  fi
+}
+
+test_task_finding_set_dismissed_without_reason_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 dismissed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "dismissed requires --reason"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf '\topen\t')"
+}
+
+test_task_finding_set_dismissed_records_reason() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 dismissed --reason "not a real bug"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf 'dismissed\t-\tx')"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "not a real bug"
+}
+
+test_task_finding_set_dismissed_keeps_a_backslash_in_the_reason_literal() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 dismissed --reason 'path C:\temp\new is fine'
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(wc -l < .ai/workspace/tasks/T-1/findings | tr -d ' ')"
+  assert_eq 7 "$(awk -F '\t' '{ print NF }' .ai/workspace/tasks/T-1/findings)"
+  assert_eq 'path C:\temp\new is fine' "$(awk -F '\t' '{ print $7 }' .ai/workspace/tasks/T-1/findings)"
+}
+
+test_task_finding_set_reason_on_non_dismissed_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 fixed --reason "irrelevant"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is only valid with dismissed"
+}
+
+test_task_finding_set_invalid_status_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid status: nope"
+}
+
+test_task_finding_set_unknown_finding_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F9 closed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown finding: F9"
+}
+
+test_task_finding_set_no_ledger_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding set T-1 F1 closed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no findings recorded for task: T-1"
+}
+
+test_task_finding_set_closed_only_reopens() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 closed >/dev/null
+  run jig task finding set T-1 F1 fixed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "F1 is closed; only \`open\` follows it"
+  run jig task finding set T-1 F1 open
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf '\topen\t')"
+}
+
+test_task_finding_set_dismissed_only_reopens_and_clears_reason() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 dismissed --reason "not applicable" >/dev/null
+  run jig task finding set T-1 F1 closed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "F1 is dismissed; only \`open\` follows it"
+  run jig task finding set T-1 F1 open
+  assert_eq 0 "$RC"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/findings)" "not applicable"
+}
+
+test_task_findings_no_ledger() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task findings T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no findings"
+  assert_contains "$OUT" "blocking: 0"
+}
+
+test_task_findings_unknown_task_dies() {
+  task_setup
+  run jig task findings NOPE
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_findings_lists_and_counts_blocking() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where a.sh:1 --summary "blocking one" >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "not blocking" >/dev/null
+  run jig task findings T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "F1 P1 open a.sh:1 blocking one"
+  assert_contains "$OUT" "F2 P2 open - not blocking"
+  assert_contains "$OUT" "blocking: 1"
+}
+
+test_task_findings_blocking_flag_exits_1_when_blocking() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P0 --where - --summary "x" >/dev/null
+  run jig task findings T-1 --blocking
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "F1 P0 open -"
+  assert_contains "$OUT" "blocking: 1"
+}
+
+test_task_findings_blocking_flag_exits_0_when_nothing_blocks() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P3 --where - --summary "x" >/dev/null
+  run jig task findings T-1 --blocking
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "P3"
+  assert_contains "$OUT" "blocking: 0"
+}
+
+# --- findings ledger gates completion (design.md §4) ---------------------------
+
+test_task_set_status_ready_refuses_open_p1() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:1374 --summary "bad flag" >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "1 blocking finding (F1 P1 open scripts/lib/task.sh:1374)"
+  assert_contains "$OUT" "jig task finding set T-1 F1 closed"
+  assert_contains "$OUT" "jig task finding set T-1 F1 dismissed --reason <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+test_task_set_status_ready_refuses_fixed_p1() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 fixed >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "1 blocking finding (F1 P1 fixed -)"
+}
+
+test_task_set_status_ready_succeeds_once_closed() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 closed >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+test_task_set_status_ready_open_p2_does_not_block() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+# The spec's own scenario: a T2 task with a planted P1 cannot be consolidated.
+test_task_set_knowledge_consolidated_refuses_planted_p1_on_t2_task() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:42 --summary "planted finding" >/dev/null
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "blocking finding"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
+}
+
+test_task_set_knowledge_consolidated_dismissed_p0_does_not_block() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P0 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 dismissed --reason "false positive, agreed with the human" >/dev/null
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: true"
+}
+
+test_task_set_no_findings_file_unchanged_behaviour() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC"
+}
+
+# task ship refuses on a blocking finding even when knowledge_consolidated was
+# already true before the finding was planted (a fix landed after
+# consolidation), so it must recheck independently of that flag.
+test_task_ship_refuses_blocking_finding_planted_after_consolidation() {
+  ship_setup
+  ship_cfg_local agent.git pr
+  sed 's/^knowledge_consolidated:.*/knowledge_consolidated: true/' \
+    .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  jig task finding add T-1 --severity P0 --where - --summary "found after consolidation" >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "1 blocking finding (F1 P0 open -)"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+

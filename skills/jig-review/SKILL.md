@@ -44,7 +44,9 @@ subagent that has not seen the implementation being defended.
 ## 3. Report
 
 Findings ordered by severity, each with file and line, one line of description, and a
-concrete fix. Say plainly when there are none.
+concrete fix. Say plainly when there are none. Record each one in the task's ledger with a
+severity, as [findings](references/findings.md) says: a finding only said here blocks nothing.
+On a re-review, close each `fixed` finding that is fixed and reopen the rest.
 
 Then either apply the fixes or hand them back, depending on what the user asked. A review
 that ends without a decision on every finding is unfinished.

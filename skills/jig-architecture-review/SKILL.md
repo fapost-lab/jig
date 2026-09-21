@@ -40,7 +40,8 @@ or rejected decisions matter; diagnostic history is not binding accepted knowled
 ## 3. Report
 
 For each of the five, one line: holds, or violated with the evidence. Violations are
-blocking; escalate a conflict between the change and an accepted decision to the human
+blocking: record each as a P0 in the task's ledger
+([findings](../jig-review/references/findings.md)). Escalate a conflict between the change and an accepted decision to the human
 rather than resolving it yourself.
 
 Then hand the ADR candidates to `jig-consolidate`.
