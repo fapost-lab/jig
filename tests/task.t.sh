@@ -2064,3 +2064,393 @@ test_task_pause_stash_refuses_a_task_checked_out_elsewhere() {
   fi
 }
 
+# --- ship (agent git rights: design.md, .ai/specs/autopilot/) ----------------
+
+# ship_cfg_local <key> <value> — set a key in .ai/config.local.yaml
+# (ADR-0038); creates the file, or appends the key when it is not there yet.
+# Mirrors housekeeping.t.sh's hk_cfg_local; duplicated because each test file
+# sources only itself.
+ship_cfg_local() {
+  local file=".ai/config.local.yaml"
+  touch "$file"
+  if grep -q "^$1:" "$file"; then
+    sed "s|^$1:.*|$1: $2|" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  else
+    printf '%s: %s\n' "$1" "$2" >> "$file"
+  fi
+}
+
+# ship_cfg <key> <value> — rewrite one line of the project's config.yaml.
+# Mirrors housekeeping.t.sh's hk_cfg.
+ship_cfg() {
+  sed "s|^$1:.*|$1: $2|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+}
+
+# ship_setup — a clean repository with a bare `origin`, task T-1 filed and
+# started on its own branch, and a commit message ready in msg.txt.
+# `agent.git` is left unset (default `none`) and `knowledge_consolidated`
+# left `false`; each test sets what it needs.
+ship_setup() {
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+}
+
+# ship_stage_change — one file, staged, belonging to the task.
+ship_stage_change() {
+  printf 'ship change\n' > ship.txt
+  git add ship.txt
+}
+
+# ship_stub_gh <existing-url-or-empty> — a fake `gh` for `task ship`'s pr
+# step. `gh auth status` succeeds; `gh pr list ...` prints <existing-url>
+# verbatim when given (standing in for the real `--jq` filter's answer) or
+# `null` for none (jq's own answer for an empty array); `gh pr create ...`
+# records its own arguments, one per line, to gh-create.argv and prints a
+# made-up URL.
+ship_stub_gh() {
+  local existing="${1:-}"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  pr)
+    shift
+    case "\$1" in
+      list)
+        if [ -n "$existing" ]; then
+          printf '%s\n' "$existing"
+        else
+          printf 'null\n'
+        fi
+        ;;
+      create)
+        shift
+        printf '%s\n' "\$@" > gh-create.argv
+        printf 'https://github.com/example/example/pull/99\n'
+        ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# ship_stub_glab <existing-url-or-empty> — a fake `glab` for `task ship`'s pr
+# step. `glab auth status` succeeds; `glab mr list ...` prints a compact
+# one-line JSON array with one object whose `web_url` is <existing-url>,
+# preceded by a nested object field (`assignee`) to prove the parser matches
+# `web_url` itself rather than splitting naively on braces or commas, or `[]`
+# for none, `glab`'s own answer for an empty list; `glab mr create ...`
+# records its own arguments, one per line, to glab-create.argv and prints a
+# made-up URL on its last line, the way real `glab` output trails one.
+ship_stub_glab() {
+  local existing="${1:-}"
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  mr)
+    shift
+    case "\$1" in
+      list)
+        if [ -n "$existing" ]; then
+          printf '[{"iid":7,"assignee":{"id":3,"username":"joe"},"web_url":"%s","title":"x"}]\n' "$existing"
+        else
+          printf '[]\n'
+        fi
+        ;;
+      create)
+        shift
+        printf '%s\n' "\$@" > glab-create.argv
+        printf 'Creating merge request for task/T-1 into main in example/example\nhttps://gitlab.example/example/example/-/merge_requests/99\n'
+        ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# ship_stub_glab_mr_create_fails — a fake `glab` whose `mr create` fails, for
+# task ship's error-handling test. `auth status` succeeds and `mr list`
+# reports no MR open yet, so the failing `create` is actually reached.
+ship_stub_glab_mr_create_fails() {
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  auth) exit 0 ;;
+  mr)
+    shift
+    case "$1" in
+      list) printf '[]\n' ;;
+      create) printf 'error: not authorized\n' >&2; exit 1 ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+test_task_ship_none_level_exits_3_and_changes_nothing() {
+  ship_setup
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task ship: agent.git is none in this clone; the human commits"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+
+test_task_ship_requires_knowledge_consolidated() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires knowledge_consolidated true"
+  assert_contains "$OUT" "jig task set T-1 knowledge_consolidated true"
+}
+
+test_task_ship_wrong_branch_refuses() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  git checkout -q main
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "current branch is main, but T-1 is on task/T-1"
+}
+
+test_task_ship_on_base_branch_refuses() {
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  _task_share_one_branch
+  git add -A
+  git commit -q -m "branch_per_task off"
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_cfg_local agent.git commit
+  printf 'msg\n' > msg.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is its own base"
+}
+
+test_task_ship_staged_workspace_path_refuses() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  local head_before
+  head_before=$(git rev-parse HEAD)
+  printf 'oops\n' > .ai/workspace/tasks/T-1/scratch.md
+  # -f: .ai/workspace is gitignored (transient state); this reproduces the
+  # one way such a path could still end up staged.
+  git add -f .ai/workspace/tasks/T-1/scratch.md
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "staged changes under .ai/workspace/ or .ai/runtime/ are not shippable"
+  assert_contains "$OUT" ".ai/workspace/tasks/T-1/scratch.md"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_ship_commit_level_commits_only_staged_and_does_not_push() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  # An untracked file that is not part of this task's staged change: `git
+  # commit -F` without `-a` must leave it alone.
+  printf 'not staged\n' > untouched.txt
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "stopped at commit: push is the human's"
+  assert_not_contains "$OUT" "pushed "
+  assert_eq "" "$(git status --porcelain -- ship.txt)"
+  assert_contains "$(git status --porcelain -- untouched.txt)" "?? untouched.txt"
+  assert_eq "" "$(git ls-remote origin task/T-1)"
+}
+
+test_task_ship_empty_index_prints_nothing_staged_no_commit() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "nothing staged; no commit"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_ship_push_level_pushes_and_stops() {
+  ship_setup
+  ship_cfg_local agent.git push
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: the pull request is the human's"
+  assert_contains "$(git ls-remote origin task/T-1)" "refs/heads/task/T-1"
+}
+
+test_task_ship_pr_level_creates_pr_into_base_branch() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_file gh-create.argv
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')" "pull request must target the task's own base"
+  assert_contains "$argv" "$(printf -- '--head\ntask/T-1')"
+  assert_contains "$argv" "$(printf -- '--title\nShip T-1')"
+}
+
+test_task_ship_pr_level_does_not_duplicate_an_existing_open_pr() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh "https://github.com/example/example/pull/7"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/7 (already open)"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_pr_level_creates_mr_with_gitlab() {
+  ship_setup
+  ship_cfg forge gitlab
+  ship_stub_glab ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "pr https://gitlab.example/example/example/-/merge_requests/99"
+  assert_file glab-create.argv
+  local argv
+  argv=$(cat glab-create.argv)
+  assert_contains "$argv" "$(printf -- '--target-branch\nmain')" "merge request must target the task's own base"
+  assert_contains "$argv" "$(printf -- '--source-branch\ntask/T-1')"
+  assert_contains "$argv" "$(printf -- '--title\nShip T-1')"
+}
+
+test_task_ship_pr_level_does_not_duplicate_an_existing_open_mr() {
+  ship_setup
+  ship_cfg forge gitlab
+  ship_stub_glab "https://gitlab.example/x/-/merge_requests/7"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://gitlab.example/x/-/merge_requests/7 (already open)"
+  assert_no_file glab-create.argv
+}
+
+test_task_ship_pr_level_gitlab_mr_create_failure_dies() {
+  ship_setup
+  ship_cfg forge gitlab
+  ship_stub_glab_mr_create_fails
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "glab mr create failed"
+}
+
+test_task_ship_pr_level_with_no_forge_stops_with_message() {
+  ship_setup
+  ship_cfg forge none
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no forge available; the pull request is the human's"
+  assert_not_contains "$OUT" "pr https"
+}
+
+test_task_ship_invalid_agent_git_level_dies() {
+  ship_setup
+  ship_cfg_local agent.git yolo
+  jig task set T-1 knowledge_consolidated true >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid agent.git: yolo (expected none|commit|push|pr)"
+}
+
+test_task_ship_message_file_required() {
+  ship_setup
+  run jig task ship T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--message-file is required"
+}
+
+test_task_ship_message_file_missing_dies() {
+  ship_setup
+  run jig task ship T-1 --message-file nope.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--message-file: no such file: nope.txt"
+}
+
+test_task_ship_unknown_task_dies() {
+  task_setup
+  printf 'msg\n' > msg.txt
+  run jig task ship NOPE --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+

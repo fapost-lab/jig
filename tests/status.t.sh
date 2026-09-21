@@ -60,6 +60,70 @@ EOF
   assert_contains "$OUT" "config.local: ignored verify.full_run (not a local key)"
 }
 
+# --- agent.git (design.md, .ai/specs/autopilot/) ------------------------------
+
+test_status_reports_agent_git_none_by_default() {
+  fixture_jig_repo
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: none (review queue: uncommitted files)"
+}
+
+test_status_reports_agent_git_commit_queue() {
+  fixture_jig_repo
+  printf 'agent.git: commit\n' > .ai/config.local.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: commit (review queue: unpushed commits)"
+}
+
+test_status_reports_agent_git_push_queue() {
+  fixture_jig_repo
+  printf 'agent.git: push\n' > .ai/config.local.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: push (review queue: pushed branches without a pull request)"
+}
+
+test_status_reports_agent_git_pr_queue() {
+  fixture_jig_repo
+  printf 'agent.git: pr\n' > .ai/config.local.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: pr (review queue: open pull requests)"
+}
+
+test_status_reports_agent_git_invalid_value() {
+  fixture_jig_repo
+  printf 'agent.git: yolo\n' > .ai/config.local.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: invalid value yolo (expected none|commit|push|pr)"
+}
+
+# A value committed to .ai/config.yaml would hand every contributor's agent
+# the same git rights (JIG_CFG_LOCAL_ONLY_KEYS, config.sh); `jig status` must
+# say so rather than silently do nothing.
+test_status_warns_when_agent_git_is_set_in_project_config() {
+  fixture_jig_repo
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: agent.git in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+  # The effective level still comes from the default, not the ignored value.
+  assert_contains "$OUT" "agent.git: none (review queue: uncommitted files)"
+}
+
+test_status_warns_when_agent_git_is_set_in_project_config_even_without_a_local_file() {
+  fixture_jig_repo
+  printf 'agent.git: commit\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: agent.git in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+}
+
 test_status_warns_when_local_config_is_not_gitignored() {
   fixture_jig_repo
   printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml

@@ -17,6 +17,11 @@ steps, a change to authentication designed, approved by you and independently re
 for a [new project](https://jig.fapost.in/greenfield), started from an idea, and for an
 [existing one](https://jig.fapost.in/brownfield), whose documentation it adopts instead of copying.
 
+By default a finished task waits in your working tree for you to review and commit. One personal
+setting, `agent.git: pr`, lets the agent commit, push and open the pull request instead — it never
+merges ([how](https://jig.fapost.in/agent-ships)). Either way, `jig status` tells you where your
+review queue is.
+
 ## Install
 
 Jig runs on macOS, Linux and Windows. It needs Git and a coding agent; nothing else.

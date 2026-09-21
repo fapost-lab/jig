@@ -24,6 +24,7 @@ cmd_status() {
   fi
   printf '%s\n' "initialised: yes"
   _status_config_local
+  _status_agent_git
 
   if manifest_exists; then
     local proj_version
@@ -310,17 +311,52 @@ _status_config_local() {
   if [ "$own" != "$file" ] && [ -f "$own" ]; then
     printf 'config.local: ignored %s (a worktree reads %s)\n' "$own" "$file"
   fi
-  [ -f "$file" ] || return 0
-  while IFS="$(printf '\t')" read -r key value kind; do
-    if [ "$kind" = local ]; then
-      printf 'config.local: %s=%s\n' "$key" "$value"
-    else
-      printf 'config.local: ignored %s (not a local key)\n' "$key"
+  if [ -f "$file" ]; then
+    while IFS="$(printf '\t')" read -r key value kind; do
+      if [ "$kind" = local ]; then
+        printf 'config.local: %s=%s\n' "$key" "$value"
+      else
+        printf 'config.local: ignored %s (not a local key)\n' "$key"
+      fi
+    done < <(jig_config_local_entries)
+    if ! jig_config_local_ignored; then
+      printf 'config.local: %s is not ignored by git and can be committed (fix: jig init)\n' \
+        "$JIG_AI_DIR/config.local.yaml"
     fi
-  done < <(jig_config_local_entries)
-  if ! jig_config_local_ignored; then
-    printf 'config.local: %s is not ignored by git and can be committed (fix: jig init)\n' \
-      "$JIG_AI_DIR/config.local.yaml"
+  fi
+
+  # A JIG_CFG_LOCAL_ONLY_KEYS key (config.sh) set in the *project's* committed
+  # config.yaml is never read there: `cfg` answers only from the local file
+  # and the default for it. A silent no-op is the worst outcome for a value
+  # someone deliberately wrote, so it is named here even when there is no
+  # local file at all.
+  local pkey pvalue t
+  t=$(printf '\t')
+  # shellcheck disable=SC2034 # pvalue: read shape must match
+  # jig_config_project_ignored's two columns; the message names the key only.
+  while IFS="$t" read -r pkey pvalue; do
+    [ -n "$pkey" ] || continue
+    printf 'config.local: %s in %s is ignored (set it in %s)\n' \
+      "$pkey" "$JIG_AI_DIR/config.yaml" "$JIG_AI_DIR/config.local.yaml"
+  done < <(jig_config_project_ignored)
+}
+
+# _status_agent_git — one line naming the review queue `agent.git`'s level
+# (config.sh) leaves for the human, always printed: the level is `none` by
+# default, and "none" is exactly the state this line exists to make visible
+# alongside every other level (design.md, .ai/specs/autopilot/).
+_status_agent_git() {
+  local level queue
+  if level=$(jig_agent_git); then
+    case "$level" in
+      none) queue="uncommitted files" ;;
+      commit) queue="unpushed commits" ;;
+      push) queue="pushed branches without a pull request" ;;
+      pr) queue="open pull requests" ;;
+    esac
+    printf 'agent.git: %s (review queue: %s)\n' "$level" "$queue"
+  else
+    printf 'agent.git: invalid value %s (expected none|commit|push|pr)\n' "$level"
   fi
 }
 

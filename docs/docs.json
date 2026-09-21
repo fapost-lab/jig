@@ -27,7 +27,7 @@
       },
       {
         "group": "Guides",
-        "pages": ["greenfield", "brownfield", "working-with-tasks"]
+        "pages": ["greenfield", "brownfield", "working-with-tasks", "agent-ships"]
       },
       {
         "group": "Reference",

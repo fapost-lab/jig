@@ -32,6 +32,7 @@ cmd_task() {
     current) task_current "$@" ;;
     changes) task_changes "$@" ;;
     artifacts) task_artifacts "$@" ;;
+    ship) task_ship "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
 }
@@ -41,7 +42,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts ...\n' ;;
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|ship ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree]\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -53,6 +54,7 @@ _task_usage() {
     current) printf 'usage: jig task current\n' ;;
     changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
     artifacts) printf 'usage: jig task artifacts <id> [--provided discovery,design,...]\n' ;;
+    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>]\n' ;;
     *) return 1 ;;
   esac
 }
@@ -191,7 +193,9 @@ _task_worktree_for() {
 
 # _task_worktree_note <path> — how a task started in its own worktree is shown
 # by `task list` and `jig status`: where it is, and how many files there wait
-# for the human's review. Agents do not commit, so that count is the queue.
+# for review. At agent.git none (the default, config.sh) agents do not
+# commit, so that count is the whole review queue; at a higher level it is
+# whatever `jig task ship` has not carried further yet.
 _task_worktree_note() {
   local n
   n=$(_task_count_lines "$(git -C "$1" status --porcelain 2>/dev/null || true)")
@@ -1201,4 +1205,182 @@ task_artifacts() {
     printf '%s: %s; inputs: %s\n  unassessed: %s\n' "$stage" "$availability" "$inputs" "$semantic"
   done < <(_task_artifact_route "$class")
   printf 'Presence and provided claims do not prove approval, quality or completion; state unchanged.\n'
+}
+
+# --- ship (agent git rights: design.md, .ai/specs/autopilot/) ----------------
+#
+# Referenced from the EXIT trap `task_ship` sets for its optional PR body
+# file, so it is script-global rather than `local` (conventions/shell.md: a
+# trap runs after its function returned, and `local` would be gone by then).
+_TASK_SHIP_BODY_TMP=""
+
+# task_ship <id> --message-file <file> [--title <t>] [--body-file <file>]
+#
+# Carries a task's own change as far as `agent.git` (config.sh) allows:
+# commit, push, open a pull request — never merge, which stays the human's
+# regardless of level (design.md). Every step it is not allowed to take ends
+# in a plain status line, not an error: "none" is the one outcome a caller
+# must tell apart from every other exit, which is why it alone is exit 3.
+task_ship() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
+  local id="$1"
+  shift
+  local message_file="" title="" body_file="" has_message=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --message-file)
+        [ $# -ge 2 ] || jig_die "task ship: --message-file requires a value"
+        has_message=1
+        message_file="$2"
+        shift 2 ;;
+      --title)
+        [ $# -ge 2 ] || jig_die "task ship: --title requires a value"
+        title="$2"
+        shift 2 ;;
+      --body-file)
+        [ $# -ge 2 ] || jig_die "task ship: --body-file requires a value"
+        body_file="$2"
+        shift 2 ;;
+      *) jig_die "task ship: unknown argument: $1" ;;
+    esac
+  done
+  [ "$has_message" -eq 1 ] || jig_die "task ship: --message-file is required"
+  [ -f "$message_file" ] || jig_die "task ship: --message-file: no such file: $message_file"
+  [ -z "$body_file" ] || [ -f "$body_file" ] || jig_die "task ship: --body-file: no such file: $body_file"
+
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task ship: unknown task: $id"
+
+  # Level first, before anything else changes: an invalid value must refuse
+  # exactly like every other check here, not read as "none" by accident.
+  local level
+  level=$(jig_agent_git) || jig_die "task ship: invalid agent.git: $level (expected none|commit|push|pr)"
+
+  if [ "$level" = none ]; then
+    # To stderr and exit 3, not `jig_die` (exit 1): a skill reads 3 as "hand
+    # this over to the human", not as a command that failed.
+    printf 'task ship: agent.git is none in this clone; the human commits\n' >&2
+    exit 3
+  fi
+
+  [ "$(task_state_get "$id" knowledge_consolidated)" = "true" ] \
+    || jig_die "task ship: requires knowledge_consolidated true; record the knowledge decision first: jig task set $id knowledge_consolidated true"
+
+  local branch base cur
+  branch=$(task_state_get "$id" branch)
+  base=$(jig_task_base "$id")
+  cur=$(_task_current_branch)
+  [ -n "$branch" ] || jig_die "task ship: $id has not been started (no branch); run \`jig task start $id\` first"
+  [ "$cur" = "$branch" ] || jig_die "task ship: current branch is $cur, but $id is on $branch; switch branches first"
+  [ "$branch" != "$base" ] || jig_die "task ship: $id's branch is its own base ($base); nothing task-specific to ship"
+
+  local staged bad p
+  staged=$(git -C "$JIG_PROJECT" diff --cached --name-only 2>/dev/null)
+  bad=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in
+      "$JIG_AI_DIR/workspace/"* | "$JIG_AI_DIR/runtime/"*) bad="$bad
+$p" ;;
+    esac
+  done <<EOF
+$staged
+EOF
+  bad=$(printf '%s\n' "$bad" | sed '/^$/d')
+  if [ -n "$bad" ]; then
+    jig_die "task ship: staged changes under $JIG_AI_DIR/workspace/ or $JIG_AI_DIR/runtime/ are not shippable:
+$bad"
+  fi
+
+  # commit — only what is staged, never `-a`; hooks run, never --no-verify.
+  if [ -n "$(printf '%s\n' "$staged" | sed '/^$/d')" ]; then
+    git -C "$JIG_PROJECT" commit -F "$message_file" >/dev/null \
+      || jig_die "task ship: git commit failed"
+    printf 'committed %s\n' "$(git -C "$JIG_PROJECT" rev-parse --short HEAD)"
+  else
+    printf 'nothing staged; no commit\n'
+  fi
+
+  if [ "$level" = commit ]; then
+    printf "stopped at commit: push is the human's\n"
+    return 0
+  fi
+
+  # push — never --force.
+  local push_out
+  if ! push_out=$(git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
+    jig_die "task ship: git push failed:
+$push_out"
+  fi
+  printf 'pushed %s\n' "$branch"
+
+  if [ "$level" = push ]; then
+    printf "stopped at push: the pull request is the human's\n"
+    return 0
+  fi
+
+  # pr — through whichever forge this checkout uses (jig_forge_kind,
+  # common.sh); `none` is not an error, opening it is the human's to do.
+  local kind
+  kind=$(jig_forge_kind) || exit 1
+  if [ "$kind" = none ]; then
+    printf "no forge available; the pull request is the human's\n"
+    return 0
+  fi
+
+  local pr_title pr_body_file
+  pr_title="${title:-$(head -n 1 "$message_file")}"
+  if [ -n "$body_file" ]; then
+    pr_body_file="$body_file"
+  else
+    # The only EXIT trap in this process: task_ship runs once per dispatch.
+    _TASK_SHIP_BODY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-task-ship-body.XXXXXX")
+    trap '[ -z "${_TASK_SHIP_BODY_TMP:-}" ] || rm -f "$_TASK_SHIP_BODY_TMP"' EXIT
+    tail -n +2 "$message_file" > "$_TASK_SHIP_BODY_TMP"
+    pr_body_file="$_TASK_SHIP_BODY_TMP"
+  fi
+
+  case "$kind" in
+    github) _task_ship_pr_github "$branch" "$base" "$pr_title" "$pr_body_file" ;;
+    gitlab) _task_ship_pr_gitlab "$branch" "$base" "$pr_title" "$pr_body_file" ;;
+  esac
+}
+
+# _task_ship_pr_github <branch> <base> <title> <body-file> — open a pull
+# request into <base>, or print the URL of the one already open from
+# <branch> rather than opening a second.
+_task_ship_pr_github() {
+  local branch="$1" base="$2" title="$3" body_file="$4" url out
+  url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
+  case "$url" in '' | null) url="" ;; esac
+  if [ -n "$url" ]; then
+    printf 'pr %s (already open)\n' "$url"
+    return 0
+  fi
+  out=$(gh pr create --base "$base" --head "$branch" --title "$title" --body-file "$body_file" 2>&1) \
+    || jig_die "task ship: gh pr create failed:
+$out"
+  url=$(printf '%s\n' "$out" | tail -n 1)
+  printf 'pr %s\n' "$url"
+}
+
+# _task_ship_pr_gitlab <branch> <base> <title> <body-file> — equivalent of
+# _task_ship_pr_github through `glab`, whose JSON is read by jig_glab_fields
+# (common.sh), the same reader housekeeping uses.
+_task_ship_pr_gitlab() {
+  local branch="$1" base="$2" title="$3" body_file="$4" out url desc
+  out=$(glab mr list --source-branch "$branch" --output json 2>/dev/null || printf '')
+  url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
+  if [ -n "$url" ]; then
+    printf 'pr %s (already open)\n' "$url"
+    return 0
+  fi
+  desc=$(cat "$body_file")
+  out=$(glab mr create --target-branch "$base" --source-branch "$branch" --title "$title" --description "$desc" 2>&1) \
+    || jig_die "task ship: glab mr create failed:
+$out"
+  url=$(printf '%s\n' "$out" | grep -oE 'https://[^[:space:]]+' | tail -n 1)
+  printf 'pr %s\n' "${url:-$out}"
 }

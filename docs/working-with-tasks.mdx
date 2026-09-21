@@ -86,6 +86,7 @@ Risk sets the floor: a one-line change to authentication is never trivial.
 
 ## Who commits
 
-Jig's scripts never push, and never commit — apart from the one first commit the Windows installer
-makes in a repository it created itself. Whether the agent may commit, push or open pull
-requests is your project's rule, written in your `AGENTS.md` or your runtime's settings — not Jig's.
+By default the agent does not commit: a finished task waits in your working tree, and you review the
+diff and commit it. One line in your own `.ai/config.local.yaml` — `agent.git: pr` — lets the agent
+commit, push and open the pull request instead; it never merges.
+[Letting the agent ship](/agent-ships) explains the levels and what happens at the end of a task.

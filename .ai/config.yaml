@@ -6,6 +6,8 @@
 # Settings that are yours alone (the housekeeping.* keys and git.worktree_root)
 # go in .ai/config.local.yaml: same format, gitignored, one file per clone. It
 # wins over this file for those keys only; `jig status` shows what it changes.
+# agent.git (none | commit | push | pr: how far the agent takes a finished task)
+# is read from .ai/config.local.yaml only, never from this file.
 
 profiles: [generic, shell]                   # generic is always active
 adapters: [claude, codex]

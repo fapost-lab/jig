@@ -18,6 +18,7 @@ Absent keys take the default. Paths are not configurable.
 | `housekeeping.trash_ttl` | `7d` | yes | trash entries older than this are deleted |
 | `housekeeping.abandoned_ttl` | `14d` | yes | abandoned workspaces are purged after this |
 | `housekeeping.stale_after` | `60d` | yes | older active tasks are reported as `STALE_CANDIDATE` |
+| `agent.git` | `none` | only | how far the agent takes a finished task: `none`, `commit`, `push`, `pr` (ADR adr-20260921-agent-git-rights-are-a-local-setting) |
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
 | `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 
@@ -38,5 +39,9 @@ and a warning when git does not ignore the file — a project installed before t
 existed in `templates/gitignore` gets it from `jig init`. `jig doctor` reports the same
 warning.
 
-The list of local keys is `JIG_CFG_LOCAL_KEYS` in `scripts/lib/config.sh`; a key added
-there is added to this table.
+A key marked **only** is read from the local file and never from `.ai/config.yaml`: a committed
+value would apply to every contributor, which is exactly what such a key must not do. A value
+for it in `.ai/config.yaml` is ignored, and `jig status` and `jig doctor` say so.
+
+The list of local keys is `JIG_CFG_LOCAL_KEYS` in `scripts/lib/config.sh`, and the local-only
+ones are also in `JIG_CFG_LOCAL_ONLY_KEYS`; a key added there is added to this table.

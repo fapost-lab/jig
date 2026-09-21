@@ -329,6 +329,28 @@ _doctor_check_config_local() {
   fi
 }
 
+# Whether `agent.git` (JIG_CFG_LOCAL_ONLY_KEYS, config.sh) is in a state
+# `jig task ship` can actually use: not shadowed by a project-layer value it
+# will never read, and not an unrecognised word either way. config.sh answers
+# both (jig_config_project_ignored, jig_agent_git), as it does for status.
+_doctor_check_agent_git() {
+  local ignored level
+  ignored=$(jig_config_project_ignored | cut -f1)
+  # Both problems are reported when both hold: an ignored project value must
+  # not hide an invalid local one, which is what makes `task ship` refuse.
+  if printf '%s\n' "$ignored" | grep -qxF agent.git; then
+    _doctor_warn "agent.git" "set in $JIG_AI_DIR/config.yaml, ignored there" \
+      "move it to $JIG_AI_DIR/config.local.yaml"
+    if level=$(jig_agent_git); then return 0; fi
+  fi
+  if level=$(jig_agent_git); then
+    _doctor_ok "agent.git" "$level"
+  else
+    _doctor_warn "agent.git" "invalid value: $level (expected none|commit|push|pr)" \
+      "set agent.git to none, commit, push or pr in $JIG_AI_DIR/config.local.yaml"
+  fi
+}
+
 # --- cmd_doctor ---------------------------------------------------------------
 
 cmd_doctor() {
@@ -364,6 +386,7 @@ cmd_doctor() {
       _doctor_check_session_hooks
       _doctor_check_instructions
       _doctor_check_config_local
+      _doctor_check_agent_git
     else
       _doctor_warn "project" "not initialised" "jig init"
     fi

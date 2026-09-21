@@ -394,73 +394,39 @@ _hk_fetch() {
   return 0
 }
 
-# _hk_forge_init — resolve which forge CLI to use and pull every pull request
-# in one call (alternatives.md C1). One network call per run, not per task:
-# this command may fire at the start of every agent session.
+# _hk_forge_init — resolve which forge CLI to use (jig_forge_kind, common.sh)
+# and pull every pull request in one call (alternatives.md C1). One network
+# call per run, not per task: this command may fire at the start of every
+# agent session.
 _hk_forge_init() {
-  _HK_FORGE_KIND="none"
   _HK_FORGE_PRS=""
+  _HK_FORGE_KIND=$(jig_forge_kind) || exit 1
 
-  local want origin
-  want=$(cfg forge auto)
-  case "$want" in
-    none) return 0 ;;
-    auto|github|gitlab) ;;
-    *) jig_die "invalid forge: $want (expected auto|github|gitlab|none)" ;;
-  esac
-
-  origin=$(git -C "$JIG_PROJECT" remote get-url origin 2>/dev/null || printf '')
-  [ -n "$origin" ] || return 0
-
-  if [ "$want" = "auto" ]; then
-    case "$origin" in
-      *github.com*) want="github" ;;
-      *gitlab.com*|*gitlab.*) want="gitlab" ;;
-      *) return 0 ;;
-    esac
-  fi
-
-  case "$want" in
+  case "$_HK_FORGE_KIND" in
     github)
-      command -v gh >/dev/null 2>&1 || return 0
-      gh auth status >/dev/null 2>&1 || return 0
       _HK_FORGE_PRS=$(gh pr list --state all --limit 200 \
         --json headRefName,baseRefName,state \
         --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)"' 2>/dev/null || printf '__failed__')
       ;;
     gitlab)
-      command -v glab >/dev/null 2>&1 || return 0
-      glab auth status >/dev/null 2>&1 || return 0
-      # One JSON object per line first: `glab` returns a compact single-line
-      # array, and a greedy `.*` across the whole line would keep only the
-      # last merge request and silently drop every other one. Each field is
-      # then taken at its first occurrence, whatever the key order: nested
-      # objects (author, assignees) carry a `state` of their own, later on.
+      # A row needs a branch and a state; jig_glab_fields (common.sh) splits
+      # glab's compact array and drops objects without a source branch.
       _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
-        | sed 's/},[[:space:]]*{/}\
-{/g' \
-        | awk '
-            function field(key,   k) {
-              k = "\"" key "\":\""
-              if (!match($0, k "[^\"]*\"")) return ""
-              return substr($0, RSTART + length(k), RLENGTH - length(k) - 1)
-            }
-            {
-              h = field("source_branch"); b = field("target_branch"); st = field("state")
-              if (h != "" && st != "") print h "\t" b "\t" st
-            }' \
+        | jig_glab_fields source_branch target_branch state \
+        | awk -F '\t' '$3 != ""' \
         || printf '__failed__')
       ;;
+    *) return 0 ;;
   esac
 
   if [ "$_HK_FORGE_PRS" = "__failed__" ]; then
     # The tier is abandoned for the whole run rather than retried per task:
     # a forge that failed once will fail 40 times, slowly.
     _HK_FORGE_PRS=""
+    _HK_FORGE_KIND="none"
     _HK_STALE_REMOTE=1
     return 0
   fi
-  _HK_FORGE_KIND="$want"
   return 0
 }
 
@@ -778,8 +744,11 @@ _hk_purge() {
 #   worktree remove` deletes ignored files silently, and a real workspace
 #   there is one this checkout knows nothing about;
 # - git does the deleting, without --force, so tracked changes and untracked
-#   files make it refuse. Agents do not commit: uncommitted work in a task
-#   worktree is the normal state before review, not debris.
+#   files make it refuse. At agent.git none (the default, config.sh) agents
+#   do not commit, so uncommitted work in a task worktree is the normal state
+#   before review, not debris; at a higher level `jig task ship` is what
+#   commits it, and the same refusal still protects whatever it has not
+#   reached yet.
 #
 # A worktree outside the root is left in place, and when it is clean and not
 # locked it no longer holds the workspace back: the task is closed, its work
