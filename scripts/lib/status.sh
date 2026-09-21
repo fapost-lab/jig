@@ -471,7 +471,7 @@ _status_html_summary() {
 }
 
 # _status_html_tasks — one row per live task: the same facts as the text
-# report's task lines, with the blocking findings' own lines
+# report's task lines (autopilot state as a badge beside the status), with the blocking findings' own lines
 # (_task_blocking_findings) and the receipt as `task receipt --check` answers
 # it (task_receipt_check), none included.
 _status_html_tasks() {
@@ -493,6 +493,12 @@ _status_html_tasks() {
       printf ' <span class="badge warn">paused</span>'
       [ -z "$_ST_REASON" ] || printf ' <span class="muted">%s</span>' "$(_status_h "$_ST_REASON")"
     fi
+    # The text report's marker (_task_autopilot_note): a run in flight, or
+    # one waiting on a human, which is the case a reader most needs to see.
+    case "$(_task_autopilot_note "$_ST_ID")" in
+      autopilot=on) printf ' <span class="badge">autopilot</span>' ;;
+      autopilot=stopped) printf ' <span class="badge warn">autopilot stopped</span>' ;;
+    esac
     printf '</td><td>%s</td>' "$(_status_h "$(jig_task_base "$_ST_ID")")"
     if [ -n "$_ST_WT" ]; then
       printf '<td class="path"><code>%s</code><br><span class="muted">%s uncommitted</span></td>' \

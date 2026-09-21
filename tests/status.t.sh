@@ -1397,3 +1397,20 @@ test_status_html_names_open_epics_as_status_does() {
   assert_contains "$page" "<li>epic: idea-x on epic/idea-x, branch missing</li>"
   assert_contains "$page" "<td>epic/idea-x — branch missing</td>"
 }
+
+test_status_html_shows_the_autopilot_state_the_text_report_shows() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+  run jig status --html
+  assert_not_contains "$(cat .ai/runtime/status.html)" ">autopilot"
+
+  jig task autopilot TASK-1 start >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge">autopilot</span>'
+
+  jig task autopilot TASK-1 stop --reason "human gate" >/dev/null
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge warn">autopilot stopped</span>'
+}

@@ -73,6 +73,19 @@ winning its own prompts; the docs describe the status page and how to open it.
 - [x] `status-page` — Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
   receipts are half of what it shows)
 
+## Phase 6 — Release
+
+Goal: the public documentation tells one story about what this epic gave the user, and the epic
+reaches the default branch as one release. Done when: the docs site's front page, Concepts,
+Comparison, the README and the navigation present agent git rights, review findings and receipts,
+autopilot (attended and unattended), the status page and phase runs as one path — not as pages
+each task added on its own; every page this epic touched is re-read against the shipped behaviour;
+the version is raised in the final pull request from the epic.
+
+- [ ] Public docs pass — read the whole docs site and README as a new user would, bring the
+  shared pages up to the epic's features, fix what the per-task pages say differently from what
+  shipped (after: every other item — it describes what they built)
+
 ## Waves
 
 1. Agent git rights as a local setting; findings ledger; routing evals
@@ -80,6 +93,7 @@ winning its own prompts; the docs describe the status page and how to open it.
 3. Autopilot run for a task
 4. Unattended mode
 5. fog: phase run
+6. Public docs pass
 
 <!--
 Rules (jig-idea §8):
