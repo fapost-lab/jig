@@ -151,10 +151,30 @@ spec_progress() {
   ' "$1"
 }
 
+# spec_list — `jig spec list`: one aligned line per spec, from spec_list_rows.
 spec_list() {
   [ $# -eq 0 ] || jig_die "spec list: unexpected argument: $1"
   jig_require_repo
-  local root id title state missing rows=""
+  local rows
+  rows=$(spec_list_rows)
+  [ -n "$rows" ] || return 0
+  printf '%s\n' "$rows" | awk -F '\t' '
+    { id[NR] = $1; t[NR] = $2; s[NR] = $3
+      if (length($1) > wi) wi = length($1)
+      if (length($2) > wt) wt = length($2) }
+    # The width is spliced into the format, not passed as `*`: not every awk
+    # on a supported machine takes a dynamic width.
+    END { fmt = "%-" wi "s   %-" wt "s   %s\n"
+          for (i = 1; i <= NR; i++) printf fmt, id[i], t[i], s[i] }
+  '
+}
+
+# spec_list_rows — what `spec list` answers, one "<id><TAB><title><TAB><state>"
+# row per spec, unformatted. `jig spec list` aligns it; `jig status --html`
+# renders it (ARCHITECTURE.md, Scripts layout: a reporting command consumes a
+# peer's answer, never recomputes it).
+spec_list_rows() {
+  local root id title state missing
   root=$(spec_dir)
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -174,19 +194,8 @@ spec_list() {
     # A tab cannot occur in any field: ids exclude it, and a heading is one
     # line whose tabs are folded to spaces here.
     title=$(printf '%s' "$title" | tr '\t' ' ')
-    rows="$rows$id	$title	$state
-"
+    printf '%s\t%s\t%s\n' "$id" "$title" "$state"
   done < <(spec_ids)
-  [ -n "$rows" ] || return 0
-  printf '%s' "$rows" | awk -F '\t' '
-    { id[NR] = $1; t[NR] = $2; s[NR] = $3
-      if (length($1) > wi) wi = length($1)
-      if (length($2) > wt) wt = length($2) }
-    # The width is spliced into the format, not passed as `*`: not every awk
-    # on a supported machine takes a dynamic width.
-    END { fmt = "%-" wi "s   %-" wt "s   %s\n"
-          for (i = 1; i <= NR; i++) printf fmt, id[i], t[i], s[i] }
-  '
 }
 
 # spec_list_state <roadmap.md> — what `spec list` says about a spec's progress.

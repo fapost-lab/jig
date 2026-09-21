@@ -50,7 +50,11 @@ their entry points — `status` sources six (`spec` for its `specs:` count), `me
 sources `task` and `knowledge`. What they may not do is *recompute* the answer: a second implementation of "how many documents
 are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
 is invisible until someone reads both. A reporting command therefore consumes a peer's
-output, never reimplements it, and never writes anything. Setup a peer needs before its
+output, never reimplements it, and never writes anything — with one exception: `jig status --html`
+writes the status page, `.ai/runtime/status.html`, and nothing else
+(adr-20260921-the-status-page-is-the-one-file-a-report-writes). Where a peer only printed formatted
+text, it gains an unformatted producer the report calls (`spec_list_rows`), rather than the report
+parsing its columns. Setup a peer needs before its
 functions work is exposed as a function of that peer (`km_init`) rather than transcribed —
 a copied prologue silently misses the step the original later gains.
 

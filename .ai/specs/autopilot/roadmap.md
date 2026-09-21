@@ -65,7 +65,7 @@ tasks, findings, receipts and spec progress; CI fails on a skill description tha
 winning its own prompts; the docs describe the status page and how to open it.
 
 - [ ] Routing evals — prompt cases per skill, a shell scorer in `tests/`, run in CI
-- [ ] Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
+- [x] `status-page` — Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
   receipts are half of what it shows)
 
 ## Waves
