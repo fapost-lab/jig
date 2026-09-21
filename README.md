@@ -19,7 +19,8 @@ for a [new project](https://jig.fapost.in/greenfield), started from an idea, and
 
 By default a finished task waits in your working tree for you to review and commit. One personal
 setting, `agent.git: pr`, lets the agent commit, push and open the pull request instead — it never
-merges. Either way, `jig status` tells you where your review queue is.
+merges ([how](https://jig.fapost.in/agent-ships)). Either way, `jig status` tells you where your
+review queue is.
 
 ## Install
 

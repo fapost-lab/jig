@@ -87,23 +87,6 @@ Risk sets the floor: a one-line change to authentication is never trivial.
 ## Who commits
 
 By default the agent does not commit: a finished task waits in your working tree, and you review the
-diff and commit it. You can let the agent go further in your own clone, with one line in
-`.ai/config.local.yaml`:
-
-```yaml
-agent.git: pr        # none | commit | push | pr
-```
-
-- `none` — the default. Uncommitted files are your review queue.
-- `commit` — the agent commits to the task's branch.
-- `push` — it also pushes the branch.
-- `pr` — it also opens the pull request, into the branch the task was cut from. Open pull requests
-  are then your review queue.
-
-The agent never merges, at any level: merging, and closing the task after it lands, stay yours. The
-setting is personal — it is read only from your local file, never from the committed
-`.ai/config.yaml`, so turning it on never changes what a colleague's agent does. `jig status` shows
-the level and which queue it means. Your approval of a design (T3, T4) is still required first.
-
-The agent hands the change over with `jig task ship`, which commits only what the agent staged,
-refuses until the knowledge decision is recorded, and stops at the step your level leaves to you.
+diff and commit it. One line in your own `.ai/config.local.yaml` — `agent.git: pr` — lets the agent
+commit, push and open the pull request instead; it never merges.
+[Letting the agent ship](/agent-ships) explains the levels and what happens at the end of a task.

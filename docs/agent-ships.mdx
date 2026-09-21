@@ -1,0 +1,113 @@
+---
+title: "Letting the agent ship"
+description: "Let the agent commit, push and open the pull request for a finished task — how to turn it on, what happens, and what stays yours."
+---
+
+By default a finished task waits in your working tree: you read the diff, commit it and open the
+pull request yourself. If you trust the process, you can let the agent do that part. You then get a
+finished task back as an open pull request, and your review happens there.
+
+This is a personal setting. It changes what the agent does in **your** copy of the repository only,
+and never what a colleague's agent does.
+
+## Turn it on
+
+1. Create `.ai/config.local.yaml` in your project if it does not exist, and add one line:
+
+   ```yaml
+   agent.git: pr
+   ```
+
+   The file is yours: Git ignores it, and `jig init` adds it to `.gitignore` if an older project
+   does not ignore it yet.
+
+2. For `pr`, the agent opens the pull request with GitHub's `gh` or GitLab's `glab`. Install the one
+   for your host and sign in once:
+
+   ```bash
+   gh auth login
+   ```
+
+   Without a signed-in tool the agent still commits and pushes, then tells you the pull request is
+   yours to open.
+
+3. Check it took effect:
+
+   ```bash
+   jig status
+   ```
+
+   ```text
+   agent.git: pr (review queue: open pull requests)
+   ```
+
+Putting `agent.git` in the committed `.ai/config.yaml` does nothing: that file is shared with
+everyone, and a shared value would switch every contributor's agent on. `jig status` and
+`jig doctor` warn when they find it there.
+
+## Choose how far it goes
+
+| Level | The agent | What waits for you |
+|---|---|---|
+| `none` (default) | Leaves the change uncommitted. | Uncommitted files: review, commit, push, open the pull request. |
+| `commit` | Commits to the task's branch. | Unpushed commits: push and open the pull request. |
+| `push` | Commits and pushes the task's branch. | A pushed branch: open the pull request. |
+| `pr` | Commits, pushes and opens the pull request. | An open pull request: review and merge. |
+
+No level merges. Merging is your decision, always.
+
+## What happens at the end of a task
+
+Nothing changes until the task is done. The agent still sizes the work, and for a risky task it
+still stops and waits for you to approve the design ([Working with tasks](/working-with-tasks)).
+Git rights do not skip that approval.
+
+When the work is finished and checked, the agent:
+
+1. records what the project should remember from the task — or that there is nothing;
+2. stages the task's own changes, and only those — if other work sits in the same folder, it stays
+   out of the commit;
+3. writes the commit message: the first line becomes the pull request's title, the rest its
+   description — what the task was for and how it was checked;
+4. runs `jig task ship`, which does the Git part as far as your level allows and reports each step:
+
+   ```text
+   committed f20a7aa
+   pushed task/csv-export
+   pr https://github.com/acme/app/pull/42
+   ```
+
+   At a lower level it says where it stopped, for example
+   `stopped at push: the pull request is the human's`.
+
+The pull request goes into the branch the task was cut from: your main branch, or the epic branch
+of a specification released at once ([New project](/greenfield)). You do not have to pick it.
+
+## Review, fix, merge
+
+Review the pull request as you would any other. When you ask for a change, the agent makes it in
+the same task and runs `jig task ship` again: it commits the fix, pushes it, and reports the
+pull request that is already open instead of opening a second one.
+
+After you merge, the task is not closed yet — a fix may still follow. At the start of a later
+session the agent names the merged task and asks whether it can be closed. Nothing is closed
+without your yes.
+
+## What `jig task ship` will not do
+
+It is a script, so these limits hold whatever the agent intends:
+
+- it never merges, never force-pushes and never skips your Git hooks;
+- it commits only what was staged, never "everything in the folder";
+- it refuses, changing nothing, until the task's knowledge decision is recorded;
+- it refuses on any branch but the task's own, and on the main branch itself;
+- it refuses when task notes (`.ai/workspace/`) or Jig's runtime files (`.ai/runtime/`) are staged —
+  those never leave your machine.
+
+When it refuses, the message says why and what to run. At `none` it does nothing at all, and the
+agent tells you the change is ready for your review.
+
+## Turn it off
+
+Remove the line from `.ai/config.local.yaml`, or set `agent.git: none`. The next task ends in your
+working tree again.
