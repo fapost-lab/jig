@@ -4,6 +4,8 @@ Destination: a user who opted in hands a task to Jig and gets back an open pull 
 stop that names a human decision, with completion refused by scripts while a serious finding
 is open or the review no longer matches the code.
 
+Epic: epic/autopilot
+
 ## Phase 1 — Commit rights are the user's choice
 
 Goal: an agent commits, pushes or opens a pull request exactly as far as the clone's owner
