@@ -1,0 +1,8 @@
+# jig-analyze: understanding a problem and its blast radius before changing code.
++ analyze why the import job fails on large files
++ investigate why this happens only on Windows
++ what does this touch if we rename the user table
++ why does this happen after every deploy
+- analyze the project and set up its knowledge
+- implement the plan we agreed on
+- review this change before it ships

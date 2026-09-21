@@ -1,0 +1,8 @@
+# jig-idea: an unsettled idea or work bigger than one task, kept as a spec with a roadmap.
++ I have an idea for an offline mode, poke holes in this
++ write a spec for the new sync engine
++ build a roadmap for the migration, it will take several phases
++ design the architecture and stack for a project that has no code yet
++ continue the spec we started last week
+- fix the crash when the config file is empty
+- implement the next step of the plan
