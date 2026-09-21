@@ -41,7 +41,8 @@ or rejected decisions matter; diagnostic history is not binding accepted knowled
 
 For each of the five, one line: holds, or violated with the evidence. Violations are
 blocking: record each as a P0 in the task's ledger
-([findings](../jig-review/references/findings.md)). Escalate a conflict between the change and an accepted decision to the human
+([findings](../jig-review/references/findings.md)), then write the receipt
+(`jig task receipt <id> --stage architecture-review`). Escalate a conflict between the change and an accepted decision to the human
 rather than resolving it yourself.
 
 Then hand the ADR candidates to `jig-consolidate`.

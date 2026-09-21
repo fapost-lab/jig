@@ -93,6 +93,21 @@ jig task findings <task-id>
 
 `jig status` marks a task that is stopped this way with `blocking=<n>`.
 
+### When the change moved after review
+
+A review ends by pinning what it looked at: the code, the approved design and its list of findings.
+If any of them changes afterwards — a line of code edited, a finding closed by the agent that wrote
+the code — the review no longer describes the change, and the task stops again for the same three
+steps until the change is reviewed once more. Committing the reviewed change does not count as a
+change; only its content does. The project's knowledge and specification files are not pinned: the
+agent writes them after the review, as the last step of every task.
+
+A task of the highest risk class (T4) cannot be finished without such a pinned review at all.
+
+To see whether the review still holds, ask *"is the review still current?"*, or run
+`jig task receipt <task-id> --check`. `jig status` marks a task whose review no longer holds with
+`review=stale`.
+
 ## Several agents at once
 
 One checkout holds one piece of uncommitted work. When an agent is already working and you want to

@@ -23,14 +23,14 @@ queue it is counting.
 ## Phase 2 — Gates a script enforces
 
 Goal: completion stops on its own when review found something serious or no longer matches
-the code. Done when: a planted P1 or a commit after review makes marking the task ready
+the code. Done when: a planted P1 or a change after review makes marking the task ready
 (`task set … status ready`, the end of verification) and consolidation refuse, with a message naming what to do; the docs say how findings are
 recorded and what to do when completion is refused.
 
 - [x] `findings-ledger` — Findings ledger — review records findings with severity and status through a `jig task`
   subcommand; open or unre-reviewed P0/P1 refuse completion
-- [ ] Review receipt — review pins the reviewed commit and the approved documents; a moved
-  HEAD or changed document refuses completion; required for T4 (after: findings ledger — the
+- [x] `review-receipt` — Review receipt — review pins the reviewed working tree and the approved documents; changed
+  content or a changed document refuses completion; required for T4 (after: findings ledger — the
   receipt records the ledger's state at review time)
 
 ## Phase 3 — Autopilot for one task

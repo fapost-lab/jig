@@ -36,3 +36,23 @@ levels, pick the higher one: a blocking finding costs a re-review, a missed one 
   conversation: show the finding, say why, and put their decision in the reason.
 
 `closed` and `dismissed` are final; a regression reopens the finding with `open`.
+
+## Sign the review: the receipt
+
+A review ends with a receipt, written after its findings are recorded — a re-review writes it
+again:
+
+```
+.ai/scripts/jig task receipt <id> --stage review|architecture-review
+```
+
+It pins what was reviewed: the working tree (everything but `.ai/knowledge/` and `.ai/specs/`,
+which consolidation writes afterwards), the approved `design.md`, and the ledger as it stands. A
+change to any of them afterwards — code edited, a finding closed by its author — makes the receipt
+stale, and `ready`, the knowledge decision and `task ship` refuse until a re-review writes a new
+one. A commit that changes no content leaves it current. A T4 task cannot be finished without one.
+`jig task receipt <id> --check` says whether it still holds.
+
+Never write a receipt for a review that did not happen, and never rewrite one to get past a
+refusal: the refusal means the change is not the one that was reviewed.
+

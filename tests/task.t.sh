@@ -2773,3 +2773,380 @@ test_task_ship_refuses_blocking_finding_planted_after_consolidation() {
   assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
 }
 
+# --- review receipt (design.md, review-receipt) --------------------------------
+
+test_task_receipt_writes_all_keys() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  local expected_base
+  expected_base=$(sed -n 's/^base_commit:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+
+  run jig task receipt T-1 --stage review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stage: review"
+
+  assert_file .ai/workspace/tasks/T-1/receipt
+  local keys
+  keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/receipt | tr '\n' ' ')
+  assert_eq "stage reviewed_at tree base_commit head design findings " "$keys"
+
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: review"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "reviewed_at: $(date +%Y-%m-%d)"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "base_commit: $expected_base"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "findings: -"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/receipt)" "design: -"
+}
+
+test_task_receipt_reads_the_worktree_that_holds_the_task_branch() {
+  task_setup_nested
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 --worktree >/dev/null
+  local wt
+  wt=$(git worktree list --porcelain | awk '/^worktree /{ p = substr($0, 10) } /^branch refs\/heads\/task\/T-1$/{ print p }')
+  [ -n "$wt" ] || fail "task worktree not found"
+  # A commit of its own, so the worktree's HEAD differs from this checkout's.
+  printf 'x\n' > "$wt/committed.txt"
+  git -C "$wt" add committed.txt && git -C "$wt" commit -q -m "task commit"
+  run jig task receipt T-1 --stage review
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "head: $(git -C "$wt" rev-parse HEAD)"
+  # A change in the filing checkout is not the task's change.
+  printf 'unrelated\n' > unrelated.txt
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "receipt: current"
+  # A change in the task's own worktree is.
+  printf 'task work\n' > "$wt/work.txt"
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_refuses_when_the_task_branch_is_checked_out_nowhere() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  git checkout -q main
+  run jig task receipt T-1 --stage review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: task/T-1 is not checked out in any worktree; review the task where its branch is"
+  assert_no_file .ai/workspace/tasks/T-1/receipt
+}
+
+test_task_receipt_check_counts_an_unreadable_tree_as_changed() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  git checkout -q main
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_architecture_review_stage() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --stage architecture-review
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: architecture-review"
+}
+
+test_task_receipt_rereview_replaces_the_stage() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task receipt T-1 --stage architecture-review
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: architecture-review"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/receipt)" "stage: review"
+}
+
+test_task_receipt_unknown_task_dies() {
+  task_setup
+  run jig task receipt nope --stage review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: unknown task: nope"
+}
+
+test_task_receipt_no_args_dies_with_usage() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task receipt"
+}
+
+test_task_receipt_stage_requires_a_value_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --stage
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: --stage requires a value"
+}
+
+test_task_receipt_invalid_stage_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --stage bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: invalid stage: bogus (expected review|architecture-review)"
+}
+
+test_task_receipt_unknown_argument_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: unknown argument: --bogus"
+}
+
+test_task_receipt_check_and_stage_are_mutually_exclusive_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --check --stage review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: --stage and --check are mutually exclusive"
+}
+
+test_task_receipt_check_none_for_t0_through_t3() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: none" "$OUT"
+}
+
+test_task_receipt_check_none_required_for_t4() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_eq "receipt: none (required for T4)" "$OUT"
+}
+
+test_task_receipt_check_current_right_after_writing() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+test_task_receipt_check_stale_after_a_tracked_code_edit_names_tree() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf '# edited\n' >> AGENTS.md
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree, reviewed $(date +%Y-%m-%d))"
+}
+
+test_task_receipt_check_stale_after_a_new_untracked_file() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf 'new\n' > untracked.txt
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_check_current_after_editing_knowledge_or_specs() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  mkdir -p .ai/knowledge/domains/foo .ai/specs/bar
+  printf 'x\n' > .ai/knowledge/domains/foo/OVERVIEW.md
+  printf 'x\n' > .ai/specs/bar/roadmap.md
+
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+test_task_receipt_check_current_after_committing_the_reviewed_content() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'work in progress\n' > work.txt
+  jig task receipt T-1 --stage review >/dev/null
+
+  git add work.txt
+  git commit -q -m "commit the reviewed content"
+
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+# The spec's own scenario: amending a commit after review, changing its
+# content, must go stale even though HEAD is not what the receipt pins.
+test_task_receipt_check_stale_after_an_amend_that_changes_content() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'work in progress\n' > work.txt
+  git add work.txt
+  git commit -q -m "wip"
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf 'different content\n' > work.txt
+  git add work.txt
+  git commit -q --amend -m "wip amended"
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_check_stale_after_editing_design_md_names_design() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf '# design v2\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (design"
+}
+
+test_task_receipt_check_stale_after_a_findings_change_names_findings() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  jig task finding add T-1 --severity P2 --where - --summary "minor" >/dev/null
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (findings"
+}
+
+test_task_receipt_t4_design_hash_covers_spec_and_alternatives() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  printf '# spec\n' > .ai/workspace/tasks/T-1/spec.md
+  printf '# alt\n' > .ai/workspace/tasks/T-1/alternatives.md
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf '# spec v2\n' > .ai/workspace/tasks/T-1/spec.md
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (design"
+}
+
+# The temporary index is thrown away on every path, real or not: whatever is
+# staged before `task receipt` runs must read back unchanged afterwards.
+test_task_receipt_does_not_touch_the_real_index() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'staged\n' > staged.txt
+  git add staged.txt
+
+  local before_cached before_ls
+  before_cached=$(git diff --cached --name-only)
+  before_ls=$(git ls-files -s)
+
+  run jig task receipt T-1 --stage review
+  assert_eq 0 "$RC"
+
+  assert_eq "$before_cached" "$(git diff --cached --name-only)"
+  assert_eq "$before_ls" "$(git ls-files -s)"
+}
+
+test_task_set_status_ready_refuses_stale_receipt() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  printf '# edited\n' >> AGENTS.md
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: review is stale: code changed since review on $(date +%Y-%m-%d) (tree); re-review and run: jig task receipt T-1 --stage review"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+test_task_set_knowledge_consolidated_refuses_stale_receipt() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  printf '# edited\n' >> AGENTS.md
+
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale: code changed since review on"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
+}
+
+test_task_set_status_ready_refuses_t4_without_a_receipt() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: T4 needs a review receipt; run the independent review, then: jig task receipt T-1 --stage review"
+}
+
+test_task_set_status_ready_passes_t3_without_a_receipt() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+# task ship refuses on a stale receipt even when knowledge_consolidated was
+# already true before the code changed (a later edit, or a re-review nobody
+# ran), so it must recheck independently — same reason as the findings ledger
+# recheck above.
+test_task_ship_refuses_stale_receipt_planted_after_consolidation() {
+  ship_setup
+  ship_cfg_local agent.git pr
+  jig task receipt T-1 --stage review >/dev/null
+  sed 's/^knowledge_consolidated:.*/knowledge_consolidated: true/' \
+    .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  printf '# edited after review\n' >> AGENTS.md
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale: code changed since review on"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+

@@ -34,6 +34,7 @@ cmd_task() {
     artifacts) task_artifacts "$@" ;;
     finding) task_finding "$@" ;;
     findings) task_findings "$@" ;;
+    receipt) task_receipt "$@" ;;
     ship) task_ship "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
@@ -44,7 +45,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|ship ...\n' ;;
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|receipt|ship ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree]\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -61,6 +62,10 @@ _task_usage() {
       printf '       jig task finding set <id> <F-id> open|fixed|closed|dismissed [--reason <text>]\n'
       ;;
     findings) printf 'usage: jig task findings <id> [--blocking]\n' ;;
+    receipt)
+      printf 'usage: jig task receipt <id> --stage review|architecture-review\n'
+      printf '       jig task receipt <id> --check\n'
+      ;;
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>]\n' ;;
     *) return 1 ;;
   esac
@@ -836,6 +841,12 @@ task_set() {
     local blocking
     blocking=$(_task_blocking_findings "$id")
     [ -z "$blocking" ] || jig_die "task set: $(_task_gate_blocking_message "$id" "$blocking")"
+    # review-receipt (design.md §3): a receipt that no longer matches what was
+    # reviewed, or a T4 task with none at all, refuses the same way. Checked
+    # after the findings gate, same order as the two ledger checks above.
+    local receipt_msg
+    receipt_msg=$(_task_receipt_gate_message "$id")
+    [ -z "$receipt_msg" ] || jig_die "task set: $receipt_msg"
   fi
 
   _task_rewrite_state "$dir" "$key" "$value"
@@ -1082,6 +1093,269 @@ task_findings() {
   fi
   printf 'blocking: %s\n' "$bcount"
   return 0
+}
+
+# --- review receipt (design.md, review-receipt) --------------------------------
+#
+# `.ai/workspace/tasks/<id>/receipt` — gitignored workspace file, flat
+# `key: value`, one review's worth of state (design.md §1): `stage`,
+# `reviewed_at`, `tree` (a git tree id — everything `git add -A` would stage
+# from the project root, except `.ai/knowledge/` and `.ai/specs/`, which
+# consolidation writes after review), `base_commit` and `head` (read by
+# people, not compared), `design` (a hash of the approved design document(s))
+# and `findings` (a hash of the findings ledger at review time). Written
+# atomically (tmp.$$ then mv), like every other workspace file here.
+#
+# Pins the reviewed tree's *content*, not a commit: review most often runs
+# against an uncommitted working tree (agent.git: none), where HEAD is the
+# base, not what was reviewed, and a commit made after review (by hand or
+# `task ship`) must not by itself make the receipt stale.
+
+# _task_review_dir <id> — the checkout that holds <id>'s working tree: the
+# one git lists with the task's branch checked out, this checkout or a task
+# worktree (ADR-0029). A task with no branch of its own answers this
+# checkout. Non-zero when the branch is checked out nowhere: its working tree
+# cannot be read, and fingerprinting whatever this checkout holds instead
+# would pin, or check, the wrong change.
+_task_review_dir() {
+  local branch dir
+  branch=$(task_state_get "$1" branch)
+  if [ -z "$branch" ] || [ "$branch" = "$(_task_current_branch)" ]; then
+    printf '%s\n' "$JIG_PROJECT"
+    return 0
+  fi
+  dir=$(_task_worktree_for "$branch" "$(_task_worktrees)")
+  [ -n "$dir" ] || return 1
+  printf '%s\n' "$dir"
+}
+
+# _task_review_tree <dir> — the git tree id of everything `git add -A` would
+# stage right now in the checkout <dir>, minus `.ai/knowledge/` and
+# `.ai/specs/`. Computed through a temporary index so the real one is never
+# touched: every git call below is pointed at a throwaway `GIT_INDEX_FILE`,
+# cleaned up on every return path rather than through an EXIT trap, because
+# this function can run many times in one process — once per task with a
+# receipt, from `jig status` — and a single process-wide trap variable (the
+# convention `task_ship`'s PR body file uses) would only remember the last one.
+#
+# A repository with no commits yet has no HEAD to read: `read-tree` is
+# skipped in that case rather than treated as a failure, and the temporary
+# index simply starts empty (a missing GIT_INDEX_FILE reads as one).
+_task_review_tree() {
+  local dir="$1" tmp tree
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jig-task-review-tree.XXXXXX") || return 1
+  rm -f "$tmp"
+
+  if git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    if ! GIT_INDEX_FILE="$tmp" git -C "$dir" read-tree HEAD 2>/dev/null; then
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+  if ! GIT_INDEX_FILE="$tmp" git -C "$dir" add -A 2>/dev/null; then
+    rm -f "$tmp"
+    return 1
+  fi
+  GIT_INDEX_FILE="$tmp" git -C "$dir" rm -r -q --cached --ignore-unmatch \
+    -- "$JIG_AI_DIR/knowledge" "$JIG_AI_DIR/specs" >/dev/null 2>&1 || true
+  tree=$(GIT_INDEX_FILE="$tmp" git -C "$dir" write-tree 2>/dev/null) || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+  printf '%s\n' "$tree"
+}
+
+# _task_receipt_design_hash <id> — the receipt's `design` field: the hash of
+# design.md, and for a T4 task also spec.md and alternatives.md when they
+# exist, combined by hashing their own "<name> <hash>" lines together so any
+# one of the documents changing changes the combined value too. "-" when
+# design.md itself is absent — nothing has been approved yet to pin.
+_task_receipt_design_hash() {
+  local id="$1" dir class lines file
+  dir=$(task_dir "$id")
+  [ -f "$dir/design.md" ] || { printf -- '-\n'; return 0; }
+  lines="design.md $(jig_hash "$dir/design.md")"
+  class=$(task_state_get "$id" class)
+  if [ "$class" = T4 ]; then
+    for file in spec.md alternatives.md; do
+      [ -f "$dir/$file" ] || continue
+      lines="$lines
+$file $(jig_hash "$dir/$file")"
+    done
+  fi
+  printf '%s\n' "$lines" | git hash-object --stdin
+}
+
+# _task_receipt_findings_hash <id> — the receipt's `findings` field: the hash
+# of the findings ledger file, or "-" when the task has none. Any later edit
+# to the ledger — including the author closing their own finding — changes
+# this and makes the receipt stale (design.md §3: the ledger tie-in).
+_task_receipt_findings_hash() {
+  local file
+  file="$(task_dir "$1")/findings"
+  if [ -f "$file" ]; then
+    jig_hash "$file"
+  else
+    printf -- '-\n'
+  fi
+}
+
+# _task_receipt_get <id> <key> — the value of <key> from the task's receipt
+# file, or nothing when the task has no receipt or the key is absent.
+# Companion to task_state_get, same shape, different file.
+_task_receipt_get() {
+  local id="$1" key="$2" file
+  file="$(task_dir "$id")/receipt"
+  [ -f "$file" ] || return 0
+  sed -n "s/^${key}:[[:space:]]*//p" "$file" | head -n 1
+}
+
+# _task_receipt_changed <id> — "tree", "design", "findings", any combination
+# joined by ", ", or empty, for the parts of an existing receipt that no
+# longer match the task's current state; empty (not an error) when the task
+# has no receipt at all. One function decides staleness so `--check`, the
+# three completion gates and `jig status` cannot disagree about what "stale"
+# means (ARCHITECTURE.md, Scripts layout: a reporting command consumes a
+# peer's answer, never recomputes it).
+_task_receipt_changed() {
+  local id="$1" file changed="" sep="" cur dir
+  file="$(task_dir "$id")/receipt"
+  [ -f "$file" ] || return 0
+
+  # A tree that cannot be read — the branch checked out nowhere — counts as
+  # changed: the gate must not pass on a change it could not look at.
+  cur=""
+  if dir=$(_task_review_dir "$id"); then
+    cur=$(_task_review_tree "$dir") || cur=""
+  fi
+  if [ "$cur" != "$(_task_receipt_get "$id" tree)" ]; then
+    changed="$changed${sep}tree"
+    sep=", "
+  fi
+  cur=$(_task_receipt_design_hash "$id")
+  if [ "$cur" != "$(_task_receipt_get "$id" design)" ]; then
+    changed="$changed${sep}design"
+    sep=", "
+  fi
+  cur=$(_task_receipt_findings_hash "$id")
+  if [ "$cur" != "$(_task_receipt_get "$id" findings)" ]; then
+    changed="$changed${sep}findings"
+    sep=", "
+  fi
+  printf '%s\n' "$changed"
+}
+
+# _task_receipt_gate_message <id> — empty when the task's review receipt
+# needs no attention; otherwise the refusal text (the caller still prefixes
+# it with "<command>: ", same as _task_gate_blocking_message) for a stale
+# receipt, or for a T4 task with no receipt at all (design.md §3). Read by
+# task_set's two gates and task_ship's recheck — the same three call sites
+# _task_blocking_findings has, right after it.
+_task_receipt_gate_message() {
+  local id="$1" changed class
+  if [ -f "$(task_dir "$id")/receipt" ]; then
+    changed=$(_task_receipt_changed "$id")
+    [ -n "$changed" ] || return 0
+    printf 'review is stale: code changed since review on %s (%s); re-review and run: jig task receipt %s --stage %s' \
+      "$(_task_receipt_get "$id" reviewed_at)" "$changed" "$id" "$(_task_receipt_get "$id" stage)"
+    return 0
+  fi
+  class=$(task_state_get "$id" class)
+  if [ "$class" = T4 ]; then
+    printf 'T4 needs a review receipt; run the independent review, then: jig task receipt %s --stage review' "$id"
+  fi
+  return 0
+}
+
+# jig task receipt <id> --stage review|architecture-review — write the
+# receipt and print it; jig task receipt <id> --check — report whether it
+# still matches.
+task_receipt() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage receipt)"
+  local id="$1"
+  shift
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task receipt: unknown task: $id"
+
+  local stage="" has_stage=0 check=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stage)
+        [ $# -ge 2 ] || jig_die "task receipt: --stage requires a value"
+        stage="$2"; has_stage=1; shift 2 ;;
+      --check) check=1; shift ;;
+      *) jig_die "task receipt: unknown argument: $1" ;;
+    esac
+  done
+  [ "$check" -eq 0 ] || [ "$has_stage" -eq 0 ] || jig_die "task receipt: --stage and --check are mutually exclusive"
+
+  if [ "$check" -eq 1 ]; then
+    task_receipt_check "$id"
+    return
+  fi
+
+  [ "$has_stage" -eq 1 ] || jig_die "$(_task_usage receipt)"
+  case "$stage" in
+    review | architecture-review) ;;
+    *) jig_die "task receipt: invalid stage: $stage (expected review|architecture-review)" ;;
+  esac
+
+  task_receipt_write "$id" "$stage"
+}
+
+# task_receipt_write <id> <stage> — write the task's receipt (design.md §1)
+# and print it. One receipt per task: a repeated call, most often a
+# re-review, replaces it outright — the stage most recently written wins, and
+# nothing reads the one it overwrote.
+task_receipt_write() {
+  local id="$1" stage="$2" dir tree base_commit head design findings file tmp
+  dir=$(task_dir "$id")
+  local review_dir
+  review_dir=$(_task_review_dir "$id") \
+    || jig_die "task receipt: $(task_state_get "$id" branch) is not checked out in any worktree; review the task where its branch is"
+  tree=$(_task_review_tree "$review_dir") || jig_die "task receipt: could not read the working tree"
+  base_commit=$(task_state_get "$id" base_commit)
+  head=$(git -C "$review_dir" rev-parse --verify --quiet HEAD 2>/dev/null) || head=""
+  design=$(_task_receipt_design_hash "$id")
+  findings=$(_task_receipt_findings_hash "$id")
+
+  file="$dir/receipt"
+  tmp="$file.tmp.$$"
+  {
+    printf 'stage: %s\n' "$stage"
+    printf 'reviewed_at: %s\n' "$(jig_today)"
+    printf 'tree: %s\n' "$tree"
+    printf 'base_commit: %s\n' "$base_commit"
+    printf 'head: %s\n' "$head"
+    printf 'design: %s\n' "$design"
+    printf 'findings: %s\n' "$findings"
+  } > "$tmp"
+  mv "$tmp" "$file"
+  cat "$file"
+}
+
+# task_receipt_check <id> — `receipt: current|stale (...)|none`, exit 1 for
+# stale and for a T4 task with none at all (design.md §3), exit 0 otherwise.
+task_receipt_check() {
+  local id="$1" file changed class
+  file="$(task_dir "$id")/receipt"
+  if [ ! -f "$file" ]; then
+    class=$(task_state_get "$id" class)
+    if [ "$class" = T4 ]; then
+      printf 'receipt: none (required for T4)\n'
+      return 1
+    fi
+    printf 'receipt: none\n'
+    return 0
+  fi
+
+  changed=$(_task_receipt_changed "$id")
+  if [ -z "$changed" ]; then
+    printf 'receipt: current\n'
+    return 0
+  fi
+  printf 'receipt: stale (%s, reviewed %s)\n' "$changed" "$(_task_receipt_get "$id" reviewed_at)"
+  return 1
 }
 
 # --- pause / resume ---------------------------------------------------------------
@@ -1554,6 +1828,13 @@ task_ship() {
   local blocking
   blocking=$(_task_blocking_findings "$id")
   [ -z "$blocking" ] || jig_die "task ship: $(_task_gate_blocking_message "$id" "$blocking")"
+
+  # Same independent recheck as the findings ledger above, for the same
+  # reason: a receipt gone stale after knowledge_consolidated was set true —
+  # a later code edit, or a re-review nobody ran — must still refuse here.
+  local receipt_msg
+  receipt_msg=$(_task_receipt_gate_message "$id")
+  [ -z "$receipt_msg" ] || jig_die "task ship: $receipt_msg"
 
   local branch base cur
   branch=$(task_state_get "$id" branch)

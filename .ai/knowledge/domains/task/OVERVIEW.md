@@ -123,3 +123,10 @@ never by reading the file. The ledger records claims (ADR-0020): the script cann
 from the author, so who may close or dismiss a finding is a rule of the skills
 (`skills/jig-review/references/findings.md`), not of this code.
 
+**The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
+After the findings check, each gate asks one staleness function whether the working tree, the
+approved design or the ledger moved since the receipt, and a T4 task must have one. The tree is
+content, built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
+`.ai/specs/` because consolidation writes them after review. A new path that consolidation starts
+writing must join that exclusion, or every task will read as unreviewed at its last step.
+
