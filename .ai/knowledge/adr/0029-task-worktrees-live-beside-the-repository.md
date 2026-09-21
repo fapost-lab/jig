@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-21
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -149,3 +149,11 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > housekeeping then removes only links and empty directories there, with `rmdir`, and anything else keeps
 > the task under `worktree-kept` with reason `leftover`. The claim above that "every framework symlink
 > is relative and committed" holds for link mode only, which still needs real symlinks.
+
+> **Amendment (2026-09-21).** "Agents here do not commit" is no longer a rule of the framework:
+> it is the default level, `none`, of the per-clone setting `agent.git`
+> (adr-20260921-agent-git-rights-are-a-local-setting). The alternative this decision rejected —
+> agents commit to their own branch and the human reviews a pull request — was reopened by the
+> maintainer on 2026-09-18 as an opt-in for one clone, never a project default. At `none`
+> everything above holds unchanged. At a higher level uncommitted work in a worktree is still
+> kept, and still not debris; it is just no longer the whole review queue.

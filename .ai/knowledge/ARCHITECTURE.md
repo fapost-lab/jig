@@ -142,7 +142,8 @@ touches the rest (ADR-0011).
 A third owner sits outside the split: `.ai/config.local.yaml` belongs to the person whose
 clone it is. It is gitignored, created by nobody but them, and never touched by `init` or
 `upgrade`; `cfg` reads it before `.ai/config.yaml`, for a fixed list of keys only
-(ADR-0038).
+(ADR-0038). A few of those keys are local-only — `agent.git` — and `cfg` never reads them from
+`.ai/config.yaml` at all (adr-20260921-agent-git-rights-are-a-local-setting).
 
 `copy` (default): framework files are copied into the project and hashed in
 `.ai/manifest`. `link` (developing the framework itself): `.ai/scripts`, profiles,

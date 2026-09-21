@@ -13,9 +13,12 @@ allowed, and not at all by default. Done when: with `agent.git: pr` in `config.l
 T1 task ends in an open pull request; without it, nothing changes; `jig status` says which
 queue it is counting.
 
-- [ ] Agent git rights as a local setting — ADR replacing the unwritten "agents do not
+- [x] `agent-git-rights` — Agent git rights as a local setting — ADR replacing the unwritten "agents do not
   commit", the whitelisted key, skills that commit/push/open a PR up to the level, `jig
   status` and the README telling the two queues apart
+- [ ] `agent-git-epics` — Agent git rights reach spec work — with the level allowing it, the
+  agent pushes the epic and opens the spec's final pull request (after: agent-git-rights — it
+  uses that task's key and `jig task ship`)
 
 ## Phase 2 — Gates a script enforces
 
@@ -65,7 +68,7 @@ winning its own prompts.
 ## Waves
 
 1. Agent git rights as a local setting; findings ledger; routing evals
-2. Review receipt; status page
+2. Review receipt; status page; agent git rights reach spec work
 3. Autopilot run for a task
 4. Waivable human gate for T3/T4
 5. fog: phase run

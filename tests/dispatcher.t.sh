@@ -150,6 +150,88 @@ EOF
   assert_eq "9d|$main_root" "$OUT"
 }
 
+# --- JIG_CFG_LOCAL_ONLY_KEYS: agent.git (design.md, .ai/specs/autopilot/) ----
+# A value committed to .ai/config.yaml would hand every contributor's agent
+# the same git rights, so `cfg` must never read `agent.git` from the project
+# layer — only from .ai/config.local.yaml, or the `none` default.
+
+test_cfg_agent_git_in_project_config_is_never_read() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+agent.git: pr
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    cfg agent.git none
+  '
+  assert_eq 0 "$RC"
+  assert_eq "none" "$OUT"
+}
+
+test_cfg_agent_git_local_value_is_read() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+agent.git: pr
+EOF
+  cat > .ai/config.local.yaml <<'EOF'
+agent.git: commit
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    cfg agent.git none
+  '
+  assert_eq 0 "$RC"
+  assert_eq "commit" "$OUT"
+}
+
+test_jig_agent_git_default_is_none() {
+  fixture_repo
+  mkdir -p .ai
+  : > .ai/config.yaml
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_agent_git
+  '
+  assert_eq 0 "$RC"
+  assert_eq "none" "$OUT"
+}
+
+test_jig_agent_git_rejects_an_unknown_value_but_still_prints_it() {
+  fixture_repo
+  mkdir -p .ai
+  : > .ai/config.yaml
+  cat > .ai/config.local.yaml <<'EOF'
+agent.git: yolo
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_agent_git
+  '
+  assert_eq 1 "$RC"
+  assert_eq "yolo" "$OUT"
+}
+
+test_jig_config_project_ignored_reports_agent_git_set_in_project_config() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+agent.git: pr
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_config_project_ignored
+  '
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 'agent.git\tpr')" "$OUT"
+}
+
 test_duration_seconds() {
   run bash -c 'JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; printf "%s %s %s %s" "$(jig_duration_seconds 1d)" "$(jig_duration_seconds 2h)" "$(jig_duration_seconds 30m)" "$(jig_duration_seconds 45)"'
   assert_eq "86400 7200 1800 3888000" "$OUT"

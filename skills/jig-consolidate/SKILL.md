@@ -132,8 +132,21 @@ open questions, untested assumptions; ask the human about each one, move it wher
 spec through `jig-idea`, or a task) or drop it, and run it again with `--leftovers-handled`. A spec on
 an epic is closed on the epic by `--finish`, not here.
 
+Then hand the change over. Stage the task's changes — only this task's, hunk by hunk when
+the tree holds other work — write a commit message, and run:
+
+```
+.ai/scripts/jig task ship <id> --message-file <file>
+```
+
+It commits, pushes and opens the pull request into the task's base as far as `agent.git` in
+this clone allows, and says where it stopped. Exit 3 means `none`: tell the human the change
+is ready for their review and commit. The step it stopped at is the human's; never finish
+it by hand with git. The first line of the message is the pull request's title, the rest its
+body: the task's goal and what verified it.
+
 The status stays `ready`: the task is still current, and fixes from review of the commit
-or PR continue in it. If review changes the implementation, update the same documents; do
+or PR continue in it — stage the fix and run `task ship` again. If review changes the implementation, update the same documents; do
 not start a new task document for it.
 
 A task cut from an epic (`base_branch: epic/…`) lands when its pull request is merged into the

@@ -308,6 +308,51 @@ test_doctor_config_local_warns_when_not_gitignored() {
   assert_contains "$OUT" "fix: jig init"
 }
 
+# --- agent.git (design.md, .ai/specs/autopilot/) ------------------------------
+
+test_doctor_agent_git_ok_with_default() {
+  fixture_jig_repo
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    agent.git: none"
+}
+
+test_doctor_agent_git_ok_shows_the_local_level() {
+  fixture_jig_repo
+  printf 'agent.git: push\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    agent.git: push"
+}
+
+test_doctor_agent_git_warns_when_set_in_project_config() {
+  fixture_jig_repo
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git: set in .ai/config.yaml, ignored there"
+  assert_contains "$OUT" "fix: move it to .ai/config.local.yaml"
+}
+
+test_doctor_agent_git_warns_on_invalid_value() {
+  fixture_jig_repo
+  printf 'agent.git: yolo\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git: invalid value: yolo (expected none|commit|push|pr)"
+  assert_contains "$OUT" "fix: set agent.git to none, commit, push or pr in .ai/config.local.yaml"
+}
+
+test_doctor_agent_git_reports_both_an_ignored_project_value_and_an_invalid_local_one() {
+  fixture_jig_repo
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+  printf 'agent.git: yolo\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git: set in .ai/config.yaml, ignored there"
+  assert_contains "$OUT" "warn  agent.git: invalid value: yolo (expected none|commit|push|pr)"
+}
+
 # --- final tally line -----------------------------------------------------------
 
 test_doctor_tally_counts_every_line() {

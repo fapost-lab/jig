@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-21
 ---
 # Task
 
@@ -100,8 +100,16 @@ wrong from inside this domain's code:
   Nothing may delete or move a workspace through that link. `task artifacts`, which
   refuses links, accepts exactly this one.
 - Which worktree a task is in is *derived* from `git worktree list` on every call, never
-  stored. `task list` and `jig status` print it with the count of uncommitted files there,
-  because agents do not commit and that count is the human's review queue.
+  stored. `task list` and `jig status` print it with the count of uncommitted files there:
+  at `agent.git: none` that count is the human's review queue; at a higher level it is still a
+  fact worth showing, and the queue is what `jig status`'s `agent.git:` line names.
 - A task in a worktree is not `task current` in the filing checkout: its branch is checked
   out elsewhere, and ADR-0008's branch match is what decides.
 
+**`task ship` is the one command here that commits, pushes or opens a pull request**
+(adr-20260921-agent-git-rights-are-a-local-setting). It reads three things other parts of this
+domain own — `knowledge_consolidated`, `branch` and the task base through `jig_task_base` — and
+refuses on each before it touches git, so a renamed field turns into a refusal, not a commit on
+the wrong branch. How far it goes is `agent.git`, a local-only key of the config layer; the
+forge it opens the pull request on is resolved by `jig_forge_kind` in `common.sh`, the same answer
+housekeeping reads PR state from.

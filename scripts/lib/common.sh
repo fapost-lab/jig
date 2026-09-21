@@ -363,6 +363,85 @@ jig_fetch_branches() {
   return 0
 }
 
+# --- forge -------------------------------------------------------------------
+
+# jig_forge_kind — which forge CLI this checkout should use: cfg `forge`
+# (auto|github|gitlab|none, default auto) resolved against the origin URL
+# when auto, then confirmed actually usable here — the CLI on PATH and
+# authenticated. Prints github|gitlab|none; dies only on an unrecognised
+# `forge` value, the one case a caller cannot paper over with "none".
+#
+# Shared rather than kept in housekeeping.sh: `housekeeping`'s remote-state
+# tier and `task ship`'s pull-request step both have to agree on which forge
+# this checkout uses, and one command library never sources another
+# (ARCHITECTURE.md, Scripts layout) — so the decision common to both lives
+# here.
+jig_forge_kind() {
+  local want origin
+  want=$(cfg forge auto)
+  case "$want" in
+    none) printf 'none\n'; return 0 ;;
+    auto|github|gitlab) ;;
+    *) jig_die "invalid forge: $want (expected auto|github|gitlab|none)" ;;
+  esac
+
+  origin=$(git -C "$JIG_PROJECT" remote get-url origin 2>/dev/null || printf '')
+  if [ -z "$origin" ]; then
+    printf 'none\n'
+    return 0
+  fi
+
+  if [ "$want" = "auto" ]; then
+    case "$origin" in
+      *github.com*) want="github" ;;
+      *gitlab.com*|*gitlab.*) want="gitlab" ;;
+      *) printf 'none\n'; return 0 ;;
+    esac
+  fi
+
+  case "$want" in
+    github)
+      if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        printf 'github\n'
+      else
+        printf 'none\n'
+      fi
+      ;;
+    gitlab)
+      if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
+        printf 'gitlab\n'
+      else
+        printf 'none\n'
+      fi
+      ;;
+  esac
+}
+
+# jig_glab_fields <key>... — read `glab ... --output json` on stdin and print
+# one tab-separated row of the given string fields per object, skipping an
+# object whose first field is empty. `glab` returns a compact single-line
+# array, so it is split into one object per line first: a greedy `.*` across
+# the whole line would keep only the last merge request. Each field is taken
+# at its first occurrence, whatever the key order: nested objects (author,
+# assignees) carry a `state` of their own, later on. Housekeeping and
+# `task ship` both read `glab` through this, so they cannot disagree on it.
+jig_glab_fields() {
+  sed 's/},[[:space:]]*{/}\
+{/g' | awk -v keys="$*" '
+    function field(key,   k) {
+      k = "\"" key "\":\""
+      if (!match($0, k "[^\"]*\"")) return ""
+      return substr($0, RSTART + length(k), RLENGTH - length(k) - 1)
+    }
+    BEGIN { n = split(keys, want, " ") }
+    {
+      row = field(want[1])
+      if (row == "") next
+      for (i = 2; i <= n; i++) row = row "\t" field(want[i])
+      print row
+    }'
+}
+
 # --- specification links ------------------------------------------------------
 
 # jig_spec_link <task.md> — the spec id a task links to, or nothing.
