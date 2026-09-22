@@ -218,7 +218,7 @@ spec_phase_rows() {
       IFS=$'\t' read -r ref source <<EOF
 $loc
 EOF
-      git -C "$JIG_PROJECT" show "$ref:$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null \
+      jig_git_show_path "$ref" "$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null \
         | spec_phase_counts - | _spec_phase_prefix "$id" "$source" || true
       continue
     fi
@@ -445,7 +445,7 @@ spec_plan() {
     IFS=$'\t' read -r ref source <<LOC
 $loc
 LOC
-    text=$(git -C "$JIG_PROJECT" show "$ref:$rel" 2>/dev/null) \
+    text=$(jig_git_show_path "$ref" "$rel" 2>/dev/null) \
       || jig_die "spec plan: $source has no $rel"
   else
     text=$(cat "$roadmap") || jig_die "spec plan: cannot read $rel"
@@ -855,7 +855,7 @@ spec_epic_declare() {
   [ "$start" != HEAD ] || jig_die "spec epic: $default exists neither here nor on origin"
   commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) \
     || jig_die "spec epic: cannot resolve $start"
-  on_default=$(git -C "$JIG_PROJECT" show "$commit:$rel" 2>/dev/null | jig_spec_epic -) || rc=$?
+  on_default=$(jig_git_show_path "$commit" "$rel" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ "$on_default" != "$branch open" ]; then
     jig_die "spec epic: the Epic: line of $rel is not on $default yet; merge it into $default first"
   fi
@@ -909,7 +909,7 @@ spec_epic_reopen() {
     [ -n "$del" ] || jig_die "spec epic: no removed spec $id in the history of this branch"
     src="$del^"
   fi
-  line=$(git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+  line=$(jig_git_show_path "$src" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$line" ]; then
     jig_die "spec epic: the removed $roadmap declares no epic"
   fi
@@ -928,7 +928,7 @@ spec_epic_reopen() {
     [ -n "$path" ] || continue
     sub=${path#"$rel/"}
     if ! mkdir -p "$tmp/$(dirname "$sub")" \
-       || ! git -C "$JIG_PROJECT" show "$src:$path" > "$tmp/$sub"; then
+       || ! jig_git_show_path "$src" "$path" > "$tmp/$sub"; then
       spec_trash_partial "$tmp" "$id"
       jig_die "spec epic: could not restore $path"
     fi
@@ -1119,7 +1119,7 @@ spec_ship() {
         start=$(jig_fresh_base_ref "$default" "spec ship") || exit 1
         if [ "$start" != HEAD ]; then
           rc=0
-          on_default=$(git -C "$JIG_PROJECT" show "$start:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+          on_default=$(jig_git_show_path "$start" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
           [ "$rc" -ne 0 ] || [ "$on_default" != "$branch open" ] || mode=epic
         fi
       fi
@@ -1153,12 +1153,12 @@ spec_ship_removed_epic() {
     [ -n "$del" ] || jig_die "spec ship: no spec $id here, and none removed in the history of this branch"
     src="$del^"
   fi
-  line=$(git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+  line=$(jig_git_show_path "$src" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$line" ] || [ "${line##* }" != open ]; then
     jig_die "spec ship: the removed $roadmap declares no open epic; only an epic's final pull request ships a removed spec"
   fi
   # Validated where it is read, as the release level the final PR carries.
-  git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | spec_release_check "spec ship" "$roadmap" >/dev/null || exit 1
+  jig_git_show_path "$src" "$roadmap" 2>/dev/null | spec_release_check "spec ship" "$roadmap" >/dev/null || exit 1
   printf '%s\n' "${line% *}"
 }
 
