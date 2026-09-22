@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-09-18
+reviewed_at: 2026-09-22
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -133,3 +133,10 @@ so it cannot live where everything is read as describing it.
 > `ARCHITECTURE.md` (what is not built yet under its own heading), `RULES.md`, ADRs and boundary
 > conventions, and turns on the stack's profiles; `jig-idea` offers that step when it ends a spec in such
 > a project. The spec itself stays a plan and is still never resolved.
+
+> **Amendment (2026-09-22).** "The checkmark lands with the work" holds for a task on its own; in a
+> phase run it is the wave's work that lands, and the marks follow it. The coordinator runs
+> `jig spec done` in the epic checkout after each merge, and `spec done` refuses in the branch of a
+> task whose state carries `autopilot_phase` — otherwise the wave's branches would rewrite
+> neighbouring roadmap lines and conflict. `jig spec plan` does not need the marks: a merged, closed
+> task already reads as merged (adr-20260922-a-phase-run-is-coordinated).

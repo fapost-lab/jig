@@ -212,6 +212,24 @@ An autopilot run in a clone with `autopilot.unattended: true`: it asks nothing, 
 safe default at each stop and, at `agent.git: merge`, ends merged once CI passed. Its mode is
 fixed when the run starts. Informal synonyms: without stops, hands-off run.
 
+## Phase Run
+
+An autopilot run over a whole phase of a Specification's roadmap, wave by wave, instead of one
+task. Each task of a wave is built by its own Agent in its own Task Worktree; how many at once is
+`autopilot.parallel`. A task started as part of one records `autopilot_phase: <spec-id>/<n>` in its
+State, which is what makes `jig spec done` refuse in its branch and the Status Page send the
+person to the Coordinator. It needs `agent.git` at `pr` or better and an Epic Branch
+(adr-20260922-a-phase-run-is-coordinated). Informal synonyms: wave run, running a phase.
+
+## Coordinator
+
+The session that runs a Phase Run, in the checkout of the Epic Branch. It writes no code: it files
+each wave's tasks in one unpushed commit on the epic, starts an Agent per task, ships every task
+with `jig task ship`, keeps the merge queue and checks the roadmap items after each merge. Its
+session is where a stopped task of the phase is answered
+(adr-20260922-a-phase-run-is-coordinated). Informal synonyms: the coordinating session, the
+orchestrator.
+
 ## Status Page
 
 `.ai/runtime/status.html`: one self-contained page written by `jig status --html` or

@@ -164,6 +164,46 @@ task is, what earlier waves are still holding it, and which tasks may start now.
 waves list that names no roadmap item, or more than one, is reported, never guessed. It changes
 nothing and needs no network. `--format tsv` prints the same answer for a script to read.
 
+## Running a whole phase
+
+A run can take a phase of a roadmap instead of a single task:
+
+> *"Run phase 4 of the autopilot spec on autopilot."*
+
+The agent becomes a **coordinator**. For each wave of that phase it files the wave's tasks,
+gives each one its own folder and its own agent, and those agents work at the same time. The
+coordinator writes no code itself: it opens each task's pull request, keeps the merge queue,
+and after every merge ticks the roadmap item off and brings the other branches of the wave up
+to date. A wave finishes; then the next one starts.
+
+For this it needs two things: permission to open pull requests (`agent.git: pr` or `merge`) and
+a specification built on [an epic branch](/agent-ships#specs-and-epics). Without either it says
+so and offers to run the phase's tasks one at a time instead.
+
+**How many at once** is yours to choose, in `.ai/config.local.yaml`:
+
+```yaml
+autopilot.parallel: 2
+```
+
+Two by default, at most sixteen. The number counts only the agents still *building* a task: one
+whose work is finished and is waiting its turn to be merged does not hold a place, and neither
+do the short-lived agents that fix a failed check or a merge conflict. `jig spec plan` prints
+what is left — *"may start now: a, b (1 of 2 slots free)"* — and the status page shows the phase,
+its waves and its free places while the run goes on.
+
+**Where you answer.** A question from any task of the phase comes to you in the coordinator's
+session, not the task's — the status page says so too. Questions from one wave arrive together,
+in a single message. The wave being worked on finishes either way; it is the **next** wave that
+waits for your answer. Without stops ([above](#without-stops)) nothing is asked: a task that
+could not be finished becomes a draft pull request, and the phase run ends there with a report,
+leaving the next wave to you.
+
+**Why a change is reviewed again.** Every time another task of the wave lands, the branches
+still open are brought up to date with it. When what arrived is more than the roadmap tick, the
+task's review no longer covers what the branch now contains, so it is reviewed again before it
+ships. That is the cost of an honest review, not a wasted step.
+
 ## What autopilot does not protect you from
 
 Jig's scripts cannot see the commands the agent runs. The limit on fixing attempts and the rules

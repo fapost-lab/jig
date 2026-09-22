@@ -830,6 +830,7 @@ HTML
   _status_html_freshness
 
   _status_html_needs
+  _status_html_phase_run
   _status_html_tasks
   _status_html_specs
   _status_html_summary
@@ -887,7 +888,7 @@ _status_card() {
 # says in plain words what to do. Nothing to do is said out loud too.
 _status_html_needs() {
   local cards="" stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url hk_note pr_ids=""
-  local nc wrong kept closed open settled
+  local nc wrong kept closed open settled phase phase_stops=""
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
@@ -910,6 +911,18 @@ _status_html_needs() {
         "just now") stop_reason="$stop_reason (just now)" ;;
         *) stop_reason="$stop_reason ($ago ago)" ;;
       esac
+      # A task of a phase run has no session of its own to answer in: its
+      # agent was started by a coordinator, which is where the question
+      # surfaced and where the answer goes back
+      # (adr-20260922-a-phase-run-is-coordinated). Every stop of one phase is
+      # held back here and becomes a single card below — the page says what
+      # the coordinator says in chat, one message for the whole wave.
+      phase=$(printf '%s\n' "$_ST_APFACTS" | cut -f 7)
+      if [ -n "$phase" ] && [ "$phase" != "-" ]; then
+        phase_stops="$phase_stops$phase	$_ST_ID	$stop_reason
+"
+        continue
+      fi
       stopped="$stopped$(_status_card "Autopilot stopped and is waiting for you" "$_ST_ID" "$stop_reason" \
         "Answer the agent in this task's session; it resumes the run." "" '<span class="badge warn">autopilot stopped</span>')
 "
@@ -947,8 +960,9 @@ _status_html_needs() {
   done <<EOF
 $_STATUS_LIVE
 EOF
-  # Most urgent first, whatever order the workspaces came in.
-  cards="$stopped$gates$git_steps"
+  # Most urgent first, whatever order the workspaces came in; a phase run's
+  # stops come first of all, as one card per phase.
+  cards="$(_status_phase_stop_cards "$phase_stops")$stopped$gates$git_steps"
 
   # 4. A pull request waits for review or merge: one jig opened (pr_url), or
   # one the last housekeeping run saw open (a closed task's too).
@@ -1027,6 +1041,155 @@ _status_cards() {
   done <<EOF
 $1
 EOF
+}
+
+# _status_phase_stop_cards <lines> — one "needs you" card per phase, from
+# `<phase>\t<task-id>\t<stop reason>` lines. Several stopped tasks of one
+# phase make one card with all of them listed: in a phase run the person is
+# asked once, in the coordinator's session, about the whole wave — the page
+# says the same thing rather than handing them a card each
+# (adr-20260922-a-phase-run-is-coordinated).
+_status_phase_stop_cards() {
+  local lines="$1" phases="" phase id reason detail n
+  [ -n "$lines" ] || return 0
+  phases=$(printf '%s\n' "$lines" | cut -f 1 | grep -v '^$' | sort -u)
+  while IFS= read -r phase; do
+    [ -n "$phase" ] || continue
+    detail="" n=0
+    while IFS="$(printf '\t')" read -r _ id reason; do
+      [ -n "$id" ] || continue
+      n=$((n + 1))
+      detail="$detail${detail:+; }$id — $reason"
+    done < <(printf '%s\n' "$lines" | awk -F '\t' -v p="$phase" '$1 == p')
+    if [ "$n" -gt 1 ]; then
+      _status_card "A phase run is waiting for you" "phase $phase" "$detail" \
+        "Answer in the coordinator's session; it resumes the tasks." "" \
+        '<span class="badge warn">autopilot stopped</span>'
+    else
+      _status_card "A phase run is waiting for you" "phase $phase" "$detail" \
+        "Answer in the coordinator's session; it resumes the task." "" \
+        '<span class="badge warn">autopilot stopped</span>'
+    fi
+    printf '\n'
+  done < <(printf '%s\n' "$phases")
+}
+
+# _status_html_phase_run — "Phase run": the roadmap phases a coordinator is
+# running here, one block each. A phase is running when some live task's
+# `autopilot_phase` names it and its run has not ended, so a phase whose
+# tasks all merged and closed leaves the page on its own.
+#
+# Everything about the phase itself is `jig spec plan`'s answer, never
+# recomputed here (ARCHITECTURE.md, Scripts layout: a reporting command
+# consumes a peer's answer). `spec plan` refuses outright when the spec has
+# no roadmap here or its epic is missing; the page then says so for that
+# phase instead of dying with it.
+_status_html_phase_run() {
+  local rec phase phases=""
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    case "$_ST_AUTOPILOT" in
+      on | stopped) ;;
+      *) continue ;;
+    esac
+    phase=$(_status_phase_of "$_ST_APFACTS")
+    [ -n "$phase" ] || continue
+    _status_in "$phase" "$phases" || phases="$phases$phase
+"
+  done <<EOF
+$_STATUS_LIVE
+EOF
+  [ -n "$phases" ] || return 0
+  printf '<section id="phase-run">\n<h2>Phase run</h2>\n'
+  while IFS= read -r phase; do
+    [ -n "$phase" ] || continue
+    _status_html_one_phase "$phase"
+  done < <(printf '%s\n' "$phases" | sort -u)
+  printf '</section>\n'
+}
+
+# _status_phase_of <autopilot facts line> — the run's phase, or nothing when
+# it is not part of one.
+_status_phase_of() {
+  local phase
+  phase=$(printf '%s\n' "$1" | cut -f 7)
+  [ "$phase" != "-" ] || phase=""
+  printf '%s\n' "$phase"
+}
+
+# _status_html_one_phase <spec-id>/<n> — one running phase: its waves and free
+# slots, the tasks of it that are in flight here, and what an earlier wave
+# still holds. The waves, the slots and the blockers are `spec plan`'s answer;
+# the tasks are the page's own live records, which already carry the pull
+# request and the receipt `spec plan` knows nothing about.
+_status_html_one_phase() {
+  local phase="$1" sid="${1%/*}" num="${1##*/}" rows="" kind a b c
+  local waves="" slots="" blockers="" problems=""
+  printf '<h3><code>%s</code> · phase %s</h3>\n' "$(_status_h "$sid")" "$(_status_h "$num")"
+  rows=$(spec_plan "$sid" --phase "$num" --format tsv 2>/dev/null) || rows=""
+  if [ -z "$rows" ]; then
+    printf '<p class="empty">No plan for this phase here; <code>jig spec plan %s --phase %s</code> says why.</p>\n' \
+      "$(_status_h "$sid")" "$(_status_h "$num")"
+  else
+    while IFS="$(printf '\t')" read -r kind a b c; do
+      case "$kind" in
+        parallel) slots=$(_status_phase_slots "$a" "$b") ;;
+        wave) waves="$waves${waves:+, }wave $a $b" ;;
+        blocker) blockers="$blockers${blockers:+, }$b" ;;
+        problem) problems="$problems<li>$(_status_h "wave $a: \"$c\" is $b")</li>" ;;
+      esac
+    done < <(printf '%s\n' "$rows")
+    printf '<p class="muted">%s%s</p>\n' "$(_status_h "${waves:-no waves}")" \
+      "${slots:+ · $(_status_h "$slots")}"
+  fi
+  _status_html_phase_tasks "$phase"
+  [ -z "$blockers" ] || printf '<p class="muted">The next wave waits on: %s.</p>\n' "$(_status_h "$blockers")"
+  [ -z "$problems" ] || printf '<p>The waves list has a problem:</p>\n<ul>%s</ul>\n' "$problems"
+}
+
+# _status_html_phase_tasks <phase> — the live tasks of one phase, each with
+# where its agent is, its pull request and its receipt. A task whose knowledge
+# decision is recorded is waiting to ship: that is the coordinator's queue,
+# and it is marked so the person can see how much of the wave is already done.
+_status_html_phase_tasks() {
+  local want="$1" rec body=""
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    [ "$(_status_phase_of "$_ST_APFACTS")" = "$want" ] || continue
+    body="$body<tr><td class=\"id\"><code>$(_status_h "$_ST_ID")</code></td>"
+    if [ "$_ST_KC" = true ]; then
+      body="$body<td>waiting to ship</td>"
+    else
+      body="$body<td>$(_status_h "${_ST_AUTOPILOT:-building}")</td>"
+    fi
+    case "$_ST_PR_URL" in
+      https://*) body="$body<td><a href=\"$(_status_h "$_ST_PR_URL")\">$(_status_h "$_ST_PR_URL")</a></td>" ;;
+      *) body="$body<td class=\"muted\">-</td>" ;;
+    esac
+    body="$body<td>$(_status_h "${_ST_RECEIPT#receipt: }")</td></tr>
+"
+  done <<EOF
+$_STATUS_LIVE
+EOF
+  [ -n "$body" ] || return 0
+  printf '<div class="scroll"><table>\n'
+  printf '<thead><tr><th>Task</th><th>Run</th><th>Pull request</th><th>Receipt</th></tr></thead>\n<tbody>\n'
+  printf '%s' "$body"
+  printf '</tbody>\n</table></div>\n'
+}
+
+# _status_phase_slots <limit> <building> — "N of M slots free", the phrase
+# `jig spec plan` prints, with the same floor at zero.
+_status_phase_slots() {
+  local limit="$1" building="$2" free
+  case "$limit$building" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  free=$((limit - building))
+  [ "$free" -ge 0 ] || free=0
+  printf '%s of %s slots free' "$free" "$limit"
 }
 
 # _status_html_tasks — "Running now": one row per live task except a stopped

@@ -78,9 +78,23 @@ resolved by guessing — a wave holding one never counts as merged. Waves are on
 roadmap, so an earlier phase's unmerged item holds a later phase's wave. It learns task state from the
 workspace `state` file and "merged" only from what is already answered: a checked item, a
 `consolidated` task (ADR-0030), or `remote=merged` in the newest run of `.ai/runtime/housekeeping.log`
-— never a fetch or a forge call. Its `--format tsv` rows (`wave`, `item`, `blocker`, `problem`, shapes in
+— never a fetch or a forge call. Its `--format tsv` rows (`parallel`, `wave`, `item`, `blocker`, `problem`, shapes in
 the comment above `spec_plan`) are what a phase-run coordinator reads: a changed column is a changed
 contract.
+
+In a **phase run** (adr-20260922-a-phase-run-is-coordinated) a coordinator takes a whole phase wave
+by wave, one agent per task in its own worktree, and the spec has exactly one writer: the
+coordinator. It files a wave's task tags in one commit on the local epic and leaves it unpushed, so
+`jig_fresh_base_ref` gives every branch of the wave that same commit and none of them rewrites a
+neighbour's roadmap line; `spec plan` sees the tags at once because the epic is checked out there.
+`spec done` enforces the other half: `_spec_done_phase_refusal` refuses in the branch of a task
+whose `state` carries `autopilot_phase` (written by `jig task autopilot <id> start --phase`), so an
+agent cannot check its own item and the coordinator does it in the epic checkout after the merge —
+a refinement of ADR-0035's "the checkmark lands with the work". The `parallel <limit> <building>`
+row is `autopilot.parallel` (local-only, 1–16, default 2) and the count of the open wave's tasks an
+agent is still building — run `on`, knowledge not consolidated — so no reader counts slots itself;
+an unreadable value answers 1 rather than making a report refuse (only a hand-edited local file
+can hold one: `jig config set` validates before it writes).
 
 `spec ship` takes its git steps from `common.sh` (`jig_ship_*`), the ones `task ship` takes, and keeps
 only its modes and their refusals here. It never writes a spec file: what it commits is what `spec epic`
@@ -102,6 +116,8 @@ spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut fr
 - `.github/scripts/epic-pr-check.sh` — this repository's CI check of an epic's final pull request.
 - `skills/jig-consolidate/SKILL.md` §5 and `skills/jig-task/SKILL.md` — where a linked task meets
   its spec.
+- `skills/jig-autopilot/SKILL.md` §6 and `references/phase-run.md` — the coordinator's loop over a
+  phase, the contract its task agents work under, and what it does when one fails.
 - `templates/spec/spec.md`, `templates/spec/roadmap.md` — installed as `.ai/templates/spec/`.
 - `skills/jig-idea/SKILL.md` and `references/pressure.md`.
 - `schemas/spec.md` — the directory layout and the roadmap line grammar the script counts.

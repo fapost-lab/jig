@@ -40,11 +40,15 @@ person who says "keep the default" or "skip" moves on: nothing is written for th
    Set `true` only on an explicit yes.
 4. **CI wait** (`agent.ci_timeout`) — only with `merge`. "How many minutes should it wait for
    the checks before leaving the pull request open for you?" Default 30.
-5. **Cleanup** (`housekeeping.*`) — one question, offer to skip: how long an abandoned task is
+5. **At once** (`autopilot.parallel`). "When a whole roadmap phase runs, how many of its tasks
+   may agents work on at the same time?" Each one gets its own folder and its own agent, so
+   more means more of the machine and more to read when they finish. Default 2, at most 16.
+   Recommend 2, or 1 for someone who wants to watch every change.
+6. **Cleanup** (`housekeeping.*`) — one question, offer to skip: how long an abandoned task is
    kept (`abandoned_ttl`, 14d), how long the trash is kept (`trash_ttl`, 7d), when an idle task
    is called stale (`stale_after`, 60d), how often cleanup runs (`cadence`, whole days, 1d),
    whether it may `git fetch` (`fetch`, true). Recommend the defaults.
-6. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
+7. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
    task folders somewhere other than `../<project>.worktrees`.
 
 Ask about no other key. If `jig config set` refuses a key as not local, this version of Jig

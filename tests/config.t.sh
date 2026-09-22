@@ -283,6 +283,58 @@ test_config_set_agent_git_validation() {
   _config_rejects agent.git PR
 }
 
+# autopilot.parallel bounds how many task agents a phase run builds at once;
+# 1..16 keeps a typo from starting a swarm
+# (adr-20260922-a-phase-run-is-coordinated).
+test_config_set_autopilot_parallel_validation() {
+  fixture_jig_repo
+  _config_accepts autopilot.parallel 1
+  _config_accepts autopilot.parallel 3
+  _config_accepts autopilot.parallel 16
+  _config_rejects autopilot.parallel 0
+  _config_rejects autopilot.parallel 17
+  _config_rejects autopilot.parallel two
+  _config_rejects autopilot.parallel -1
+  _config_rejects autopilot.parallel 1.5
+}
+
+# It is local-only: a project value is ignored and said so, and with nothing
+# set the default is 2 — the number `jig spec plan` counts slots against.
+test_config_autopilot_parallel_is_local_only_and_defaults_to_two() {
+  fixture_jig_repo
+  printf 'autopilot.parallel: 8\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: autopilot.parallel in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+
+  plan_spec_for_parallel
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel$(printf '\t')2$(printf '\t')0"
+
+  run jig config set autopilot.parallel 4 --local
+  assert_eq 0 "$RC"
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel$(printf '\t')4$(printf '\t')0"
+}
+
+# A one-phase, one-wave roadmap: enough for the `parallel` row to have
+# something to count.
+plan_spec_for_parallel() {
+  mkdir -p .ai/specs/alpha
+  cat > .ai/specs/alpha/roadmap.md <<'RM'
+## Phase 1 - First
+
+- [ ] `T-a` - Alpha - goal
+
+## Waves
+
+1. Alpha
+RM
+}
+
 test_config_set_agent_ci_timeout_validation() {
   fixture_jig_repo
   _config_accepts agent.ci_timeout 0

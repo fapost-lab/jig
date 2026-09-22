@@ -1554,6 +1554,97 @@ test_status_page_shows_a_stopped_run_first_with_its_reason() {
   assert_not_contains "$(status_page_section "$page" tasks)" "<code>run-1</code>"
 }
 
+# A task of a phase run has no session of its own: the coordinator started
+# it, and the answer goes back there
+# (adr-20260922-a-phase-run-is-coordinated).
+test_status_page_sends_a_phase_runs_question_to_the_coordinator() {
+  fixture_jig_repo
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start --phase alpha/1 >/dev/null
+  jig task autopilot run-1 stop --reason "which index to add" >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" 'A phase run is waiting for you <span class="badge warn">autopilot stopped</span>'
+  assert_contains "$needs" "Answer in the coordinator&#39;s session; it resumes the task."
+  assert_not_contains "$needs" "Answer the agent in this task&#39;s session"
+}
+
+# Several stops of one phase are one card: in a phase run the person is asked
+# once, about the whole wave.
+test_status_page_gathers_a_phases_stops_into_one_card() {
+  fixture_jig_repo
+  local t
+  for t in run-1 run-2; do
+    jig task new "$t" --class T2 >/dev/null
+    jig task start "$t" >/dev/null
+    jig task autopilot "$t" start --phase alpha/1 >/dev/null
+    jig task autopilot "$t" stop --reason "question from $t" >/dev/null
+  done
+  run jig status --html
+  local needs n
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  n=$(printf '%s\n' "$needs" | grep -c "A phase run is waiting for you" || true)
+  assert_eq 1 "$n" "expected one card for the whole phase, got $n"
+  assert_contains "$needs" "run-1 — question from run-1"
+  assert_contains "$needs" "run-2 — question from run-2"
+  assert_contains "$needs" "Answer in the coordinator&#39;s session; it resumes the tasks."
+}
+
+# The "Phase run" section: the waves and free slots are `spec plan`'s answer,
+# the tasks are the page's own records.
+test_status_page_shows_a_phase_run_with_its_waves_and_slots() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  cat > .ai/specs/alpha/roadmap.md <<'RM'
+## Phase 1 — First
+
+- [ ] `run-1` — Alpha — goal
+- [ ] `run-2` — Bravo — goal
+
+## Waves
+
+1. Alpha; Bravo
+RM
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task new run-2 --class T2 >/dev/null
+  jig task start run-2 >/dev/null
+  jig task autopilot run-1 start --phase alpha/1 >/dev/null
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local phase
+  phase=$(status_page_section "$(cat .ai/runtime/status.html)" phase-run)
+  assert_contains "$phase" "<h2>Phase run</h2>"
+  assert_contains "$phase" "<code>alpha</code> · phase 1"
+  assert_contains "$phase" "wave 1 open"
+  assert_contains "$phase" "1 of 2 slots free"
+  assert_contains "$phase" "<code>run-1</code>"
+  # run-2 has no phase run of its own: it is not in this section.
+  assert_not_contains "$phase" "<code>run-2</code>"
+
+  # Consolidated work gives its slot back and joins the ship queue.
+  jig task set run-1 knowledge_consolidated true >/dev/null
+  run jig status --html
+  phase=$(status_page_section "$(cat .ai/runtime/status.html)" phase-run)
+  assert_contains "$phase" "2 of 2 slots free"
+  assert_contains "$phase" "waiting to ship"
+}
+
+# No phase run, no section: the page does not grow one for every project.
+test_status_page_has_no_phase_run_section_without_one() {
+  fixture_jig_repo
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "<h2>Phase run</h2>"
+}
+
 test_status_page_puts_a_stopped_run_before_a_design_at_its_gate() {
   fixture_jig_repo
   # Filed first, so the workspaces list it first.
