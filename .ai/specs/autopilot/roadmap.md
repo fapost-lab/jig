@@ -99,10 +99,17 @@ Comparison, the README and the navigation present agent git rights, review findi
 autopilot (attended and unattended), the status page and phase runs as one path — not as pages
 each task added on its own; every page this epic touched is re-read against the shipped behaviour;
 CONTRIBUTING says which `jig` a contributor runs, since developing Jig with Jig means two
-installations on one machine; the version is raised in the final pull request from the epic.
+installations on one machine; no report this epic added contradicts itself in front of a reader who
+believes it; the version is raised in the final pull request from the epic.
 
-- [ ] Public docs pass — read the whole docs site and README as a new user would, bring the
-  shared pages up to the epic's features, fix what the per-task pages say differently from what
+- [ ] `truthful-reports` — Every report this epic added says something its reader can act on:
+  `jig doctor` stops calling a project current while dozens of framework files are pending, the
+  status page stops showing `base main` for a task of an epic that has not started yet, `jig-setup`
+  stops listing keys it cannot remove from the local file, `jig-consolidate` §5 orders its commands
+  so a phase-run task can follow them top to bottom, and `schemas/config.md` lists its keys instead
+  of running them into one paragraph (after: phase run — the last of these came out of it)
+- [ ] `public-docs-pass` — Public docs pass — read the whole docs site and README as a new
+  user would, bring the shared pages up to the epic's features, fix what the per-task pages say differently from what
   shipped, and tell a contributor in CONTRIBUTING which `jig` runs where: this checkout's own
   `.ai/scripts/jig` (link mode, a tracked symlink, so a worktree runs its own branch's code) against
   the released one on `PATH`, which never delegates to a project's copy (after: every other item —
@@ -116,7 +123,8 @@ installations on one machine; the version is raised in the final pull request fr
 4. Unattended mode; `worktree-leaves-on-landing`
 5. `local-setup`; phase plan
 6. `phase-run`
-7. Public docs pass
+7. `truthful-reports`
+8. `public-docs-pass`
 
 <!--
 Rules (jig-idea §8):
