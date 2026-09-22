@@ -88,7 +88,9 @@ The script answers from file metadata alone; the agent then reads the listed fil
   files you have not edited, keeps and reports the ones you have, and deletes a file the new version
   no longer ships only when you have not edited it — this can be outside `.ai/`, for example an old
   skill under `.claude/skills/`. It never touches knowledge, specifications, configuration or
-  `AGENTS.md`.
+  `AGENTS.md`. Each run ends with a summary line, and a run that placed nothing leaves
+  `.ai/manifest` alone — a project only starts using another checkout of Jig once an upgrade has
+  really installed from it.
 - **`jig verify`** runs your project's own tools — test scripts, linters, `php artisan test`, Gradle
   or Maven wrappers. **That is running your project's code**, with whatever that code does; some
   toolchains download dependencies by themselves. Jig installs nothing. A missing tool is a skip,

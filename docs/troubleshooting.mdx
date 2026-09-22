@@ -46,3 +46,4 @@ each, and prints a fix for every warning. On Windows, run it in Git Bash, or as
 | A map line fails a profile | The error names the file and line in `.ai/verify/<profile>.map`; each line needs a pattern and a decision ([Configuration](/configuration#a-verification-map-for-your-project)). |
 | `upgrade` kept some files | You edited them; the report marks them `keep-modified` or `keep-conflict`. Compare with the new version and reconcile by hand. |
 | `upgrade` cannot determine the framework source | Pass `--from /absolute/path/to/jig`; an installed copy is not the full source. |
+| `upgrade` says `manifest unchanged` | It placed nothing, so the project stays on the checkout it was installed from. To move it onto the one you passed, run `jig init --from <dir>` (add `--link` in link mode). |

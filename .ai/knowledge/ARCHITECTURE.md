@@ -147,4 +147,7 @@ clone it is. It is gitignored, created by nobody but them, and never touched by 
 `copy` (default): framework files are copied into the project and hashed in
 `.ai/manifest`. `link` (developing the framework itself): `.ai/scripts`, profiles,
 templates and skills are relative symlinks into the source checkout, the manifest has no hash lines
-and `jig.source` is `.`. In link mode `upgrade` creates any symlink missing for the current config and rewrites the manifest header; nothing is copied.
+and `jig.source` is `.`. In link mode `upgrade` creates any symlink missing for the current
+config; nothing is copied. In either mode it rewrites the manifest header only when it placed
+something, or when the source it would record is the one already recorded
+(adr-20260922-upgrade-records-the-source-it-installed-from).
