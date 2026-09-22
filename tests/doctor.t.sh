@@ -25,6 +25,29 @@ _doctor_tools_bin() {
   printf '%s\n' "$dir"
 }
 
+# _doctor_global_bin <source-root> — a directory to put first on PATH so that
+# `jig` resolves to <source-root>/scripts/jig, the way the installer places it
+# (design.md §1). The framework-version line compares the project's manifest
+# against whatever `jig` PATH selects, so a test that asserts on that line has
+# to supply the global side itself: on a machine with no global install — a CI
+# runner, a colleague who only cloned the project — the line reads
+# "global=unavailable" and the comparison never happens.
+#
+# Prints <bin-dir>, or <source-root>/scripts when `ln -s` makes no real link
+# (Windows Git Bash copies instead of linking, and jig_global_executable only
+# ever recognises a path ending in /scripts/jig — install.sh's own PATH
+# fallback exists for the same reason).
+_doctor_global_bin() {
+  local src="$1" bin
+  bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-globalbin.XXXXXX") || return 1
+  if ln -s "$src/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
+    printf '%s\n' "$bin"
+  else
+    rm -f "$bin/jig"
+    printf '%s\n' "$src/scripts"
+  fi
+}
+
 # --- basic shape ---------------------------------------------------------------
 
 test_doctor_rejects_arguments() {
@@ -272,7 +295,7 @@ EOF
 
 test_doctor_pending_at_the_same_version_names_the_source() {
   fixture_repo
-  local src version recorded
+  local src version recorded bin
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src3.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
   rm -rf "$src/.git"
@@ -288,7 +311,12 @@ description: fixture skill added to the source after init
 Run `/jig-newthing` to do the thing.
 EOF
 
-  run jig_installed doctor
+  # The version line has a global jig to compare the manifest against only
+  # when PATH offers one; the fixture source is that global here, so the two
+  # versions agree by construction rather than by what the machine happens to
+  # have installed.
+  bin=$(_doctor_global_bin "$src")
+  run env PATH="$bin:$PATH" .ai/scripts/jig doctor
   assert_eq 0 "$RC"
   # The versions still agree, and the line says so rather than leaving the
   # reader to reconcile it with "current" above.
@@ -301,7 +329,7 @@ EOF
   assert_contains "$OUT" "although the version is the same ($version): pending measures this install against its source, $recorded"
   assert_contains "$OUT" "fix: jig upgrade"
 
-  rm -rf "$src"
+  rm -rf "$src" "$bin"
 }
 
 # The other half of the same rule: when the versions disagree, the version
@@ -309,7 +337,7 @@ EOF
 # nothing and stays as it was.
 test_doctor_pending_at_a_different_version_stays_plain() {
   fixture_repo
-  local src
+  local src bin
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src4.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
   rm -rf "$src/.git"
@@ -328,14 +356,18 @@ EOF
   sed 's/^jig\.version: .*/jig.version: 0.0.1/' .ai/manifest > .ai/manifest.new
   mv .ai/manifest.new .ai/manifest
 
-  run jig_installed doctor
+  # The mismatch is between the manifest and a global jig, so the test puts
+  # one on PATH itself: the fixture source, which still declares its own
+  # version.
+  bin=$(_doctor_global_bin "$src")
+  run env PATH="$bin:$PATH" .ai/scripts/jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "warn  framework version: project=0.0.1"
   assert_contains "$OUT" "mismatch"
   assert_contains "$OUT" "warn  upgrade check:"
   assert_not_contains "$OUT" "although the version is the same"
 
-  rm -rf "$src"
+  rm -rf "$src" "$bin"
 }
 
 # --- session hook (mirrors status.sh's _status_session_hook contract) --------
