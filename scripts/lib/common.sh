@@ -309,6 +309,19 @@ jig_base_ref() {
   return 0
 }
 
+# jig_git_show_path <ref> <path> — the content of <path> as committed at <ref>,
+# on stdout; non-zero when <ref> names no commit or <path> is not in it.
+# The ref is resolved to a commit SHA first and git is handed `<sha>:<path>`,
+# never `<ref>:<path>`: under Git Bash (MSYS) an argument holding both `/`
+# and `:` — `epic/idea-x:.ai/specs/...` — is rewritten as a path list before
+# git sees it, so a ref with `/` in its name read nothing on Windows.
+jig_git_show_path() {
+  local sha
+  sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$1^{commit}" 2>/dev/null) || return 1
+  [ -n "$sha" ] || return 1
+  git -C "$JIG_PROJECT" show "$sha:$2"
+}
+
 # jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
 # refs/heads/<name> and refs/remotes/origin/<name>, or HEAD when neither exists.
 #
@@ -781,7 +794,9 @@ jig_knowledge_read_path() {
   case "$src" in
     /* | ../* | */../* | *.. ) return 3 ;;
   esac
-  [ -f "$JIG_PROJECT/$src" ] && [ ! -L "$JIG_PROJECT/$src" ] || return 3
+  if [ ! -f "$JIG_PROJECT/$src" ] || [ -L "$JIG_PROJECT/$src" ]; then
+    return 3
+  fi
   local root dir
   root=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 3
   dir=$(cd -P "$(dirname "$JIG_PROJECT/$src")" 2>/dev/null && pwd -P) || return 3

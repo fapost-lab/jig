@@ -43,7 +43,7 @@ EOF
     jig_require_repo
     printf "%s|%s|%s|%s|" "$(cfg housekeeping.trash_ttl)" "$(cfg_list profiles)" "$(cfg missing.key dflt)" "$(cfg profiles)"
     cfg_bool housekeeping.fetch && printf "T"
-    cfg_bool nope && printf "X" || printf "F"
+    if cfg_bool nope; then printf "X"; else printf "F"; fi
   '
   assert_eq 0 "$RC"
   assert_eq "7d|generic php|dflt|[generic, php]|TF" "$OUT"

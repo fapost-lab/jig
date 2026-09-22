@@ -39,7 +39,8 @@ test_doctor_help_lists_doctor() {
 }
 
 test_doctor_outside_repository_reports_global_checks_only() {
-  mkdir outside && cd outside || return 1
+  mkdir outside || return 1
+  cd outside || return 1
   run jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "git: "
@@ -65,7 +66,8 @@ test_doctor_uninitialised_repository_warns_project_not_initialised() {
 # rather than relying on that default staying true.
 
 test_doctor_git_identity_warns_when_unset() {
-  mkdir work && cd work || return 1
+  mkdir work || return 1
+  cd work || return 1
   run jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "warn  git identity: not set:"
@@ -75,7 +77,8 @@ test_doctor_git_identity_warns_when_unset() {
 }
 
 test_doctor_git_identity_ok_when_set() {
-  mkdir work && cd work || return 1
+  mkdir work || return 1
+  cd work || return 1
   git config --global user.name "Doctor Test"
   git config --global user.email "doctor@example.com"
   run jig doctor
@@ -87,7 +90,8 @@ test_doctor_git_identity_ok_when_set() {
 
 test_doctor_directory_links_symlink_ok_on_this_machine() {
   skip_unless_symlinks
-  mkdir work && cd work || return 1
+  mkdir work || return 1
+  cd work || return 1
   run jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ok    directory links: symlink"

@@ -627,16 +627,26 @@ _status_epoch() {
     || true
 }
 
+# _status_zone — reads "<date> <time> <offset> <zone>" (date's `%z %Z`) on
+# stdin and prints "<date> <time> <zone>", naming a +0000 offset `UTC`
+# whatever the zone abbreviation says: Git Bash's `date` calls TZ=UTC `GMT`,
+# and the reader should see one name for the same zone on every platform.
+_status_zone() {
+  awk '{ z = ($4 != "") ? $4 : $3; if ($3 == "+0000" || $3 == "-0000") z = "UTC"; print $1, $2, z }'
+}
+
 # _status_when <UTC ISO time> — the same moment in the reader's local time,
 # "YYYY-MM-DD HH:MM <zone>", like the page's own "updated" line; the input
 # unchanged when it cannot be read. BSD `date -r <seconds>`, else GNU `-d @`.
 _status_when() {
-  local e
+  local e out=""
   e=$(_status_epoch "$1")
   if [ -n "$e" ]; then
-    date -r "$e" '+%Y-%m-%d %H:%M %Z' 2>/dev/null \
-      || date -d "@$e" '+%Y-%m-%d %H:%M %Z' 2>/dev/null \
-      || printf '%s\n' "$1"
+    out=$(date -r "$e" '+%Y-%m-%d %H:%M %z %Z' 2>/dev/null \
+      || date -d "@$e" '+%Y-%m-%d %H:%M %z %Z' 2>/dev/null) || out=""
+  fi
+  if [ -n "$out" ]; then
+    printf '%s\n' "$out" | _status_zone
   else
     printf '%s\n' "$1"
   fi
@@ -723,7 +733,7 @@ _status_in() {
 _status_html_page() {
   local project generated report
   project=$(basename "$JIG_PROJECT")
-  generated=$(date '+%Y-%m-%d %H:%M:%S %Z')
+  generated=$(date '+%Y-%m-%d %H:%M:%S %z %Z' | _status_zone)
   # Asked once: the report and the summary both show it.
   _STATUS_CURRENT=$(_status_current_task)
   # The whole text report, as `jig status` prints it, so the page never shows
@@ -890,7 +900,9 @@ _status_html_needs() {
     if [ "$_ST_AUTOPILOT" = stopped ]; then
       stop_reason=$(printf '%s\n' "$_ST_APFACTS" | cut -f 5)
       stop_at=$(printf '%s\n' "$_ST_APFACTS" | cut -f 6)
-      [ -n "$stop_reason" ] && [ "$stop_reason" != "-" ] || stop_reason="no reason recorded"
+      if [ -z "$stop_reason" ] || [ "$stop_reason" = "-" ]; then
+        stop_reason="no reason recorded"
+      fi
       ago=""
       [ -z "$stop_at" ] || [ "$stop_at" = "-" ] || ago=$(_status_ago "$stop_at")
       case "$ago" in
@@ -1122,7 +1134,9 @@ _status_html_stage() {
     repairs=$(printf '%s\n' "$_ST_APFACTS" | cut -f 2)
     stage=$(printf '%s\n' "$_ST_APFACTS" | cut -f 3)
     stage_at=$(printf '%s\n' "$_ST_APFACTS" | cut -f 4)
-    [ -n "$stage" ] && [ "$stage" != "-" ] || stage="starting"
+    if [ -z "$stage" ] || [ "$stage" = "-" ]; then
+      stage="starting"
+    fi
     printf '<span class="badge">autopilot</span> %s' "$(_status_h "$stage")"
     ago=""
     [ -z "$stage_at" ] || [ "$stage_at" = "-" ] || ago=$(_status_ago "$stage_at")
