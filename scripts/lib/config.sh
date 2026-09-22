@@ -13,10 +13,10 @@
 # reported by `jig status`. Adding a key here is a decision about that test,
 # not a convenience; record it in schemas/config.md.
 #
-# `agent.git` is also in JIG_CFG_LOCAL_ONLY_KEYS below: it answers *only* from
-# this list, never falling back to the project layer the way every other key
-# here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after git.worktree_root agent.git"
+# `agent.git`, `agent.ci_timeout` and `autopilot.unattended` are also in
+# JIG_CFG_LOCAL_ONLY_KEYS below: they answer *only* from this list, never
+# falling back to the project layer the way every other key here does.
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after git.worktree_root agent.git agent.ci_timeout autopilot.unattended"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -24,9 +24,13 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # every contributor the same thing a local key exists to keep personal —
 # `agent.git` grants an agent git rights, and a project-wide grant would make
 # every contributor's agent commit, whether that contributor agreed to it or
-# not (spec: .ai/specs/autopilot/). `jig_config_project_ignored` reports a
-# project-layer value here so it does not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git"
+# not (spec: .ai/specs/autopilot/). `autopilot.unattended` lets a run ask
+# nothing and `agent.ci_timeout` bounds how long a merge waits for CI: both
+# decide what one person's agent does on their behalf, for the same reason
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+# `jig_config_project_ignored` reports a project-layer value here so it does
+# not silently do nothing.
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -163,8 +167,8 @@ cfg_bool() {
   esac
 }
 
-# jig_agent_git — print agent.git's level (none|commit|push|pr, default
-# none) and exit 0; for anything else, still print the value read (so a
+# jig_agent_git — print agent.git's level (none|commit|push|pr|merge,
+# default none) and exit 0; for anything else, still print the value read (so a
 # caller can report *what* was invalid) and exit 1. Never `jig_die`s itself:
 # `jig status` must be able to report an invalid value without dying, the
 # same reason `_hk_forge_init`/`jig_forge_kind` split validation from the die
@@ -173,7 +177,28 @@ jig_agent_git() {
   local value
   value=$(cfg agent.git none)
   case "$value" in
-    none | commit | push | pr) printf '%s\n' "$value"; return 0 ;;
+    none | commit | push | pr | merge) printf '%s\n' "$value"; return 0 ;;
     *) printf '%s\n' "$value"; return 1 ;;
   esac
+}
+
+# jig_ci_timeout — print agent.ci_timeout, the minutes a merge waits for the
+# pull request's checks (default 30; 0 looks once and does not wait), and exit
+# 0; for anything but a whole number, print the value read and exit 1, like
+# jig_agent_git.
+jig_ci_timeout() {
+  local value
+  value=$(cfg agent.ci_timeout 30)
+  case "$value" in
+    '' | *[!0-9]* | ?????*) printf '%s\n' "$value"; return 1 ;;
+  esac
+  printf '%s\n' "$((10#$value))"
+}
+
+# jig_unattended — exit 0 when this clone opted in to autopilot runs that ask
+# nothing (`autopilot.unattended: true`, local-only). Read once by `task
+# autopilot start`, which records the answer for the run, and by `spec ship`,
+# whose epic finish has no run to record it in.
+jig_unattended() {
+  [ "$(cfg autopilot.unattended false)" = true ]
 }

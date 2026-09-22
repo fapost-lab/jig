@@ -143,8 +143,9 @@ the tree holds other work — write a commit message, and run:
 ```
 
 It commits, pushes and opens the pull request into the task's base as far as `agent.git` in
-this clone allows, and says where it stopped. Exit 3 means `none`: tell the human the change
-is ready for their review and commit. The step it stopped at is the human's; never finish
+this clone allows, and says where it stopped. At `merge` it then waits for CI and prints
+`merged <url>` or `not merged: <why>`; a pull request left open is an ordinary end — say why.
+Exit 3 means `none`: tell the human the change is ready for their review and commit. The step it stopped at is the human's; never finish
 it by hand with git. The first line of the message is the pull request's title, the rest its
 body: the task's goal and what verified it.
 
@@ -168,7 +169,9 @@ or the human says the work is finished.
 1. `knowledge_consolidated` must already be `true`. If it is not, run §1–§5 first; the
    knowledge then reaches the repository in a follow-up change.
 2. If fixes after the commit changed the intent, update the documents they touched.
-3. Ask the human whether a fix is still expected on this task. If one is, leave it open.
+3. Ask the human whether a fix is still expected on this task. If one is, leave it open. In
+   an unattended autopilot run whose `task ship` printed `merged`, do not ask: close it now.
+   Nowhere else does a merge close a task without the human.
 
 ```
 .ai/scripts/jig task set <id> status consolidated

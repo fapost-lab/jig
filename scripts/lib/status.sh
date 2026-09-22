@@ -953,11 +953,11 @@ EOF
     url=$(task_state_get "$id" pr_url)
     if _status_in "$id" "$open"; then
       cards="$cards$(_status_card "A pull request is waiting for review or merge" "$id" "open as of $hk_note" \
-        "Review it and merge it; jig never merges." "$url")
+        "Review it and merge it; jig merges one itself only at agent.git: merge, on green CI." "$url")
 "
     else
       cards="$cards$(_status_card "A pull request is waiting for review or merge" "$id" "opened by jig task ship" \
-        "Review it and merge it; jig never merges." "$url")
+        "Review it and merge it; jig merges one itself only at agent.git: merge, on green CI." "$url")
 "
     fi
   done <<EOF
@@ -1327,10 +1327,11 @@ _status_agent_git() {
       commit) queue="unpushed commits" ;;
       push) queue="pushed branches without a pull request" ;;
       pr) queue="open pull requests" ;;
+      merge) queue="pull requests left open: red or silent CI, a draft, branch protection" ;;
     esac
     printf 'agent.git: %s (review queue: %s)\n' "$level" "$queue"
   else
-    printf 'agent.git: invalid value %s (expected none|commit|push|pr)\n' "$level"
+    printf 'agent.git: invalid value %s (expected none|commit|push|pr|merge)\n' "$level"
   fi
 }
 

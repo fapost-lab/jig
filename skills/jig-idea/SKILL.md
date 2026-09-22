@@ -196,9 +196,19 @@ item is checked later by `jig spec done`, called from consolidation — never by
   the version by it (propose one, and let the human confirm, when it says `not recorded`), stage the
   removal with the bump and run `jig spec ship <id> --message-file <file>`: it commits, pushes the
   epic and opens the pull request into the default branch as far as `agent.git` allows. Reviewing
-  and merging that pull request is the human's — the merge is the release. If review needs a fix,
+  and merging that pull request is the human's — the merge is the release — except in an
+  unattended run, below. If review needs a fix,
   `jig spec epic <id> --reopen` on the epic brings the spec back from git; fix it as an ordinary
   task, finish again and ship again: the open pull request is reported, not duplicated.
+
+- **Finishing an epic unattended** (`autopilot.unattended: true`, nobody to ask): finish only
+  when every roadmap item that is not `fog:` is checked — otherwise report "the epic is not
+  finished" and stop there. Drop fog, open questions and untested assumptions with
+  `--leftovers-handled`, and quote each one verbatim in the pull request body under
+  `## Dropped without you`. Raise the version by the recorded level, `minor` when none was
+  recorded. At `agent.git: merge`, `spec ship` merges with a merge commit once CI passed, and
+  opens a `major` release as a draft that needs a human instead; `not merged: <why>` leaves the
+  pull request open — say why.
 
 - **Starting a new project from a spec**: copy `.ai/specs/<id>/` into that project, which needs
   Jig 0.3.0 or later. From then on its own Jig tracks the spec; nothing links the two copies.

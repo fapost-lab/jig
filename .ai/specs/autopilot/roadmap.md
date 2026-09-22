@@ -45,7 +45,7 @@ site says how to start a run, where it stops and what to do at each stop.
 - [x] `autopilot-run` — Autopilot run for a task — entry, stop conditions, repair limit, a run report (after:
   Phase 1 — it ends in a commit or PR; Phase 2 — its stops on findings and stale review are
   those scripts)
-- [ ] `unattended-mode` — Unattended mode — a local-only opt-in under which a run asks nothing: every stop becomes a
+- [x] `unattended-mode` — Unattended mode — a local-only opt-in under which a run asks nothing: every stop becomes a
   safe default recorded in the pull request in plain words (the gate approved by the agent with the
   design in the PR, the most reversible option for an unmade decision, no destructive operation
   ever, a draft PR when repairs run out), and a finished run merges once CI passed, without

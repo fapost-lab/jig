@@ -2429,7 +2429,7 @@ test_task_ship_invalid_agent_git_level_dies() {
 
   run jig task ship T-1 --message-file msg.txt
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "task ship: invalid agent.git: yolo (expected none|commit|push|pr)"
+  assert_contains "$OUT" "task ship: invalid agent.git: yolo (expected none|commit|push|pr|merge)"
 }
 
 test_task_ship_message_file_required() {
@@ -2452,6 +2452,408 @@ test_task_ship_unknown_task_dies() {
   run jig task ship NOPE --message-file msg.txt
   assert_eq 1 "$RC"
   assert_contains "$OUT" "unknown task: NOPE"
+}
+
+# --- ship at agent.git: merge (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
+
+# mship_stub_gh — a fake, authenticated `gh` that can merge. Every call is
+# logged, one per line, to gh.log; its answers come from files in the test
+# directory, so each test sets only what differs:
+#   gh-checks    the pull request's check buckets, one per line (default: pass)
+#   gh-draft     `true`|`false` for `pr view` (default: false)
+#   gh-head      the head `pr view` reports (default: HEAD of this repository)
+#   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
+#   gh-merge.rc  the exit code of `pr merge` (default: 0)
+# `pr create` and `pr merge` record their arguments in gh-create.argv and
+# gh-merge.argv.
+mship_stub_gh() {
+  local dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/gh.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create") shift 2; printf '%s\n' "\$@" > "\$d/gh-create.argv"; printf 'https://github.com/example/example/pull/99\n' ;;
+  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git -C "\$d" rev-parse HEAD)")" ;;
+  "repo view") val gh-repo "true true true" ;;
+  "pr checks") val gh-checks pass ;;
+  "pr merge")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-merge.argv"
+    rc=\$(val gh-merge.rc 0)
+    [ "\$rc" -eq 0 ] || printf 'GraphQL: Base branch policy prohibits the merge\n' >&2
+    exit "\$rc" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# mship_stub_glab — the same for `glab`, logged to glab.log:
+#   glab-pipeline  the head pipeline's status, or `null` for none (default: success)
+#   glab-psha      the head pipeline's commit (default: HEAD of this repository)
+#   glab-draft     `true`|`false` (default: false)
+#   glab-project   merge_method and squash_option (default: merge default_off)
+#   glab-merge.rc  the exit code of `mr merge` (default: 0)
+mship_stub_glab() {
+  local dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/glab.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
+head=\$(git -C "\$d" rev-parse HEAD)
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "mr list") printf '[]\n' ;;
+  "mr create") shift 2; printf '%s\n' "\$@" > "\$d/glab-create.argv"; printf 'https://gitlab.example/example/example/-/merge_requests/99\n' ;;
+  "mr view")
+    p=\$(val glab-pipeline success)
+    if [ "\$p" = null ]; then pipe=null; else
+      pipe="{\"id\":5,\"sha\":\"\$(val glab-psha "\$head")\",\"status\":\"\$p\",\"user\":{\"id\":1,\"state\":\"active\"}}"
+    fi
+    printf '{"iid":99,"state":"opened","draft":%s,"sha":"%s","head_pipeline":%s}\n' "\$(val glab-draft false)" "\$head" "\$pipe" ;;
+  "api projects/:id")
+    read -r mm so <<EOF
+\$(val glab-project "merge default_off")
+EOF
+    printf '{"id":1,"namespace":{"id":2,"kind":"group"},"merge_method":"%s","squash_option":"%s"}\n' "\$mm" "\$so" ;;
+  "mr merge")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/glab-merge.argv"
+    rc=\$(val glab-merge.rc 0)
+    [ "\$rc" -eq 0 ] || printf 'ERROR: 405 Method Not Allowed\n' >&2
+    exit "\$rc" ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# mship_setup <github|gitlab> — ship_setup at agent.git: merge with the forge
+# stubbed, the knowledge decision recorded and a change staged. CI is given
+# no time to wait (agent.ci_timeout 0): each test settles on the first look.
+mship_setup() {
+  ship_setup
+  ship_cfg forge "$1"
+  if [ "$1" = github ]; then mship_stub_gh; else mship_stub_glab; fi
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+# assert_no_override <log> — nothing in <log> asked the forge to override its
+# rules or to merge later.
+assert_no_override() {
+  assert_not_contains "$(cat "$1")" "--admin"
+  assert_not_contains "$(cat "$1")" "--auto "
+  assert_not_contains "$(cat "$1")" "--auto-merge=true"
+}
+
+test_task_ship_merge_level_merges_on_green_checks_at_the_shipped_commit() {
+  mship_setup github
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  local argv
+  argv=$(cat gh-merge.argv)
+  assert_contains "$argv" "https://github.com/example/example/pull/99"
+  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "--merge"
+  assert_no_override gh.log
+}
+
+test_task_ship_merge_level_takes_squash_when_merge_commits_are_not_allowed() {
+  mship_setup github
+  printf 'false true true\n' > gh-repo
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged "
+  assert_contains "$(cat gh-merge.argv)" "--squash"
+  assert_not_contains "$(cat gh-merge.argv)" "--merge"
+}
+
+test_task_ship_merge_level_does_not_merge_without_any_check() {
+  mship_setup github
+  : > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: CI checked nothing"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_when_only_skipped_checks_ran() {
+  mship_setup github
+  printf 'skipping\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: CI checked nothing"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_on_a_red_check() {
+  mship_setup github
+  printf 'pass\nfail\npending\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_when_checks_outlast_the_timeout() {
+  mship_setup github
+  printf 'pass\npending\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the checks did not finish within 0 minutes (agent.ci_timeout)"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_forge_refusal_leaves_the_pr_open_and_exits_0() {
+  mship_setup github
+  printf '1\n' > gh-merge.rc
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the forge refused: GraphQL: Base branch policy prohibits the merge"
+  assert_file gh-merge.argv
+  assert_no_override gh.log
+}
+
+test_task_ship_merge_level_does_not_merge_a_draft() {
+  mship_setup github
+  printf 'true\n' > gh-draft
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_a_pr_at_another_commit() {
+  mship_setup github
+  printf '0123456789abcdef0123456789abcdef01234567\n' > gh-head
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the pull request is at 0123456789abcdef0123456789abcdef01234567"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_draft_opens_a_draft_and_never_merges() {
+  mship_setup github
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+# Repairs ran out: the finding that stopped the run is still open and no
+# knowledge decision was made. A draft is still shipped, and never merged.
+test_task_ship_draft_ships_an_unfinished_task_with_its_blocking_finding() {
+  ship_setup
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  ship_stage_change
+  jig task finding add T-1 --severity P1 --where - --summary "still broken" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_draft_at_pr_level_opens_a_draft() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_not_contains "$OUT" "merged"
+}
+
+test_task_ship_pr_level_never_merges() {
+  mship_setup github
+  ship_cfg_local agent.git pr
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "merged"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_refuses_with_a_blocking_finding_and_merges_nothing() {
+  mship_setup github
+  jig task finding add T-1 --severity P1 --where - --summary "broken" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "blocking finding"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_refuses_with_a_stale_receipt_and_merges_nothing() {
+  mship_setup github
+  jig task receipt T-1 --stage review >/dev/null
+  printf 'changed after review\n' >> ship.txt
+  git add ship.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_with_no_forge_leaves_the_merge_to_the_human() {
+  ship_setup
+  ship_cfg forge none
+  ship_cfg_local agent.git merge
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no forge available; the pull request is the human's"
+  assert_contains "$OUT" "not merged: no forge available; the merge is the human's"
+}
+
+test_task_ship_merge_level_invalid_ci_timeout_dies() {
+  mship_setup github
+  ship_cfg_local agent.ci_timeout soon
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid agent.ci_timeout: soon (expected whole minutes)"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_ignores_the_project_ci_timeout() {
+  mship_setup github
+  sed '/^agent.ci_timeout:/d' .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+  printf 'agent.ci_timeout: soon\n' >> .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+test_task_ship_merge_level_ignores_agent_git_merge_in_the_project_config() {
+  ship_setup
+  printf 'agent.git: merge\n' >> .ai/config.yaml
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC"
+}
+
+test_task_ship_merge_level_gitlab_merges_on_a_green_pipeline() {
+  mship_setup gitlab
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://gitlab.example/example/example/-/merge_requests/99"
+  local argv
+  argv=$(cat glab-merge.argv)
+  assert_contains "$argv" "$(printf '99\n--sha\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "--yes"
+  assert_contains "$argv" "--auto-merge=false"
+  assert_not_contains "$argv" "--squash"
+  assert_no_override glab.log
+}
+
+test_task_ship_merge_level_gitlab_squashes_where_the_project_squashes() {
+  mship_setup gitlab
+  printf 'merge always\n' > glab-project
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$(cat glab-merge.argv)" "--squash"
+}
+
+test_task_ship_merge_level_gitlab_does_not_merge_on_a_failed_pipeline() {
+  mship_setup gitlab
+  printf 'failed\n' > glab-pipeline
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_does_not_merge_without_a_pipeline() {
+  mship_setup gitlab
+  printf 'null\n' > glab-pipeline
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: CI checked nothing"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_waits_on_a_pipeline_for_an_older_commit() {
+  mship_setup gitlab
+  printf '0123456789abcdef0123456789abcdef01234567\n' > glab-psha
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the checks did not finish within 0 minutes"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_does_not_merge_a_draft() {
+  mship_setup gitlab
+  printf 'true\n' > glab-draft
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the merge request is a draft"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_refusal_leaves_the_mr_open() {
+  mship_setup gitlab
+  printf '1\n' > glab-merge.rc
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the forge refused: ERROR: 405 Method Not Allowed"
+}
+
+test_task_ship_draft_with_gitlab_opens_a_draft_mr() {
+  mship_setup gitlab
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$(cat glab-create.argv)" "--draft"
+  assert_no_file glab-merge.argv
 }
 
 # --- findings ledger (design.md, findings-ledger) ------------------------------
@@ -3842,4 +4244,181 @@ test_task_ship_pr_level_already_open_pr_still_records_pr_url_in_state() {
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/7"
+}
+
+# --- unattended runs (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
+
+# unattended_local — opt this clone in to runs that ask nothing.
+unattended_local() {
+  printf 'autopilot.unattended: true\n' >> .ai/config.local.yaml
+}
+
+test_task_autopilot_start_records_the_attended_mode_by_default() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: attended"
+}
+
+test_task_autopilot_start_records_the_unattended_mode() {
+  task_setup
+  task_started T-1
+  unattended_local
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on (unattended)" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\tunattended')"
+}
+
+test_task_autopilot_unattended_in_the_project_config_is_ignored() {
+  task_setup
+  task_started T-1
+  printf 'autopilot.unattended: true\n' >> .ai/config.yaml
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: attended"
+}
+
+test_task_autopilot_mode_holds_when_the_key_changes_mid_run() {
+  task_setup
+  task_started T-1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "x" >/dev/null
+  : > .ai/config.local.yaml
+  jig task autopilot T-1 resume >/dev/null
+  run jig task autopilot T-1 decide --reason "kept the old API"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
+}
+
+test_task_autopilot_approve_and_decide_are_refused_in_an_attended_run() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 approve --reason "design"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "run is attended; stop and ask the human instead"
+  run jig task autopilot T-1 decide --reason "choice"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "run is attended"
+  if grep -q "$(printf '\t')decide$(printf '\t')" .ai/workspace/tasks/T-1/autopilot; then
+    fail "a refused decide was journaled"
+  fi
+}
+
+test_task_autopilot_approve_and_decide_need_a_running_run_and_a_reason() {
+  task_setup
+  task_started T-1
+  unattended_local
+  run jig task autopilot T-1 decide --reason "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run"
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 approve
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot approve: --reason is required"
+  run jig task autopilot T-1 decide --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must be a single line with no tab"
+}
+
+test_task_autopilot_report_lists_what_was_decided_and_self_approved() {
+  task_setup
+  task_started T-1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 approve --reason "design.md approved at the gate"
+  assert_eq 0 "$RC"
+  assert_eq "approve: design.md approved at the gate" "$OUT"
+  jig task autopilot T-1 decide --reason "kept the old flag name: renaming it breaks callers" >/dev/null
+  jig task autopilot T-1 decide --reason "did not delete the old directory" >/dev/null
+  jig task autopilot T-1 end >/dev/null
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "$(printf 'Decided without you:\n- kept the old flag name: renaming it breaks callers\n- did not delete the old directory')"
+  assert_contains "$OUT" "$(printf 'Approved by the agent, not a human:\n- design.md approved at the gate')"
+  assert_contains "$OUT" "autopilot: done, repairs: 0/2, unattended"
+}
+
+test_task_autopilot_report_has_no_blocks_for_an_attended_run() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 report
+  assert_not_contains "$OUT" "Decided without you"
+  assert_not_contains "$OUT" "Approved by the agent"
+  assert_not_contains "$OUT" "unattended"
+}
+
+test_task_autopilot_unattended_repair_limit_still_stops_with_exit_3() {
+  task_setup
+  task_started T-1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+  run jig task autopilot T-1 repair --reason "r3"
+  assert_eq 3 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+}
+
+test_task_gate_by_agent_in_an_unattended_run_records_who_approved() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+
+  run jig task gate T-1 approved --by agent
+  assert_eq 0 "$RC"
+  assert_eq "gate: approved by the agent" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: agent"
+}
+
+test_task_gate_by_agent_is_refused_outside_an_unattended_run() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the gate is the human's"
+  jig task autopilot T-1 start >/dev/null
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  if grep -q '^gate:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused self-approval recorded the gate"
+  fi
+}
+
+test_task_gate_records_a_human_by_default() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: human"
+  run jig task gate T-1 approved --by robot
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task gate: invalid --by: robot (expected human|agent)"
+}
+
+test_task_set_refuses_autopilot_mode_and_gate_by_keys() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  local key
+  for key in autopilot_mode gate_by; do
+    run jig task set T-1 "$key" x
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" "task set: key is not writable: $key"
+  done
 }

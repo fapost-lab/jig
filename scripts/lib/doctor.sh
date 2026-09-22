@@ -346,8 +346,8 @@ _doctor_check_agent_git() {
   if level=$(jig_agent_git); then
     _doctor_ok "agent.git" "$level"
   else
-    _doctor_warn "agent.git" "invalid value: $level (expected none|commit|push|pr)" \
-      "set agent.git to none, commit, push or pr in $JIG_AI_DIR/config.local.yaml"
+    _doctor_warn "agent.git" "invalid value: $level (expected none|commit|push|pr|merge)" \
+      "set agent.git to none, commit, push, pr or merge in $JIG_AI_DIR/config.local.yaml"
   fi
 }
 

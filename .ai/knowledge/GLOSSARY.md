@@ -201,7 +201,15 @@ Risk/complexity class `T0`–`T4` assigned by the Agent that selects the workflo
 
 A stage where the workflow stops until a human approves (T3, T4). The decision is written
 in `task.md`, and an approval is also recorded with `jig task gate <id> approved`, which
-pins the approved design.
+pins the approved design. In an unattended autopilot run it does not stop: the agent approves
+its own design with `--by agent`, and the pull request says so
+(adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+
+## Unattended Run
+
+An autopilot run in a clone with `autopilot.unattended: true`: it asks nothing, takes a recorded
+safe default at each stop and, at `agent.git: merge`, ends merged once CI passed. Its mode is
+fixed when the run starts. Informal synonyms: without stops, hands-off run.
 
 ## Status Page
 

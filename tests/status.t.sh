@@ -93,12 +93,33 @@ test_status_reports_agent_git_pr_queue() {
   assert_contains "$OUT" "agent.git: pr (review queue: open pull requests)"
 }
 
+test_status_reports_agent_git_merge_queue() {
+  fixture_jig_repo
+  printf 'agent.git: merge\n' > .ai/config.local.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: merge (review queue: pull requests left open: red or silent CI, a draft, branch protection)"
+}
+
+# autopilot.unattended and agent.ci_timeout decide what one person's agent does
+# for them, like agent.git: a project value is ignored, and said so.
+test_status_warns_when_unattended_keys_are_set_in_project_config() {
+  fixture_jig_repo
+  printf 'autopilot.unattended: true\nagent.ci_timeout: 5\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: autopilot.unattended in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+  assert_contains "$OUT" \
+    "config.local: agent.ci_timeout in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+}
+
 test_status_reports_agent_git_invalid_value() {
   fixture_jig_repo
   printf 'agent.git: yolo\n' > .ai/config.local.yaml
   run jig status
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "agent.git: invalid value yolo (expected none|commit|push|pr)"
+  assert_contains "$OUT" "agent.git: invalid value yolo (expected none|commit|push|pr|merge)"
 }
 
 # A value committed to .ai/config.yaml would hand every contributor's agent

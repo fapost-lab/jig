@@ -72,17 +72,19 @@ _task_usage() {
       printf 'usage: jig task receipt <id> --stage review|architecture-review\n'
       printf '       jig task receipt <id> --check\n'
       ;;
-    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>]\n' ;;
+    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft]\n' ;;
     autopilot)
       printf 'usage: jig task autopilot <id> start\n'
       printf '       jig task autopilot <id> stage <name>\n'
       printf '       jig task autopilot <id> repair --reason <text>\n'
       printf '       jig task autopilot <id> stop --reason <text>\n'
+      printf '       jig task autopilot <id> approve --reason <text>\n'
+      printf '       jig task autopilot <id> decide --reason <text>\n'
       printf '       jig task autopilot <id> resume\n'
       printf '       jig task autopilot <id> end\n'
       printf '       jig task autopilot <id> report\n'
       ;;
-    gate) printf 'usage: jig task gate <id> approved\n' ;;
+    gate) printf 'usage: jig task gate <id> approved [--by human|agent]\n' ;;
     *) return 1 ;;
   esac
 }
@@ -834,7 +836,7 @@ task_set() {
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
-      | autopilot | autopilot_repairs | gate | gate_design | pr_url)
+      | autopilot | autopilot_repairs | autopilot_mode | gate | gate_design | gate_by | pr_url)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -884,13 +886,23 @@ task_abandon() {
 #
 # `.ai/workspace/tasks/<id>/autopilot` — gitignored workspace file, TSV, one
 # line per event: `<UTC ISO time>\t<event>\t<text>` where event is one of
-# start, stage, repair, stop, resume, end and text is a single line with no
-# tab (validated the same way as a findings-ledger field, _task_finding_valid_field).
+# start, stage, repair, stop, resume, approve, decide, end and text is a
+# single line with no tab (validated the same way as a findings-ledger field,
+# _task_finding_valid_field).
 #
 # State: `autopilot: on|stopped|done` (absent before the first `start`),
 # `autopilot_repairs: <n>` (the repair count for the current run, reset to 0
-# by `start` and by `resume`). Both are script-owned, alongside `paused` and
-# the other keys `task set` refuses to write by hand (schemas/state.md).
+# by `start` and by `resume`), `autopilot_mode: attended|unattended` (read
+# from `autopilot.unattended` once, by `start`, so changing the key halfway
+# changes nothing about a run). All three are script-owned, alongside `paused`
+# and the other keys `task set` refuses to write by hand (schemas/state.md).
+#
+# An unattended run asks nothing
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci): where an
+# attended run would stop, the skill takes the safe default and says so with
+# `approve` (it approved its own design at a gate) or `decide` (it chose for
+# the human), and `report` lists both for the pull request. Only an
+# unattended run may record either: in an attended one they are stops.
 #
 # The repair limit (2 per run, design's gate decision) is enforced here, not
 # by the calling skill: a script-side stop is a stop no orchestration prompt
@@ -996,6 +1008,8 @@ task_autopilot() {
     stage) _task_autopilot_stage "$id" "$@" ;;
     repair) _task_autopilot_repair "$id" "$@" ;;
     stop) _task_autopilot_stop "$id" "$@" ;;
+    approve) _task_autopilot_unattended_event "$id" approve "$@" ;;
+    decide) _task_autopilot_unattended_event "$id" decide "$@" ;;
     resume) _task_autopilot_resume "$id" "$@" ;;
     end) _task_autopilot_end "$id" "$@" ;;
     report) _task_autopilot_report "$id" "$@" ;;
@@ -1019,10 +1033,28 @@ _task_autopilot_start() {
     on) jig_die "task autopilot start: already running: $id" ;;
     stopped) jig_die "task autopilot start: $id is stopped; run: jig task autopilot $id resume" ;;
   esac
+  local mode=attended
+  if jig_unattended; then mode=unattended; fi
   _task_rewrite_state "$dir" autopilot on
   _task_rewrite_state "$dir" autopilot_repairs 0
-  _task_autopilot_log "$id" start ""
-  printf 'autopilot: on\n'
+  _task_rewrite_state "$dir" autopilot_mode "$mode"
+  _task_autopilot_log "$id" start "$mode"
+  if [ "$mode" = unattended ]; then
+    printf 'autopilot: on (unattended)\n'
+  else
+    printf 'autopilot: on\n'
+  fi
+}
+
+# _task_autopilot_mode <id> — the mode the current run recorded at `start`:
+# `unattended`, or `attended` for anything else, a run started before modes
+# existed included.
+_task_autopilot_mode() {
+  if [ "$(task_state_get "$1" autopilot_mode)" = unattended ]; then
+    printf 'unattended\n'
+  else
+    printf 'attended\n'
+  fi
 }
 
 # stage <name>: logs which stage the run just reached. Requires an active
@@ -1126,6 +1158,40 @@ _task_autopilot_stop() {
   printf 'autopilot: stopped\n'
 }
 
+# approve|decide --reason <text>: what an unattended run did instead of
+# stopping — `approve` for its own design at a gate, `decide` for a choice
+# nobody made or a destructive step it left out. Requires an active run whose
+# recorded mode is unattended: in an attended run each of these is a stop, and
+# a journal line cannot stand in for the human's answer.
+_task_autopilot_unattended_event() {
+  local id="$1" event="$2"
+  shift 2
+  local reason="" has_reason=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task autopilot $event: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      *) jig_die "task autopilot $event: unknown argument: $1" ;;
+    esac
+  done
+  [ "$has_reason" -eq 1 ] || jig_die "task autopilot $event: --reason is required"
+  [ -n "$reason" ] || jig_die "task autopilot $event: --reason must not be empty"
+  _task_finding_valid_field "$reason" \
+    || jig_die "task autopilot $event: --reason must be a single line with no tab"
+
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task autopilot $event: unknown task: $id"
+  [ "$(task_state_get "$id" autopilot)" = "on" ] \
+    || jig_die "task autopilot $event: no active autopilot run: $id; run: jig task autopilot $id start"
+  [ "$(_task_autopilot_mode "$id")" = unattended ] \
+    || jig_die "task autopilot $event: $id's run is attended; stop and ask the human instead: jig task autopilot $id stop --reason <text>"
+
+  _task_autopilot_log "$id" "$event" "$reason"
+  printf '%s: %s\n' "$event" "$reason"
+}
+
 # resume: after the human answers a stop. Requires `stopped` and resets the
 # repair count to 0 — the human just gave the run a new direction, so the
 # two repairs already spent no longer count against it (task.md human gate).
@@ -1187,12 +1253,21 @@ _task_autopilot_report() {
     fi
   done < "$file"
 
-  local facts state repairs
+  # What an unattended run chose instead of asking, in blocks the skill
+  # copies into the pull request as they are: the human reads them there.
+  local block
+  block=$(awk -F '\t' '$2 == "decide" { print "- " $3 }' "$file")
+  [ -z "$block" ] || printf '\nDecided without you:\n%s\n' "$block"
+  block=$(awk -F '\t' '$2 == "approve" { print "- " $3 }' "$file")
+  [ -z "$block" ] || printf '\nApproved by the agent, not a human:\n%s\n' "$block"
+
+  local facts state repairs mode=""
   facts=$(_task_autopilot_facts "$id")
   state=$(printf '%s\n' "$facts" | cut -f 1)
   repairs=$(printf '%s\n' "$facts" | cut -f 2)
   [ -n "$repairs" ] || repairs=0
-  printf 'autopilot: %s, repairs: %s/2\n' "$state" "$repairs"
+  [ "$(_task_autopilot_mode "$id")" != unattended ] || mode=", unattended"
+  printf 'autopilot: %s, repairs: %s/2%s\n' "$state" "$repairs" "$mode"
 }
 
 # --- findings ledger (design.md, findings-ledger) ------------------------------
@@ -1709,16 +1784,30 @@ task_receipt_check() {
 # script cannot tell who approved. What it adds is that a design changed after
 # its approval becomes visible without anyone rereading task.md.
 
-# task_gate <id> approved — record the human's approval of the design as it is
-# now. Refused for a class without a gate and for a task with no design.md,
-# since there is nothing to pin.
+# task_gate <id> approved [--by human|agent] — record the approval of the
+# design as it is now, and who gave it (`gate_by`, human by default). Refused
+# for a class without a gate and for a task with no design.md, since there is
+# nothing to pin. `--by agent` is the self-approval of an unattended run
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), and is
+# refused anywhere else: outside such a run the gate is a human's.
 task_gate() {
   jig_require_init
-  [ $# -eq 2 ] || jig_die "$(_task_usage gate)"
-  local id="$1" decision="$2" dir class design
+  [ $# -eq 2 ] || [ $# -eq 4 ] || jig_die "$(_task_usage gate)"
+  local id="$1" decision="$2" by=human dir class design
+  if [ $# -eq 4 ]; then
+    [ "$3" = --by ] || jig_die "task gate: unknown argument: $3"
+    case "$4" in
+      human | agent) by="$4" ;;
+      *) jig_die "task gate: invalid --by: $4 (expected human|agent)" ;;
+    esac
+  fi
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task gate: unknown task: $id"
   [ "$decision" = approved ] || jig_die "task gate: unknown decision: $decision (expected approved)"
+  if [ "$by" = agent ]; then
+    [ "$(task_state_get "$id" autopilot)" = on ] && [ "$(_task_autopilot_mode "$id")" = unattended ] \
+      || jig_die "task gate: --by agent is an unattended run's self-approval; $id has no unattended autopilot run on, so the gate is the human's"
+  fi
   class=$(task_state_get "$id" class)
   case "$class" in
     T3 | T4) ;;
@@ -1728,7 +1817,12 @@ task_gate() {
   [ "$design" != "-" ] || jig_die "task gate: $id has no design.md to approve"
   _task_rewrite_state "$dir" gate approved
   _task_rewrite_state "$dir" gate_design "$design"
-  printf 'gate: approved\n'
+  _task_rewrite_state "$dir" gate_by "$by"
+  if [ "$by" = agent ]; then
+    printf 'gate: approved by the agent\n'
+  else
+    printf 'gate: approved\n'
+  fi
 }
 
 # _task_gate_state <id> — where a T3/T4 task stands at its human gate:
@@ -2160,21 +2254,28 @@ task_artifacts() {
 # The git steps themselves are shared with `jig spec ship` (jig_ship_*,
 # common.sh); the task's own gates stay here.
 
-# task_ship <id> --message-file <file> [--title <t>] [--body-file <file>]
+# task_ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft]
 #
 # Carries a task's own change as far as `agent.git` (config.sh) allows:
-# commit, push, open a pull request — never merge, which stays the human's
-# regardless of level (design.md). Every step it is not allowed to take ends
-# in a plain status line, not an error: "none" is the one outcome a caller
-# must tell apart from every other exit, which is why it alone is exit 3.
+# commit, push, open a pull request, and at `merge` merge it once its checks
+# passed (jig_ship_merge, common.sh;
+# adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci). `--draft`
+# opens the pull request as a draft, which is never merged: an unattended run
+# whose repairs ran out ends in one. Every step it is not allowed to take, and
+# a merge that did not happen, ends in a plain status line, not an error:
+# "none" is the one outcome a caller must tell apart from every other exit,
+# which is why it alone is exit 3.
 task_ship() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
   local id="$1"
   shift
-  local message_file="" title="" body_file="" has_message=0
+  local message_file="" title="" body_file="" has_message=0 draft=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      --draft)
+        draft=1
+        shift ;;
       --message-file)
         [ $# -ge 2 ] || jig_die "task ship: --message-file requires a value"
         has_message=1
@@ -2202,7 +2303,7 @@ task_ship() {
   # Level first, before anything else changes: an invalid value must refuse
   # exactly like every other check here, not read as "none" by accident.
   local level
-  level=$(jig_agent_git) || jig_die "task ship: invalid agent.git: $level (expected none|commit|push|pr)"
+  level=$(jig_agent_git) || jig_die "task ship: invalid agent.git: $level (expected none|commit|push|pr|merge)"
 
   if [ "$level" = none ]; then
     # To stderr and exit 3, not `jig_die` (exit 1): a skill reads 3 as "hand
@@ -2211,22 +2312,28 @@ task_ship() {
     exit 3
   fi
 
-  [ "$(task_state_get "$id" knowledge_consolidated)" = "true" ] \
-    || jig_die "task ship: requires knowledge_consolidated true; record the knowledge decision first: jig task set $id knowledge_consolidated true"
+  # A draft completes nothing and is never merged (below, and jig_ship_merge
+  # refuses one on its own): it is how an unattended run whose repairs ran out
+  # shows where it stopped — usually with the blocking finding still open —
+  # so the three completion gates are not asked for one. Everything else here
+  # still is.
+  local blocking="" receipt_msg=""
+  if [ "$draft" -eq 0 ]; then
+    [ "$(task_state_get "$id" knowledge_consolidated)" = "true" ] \
+      || jig_die "task ship: requires knowledge_consolidated true; record the knowledge decision first: jig task set $id knowledge_consolidated true"
 
-  # Checked again, independently of knowledge_consolidated above (design §4):
-  # a fix landed after consolidation can plant a new finding, and ADR-0030's
-  # order check alone would not see it.
-  local blocking
-  blocking=$(_task_blocking_findings "$id")
-  [ -z "$blocking" ] || jig_die "task ship: $(_task_gate_blocking_message "$id" "$blocking")"
+    # Checked again, independently of knowledge_consolidated above (design §4):
+    # a fix landed after consolidation can plant a new finding, and ADR-0030's
+    # order check alone would not see it.
+    blocking=$(_task_blocking_findings "$id")
+    [ -z "$blocking" ] || jig_die "task ship: $(_task_gate_blocking_message "$id" "$blocking")"
 
-  # Same independent recheck as the findings ledger above, for the same
-  # reason: a receipt gone stale after knowledge_consolidated was set true —
-  # a later code edit, or a re-review nobody ran — must still refuse here.
-  local receipt_msg
-  receipt_msg=$(_task_receipt_gate_message "$id")
-  [ -z "$receipt_msg" ] || jig_die "task ship: $receipt_msg"
+    # Same independent recheck as the findings ledger above, for the same
+    # reason: a receipt gone stale after knowledge_consolidated was set true —
+    # a later code edit, or a re-review nobody ran — must still refuse here.
+    receipt_msg=$(_task_receipt_gate_message "$id")
+    [ -z "$receipt_msg" ] || jig_die "task ship: $receipt_msg"
+  fi
 
   local branch base cur
   branch=$(task_state_get "$id" branch)
@@ -2251,11 +2358,30 @@ task_ship() {
     return 0
   fi
 
-  jig_ship_pr "task ship" "$branch" "$base" "$message_file" "$title" "$body_file"
+  jig_ship_pr "task ship" "$branch" "$base" "$message_file" "$title" "$body_file" "$draft"
   # The pull request's address, kept so the status page can link it the
   # moment it exists. A fact about what ship did, not a merge state: whether
   # it was merged is still derived by housekeeping every run (ADR-0005).
   case "$JIG_SHIP_URL" in
     https://*) _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL" ;;
   esac
+
+  [ "$level" = merge ] || return 0
+  if [ "$draft" -eq 1 ]; then
+    printf 'not merged: a draft pull request is never merged\n'
+    return 0
+  fi
+  # The task's own gates once more, right before the merge: the merge is the
+  # last moment either can still stop the change.
+  blocking=$(_task_blocking_findings "$id")
+  if [ -n "$blocking" ]; then
+    printf 'not merged: %s blocking finding(s) in the ledger\n' "$(_task_count_lines "$blocking")"
+    return 0
+  fi
+  receipt_msg=$(_task_receipt_gate_message "$id")
+  if [ -n "$receipt_msg" ]; then
+    printf 'not merged: %s\n' "$receipt_msg"
+    return 0
+  fi
+  jig_ship_merge "task ship" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" any
 }

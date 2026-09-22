@@ -88,9 +88,13 @@ Some settings are a matter of personal taste rather than project policy. Put the
   `housekeeping.abandoned_ttl`, `housekeeping.stale_after`;
 - `git.worktree_root`;
 - `agent.git` — how far the agent takes a finished task, and a specification's epic: `none` (the default: you commit),
-  `commit`, `push` or `pr`. This one is read **only** from your local file; in `.ai/config.yaml` it
+  `commit`, `push`, `pr` or `merge`. This one is read **only** from your local file; in `.ai/config.yaml` it
   is ignored, so it can never switch on for everyone. See
   [Letting the agent ship](/agent-ships).
+- `agent.ci_timeout` — minutes the `merge` level waits for the pull request's checks (default 30);
+  local only, like `agent.git`.
+- `autopilot.unattended` — `true` lets an autopilot run go on without asking you anything; local
+  only. See [Autopilot: without stops](/autopilot#without-stops).
 
 Any other key in it is ignored. `jig status` shows what your local file changes, and warns if Git
 does not ignore it.

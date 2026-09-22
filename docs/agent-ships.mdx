@@ -53,9 +53,31 @@ everyone, and a shared value would switch every contributor's agent on. `jig sta
 | `commit` | Commits to the task's branch. | Unpushed commits: push and open the pull request. |
 | `push` | Commits and pushes the task's branch. | A pushed branch: open the pull request. |
 | `pr` | Commits, pushes and opens the pull request. | An open pull request: review and merge. |
+| `merge` | Also merges the pull request once your CI passed. | Pull requests it left open, each with the reason. |
 
-No level merges. Merging is your decision, always. The same levels apply to a specification's epic
+Up to `pr`, merging is your decision. The same levels apply to a specification's epic
 ([Specs and epics](#specs-and-epics)).
+
+## The `merge` level
+
+With `agent.git: merge`, `jig task ship` opens the pull request, waits for its checks and merges it —
+only when at least one check ran and every check passed (it waits up to `agent.ci_timeout` minutes,
+30 by default, set in the same file), the review left nothing serious open, the pull request is not
+a draft and it is exactly the commit that was shipped. It merges the way your repository allows: a
+merge commit, else squash, else rebase.
+
+It never uses an administrator's override and never asks the host to "merge when ready" later. When
+your repository's branch protection refuses — a required review, for example — the pull request
+stays open and `ship` says why:
+
+```text
+pr https://github.com/acme/app/pull/42
+not merged: the forge refused: At least 1 approving review is required
+```
+
+That is not an error: protection on your main branch is the limit your team keeps over one person's
+setting. The level works the same with GitLab. Together with `autopilot.unattended: true` it is how a
+run finishes without you ([Autopilot: without stops](/autopilot#without-stops)).
 
 ## What happens at the end of a task
 
@@ -103,10 +125,12 @@ What stays yours at every level:
 - **The version.** You choose patch, minor or major when the epic is declared; at the finish the
   agent raises the version by that choice, or proposes one and waits for your yes when none was
   recorded.
-- **Merging.** Merging the epic's final pull request is the release, and no level does it.
+- **Merging.** Merging the epic's final pull request is the release. Only an unattended run at
+  `merge` does it — with a merge commit, once CI passed and every roadmap item is done — and never
+  for a `major` release, which it opens as a draft for you.
 
-`jig spec ship` keeps the limits of `jig task ship` below: it never merges, force-pushes or skips
-hooks, commits only what was staged, and refuses when task notes or runtime files are staged. A spec
+`jig spec ship` keeps the limits of `jig task ship` below: it never force-pushes or skips hooks,
+never merges a spec reaching main, merges the epic only as above, commits only what was staged, and refuses when task notes or runtime files are staged. A spec
 reaching main is committed on a branch of its own, never on main itself, and may stage nothing but
 the spec. The epic is pushed only as a fast-forward: when someone else moved it on the server, the
 push is refused and the agent tells you. The final pull request is refused until the epic holds the
@@ -126,7 +150,8 @@ without your yes.
 
 It is a script, so these limits hold whatever the agent intends:
 
-- it never merges, never force-pushes and never skips your Git hooks;
+- it never force-pushes and never skips your Git hooks, and it merges only at `merge`, only on
+  green checks and never past your repository's protection;
 - it commits only what was staged, never "everything in the folder";
 - it refuses, changing nothing, until the task's knowledge decision is recorded;
 - it refuses on any branch but the task's own, and on the main branch itself;

@@ -21,11 +21,13 @@ Where the run ends depends on [Letting the agent ship](/agent-ships):
 
 | `agent.git` in your `.ai/config.local.yaml` | The run ends with |
 |---|---|
+| `merge` | the pull request merged once its checks passed — or left open, with the reason |
 | `pr` | an open pull request for you to review and merge |
 | `push` or `commit` | the task's branch pushed or committed; the rest is yours |
 | `none` (default) | the change in your working tree, ready for your review and commit |
 
-The agent never merges. The pull request is where you look at the result.
+Below `merge` the agent never merges, and the pull request is where you look at the result. If you
+cannot answer the questions a run stops on, read [Without stops](#without-stops).
 
 ## What happens during a run
 
@@ -79,6 +81,72 @@ starts, or run `jig status --open` ([Seeing where things stand](/working-with-ta
 While the run goes on, the page shows the stage it is in, for how long, and how many of its two
 fixing attempts it used. When it stops, a card at the top says so, with the agent's question and
 when it was asked. The page keeps itself up to date: leave it open.
+
+## Without stops
+
+The stops above ask for decisions a developer makes. If you build through the agent without being
+one, you may not be able to answer them — and you would rather have your change deployed. Then add
+two lines to `.ai/config.local.yaml` in your project (create the file if it is not there):
+
+```yaml
+agent.git: merge
+autopilot.unattended: true
+```
+
+Both are personal: they change what **your** agent does, never a colleague's, and they do nothing in
+the shared `.ai/config.yaml`. The first lets the agent merge its pull request; the second lets a run
+go on without asking you anything. Hand over a task as usual — *"take the CSV export on
+autopilot"* — and the agent comes back when the change is merged, or with a pull request and the
+reason it stayed open.
+
+### What the agent decides for you
+
+Where a run would stop and ask, it takes the safe choice instead and writes it down in the pull
+request, in plain words:
+
+| Where it would ask | What it does instead |
+|---|---|
+| Approving the design of a risky task | Approves its own design. The design is in the pull request under **Design — approved by the agent, not a human** |
+| A decision nobody has made | Picks the most careful option, the one easiest to undo. Listed under **Decided without you** |
+| Something that would destroy data or history | Never does it. It finds another way or leaves that part out, and says so under **Decided without you** |
+| A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged |
+
+Read these sections in the pull request, even after it merged: they are everything the agent chose
+without you. The run's report (`jig task autopilot <task-id> report`) lists them too.
+
+### When it merges
+
+Only when all of this holds:
+
+- your project's automatic checks (CI) ran on the pull request — at least one — and every one
+  passed, within 30 minutes (change it with `agent.ci_timeout: <minutes>` in the same file);
+- the review found nothing serious left, and nothing changed after the review;
+- the pull request is not a draft, and it is exactly the change the agent sent.
+
+Then the agent merges it the way your repository allows, closes the task, and your CI deploys as it
+always does. A project with no CI never gets merged: checks that never ran prove nothing.
+
+### What it never does
+
+- It never merges past your repository's rules — no admin override, no "merge later by itself".
+- It never dismisses a serious review finding, and never skips the review or the checks.
+- It never force-pushes, deletes branches or data, or rewrites history.
+- It never merges a draft, a pull request with a failed check, or one no check ran on.
+- It never releases a **major** version of a whole feature ([an epic](/agent-ships#specs-and-epics)) by
+  itself: that pull request opens as a draft that says "Needs a human: major release?".
+
+### Why a pull request can stay open
+
+Many repositories protect their main branch: a required human review, a required check, a list of
+who may merge. The agent obeys that protection — it is the limit your team keeps over one person's
+settings. When the repository refuses, the pull request stays open, and the agent tells you why:
+
+```text
+not merged: the forge refused: At least 1 approving review is required
+```
+
+Ask someone who may approve or merge on your repository to look at it. The same line explains the
+other cases — a failed check, checks that took longer than the timeout, or no checks at all.
 
 ## What autopilot does not protect you from
 

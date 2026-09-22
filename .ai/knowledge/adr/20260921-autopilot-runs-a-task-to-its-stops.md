@@ -12,7 +12,7 @@ paths:
   - schemas/state.md
   - "skills/jig-autopilot/**"
 summary: Why autopilot is its own skill run without a setting, why its two-repair limit is enforced by a script while the gate, re-classification, unmade decisions and destructive steps are the skill's stops.
-reviewed_at: 2026-09-21
+reviewed_at: 2026-09-22
 ---
 # An autopilot run takes one task through its route without pausing between stages, and stops only where a human is needed
 
@@ -64,3 +64,10 @@ findings and receipt gates refuse to finish a task that is not reviewed as it st
   the specification — replaces the stops with recorded safe defaults for users who cannot answer
   them; without it, every stop asks the human.
 - A new skill exists only after `jig upgrade` places it for each runtime.
+
+> **Amendment (2026-09-22).** The unattended mode exists: with `autopilot.unattended: true` `start`
+> records the run as unattended, and each stop of the skill becomes a recorded default — the gate
+> self-approved, an unmade decision taken the most reversible way, a destructive step never taken
+> (`approve` and `decide` events, refused in an attended run), exhausted repairs ending in a draft pull
+> request. The repair limit is unchanged. See
+> adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci.

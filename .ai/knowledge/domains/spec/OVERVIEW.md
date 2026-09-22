@@ -69,14 +69,19 @@ checkout is elsewhere — progress is made there (ADR-0040) — without fetching
 A command that changes a spec redraws the status page (`jig_status_page_touch`).
 
 `spec ship` takes its git steps from `common.sh` (`jig_ship_*`), the ones `task ship` takes, and keeps
-only its modes and their refusals here. It never merges, and it never writes a spec file: what it
-commits is what `spec epic` and the agent left staged.
+only its modes and their refusals here. It never writes a spec file: what it commits is what `spec epic`
+and the agent left staged. It merges one thing, the epic's final pull request, at `agent.git: merge` and
+only when `autopilot.unattended` is set (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci):
+with a merge commit only, after `spec_ship_final_ready` finds the epic holding the freshest default, the
+spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut from the epic outside it
+(`spec_epic_unmerged_tasks`, which reads task `state` files: `base_branch`, `branch`, `status`); a
+`major` `Release:` opens a draft instead. A declaration is never merged.
 
 ## Entry points
 
 - `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`, `spec_list_rows`,
   `spec_progress`, `spec_phase_counts`, `spec_phase_rows`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
-  `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_release_check`.
+  `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_ship_final_ready`, `spec_release_check`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`; `jig_ship_*`,
   shared with `task ship`.

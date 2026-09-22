@@ -458,8 +458,12 @@ jig_glab_fields() {
 # (ARCHITECTURE.md, Scripts layout). Each caller keeps its own gates — a task's
 # knowledge decision and review, a spec's mode — and decides which of these
 # steps to take; <who> prefixes every message with the command that was run.
-# Nothing here stages, forces a push, skips hooks or merges
-# (adr-20260921-agent-git-rights-are-a-local-setting).
+# Nothing here stages, forces a push or skips hooks
+# (adr-20260921-agent-git-rights-are-a-local-setting). The one merge, at
+# `agent.git: merge`, is jig_ship_merge below, and it merges only a pull
+# request whose checks all passed, at the commit that was shipped, through the
+# forge's own rules — never --admin, never --auto
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
 
 # Referenced from the EXIT trap jig_ship_pr sets for the pull request body it
 # cuts from a commit message, so it is script-global rather than `local`
@@ -521,16 +525,16 @@ $out"
   printf 'pushed %s\n' "$branch"
 }
 
-# jig_ship_pr <who> <head> <base> <message-file> [<title>] [<body-file>] — open
-# a pull request from <head> into <base> through whichever forge this checkout
-# uses (jig_forge_kind), or report the one already open from <head> rather
-# than opening a second. The title defaults to the message's first line, the
-# body to the rest of it. With no usable forge it says the pull request is the
-# human's and returns 0. Leaves the URL in JIG_SHIP_URL, so it is called
-# directly, never in `$()`.
+# jig_ship_pr <who> <head> <base> <message-file> [<title>] [<body-file>] [<draft>]
+# — open a pull request from <head> into <base> through whichever forge this
+# checkout uses (jig_forge_kind), or report the one already open from <head>
+# rather than opening a second. The title defaults to the message's first
+# line, the body to the rest of it; <draft> 1 opens it as a draft. With no
+# usable forge it says the pull request is the human's and returns 0. Leaves
+# the URL in JIG_SHIP_URL, so it is called directly, never in `$()`.
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 jig_ship_pr() {
-  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" kind
+  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" draft="${7:-0}" kind
   JIG_SHIP_URL=""
   kind=$(jig_forge_kind) || exit 1
   if [ "$kind" = none ]; then
@@ -545,15 +549,17 @@ jig_ship_pr() {
     body_file="$_JIG_SHIP_BODY_TMP"
   fi
   case "$kind" in
-    github) _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" ;;
-    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" ;;
+    github) _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" "$draft" ;;
+    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" "$draft" ;;
   esac
 }
 
-# _jig_ship_pr_github <who> <head> <base> <title> <body-file>
+# _jig_ship_pr_github <who> <head> <base> <title> <body-file> <draft>
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 _jig_ship_pr_github() {
-  local who="$1" head="$2" base="$3" title="$4" body_file="$5" url out
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" url out
+  local extra=""
+  [ "$draft" != 1 ] || extra="--draft"
   url=$(gh pr list --head "$head" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
   case "$url" in '' | null) url="" ;; esac
   if [ -n "$url" ]; then
@@ -561,7 +567,8 @@ _jig_ship_pr_github() {
     printf 'pr %s (already open)\n' "$url"
     return 0
   fi
-  out=$(gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" 2>&1) \
+  # shellcheck disable=SC2086 # $extra is one flag or nothing
+  out=$(gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" $extra 2>&1) \
     || jig_die "$who: gh pr create failed:
 $out"
   url=$(printf '%s\n' "$out" | tail -n 1)
@@ -569,12 +576,14 @@ $out"
   printf 'pr %s\n' "$url"
 }
 
-# _jig_ship_pr_gitlab <who> <head> <base> <title> <body-file> — the same
-# through `glab`, whose JSON is read by jig_glab_fields, the reader
+# _jig_ship_pr_gitlab <who> <head> <base> <title> <body-file> <draft> — the
+# same through `glab`, whose JSON is read by jig_glab_fields, the reader
 # housekeeping uses.
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 _jig_ship_pr_gitlab() {
-  local who="$1" head="$2" base="$3" title="$4" body_file="$5" out url desc
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" out url desc
+  local extra=""
+  [ "$draft" != 1 ] || extra="--draft"
   out=$(glab mr list --source-branch "$head" --output json 2>/dev/null || printf '')
   url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
   if [ -n "$url" ]; then
@@ -583,12 +592,291 @@ _jig_ship_pr_gitlab() {
     return 0
   fi
   desc=$(cat "$body_file")
-  out=$(glab mr create --target-branch "$base" --source-branch "$head" --title "$title" --description "$desc" 2>&1) \
+  # shellcheck disable=SC2086 # $extra is one flag or nothing
+  out=$(glab mr create --target-branch "$base" --source-branch "$head" --title "$title" --description "$desc" $extra 2>&1) \
     || jig_die "$who: glab mr create failed:
 $out"
   url=$(printf '%s\n' "$out" | grep -oE 'https://[^[:space:]]+' | tail -n 1)
   JIG_SHIP_URL="$url"
   printf 'pr %s\n' "${url:-$out}"
+}
+
+# --- merging a shipped pull request ----------------------------------------------
+#
+# adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci. At
+# `agent.git: merge` a ship ends by merging the pull request it opened — only
+# when every condition below holds, and otherwise leaving it open with the
+# reason. Not merging is an ordinary end, not an error: the forge's branch
+# protection and a human review a repository requires are the ceiling a team
+# keeps over one contributor's local key, and a red or silent CI is an answer.
+# Each caller checks its own gates — a task's findings and receipt, an epic's
+# leftovers — right before calling it.
+
+# Set by jig_ship_merge: 1 when it merged, 0 otherwise.
+JIG_SHIP_MERGED=0
+
+# The seconds between two looks at a pull request's checks, and how long no
+# check at all may mean "not registered yet" rather than "CI checks nothing".
+_JIG_CI_POLL=15
+_JIG_CI_GRACE=120
+
+# jig_ship_merge <who> <url> <sha> <any|merge-commit> — merge the pull request
+# at <url>, only as the commit <sha> that was shipped. Prints `merged <url>` or
+# `not merged: <reason>` and returns 0 either way; dies (exit 1) only on an
+# invalid agent.ci_timeout. The conditions, in order:
+#   1. a forge this checkout can use, and a pull request to merge;
+#   2. not a draft, and its head is <sha>;
+#   3. a merge method the repository allows: `any` takes a merge commit, else
+#      squash, else rebase; `merge-commit` takes a merge commit or nothing (an
+#      epic: squash and rebase break the ancestry its tasks are judged by,
+#      ADR-0040);
+#   4. at least one check, and every check passed, within agent.ci_timeout
+#      minutes — none, a red one or the timeout leaves it open;
+#   5. the forge merges it at <sha> (GitHub `--match-head-commit`, GitLab
+#      `--sha`) and agrees to: a refusal — branch protection, a required
+#      review — leaves it open.
+# Never `--admin`, never `--auto`: nothing here overrides the forge or asks it
+# to merge later, when nobody is watching the conditions. Leaves the answer in
+# JIG_SHIP_MERGED, so it is called directly, never in `$()`.
+jig_ship_merge() {
+  local who="$1" url="$2" sha="$3" policy="$4" kind timeout
+  JIG_SHIP_MERGED=0
+  timeout=$(jig_ci_timeout) || jig_die "$who: invalid agent.ci_timeout: $timeout (expected whole minutes)"
+  kind=$(jig_forge_kind) || exit 1
+  if [ "$kind" = none ]; then
+    printf "not merged: no forge available; the merge is the human's\n"
+    return 0
+  fi
+  if [ -z "$url" ]; then
+    printf 'not merged: no pull request to merge\n'
+    return 0
+  fi
+  case "$kind" in
+    github) _jig_ship_merge_github "$url" "$sha" "$policy" "$timeout" ;;
+    gitlab) _jig_ship_merge_gitlab "$url" "$sha" "$policy" "$timeout" ;;
+  esac
+}
+
+# _jig_ship_ci_wait <timeout-minutes> <reader> <args>... — call <reader>
+# <args>... until the checks settle or the timeout passes; the reader prints
+# one line, `<passed> <failed> <pending>` (counts). Prints green, red, none
+# (nothing was checked) or timeout. No check at all is waited on only for
+# _JIG_CI_GRACE seconds — a check registers a little after the push — and a
+# timeout of 0 looks once.
+_jig_ship_ci_wait() {
+  local timeout="$1" reader="$2" start deadline counts passed failed pending now left
+  shift 2
+  start=$SECONDS
+  deadline=$((start + timeout * 60))
+  while :; do
+    counts=$("$reader" "$@") || counts="0 0 0"
+    read -r passed failed pending <<EOF
+$counts
+EOF
+    passed=${passed:-0}
+    failed=${failed:-0}
+    pending=${pending:-0}
+    if [ "$failed" -gt 0 ]; then
+      printf 'red\n'
+      return 0
+    fi
+    if [ "$pending" -eq 0 ] && [ "$passed" -gt 0 ]; then
+      printf 'green\n'
+      return 0
+    fi
+    now=$SECONDS
+    if [ "$pending" -eq 0 ] && [ $((now - start)) -ge "$_JIG_CI_GRACE" ]; then
+      printf 'none\n'
+      return 0
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+      if [ "$pending" -eq 0 ]; then printf 'none\n'; else printf 'timeout\n'; fi
+      return 0
+    fi
+    left=$((deadline - now))
+    [ "$left" -le "$_JIG_CI_POLL" ] || left=$_JIG_CI_POLL
+    sleep "$left"
+  done
+}
+
+# _jig_ship_ci_reason <state> <timeout> — the `not merged:` text for a CI
+# state other than green.
+_jig_ship_ci_reason() {
+  case "$1" in
+    red) printf 'a check failed\n' ;;
+    none) printf 'CI checked nothing: no check ran on the pull request\n' ;;
+    *) printf 'the checks did not finish within %s minutes (agent.ci_timeout)\n' "$2" ;;
+  esac
+}
+
+# _jig_ship_first_line <text> — the first non-empty line, for a refusal.
+_jig_ship_first_line() {
+  printf '%s\n' "$1" | sed '/^[[:space:]]*$/d' | head -n 1
+}
+
+# _jig_ship_checks_github <url> — `<passed> <failed> <pending>` for the pull
+# request's checks. A skipped check counts as neither; a cancelled one as
+# failed. An error reading them reads as no checks, never as passed.
+_jig_ship_checks_github() {
+  local out
+  out=$(gh pr checks "$1" --json bucket --jq '.[].bucket' 2>/dev/null) || true
+  printf '%s\n' "$out" | awk '
+    $1 == "pass" { p++ }
+    $1 == "fail" || $1 == "cancel" { f++ }
+    $1 == "pending" { w++ }
+    END { printf "%d %d %d\n", p, f, w }'
+}
+
+# _jig_ship_merge_github <url> <sha> <policy> <timeout>
+# shellcheck disable=SC2034 # JIG_SHIP_MERGED is read by the caller
+_jig_ship_merge_github() {
+  local url="$1" sha="$2" policy="$3" timeout="$4" view draft="" head="" allowed m="" s="" r="" method state out
+  if ! view=$(gh pr view "$url" --json isDraft,headRefOid --jq '"\(.isDraft) \(.headRefOid)"' 2>/dev/null); then
+    printf 'not merged: could not read the pull request\n'
+    return 0
+  fi
+  read -r draft head <<EOF
+$view
+EOF
+  if [ "$draft" != false ]; then
+    printf 'not merged: the pull request is a draft\n'
+    return 0
+  fi
+  if [ "$head" != "$sha" ]; then
+    printf 'not merged: the pull request is at %s, not at the shipped %s\n' "${head:-an unknown commit}" "$sha"
+    return 0
+  fi
+  allowed=$(gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
+    --jq '"\(.mergeCommitAllowed) \(.squashMergeAllowed) \(.rebaseMergeAllowed)"' 2>/dev/null) || allowed=""
+  read -r m s r <<EOF
+$allowed
+EOF
+  method=""
+  if [ "$m" = true ]; then
+    method=merge
+  elif [ "$policy" = any ] && [ "$s" = true ]; then
+    method=squash
+  elif [ "$policy" = any ] && [ "$r" = true ]; then
+    method=rebase
+  fi
+  if [ -z "$method" ]; then
+    if [ "$policy" = merge-commit ] && [ -n "$allowed" ]; then
+      printf 'not merged: the repository does not allow merge commits, and an epic merges only with one\n'
+    else
+      printf 'not merged: could not tell which merge method the repository allows\n'
+    fi
+    return 0
+  fi
+  state=$(_jig_ship_ci_wait "$timeout" _jig_ship_checks_github "$url")
+  if [ "$state" != green ]; then
+    printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
+    return 0
+  fi
+  if ! out=$(gh pr merge "$url" --match-head-commit "$sha" "--$method" 2>&1); then
+    printf 'not merged: the forge refused: %s\n' "$(_jig_ship_first_line "$out")"
+    return 0
+  fi
+  JIG_SHIP_MERGED=1
+  printf 'merged %s\n' "$url"
+}
+
+# _jig_ship_glab_mr <url> — the merge request's iid from its web URL, or
+# nothing when the URL is not one.
+_jig_ship_glab_mr() {
+  local iid="${1##*/merge_requests/}"
+  iid=${iid%%[/?#]*}
+  case "$iid" in '' | *[!0-9]*) return 0 ;; esac
+  printf '%s\n' "$iid"
+}
+
+# _jig_ship_glab_pipeline <json> — `<status> <sha>` of the merge request's
+# head pipeline, or nothing when it has none (`"head_pipeline":null`). Its
+# fields are read up to its first nested object; status and sha come first.
+_jig_ship_glab_pipeline() {
+  local obj status psha
+  obj=$(printf '%s' "$1" | tr '\n' ' ' | sed -n 's/.*"head_pipeline":[[:space:]]*{\([^}]*\).*/\1/p')
+  [ -n "$obj" ] || return 0
+  status=$(printf '%s' "$obj" | sed -n 's/.*"status":[[:space:]]*"\([^"]*\)".*/\1/p')
+  psha=$(printf '%s' "$obj" | sed -n 's/.*"sha":[[:space:]]*"\([^"]*\)".*/\1/p')
+  printf '%s %s\n' "${status:-unknown}" "${psha:--}"
+}
+
+# _jig_ship_checks_gitlab <iid> <sha> — `<passed> <failed> <pending>` for the
+# merge request's head pipeline, the one check GitLab reports on it: a
+# pipeline for another commit is still pending for <sha>; a skipped one
+# checked nothing.
+_jig_ship_checks_gitlab() {
+  local json pipe status="" psha=""
+  json=$(glab mr view "$1" --output json 2>/dev/null) || json=""
+  pipe=$(_jig_ship_glab_pipeline "$json")
+  if [ -z "$pipe" ]; then
+    printf '0 0 0\n'
+    return 0
+  fi
+  read -r status psha <<EOF
+$pipe
+EOF
+  if [ "$psha" != "$2" ]; then
+    printf '0 0 1\n'
+    return 0
+  fi
+  case "$status" in
+    success) printf '1 0 0\n' ;;
+    failed | canceled | canceling) printf '0 1 0\n' ;;
+    skipped) printf '0 0 0\n' ;;
+    *) printf '0 0 1\n' ;;
+  esac
+}
+
+# _jig_ship_merge_gitlab <url> <sha> <policy> <timeout> — the same through
+# `glab`. GitLab sets the method per project (merge_method, squash_option):
+# `merge-commit` needs a merge commit and a squash that is off by default.
+# shellcheck disable=SC2034 # JIG_SHIP_MERGED is read by the caller
+_jig_ship_merge_gitlab() {
+  local url="$1" sha="$2" policy="$3" timeout="$4" iid json project mm so squash="" state out
+  iid=$(_jig_ship_glab_mr "$url")
+  if [ -z "$iid" ]; then
+    printf 'not merged: could not read the merge request from %s\n' "$url"
+    return 0
+  fi
+  if ! json=$(glab mr view "$iid" --output json 2>/dev/null); then
+    printf 'not merged: could not read the merge request\n'
+    return 0
+  fi
+  case "$(printf '%s' "$json" | tr -d ' \n')" in
+    *'"draft":true'* | *'"work_in_progress":true'*)
+      printf 'not merged: the merge request is a draft\n'
+      return 0 ;;
+  esac
+  project=$(glab api "projects/:id" 2>/dev/null | tr '\n' ' ') || project=""
+  mm=$(printf '%s' "$project" | sed -n 's/.*"merge_method":[[:space:]]*"\([^"]*\)".*/\1/p')
+  so=$(printf '%s' "$project" | sed -n 's/.*"squash_option":[[:space:]]*"\([^"]*\)".*/\1/p')
+  case "$policy:$mm:$so" in
+    merge-commit:merge:never | merge-commit:merge:default_off \
+      | merge-commit:rebase_merge:never | merge-commit:rebase_merge:default_off) ;;
+    merge-commit:?*:?*)
+      printf 'not merged: the project does not merge with a merge commit, and an epic merges only with one\n'
+      return 0 ;;
+    any:?*:always | any:?*:default_on) squash="--squash" ;;
+    any:?*:?*) ;;
+    *)
+      printf 'not merged: could not tell which merge method the project allows\n'
+      return 0 ;;
+  esac
+  state=$(_jig_ship_ci_wait "$timeout" _jig_ship_checks_gitlab "$iid" "$sha")
+  if [ "$state" != green ]; then
+    printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
+    return 0
+  fi
+  # --auto-merge=false: merge now or not at all, never "once the pipeline
+  # succeeds", later, when nobody checks the conditions again.
+  # shellcheck disable=SC2086 # $squash is one flag or nothing
+  if ! out=$(glab mr merge "$iid" --sha "$sha" --yes --auto-merge=false $squash 2>&1); then
+    printf 'not merged: the forge refused: %s\n' "$(_jig_ship_first_line "$out")"
+    return 0
+  fi
+  JIG_SHIP_MERGED=1
+  printf 'merged %s\n' "$url"
 }
 
 # --- specification links ------------------------------------------------------
