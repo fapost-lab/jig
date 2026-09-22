@@ -2382,7 +2382,7 @@ test_spec_ship_invalid_agent_git_dies() {
 
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "spec ship: invalid agent.git: yolo (expected none|commit|push|pr)"
+  assert_contains "$OUT" "spec ship: invalid agent.git: yolo (expected none|commit|push|pr|merge)"
 }
 
 test_spec_ship_unknown_spec_dies() {
@@ -2597,6 +2597,234 @@ test_spec_ship_final_runs_only_on_the_epic() {
   assert_contains "$OUT" "shipped from epic/idea-x — switch to it first"
 }
 
+# --- spec ship: the epic's final merge (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
+
+# mfin_stub_gh — a fake, authenticated `gh` that can merge, answering from
+# files in the test directory (as task.t.sh's mship_stub_gh; duplicated
+# because each test file sources only itself): gh-checks (default: pass),
+# gh-draft (false), gh-repo (true true true), gh-merge.rc (0). Every call is
+# logged to gh.log; `pr create` records its arguments in gh-create.argv and
+# the body it was given in gh-create.body, `pr merge` its arguments in
+# gh-merge.argv.
+mfin_stub_gh() {
+  local dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/gh.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-create.argv"
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = --body-file ]; then cat "\$2" > "\$d/gh-create.body"; fi
+      shift
+    done
+    printf 'https://github.com/example/example/pull/42\n' ;;
+  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(git -C "\$d" rev-parse HEAD)" ;;
+  "repo view") val gh-repo "true true true" ;;
+  "pr checks") val gh-checks pass ;;
+  "pr merge")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-merge.argv"
+    exit "\$(val gh-merge.rc 0)" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  sship_cfg forge github
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# mfin_finished <id> [<release>] [<roadmap-item>] — sship_finished with a
+# roadmap whose only work item is checked (or <roadmap-item> added unchecked)
+# and one unchecked fog item, declared with <release> when given; agent.git
+# merge, the unattended opt-in, CI given no time to wait, gh stubbed.
+mfin_finished() {
+  local id="$1" release="${2:-}" extra="${3:-}"
+  epic_setup
+  jig spec new "$id" >/dev/null
+  {
+    printf '# Roadmap — %s\n\nDestination: done.\n\n## Phase 1 — One\n\n' "$id"
+    printf -- '- [x] `t-1` — the one item\n'
+    [ -z "$extra" ] || printf -- '- [ ] %s\n' "$extra"
+    printf -- '- [ ] fog: later — cannot be stated yet\n'
+  } > ".ai/specs/$id/roadmap.md"
+  git add -A
+  git commit -q -m "add spec $id"
+  if [ -n "$release" ]; then
+    jig spec epic "$id" --release "$release" >/dev/null 2>&1
+  else
+    jig spec epic "$id" >/dev/null 2>&1
+  fi
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic "$id" >/dev/null 2>&1
+  git checkout -q "epic/$id"
+  sship_origin
+  jig spec epic "$id" --finish --leftovers-handled >/dev/null 2>&1
+  printf '1.1.0\n' > VERSION
+  git add -A ".ai/specs/$id" VERSION
+  printf 'Release %s\n\nThe epic, finished.\n' "$id" > msg.txt
+  mfin_stub_gh
+  sship_cfg_local agent.git merge
+  sship_cfg_local agent.ci_timeout 0
+  sship_cfg_local autopilot.unattended true
+}
+
+test_spec_ship_final_merges_in_an_unattended_run_with_a_merge_commit_only() {
+  mfin_finished idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: final"
+  assert_contains "$OUT" "release: minor (no Release: line; the unattended default)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+  local argv
+  argv=$(cat gh-merge.argv)
+  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "--merge"
+  assert_not_contains "$(cat gh.log)" "--admin"
+  assert_not_contains "$(cat gh.log)" "--auto"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+}
+
+test_spec_ship_final_prints_the_recorded_release_level() {
+  mfin_finished idea-x patch
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: patch"
+  assert_contains "$OUT" "merged "
+}
+
+test_spec_ship_final_at_merge_is_the_humans_outside_an_unattended_run() {
+  mfin_finished idea-x
+  sship_cfg_local autopilot.unattended false
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_contains "$OUT" "not merged: the epic's final merge is the release, and outside an unattended run it is the human's"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_unattended_in_the_project_config_does_not_merge() {
+  mfin_finished idea-x
+  sed '/^autopilot.unattended:/d' .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+  printf 'autopilot.unattended: true\n' >> .ai/config.yaml
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the epic's final merge is the release"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_does_not_merge_where_merge_commits_are_not_allowed() {
+  mfin_finished idea-x
+  printf 'false true true\n' > gh-repo
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the repository does not allow merge commits, and an epic merges only with one"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_major_release_opens_a_draft_that_needs_a_human() {
+  mfin_finished idea-x major
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: major"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$(cat gh-create.body)" "Needs a human: major release?"
+  assert_contains "$(cat gh-create.body)" "The epic, finished."
+  assert_contains "$OUT" "not merged: a major release needs a human; the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_does_not_merge_an_epic_with_unchecked_roadmap_items() {
+  mfin_finished idea-x "" '`t-2` — the item nobody finished'
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the epic is not finished: 1 roadmap item(s) unchecked, first: \`t-2\` — the item nobody finished"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_does_not_merge_while_a_task_of_the_epic_is_not_in_it() {
+  mfin_finished idea-x
+  local c
+  c=$(git commit-tree -p HEAD -m "unmerged work" "HEAD^{tree}")
+  git branch task/t-9 "$c"
+  mkdir -p .ai/workspace/tasks/t-9
+  printf 'task_id: t-9\nstatus: ready\nbranch: task/t-9\nbase_branch: epic/idea-x\n' > .ai/workspace/tasks/t-9/state
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: task(s) cut from epic/idea-x not merged into it: t-9"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_ignores_an_abandoned_task_of_the_epic() {
+  mfin_finished idea-x
+  local c
+  c=$(git commit-tree -p HEAD -m "dropped work" "HEAD^{tree}")
+  git branch task/t-9 "$c"
+  mkdir -p .ai/workspace/tasks/t-9
+  printf 'task_id: t-9\nstatus: abandoned\nbranch: task/t-9\nbase_branch: epic/idea-x\n' > .ai/workspace/tasks/t-9/state
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+}
+
+test_spec_ship_final_does_not_merge_on_a_red_check() {
+  mfin_finished idea-x
+  printf 'fail\n' > gh-checks
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_at_merge_refuses_an_epic_without_the_latest_main() {
+  mfin_finished idea-x
+  git stash -q
+  git checkout -q main
+  printf 'new\n' > new.txt
+  git add new.txt
+  git commit -q -m "new work on main"
+  git checkout -q epic/idea-x
+  git stash pop -q
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic/idea-x does not contain the latest main"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_declare_at_merge_opens_the_pr_and_never_merges_it() {
+  sship_declared idea-x
+  sship_origin
+  mfin_stub_gh
+  sship_cfg_local agent.git merge
+  sship_cfg_local autopilot.unattended true
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: declare"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_not_contains "$OUT" "merged https"
+  assert_no_file gh-merge.argv
+}
+
 # --- spec epic: the next step by agent.git -------------------------------------
 
 test_spec_epic_declare_names_spec_ship_when_the_agent_commits() {
@@ -2634,6 +2862,15 @@ test_spec_epic_cut_at_commit_leaves_the_push_to_the_human() {
   run jig spec epic idea-x
   assert_eq 0 "$RC"
   assert_contains "$OUT" 'push it with `git push -u origin epic/idea-x` — yours at agent.git: commit'
+}
+
+test_spec_epic_finish_at_merge_says_the_merge_is_an_unattended_runs_only() {
+  epic_ready_to_finish idea-x
+  sship_cfg_local agent.git merge
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'and merges it once CI passed only in an unattended run)'
 }
 
 test_spec_epic_finish_names_spec_ship_and_what_stays_the_humans() {

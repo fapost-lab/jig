@@ -17,8 +17,10 @@ Classify, file and start the task with `jig-task` (or resume one that is filed).
 .ai/scripts/jig task autopilot <id> start
 ```
 
-Say in one line what will happen: the class, the route, and where the run will end —
-an open pull request with `agent.git: pr`, or "ready for your commit" with `none`. Offer to
+It prints `autopilot: on (unattended)` when this clone set `autopilot.unattended: true`: then
+the run asks nothing, and §5 replaces §3. Say in one line what will happen: the class, the
+route, and where the run will end — merged with `agent.git: merge`, an open pull request with
+`pr`, or "ready for your commit" with `none`. Offer to
 open the status page with `.ai/scripts/jig status --open`, where the human can watch the run
 and sees first what it needs from them.
 
@@ -46,7 +48,7 @@ Run each stage's skill in order, and mark it as you enter it:
 
 ## 3. Stop only here
 
-On a stop, record it, tell the human in plain words what you need from them, and wait:
+In an unattended run there are no stops: §5. Otherwise, on a stop, record it, tell the human in plain words what you need from them, and wait:
 
 ```
 .ai/scripts/jig task autopilot <id> stop --reason "<what is needed>"
@@ -87,3 +89,22 @@ as `agent.git` allows. Then:
 Hand back the pull request link (or "ready for your commit") and the report, and put the report
 in the pull request body when you write it. Closing the task after the merge stays as
 `jig-consolidate` §6 says.
+
+## 5. Unattended: ask nothing
+
+The person who set `autopilot.unattended` cannot answer a stop. Each one becomes the safe
+default below, recorded so they read it in the pull request, in plain words, not in jargon:
+
+| Stop | Instead |
+|---|---|
+| The gate of a T3/T4 task, or a re-classification into one | Write the design as usual, then `jig task gate <id> approved --by agent`, `jig task autopilot <id> approve --reason "<what was approved>"`, and in `task.md`: "Human gate — approved by the agent (unattended)". Put `design.md` verbatim in the pull request under `## Design — approved by the agent, not a human` |
+| A decision nobody made | The most cautious option that is easiest to undo. `jig task autopilot <id> decide --reason "<what you chose, and why>"` |
+| A destructive operation | Never. Find another way or leave that part out, and say so with `decide --reason` |
+| `repair` exited 3 | The run ends unfinished: stage what there is and run `jig task ship <id> --message-file <file> --draft`. The body starts with `Not finished: <why>`. A draft is never merged; the run stays `stopped`, and the status page shows it waiting |
+
+What never changes: a P0/P1 is never dismissed, the gates are never worked around, and nothing
+is merged but by `task ship`. Before shipping, put `jig task autopilot <id> report`'s
+**Decided without you** and **Approved by the agent, not a human** blocks in the pull request
+body as they are. At `agent.git: merge`, `task ship` merges once CI passed or prints
+`not merged: <why>` — both are a finished run; say which. After `merged`, close the task
+(`jig-consolidate` §6) without asking, then `end`.

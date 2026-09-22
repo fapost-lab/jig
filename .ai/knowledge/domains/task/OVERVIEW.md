@@ -114,6 +114,11 @@ the wrong branch. How far it goes is `agent.git`, a local-only key of the config
 steps themselves — commit, push, pull request — are `jig_ship_*` in `common.sh`, shared with
 `jig spec ship` (adr-20260922-spec-work-ships-by-the-agent-git-level), and the forge they open the
 pull request on is resolved by `jig_forge_kind`, the same answer housekeeping reads PR state from.
+At `merge` it also merges, through `jig_ship_merge`, after asking `_task_blocking_findings` and
+`_task_receipt_gate_message` once more; `--draft` opens a draft that is never merged, and is the one
+ship those completion gates and `knowledge_consolidated` do not refuse — it is how an unattended run
+whose repairs ran out shows where it stopped
+(adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
 
 **The findings ledger is this domain's, and it adds two cross-key rules to `task set`**
 (adr-20260921-review-findings-block-completion). `status ready` and `knowledge_consolidated true`
@@ -140,10 +145,12 @@ redraws the page once at its end. An exit that skips that end after a write must
 `jig_die` does, and so does the third repair's `return 3`. A new writer that does not mark, or a new
 early exit that does not flush, leaves the page a command behind.
 
-Two keys record facts only this domain's commands know, both refused by `task set`: `gate` and
-`gate_design`, written by `jig task gate <id> approved` — the human's approval of a T3/T4 design as
-data, pinned by the same hash a review receipt uses, so a design changed after approval is visible —
-and `pr_url`, written by `task ship` when it opened or found a pull request. `pr_url` is what ship
+Keys record facts only this domain's commands know, all refused by `task set`: `gate`,
+`gate_design` and `gate_by`, written by `jig task gate <id> approved` — the approval of a T3/T4 design
+as data, pinned by the same hash a review receipt uses, so a design changed after approval is visible,
+and who gave it: `human`, or `agent` in an unattended run, where `--by agent` is refused unless the
+run's `autopilot_mode` (recorded by `autopilot start`) is `unattended` — and `pr_url`, written by
+`task ship` when it opened or found a pull request. `pr_url` is what ship
 did, not a merge state: ADR-0005 still holds, and housekeeping still derives whether it merged.
 
 **The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).

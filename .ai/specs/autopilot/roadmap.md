@@ -45,12 +45,18 @@ site says how to start a run, where it stops and what to do at each stop.
 - [x] `autopilot-run` — Autopilot run for a task — entry, stop conditions, repair limit, a run report (after:
   Phase 1 — it ends in a commit or PR; Phase 2 — its stops on findings and stale review are
   those scripts)
-- [ ] Unattended mode — a local-only opt-in under which a run asks nothing: every stop becomes a
+- [x] `unattended-mode` — Unattended mode — a local-only opt-in under which a run asks nothing: every stop becomes a
   safe default recorded in the pull request in plain words (the gate approved by the agent with the
   design in the PR, the most reversible option for an unmade decision, no destructive operation
   ever, a draft PR when repairs run out), and a finished run merges once CI passed, without
   overriding branch protection, then closes the task; ADR refining ADR-0009 (after: autopilot
   run — the defaults replace its stops)
+- [ ] Local setup — the agent asks, in plain words and one question at a time, how far it may go
+  with git, whether to stop and ask or decide and record, how many agents to run at once, how long to
+  wait for CI and how long to keep finished work; shows the resulting `.ai/config.local.yaml` whole and
+  writes it after a yes, through `jig config set <key> <value> --local`, which accepts only local keys
+  with valid values and writes atomically; offered by `jig init` and on "set up Jig for me" (after:
+  unattended mode — its keys are among the answers)
 
 ## Phase 4 — Autopilot for a roadmap phase
 
@@ -103,8 +109,8 @@ the version is raised in the final pull request from the epic.
 1. Agent git rights as a local setting; findings ledger; routing evals
 2. Review receipt; status page; agent git rights reach spec work; live status page
 3. Autopilot run for a task
-4. Unattended mode
-5. Phase plan
+4. Unattended mode; `worktree-leaves-on-landing`
+5. Local setup; phase plan
 6. Phase run
 7. Public docs pass
 

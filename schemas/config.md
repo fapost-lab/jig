@@ -18,7 +18,9 @@ Absent keys take the default. Paths are not configurable.
 | `housekeeping.trash_ttl` | `7d` | yes | trash entries older than this are deleted |
 | `housekeeping.abandoned_ttl` | `14d` | yes | abandoned workspaces are purged after this |
 | `housekeeping.stale_after` | `60d` | yes | older active tasks are reported as `STALE_CANDIDATE` |
-| `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr` (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level) |
+| `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr`, `merge` — `merge` also merges the pull request once CI passed, never past branch protection; an epic's only in an unattended run (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level, adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
+| `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |
+| `autopilot.unattended` | `false` | only | `true`: an autopilot run asks nothing — each stop becomes a safe default recorded in the pull request — and an epic's final pull request may be merged (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
 | `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 

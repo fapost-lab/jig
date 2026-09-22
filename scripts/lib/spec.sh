@@ -1011,7 +1011,7 @@ spec_ship_hint() {
       case "$level" in
         commit) does="it commits; the push and the pull request into $default are yours" ;;
         push) does="it commits and pushes; the pull request into $default is yours" ;;
-        pr) does="it commits, pushes and opens the pull request into $default" ;;
+        pr | merge) does="it commits, pushes and opens the pull request into $default" ;;
         *)
           printf 'commit %s and merge it into %s, then run `jig spec epic %s` again to cut %s\n' "$rel" "$default" "$id" "$branch"
           return 0 ;;
@@ -1021,7 +1021,7 @@ spec_ship_hint() {
       ;;
     cut)
       case "$level" in
-        push | pr) printf 'push it with `jig spec ship %s`\n' "$id" ;;
+        push | pr | merge) printf 'push it with `jig spec ship %s`\n' "$id" ;;
         *) printf 'push it with `git push -u origin %s` — yours at agent.git: %s\n' "$branch" "$level" ;;
       esac
       ;;
@@ -1030,6 +1030,7 @@ spec_ship_hint() {
         commit) does="it commits; pushing $branch and the pull request into $default are yours" ;;
         push) does="it commits and pushes $branch; the pull request into $default is yours" ;;
         pr) does="it commits, pushes $branch and opens the pull request into $default" ;;
+        merge) does="it commits, pushes $branch and opens the pull request into $default, and merges it once CI passed only in an unattended run" ;;
         *)
           printf 'commit the removal with the version bump, then open the pull request from %s into %s\n' "$branch" "$default"
           return 0 ;;
@@ -1055,10 +1056,12 @@ spec_ship_hint() {
 #   Commits nothing.
 # - final — on the epic, with the spec removed by `spec epic --finish`: commit
 #   the staged removal and version bump, push the epic, open its pull request
-#   into the default branch.
+#   into the default branch — and at `merge`, in an unattended run only, merge
+#   it (spec_ship_final).
 #
-# Never merges. At `none` it exits 3, like `task ship`: the skill reads it as
-# "the human's step".
+# A declaration's pull request is never merged here, and outside an unattended
+# run neither is the final one: that merge is the release. At `none` it exits
+# 3, like `task ship`: the skill reads it as "the human's step".
 spec_ship() {
   [ $# -ge 1 ] || jig_die "spec ship: missing spec id (usage: jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>])"
   local id="$1" message_file="" title="" body_file=""
@@ -1087,7 +1090,7 @@ spec_ship() {
 
   # Level first, before anything else changes (as `task ship`).
   local level
-  level=$(jig_agent_git) || jig_die "spec ship: invalid agent.git: $level (expected none|commit|push|pr)"
+  level=$(jig_agent_git) || jig_die "spec ship: invalid agent.git: $level (expected none|commit|push|pr|merge)"
   if [ "$level" = none ]; then
     printf "spec ship: agent.git is none in this clone; committing, pushing and the pull request are the human's\n" >&2
     exit 3
@@ -1144,15 +1147,9 @@ spec_ship() {
 # else the commit before the one that deleted the roadmap. Dies when this
 # branch never held the spec with an open Epic: line.
 spec_ship_removed_epic() {
-  local id="$1" roadmap src del line rc=0
+  local id="$1" roadmap src line rc=0
   roadmap="$JIG_AI_DIR/specs/$id/roadmap.md"
-  if git -C "$JIG_PROJECT" cat-file -e "HEAD:$roadmap" 2>/dev/null; then
-    src=HEAD
-  else
-    del=$(git -C "$JIG_PROJECT" log -1 --diff-filter=D --format=%H -- "$roadmap" 2>/dev/null) || del=""
-    [ -n "$del" ] || jig_die "spec ship: no spec $id here, and none removed in the history of this branch"
-    src="$del^"
-  fi
+  src=$(spec_ship_removed_src "$id") || exit 1
   line=$(jig_git_show_path "$src" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$line" ] || [ "${line##* }" != open ]; then
     jig_die "spec ship: the removed $roadmap declares no open epic; only an epic's final pull request ships a removed spec"
@@ -1162,11 +1159,30 @@ spec_ship_removed_epic() {
   printf '%s\n' "${line% *}"
 }
 
-# spec_ship_steps <level> <branch> <base> <message-file> <title> <body-file> —
+# spec_ship_removed_src <id> — the commit a removed spec is read from, as a
+# hash: HEAD while its removal is not committed, else the commit before the
+# one that deleted its roadmap. A hash, not `HEAD`: the final ship commits the
+# removal and reads the roadmap again after that. Dies when this branch never
+# held it.
+spec_ship_removed_src() {
+  local id="$1" roadmap del ref
+  roadmap="$JIG_AI_DIR/specs/$id/roadmap.md"
+  if git -C "$JIG_PROJECT" cat-file -e "HEAD:$roadmap" 2>/dev/null; then
+    ref=HEAD
+  else
+    del=$(git -C "$JIG_PROJECT" log -1 --diff-filter=D --format=%H -- "$roadmap" 2>/dev/null) || del=""
+    [ -n "$del" ] || jig_die "spec ship: no spec $id here, and none removed in the history of this branch"
+    ref="$del^"
+  fi
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null \
+    || jig_die "spec ship: cannot resolve $ref"
+}
+
+# spec_ship_steps <level> <branch> <base> <message-file> <title> <body-file> [<draft>] —
 # commit, push <branch>, open its pull request into <base>, stopping where
 # <level> stops; the same steps and stop lines as `task ship`.
 spec_ship_steps() {
-  local level="$1" branch="$2" base="$3" message_file="$4" title="$5" body_file="$6"
+  local level="$1" branch="$2" base="$3" message_file="$4" title="$5" body_file="$6" draft="${7:-0}"
   jig_ship_commit "spec ship" "$message_file"
   if [ "$level" = commit ]; then
     printf "stopped at commit: push is the human's\n"
@@ -1177,7 +1193,7 @@ spec_ship_steps() {
     printf "stopped at push: the pull request is the human's\n"
     return 0
   fi
-  jig_ship_pr "spec ship" "$branch" "$base" "$message_file" "$title" "$body_file"
+  jig_ship_pr "spec ship" "$branch" "$base" "$message_file" "$title" "$body_file" "$draft"
 }
 
 spec_ship_declare() {
@@ -1235,9 +1251,23 @@ spec_ship_epic() {
   jig_ship_push "spec ship" "$branch"
 }
 
+# The body file spec_ship_final writes for a draft; script-global because the
+# EXIT trap that removes it runs after the function returned
+# (conventions/shell.md). jig_ship_pr leaves the trap alone when it is given a
+# body file, so this is the one EXIT trap of the process.
+_SPEC_SHIP_BODY_TMP=""
+
+# spec_ship_final — the epic's final pull request. At `merge`, in an unattended
+# run (`autopilot.unattended`, the key itself: an epic finish belongs to no
+# task's run), the merge is the agent's too
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), and only
+# after spec_ship_final_ready finds nothing left; the release level the
+# roadmap recorded decides first: `major` is never released without a human —
+# the pull request opens as a draft that says so — and no `Release:` line
+# reads as `minor`. Anywhere else the merge is the human's, as it was.
 spec_ship_final() {
   local id="$1" level="$2" branch="$3" default="$4" message_file="$5" title="$6" body_file="$7"
-  local rel start
+  local rel start src release draft=0 unattended=0
   rel="$JIG_AI_DIR/specs/$id"
   [ -n "$message_file" ] || jig_die "spec ship: the final pull request commits; --message-file is required"
   jig_fetch_branches "spec ship" "$default"
@@ -1251,7 +1281,117 @@ spec_ship_final() {
   jig_ship_check_staged "spec ship"
   [ -z "$(git -C "$JIG_PROJECT" ls-files --cached -- "$rel/" 2>/dev/null)" ] \
     || jig_die "spec ship: the removal of $rel/ is not staged; stage it with the version bump first"
-  spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file"
+
+  src=$(spec_ship_removed_src "$id") || exit 1
+  if [ "$level" = merge ] && jig_unattended; then
+    unattended=1
+    release=$(jig_git_show_path "$src" "$rel/roadmap.md" 2>/dev/null \
+      | spec_release_check "spec ship" "$rel/roadmap.md") || exit 1
+    if [ -z "$release" ]; then
+      printf 'release: minor (no Release: line; the unattended default)\n'
+    else
+      printf 'release: %s\n' "$release"
+    fi
+    if [ "$release" = major ]; then
+      draft=1
+      _SPEC_SHIP_BODY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-spec-body.XXXXXX")
+      trap '[ -z "${_SPEC_SHIP_BODY_TMP:-}" ] || rm -f "$_SPEC_SHIP_BODY_TMP"' EXIT
+      {
+        printf 'Needs a human: major release?\n\n'
+        if [ -n "$body_file" ]; then cat "$body_file"; else tail -n +2 "$message_file"; fi
+      } > "$_SPEC_SHIP_BODY_TMP"
+      body_file="$_SPEC_SHIP_BODY_TMP"
+    fi
+  fi
+
+  spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file" "$draft"
+  [ "$level" = merge ] || return 0
+  if [ "$unattended" -eq 0 ]; then
+    printf "not merged: the epic's final merge is the release, and outside an unattended run it is the human's\n"
+    return 0
+  fi
+  if [ "$draft" -eq 1 ]; then
+    printf 'not merged: a major release needs a human; the pull request is a draft\n'
+    return 0
+  fi
+  local left
+  left=$(spec_ship_final_ready "$id" "$branch" "$default" "$src")
+  if [ -n "$left" ]; then
+    printf 'not merged: %s\n' "$left"
+    return 0
+  fi
+  jig_ship_merge "spec ship" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" merge-commit
+}
+
+# spec_ship_final_ready <id> <branch> <default> <src> — what still stands in
+# the way of merging the epic, as one line, or nothing: the epic behind the
+# freshest default branch, the spec back on disk, a roadmap item left
+# unchecked (fog is not an item: it is dropped with the spec, and the skill
+# quotes it in the pull request), or a task cut from the epic whose branch is
+# not in it. Read again right before the merge, not trusted from the finish.
+spec_ship_final_ready() {
+  local id="$1" branch="$2" default="$3" src="$4" start items tasks
+  jig_fetch_branches "spec ship" "$default"
+  start=$(jig_fresh_base_ref "$default" "spec ship") || exit 1
+  if [ "$start" != HEAD ] \
+     && ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$start" HEAD 2>/dev/null; then
+    printf '%s does not contain the latest %s\n' "$branch" "$default"
+    return 0
+  fi
+  if [ -e "$(spec_dir)/$id" ]; then
+    printf 'the spec %s is on disk again\n' "$id"
+    return 0
+  fi
+  items=$(jig_git_show_path "$src" "$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null | spec_unchecked_items)
+  if [ -n "$items" ]; then
+    printf 'the epic is not finished: %s roadmap item(s) unchecked, first: %s\n' \
+      "$(printf '%s\n' "$items" | wc -l | tr -d ' ')" "$(printf '%s\n' "$items" | head -n 1)"
+    return 0
+  fi
+  tasks=$(spec_epic_unmerged_tasks "$branch")
+  if [ -n "$tasks" ]; then
+    printf 'task(s) cut from %s not merged into it: %s\n' "$branch" "$(printf '%s\n' "$tasks" | tr '\n' ' ' | sed 's/ $//')"
+    return 0
+  fi
+}
+
+# spec_unchecked_items — read a roadmap on stdin and print each unchecked item
+# that is real work: not a `fog:` item and not a template `<placeholder>`,
+# the way spec_leftovers names them.
+spec_unchecked_items() {
+  awk '/^[[:space:]]*[-*][[:space:]]+\[ \]/ {
+    t = $0; sub(/^[[:space:]]*[-*][[:space:]]+\[ \][[:space:]]*/, "", t)
+    if (t !~ /^</ && t !~ /^fog:/) print t
+  }'
+}
+
+# spec_epic_unmerged_tasks <branch> — the ids of the tasks in this checkout's
+# workspace cut from <branch> (base_branch) whose own branch is not in HEAD.
+# An abandoned task, one never started, and one whose branch exists nowhere
+# any more are not counted: there is nothing of theirs left to merge. A task
+# merged by squash is counted — its commits are not in the epic, and saying
+# so is the safe side.
+spec_epic_unmerged_tasks() {
+  local want="$1" root dir name state base tbranch status ref
+  root="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  [ -d "$root" ] || return 0
+  for dir in "$root"/*/; do
+    name=${dir%/}
+    name=${name##*/}
+    jig_valid_id "$name" || continue
+    state="$root/$name/state"
+    [ -f "$state" ] || continue
+    base=$(sed -n 's/^base_branch:[[:space:]]*//p' "$state" | head -n 1)
+    [ "$base" = "$want" ] || continue
+    status=$(sed -n 's/^status:[[:space:]]*//p' "$state" | head -n 1)
+    [ "$status" != abandoned ] || continue
+    tbranch=$(sed -n 's/^branch:[[:space:]]*//p' "$state" | head -n 1)
+    [ -n "$tbranch" ] || continue
+    ref=$(jig_base_ref "$tbranch")
+    [ -n "$ref" ] || continue
+    git -C "$JIG_PROJECT" merge-base --is-ancestor "$ref" HEAD 2>/dev/null || printf '%s\n' "$name"
+  done
+  return 0
 }
 
 # --- closing a spec --------------------------------------------------------------

@@ -153,7 +153,7 @@ It answers four questions, in this order:
    | A design is waiting for your decision | Read the design the agent showed you, then approve it or say what to change |
    | A design changed after you approved it | Read what changed and approve it again |
    | Ready for your step in git | Commit, push or open the pull request — whichever step the agent may not take in your project |
-   | A pull request is waiting for review or merge | Review it and merge it; the link opens it. Jig never merges |
+   | A pull request is waiting for review or merge | Review it and merge it; the link opens it. Jig merges one itself only at `agent.git: merge`, once CI passed |
    | Merged: the task can be closed | Tell the agent to close the task |
    | The work landed on a different branch than planned, the pull request was closed without merging, a worktree was kept | Look at it; only you can say what happens next |
    | Knowledge is waiting for your decision | Ask the agent *"what's proposed?"* |
@@ -201,5 +201,5 @@ Risk sets the floor: a one-line change to authentication is never trivial.
 
 By default the agent does not commit: a finished task waits in your working tree, and you review the
 diff and commit it. One line in your own `.ai/config.local.yaml` — `agent.git: pr` — lets the agent
-commit, push and open the pull request instead; it never merges.
+commit, push and open the pull request instead; only `agent.git: merge` also merges, once CI passed.
 [Letting the agent ship](/agent-ships) explains the levels and what happens at the end of a task.

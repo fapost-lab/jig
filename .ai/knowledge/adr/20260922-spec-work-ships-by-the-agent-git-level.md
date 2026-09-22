@@ -91,3 +91,9 @@ open. Merging the final pull request in an unattended run, and the default level
 - `spec ship` touches the network (fetching the default branch) to tell a declaration from an epic.
 - Reverting the command is cheap; the helpers in `common.sh` stay harmless. A merged epic is a
   release and is not reverted by reverting this.
+
+> **Amendment (2026-09-22).** The two questions left to the unattended-mode decision are answered: at
+> `agent.git: merge`, in an unattended run only, `spec ship` merges the epic's final pull request with a
+> merge commit once CI passed and nothing is left of the epic; no `Release:` line reads as `minor`, and a
+> `major` release opens as a draft that needs a human. A declaration is still never merged
+> (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
