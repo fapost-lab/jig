@@ -106,7 +106,8 @@ templates append stdout to the same `housekeeping.log`, so no report line may ca
 
 **The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
 block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
-(ADR-0027). Its line shape is an interface with two consumers now, and nothing rotates it.
+(ADR-0027); `jig spec plan` reads `remote=merged` from the newest block to tell which of a
+phase's tasks merged. Its line shape is an interface with three consumers now, and nothing rotates it.
 The status page reads the newest block too — `remote=open` for pull requests waiting on a person,
 the flags for its cards — and the marker's `forge=github|gitlab|none|failed` field to say whether
 that data can be trusted: `failed` means the forge did not answer this run, so no `open` was seen

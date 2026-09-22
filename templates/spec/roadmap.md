@@ -30,4 +30,6 @@ Rules (jig-idea §8):
 - No dates, no point estimates: order is the priority.
 - `jig spec list` counts checkbox lines only: `[x]` done, a leading backticked task id
   followed by a dash (`—` or `-`) filed, a leading `fog:` fog. Keep waves as a numbered list.
+- A wave entry names an item by its title (the text before its first ` — `) or its task id,
+  entries separated by `;` — `jig spec plan` reports an entry that names no item or several.
 -->
