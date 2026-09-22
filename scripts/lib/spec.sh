@@ -8,12 +8,14 @@
 # A task links to a spec through one `Spec: .ai/specs/<id>/ — Phase <n>` line in
 # its task.md. `new` creates a spec, `done` checks a linked task's roadmap
 # items, `remove` unlinks a spec's open tasks and moves the spec to trash,
-# `close` removes a spec whose roadmap is complete, and `epic` declares, cuts,
-# finishes and reopens a spec's epic branch (ADR-0035, ADR-0040 as amended);
+# `close` removes a spec whose roadmap is complete, `epic` declares, cuts,
+# finishes and reopens a spec's epic branch (ADR-0035, ADR-0040 as amended),
+# and `ship` carries a declaration, an epic or an epic's final pull request as
+# far as `agent.git` allows (adr-20260922-spec-work-ships-by-the-agent-git-level);
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -27,6 +29,8 @@ cmd_spec() {
     remove) spec_remove "$@"; jig_status_page_touch ;;
     close) spec_close "$@"; jig_status_page_touch ;;
     epic) spec_epic "$@"; jig_status_page_touch ;;
+    # Ships through git only; the spec's files are as `epic` left them.
+    ship) spec_ship "$@" ;;
     help | -h | --help)
       printf '%s\n' "$SPEC_USAGE" >&2
       return 0
@@ -359,20 +363,27 @@ spec_epic_status() {
 # into it, closes the line before the final pull request; `--reopen` takes
 # that back when review of the final pull request needs a fix.
 spec_epic() {
-  [ $# -ge 1 ] || jig_die "spec epic: missing spec id (usage: jig spec epic <id> [--finish | --reopen])"
-  local id="$1" mode=declare handled=0
+  [ $# -ge 1 ] || jig_die "spec epic: missing spec id (usage: jig spec epic <id> [--release <level> | --finish | --reopen])"
+  local id="$1" mode=declare handled=0 release=""
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --finish) [ "$mode" = declare ] || jig_die "spec epic: --finish and --reopen exclude each other"; mode=finish ;;
       --reopen) [ "$mode" = declare ] || jig_die "spec epic: --finish and --reopen exclude each other"; mode=reopen ;;
       --leftovers-handled) handled=1 ;;
+      --release)
+        [ $# -ge 2 ] || jig_die "spec epic: --release requires a value (patch|minor|major)"
+        release="$2"
+        shift ;;
       *) jig_die "spec epic: unexpected argument: $1" ;;
     esac
     shift
   done
   spec_valid_id "$id" || jig_die "spec epic: invalid spec id: $id"
   [ "$handled" -eq 0 ] || [ "$mode" = finish ] || jig_die "spec epic: --leftovers-handled goes with --finish"
+  [ -z "$release" ] || [ "$mode" = declare ] || jig_die "spec epic: --release goes with declaring the epic, not with --finish or --reopen"
+  [ -z "$release" ] || spec_release_valid "$release" \
+    || jig_die "spec epic: invalid release level: $release (expected patch|minor|major)"
   jig_require_init
   if [ "$mode" = reopen ]; then
     spec_epic_reopen "$id"
@@ -384,24 +395,27 @@ spec_epic() {
   [ -f "$roadmap" ] || jig_die "spec epic: no such spec, or it has no roadmap: $rel"
   line=$(jig_spec_epic "$roadmap") || rc=$?
   [ "$rc" -ne 2 ] || jig_die "spec epic: $rel declares more than one epic; keep one Epic: line"
+  spec_release_check "spec epic" "$rel" < "$roadmap" >/dev/null
 
   case "$mode" in
-    declare) spec_epic_declare "$id" "$roadmap" "$rel" "$line" ;;
+    declare) spec_epic_declare "$id" "$roadmap" "$rel" "$line" "$release" ;;
     finish) spec_epic_finish "$id" "$roadmap" "$rel" "$line" "$handled" ;;
   esac
 }
 
 spec_epic_declare() {
-  local id="$1" roadmap="$2" rel="$3" line="$4" branch default start commit on_default rc=0
+  local id="$1" roadmap="$2" rel="$3" line="$4" release="${5:-}" branch default start commit on_default rc=0
   if [ -z "$line" ]; then
     branch="epic/$id"
     git check-ref-format --branch "$branch" >/dev/null 2>&1 \
       || jig_die "spec epic: git rejects the branch name: $branch"
-    spec_epic_write "$roadmap" "declare" "$branch"
+    spec_epic_write "$roadmap" "declare" "$branch" "$release"
     printf '%s: Epic: %s\n' "$rel" "$branch"
-    jig_info "spec epic: commit $rel and merge it into $(cfg git.base_branch main), then run \`jig spec epic $id\` again to cut $branch"
+    [ -z "$release" ] || printf '%s: Release: %s\n' "$rel" "$release"
+    jig_info "spec epic: $(spec_ship_hint declare "$id" "$branch" "$rel")"
     return 0
   fi
+  [ -z "$release" ] || jig_die "spec epic: $rel declares ${line% *} already; the release level is recorded when the epic is declared — edit its Release: line instead"
   branch=${line% *}
   [ "${line##* }" = open ] || jig_die "spec epic: $rel marks epic $branch finished, as an older jig did; a finished epic's spec is removed now — delete the spec, or drop \"— finished\" to reopen it"
   git check-ref-format --branch "$branch" >/dev/null 2>&1 \
@@ -431,7 +445,7 @@ spec_epic_declare() {
   git -C "$JIG_PROJECT" branch "$branch" "$commit" >/dev/null 2>&1 \
     || jig_die "spec epic: could not create $branch"
   printf 'created: %s at %s\n' "$branch" "$commit"
-  jig_info "spec epic: push it with \`git push -u origin $branch\`"
+  jig_info "spec epic: $(spec_ship_hint cut "$id" "$branch" "$rel")"
 }
 
 spec_epic_finish() {
@@ -450,8 +464,13 @@ spec_epic_finish() {
   fi
   # The spec leaves with the epic's final pull request: its decisions are in
   # knowledge by now, and what is not is decided by a human first.
+  local release
+  release=$(spec_release_check "spec epic" "$rel" < "$roadmap") || exit 1
   spec_close_dir "$id" "spec epic" "$handled"
-  jig_info "spec epic: commit the removal with the version bump, then open the pull request from $branch into $default"
+  # The level the version is raised by in this commit, as recorded when the
+  # epic was declared; the rule that picks one when none was is the caller's.
+  printf 'release: %s\n' "${release:-not recorded}"
+  jig_info "spec epic: $(spec_ship_hint finish "$id" "$branch" "$rel")"
 }
 
 # spec_epic_reopen <id> — bring back the spec `--finish` removed, on its epic,
@@ -513,6 +532,309 @@ spec_trash_partial() {
   if mkdir -p "${dest%/*}" 2>/dev/null; then
     mv "$1" "$dest" 2>/dev/null || true
   fi
+}
+
+# --- release level ----------------------------------------------------------------
+
+# spec_release_valid <level> — patch, minor or major.
+spec_release_valid() {
+  case "$1" in patch | minor | major) return 0 ;; *) return 1 ;; esac
+}
+
+# spec_release_check <who> <rel> — read a roadmap on stdin and print the level
+# its `Release:` line records, or nothing when it has none. The line says how
+# far the epic's final pull request raises the version; it is recorded when
+# the epic is declared, while the human still answers (jig-idea §8), so an
+# unattended run never has to guess a release a human would have chosen.
+# Every line starting with `Release:` counts, so a line with a typo or a
+# trailing remark is refused instead of silently read as "not recorded". Dies
+# on a value other than patch|minor|major and on two lines that disagree.
+spec_release_check() {
+  local who="$1" rel="$2" out rc=0
+  out=$(awk '
+    /^Release:/ {
+      v = $0
+      sub(/^Release:[[:space:]]*/, "", v)
+      sub(/[[:space:]]+$/, "", v)
+      if (v !~ /^(patch|minor|major)$/) { print v; bad = 1; exit }
+      if (found == "") found = v
+      else if (found != v) conflict = 1
+    }
+    END {
+      if (bad) exit 1
+      if (conflict) exit 2
+      if (found != "") print found
+    }') || rc=$?
+  case "$rc" in
+    0) [ -z "$out" ] || printf '%s\n' "$out" ;;
+    2) jig_die "$who: $rel records more than one release level; keep one Release: line" ;;
+    *) jig_die "$who: $rel records an invalid release level: ${out:-(empty)} (expected Release: patch|minor|major)" ;;
+  esac
+}
+
+# --- shipping spec work (adr-20260922-spec-work-ships-by-the-agent-git-level) -----
+
+# spec_ship_level — agent.git for the next-step lines `spec epic` prints: an
+# invalid value reads as `none` here, because only `spec ship` may refuse it.
+spec_ship_level() {
+  local level
+  level=$(jig_agent_git 2>/dev/null) || level=none
+  printf '%s\n' "$level"
+}
+
+# spec_ship_hint declare|cut|finish <id> <branch> <rel> — the step after
+# `spec epic`, named by whose it is at this clone's agent.git level.
+# shellcheck disable=SC2016 # the backticks are literal: they quote a command
+spec_ship_hint() {
+  local step="$1" id="$2" branch="$3" rel="$4" level default does
+  level=$(spec_ship_level)
+  default=$(cfg git.base_branch main)
+  case "$step" in
+    declare)
+      case "$level" in
+        commit) does="it commits; the push and the pull request into $default are yours" ;;
+        push) does="it commits and pushes; the pull request into $default is yours" ;;
+        pr) does="it commits, pushes and opens the pull request into $default" ;;
+        *)
+          printf 'commit %s and merge it into %s, then run `jig spec epic %s` again to cut %s\n' "$rel" "$default" "$id" "$branch"
+          return 0 ;;
+      esac
+      printf 'stage %s/ and run `jig spec ship %s` (agent.git: %s — %s); once it is merged into %s, run `jig spec epic %s` again to cut %s\n' \
+        "${rel%/roadmap.md}" "$id" "$level" "$does" "$default" "$id" "$branch"
+      ;;
+    cut)
+      case "$level" in
+        push | pr) printf 'push it with `jig spec ship %s`\n' "$id" ;;
+        *) printf 'push it with `git push -u origin %s` — yours at agent.git: %s\n' "$branch" "$level" ;;
+      esac
+      ;;
+    finish)
+      case "$level" in
+        commit) does="it commits; pushing $branch and the pull request into $default are yours" ;;
+        push) does="it commits and pushes $branch; the pull request into $default is yours" ;;
+        pr) does="it commits, pushes $branch and opens the pull request into $default" ;;
+        *)
+          printf 'commit the removal with the version bump, then open the pull request from %s into %s\n' "$branch" "$default"
+          return 0 ;;
+      esac
+      printf 'stage the removal with the version bump and run `jig spec ship %s` (agent.git: %s — %s)\n' "$id" "$level" "$does"
+      ;;
+  esac
+}
+
+# spec_ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]
+#
+# Carries spec work as far as `agent.git` allows, through the same git steps as
+# `task ship` (jig_ship_*, common.sh). What to ship is read from the state of
+# the checkout, never from a flag, and printed first as `mode: <mode>`:
+#
+# - declare — the spec is here and its Epic: line is not on the freshest
+#   default branch yet (or it has no epic): commit what is staged, all of it
+#   under the spec's own directory, on a branch of its own — `spec/<id>`,
+#   switched to from the default branch — push it and open the pull request
+#   into the default branch.
+# - epic — the Epic: line is on the default branch and the epic exists here:
+#   push it (after it was cut, or after the default branch was merged into it).
+#   Commits nothing.
+# - final — on the epic, with the spec removed by `spec epic --finish`: commit
+#   the staged removal and version bump, push the epic, open its pull request
+#   into the default branch.
+#
+# Never merges. At `none` it exits 3, like `task ship`: the skill reads it as
+# "the human's step".
+spec_ship() {
+  [ $# -ge 1 ] || jig_die "spec ship: missing spec id (usage: jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>])"
+  local id="$1" message_file="" title="" body_file=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --message-file)
+        [ $# -ge 2 ] || jig_die "spec ship: --message-file requires a value"
+        message_file="$2"
+        shift 2 ;;
+      --title)
+        [ $# -ge 2 ] || jig_die "spec ship: --title requires a value"
+        title="$2"
+        shift 2 ;;
+      --body-file)
+        [ $# -ge 2 ] || jig_die "spec ship: --body-file requires a value"
+        body_file="$2"
+        shift 2 ;;
+      *) jig_die "spec ship: unexpected argument: $1" ;;
+    esac
+  done
+  spec_valid_id "$id" || jig_die "spec ship: invalid spec id: $id"
+  jig_require_init
+  [ -z "$message_file" ] || [ -f "$message_file" ] || jig_die "spec ship: --message-file: no such file: $message_file"
+  [ -z "$body_file" ] || [ -f "$body_file" ] || jig_die "spec ship: --body-file: no such file: $body_file"
+
+  # Level first, before anything else changes (as `task ship`).
+  local level
+  level=$(jig_agent_git) || jig_die "spec ship: invalid agent.git: $level (expected none|commit|push|pr)"
+  if [ "$level" = none ]; then
+    printf "spec ship: agent.git is none in this clone; committing, pushing and the pull request are the human's\n" >&2
+    exit 3
+  fi
+
+  local dir rel roadmap here default line branch mode rc=0 start on_default
+  dir="$(spec_dir)/$id"
+  rel="$JIG_AI_DIR/specs/$id"
+  roadmap="$rel/roadmap.md"
+  default=$(cfg git.base_branch main)
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ -n "$here" ] || jig_die "spec ship: HEAD is detached; switch to a branch first"
+
+  if [ -d "$dir" ]; then
+    [ -f "$dir/roadmap.md" ] || jig_die "spec ship: $rel has no roadmap"
+    line=$(jig_spec_epic "$dir/roadmap.md") || rc=$?
+    [ "$rc" -ne 2 ] || jig_die "spec ship: $roadmap declares more than one epic; keep one Epic: line"
+    spec_release_check "spec ship" "$roadmap" < "$dir/roadmap.md" >/dev/null
+    mode=declare
+    if [ -n "$line" ]; then
+      branch=${line% *}
+      [ "${line##* }" = open ] || jig_die "spec ship: $roadmap marks epic $branch finished, as an older jig did; a finished epic's spec is removed now"
+      git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+        || jig_die "spec ship: git rejects the branch name: $branch"
+      if [ "$here" = "$branch" ]; then
+        mode=epic
+      else
+        jig_fetch_branches "spec ship" "$default"
+        start=$(jig_fresh_base_ref "$default" "spec ship") || exit 1
+        if [ "$start" != HEAD ]; then
+          rc=0
+          on_default=$(git -C "$JIG_PROJECT" show "$start:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+          [ "$rc" -ne 0 ] || [ "$on_default" != "$branch open" ] || mode=epic
+        fi
+      fi
+    fi
+  else
+    mode=final
+    branch=$(spec_ship_removed_epic "$id") || exit 1
+    [ "$here" = "$branch" ] \
+      || jig_die "spec ship: $rel is not here; an epic's final pull request is shipped from $branch — switch to it first"
+  fi
+
+  printf 'mode: %s\n' "$mode"
+  case "$mode" in
+    declare) spec_ship_declare "$id" "$level" "$here" "$default" "$message_file" "$title" "$body_file" "$line" ;;
+    epic) spec_ship_epic "$id" "$level" "$branch" ;;
+    final) spec_ship_final "$id" "$level" "$branch" "$default" "$message_file" "$title" "$body_file" ;;
+  esac
+}
+
+# spec_ship_removed_epic <id> — the epic a removed spec declared, read from git
+# the way `epic --reopen` reads it: HEAD while the removal is not committed,
+# else the commit before the one that deleted the roadmap. Dies when this
+# branch never held the spec with an open Epic: line.
+spec_ship_removed_epic() {
+  local id="$1" roadmap src del line rc=0
+  roadmap="$JIG_AI_DIR/specs/$id/roadmap.md"
+  if git -C "$JIG_PROJECT" cat-file -e "HEAD:$roadmap" 2>/dev/null; then
+    src=HEAD
+  else
+    del=$(git -C "$JIG_PROJECT" log -1 --diff-filter=D --format=%H -- "$roadmap" 2>/dev/null) || del=""
+    [ -n "$del" ] || jig_die "spec ship: no spec $id here, and none removed in the history of this branch"
+    src="$del^"
+  fi
+  line=$(git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$line" ] || [ "${line##* }" != open ]; then
+    jig_die "spec ship: the removed $roadmap declares no open epic; only an epic's final pull request ships a removed spec"
+  fi
+  # Validated where it is read, as the release level the final PR carries.
+  git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | spec_release_check "spec ship" "$roadmap" >/dev/null || exit 1
+  printf '%s\n' "${line% *}"
+}
+
+# spec_ship_steps <level> <branch> <base> <message-file> <title> <body-file> —
+# commit, push <branch>, open its pull request into <base>, stopping where
+# <level> stops; the same steps and stop lines as `task ship`.
+spec_ship_steps() {
+  local level="$1" branch="$2" base="$3" message_file="$4" title="$5" body_file="$6"
+  jig_ship_commit "spec ship" "$message_file"
+  if [ "$level" = commit ]; then
+    printf "stopped at commit: push is the human's\n"
+    return 0
+  fi
+  jig_ship_push "spec ship" "$branch"
+  if [ "$level" = push ]; then
+    printf "stopped at push: the pull request is the human's\n"
+    return 0
+  fi
+  jig_ship_pr "spec ship" "$branch" "$base" "$message_file" "$title" "$body_file"
+}
+
+spec_ship_declare() {
+  local id="$1" level="$2" here="$3" default="$4" message_file="$5" title="$6" body_file="$7" line="$8"
+  local rel branch p bad=""
+  rel="$JIG_AI_DIR/specs/$id"
+  [ -n "$message_file" ] || jig_die "spec ship: declaring commits; --message-file is required"
+  case "$here" in
+    epic/*) jig_die "spec ship: $here is an epic branch; the declaration goes into $default from a branch of its own" ;;
+  esac
+  jig_ship_check_staged "spec ship"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in
+      "$rel/"*) ;;
+      *) bad="$bad
+$p" ;;
+    esac
+  done <<EOF
+$(jig_ship_staged)
+EOF
+  bad=$(printf '%s\n' "$bad" | sed '/^$/d')
+  if [ -n "$bad" ]; then
+    jig_die "spec ship: a declaration commits only $rel/; staged outside it:
+$bad"
+  fi
+  branch="$here"
+  if [ "$here" = "$default" ]; then
+    # Nothing is committed to the default branch: the declaration gets a
+    # branch of its own, and the working tree and index come along unchanged.
+    branch="spec/$id"
+    git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+      || jig_die "spec ship: git rejects the branch name: $branch"
+    if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
+      jig_die "spec ship: $branch exists already; switch to it and run again"
+    fi
+    git -C "$JIG_PROJECT" switch --quiet -c "$branch" >/dev/null 2>&1 \
+      || jig_die "spec ship: could not switch to a new branch $branch"
+    printf 'switched to %s\n' "$branch"
+  fi
+  spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file"
+  [ -z "$line" ] || jig_info "spec ship: once $branch is merged into $default, run \`jig spec epic $id\` to cut ${line% *}"
+}
+
+spec_ship_epic() {
+  local id="$1" level="$2" branch="$3"
+  [ -z "$(jig_ship_staged)" ] \
+    || jig_die "spec ship: pushing $branch commits nothing, and something is staged; commit it through a task or unstage it first"
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 \
+    || jig_die "spec ship: $branch is not a local branch here; cut it with \`jig spec epic $id\`"
+  if [ "$level" = commit ]; then
+    printf "stopped at commit: pushing %s is the human's\n" "$branch"
+    return 0
+  fi
+  jig_ship_push "spec ship" "$branch"
+}
+
+spec_ship_final() {
+  local id="$1" level="$2" branch="$3" default="$4" message_file="$5" title="$6" body_file="$7"
+  local rel start
+  rel="$JIG_AI_DIR/specs/$id"
+  [ -n "$message_file" ] || jig_die "spec ship: the final pull request commits; --message-file is required"
+  jig_fetch_branches "spec ship" "$default"
+  start=$(jig_fresh_base_ref "$default" "spec ship") || exit 1
+  # Checked again although --finish checked it: the default branch may have
+  # moved between the finish and the ship.
+  if [ "$start" != HEAD ] \
+     && ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$start" HEAD 2>/dev/null; then
+    jig_die "spec ship: $branch does not contain the latest $default; merge $default into it first"
+  fi
+  jig_ship_check_staged "spec ship"
+  [ -z "$(git -C "$JIG_PROJECT" ls-files --cached -- "$rel/" 2>/dev/null)" ] \
+    || jig_die "spec ship: the removal of $rel/ is not staged; stage it with the version bump first"
+  spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file"
 }
 
 # --- closing a spec --------------------------------------------------------------
@@ -589,23 +911,27 @@ spec_close() {
   jig_info "spec close: commit the removal together with the change that finished the spec"
 }
 
-# spec_epic_write <roadmap> declare <branch> — add the Epic: line, atomically,
-# after the Destination: paragraph; refuses a roadmap without one.
+# spec_epic_write <roadmap> declare <branch> [<release>] — add the Epic: line,
+# and the Release: line under it when a level is given (replacing any Release:
+# line already there), atomically, after the Destination: paragraph; refuses a
+# roadmap without one.
 spec_epic_write() {
-  local roadmap="$1" branch="$3" tmp
+  local roadmap="$1" branch="$3" release="${4:-}" tmp
   tmp="$roadmap.tmp.$$"
   # The destination is a paragraph and may wrap: the line goes after the
   # paragraph ends, never inside the sentence.
-  awk -v b="$branch" '
+  awk -v b="$branch" -v r="$release" '
+    function declare() { print ""; print "Epic: " b; if (r != "") print "Release: " r }
+    r != "" && /^Release:/ { next }
     {
-      if (pending && !done && $0 ~ /^[[:space:]]*$/) { print ""; print "Epic: " b; done = 1 }
+      if (pending && !done && $0 ~ /^[[:space:]]*$/) { declare(); done = 1 }
       print
       if (!pending && $0 ~ /^Destination:/) pending = 1
     }
     END {
       if (done) exit 0
       if (!pending) exit 3
-      print ""; print "Epic: " b
+      declare()
     }
   ' "$roadmap" > "$tmp" || {
     rm -f "$tmp"

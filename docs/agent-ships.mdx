@@ -1,6 +1,6 @@
 ---
 title: "Letting the agent ship"
-description: "Let the agent commit, push and open the pull request for a finished task — how to turn it on, what happens, and what stays yours."
+description: "Let the agent commit, push and open the pull request for a finished task or a specification's epic — how to turn it on, what happens, and what stays yours."
 ---
 
 By default a finished task waits in your working tree: you read the diff, commit it and open the
@@ -54,7 +54,8 @@ everyone, and a shared value would switch every contributor's agent on. `jig sta
 | `push` | Commits and pushes the task's branch. | A pushed branch: open the pull request. |
 | `pr` | Commits, pushes and opens the pull request. | An open pull request: review and merge. |
 
-No level merges. Merging is your decision, always.
+No level merges. Merging is your decision, always. The same levels apply to a specification's epic
+([Specs and epics](#specs-and-epics)).
 
 ## What happens at the end of a task
 
@@ -82,6 +83,34 @@ When the work is finished and checked, the agent:
 
 The pull request goes into the branch the task was cut from: your main branch, or the epic branch
 of a specification released at once ([New project](/greenfield)). You do not have to pick it.
+
+## Specs and epics
+
+The same setting covers the work of a [specification released at once](/greenfield): the spec
+reaching your main branch, the epic branch, and the epic's final pull request. The agent runs
+`jig spec ship <id>`, which works out which of the three it is from where your repository stands,
+prints it (`mode: declare`, `mode: epic` or `mode: final`) and goes as far as your level allows:
+
+| Step | `none` | `commit` | `push` | `pr` |
+|---|---|---|---|---|
+| The spec and its epic line reach the main branch | yours | committed on `spec/<id>` | and pushed | and a pull request into main |
+| The epic branch, after it is cut or after main was merged into it | yours | yours | pushed | pushed |
+| The finished epic: the spec's removal with the version bump | yours | committed on the epic | and pushed | and a pull request into main |
+
+What stays yours at every level:
+
+- **Finishing.** The agent finishes an epic only when you say every phase is in.
+- **The version.** You choose patch, minor or major when the epic is declared; at the finish the
+  agent raises the version by that choice, or proposes one and waits for your yes when none was
+  recorded.
+- **Merging.** Merging the epic's final pull request is the release, and no level does it.
+
+`jig spec ship` keeps the limits of `jig task ship` below: it never merges, force-pushes or skips
+hooks, commits only what was staged, and refuses when task notes or runtime files are staged. A spec
+reaching main is committed on a branch of its own, never on main itself, and may stage nothing but
+the spec. The epic is pushed only as a fast-forward: when someone else moved it on the server, the
+push is refused and the agent tells you. The final pull request is refused until the epic holds the
+latest main.
 
 ## Review, fix, merge
 

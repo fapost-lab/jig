@@ -110,9 +110,10 @@ wrong from inside this domain's code:
 (adr-20260921-agent-git-rights-are-a-local-setting). It reads three things other parts of this
 domain own — `knowledge_consolidated`, `branch` and the task base through `jig_task_base` — and
 refuses on each before it touches git, so a renamed field turns into a refusal, not a commit on
-the wrong branch. How far it goes is `agent.git`, a local-only key of the config layer; the
-forge it opens the pull request on is resolved by `jig_forge_kind` in `common.sh`, the same answer
-housekeeping reads PR state from.
+the wrong branch. How far it goes is `agent.git`, a local-only key of the config layer; the git
+steps themselves — commit, push, pull request — are `jig_ship_*` in `common.sh`, shared with
+`jig spec ship` (adr-20260922-spec-work-ships-by-the-agent-git-level), and the forge they open the
+pull request on is resolved by `jig_forge_kind`, the same answer housekeeping reads PR state from.
 
 **The findings ledger is this domain's, and it adds two cross-key rules to `task set`**
 (adr-20260921-review-findings-block-completion). `status ready` and `knowledge_consolidated true`

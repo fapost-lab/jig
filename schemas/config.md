@@ -18,7 +18,7 @@ Absent keys take the default. Paths are not configurable.
 | `housekeeping.trash_ttl` | `7d` | yes | trash entries older than this are deleted |
 | `housekeeping.abandoned_ttl` | `14d` | yes | abandoned workspaces are purged after this |
 | `housekeeping.stale_after` | `60d` | yes | older active tasks are reported as `STALE_CANDIDATE` |
-| `agent.git` | `none` | only | how far the agent takes a finished task: `none`, `commit`, `push`, `pr` (ADR adr-20260921-agent-git-rights-are-a-local-setting) |
+| `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr` (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level) |
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
 | `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 
