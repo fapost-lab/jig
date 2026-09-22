@@ -11,8 +11,9 @@ paths:
   - scripts/lib/config.sh
   - scripts/lib/task.sh
   - skills/jig-consolidate/SKILL.md
+  - scripts/lib/common.sh
 summary: Why agent.git (none|commit|push|pr) is read only from the clone's local config, why jig task ship does the git work up to that level, and why no level merges.
-reviewed_at: 2026-09-21
+reviewed_at: 2026-09-22
 ---
 # Whether an agent commits, pushes or opens a pull request is a per-clone setting, and a script ships the change
 
@@ -81,3 +82,7 @@ contributor's agent starts committing.
 - Pushing an epic and opening a specification's final pull request are not covered: `jig spec epic`
   and `jig-idea` still name those steps as the human's (task `agent-git-epics`).
 - ADR-0029's "Agents here do not commit" is now the `none` level of this setting, not a rule.
+
+> **Amendment (2026-09-22).** The consequence left open above is decided: spec work ships by the same
+> level through `jig spec ship`, and the git steps both commands take live in `common.sh`
+> (adr-20260922-spec-work-ships-by-the-agent-git-level).
