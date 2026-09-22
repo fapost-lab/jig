@@ -117,26 +117,31 @@ Frontmatter is never hand-edited: the commands above own it (ADR-0001, ADR-0010)
 
 ```
 .ai/scripts/jig knowledge check
-.ai/scripts/jig spec done <id>
 .ai/scripts/jig task set <id> knowledge_consolidated true
 ```
 
 `task set … knowledge_consolidated true` refuses while a P0 or P1 review finding is unresolved,
 or when the change moved after its review; resolve the finding or re-review first ([findings](../jig-review/references/findings.md)).
 
-`spec done` checks the roadmap items that name the task when its `task.md` carries a `Spec:`
-line, so the checkmark reaches the base branch in the same change as the work; for a task with
-no link it says so and changes nothing. If it reports that no roadmap item names the task, the
-roadmap and the task disagree: ask the human, and do not edit the roadmap by hand.
-
 **In a phase run this task is not yours to finish.** When `jig task show <id>` has an
 `autopilot_phase` line, a coordinator started this task as one of a roadmap wave
-(adr-20260922-a-phase-run-is-coordinated). Then: do not run `spec done` — it refuses in this
-branch, and the coordinator checks the item after the merge — and **stop after
-`knowledge_consolidated true`**. Stage the change, write the commit message to
+(adr-20260922-a-phase-run-is-coordinated). Then **stop here**: the rest of this section and §6
+are the coordinator's. Stage the change, write the commit message to
 `.ai/workspace/tasks/<id>/commit-message` and the pull request body to `pr-body`, and report
-back. `jig task ship`, `jig task autopilot <id> end` and §6 below are the coordinator's: it
-ships one task at a time so that two of them cannot merge past each other.
+back. The coordinator ships one task at a time so that two of them cannot merge past each
+other, runs `jig task ship` and `jig task autopilot <id> end` itself, and checks the roadmap
+item after the merge — `spec done` below refuses in this branch, by design.
+
+Every other run checks the roadmap here, before the commit:
+
+```
+.ai/scripts/jig spec done <id>
+```
+
+It checks the roadmap items that name the task when its `task.md` carries a `Spec:` line, so
+the checkmark reaches the base branch in the same change as the work; for a task with no link
+it says so and changes nothing. If it reports that no roadmap item names the task, the roadmap
+and the task disagree: ask the human, and do not edit the roadmap by hand.
 
 When it prints `roadmap complete`, the spec is closed in this same change: its decisions are knowledge
 now. Run the command it names. It first lists what knowledge does not hold — unchecked items, fog,

@@ -126,3 +126,23 @@ value the key's reader would misread — the same checks the readers use (`jig_c
 beside `jig_agent_git` and `jig_ci_timeout`). Not being ignored by git stays a warning. There is
 no project-file counterpart: `.ai/config.yaml` is the team's, changed by hand and reviewed like
 code, so the command refuses without `--local` rather than defaulting to either file.
+
+## Amendment (2026-09-22): a second command removes keys, on any key the file holds
+
+`jig config unset <key> [<key>...] --local` is the other half of the amendment above, and it
+takes a wider set of keys on purpose: any key the file holds, not only `JIG_CFG_LOCAL_KEYS`.
+The keys worth removing are precisely the ones this ADR's list excludes — a misspelling, or a
+setting from a Jig that had that key — because `cfg` answers from none of them, so `jig status`
+and `jig config show --local` report them as ignored. Refusing them would have left a hand edit
+of a file the tooling owns as the only way out (ADR-0001).
+
+Removing a key can only widen what a reader falls back to, never grant anything: a local-only
+key returns to its default, and any other returns to `.ai/config.yaml`, which is the layering
+this ADR already describes. So the narrow key list guards writes of values, which change what an
+agent may do, and not removals. Every line setting the key goes, not only the first one `cfg`
+reads, and a key the file does not hold is reported while the file is left untouched. The rest
+of this ADR's lines hold: only the clone's file, never `.ai/config.yaml`, refusal without
+`--local`.
+
+`jig config show --local` names the ignored keys after printing the file, so the report a person
+acts on and the list `jig status` prints cannot disagree.

@@ -318,11 +318,17 @@ jig_config_value_problem() {
 }
 
 # --- jig config ---------------------------------------------------------------
-# `jig config set <key> <value> [<key> <value>...] --local [--dry-run]` and
+# `jig config set <key> <value> [<key> <value>...] --local [--dry-run]`,
+# `jig config unset <key> [<key>...] --local [--dry-run]` and
 # `jig config show --local`. Writes only the clone's .ai/config.local.yaml,
-# only keys in JIG_CFG_LOCAL_KEYS, only values the readers accept, and never
-# .ai/config.yaml: that file is the team's, edited by hand and reviewed like
-# code (ADR-0038).
+# and never .ai/config.yaml: that file is the team's, edited by hand and
+# reviewed like code (ADR-0038).
+#
+# `set` writes only keys in JIG_CFG_LOCAL_KEYS and only values the readers
+# accept. `unset` takes any key the file holds, local or not: a key no reader
+# answers from is exactly the one a person wants gone, and refusing it would
+# leave the only way to remove it a hand edit of a file the tooling owns
+# (ADR-0001).
 
 # Referenced from the EXIT trap, so global (convention-shell).
 _CONFIG_TMP=""
@@ -332,14 +338,16 @@ cmd_config() {
   [ $# -gt 0 ] && shift
   case "$sub" in
     set) _config_set "$@" ;;
+    unset) _config_unset "$@" ;;
     show) _config_show "$@" ;;
     help | -h | --help)
       printf 'usage: jig config set <key> <value> [<key> <value>...] --local [--dry-run]\n'
+      printf '       jig config unset <key> [<key>...] --local [--dry-run]\n'
       printf '       jig config show --local\n'
       printf 'local keys: %s\n' "$JIG_CFG_LOCAL_KEYS"
       ;;
-    '') jig_die "config: missing subcommand (usage: jig config set|show ... --local)" ;;
-    *) jig_die "config: unknown subcommand: $sub (usage: jig config set|show ... --local)" ;;
+    '') jig_die "config: missing subcommand (usage: jig config set|unset|show ... --local)" ;;
+    *) jig_die "config: unknown subcommand: $sub (usage: jig config set|unset|show ... --local)" ;;
   esac
 }
 
@@ -378,6 +386,15 @@ _config_show() {
     return 0
   fi
   cat "$file"
+  # Then the keys in it that no reader answers from — the `ignored` kind of
+  # jig_config_local_entries, the same answer `jig status` gives. Printing the
+  # file alone showed a misspelt or non-local key as if it were a setting,
+  # which is the one thing this command must not do; each is named with the
+  # command that removes it, since `jig config set` cannot.
+  jig_config_local_entries | awk -F'\t' '
+    $3 == "ignored" {
+      printf "ignored: %s (not a local key; jig config unset %s --local)\n", $1, $1
+    }'
 }
 
 # _config_apply <in> <out> <key> <value> — <in> with <key> set to <value>: the
@@ -461,4 +478,111 @@ _config_set() {
     i=$((i + 2))
   done
   _config_warn_ignored "$shown"
+}
+
+# _config_has_key <file> <key> — exit 0 when <file> has a line setting <key>.
+# The same anchoring _cfg_read and _config_apply use, so "is it there", "what
+# does it read" and "what does a write replace" cannot disagree.
+_config_has_key() {
+  JIG_CFG_KEY="$2" awk '
+    BEGIN { k = ENVIRON["JIG_CFG_KEY"]; n = length(k) + 1 }
+    substr($0, 1, n) == k ":" { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$1"
+}
+
+# _config_remove <in> <out> <key> — <in> without any line that sets <key>.
+# Every occurrence, not only the first one `cfg` reads: reporting a key as
+# removed while a later duplicate still sets it is the kind of half-truth this
+# command exists to clear away.
+_config_remove() {
+  JIG_CFG_KEY="$3" awk '
+    BEGIN { k = ENVIRON["JIG_CFG_KEY"]; n = length(k) + 1 }
+    substr($0, 1, n) == k ":" { next }
+    { print }
+  ' "$1" > "$2"
+}
+
+# _config_unset — `jig config unset <key> [<key>...] --local [--dry-run]`.
+#
+# Any key the file holds, local or not (see the section header). A key the file
+# does not hold is reported and costs nothing: this is how a person clears out
+# what `jig status` and `jig config show` call `ignored`, and a refusal there
+# would send them back to editing the file by hand.
+_config_unset() {
+  local local_flag=0 dry=0 n=0 key file shown i removed=0
+  local args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) local_flag=1; shift ;;
+      --dry-run) dry=1; shift ;;
+      --*) jig_die "config unset: unknown flag: $1 (usage: jig config unset <key> [<key>...] --local [--dry-run])" ;;
+      *) args[n]="$1"; n=$((n + 1)); shift ;;
+    esac
+  done
+  [ "$local_flag" = 1 ] || _config_refuse_project unset
+  [ "$n" -gt 0 ] \
+    || jig_die "config unset: missing key (usage: jig config unset <key> [<key>...] --local [--dry-run])"
+
+  # A key is a name the file's own grammar allows (jig_config_local_entries
+  # reads exactly this set); anything else could never be in the file, so
+  # saying so beats silently removing nothing.
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    case "${args[i]}" in
+      '' | *[!A-Za-z0-9_.-]*)
+        jig_die "config unset: not a key name: '${args[i]}' (letters, digits, '.', '_' and '-')" ;;
+    esac
+    i=$((i + 1))
+  done
+
+  jig_require_repo
+  file=$(jig_config_local_file)
+  shown=$(_config_display_path "$file")
+  if [ ! -f "$file" ]; then
+    printf 'no local settings: %s does not exist\n' "$shown"
+    return 0
+  fi
+
+  _CONFIG_TMP="$file.tmp.$$"
+  trap 'rm -f "$_CONFIG_TMP" "$_CONFIG_TMP.next"' EXIT
+  cat "$file" > "$_CONFIG_TMP"
+  # The report is built here, against the file as it still is, so "unset" and
+  # "not set" say what actually happened rather than what was asked for.
+  local report=""
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    key=${args[i]}
+    if _config_has_key "$_CONFIG_TMP" "$key"; then
+      _config_remove "$_CONFIG_TMP" "$_CONFIG_TMP.next" "$key"
+      mv "$_CONFIG_TMP.next" "$_CONFIG_TMP"
+      removed=$((removed + 1))
+      report="$report$(printf 'config: unset %s (%s)' "$key" "$shown")
+"
+    else
+      report="$report$(printf 'config: %s is not set (%s)' "$key" "$shown")
+"
+    fi
+    i=$((i + 1))
+  done
+
+  if [ "$dry" = 1 ]; then
+    # stdout is the file that would be written and nothing else, as it is for
+    # `config set --dry-run`: `jig-setup` shows that output to a person as the
+    # file. The per-key lines go to stderr with the dry-run notice, and say
+    # "would unset", because this run removed nothing.
+    cat "$_CONFIG_TMP"
+    rm -f "$_CONFIG_TMP"
+    printf '%s' "$report" | sed 's/^config: unset /config: would unset /' >&2
+    printf 'config: dry run, nothing written to %s\n' "$shown" >&2
+    return 0
+  fi
+  # An untouched file is left untouched, mtime included: nothing was asked of
+  # it that it did not already satisfy.
+  if [ "$removed" -gt 0 ]; then
+    mv "$_CONFIG_TMP" "$file"
+  else
+    rm -f "$_CONFIG_TMP"
+  fi
+  printf '%s' "$report"
 }

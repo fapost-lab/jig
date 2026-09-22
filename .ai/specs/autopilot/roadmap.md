@@ -102,7 +102,7 @@ CONTRIBUTING says which `jig` a contributor runs, since developing Jig with Jig 
 installations on one machine; no report this epic added contradicts itself in front of a reader who
 believes it; the version is raised in the final pull request from the epic.
 
-- [ ] `truthful-reports` — Every report this epic added says something its reader can act on:
+- [x] `truthful-reports` — Every report this epic added says something its reader can act on:
   `jig doctor` stops calling a project current while dozens of framework files are pending, the
   status page stops showing `base main` for a task of an epic that has not started yet, `jig-setup`
   stops listing keys it cannot remove from the local file, `jig-consolidate` §5 orders its commands

@@ -1297,7 +1297,40 @@ EOF2
   assert_contains "$page" '<span class="badge ok">current</span>'
   assert_contains "$page" '<span class="badge bad">none (required for T4)</span>'
   assert_contains "$page" '<span class="badge">none</span>'
-  assert_contains "$page" '<td class="id"><code>t2-unreviewed</code></td><td>T2</td><td>active</td><td><span class="muted">filed, not started</span></td><td>main</td>'
+  assert_contains "$page" '<td class="id"><code>t2-unreviewed</code></td><td>T2</td><td>active</td><td><span class="muted">filed, not started</span></td><td class="muted">-</td>'
+}
+
+# --- the Base column: the Task Base, or nothing -------------------------------
+#
+# The base is recorded by `jig task start` (_task_start_base) and by nothing
+# else, and it is not always `git.base_branch`: a task linked to a spec with an
+# open epic is cut from the epic. The page used to substitute the project
+# default for a task that had not started, which shows a guess as a fact and
+# can be the wrong branch. The text page and `jig task list` never did.
+
+test_status_html_base_column_is_empty_until_the_task_starts() {
+  fixture_jig_repo
+  fixture_task filed task/filed active "class:T1"
+  fixture_task started task/started active "class:T1" "base_branch:main"
+  fixture_task on-epic task/on-epic active "class:T1" "base_branch:epic/autopilot"
+  # A filed task has no base at all, which fixture_task models by omission.
+  sed '/^base_branch:/d' .ai/workspace/tasks/filed/state > .ai/workspace/tasks/filed/state.new
+  mv .ai/workspace/tasks/filed/state.new .ai/workspace/tasks/filed/state
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  # One row per line (_status_html_task_row), so a row can be asserted whole.
+  local page row
+  page=$(cat .ai/runtime/status.html)
+  row=$(printf '%s\n' "$page" | grep '<code>filed</code>') || fail "no row for filed"
+  # The Base cell, then the Worktree cell: both empty, both muted.
+  assert_contains "$row" '<td class="muted">-</td><td class="muted">-</td>'
+  assert_not_contains "$row" '<td>main</td>'
+  # A recorded base is still printed, the project's own included.
+  row=$(printf '%s\n' "$page" | grep '<code>started</code>') || fail "no row for started"
+  assert_contains "$row" '<td>main</td>'
+  row=$(printf '%s\n' "$page" | grep '<code>on-epic</code>') || fail "no row for on-epic"
+  assert_contains "$row" '<td>epic/autopilot</td>'
 }
 
 test_status_html_lists_many_tasks_and_counts_finished_ones() {
