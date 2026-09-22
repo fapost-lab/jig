@@ -16,7 +16,7 @@ queue it is counting.
 - [x] `agent-git-rights` — Agent git rights as a local setting — ADR replacing the unwritten "agents do not
   commit", the whitelisted key, skills that commit/push/open a PR up to the level, `jig
   status` and the README telling the two queues apart
-- [ ] `agent-git-epics` — Agent git rights reach spec work — with the level allowing it, the
+- [x] `agent-git-epics` — Agent git rights reach spec work — with the level allowing it, the
   agent pushes the epic and opens the spec's final pull request (after: agent-git-rights — it
   uses that task's key and `jig task ship`)
 

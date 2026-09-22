@@ -309,7 +309,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -323,7 +323,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -331,7 +331,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -1927,4 +1927,469 @@ test_spec_status_page_new_spec_appears_on_the_page() {
   jig status --html >/dev/null
   jig spec new my-idea >/dev/null
   assert_file_contains .ai/runtime/status.html "<code>my-idea</code>"
+}
+
+# --- spec ship (adr-20260922-spec-work-ships-by-the-agent-git-level) -----------
+
+# sship_cfg_local <key> <value> — set a key in .ai/config.local.yaml, where
+# agent.git is read from (ADR-0038). Mirrors task.t.sh's ship_cfg_local;
+# duplicated because each test file sources only itself.
+sship_cfg_local() {
+  local file=".ai/config.local.yaml"
+  touch "$file"
+  if grep -q "^$1:" "$file"; then
+    sed "s|^$1:.*|$1: $2|" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  else
+    printf '%s: %s\n' "$1" "$2" >> "$file"
+  fi
+}
+
+# sship_cfg <key> <value> — rewrite one line of the project's config.yaml.
+sship_cfg() {
+  sed "s|^$1:.*|$1: $2|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+}
+
+# sship_origin — a bare `origin` holding every branch this repository has now.
+sship_origin() {
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+}
+
+# sship_stub_gh <existing-url-or-empty> — a fake, authenticated `gh`: `pr list`
+# prints <existing-url> or `null`, `pr create` records its arguments, one per
+# line, in gh-create.argv and prints a made-up URL. As task.t.sh's ship_stub_gh.
+sship_stub_gh() {
+  local existing="${1:-}"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  pr)
+    shift
+    case "\$1" in
+      list) if [ -n "$existing" ]; then printf '%s\n' "$existing"; else printf 'null\n'; fi ;;
+      create) shift; printf '%s\n' "\$@" > gh-create.argv; printf 'https://github.com/example/example/pull/42\n' ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  sship_cfg forge github
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# sship_declared <id> — a spec with its Epic: line written, not committed, and
+# staged, on main: what `jig-idea` has at hand when it ships a declaration.
+sship_declared() {
+  epic_setup
+  jig spec new "$1" >/dev/null
+  jig spec epic "$1" >/dev/null
+  git add ".ai/specs/$1"
+  printf 'Declare %s\n\nThe spec and its epic.\n' "$1" > msg.txt
+}
+
+# sship_cut <id> — the Epic: line on main and on origin, the epic cut here and
+# not pushed yet; checkout on main.
+sship_cut() {
+  epic_setup
+  jig spec new "$1" >/dev/null
+  jig spec epic "$1" >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  sship_origin
+  jig spec epic "$1" >/dev/null 2>&1
+}
+
+# sship_finished <id> — on the epic, pushed, with the spec removed by
+# `--finish`, the removal and a version bump staged.
+sship_finished() {
+  epic_ready_to_finish "$1"
+  sship_origin
+  jig spec epic "$1" --finish --leftovers-handled >/dev/null 2>&1
+  printf '1.0.0\n' > VERSION
+  git add -A ".ai/specs/$1" VERSION
+  printf 'Release %s\n\nThe epic, finished.\n' "$1" > msg.txt
+}
+
+test_spec_ship_none_level_exits_3_and_changes_nothing() {
+  sship_declared idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "spec ship: agent.git is none in this clone"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_contains "$(git status --porcelain -- .ai/specs/idea-x)" "A  .ai/specs/idea-x/roadmap.md"
+}
+
+test_spec_ship_ignores_agent_git_in_the_project_config() {
+  sship_declared idea-x
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 3 "$RC"
+}
+
+test_spec_ship_invalid_agent_git_dies() {
+  sship_declared idea-x
+  sship_cfg_local agent.git yolo
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: invalid agent.git: yolo (expected none|commit|push|pr)"
+}
+
+test_spec_ship_unknown_spec_dies() {
+  epic_setup
+  sship_cfg_local agent.git pr
+  run jig spec ship nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no spec nope here, and none removed in the history of this branch"
+}
+
+test_spec_ship_declare_at_commit_switches_off_main_and_commits() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  local main_sha
+  main_sha=$(git rev-parse main)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: declare"
+  assert_contains "$OUT" "switched to spec/idea-x"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "stopped at commit: push is the human's"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$main_sha" "$(git rev-parse main)" "nothing may be committed to main"
+  assert_eq "Declare idea-x" "$(git log -1 --format=%s)"
+}
+
+test_spec_ship_declare_requires_a_message_file() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declaring commits; --message-file is required"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_declare_refuses_staged_paths_outside_the_spec() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  printf 'other\n' > other.txt
+  git add other.txt
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a declaration commits only .ai/specs/idea-x/; staged outside it:"
+  assert_contains "$OUT" "other.txt"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_refuses_staged_workspace_paths() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  mkdir -p .ai/workspace/tasks/T-1
+  printf 'x\n' > .ai/workspace/tasks/T-1/notes.md
+  git add -f .ai/workspace/tasks/T-1/notes.md
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "staged changes under .ai/workspace/ or .ai/runtime/ are not shippable"
+}
+
+test_spec_ship_declare_refuses_when_its_branch_exists() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  git branch spec/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec/idea-x exists already; switch to it and run again"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_declare_at_pr_pushes_and_opens_the_pr_into_main() {
+  sship_declared idea-x
+  sship_origin
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: declare"
+  assert_contains "$OUT" "pushed spec/idea-x"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_contains "$OUT" 'once spec/idea-x is merged into main, run `jig spec epic idea-x` to cut epic/idea-x'
+  git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null \
+    || fail "spec/idea-x was not pushed"
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')"
+  assert_contains "$argv" "$(printf -- '--head\nspec/idea-x')"
+  assert_contains "$argv" "$(printf -- '--title\nDeclare idea-x')"
+}
+
+test_spec_ship_epic_at_push_pushes_the_cut_epic() {
+  sship_cut idea-x
+  sship_cfg_local agent.git push
+
+  run jig spec ship idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: epic"
+  assert_contains "$OUT" "pushed epic/idea-x"
+  assert_eq "$(git rev-parse epic/idea-x)" "$(git --git-dir=origin.git rev-parse refs/heads/epic/idea-x)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_epic_at_commit_leaves_the_push_to_the_human() {
+  sship_cut idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stopped at commit: pushing epic/idea-x is the human's"
+  if git --git-dir=origin.git rev-parse --verify --quiet refs/heads/epic/idea-x >/dev/null; then
+    fail "epic/idea-x was pushed at agent.git: commit"
+  fi
+}
+
+test_spec_ship_epic_refuses_what_is_staged() {
+  sship_cut idea-x
+  sship_cfg_local agent.git push
+  printf 'x\n' > x.txt
+  git add x.txt
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "pushing epic/idea-x commits nothing, and something is staged"
+}
+
+test_spec_ship_epic_never_forces_a_push_origin_moved_past() {
+  sship_cut idea-x
+  sship_cfg_local agent.git push
+  jig spec ship idea-x >/dev/null
+  git clone -q origin.git other
+  (cd other && git checkout -q epic/idea-x && printf 'theirs\n' > t.txt && git add t.txt \
+    && git commit -q -m theirs && git push -q origin epic/idea-x)
+  git checkout -q epic/idea-x
+  printf 'ours\n' > o.txt
+  git add o.txt
+  git commit -q -m ours
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: git push failed"
+}
+
+test_spec_ship_final_at_pr_commits_pushes_and_opens_the_pr_into_main() {
+  sship_finished idea-x
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: final"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed epic/idea-x"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_eq "" "$(git ls-files -- .ai/specs/idea-x)"
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')"
+  assert_contains "$argv" "$(printf -- '--head\nepic/idea-x')"
+  assert_contains "$argv" "$(printf -- '--title\nRelease idea-x')"
+}
+
+test_spec_ship_final_reports_an_open_pr_instead_of_a_second() {
+  sship_finished idea-x
+  sship_stub_gh "https://github.com/example/example/pull/7"
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/7 (already open)"
+  assert_no_file gh-create.argv
+}
+
+test_spec_ship_final_refuses_an_unstaged_removal() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+  git reset -q -- .ai/specs/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the removal of .ai/specs/idea-x/ is not staged"
+}
+
+test_spec_ship_final_refuses_an_epic_without_the_latest_main() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+  git stash -q
+  git checkout -q main
+  printf 'new\n' > new.txt
+  git add new.txt
+  git commit -q -m "new work on main"
+  git checkout -q epic/idea-x
+  git stash pop -q
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic/idea-x does not contain the latest main; merge main into it first"
+}
+
+test_spec_ship_final_runs_only_on_the_epic() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+  git commit -q -m "finish"
+  git checkout -q main
+  git merge -q --no-ff -m "release" epic/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "shipped from epic/idea-x — switch to it first"
+}
+
+# --- spec epic: the next step by agent.git -------------------------------------
+
+test_spec_epic_declare_names_spec_ship_when_the_agent_commits() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  sship_cfg_local agent.git pr
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'stage .ai/specs/idea-x/ and run `jig spec ship idea-x` (agent.git: pr — it commits, pushes and opens the pull request into main)'
+  assert_not_contains "$OUT" "commit .ai/specs/idea-x/roadmap.md and merge it"
+}
+
+test_spec_epic_cut_names_spec_ship_when_the_agent_pushes() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  sship_cfg_local agent.git push
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'push it with `jig spec ship idea-x`'
+}
+
+test_spec_epic_cut_at_commit_leaves_the_push_to_the_human() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  sship_cfg_local agent.git commit
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'push it with `git push -u origin epic/idea-x` — yours at agent.git: commit'
+}
+
+test_spec_epic_finish_names_spec_ship_and_what_stays_the_humans() {
+  epic_ready_to_finish idea-x
+  sship_cfg_local agent.git push
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'run `jig spec ship idea-x` (agent.git: push — it commits and pushes epic/idea-x; the pull request into main is yours)'
+}
+
+# --- the Release: line -----------------------------------------------------------
+
+test_spec_epic_release_is_written_under_the_epic_line() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+
+  run jig spec epic idea-x --release minor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/specs/idea-x/roadmap.md: Release: minor"
+  awk '/^Epic: epic\/idea-x$/{getline r; if (r == "Release: minor") found=1} END{exit !found}' \
+    .ai/specs/idea-x/roadmap.md || fail "Release: line not right under the Epic: line"
+}
+
+test_spec_epic_release_rejects_an_unknown_level() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+
+  run jig spec epic idea-x --release huge
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid release level: huge (expected patch|minor|major)"
+  assert_not_contains "$(cat .ai/specs/idea-x/roadmap.md)" "Epic:"
+}
+
+test_spec_epic_release_only_when_declaring() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+
+  run jig spec epic idea-x --release major
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declares epic/idea-x already; the release level is recorded when the epic is declared"
+
+  run jig spec epic idea-x --finish --release major
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--release goes with declaring the epic"
+}
+
+test_spec_epic_refuses_an_invalid_release_line() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+  printf 'Release: minor, probably\n' >> .ai/specs/idea-x/roadmap.md
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "records an invalid release level: minor, probably (expected Release: patch|minor|major)"
+}
+
+test_spec_epic_refuses_two_release_levels() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x --release minor >/dev/null
+  printf 'Release: major\n' >> .ai/specs/idea-x/roadmap.md
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "records more than one release level; keep one Release: line"
+}
+
+test_spec_epic_finish_reports_the_recorded_release() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x --release minor >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null 2>&1
+  git checkout -q epic/idea-x
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: minor"
+}
+
+test_spec_epic_finish_without_a_release_line_says_so() {
+  epic_ready_to_finish idea-x
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: not recorded"
+}
+
+test_spec_ship_refuses_an_invalid_release_line() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  printf 'Release: soon\n' >> .ai/specs/idea-x/roadmap.md
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "records an invalid release level: soon"
 }

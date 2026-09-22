@@ -110,6 +110,12 @@ Parsed by `jig_spec_epic` in `common.sh`. Two lines that disagree on the branch 
 conflict: `task start` and `spec epic` refuse. Any branch name is read; a caller checks it with
 `git check-ref-format --branch` before building a ref.
 
+A `Release: patch|minor|major` line, written under the `Epic:` line by `jig spec epic <id> --release
+<level>` when the epic is declared, records how far the epic's final pull request raises the version.
+Every line starting with `Release:` is read: a value other than the three, or two lines that disagree,
+is refused by `spec epic` and `spec ship`. No line means the level was not recorded; `--finish` prints
+`release: <level>` or `release: not recorded`.
+
 `jig spec list` shows, for an open epic: the usual progress and `(on <branch>)` when the checkout is
 on the epic; `<branch> — progress is on the epic` elsewhere; `<branch> — branch missing` when neither
 the local nor the origin ref exists. A legacy finished line shows the usual progress. `jig status` prints
@@ -129,14 +135,36 @@ the leftovers and refuses until `--leftovers-handled` confirms the decision, the
 `.ai/runtime/trash/<date>/spec-<id>` without touching any task's `Spec:` line. The removal is committed
 with the change that finished the spec. A spec with an `Epic:` line is refused: its epic closes it.
 
-## `jig spec epic <spec-id> [--finish [--leftovers-handled] | --reopen]`
+## `jig spec epic <spec-id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen]`
 
 | Situation | Result |
 |---|---|
-| no `Epic:` line | the line is inserted after `Destination:` (error without one); commit it and merge it into the default branch |
+| no `Epic:` line | the line is inserted after `Destination:` (error without one), with `Release: <level>` under it when `--release` is given; commit it and merge it into the default branch |
+| `--release` with an `Epic:` line already there, or with `--finish`/`--reopen` | error |
 | open line, branch exists locally or on origin (after a fetch) | `exists: <branch>`, exit 0 |
 | open line, not yet on the freshest default branch's committed roadmap | error |
-| open line, on the default branch | `created: <branch> at <sha>` — a local branch, no checkout; pushing is the human's step |
+| open line, on the default branch | `created: <branch> at <sha>` — a local branch, no checkout; pushed by `jig spec ship` or by the human, by `agent.git` |
 | legacy finished line | error |
 | `--finish` | on the epic only, which must contain the freshest default branch; the leftover gate of `spec close`, then the spec directory is removed — committed with the version bump, carried to the default branch by the epic's final pull request |
 | `--reopen` | spec absent, on the epic it declared: restores the directory from git — from `HEAD` while the removal is uncommitted, else from before the commit that deleted its roadmap — without touching the index |
+
+The line printed after each step names the next one by `agent.git`: `jig spec ship <id>` where the
+level lets the agent take it, the git command or pull request that is the human's where it does not.
+
+## `jig spec ship <spec-id> [--message-file <file>] [--title <t>] [--body-file <file>]`
+
+Carries spec work as far as `agent.git` allows (adr-20260922-spec-work-ships-by-the-agent-git-level),
+through the git steps `jig task ship` uses. It never merges. At `none` it exits 3, changing nothing; an
+invalid level, a detached `HEAD`, anything staged under `.ai/workspace/` or `.ai/runtime/`, and an
+invalid `Release:` line are errors. The mode is read from the checkout and printed first:
+
+| Mode | When | What it does |
+|---|---|---|
+| `declare` | the spec is here, and its open `Epic:` line is not on the freshest default branch (or it has none) | requires `--message-file`; everything staged must be under `.ai/specs/<id>/`; on the default branch it switches to a new `spec/<id>` first (error when that branch exists), on an `epic/*` branch it refuses; commits, pushes the branch, opens the pull request into the default branch |
+| `epic` | the spec is here, its `Epic:` line is on the default branch or the checkout is on the epic, and the epic exists locally | refuses when anything is staged; pushes the epic (`push` and up), never forced |
+| `final` | the spec is gone, and the checkout is on the epic its removed roadmap declared | requires `--message-file`, the freshest default branch in the epic, and the removal of `.ai/specs/<id>/` staged; commits, pushes the epic, opens the pull request into the default branch |
+
+Each step prints what `task ship` prints — `committed <sha>` or `nothing staged; no commit`,
+`pushed <branch>`, `pr <url>` or `pr <url> (already open)`, `no forge available; …` — and a level that
+stops earlier ends in `stopped at …`. The title is the message's first line unless `--title`; the body
+the rest of it unless `--body-file`.

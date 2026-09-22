@@ -87,9 +87,16 @@ something on its own, or is the product released once, at the end?
 - **Released once:** the spec gets an **epic branch**. The spec's tasks branch from the epic and their
   pull requests go into it; the main branch sees the feature in one piece when the epic is finished.
 
+**Where you are needed:** the agent asks how far the finished epic raises the version — patch, minor
+or major — and writes your answer into the roadmap, so the release is decided while you are there.
+
 **Under the hood:** `jig spec epic <id>` creates the epic branch once the spec is on the main
-branch; you push it. When every phase is in, finishing the epic lists what is still open in the
-spec — unchecked items, fog, open questions — and asks you about each before the spec is retired.
+branch. Who pushes it, and who opens the pull requests that carry the spec to the main branch and,
+at the end, the epic itself, follows your [git rights](/agent-ships#specs-and-epics): with
+`agent.git: pr` the agent does all of it through `jig spec ship`; with none, each step is yours.
+When every phase is in, finishing the epic lists what is still open in the spec — unchecked items,
+fog, open questions — and asks you about each before the spec is retired. Merging the epic into the
+main branch is the release, and it stays yours.
 
 ## 5. Start the first tasks
 
