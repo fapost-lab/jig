@@ -21,6 +21,7 @@ bug during Phase 1; the rationale column says which.
 | Rule | Rationale |
 |---|---|
 | Every executable starts with `set -eu` and `set -o pipefail`; libraries are sourced and start with `# shellcheck shell=bash`. | `pipefail` is the only way a failing `find` in a pipeline is noticed under `set -e`. |
+| Under `pipefail`, never pipe a variable into a reader that can stop before the end of its input (`grep -q`, `head`, `awk '{ ...; exit }'`). Test a line with `case $'\n'"$var"$'\n' in *$'\n'line$'\n'*)`, and let awk read to the end with a flag instead of `exit`. | bash writes a pipe line by line, so `printf '%s\n' "$var"` is still writing when the reader quits; it dies of SIGPIPE, and `pipefail` turns 141 into a failed check. `jig spec plan` tested for its `## Waves` list with `printf ... \| grep -qx waves` and refused a valid roadmap about once in a hundred runs on Linux bash 5.2 — never on macOS bash 3.2 — so a spec test failed once in CI and passed on rerun. |
 | Validate before `shift`: `[ $# -ge 2 ] \|\| jig_die "cmd: --flag requires a value"`. | A bare `shift 2` with one argument left kills the process under `set -e` with no message. |
 | Never pipe into `while read`; use `while read ...; done < <(cmd)`. | A piped loop runs in a subshell and every counter or accumulator set inside it is lost. |
 | Variables referenced from an `EXIT` trap are script-global, never `local`. | The trap runs after the function returned and `set -u` reports an unbound variable. |
