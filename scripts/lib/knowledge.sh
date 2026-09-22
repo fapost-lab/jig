@@ -63,7 +63,7 @@ km_glob_matches() {
   local glob="$1" pattern hit
   pattern=$(jig_glob_pattern "$glob")
   hit=$(find "$JIG_PROJECT" -path "$JIG_PROJECT/.git" -prune -o \
-    -path "$JIG_PROJECT/$pattern" -print 2>/dev/null | head -n 1)
+    -path "$JIG_PROJECT/$pattern" -print -quit 2>/dev/null)
   [ -n "$hit" ]
 }
 
@@ -426,7 +426,7 @@ km_check_domain_placement() {
   esac
   dir="${rest%%/*}"
   [ "$dir" = "$rest" ] && return 0
-  printf '%s\n' "$domains" | grep -qxF -- "$dir" \
+  jig_has_line "$dir" "$domains" \
     || km_fail "$relpath" "filed under domains/$dir/ but does not declare domain: $dir"
 }
 
@@ -1789,7 +1789,7 @@ km_paths_edit() {
   # a writer returns non-zero both for "the list already said that" and for a
   # failed write, and reporting a failed write as "unchanged" would be a lie.
   local listed=0
-  fm_list "$file" paths | grep -qxF -- "$glob" && listed=1
+  if jig_has_line "$glob" "$(fm_list "$file" paths)"; then listed=1; fi
 
   if [ "$op" = add ]; then
     if [ "$listed" -eq 1 ]; then
@@ -2217,7 +2217,7 @@ km_stages() {
   jig_valid_stage "$stage" || jig_die "knowledge stages: invalid stage: $stage"
   doc=$(km_doc_by_id "$id") || return 1
   current=$(fm_list "$doc" stages)
-  if printf '%s\n' "$current" | grep -qxF -- "$stage"; then
+  if jig_has_line "$stage" "$current"; then
     if [ "$op" = remove ]; then fm_list_remove "$doc" stages "$stage" || return 1; fi
   elif [ "$op" = add ]; then
     fm_list_add "$doc" stages "$stage" || return 1

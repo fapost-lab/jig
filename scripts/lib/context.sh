@@ -421,7 +421,7 @@ _ctx_select_reason() {
   fi
 
   if [ -n "$CTX_STAGE" ] && [ -n "$CTX_DOMAINS" ] && [ "$load" = matched ]; then
-    if fm_list "$doc" stages | grep -qxF -- "$CTX_STAGE"; then
+    if jig_has_line "$CTX_STAGE" "$(fm_list "$doc" stages)"; then
       while IFS= read -r dom; do
         [ -n "$dom" ] || continue
         if _ctx_domain_matches_any "$dom" "$CTX_DOMAINS"; then
@@ -433,6 +433,13 @@ _ctx_select_reason() {
   fi
 
   return 1
+}
+
+# _ctx_listed <rows-file> <relpath> — exit 0 when a row of <rows-file> is for
+# <relpath>. awk reads the file itself: `cut | grep -q` quits before cut has
+# written a long file, and pipefail turns cut's SIGPIPE into "not listed".
+_ctx_listed() {
+  JIG_CTX_P="$2" awk -F '\t' '$1 == ENVIRON["JIG_CTX_P"] { f = 1 } END { exit !f }' "$1"
 }
 
 # _ctx_required_rows <rows-file> — write "<relpath><TAB><reason>" for every
@@ -456,7 +463,7 @@ _ctx_required_rows() {
     doc=$(awk -F "$t" -v want="$id" '$1 == want { print $2; exit }' "$idmap")
     [ -n "$doc" ] || { rm -f "$idmap"; jig_die "context: no active document with id: $id"; }
     relpath=$(jig_relpath "$doc" "$JIG_PROJECT")
-    cut -f1 "$rows" | grep -qxF -- "$relpath" && continue
+    if _ctx_listed "$rows" "$relpath"; then continue; fi
     printf '%s%sid: %s\n' "$relpath" "$t" "$id" >> "$rows"
   done
 
@@ -542,7 +549,7 @@ _ctx_close_requires() {
           jig_die "context: $relpath requires unknown or inactive document: $reqid; run: jig knowledge check"
         fi
         reqrel=$(jig_relpath "$reqdoc" "$JIG_PROJECT")
-        cut -f1 "$rows" | grep -qxF -- "$reqrel" && continue
+        if _ctx_listed "$rows" "$reqrel"; then continue; fi
         printf '%s%srequires: %s\n' "$reqrel" "$t" "$id" >> "$rows"
         added=1
       done < <(fm_list "$doc" requires)
@@ -586,7 +593,7 @@ _ctx_catalog_rows() {
 
   while IFS= read -r doc; do
     relpath=$(jig_relpath "$doc" "$JIG_PROJECT")
-    cut -f1 "$rows" | grep -qxF -- "$relpath" && continue
+    if _ctx_listed "$rows" "$relpath"; then continue; fi
     hit=0
     doms=$(fm_list "$doc" domains)
     if [ -z "$doms" ]; then
@@ -764,7 +771,7 @@ ctx_acknowledge() {
   if [ -f "$ledger" ]; then
     while IFS="$t" read -r hash rel; do
       [ -n "$rel" ] || continue
-      printf '%s\n' "$files" | grep -qxF -- "$rel" && continue
+      if jig_has_line "$rel" "$files"; then continue; fi
       printf '%s%s%s\n' "$hash" "$t" "$rel" >> "$tmp"
     done < "$ledger"
   fi

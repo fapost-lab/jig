@@ -169,7 +169,7 @@ _profiles_glob_matches() {
   hit=$(find "$JIG_PROJECT" \
     \( -path "$JIG_PROJECT/.git" -o -name node_modules -o -name vendor \
        -o -name .venv -o -name venv -o -name .dart_tool -o -name .ai \) -prune -o \
-    -path "$JIG_PROJECT/$pattern" -print 2>/dev/null | head -n 1)
+    -path "$JIG_PROJECT/$pattern" -print -quit 2>/dev/null)
   [ -n "$hit" ]
 }
 

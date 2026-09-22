@@ -1350,7 +1350,7 @@ spec_ship_final_ready() {
   items=$(jig_git_show_path "$src" "$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null | spec_unchecked_items)
   if [ -n "$items" ]; then
     printf 'the epic is not finished: %s roadmap item(s) unchecked, first: %s\n' \
-      "$(printf '%s\n' "$items" | wc -l | tr -d ' ')" "$(printf '%s\n' "$items" | head -n 1)"
+      "$(printf '%s\n' "$items" | wc -l | tr -d ' ')" "${items%%$'\n'*}"
     return 0
   fi
   tasks=$(spec_epic_unmerged_tasks "$branch")

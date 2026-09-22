@@ -727,7 +727,7 @@ _status_hk_stale() {
 
 # _status_in <id> <list> — exit 0 when <id> is a line of <list>.
 _status_in() {
-  printf '%s\n' "$2" | grep -qxF -- "$1"
+  jig_has_line "$1" "$2"
 }
 
 _status_html_page() {

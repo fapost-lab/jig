@@ -50,7 +50,10 @@ fm_list() {
   block=$(fm_block "$file")
   [ -n "$block" ] || return 0
 
-  if printf '%s\n' "$block" | grep -q -E "^${key}:[[:space:]]*\["; then
+  # No reader in this file quits before the end of its input: under pipefail
+  # the SIGPIPE it leaves the writer with fails the call (conventions/shell.md).
+  # A `case` stands in for jig_has_line, which this file is sourced without.
+  if printf '%s\n' "$block" | grep -c -E "^${key}:[[:space:]]*\[" >/dev/null; then
     inline_content=$(printf '%s\n' "$block" \
       | sed -n "s/^${key}:[[:space:]]*\[\(.*\)\].*/\1/p" | head -n 1)
     printf '%s\n' "$inline_content" | tr ',' '\n' \
@@ -70,7 +73,7 @@ fm_list() {
         sub(/^  - /, "", line)
         print line
       } else {
-        exit
+        capture = 2
       }
     }
   ' | sed 's/[[:space:]]*#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//; s/^"\(.*\)"$/\1/'
@@ -110,7 +113,7 @@ fm_body_start() {
 # inline `key: [...]` or a block `key:` with `  - ` items under it.
 fm_is_list() {
   local file="$1" key="$2"
-  fm_block "$file" | grep -q -E "^${key}:[[:space:]]*(\[|(#.*)?$)"
+  fm_block "$file" | grep -c -E "^${key}:[[:space:]]*(\[|(#.*)?$)" >/dev/null
 }
 
 # _fm_valid_item <item> — exit 0 when the item can be read back unchanged.
@@ -279,7 +282,7 @@ fm_list_set() {
 fm_list_add() {
   local file="$1" key="$2" item="$3" current
   current=$(fm_list "$file" "$key" | sed '/^$/d')
-  printf '%s\n' "$current" | grep -qxF -- "$item" && return 1
+  case $'\n'"$current"$'\n' in *$'\n'"$item"$'\n'*) return 1 ;; esac
   { printf '%s\n' "$current" | sed '/^$/d'; printf '%s\n' "$item"; } \
     | fm_list_set "$file" "$key"
 }
@@ -289,7 +292,7 @@ fm_list_add() {
 fm_list_remove() {
   local file="$1" key="$2" item="$3" current remaining
   current=$(fm_list "$file" "$key" | sed '/^$/d')
-  printf '%s\n' "$current" | grep -qxF -- "$item" || return 1
+  case $'\n'"$current"$'\n' in *$'\n'"$item"$'\n'*) ;; *) return 1 ;; esac
   # `|| true`: removing the last item leaves grep with nothing to select, and
   # its exit 1 would otherwise become the function's status under `pipefail`
   # — reporting "nothing removed" for a removal that did happen.

@@ -242,7 +242,7 @@ _task_worktrees() {
 # _task_worktree_for <branch> <worktrees> — the path of the worktree that has
 # <branch> checked out, from a `_task_worktrees` listing; empty when none.
 _task_worktree_for() {
-  printf '%s\n' "$2" | awk -F '\t' -v b="$1" '$1 == b { print $2; exit }'
+  printf '%s\n' "$2" | awk -F '\t' -v b="$1" '!f && $1 == b { print $2; f = 1 }'
 }
 
 # _task_worktree_note <path> — how a task started in its own worktree is shown
@@ -2137,7 +2137,7 @@ task_changes() {
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     path=${row%%"$t"*}
-    if [ "$has_files" -eq 1 ] && ! printf '%s\n' "$files" | grep -qxF -- "$path"; then continue; fi
+    if [ "$has_files" -eq 1 ] && ! jig_has_line "$path" "$files"; then continue; fi
     selected="$selected$row
 "
   done < <(printf '%s\n' "$rows")
@@ -2162,7 +2162,7 @@ _task_artifact_kind() {
 # Resolve links without readlink -f. Do not read an artifact outside the workspace.
 _task_artifact_fact() {
   local root="$1" kind="$2" provided="$3" path target parent hops=0
-  if printf '%s\n' "$provided" | grep -qxF -- "$kind"; then
+  if jig_has_line "$kind" "$provided"; then
     printf 'provided-claim (caller must substantiate)\n'; return 0
   fi
   path="$root/$kind.md"

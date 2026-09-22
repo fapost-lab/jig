@@ -130,7 +130,7 @@ _rust_first_unknown() {
   local known="" name
   known=$(_rust_known_crates)
   for name in "$@"; do
-    if ! printf '%s\n' "$known" | grep -qx "$name"; then
+    if ! jp_has_line "$name" "$known"; then
       printf '%s\n' "$name"
       return 0
     fi
