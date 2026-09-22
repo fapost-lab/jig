@@ -40,6 +40,25 @@ A line that opens with a backticked command rather than a task id, like
 
 `jig spec list` prints `roadmap <done>/<total> done, <filed> filed, fog <fog>`.
 
+### Waves
+
+`jig spec plan <id> --phase <n>` reads the `## Waves` list: lines `<n>. <entry>; <entry>; …`,
+one numbered list over the whole roadmap, an indented line continuing the one above it. An entry
+names the item whose **title** it equals — the item's text without a leading
+``` `task-id` — ``` or `fog:`, up to the first dash with a space on each side (`—`, `--`, `-`) or
+` (after:` — ignoring case, backticks and runs of spaces; or the item whose **task id** it is,
+backticked or not. `Findings ledger` and `` `findings-ledger` `` both name
+``- [ ] `findings-ledger` — Findings ledger — review records…``.
+
+An entry that names no item (`unmatched`) or several (`ambiguous`), and an item two entries name
+(`repeated`, then placed in no wave), are reported and never guessed. A wave holding such an entry
+never counts as merged, so every later wave waits until the list is fixed. Items in no wave are
+listed under their phase and never start.
+
+The rule is strict: wave N opens only when every item of every wave numbered below it has
+merged — whichever phase that item is in. Merged is read offline: the item is checked, its task is
+`consolidated`, or the newest housekeeping run logged it `remote=merged`.
+
 ## Conventions the script does not check
 
 - One destination sentence before the first phase.
