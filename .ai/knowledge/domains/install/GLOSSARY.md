@@ -15,7 +15,7 @@ paths:
   - install.sh
   - scripts/lib/self-update.sh
   - .github/scripts/release-tag.sh
-reviewed_at: 2026-09-14
+reviewed_at: 2026-09-22
 ---
 # Install glossary
 
@@ -36,7 +36,8 @@ no hash lines — used when developing the framework against itself.
 
 `.ai/manifest`: a header (`jig.version`, `jig.source`, `jig.mode`, `installed_at`,
 `adapters`) and, in copy mode, one hash line per installed path. Maintained by `init` and
-`upgrade`, never edited by hand.
+`upgrade`, never edited by hand. `init` chooses `jig.source`; `upgrade` writes it only for a
+source it actually installed from (adr-20260922-upgrade-records-the-source-it-installed-from).
 
 ## Drift
 

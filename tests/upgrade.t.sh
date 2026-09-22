@@ -44,8 +44,65 @@ test_upgrade_link_mode_is_noop_when_everything_already_linked() {
   jig init --from "$JIG_HOME" --link >/dev/null
   run jig upgrade --from "$JIG_HOME"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "nothing to link"
+  assert_contains "$OUT" "0 placed"
+  assert_contains "$OUT" "manifest updated"
   assert_not_contains "$OUT" "link .ai"
+}
+
+# Reproduces the reported case (2026-09-22): `jig upgrade --from <another
+# checkout>` in a link-mode project conflicts on every link, places nothing,
+# and used to repoint jig.source at that checkout all the same — after which
+# a plain `jig upgrade` would have read from a source no file came from.
+test_upgrade_link_mode_keeps_manifest_when_every_link_conflicts() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-other.XXXXXX")
+  src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  cp .ai/manifest manifest.before.tmp
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-conflict .ai/scripts"
+  assert_not_contains "$OUT" "link .ai/scripts"
+  assert_contains "$OUT" "0 placed"
+  assert_contains "$OUT" "manifest unchanged"
+  assert_contains "$OUT" "jig init --link --from $src"
+  diff -q manifest.before.tmp .ai/manifest >/dev/null \
+    || fail "manifest changed although nothing was linked"
+  assert_file_contains .ai/manifest "jig.source: $JIG_HOME"
+
+  rm -rf "$src"
+}
+
+# The other half of the rule: the recorded source may always be written back,
+# placed or not. In link mode the project runs that checkout's scripts
+# directly, so jig.version has to keep following it — otherwise `jig status`
+# reports a version mismatch that no `jig upgrade` can ever clear.
+test_upgrade_link_mode_refreshes_version_of_the_recorded_source() {
+  skip_unless_symlinks
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-same.XXXXXX")
+  src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" --link >/dev/null
+  local tmp_version="$src/scripts/lib/version.sh.tmp"
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="9.9.9"/' "$src/scripts/lib/version.sh" > "$tmp_version"
+  mv "$tmp_version" "$src/scripts/lib/version.sh"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 placed"
+  assert_contains "$OUT" "manifest updated"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9"
+  assert_file_contains .ai/manifest "jig.source: $src"
+
+  rm -rf "$src"
 }
 
 # Reproduces the gap: activating a profile in config.yaml after `init --link`
@@ -209,6 +266,60 @@ test_upgrade_decision_table_full() {
   assert_not_contains "$OUT" "install"
   assert_not_contains "$OUT" "delete"
   diff -q manifest.after.tmp .ai/manifest >/dev/null || fail "manifest changed on a no-op rerun"
+
+  rm -rf "$src"
+}
+
+# The same fork as link mode's, in copy mode: nothing installed, replaced or
+# deleted means the project is still the install it was, so neither
+# jig.source nor jig.version may move to the checkout it was offered.
+test_upgrade_copy_mode_keeps_manifest_when_nothing_was_placed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src before_version
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
+  _mk_source_v2 "$src"
+  before_version=$(sed -n 's/^jig\.version: //p' .ai/manifest)
+
+  # Every path source-v2 would place is locally modified or occupied, so the
+  # decision table ends with keep-modified/keep-conflict and nothing else.
+  printf '\n# local edit\n' >> .ai/profiles/generic/verify.sh
+  printf '\n# local edit\n' >> .ai/scripts/lib/version.sh
+  mkdir -p .claude/skills/jig-newthing .codex/skills/jig-newthing
+  echo "mine" > .claude/skills/jig-newthing/SKILL.md
+  echo "mine" > .codex/skills/jig-newthing/SKILL.md
+  cp .ai/manifest manifest.before.tmp
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 placed"
+  assert_contains "$OUT" "manifest unchanged"
+  assert_contains "$OUT" "jig init --from $src"
+  assert_not_contains "$OUT" "jig init --link"
+  diff -q manifest.before.tmp .ai/manifest >/dev/null \
+    || fail "manifest changed although nothing was placed"
+  assert_file_contains .ai/manifest "jig.source: $JIG_HOME"
+  assert_file_contains .ai/manifest "jig.version: $before_version"
+
+  rm -rf "$src"
+}
+
+# Moving a project onto another checkout stays possible: an upgrade that does
+# place files from it records it, exactly as before.
+test_upgrade_copy_mode_records_the_source_it_placed_from() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
+  _mk_source_v2 "$src"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "manifest updated"
+  assert_file_contains .ai/manifest "jig.source: $src"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9"
 
   rm -rf "$src"
 }
