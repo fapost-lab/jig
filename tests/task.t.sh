@@ -3580,3 +3580,266 @@ test_task_set_status_ready_still_refuses_with_autopilot_on_and_an_open_p1_findin
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
 }
+
+# --- the live status page (common.sh jig_status_page_touch/_dirty/_flush;
+# adr-20260922-the-status-page-stays-current-without-a-server) ----------------
+#
+# `jig status --html` writes .ai/runtime/status.html; once it exists, every
+# task command that writes state/journal/findings/receipt redraws it
+# synchronously through the INSTALLED copy in the main checkout
+# (.ai/scripts/jig status --refresh), output discarded, failures ignored. A
+# project that never asked for the page gets none created for it.
+
+test_task_status_page_absent_task_new_creates_no_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  assert_no_file .ai/runtime/status.html
+}
+
+test_task_status_page_absent_task_set_creates_no_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task set T-1 status active >/dev/null
+  assert_no_file .ai/runtime/status.html
+}
+
+test_task_status_page_absent_autopilot_start_creates_no_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  assert_no_file .ai/runtime/status.html
+}
+
+test_task_status_page_new_task_appears_on_the_page() {
+  task_setup
+  jig status --html >/dev/null
+  jig task new T-9 >/dev/null
+  assert_file_contains .ai/runtime/status.html "<code>T-9</code>"
+}
+
+test_task_status_page_set_status_ready_changes_the_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+  assert_file_contains .ai/runtime/status.html "status=active"
+
+  jig task set T-1 status ready >/dev/null
+  assert_file_contains .ai/runtime/status.html "status=ready"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "status=active"
+}
+
+test_task_status_page_finding_add_line_appears() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+
+  run jig task finding add T-1 --severity P1 --where src/x.sh:10 --summary "bad thing"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/status.html "$OUT P1 open src/x.sh:10"
+}
+
+test_task_status_page_autopilot_stop_reason_appears() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+  jig task autopilot T-1 start >/dev/null
+
+  jig task autopilot T-1 stop --reason "needs a human decision" >/dev/null
+  assert_file_contains .ai/runtime/status.html "Autopilot stopped and is waiting for you"
+  assert_file_contains .ai/runtime/status.html "needs a human decision"
+}
+
+test_task_status_page_autopilot_third_repair_stop_appears() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+
+  run jig task autopilot T-1 repair --reason "r3"
+  assert_eq 3 "$RC"
+  assert_file_contains .ai/runtime/status.html "Autopilot stopped and is waiting for you"
+}
+
+# A failing redraw (a broken installed copy) must not change the triggering
+# command's own output or exit code, and must leave the page as it was:
+# jig_status_page_touch discards the redraw's output and ignores its failure.
+test_task_status_page_failing_redraw_does_not_change_output_exit_code_or_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig status --html >/dev/null
+  local page_before
+  page_before=$(cat .ai/runtime/status.html)
+
+  cat > .ai/scripts/jig <<'BROKEN'
+#!/bin/sh
+printf 'garbage on stdout\n'
+printf 'garbage on stderr\n' >&2
+exit 1
+BROKEN
+  chmod +x .ai/scripts/jig
+
+  run jig task set T-1 class T2
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  assert_eq "$page_before" "$(cat .ai/runtime/status.html)"
+}
+
+# A task command run in a task worktree redraws the MAIN checkout's page
+# (jig_config_clone_root), through that checkout's own installed jig.
+test_task_status_page_worktree_command_redraws_the_main_checkouts_page() {
+  task_setup_nested
+  jig task new T-1 --class T1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  jig status --html >/dev/null
+  assert_no_file "$wt/.ai/runtime/status.html"
+  assert_file_contains .ai/runtime/status.html "class=T1"
+
+  ( cd "$wt" && jig task set T-1 class T2 >/dev/null )
+
+  assert_file_contains .ai/runtime/status.html "class=T2"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "class=T1"
+}
+
+# --- the human gate (task_gate, _task_gate_state; ADR-0031) -------------------
+#
+# `jig task gate <id> approved` records a T3/T4 design's approval: only T3/T4,
+# only with a design.md in the workspace, writing `gate: approved` and
+# `gate_design: <hash>` (the same design hash a review receipt pins).
+
+test_task_gate_refused_for_t2() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 is T2; only T3 and T4 tasks have a human gate"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate:"
+}
+
+test_task_gate_refused_for_unclassified() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 is unclassified; only T3 and T4 tasks have a human gate"
+}
+
+test_task_gate_refused_without_design_md() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 has no design.md to approve"
+}
+
+test_task_gate_refused_for_a_decision_other_than_approved() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 rejected
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown decision: rejected"
+}
+
+test_task_gate_unknown_task_dies() {
+  task_setup
+  run jig task gate NOPE approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_gate_approved_writes_state_matching_the_receipts_design_pin() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC"
+  assert_eq "gate: approved" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
+
+  local gate_design receipt_design
+  gate_design=$(sed -n 's/^gate_design:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  [ -n "$gate_design" ] || fail "gate_design was not recorded"
+
+  jig task receipt T-1 --stage review >/dev/null
+  receipt_design=$(sed -n 's/^design:[[:space:]]*//p' .ai/workspace/tasks/T-1/receipt)
+  assert_eq "$receipt_design" "$gate_design" "gate_design must equal the receipt's design pin"
+}
+
+test_task_set_refuses_gate_and_pr_url_keys() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  local key
+  for key in gate gate_design pr_url; do
+    run jig task set T-1 "$key" x
+    assert_eq 1 "$RC" "task set accepted key [$key]"
+    assert_contains "$OUT" "not writable"
+  done
+}
+
+# --- the human gate on the status page ----------------------------------------
+
+test_task_status_page_gate_waiting_approved_and_changed_states() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
+  jig status --html >/dev/null
+
+  assert_file_contains .ai/runtime/status.html "A design is waiting for your decision"
+
+  jig task gate T-1 approved >/dev/null
+  assert_file_contains .ai/runtime/status.html "design approved"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "A design is waiting for your decision"
+
+  printf '# design v2\n' > .ai/workspace/tasks/T-1/design.md
+  # Editing a file in the workspace does not itself redraw; a task command does.
+  jig task set T-1 status active >/dev/null
+  assert_file_contains .ai/runtime/status.html "A design changed after you approved it"
+}
+
+# --- ship stores pr_url (design.md, .ai/specs/autopilot/) ---------------------
+
+test_task_ship_pr_level_records_pr_url_in_state() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/99"
+}
+
+test_task_ship_pr_level_already_open_pr_still_records_pr_url_in_state() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh "https://github.com/example/example/pull/7"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/7"
+}

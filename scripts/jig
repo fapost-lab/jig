@@ -39,8 +39,10 @@ Usage: jig <command> [args]
   init [--from <dir>] [--link] [--session-hook]
                                  bootstrap .ai/ in the current repository
   upgrade [--from <dir>]         update framework-owned files (manifest-aware)
-  status [--html]                active tasks, housekeeping flags, drift;
-                                 --html writes the status page to .ai/runtime/status.html
+  status [--html | --open]       active tasks, housekeeping flags, drift;
+                                 --html writes the status page to .ai/runtime/status.html,
+                                 --open writes it and opens it in the browser; once it
+                                 exists, task, spec and housekeeping commands keep it current
   task new|start|set|abandon ... task workspace and state (new files it, start begins it)
   task changes <id> --base <ref> inventory all change layers; --files and --format paths
   task artifacts <id> [...]      fixed-route inputs; --provided names conversation outputs
@@ -53,6 +55,7 @@ Usage: jig <command> [args]
   task autopilot <id> start|stage|repair|stop|resume|end|report
                                  run a task's route without stopping between stages;
                                  repair caps out at 2 and stops the run (exit 3)
+  task gate <id> approved        record the human's approval of a T3/T4 design
   context [...]                  relevant knowledge for a task
   context resolve [...]          required documents; --stage, --no-task, --catalog
   context pending|guard [...]    knowledge required but not yet acknowledged

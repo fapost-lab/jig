@@ -11,7 +11,7 @@ paths:
   - scripts/lib/spec.sh
   - "templates/spec/**"
   - "skills/jig-idea/**"
-reviewed_at: 2026-09-21
+reviewed_at: 2026-09-22
 ---
 # Spec
 
@@ -58,12 +58,16 @@ its epic is the task's `base_branch`.
 
 `status.sh` consumes `spec_count` and `spec_epic_status`, never recounts, and its status page renders
 `spec_list_rows` — the unformatted rows `spec list` aligns — so the page and `spec list` cannot disagree
-about a spec's state. The counting rules for roadmap lines live in `spec_progress` only.
+about a spec's state. The counting rules for roadmap lines live in `spec_phase_counts` only: it counts
+per `## Phase <n>` section, and `spec_progress` is its sum. The page's progress by phase is
+`spec_phase_rows`, which reads the roadmap of a spec with an open epic from the epic's ref when the
+checkout is elsewhere — progress is made there (ADR-0040) — without fetching, and names that branch.
+A command that changes a spec redraws the status page (`jig_status_page_touch`).
 
 ## Entry points
 
 - `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`, `spec_list_rows`,
-  `spec_progress`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
+  `spec_progress`, `spec_phase_counts`, `spec_phase_rows`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
   `spec_epic_status`, `spec_close`, `spec_leftovers`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`.

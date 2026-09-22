@@ -2026,3 +2026,80 @@ test_hk_worktree_leftover_handles_a_path_with_spaces() {
   hk_leftover_assert_owner_intact "$owner_abs"
 }
 
+
+# --- the run marker's forge= field (schemas: --- run <UTC> forge=<...>) -------
+#
+# `_hk_log "--- run ... forge=$_HK_FORGE_TOKEN"`: github|gitlab|none|failed —
+# the status page shows `remote=open` only as fresh as this.
+
+test_housekeeping_forge_token_is_none_without_a_forge() {
+  hk_setup
+  jig housekeeping >/dev/null
+  assert_file_contains .ai/runtime/housekeeping.log "--- run "
+  assert_contains "$(cat .ai/runtime/housekeeping.log)" "forge=none"
+}
+
+# hk_stub_gh_failing — a fake `gh` whose `auth status` succeeds but whose
+# `pr list` fails, so `_hk_forge_init` (housekeeping.sh) takes the
+# `__failed__` branch and reports the run's forge token as `failed`.
+hk_stub_gh_failing() {
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  auth) exit 0 ;;
+  pr) exit 1 ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  git remote add origin https://github.com/example/example.git 2>/dev/null || true
+}
+
+test_housekeeping_forge_token_is_failed_when_the_forge_does_not_answer() {
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_failing
+
+  jig housekeeping >/dev/null
+  assert_contains "$(cat .ai/runtime/housekeeping.log)" "forge=failed"
+}
+
+# --- the live status page (jig_status_page_touch, common.sh) ------------------
+#
+# A non-dry run does a full redraw (`status --html`) when the page exists;
+# `--dry-run` never creates or changes it; a run with no page creates none.
+
+test_housekeeping_redraws_an_existing_status_page() {
+  hk_setup
+  jig status --html >/dev/null
+  assert_file_contains .ai/runtime/status.html "Housekeeping has not run yet"
+
+  jig housekeeping >/dev/null
+  assert_file_contains .ai/runtime/status.html "Housekeeping last ran at"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "Housekeeping has not run yet"
+}
+
+test_housekeeping_dry_run_does_not_create_the_page() {
+  hk_setup
+  run jig housekeeping --dry-run
+  assert_eq 0 "$RC"
+  assert_no_file .ai/runtime/status.html
+}
+
+test_housekeeping_dry_run_does_not_change_an_existing_page() {
+  hk_setup
+  jig status --html >/dev/null
+  local before
+  before=$(cat .ai/runtime/status.html)
+
+  run jig housekeeping --dry-run
+  assert_eq "$before" "$(cat .ai/runtime/status.html)"
+}
+
+test_housekeeping_run_without_a_page_creates_none() {
+  hk_setup
+  jig housekeeping >/dev/null
+  assert_no_file .ai/runtime/status.html
+}

@@ -73,7 +73,7 @@ winning its own prompts; the docs describe the status page and how to open it.
 - [x] `routing-evals` — Routing evals — prompt cases per skill, a shell scorer in `tests/`, run in CI
 - [x] `status-page` — Status page — `jig status --html`, one self-contained file (after: Phase 2 — findings and
   receipts are half of what it shows)
-- [ ] `status-page-live` — Live status page — answers "what needs me" first, then what is running and
+- [x] `status-page-live` — Live status page — answers "what needs me" first, then what is running and
   spec progress; rewritten by jig on every task state change and self-refreshing, `jig status --open`
   (after: status page — it reshapes that page; autopilot run — it shows the run's stage and stops)
 

@@ -19,12 +19,14 @@ cmd_spec() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    new) spec_new "$@" ;;
+    # A command that changes a spec redraws the status page, whose progress
+    # by phase it feeds (jig_status_page_touch, common.sh).
+    new) spec_new "$@"; jig_status_page_touch ;;
     list) spec_list "$@" ;;
-    done) spec_done "$@" ;;
-    remove) spec_remove "$@" ;;
-    close) spec_close "$@" ;;
-    epic) spec_epic "$@" ;;
+    done) spec_done "$@"; jig_status_page_touch ;;
+    remove) spec_remove "$@"; jig_status_page_touch ;;
+    close) spec_close "$@"; jig_status_page_touch ;;
+    epic) spec_epic "$@"; jig_status_page_touch ;;
     help | -h | --help)
       printf '%s\n' "$SPEC_USAGE" >&2
       return 0
@@ -129,15 +131,55 @@ spec_title() {
   sed -n 's/^#[[:space:]]\{1,\}//p' "$1" | head -n 1
 }
 
-# spec_progress <roadmap.md> — "roadmap D/T done, F filed, fog G".
+# spec_progress <roadmap.md> — "roadmap D/T done, F filed, fog G": the sum of
+# spec_phase_counts, so the whole and its phases cannot disagree.
+spec_progress() {
+  spec_phase_counts "$1" | awk -F '\t' '
+    { done += $3; total += $4; filed += $5; fog += $6 }
+    END { printf "roadmap %d/%d done, %d filed, fog %d\n", done, total, filed, fog }
+  '
+}
+
+# spec_phase_counts <roadmap.md|-> — the roadmap counted by section, one
+# `<phase>\t<title>\t<done>\t<total>\t<filed>\t<fog>` line each. The one place
+# the counting rules for roadmap lines live (schemas/spec.md).
 #
 # An item is a checkbox line. Done is a checked one. Filed is an unchecked item
 # whose text starts with a backticked task id followed by a dash — the id alone
 # is not enough, because an item may just as well open with a backticked
 # command name. Fog is an unchecked item whose text starts with `fog:`. Wave
 # lines are a numbered list, not checkboxes, so they are never counted.
-spec_progress() {
+#
+# A `## Phase <n> — <title>` heading opens phase <n>, listed even while it has
+# no items. Items under any other `##` heading, or before the first one, are
+# counted under `-` with that heading as their title (`-` when there is
+# none), and listed only when there are some: every item is counted exactly
+# once, which is what keeps spec_progress's sum equal to the old total.
+spec_phase_counts() {
   awk '
+    function reset() { done = 0; total = 0; filed = 0; fog = 0 }
+    function flush() {
+      if (phase != "-" || total > 0)
+        printf "%s\t%s\t%d\t%d\t%d\t%d\n", phase, (title == "" ? "-" : title), done, total, filed, fog
+    }
+    BEGIN { phase = "-"; title = ""; reset() }
+    /^##[[:space:]]/ {
+      flush(); reset()
+      h = $0
+      sub(/^##[[:space:]]+/, "", h)
+      gsub(/\t/, " ", h)
+      if (h ~ /^Phase[[:space:]]+[0-9]+/) {
+        sub(/^Phase[[:space:]]+/, "", h)
+        phase = h
+        sub(/[^0-9].*$/, "", phase)
+        sub(/^[0-9]+[[:space:]]*/, "", h)
+        sub(/^(—|--|-|:)[[:space:]]*/, "", h)
+      } else {
+        phase = "-"
+      }
+      title = h
+      next
+    }
     /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/ {
       total++
       if ($0 ~ /\[[xX]\]/) { done++; next }
@@ -147,8 +189,51 @@ spec_progress() {
       if (text ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|-|--)[[:space:]]/) filed++
       else if (text ~ /^fog:/) fog++
     }
-    END { printf "roadmap %d/%d done, %d filed, fog %d\n", done, total, filed, fog }
+    END { flush() }
   ' "$1"
+}
+
+# spec_phase_rows — every spec's progress by phase for the status page, one
+# `<spec-id>\t<phase>\t<title>\t<done>\t<total>\t<filed>\t<fog>\t<source>` row
+# per spec_phase_counts line, unformatted (ARCHITECTURE.md, Scripts layout).
+# <source> is empty when the roadmap is this checkout's. A spec with an open
+# epic that is not checked out here is read from the epic's ref — progress is
+# made there (ADR-0040) — with no fetch, and <source> names the branch and
+# whether the ref is the remote's as of the last fetch; with no ref at all it
+# has no rows, and spec_list_rows already says `branch missing`.
+spec_phase_rows() {
+  local root id roadmap line branch here ref source
+  root=$(spec_dir)
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    roadmap="$root/$id/roadmap.md"
+    [ -f "$roadmap" ] || continue
+    line=$(jig_spec_epic "$roadmap" 2>/dev/null) || line=""
+    if [ -n "$line" ] && [ "${line##* }" != finished ] && [ "${line% *}" != "$here" ]; then
+      branch=${line% *}
+      ref=""
+      if git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+        ref=$(jig_base_ref "$branch")
+      fi
+      [ -n "$ref" ] || continue
+      case "$ref" in
+        refs/remotes/*) source="$branch as of the last fetch" ;;
+        *) source="$branch" ;;
+      esac
+      git -C "$JIG_PROJECT" show "$ref:$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null \
+        | spec_phase_counts - | _spec_phase_prefix "$id" "$source" || true
+      continue
+    fi
+    spec_phase_counts "$roadmap" | _spec_phase_prefix "$id" ""
+  done < <(spec_ids)
+}
+
+# _spec_phase_prefix <id> <source> — frame spec_phase_counts lines as rows.
+# Values reach awk through the environment: a `-v` value has its escapes
+# expanded.
+_spec_phase_prefix() {
+  JIG_SP_ID="$1" JIG_SP_SOURCE="$2" awk '{ printf "%s\t%s\t%s\n", ENVIRON["JIG_SP_ID"], $0, ENVIRON["JIG_SP_SOURCE"] }'
 }
 
 # spec_list — `jig spec list`: one aligned line per spec, from spec_list_rows.

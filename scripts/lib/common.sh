@@ -10,7 +10,13 @@ export JIG_AI_DIR
 jig_log()  { [ -n "${JIG_QUIET:-}" ] || printf '%s\n' "$*"; }
 jig_info() { [ -n "${JIG_QUIET:-}" ] || printf 'jig: %s\n' "$*" >&2; }
 jig_warn() { printf 'jig: warning: %s\n' "$*" >&2; }
-jig_die()  { printf 'jig: error: %s\n' "$*" >&2; exit 1; }
+jig_die()  {
+  printf 'jig: error: %s\n' "$*" >&2
+  # A command that changed a task and then failed still redraws the status
+  # page, so the page never shows less than the files do.
+  jig_status_page_flush
+  exit 1
+}
 
 # --- repository ------------------------------------------------------------
 
@@ -672,6 +678,49 @@ jig_trash_dest() {
     n=$((n + 1))
   done
   printf '%s\n' "$dest"
+}
+
+# --- the live status page (adr-20260922-the-status-page-stays-current-without-a-server)
+#
+# The page, .ai/runtime/status.html, is redrawn by the commands that change
+# what it shows, synchronously and from the counts the last full `jig status`
+# cached, so a redraw costs a fraction of a second. Shared here because task,
+# spec and housekeeping all trigger it and none of them may source status.sh:
+# the redraw is a process, `jig status --refresh`, the way one domain runs
+# another's command (ARCHITECTURE.md, Scripts layout).
+
+_JIG_PAGE_DIRTY=""
+
+# jig_status_page_touch [--full] — redraw the clone's status page if it exists.
+# One page per clone: a command run in a task worktree redraws the page of the
+# main checkout, with that checkout's own jig. A page nobody has opened yet
+# (`jig status --html` or `--open` writes the first one) is never created
+# here. --full recounts everything and refreshes the cached counts
+# (`status --html`); without it the redraw reads them (`status --refresh`).
+# Always returns 0 and prints nothing: a failed redraw never changes the
+# output or the exit code of the command that triggered it.
+jig_status_page_touch() {
+  local mode="--refresh" root jig
+  [ "${1:-}" != --full ] || mode="--html"
+  root=$(jig_config_clone_root 2>/dev/null) || return 0
+  [ -f "$root/$JIG_AI_DIR/runtime/status.html" ] || return 0
+  jig="$root/$JIG_AI_DIR/scripts/jig"
+  [ -f "$jig" ] || return 0
+  (cd "$root" && bash "$jig" status "$mode") </dev/null >/dev/null 2>&1 || true
+  return 0
+}
+
+# jig_status_page_dirty — note that this command changed something the page
+# shows. The writers call it themselves, so a new command that writes through
+# them is covered without anyone remembering to; jig_status_page_flush then
+# redraws once, however many writes came before.
+jig_status_page_dirty() { _JIG_PAGE_DIRTY=1; }
+
+# jig_status_page_flush — redraw the page when this command changed something.
+jig_status_page_flush() {
+  [ -n "${_JIG_PAGE_DIRTY:-}" ] || return 0
+  _JIG_PAGE_DIRTY=""
+  jig_status_page_touch
 }
 
 # Content hash used by the manifest (ADR-0003, domains/install). git is mandatory,

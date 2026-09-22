@@ -72,6 +72,14 @@ jig task autopilot <task-id> report
 `jig status` marks a task that is running with `autopilot=on`, and one waiting for you with
 `autopilot=stopped`.
 
+## Watching a run
+
+To follow a run without asking the agent, open the status page — the agent offers it when the run
+starts, or run `jig status --open` ([Seeing where things stand](/working-with-tasks#seeing-where-things-stand)).
+While the run goes on, the page shows the stage it is in, for how long, and how many of its two
+fixing attempts it used. When it stops, a card at the top says so, with the agent's question and
+when it was asked. The page keeps itself up to date: leave it open.
+
 ## What autopilot does not protect you from
 
 Jig's scripts cannot see the commands the agent runs. The limit on fixing attempts and the rules

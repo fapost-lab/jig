@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-21
+reviewed_at: 2026-09-22
 ---
 # Task
 
@@ -123,13 +123,27 @@ never by reading the file. The ledger records claims (ADR-0020): the script cann
 from the author, so who may close or dismiss a finding is a rule of the skills
 (`skills/jig-review/references/findings.md`), not of this code.
 
-**The status page shows this domain's answers verbatim**
-(adr-20260921-the-status-page-is-the-one-file-a-report-writes). `jig status --html` lists each live
-task with the lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`,
-`stale (…)`, `none`, `none (required for T4)`), `_task_worktree_note` and `jig_task_base`. Those strings
-are therefore read by a person on the page as well as by the gates: change one and the page and its
-tests change with it. `status.sh` reads each task's `state` once, in `_status_task_facts`, for the
-text report and the page alike.
+**The status page shows this domain's answers verbatim, and this domain keeps it current**
+(adr-20260922-the-status-page-stays-current-without-a-server). The page lists each live task with the
+lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`, `stale (…)`,
+`none`, `none (required for T4)`), `_task_worktree_note` and the task base; an autopilot run as
+`_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time —
+the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
+(`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
+gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
+awk pass (`_status_task_rows`), so a renamed key empties a column there too.
+
+Every writer here — `_task_rewrite_state`, `_task_rewrite_state_remove`, `task new`'s state, the
+autopilot journal, the findings ledger, the receipt — calls `jig_status_page_dirty`, and `cmd_task`
+redraws the page once at its end. An exit that skips that end after a write must flush first:
+`jig_die` does, and so does the third repair's `return 3`. A new writer that does not mark, or a new
+early exit that does not flush, leaves the page a command behind.
+
+Two keys record facts only this domain's commands know, both refused by `task set`: `gate` and
+`gate_design`, written by `jig task gate <id> approved` — the human's approval of a T3/T4 design as
+data, pinned by the same hash a review receipt uses, so a design changed after approval is visible —
+and `pr_url`, written by `task ship` when it opened or found a pull request. `pr_url` is what ship
+did, not a merge state: ADR-0005 still holds, and housekeeping still derives whether it merged.
 
 **The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
 After the findings check, each gate asks one staleness function whether the working tree, the

@@ -37,8 +37,13 @@ cmd_task() {
     receipt) task_receipt "$@" ;;
     ship) task_ship "$@" ;;
     autopilot) task_autopilot "$@" ;;
+    gate) task_gate "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
+  # One redraw of the status page for however many writes the command made
+  # (jig_status_page_dirty, common.sh). A command that stops early redraws on
+  # its own way out: jig_die flushes, and so does the one `return 3` below.
+  jig_status_page_flush
 }
 
 # _task_usage [sub] — the usage line of <sub>, or of `jig task` as a whole
@@ -46,7 +51,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|receipt|ship|autopilot ...\n' ;;
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|receipt|ship|autopilot|gate ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree]\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -77,6 +82,7 @@ _task_usage() {
       printf '       jig task autopilot <id> end\n'
       printf '       jig task autopilot <id> report\n'
       ;;
+    gate) printf 'usage: jig task gate <id> approved\n' ;;
     *) return 1 ;;
   esac
 }
@@ -100,7 +106,10 @@ task_state_get() {
   local id="$1" key="$2" file
   file="$(task_dir "$id")/state"
   [ -f "$file" ] || return 0
-  sed -n "s/^${key}:[[:space:]]*//p" "$file" | head -n 1
+  # One awk rather than `sed | head`: the first `<key>:` line, its value after
+  # the colon and any blanks. Half the processes for the most called reader in
+  # jig, which the status page's redraw runs after every task command.
+  awk -v k="$key:" 'index($0, k) == 1 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$file"
 }
 
 # --- validation ---------------------------------------------------------------
@@ -406,6 +415,7 @@ _task_rewrite_state() {
     }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
+  jig_status_page_dirty
 }
 
 # Rewrite <dir>/state with the <key> line removed (companion to
@@ -429,6 +439,7 @@ _task_rewrite_state_remove() {
     }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
+  jig_status_page_dirty
 }
 
 # --- pause / resume helpers (design §4, §5) --------------------------------------
@@ -569,6 +580,7 @@ task_new() {
     printf 'updated_at: %s\n' "$(jig_today)"
   } > "$tmp"
   mv "$tmp" "$dir/state"
+  jig_status_page_dirty
 
   _task_write_task_md "$id" "$dir/task.md" "$from"
 
@@ -822,7 +834,7 @@ task_set() {
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
-      | autopilot | autopilot_repairs)
+      | autopilot | autopilot_repairs | gate | gate_design | pr_url)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -931,6 +943,7 @@ _task_autopilot_log() {
   fi
   printf '%s\t%s\t%s\n' "$(_task_autopilot_now)" "$event" "$text" >> "$tmp"
   mv "$tmp" "$file"
+  jig_status_page_dirty
 }
 
 # _task_autopilot_note <id> — "autopilot=on" or "autopilot=stopped" for
@@ -941,6 +954,30 @@ _task_autopilot_note() {
     on) printf 'autopilot=on\n' ;;
     stopped) printf 'autopilot=stopped\n' ;;
   esac
+}
+
+# _task_autopilot_facts <id> — the run as data, for `report` and the status
+# page (ARCHITECTURE.md, Scripts layout: a report consumes an unformatted
+# producer rather than parsing a formatted one). One line,
+# `<state>\t<repairs>\t<stage>\t<stage-at>\t<stop-reason>\t<stop-at>`, every
+# empty field written `-` so a tab-split read cannot collapse it; nothing at
+# all for a task that never started a run. The stage is the last one the
+# current run reached — since its last `start` or `resume` — and the stop is
+# the journal's last, which is the one a `stopped` run is waiting on.
+_task_autopilot_facts() {
+  local id="$1" state file
+  state=$(task_state_get "$id" autopilot)
+  [ -n "$state" ] || return 0
+  file="$(task_dir "$id")/autopilot"
+  {
+    if [ -f "$file" ]; then cat "$file"; fi
+  } | awk -F '\t' -v state="$state" -v repairs="$(_task_autopilot_repairs "$id")" '
+    $2 == "start" || $2 == "resume" { stage = ""; stage_at = "" }
+    $2 == "stage" { stage = $3; stage_at = $1 }
+    $2 == "stop"  { stop = $3; stop_at = $1 }
+    function v(x) { return x == "" ? "-" : x }
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s\n", state, repairs, v(stage), v(stage_at), v(stop), v(stop_at) }
+  '
 }
 
 # jig task autopilot <id> start|stage|repair|stop|resume|end|report —
@@ -1053,6 +1090,8 @@ _task_autopilot_repair() {
   _task_rewrite_state "$dir" autopilot stopped
   _task_autopilot_log "$id" stop "repair limit reached (2): $reason"
   printf 'stop: repair limit reached (2)\n'
+  # `return 3` ends the command under errexit before cmd_task's own flush.
+  jig_status_page_flush
   return 3
 }
 
@@ -1148,7 +1187,12 @@ _task_autopilot_report() {
     fi
   done < "$file"
 
-  printf 'autopilot: %s, repairs: %s/2\n' "$(task_state_get "$id" autopilot)" "$(_task_autopilot_repairs "$id")"
+  local facts state repairs
+  facts=$(_task_autopilot_facts "$id")
+  state=$(printf '%s\n' "$facts" | cut -f 1)
+  repairs=$(printf '%s\n' "$facts" | cut -f 2)
+  [ -n "$repairs" ] || repairs=0
+  printf 'autopilot: %s, repairs: %s/2\n' "$state" "$repairs"
 }
 
 # --- findings ledger (design.md, findings-ledger) ------------------------------
@@ -1274,6 +1318,7 @@ task_finding_add() {
   fi
   printf '%s\t%s\topen\t%s\t%s\t%s\t\n' "$fid" "$severity" "$where" "$summary" "$(jig_today)" >> "$tmp"
   mv "$tmp" "$file"
+  jig_status_page_dirty
 
   printf '%s\n' "$fid"
 }
@@ -1339,6 +1384,7 @@ task_finding_set() {
       { print }
     ' "$file" > "$tmp"
   mv "$tmp" "$file"
+  jig_status_page_dirty
 }
 
 # jig task findings <id> [--blocking] — a table of every recorded finding,
@@ -1625,6 +1671,7 @@ task_receipt_write() {
     printf 'findings: %s\n' "$findings"
   } > "$tmp"
   mv "$tmp" "$file"
+  jig_status_page_dirty
   cat "$file"
 }
 
@@ -1650,6 +1697,59 @@ task_receipt_check() {
   fi
   printf 'receipt: stale (%s, reviewed %s)\n' "$changed" "$(_task_receipt_get "$id" reviewed_at)"
   return 1
+}
+
+# --- the human gate (adr-20260922-the-status-page-stays-current-without-a-server)
+#
+# A T3/T4 design is approved by a human in conversation, and the jig-task
+# skill writes the decision into task.md in prose (ADR-0031). `jig task gate`
+# records the same decision as data: `gate: approved` and `gate_design`, the
+# hash of the documents approved (_task_receipt_design_hash, the same value a
+# review receipt pins). It is a claim, like every record here (ADR-0020): the
+# script cannot tell who approved. What it adds is that a design changed after
+# its approval becomes visible without anyone rereading task.md.
+
+# task_gate <id> approved — record the human's approval of the design as it is
+# now. Refused for a class without a gate and for a task with no design.md,
+# since there is nothing to pin.
+task_gate() {
+  jig_require_init
+  [ $# -eq 2 ] || jig_die "$(_task_usage gate)"
+  local id="$1" decision="$2" dir class design
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task gate: unknown task: $id"
+  [ "$decision" = approved ] || jig_die "task gate: unknown decision: $decision (expected approved)"
+  class=$(task_state_get "$id" class)
+  case "$class" in
+    T3 | T4) ;;
+    *) jig_die "task gate: $id is ${class:-unclassified}; only T3 and T4 tasks have a human gate" ;;
+  esac
+  design=$(_task_receipt_design_hash "$id")
+  [ "$design" != "-" ] || jig_die "task gate: $id has no design.md to approve"
+  _task_rewrite_state "$dir" gate approved
+  _task_rewrite_state "$dir" gate_design "$design"
+  printf 'gate: approved\n'
+}
+
+# _task_gate_state <id> — where a T3/T4 task stands at its human gate:
+# `waiting` (a design.md exists and no approval is recorded), `changed` (the
+# design moved after the approval), `approved`; nothing for a task without a
+# gate or without a design yet. The status page's "needs you" reads it.
+_task_gate_state() {
+  local id="$1" design
+  case "$(task_state_get "$id" class)" in
+    T3 | T4) ;;
+    *) return 0 ;;
+  esac
+  design=$(_task_receipt_design_hash "$id")
+  [ "$design" != "-" ] || return 0
+  if [ "$(task_state_get "$id" gate)" != approved ]; then
+    printf 'waiting\n'
+  elif [ "$(task_state_get "$id" gate_design)" != "$design" ]; then
+    printf 'changed\n'
+  else
+    printf 'approved\n'
+  fi
 }
 
 # --- pause / resume ---------------------------------------------------------------
@@ -2061,6 +2161,8 @@ task_artifacts() {
 # file, so it is script-global rather than `local` (conventions/shell.md: a
 # trap runs after its function returned, and `local` would be gone by then).
 _TASK_SHIP_BODY_TMP=""
+# The pull request's URL as _task_ship_pr_github/_gitlab found or opened it.
+_TASK_SHIP_URL=""
 
 # task_ship <id> --message-file <file> [--title <t>] [--body-file <file>]
 #
@@ -2204,9 +2306,16 @@ $push_out"
     pr_body_file="$_TASK_SHIP_BODY_TMP"
   fi
 
+  _TASK_SHIP_URL=""
   case "$kind" in
     github) _task_ship_pr_github "$branch" "$base" "$pr_title" "$pr_body_file" ;;
     gitlab) _task_ship_pr_gitlab "$branch" "$base" "$pr_title" "$pr_body_file" ;;
+  esac
+  # The pull request's address, kept so the status page can link it the
+  # moment it exists. A fact about what ship did, not a merge state: whether
+  # it was merged is still derived by housekeeping every run (ADR-0005).
+  case "$_TASK_SHIP_URL" in
+    https://*) _task_rewrite_state "$dir" pr_url "$_TASK_SHIP_URL" ;;
   esac
 }
 
@@ -2218,6 +2327,7 @@ _task_ship_pr_github() {
   url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
   case "$url" in '' | null) url="" ;; esac
   if [ -n "$url" ]; then
+    _TASK_SHIP_URL="$url"
     printf 'pr %s (already open)\n' "$url"
     return 0
   fi
@@ -2225,6 +2335,7 @@ _task_ship_pr_github() {
     || jig_die "task ship: gh pr create failed:
 $out"
   url=$(printf '%s\n' "$out" | tail -n 1)
+  _TASK_SHIP_URL="$url"
   printf 'pr %s\n' "$url"
 }
 
@@ -2236,6 +2347,7 @@ _task_ship_pr_gitlab() {
   out=$(glab mr list --source-branch "$branch" --output json 2>/dev/null || printf '')
   url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
   if [ -n "$url" ]; then
+    _TASK_SHIP_URL="$url"
     printf 'pr %s (already open)\n' "$url"
     return 0
   fi
@@ -2244,5 +2356,6 @@ _task_ship_pr_gitlab() {
     || jig_die "task ship: glab mr create failed:
 $out"
   url=$(printf '%s\n' "$out" | grep -oE 'https://[^[:space:]]+' | tail -n 1)
+  _TASK_SHIP_URL="$url"
   printf 'pr %s\n' "${url:-$out}"
 }

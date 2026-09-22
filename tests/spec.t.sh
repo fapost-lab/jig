@@ -1841,3 +1841,90 @@ test_spec_list_after_epic_finish_no_longer_lists_the_spec() {
   assert_eq 0 "$RC"
   assert_eq "" "$OUT"
 }
+
+# --- spec_phase_counts / spec_phase_rows (schemas/spec.md) --------------------
+#
+# The roadmap counted by section: a `## Phase <n> — <title>` heading opens a
+# phase, listed even with no items; every other `##` section, and anything
+# before the first heading, is counted under `-` and listed only when it has
+# items. `spec_progress` is their sum, so `jig spec list`'s total cannot
+# disagree with the per-phase breakdown the status page shows.
+
+# spec_phase_counts_of <roadmap.md> — call spec_phase_counts directly, the
+# same way housekeeping.t.sh's hk_decide calls a pure function: source the
+# libraries in a subshell and let its own stdout/exit code answer.
+spec_phase_counts_of() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/spec.sh"
+    spec_phase_counts "$1"
+  ' _ "$1"
+}
+
+# spec_mixed_roadmap <file> — a roadmap with a preamble item, a non-phase
+# "## Waves" section (plus a numbered list, never counted) and two phases.
+spec_mixed_roadmap() {
+  {
+    printf -- '- [ ] `T-0` - preamble filed item\n'
+    printf -- '- [ ] plain preamble item\n'
+    printf '\n'
+    printf '## Waves\n'
+    printf '1. Wave one\n'
+    printf '2. Wave two\n'
+    printf '\n'
+    printf -- '- [ ] `T-9` - waves section filed item\n'
+    printf -- '- [x] waves done item\n'
+    printf '\n'
+    printf '## Phase 1 — Design\n'
+    printf -- '- [x] `T-1` - phase1 done task\n'
+    printf -- '- [ ] fog: uncertain direction\n'
+    printf '\n'
+    printf '## Phase 2 — Build\n'
+    printf -- '- [ ] `T-2` - phase2 filed task\n'
+    printf -- '- [x] plain phase2 done item\n'
+  } > "$1"
+}
+
+test_spec_phase_counts_mixed_preamble_waves_and_phases() {
+  mkdir -p roadmap-fixture
+  spec_mixed_roadmap roadmap-fixture/roadmap.md
+
+  local tab out expected
+  tab=$(printf '\t')
+  out=$(spec_phase_counts_of roadmap-fixture/roadmap.md)
+  expected="-${tab}-${tab}0${tab}2${tab}1${tab}0
+-${tab}Waves${tab}1${tab}2${tab}1${tab}0
+1${tab}Design${tab}1${tab}2${tab}0${tab}1
+2${tab}Build${tab}1${tab}2${tab}1${tab}0"
+
+  assert_eq "$expected" "$out"
+}
+
+test_spec_list_output_unchanged_for_a_roadmap_mixing_phases_and_non_phase_sections() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/mixed
+  {
+    printf '# Mixed Sections\n'
+    printf '\n'
+    printf 'Body text.\n'
+  } > .ai/specs/mixed/spec.md
+  spec_mixed_roadmap .ai/specs/mixed/roadmap.md
+
+  run jig spec list
+  assert_eq 0 "$RC"
+  # The sum across every section: done=0+1+1+1=3, total=2+2+2+2=8,
+  # filed=1+1+0+1=3, fog=0+0+1+0=1 -- unchanged from before spec_phase_counts
+  # split the roadmap into per-section rows.
+  assert_eq "mixed   Mixed Sections   roadmap 3/8 done, 3 filed, fog 1" "$OUT"
+}
+
+# --- the live status page (jig_status_page_touch, common.sh) ------------------
+
+test_spec_status_page_new_spec_appears_on_the_page() {
+  fixture_jig_repo
+  jig status --html >/dev/null
+  jig spec new my-idea >/dev/null
+  assert_file_contains .ai/runtime/status.html "<code>my-idea</code>"
+}

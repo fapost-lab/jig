@@ -171,6 +171,16 @@ change or reject it, and record the decision in `task.md`. Do not start implemen
 waiting, and do not treat silence or a general "ok, go on" from an earlier message as
 approval.
 
+When the human approves, record it for the scripts too, after the design reflects every change
+they asked for:
+
+```
+.ai/scripts/jig task gate <id> approved
+```
+
+It pins the approved design, so the status page stops showing it as waiting for the human and
+shows it again if `design.md` changes afterwards — then go back to the gate with what changed.
+
 For T2+, follow [requirements and planning](references/requirements-and-planning.md).
 Design UI changes with [applicable states](references/ui-states.md), and a new or changed
 boundary between components with its

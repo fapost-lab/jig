@@ -16,6 +16,7 @@ _HK_VIA=""          # tier that decided the last remote state: forge|ancestry|no
 _HK_FORGE_KIND=""   # github|gitlab|none — resolved once per run
 _HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state>" lines, fetched once per run (C1)
 _HK_STALE_REMOTE=0  # 1 when the fetch or the forge tier could not answer
+_HK_FORGE_TOKEN=""  # github|gitlab|none|failed — the run marker's forge= field
 _HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
 _HK_ROWS=""         # "<group>\t<task>\t<note>" per task, printed as the report
 _HK_WT_LINE=""      # what _hk_worktree_retire did, as a --verbose line
@@ -65,9 +66,12 @@ cmd_housekeeping() {
   # A run boundary in the log. Without it the log is an undifferentiated
   # append-only history, and any reader asking "what does the latest run say"
   # has to guess with a line count — which is how `jig status` came to report
-  # one unconsolidated task as three.
+  # one unconsolidated task as three. Its forge= field says whether the run's
+  # pull request states came from a forge (github|gitlab), from nowhere
+  # (none) or were missing because the forge did not answer (failed): the
+  # status page shows `remote=open` only as fresh as that.
   if [ "$dry" != 1 ]; then
-    _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ) forge=$_HK_FORGE_TOKEN"
   fi
 
   local needs_consolidation=0 wrong_base=0 found=0
@@ -197,6 +201,11 @@ EOF
 
   mkdir -p "$runtime"
   : > "$runtime/last-housekeeping"
+
+  # The status page shows this run's flags and pull requests, and a run is
+  # also when its cached counts are refreshed: a full redraw, when there is a
+  # page at all. Never changes this command's output or exit code.
+  jig_status_page_touch --full
 
   # Exit 3, not 1: a hook or a cron job must be able to tell "someone has to
   # consolidate this" from "the command crashed" (jig_die uses 1), and 2 is
@@ -401,6 +410,7 @@ _hk_fetch() {
 _hk_forge_init() {
   _HK_FORGE_PRS=""
   _HK_FORGE_KIND=$(jig_forge_kind) || exit 1
+  _HK_FORGE_TOKEN=$_HK_FORGE_KIND
 
   case "$_HK_FORGE_KIND" in
     github)
@@ -424,6 +434,7 @@ _hk_forge_init() {
     # a forge that failed once will fail 40 times, slowly.
     _HK_FORGE_PRS=""
     _HK_FORGE_KIND="none"
+    _HK_FORGE_TOKEN="failed"
     _HK_STALE_REMOTE=1
     return 0
   fi
