@@ -265,21 +265,27 @@ if [ -x tests/run.sh ]; then
     # A filter that selects no test is not a narrowing: tests/run.sh reports
     # `0 passed` and exits 0, and a pass nothing produced is the defect this
     # check exists to prevent (ADR-0041). Such a filter runs the full set.
-    if [ -n "$filters" ] && ! printf '%s\n' "$filters" | grep -qx 'ALL'; then
+    # Whole-line and substring tests are `case`s, never `printf | grep -q`:
+    # grep quits on the first hit while printf still writes, and pipefail
+    # turns the SIGPIPE into "no match" (conventions/shell.md).
+    case $'\n'"$filters"$'\n' in *$'\n'ALL$'\n'*) has_all=1 ;; *) has_all=0 ;; esac
+    if [ -n "$filters" ] && [ "$has_all" = 0 ]; then
       names=$(_shell_test_names)
       while IFS= read -r filter; do
         [ -n "$filter" ] || continue
-        if ! printf '%s\n' "$names" | grep -qF -- "$filter"; then
+        # A substring, as tests/run.sh selects.
+        case "$names" in *"$filter"*) ;; *)
           reason="filter '$filter' selects no tests"
           filters="ALL"
           break
-        fi
+          ;;
+        esac
       done <<EOF
 $filters
 EOF
     fi
 
-    if printf '%s\n' "$filters" | grep -qx 'ALL'; then
+    if [ "$filters" = ALL ] || [ "$has_all" = 1 ]; then
       ran_any=1
       if tests/run.sh; then
         echo "shell: tests/run.sh: pass (scope: $reason, ran full set)"

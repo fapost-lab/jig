@@ -174,7 +174,8 @@ _doctor_check_framework_version() {
   # Its own "framework versions: " prefix is stripped, since _doctor_line
   # already prints the check name once; the rest of the line (project=...
   # global=... current/mismatch) is kept verbatim.
-  first=$(printf '%s\n' "$out" | head -n 1 | sed 's/^framework versions: //')
+  first=${out%%$'\n'*}
+  first=${first#framework versions: }
   hint=$(printf '%s\n' "$out" | sed -n 's/^hint: //p')
   case "$first" in
     *mismatch*) _doctor_warn "framework version" "$first" "$hint" ;;
@@ -338,7 +339,7 @@ _doctor_check_agent_git() {
   ignored=$(jig_config_project_ignored | cut -f1)
   # Both problems are reported when both hold: an ignored project value must
   # not hide an invalid local one, which is what makes `task ship` refuse.
-  if printf '%s\n' "$ignored" | grep -qxF agent.git; then
+  if jig_has_line agent.git "$ignored"; then
     _doctor_warn "agent.git" "set in $JIG_AI_DIR/config.yaml, ignored there" \
       "move it to $JIG_AI_DIR/config.local.yaml"
     if level=$(jig_agent_git); then return 0; fi

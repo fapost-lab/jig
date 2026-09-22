@@ -58,6 +58,17 @@ jig_valid_id() {
 }
 
 # Die unless the project has been initialised with jig init.
+# jig_has_line <line> <text> — exit 0 when <line> is a whole line of <text>,
+# compared as a string. A `case`, never `printf | grep -qxF`: bash writes a
+# pipe line by line, and under pipefail the SIGPIPE a reader that quit early
+# leaves printf with turns a match into a failure (conventions/shell.md).
+jig_has_line() {
+  case $'\n'"$2"$'\n' in
+    *$'\n'"$1"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+
 jig_require_init() {
   jig_require_repo
   [ -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ] \
@@ -724,7 +735,7 @@ _jig_ship_ci_reason() {
 
 # _jig_ship_first_line <text> — the first non-empty line, for a refusal.
 _jig_ship_first_line() {
-  printf '%s\n' "$1" | sed '/^[[:space:]]*$/d' | head -n 1
+  printf '%s\n' "$1" | awk '!f && /[^[:space:]]/ { print; f = 1 }'
 }
 
 # _jig_ship_checks_github <url> — `<passed> <failed> <pending>` for the pull

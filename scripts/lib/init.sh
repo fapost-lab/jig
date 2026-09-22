@@ -280,7 +280,7 @@ _init_merge_manifest_paths() {
   local old_rel
   while IFS= read -r old_rel; do
     [ -z "$old_rel" ] && continue
-    printf '%s\n' "$framework_paths" | grep -qxF "$old_rel" && continue
+    if jig_has_line "$old_rel" "$framework_paths"; then continue; fi
     [ -f "$JIG_PROJECT/$old_rel" ] && framework_paths="$framework_paths
 $old_rel"
   done < <(manifest_paths)

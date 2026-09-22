@@ -49,6 +49,32 @@ EOF
   assert_eq "7d|generic php|dflt|[generic, php]|TF" "$OUT"
 }
 
+# jig_has_line is how a script asks "is this a line of that text" without
+# piping printf into grep -q (conventions/shell.md, pipefail): whole lines,
+# compared as strings, never as patterns.
+test_jig_has_line_matches_whole_lines_as_strings() {
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"
+    text=$(printf "alpha\nb*ta\ngamma")
+    for probe in alpha "b*ta" gamma alph lpha "b?ta" beta ""; do
+      if jig_has_line "$probe" "$text"; then printf "%s=1 " "$probe"; else printf "%s=0 " "$probe"; fi
+    done
+    jig_has_line x "" || printf "empty=0"
+  '
+  assert_eq 0 "$RC"
+  assert_eq "alpha=1 b*ta=1 gamma=1 alph=0 lpha=0 b?ta=0 beta=0 =0 empty=0" "$OUT"
+}
+
+# No script pipes a shell value into a reader that can quit before the end of
+# its input: bash writes the pipe line by line, the writer dies of SIGPIPE and
+# pipefail turns a match into a failure about once in a hundred runs on Linux.
+test_no_script_pipes_printf_into_an_early_quitting_reader() {
+  local hits
+  hits=$(grep -rnE "(printf|echo)[^|#]*\|[[:space:]]*(grep -[a-zA-Z]*q|head([[:space:]]|$))" \
+    "$JIG_HOME/scripts" "$JIG_HOME/profiles" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
+  assert_eq "" "$hits"
+}
+
 # --- .ai/config.local.yaml (ADR-0038) ----------------------------------------
 
 test_cfg_local_value_wins_for_a_whitelisted_key() {

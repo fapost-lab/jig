@@ -44,6 +44,18 @@ jp_begin() {
 # jp_scoped — exit 0 when this run is narrowed to changed files.
 jp_scoped() { [ "$JP_SCOPED" = 1 ]; }
 
+# jp_has_line <line> <text> — exit 0 when <line> is a whole line of <text>,
+# compared as a string: common.sh's jig_has_line for profiles, which source
+# this file alone. A `case`, never `printf | grep -q`: bash writes a pipe line
+# by line, and under pipefail the SIGPIPE a reader that quit early leaves
+# printf with turns a match into a failure (conventions/shell.md).
+jp_has_line() {
+  case $'\n'"$2"$'\n' in
+    *$'\n'"$1"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+
 # jp_changed [<ext>...] — changed paths that still exist, one per line; with
 # extensions (`py`, `ts`), only those. Empty outside a scoped run.
 jp_changed() {
@@ -122,7 +134,7 @@ jp_decide() {
   local out
   jp_scoped || return 0
   out=$(_jp_decide_raw "$1")
-  if printf '%s\n' "$out" | grep -qx 'ALL'; then
+  if jp_has_line ALL "$out"; then
     printf 'ALL\n'
   else
     printf '%s\n' "$out" | sed '/^$/d' | LC_ALL=C sort -u

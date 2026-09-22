@@ -791,7 +791,7 @@ _hk_worktree_retire() {
     esac
   fi
   if [ "$ours" = 1 ]; then
-    own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l 2>/dev/null | head -n 1) || own=""
+    own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l -print -quit 2>/dev/null) || own=""
     [ -z "$own" ] || reason="own-workspace"
   fi
   if [ -z "$reason" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || true)" ]; then
