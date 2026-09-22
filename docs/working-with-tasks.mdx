@@ -116,6 +116,9 @@ second working copy of the repository next to it (in `../<project>.worktrees/<id
 from the freshest main branch, and leaves the current work alone. Open a new agent session in that
 folder — the agent tells you the path; some runtimes can switch there on their own.
 
+An [autopilot run of a whole roadmap phase](/autopilot#running-a-whole-phase) does this for you:
+it puts every task of a wave in its own worktree and gives each one its own agent.
+
 Each worktree has its own branch and its own uncommitted changes; the task list in the original
 checkout still shows every task and where it runs. Review and commit in the worktree as you would
 anywhere. When the task is closed and its change has landed on its base — an epic branch included —
@@ -140,8 +143,9 @@ tells you where it is. `jig status --html` writes the page without opening it.
 **The page keeps itself current.** Once it exists, every time the agent changes a task — starts it,
 records a review finding, reaches a new stage, stops to ask you something — Jig redraws the file, and
 the open page reloads itself every 10 seconds. You do not need to run anything again; the time at the
-top says when it was last drawn. It is drawn from your main project folder, so it shows every task,
-including those the agent works on in a separate worktree.
+top says when it was last drawn. It is drawn from the checkout the tasks were filed in, which shows
+every task started there, including those the agent went on to work on in a separate worktree:
+starting a task in a worktree keeps its workspace where it was filed and links it across.
 
 It answers four questions, in this order:
 

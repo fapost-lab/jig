@@ -80,8 +80,10 @@ The script answers from file metadata alone; the agent then reads the listed fil
 ### In a project
 
 - **`jig init`** creates what it needs and never overwrites existing knowledge, configuration or a
-  file you changed. It appends missing lines to `.gitignore` (`.ai/workspace/`, `.ai/runtime/`,
-  `.ai/config.local.yaml`, `*.log`, `.claude/worktrees/`) and `.gitattributes`. With
+  file you changed. It appends missing lines to `.gitignore` (`.ai/workspace`, `.ai/runtime`,
+  `.ai/config.local.yaml`, `*.log`, `.claude/worktrees/`) and `.gitattributes` — the first two
+  deliberately without a trailing slash, so that a checkout sharing another one's workspace
+  through a directory link still ignores it. With
   `--session-hook` it creates `.claude/settings.json` only when that file does not exist; an existing
   one is never edited. It asks nothing and commits nothing.
 - **`jig upgrade`** fetches nothing: it copies from the Jig on your machine. It replaces framework

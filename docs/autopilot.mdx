@@ -176,6 +176,13 @@ coordinator writes no code itself: it opens each task's pull request, keeps the 
 and after every merge ticks the roadmap item off and brings the other branches of the wave up
 to date. A wave finishes; then the next one starts.
 
+The session you ask in becomes the coordinator, and it holds the epic branch for the whole run, so
+ask in a checkout that is free to sit on that branch. Your main one is the natural place: the task
+records of the whole phase are kept where the coordinator started them, and that is where
+`jig status` and the status page read them. A [worktree](/working-with-tasks#several-agents-at-once)
+of the epic works too when the main checkout is busy with other work — the phase's tasks then belong
+to that worktree, so ask there for the status of the run as well.
+
 For this it needs two things: permission to open pull requests (`agent.git: pr` or `merge`) and
 a specification built on [an epic branch](/agent-ships#specs-and-epics). Without either it says
 so and offers to run the phase's tasks one at a time instead.

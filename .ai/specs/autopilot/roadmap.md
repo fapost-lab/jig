@@ -108,7 +108,7 @@ believes it; the version is raised in the final pull request from the epic.
   stops listing keys it cannot remove from the local file, `jig-consolidate` §5 orders its commands
   so a phase-run task can follow them top to bottom, and `schemas/config.md` lists its keys instead
   of running them into one paragraph (after: phase run — the last of these came out of it)
-- [ ] `public-docs-pass` — Public docs pass — read the whole docs site and README as a new
+- [x] `public-docs-pass` — Public docs pass — read the whole docs site and README as a new
   user would, bring the shared pages up to the epic's features, fix what the per-task pages say differently from what
   shipped, and tell a contributor in CONTRIBUTING which `jig` runs where: this checkout's own
   `.ai/scripts/jig` (link mode, a tracked symlink, so a worktree runs its own branch's code) against
