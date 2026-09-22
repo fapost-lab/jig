@@ -309,7 +309,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -323,7 +323,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -331,7 +331,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -1927,6 +1927,348 @@ test_spec_status_page_new_spec_appears_on_the_page() {
   jig status --html >/dev/null
   jig spec new my-idea >/dev/null
   assert_file_contains .ai/runtime/status.html "<code>my-idea</code>"
+}
+
+# --- spec plan (a phase run's waves) --------------------------------------------
+# Which tasks of a phase may start: the waves are one numbered list over the
+# whole roadmap, and wave N opens only once every item of every earlier wave
+# has merged. Merged comes from what is already answered — a checked item, a
+# closed task, the newest housekeeping run — never from a network call.
+
+# plan_spec <id> — a spec whose roadmap is read from stdin.
+plan_spec() {
+  mkdir -p ".ai/specs/$1"
+  printf '# %s\n' "$1" > ".ai/specs/$1/spec.md"
+  cat > ".ai/specs/$1/roadmap.md"
+}
+
+# plan_roadmap — two phases, four waves: a checked item, a filed task, an
+# unfiled item, fog, an item a later phase shares a wave with, and one item in
+# no wave at all.
+plan_roadmap() {
+  cat <<'RM'
+# Roadmap — Plan
+
+Destination: things happen.
+
+## Phase 1 — First
+
+- [x] `T-done` — Shipped thing — already merged
+- [ ] `T-a` — Alpha work — goal
+- [ ] Beta work — not filed yet (after: `T-a` — needs it)
+- [ ] fog: Gamma area — unclear
+
+## Phase 2 — Second
+
+- [ ] `T-c` — Charlie — goal
+- [ ] Delta — goal
+- [ ] Echo — goal, in no wave
+
+## Waves
+
+1. Shipped thing; `T-a`; beta WORK
+2. Gamma area; Charlie
+3. Delta
+RM
+}
+
+test_spec_plan_argument_errors() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+
+  run jig spec plan
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: missing spec id"
+  run jig spec plan alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: missing --phase <n>"
+  run jig spec plan alpha --phase
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: --phase requires a value"
+  run jig spec plan alpha --phase one
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: --phase takes a phase number: one"
+  run jig spec plan alpha --phase 1 --format json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: --format is text or tsv: json"
+  run jig spec plan alpha --phase 1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: unknown argument: --bogus"
+  run jig spec plan alpha beta --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: unexpected argument: beta"
+  run jig spec plan -- --phase 1
+  assert_eq 1 "$RC"
+  run jig spec plan .bad --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: invalid spec id: .bad"
+  run jig spec plan nope --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: no such spec, or it has no roadmap: .ai/specs/nope/roadmap.md"
+  run jig spec plan alpha --phase 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: .ai/specs/alpha/roadmap.md has no Phase 7"
+}
+
+test_spec_plan_refuses_a_roadmap_without_waves() {
+  fixture_jig_repo
+  printf '%s\n' '## Phase 1 — Only' '' '- [ ] `T-a` — Alpha — goal' | plan_spec alpha
+  run jig spec plan alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'spec plan: .ai/specs/alpha/roadmap.md has no `## Waves` list'
+}
+
+test_spec_plan_first_wave_open_later_phase_waits_on_it() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+  jig task new T-a >/dev/null
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  # Wave 1: the checked item is done, the filed task with a workspace that
+  # was never started may start, the unfiled item has to be filed first. Fog
+  # sits in wave 2, which waits on wave 1.
+  assert_eq "wave${tab}1${tab}open
+item${tab}1${tab}T-done${tab}done${tab}roadmap${tab}false${tab}-${tab}done${tab}Shipped thing
+item${tab}1${tab}T-a${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Alpha work
+item${tab}1${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}file${tab}Beta work
+wave${tab}2${tab}waiting
+item${tab}2${tab}-${tab}fog${tab}no${tab}false${tab}-${tab}wait${tab}Gamma area
+blocker${tab}1${tab}T-a${tab}not-started${tab}Alpha work
+blocker${tab}1${tab}-${tab}not-filed${tab}Beta work" "$OUT"
+
+  # Phase 2 is spread over waves 2 and 3, and one of its items is in no wave:
+  # it is listed, and it never starts.
+  run jig spec plan alpha --phase 2 --format tsv
+  assert_eq 0 "$RC"
+  assert_eq "wave${tab}2${tab}waiting
+item${tab}2${tab}T-c${tab}no-workspace${tab}no${tab}false${tab}-${tab}wait${tab}Charlie
+wave${tab}3${tab}waiting
+item${tab}3${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}wait${tab}Delta
+item${tab}-${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}unscheduled${tab}Echo
+blocker${tab}1${tab}T-a${tab}not-started${tab}Alpha work
+blocker${tab}1${tab}-${tab}not-filed${tab}Beta work" "$OUT"
+}
+
+test_spec_plan_text_form_names_what_may_start_and_what_to_file() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+  jig task new T-a >/dev/null
+
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_eq "Phase 1 — First
+roadmap: .ai/specs/alpha/roadmap.md
+wave 1 — open
+  T-done  done         done   Shipped thing
+  T-a     not started  start  Alpha work
+  -       not filed    file   Beta work
+wave 2 — waiting
+  -       fog          wait   Gamma area
+waiting on earlier waves:
+  wave 1  T-a  not started  Alpha work
+  wave 1  -    not filed    Beta work
+may start now: T-a
+to file first: Beta work" "$OUT"
+}
+
+# Every way this checkout already knows a task merged opens the next wave:
+# its item checked, its task closed (ADR-0030 closes only after landing), or
+# the newest housekeeping run reporting remote=merged — an older run is not
+# read.
+test_spec_plan_merged_from_roadmap_closed_task_and_newest_housekeeping_run() {
+  fixture_jig_repo
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+- [ ] `T-c` — Charlie — goal
+- [ ] `T-d` — Delta — goal
+
+## Waves
+
+1. Alpha; Bravo; Charlie
+2. Delta
+RM
+  local t
+  for t in T-a T-b T-c T-d; do jig task new "$t" >/dev/null; done
+  jig task set T-a status ready >/dev/null
+  jig task set T-a knowledge_consolidated true >/dev/null
+  jig task set T-a status consolidated >/dev/null
+  jig task set T-b status ready >/dev/null
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-20T10:00:00Z forge=none\n'
+    printf '2026-09-20T10:00:01Z task=T-c status=active remote=merged via=ancestry action=preserve\n'
+    printf -- '--- run 2026-09-21T10:00:00Z forge=none\n'
+    printf '2026-09-21T10:00:01Z task=T-b status=ready remote=merged via=ancestry action=preserve flags=needs-consolidation\n'
+    printf '2026-09-21T10:00:01Z task=T-c status=active remote=unknown via=ancestry action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}T-a${tab}consolidated${tab}closed${tab}false${tab}-${tab}done${tab}Alpha"
+  assert_contains "$OUT" "item${tab}1${tab}T-b${tab}ready${tab}housekeeping${tab}false${tab}-${tab}done${tab}Bravo"
+  # T-c merged only in an older run: not merged, so wave 2 waits on it.
+  assert_contains "$OUT" "item${tab}1${tab}T-c${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Charlie"
+  assert_contains "$OUT" "wave${tab}2${tab}waiting"
+  assert_contains "$OUT" "blocker${tab}1${tab}T-c${tab}not-started${tab}Charlie"
+
+  # Once T-c's item is checked, wave 2 opens.
+  sed 's/^- \[ \] `T-c`/- [x] `T-c`/' .ai/specs/alpha/roadmap.md > roadmap.tmp
+  mv roadmap.tmp .ai/specs/alpha/roadmap.md
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "wave${tab}1${tab}merged"
+  assert_contains "$OUT" "wave${tab}2${tab}open"
+  assert_contains "$OUT" "item${tab}2${tab}T-d${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Delta"
+  assert_not_contains "$OUT" "blocker"
+}
+
+test_spec_plan_reports_running_paused_autopilot_and_abandoned_tasks() {
+  epic_setup
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+- [ ] `T-c` — Charlie — goal
+
+## Waves
+
+1. Alpha; Bravo; Charlie
+RM
+  git add -A
+  git commit -q -m "spec"
+  jig task new T-a >/dev/null
+  jig task start T-a >/dev/null
+  git checkout -q main
+  jig task new T-b >/dev/null
+  jig task start T-b >/dev/null
+  git checkout -q main
+  jig task pause T-b >/dev/null
+  jig task autopilot T-b start >/dev/null
+  jig task new T-c >/dev/null
+  jig task abandon T-c >/dev/null
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}T-a${tab}active${tab}no${tab}false${tab}-${tab}running${tab}Alpha"
+  assert_contains "$OUT" "item${tab}1${tab}T-b${tab}active${tab}no${tab}true${tab}on${tab}running${tab}Bravo"
+  assert_contains "$OUT" "item${tab}1${tab}T-c${tab}abandoned${tab}no${tab}false${tab}-${tab}abandoned${tab}Charlie"
+
+  run jig spec plan alpha --phase 1
+  assert_contains "$OUT" "active, paused, autopilot on"
+}
+
+# A wave entry names an item by its title — ignoring case, backticks and
+# runs of spaces — or by its task id. What names nothing, several items, or an
+# item another entry names too is reported, never guessed; a wave with such
+# an entry is never merged, so it holds every wave after it.
+test_spec_plan_reports_unmatched_ambiguous_and_repeated_entries() {
+  fixture_jig_repo
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [x] Twin — one
+- [x] Twin — two
+- [x] `T-r` — Repeated — goal
+- [ ] `T-z` — Zulu — wrapped
+  onto a second line
+
+## Phase 2 — Second
+
+- [ ] `T-l` — Later — goal
+
+## Waves
+
+1. twin; Nothing like it; Repeated
+2. `T-r`; T-z
+3. Later
+RM
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 2 --format tsv
+  assert_eq 0 "$RC"
+  assert_eq "wave${tab}3${tab}waiting
+item${tab}3${tab}T-l${tab}no-workspace${tab}no${tab}false${tab}-${tab}wait${tab}Later
+blocker${tab}2${tab}T-z${tab}no-workspace${tab}Zulu
+problem${tab}1${tab}ambiguous${tab}twin
+problem${tab}1${tab}unmatched${tab}Nothing like it
+problem${tab}1${tab}repeated${tab}Repeated
+problem${tab}2${tab}repeated${tab}\`T-r\`" "$OUT"
+
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not in any wave:"
+  assert_contains "$OUT" 'problem: wave 1 entry "twin" names more than one roadmap item'
+  assert_contains "$OUT" 'problem: wave 1 entry "Nothing like it" names no roadmap item'
+  assert_contains "$OUT" 'problem: wave 2 entry "`T-r`" names an item another wave entry names too'
+}
+
+# Off the epic, the roadmap is the epic's — progress is made there
+# (ADR-0040) — read from its ref without a fetch, and the output names it.
+test_spec_plan_reads_an_open_epic_roadmap_from_its_branch() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+  git checkout -q epic/idea-x
+  printf '%s\n' '## Phase 1 — On the epic' '' '- [ ] `T-e` — Epic item — goal' '' '## Waves' '' '1. Epic item' \
+    >> .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "progress on the epic"
+  git checkout -q main
+
+  run jig spec plan idea-x --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "roadmap: epic/idea-x"
+  assert_contains "$OUT" "Epic item"
+
+  # On the epic, its own copy is read.
+  git checkout -q epic/idea-x
+  run jig spec plan idea-x --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "roadmap: .ai/specs/idea-x/roadmap.md"
+}
+
+test_spec_plan_epic_without_a_branch_here_fails() {
+  fixture_jig_repo
+  printf '%s\n' 'Destination: x.' '' 'Epic: epic/gone' '' '## Phase 1 — A' '' '## Waves' | plan_spec alpha
+  run jig spec plan alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: alpha is built on epic/gone, which this checkout has no branch of; fetch it first"
+}
+
+test_spec_plan_epic_with_a_name_git_rejects_fails_naming_it() {
+  fixture_jig_repo
+  printf '%s\n' 'Destination: x.' '' 'Epic: bad..branch' '' '## Phase 1 — A' '' '## Waves' | plan_spec alpha
+  run jig spec plan alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: git rejects the epic branch name bad..branch in .ai/specs/alpha/roadmap.md"
+}
+
+test_spec_plan_is_read_only() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+  jig task new T-a >/dev/null
+  local before after
+  before=$(cat .ai/specs/alpha/roadmap.md .ai/workspace/tasks/T-a/state)
+  jig spec plan alpha --phase 1 >/dev/null
+  jig spec plan alpha --phase 1 --format tsv >/dev/null
+  after=$(cat .ai/specs/alpha/roadmap.md .ai/workspace/tasks/T-a/state)
+  assert_eq "$before" "$after"
 }
 
 # --- spec ship (adr-20260922-spec-work-ships-by-the-agent-git-level) -----------

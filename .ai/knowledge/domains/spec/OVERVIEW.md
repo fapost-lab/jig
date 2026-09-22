@@ -36,6 +36,9 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
 - Closing a spec whose work is done (ADR-0035 as amended): its leftovers (`spec_leftovers`), the
   `roadmap complete` line of `spec done`, and the removal by `spec close` or `spec epic --finish`, in
   the change that finished it.
+- The phase plan (`jig spec plan <id> --phase <n>`): each wave of a phase with its items, their tasks
+  and states, what earlier waves still hold, and which tasks may start under the strict-wave rule a
+  phase run follows. The waves grammar and the matching rule are in `schemas/spec.md`.
 - The link between a task and its spec: the `Spec:` line in the task's `task.md`, checking its
   roadmap items at the knowledge decision (`jig spec done`), and taking a spec out with its links
   (`jig spec remove`).
@@ -66,7 +69,18 @@ about a spec's state. The counting rules for roadmap lines live in `spec_phase_c
 per `## Phase <n>` section, and `spec_progress` is its sum. The page's progress by phase is
 `spec_phase_rows`, which reads the roadmap of a spec with an open epic from the epic's ref when the
 checkout is elsewhere — progress is made there (ADR-0040) — without fetching, and names that branch.
-A command that changes a spec redraws the status page (`jig_status_page_touch`).
+A command that changes a spec redraws the status page (`jig_status_page_touch`). Both the page and
+`spec plan` find the current roadmap through `spec_roadmap_ref`, so they cannot read different copies.
+
+`spec plan` is read-only and offline. A wave entry names an item by its title or task id; one that names
+nothing or several items, or an item two entries name, is reported as a `problem` row and never
+resolved by guessing — a wave holding one never counts as merged. Waves are one list over the whole
+roadmap, so an earlier phase's unmerged item holds a later phase's wave. It learns task state from the
+workspace `state` file and "merged" only from what is already answered: a checked item, a
+`consolidated` task (ADR-0030), or `remote=merged` in the newest run of `.ai/runtime/housekeeping.log`
+— never a fetch or a forge call. Its `--format tsv` rows (`wave`, `item`, `blocker`, `problem`, shapes in
+the comment above `spec_plan`) are what a phase-run coordinator reads: a changed column is a changed
+contract.
 
 `spec ship` takes its git steps from `common.sh` (`jig_ship_*`), the ones `task ship` takes, and keeps
 only its modes and their refusals here. It never writes a spec file: what it commits is what `spec epic`
@@ -80,7 +94,7 @@ spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut fr
 ## Entry points
 
 - `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`, `spec_list_rows`,
-  `spec_progress`, `spec_phase_counts`, `spec_phase_rows`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
+  `spec_progress`, `spec_phase_counts`, `spec_phase_rows`, `spec_roadmap_ref`, `spec_plan`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
   `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_ship_final_ready`, `spec_release_check`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`; `jig_ship_*`,

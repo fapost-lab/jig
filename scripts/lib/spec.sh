@@ -15,7 +15,7 @@
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -25,6 +25,7 @@ cmd_spec() {
     # by phase it feeds (jig_status_page_touch, common.sh).
     new) spec_new "$@"; jig_status_page_touch ;;
     list) spec_list "$@" ;;
+    plan) spec_plan "$@" ;;
     done) spec_done "$@"; jig_status_page_touch ;;
     remove) spec_remove "$@"; jig_status_page_touch ;;
     close) spec_close "$@"; jig_status_page_touch ;;
@@ -206,31 +207,49 @@ spec_phase_counts() {
 # whether the ref is the remote's as of the last fetch; with no ref at all it
 # has no rows, and spec_list_rows already says `branch missing`.
 spec_phase_rows() {
-  local root id roadmap line branch here ref source
+  local root id roadmap loc ref source
   root=$(spec_dir)
-  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     roadmap="$root/$id/roadmap.md"
     [ -f "$roadmap" ] || continue
-    line=$(jig_spec_epic "$roadmap" 2>/dev/null) || line=""
-    if [ -n "$line" ] && [ "${line##* }" != finished ] && [ "${line% *}" != "$here" ]; then
-      branch=${line% *}
-      ref=""
-      if git check-ref-format --branch "$branch" >/dev/null 2>&1; then
-        ref=$(jig_base_ref "$branch")
-      fi
-      [ -n "$ref" ] || continue
-      case "$ref" in
-        refs/remotes/*) source="$branch as of the last fetch" ;;
-        *) source="$branch" ;;
-      esac
-      git -C "$JIG_PROJECT" show "$ref:$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null \
+    loc=$(spec_roadmap_ref "$id") || continue
+    if [ -n "$loc" ]; then
+      IFS=$'\t' read -r ref source <<EOF
+$loc
+EOF
+      jig_git_show_path "$ref" "$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null \
         | spec_phase_counts - | _spec_phase_prefix "$id" "$source" || true
       continue
     fi
     spec_phase_counts "$roadmap" | _spec_phase_prefix "$id" ""
   done < <(spec_ids)
+}
+
+# spec_roadmap_ref <spec-id> — where the current roadmap of a spec is read.
+# Nothing when this checkout's copy is current: no epic, a finished one, or the
+# epic is checked out here. "<ref>\t<source>" when an open epic elsewhere holds
+# it — progress is made there (ADR-0040) — read with no fetch; <source> names
+# the branch and whether the ref is the remote's as of the last fetch. Exit 1
+# when that epic has no ref here at all, 2 when git rejects its name — no
+# fetch can bring that one. The one place both the status page
+# (spec_phase_rows) and `spec plan` decide it, so they cannot disagree.
+spec_roadmap_ref() {
+  local roadmap line branch here ref
+  roadmap="$(spec_dir)/$1/roadmap.md"
+  line=$(jig_spec_epic "$roadmap" 2>/dev/null) || line=""
+  [ -n "$line" ] || return 0
+  [ "${line##* }" != finished ] || return 0
+  branch=${line% *}
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$branch" != "$here" ] || return 0
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 || return 2
+  ref=$(jig_base_ref "$branch")
+  [ -n "$ref" ] || return 1
+  case "$ref" in
+    refs/remotes/*) printf '%s\t%s as of the last fetch\n' "$ref" "$branch" ;;
+    *) printf '%s\t%s\n' "$ref" "$branch" ;;
+  esac
 }
 
 # _spec_phase_prefix <id> <source> — frame spec_phase_counts lines as rows.
@@ -349,6 +368,404 @@ spec_epic_status() {
   done < <(spec_ids)
 }
 
+# --- phase plan ------------------------------------------------------------------
+
+# spec_plan <id> --phase <n> [--format text|tsv] — which tasks of a roadmap
+# phase may start now, for a phase run and the person watching it.
+#
+# A phase run follows the waves strictly: wave N starts only once every item
+# of every earlier wave has merged, whichever phase the item belongs to — the
+# waves are one numbered list over the whole roadmap, and `after:` is prose
+# nobody parses. Read-only and offline: the roadmap from where
+# spec_roadmap_ref says it is current, each filed item's task from its
+# workspace `state` (spec_task_state), and whether its work merged only from
+# what is already answered — a checked item, a closed task (ADR-0030 closes a
+# task only after its change landed), or `remote=merged` in the newest run of
+# the housekeeping log. No fetch, no forge call.
+#
+# `--format tsv` is the machine form a coordinator reads, one row per line:
+#   wave    <n> <merged|open|waiting>
+#   item    <wave|-> <task-id|-> <state> <merged> <paused> <autopilot> <next> <title>
+#   blocker <wave> <task-id|-> <state> <title>
+#   problem <wave|-> <unmatched|ambiguous|repeated> <wave entry>
+# Each `wave` row is followed by its items; items of the phase in no wave
+# come after the waves, then the unmerged items of earlier waves that hold
+# the phase's first waiting wave, then every problem of the waves list.
+# <state>: not-filed, fog, no-workspace, not-started, active, ready,
+# consolidated, abandoned, done (checked, no workspace here). <merged>: roadmap,
+# closed, housekeeping or no. <next>: start, running, file, fog, find,
+# abandoned, wait, unscheduled, done.
+spec_plan() {
+  local id="" phase="" format=text
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --phase)
+        [ $# -ge 2 ] || jig_die "spec plan: --phase requires a value"
+        phase="$2"
+        shift 2
+        ;;
+      --format)
+        [ $# -ge 2 ] || jig_die "spec plan: --format requires a value"
+        format="$2"
+        shift 2
+        ;;
+      -*) jig_die "spec plan: unknown argument: $1" ;;
+      *)
+        [ -z "$id" ] || jig_die "spec plan: unexpected argument: $1"
+        id="$1"
+        shift
+        ;;
+    esac
+  done
+  [ -n "$id" ] || jig_die "spec plan: missing spec id (usage: jig spec plan <id> --phase <n> [--format text|tsv])"
+  spec_valid_id "$id" || jig_die "spec plan: invalid spec id: $id"
+  [ -n "$phase" ] || jig_die "spec plan: missing --phase <n>"
+  case "$phase" in
+    *[!0-9]*) jig_die "spec plan: --phase takes a phase number: $phase" ;;
+  esac
+  case "$format" in
+    text | tsv) ;;
+    *) jig_die "spec plan: --format is text or tsv: $format" ;;
+  esac
+  jig_require_init
+
+  local roadmap rel loc ref="" source text parsed epic
+  roadmap="$(spec_dir)/$id/roadmap.md"
+  rel="$JIG_AI_DIR/specs/$id/roadmap.md"
+  [ -f "$roadmap" ] || jig_die "spec plan: no such spec, or it has no roadmap: $rel"
+  local lrc=0
+  loc=$(spec_roadmap_ref "$id") || lrc=$?
+  if [ "$lrc" -ne 0 ]; then
+    epic=$(jig_spec_epic "$roadmap" 2>/dev/null) || epic=""
+    [ "$lrc" -ne 2 ] || jig_die "spec plan: git rejects the epic branch name ${epic% *} in $rel"
+    jig_die "spec plan: $id is built on ${epic% *}, which this checkout has no branch of; fetch it first"
+  fi
+  source="$rel"
+  if [ -n "$loc" ]; then
+    IFS=$'\t' read -r ref source <<LOC
+$loc
+LOC
+    text=$(jig_git_show_path "$ref" "$rel" 2>/dev/null) \
+      || jig_die "spec plan: $source has no $rel"
+  else
+    text=$(cat "$roadmap") || jig_die "spec plan: cannot read $rel"
+  fi
+
+  parsed=$(printf '%s\n' "$text" | _spec_plan_parse)
+  printf '%s\n' "$parsed" | grep -qx 'waves' \
+    || jig_die "spec plan: $source has no \`## Waves\` list; a phase run starts tasks by wave"
+  local title
+  title=$(printf '%s\n' "$parsed" | awk -F '\t' -v p="$phase" '$1 == "phase" && $2 + 0 == p + 0 { print $3; exit }')
+  printf '%s\n' "$parsed" | awk -F '\t' -v p="$phase" '$1 == "phase" && $2 + 0 == p + 0 { f = 1 } END { exit !f }' \
+    || jig_die "spec plan: $source has no Phase $phase"
+
+  local rows
+  rows=$(printf '%s\n' "$parsed" | _spec_plan_enrich | JIG_SP_PHASE="$phase" _spec_plan_decide)
+  if [ "$format" = tsv ]; then
+    [ -z "$rows" ] || printf '%s\n' "$rows"
+    return 0
+  fi
+  printf '%s\n' "$rows" | JIG_SP_PHASE="$phase" JIG_SP_TITLE="$title" JIG_SP_SOURCE="$source" _spec_plan_text
+}
+
+# _spec_plan_parse — the roadmap on stdin as rows, all phases:
+#   phase   <n> <title>
+#   waves                         (the `## Waves` heading is there)
+#   wave    <n>                   (every numbered wave, in listed order)
+#   item    <phase|-> <wave|-> <checked 0|1> <task-id|-> <filed|fog|plain> <title>
+#   problem <wave> <unmatched|ambiguous|repeated> <entry>
+#
+# Items and headings follow spec_phase_counts' grammar; an item's indented
+# lines that follow it are part of its text. A wave line is `<n>. ` and its
+# entries are separated by `;`. An entry names an item when it equals the
+# item's title — its text without the leading `` `task-id` — `` or `fog:`, up
+# to the first dash with a space on each side (`—`, `--`, `-`) or ` (after:` —
+# ignoring case, backticks and runs of spaces, or when it equals the item's
+# task id, backticked or not. An entry that names no item, or more than one,
+# is a problem, and so is an item two entries name: that item is placed in no
+# wave rather than in a guessed one. `<…>` template placeholders are skipped.
+_spec_plan_parse() {
+  awk '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function norm(s) { gsub(/`/, "", s); gsub(/[[:space:]]+/, " ", s); return tolower(trim(s)) }
+    function clean(s) { gsub(/\t/, " ", s); s = trim(s); return (s == "" ? "-" : s) }
+    function end_item(   t, tid, kind) {
+      if (!cur) return
+      t = itext[cur]; kind = "plain"; tid = ""
+      if (t ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|--|-)[[:space:]]/) {
+        tid = substr(t, 2); sub(/`.*$/, "", tid)
+        # The same grammar as jig_valid_id: no leading dot or dash.
+        if (tid ~ /^[.-]/) tid = ""
+        else { sub(/^`[^`]*`[[:space:]]+(—|--|-)[[:space:]]+/, "", t); kind = "filed" }
+      } else if (t ~ /^fog:/) {
+        sub(/^fog:[[:space:]]*/, "", t); kind = "fog"
+      }
+      if (match(t, /[[:space:]]\(after:/)) t = substr(t, 1, RSTART - 1)
+      if (match(t, /[[:space:]](—|--|-)[[:space:]]/)) t = substr(t, 1, RSTART - 1)
+      iid[cur] = tid; ikind[cur] = kind; ititle[cur] = clean(t); inorm[cur] = norm(t)
+      cur = 0
+    }
+    function end_wave(   parts, m, j, e) {
+      if (wn == "") return
+      m = split(wtext, parts, ";")
+      for (j = 1; j <= m; j++) {
+        e = trim(parts[j]); sub(/\.$/, "", e); e = trim(e)
+        if (e == "" || e ~ /^</) continue
+        ne++; went[ne] = e; ewave[ne] = wn
+      }
+      wn = ""
+    }
+    BEGIN { phase = "-"; OFS = "\t" }
+    /^##[[:space:]]/ {
+      end_item(); end_wave()
+      h = $0
+      sub(/^##[[:space:]]+/, "", h)
+      gsub(/\t/, " ", h)
+      inwaves = 0
+      if (h ~ /^Phase[[:space:]]+[0-9]+/) {
+        sub(/^Phase[[:space:]]+/, "", h)
+        phase = h
+        sub(/[^0-9].*$/, "", phase)
+        phase = phase + 0
+        sub(/^[0-9]+[[:space:]]*/, "", h)
+        sub(/^(—|--|-|:)[[:space:]]*/, "", h)
+        print "phase", phase, clean(h)
+      } else {
+        phase = "-"
+        if (h ~ /^Waves[[:space:]]*$/) { inwaves = 1; print "waves" }
+      }
+      next
+    }
+    /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/ {
+      end_item(); end_wave()
+      t = $0
+      sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]*/, "", t)
+      if (t ~ /^</) next
+      n++; cur = n
+      iphase[n] = phase; ichecked[n] = ($0 ~ /\[[xX]\]/) ? 1 : 0; itext[n] = t
+      next
+    }
+    inwaves && /^[0-9]+\.[[:space:]]/ {
+      end_item(); end_wave()
+      wn = $0; sub(/\..*$/, "", wn); wn = wn + 0
+      if (!(wn in seenw)) { seenw[wn] = 1; nw++; worder[nw] = wn }
+      wtext = $0; sub(/^[0-9]+\.[[:space:]]*/, "", wtext)
+      next
+    }
+    /^[[:space:]]+[^[:space:]]/ {
+      if (cur) { itext[cur] = itext[cur] " " trim($0); next }
+      if (wn != "") { wtext = wtext " " trim($0); next }
+    }
+    { end_item(); end_wave() }
+    END {
+      end_item(); end_wave()
+      for (k = 1; k <= nw; k++) print "wave", worder[k]
+      for (k = 1; k <= ne; k++) {
+        e = went[k]; eid = e; gsub(/`/, "", eid); eid = trim(eid); en = norm(e)
+        cnt = 0; hit = 0
+        for (i = 1; i <= n; i++) {
+          if ((iid[i] != "" && eid == iid[i]) || (inorm[i] != "" && en == inorm[i])) { cnt++; hit = i }
+        }
+        if (cnt == 0) { print "problem", ewave[k], "unmatched", clean(e); continue }
+        if (cnt > 1) { print "problem", ewave[k], "ambiguous", clean(e); continue }
+        if (!(hit in first)) { first[hit] = k; continue }
+        if (!(hit in rep)) { rep[hit] = 1; print "problem", ewave[first[hit]], "repeated", clean(went[first[hit]]) }
+        print "problem", ewave[k], "repeated", clean(e)
+      }
+      for (i = 1; i <= n; i++) {
+        w = ((i in first) && !(i in rep)) ? ewave[first[i]] : "-"
+        print "item", iphase[i], w, ichecked[i], (iid[i] == "" ? "-" : iid[i]), ikind[i], ititle[i]
+      }
+    }
+  '
+}
+
+# _spec_plan_enrich — the parsed rows on stdin, each `item` row replaced by
+#   item <phase> <wave> <task-id|-> <state> <merged> <paused> <autopilot> <title>
+# from the task's workspace in this checkout and the housekeeping log; every
+# other row passes through. Workspaces are read, never written: `state` is
+# `jig task`'s alone.
+_spec_plan_enrich() {
+  local merged_ids line iphase wave checked tid ikind ititle
+  local state merged paused autopilot tdir st
+  merged_ids=" $(_spec_plan_hk_merged | tr '\n' ' ') "
+  while IFS= read -r line; do
+    case "$line" in
+      item$'\t'*) ;;
+      *) printf '%s\n' "$line"; continue ;;
+    esac
+    IFS=$'\t' read -r _ iphase wave checked tid ikind ititle <<ROW
+$line
+ROW
+    state="" merged=no paused=false autopilot=-
+    [ "$checked" != 1 ] || merged=roadmap
+    if [ "$ikind" = fog ]; then
+      state=fog
+    elif [ "$tid" = - ]; then
+      state=not-filed
+      [ "$checked" != 1 ] || state="done"
+    else
+      tdir=$(spec_task_dir "$tid") || tdir=""
+      if [ -n "$tdir" ] && [ -f "$tdir/state" ]; then
+        st=$(spec_task_state "$tdir" status)
+        state=${st:-unknown}
+        if [ "$st" = active ] \
+           && { [ -z "$(spec_task_state "$tdir" branch)" ] || [ -z "$(spec_task_state "$tdir" base_commit)" ]; }; then
+          state=not-started
+        fi
+        if [ "$(spec_task_state "$tdir" paused)" = true ]; then
+          paused=true
+        fi
+        autopilot=$(spec_task_state "$tdir" autopilot)
+        [ -n "$autopilot" ] || autopilot=-
+        if [ "$merged" = no ] && [ "$st" = consolidated ]; then
+          merged=closed
+        fi
+      else
+        state=no-workspace
+        [ "$checked" != 1 ] || state="done"
+      fi
+      if [ "$merged" = no ]; then
+        case "$merged_ids" in
+          *" $tid "*) merged=housekeeping ;;
+        esac
+      fi
+    fi
+    printf 'item\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$iphase" "$wave" "$tid" "$state" "$merged" "$paused" "$autopilot" "$ititle"
+  done
+}
+
+# _spec_plan_hk_merged — the task ids the newest housekeeping run found merged
+# into their base (`remote=merged` on a task line after the last `--- run`
+# marker; domains/housekeeping documents the log's line shape). Nothing when
+# housekeeping never ran here.
+_spec_plan_hk_merged() {
+  local log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log"
+  [ -f "$log" ] || return 0
+  awk '
+    # split("", seen) clears the array portably.
+    /^--- run / { split("", seen); n = 0; next }
+    / remote=merged( |$)/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^task=/) {
+          id = substr($i, 6)
+          if (!(id in seen)) { seen[id] = 1; ids[++n] = id }
+        }
+      }
+    }
+    END { for (i = 1; i <= n; i++) print ids[i] }
+  ' "$log"
+}
+
+# _spec_plan_decide — the enriched rows on stdin, the phase in JIG_SP_PHASE;
+# prints the TSV spec_plan documents. A wave is merged when every item in it
+# merged and none of its entries is a problem; it is open when every wave
+# numbered below it is merged. Only an open wave's items may start.
+_spec_plan_decide() {
+  awk -F '\t' '
+    BEGIN { OFS = "\t"; want = ENVIRON["JIG_SP_PHASE"] + 0 }
+    $1 == "wave" { w = $2 + 0; if (!(w in known)) { known[w] = 1; nw++; wl[nw] = w }; next }
+    $1 == "problem" { np++; pr[np] = $0; if ($2 != "-") bad[$2 + 0] = 1; next }
+    $1 == "item" {
+      n++; ph[n] = $2; wv[n] = $3; id[n] = $4; st[n] = $5; mg[n] = $6; pa[n] = $7; ap[n] = $8; ti[n] = $9
+      if (wv[n] != "-" && mg[n] == "no") unmerged[wv[n] + 0] = 1
+      next
+    }
+    function next_of(i,   w) {
+      if (mg[i] != "no") return "done"
+      if (wv[i] == "-") return "unscheduled"
+      w = wv[i] + 0
+      if (!open[w]) return "wait"
+      if (st[i] == "fog") return "fog"
+      if (st[i] == "not-filed") return "file"
+      if (st[i] == "no-workspace") return "find"
+      if (st[i] == "not-started") return "start"
+      if (st[i] == "abandoned") return "abandoned"
+      return "running"
+    }
+    function item_row(i) { print "item", wv[i], id[i], st[i], mg[i], pa[i], ap[i], next_of(i), ti[i] }
+    END {
+      # Waves in ascending order: a plain insertion sort, the list is short.
+      for (a = 2; a <= nw; a++) { v = wl[a]; for (b = a - 1; b >= 1 && wl[b] > v; b--) wl[b + 1] = wl[b]; wl[b + 1] = v }
+      prev = 1
+      for (a = 1; a <= nw; a++) {
+        w = wl[a]
+        merged[w] = !(w in unmerged) && !(w in bad)
+        open[w] = prev
+        if (!merged[w]) prev = 0
+      }
+      firstwait = ""
+      for (a = 1; a <= nw; a++) {
+        w = wl[a]; has = 0
+        for (i = 1; i <= n; i++) if (ph[i] != "-" && ph[i] + 0 == want && wv[i] != "-" && wv[i] + 0 == w) has = 1
+        if (!has) continue
+        wstate = merged[w] ? "merged" : (open[w] ? "open" : "waiting")
+        if (wstate == "waiting" && firstwait == "") firstwait = w
+        print "wave", w, wstate
+        for (i = 1; i <= n; i++) if (ph[i] != "-" && ph[i] + 0 == want && wv[i] != "-" && wv[i] + 0 == w) item_row(i)
+      }
+      for (i = 1; i <= n; i++) if (ph[i] != "-" && ph[i] + 0 == want && wv[i] == "-") item_row(i)
+      if (firstwait != "") {
+        for (a = 1; a <= nw && wl[a] < firstwait; a++) {
+          w = wl[a]
+          for (i = 1; i <= n; i++)
+            if (wv[i] != "-" && wv[i] + 0 == w && mg[i] == "no") print "blocker", w, id[i], st[i], ti[i]
+        }
+      }
+      for (k = 1; k <= np; k++) print pr[k]
+    }
+  '
+}
+
+# _spec_plan_text — the TSV on stdin for a person: the phase, each wave with
+# its items, what earlier waves still hold, the problems, and what may start.
+_spec_plan_text() {
+  awk -F '\t' '
+    function label(s, p, a, m,   l) {
+      l = s
+      if (s == "not-filed") l = "not filed"
+      else if (s == "no-workspace") l = "no workspace here"
+      else if (s == "not-started") l = "not started"
+      if (m == "housekeeping") l = l ", merged"
+      if (p == "true") l = l ", paused"
+      if (a != "-") l = l ", autopilot " a
+      return l
+    }
+    function pad(s, w) { while (length(s) < w) s = s " "; return s }
+    { row[NR] = $0 }
+    $1 == "item" { l = label($4, $6, $7, $5); if (length($3) > wid) wid = length($3); if (length(l) > wl) wl = length(l); if (length($8) > wn) wn = length($8) }
+    $1 == "blocker" { l = label($4, "false", "-", "no"); if (length($3) > bid) bid = length($3); if (length(l) > bl) bl = length(l) }
+    END {
+      t = ENVIRON["JIG_SP_TITLE"]
+      printf "Phase %s%s\n", ENVIRON["JIG_SP_PHASE"], (t == "" || t == "-") ? "" : " — " t
+      printf "roadmap: %s\n", ENVIRON["JIG_SP_SOURCE"]
+      items = 0; loose = 0; blockers = 0; start = ""; file = ""
+      for (r = 1; r <= NR; r++) {
+        split(row[r], f, "\t")
+        if (f[1] == "wave") printf "wave %s — %s\n", f[2], f[3]
+        else if (f[1] == "item") {
+          items++
+          if (f[2] == "-" && !loose) { print "not in any wave:"; loose = 1 }
+          printf "  %s  %s  %s  %s\n", pad(f[3], wid), pad(label(f[4], f[6], f[7], f[5]), wl), pad(f[8], wn), f[9]
+          if (f[8] == "start") start = start (start == "" ? "" : ", ") f[3]
+          if (f[8] == "file") file = file (file == "" ? "" : "; ") f[9]
+        } else if (f[1] == "blocker") {
+          if (!blockers) print "waiting on earlier waves:"
+          blockers++
+          printf "  wave %s  %s  %s  %s\n", f[2], pad(f[3], bid), pad(label(f[4], "false", "-", "no"), bl), f[5]
+        } else if (f[1] == "problem") {
+          why = (f[3] == "unmatched") ? "names no roadmap item" : (f[3] == "ambiguous") ? "names more than one roadmap item" : "names an item another wave entry names too"
+          printf "problem: wave %s entry \"%s\" %s\n", f[2], f[4], why
+        }
+      }
+      if (!items) print "no items in this phase"
+      printf "may start now: %s\n", (start == "" ? "none" : start)
+      if (file != "") printf "to file first: %s\n", file
+    }
+  '
+}
+
 # --- epic branches ---------------------------------------------------------------
 
 # spec_epic <id> [--finish | --reopen] — the epic branch of a spec released
@@ -438,7 +855,7 @@ spec_epic_declare() {
   [ "$start" != HEAD ] || jig_die "spec epic: $default exists neither here nor on origin"
   commit=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$start^{commit}" 2>/dev/null) \
     || jig_die "spec epic: cannot resolve $start"
-  on_default=$(git -C "$JIG_PROJECT" show "$commit:$rel" 2>/dev/null | jig_spec_epic -) || rc=$?
+  on_default=$(jig_git_show_path "$commit" "$rel" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ "$on_default" != "$branch open" ]; then
     jig_die "spec epic: the Epic: line of $rel is not on $default yet; merge it into $default first"
   fi
@@ -492,7 +909,7 @@ spec_epic_reopen() {
     [ -n "$del" ] || jig_die "spec epic: no removed spec $id in the history of this branch"
     src="$del^"
   fi
-  line=$(git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+  line=$(jig_git_show_path "$src" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$line" ]; then
     jig_die "spec epic: the removed $roadmap declares no epic"
   fi
@@ -511,7 +928,7 @@ spec_epic_reopen() {
     [ -n "$path" ] || continue
     sub=${path#"$rel/"}
     if ! mkdir -p "$tmp/$(dirname "$sub")" \
-       || ! git -C "$JIG_PROJECT" show "$src:$path" > "$tmp/$sub"; then
+       || ! jig_git_show_path "$src" "$path" > "$tmp/$sub"; then
       spec_trash_partial "$tmp" "$id"
       jig_die "spec epic: could not restore $path"
     fi
@@ -705,7 +1122,7 @@ spec_ship() {
         start=$(jig_fresh_base_ref "$default" "spec ship") || exit 1
         if [ "$start" != HEAD ]; then
           rc=0
-          on_default=$(git -C "$JIG_PROJECT" show "$start:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+          on_default=$(jig_git_show_path "$start" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
           [ "$rc" -ne 0 ] || [ "$on_default" != "$branch open" ] || mode=epic
         fi
       fi
@@ -733,12 +1150,12 @@ spec_ship_removed_epic() {
   local id="$1" roadmap src line rc=0
   roadmap="$JIG_AI_DIR/specs/$id/roadmap.md"
   src=$(spec_ship_removed_src "$id") || exit 1
-  line=$(git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+  line=$(jig_git_show_path "$src" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$line" ] || [ "${line##* }" != open ]; then
     jig_die "spec ship: the removed $roadmap declares no open epic; only an epic's final pull request ships a removed spec"
   fi
   # Validated where it is read, as the release level the final PR carries.
-  git -C "$JIG_PROJECT" show "$src:$roadmap" 2>/dev/null | spec_release_check "spec ship" "$roadmap" >/dev/null || exit 1
+  jig_git_show_path "$src" "$roadmap" 2>/dev/null | spec_release_check "spec ship" "$roadmap" >/dev/null || exit 1
   printf '%s\n' "${line% *}"
 }
 
@@ -868,7 +1285,7 @@ spec_ship_final() {
   src=$(spec_ship_removed_src "$id") || exit 1
   if [ "$level" = merge ] && jig_unattended; then
     unattended=1
-    release=$(git -C "$JIG_PROJECT" show "$src:$rel/roadmap.md" 2>/dev/null \
+    release=$(jig_git_show_path "$src" "$rel/roadmap.md" 2>/dev/null \
       | spec_release_check "spec ship" "$rel/roadmap.md") || exit 1
     if [ -z "$release" ]; then
       printf 'release: minor (no Release: line; the unattended default)\n'
@@ -925,7 +1342,7 @@ spec_ship_final_ready() {
     printf 'the spec %s is on disk again\n' "$id"
     return 0
   fi
-  items=$(git -C "$JIG_PROJECT" show "$src:$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null | spec_unchecked_items)
+  items=$(jig_git_show_path "$src" "$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null | spec_unchecked_items)
   if [ -n "$items" ]; then
     printf 'the epic is not finished: %s roadmap item(s) unchecked, first: %s\n' \
       "$(printf '%s\n' "$items" | wc -l | tr -d ' ')" "$(printf '%s\n' "$items" | head -n 1)"

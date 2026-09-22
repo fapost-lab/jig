@@ -148,6 +148,21 @@ not merged: the forge refused: At least 1 approving review is required
 Ask someone who may approve or merge on your repository to look at it. The same line explains the
 other cases — a failed check, checks that took longer than the timeout, or no checks at all.
 
+## Which tasks of a phase may start
+
+A specification's roadmap groups its items into waves: the items of one wave can be worked on at the
+same time, and a wave starts only once everything in the waves before it has been merged. To see
+where a phase stands, run:
+
+```bash
+jig spec plan <spec-id> --phase <n>
+```
+
+It lists each wave of that phase with its items, the task each one was filed as and how far that
+task is, what earlier waves are still holding it, and which tasks may start now. An entry of the
+waves list that names no roadmap item, or more than one, is reported, never guessed. It changes
+nothing and needs no network. `--format tsv` prints the same answer for a script to read.
+
 ## What autopilot does not protect you from
 
 Jig's scripts cannot see the commands the agent runs. The limit on fixing attempts and the rules

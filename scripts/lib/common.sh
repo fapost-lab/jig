@@ -309,6 +309,19 @@ jig_base_ref() {
   return 0
 }
 
+# jig_git_show_path <ref> <path> — the content of <path> as committed at <ref>,
+# on stdout; non-zero when <ref> names no commit or <path> is not in it.
+# The ref is resolved to a commit SHA first and git is handed `<sha>:<path>`,
+# never `<ref>:<path>`: under Git Bash (MSYS) an argument holding both `/`
+# and `:` — `epic/idea-x:.ai/specs/...` — is rewritten as a path list before
+# git sees it, so a ref with `/` in its name read nothing on Windows.
+jig_git_show_path() {
+  local sha
+  sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$1^{commit}" 2>/dev/null) || return 1
+  [ -n "$sha" ] || return 1
+  git -C "$JIG_PROJECT" show "$sha:$2"
+}
+
 # jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
 # refs/heads/<name> and refs/remotes/origin/<name>, or HEAD when neither exists.
 #
@@ -1069,7 +1082,9 @@ jig_knowledge_read_path() {
   case "$src" in
     /* | ../* | */../* | *.. ) return 3 ;;
   esac
-  [ -f "$JIG_PROJECT/$src" ] && [ ! -L "$JIG_PROJECT/$src" ] || return 3
+  if [ ! -f "$JIG_PROJECT/$src" ] || [ -L "$JIG_PROJECT/$src" ]; then
+    return 3
+  fi
   local root dir
   root=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 3
   dir=$(cd -P "$(dirname "$JIG_PROJECT/$src")" 2>/dev/null && pwd -P) || return 3
@@ -1122,12 +1137,15 @@ jig_trash_dest() {
 
 _JIG_PAGE_DIRTY=""
 
-# jig_status_page_touch [--full] — redraw the clone's status page if it exists.
+# jig_status_page_touch [--full | --refresh] — redraw the clone's status page
+# if it exists.
 # One page per clone: a command run in a task worktree redraws the page of the
 # main checkout, with that checkout's own jig. A page nobody has opened yet
 # (`jig status --html` or `--open` writes the first one) is never created
 # here. --full recounts everything and refreshes the cached counts
-# (`status --html`); without it the redraw reads them (`status --refresh`).
+# (`status --html`); --refresh, the default, reads them (`status --refresh`).
+# Callers in this file pass the mode explicitly: shellcheck 0.9.0 reports
+# SC2120 on a function that reads $1 when every call it can see passes none.
 # Always returns 0 and prints nothing: a failed redraw never changes the
 # output or the exit code of the command that triggered it.
 jig_status_page_touch() {
@@ -1151,7 +1169,7 @@ jig_status_page_dirty() { _JIG_PAGE_DIRTY=1; }
 jig_status_page_flush() {
   [ -n "${_JIG_PAGE_DIRTY:-}" ] || return 0
   _JIG_PAGE_DIRTY=""
-  jig_status_page_touch
+  jig_status_page_touch --refresh
 }
 
 # Content hash used by the manifest (ADR-0003, domains/install). git is mandatory,
