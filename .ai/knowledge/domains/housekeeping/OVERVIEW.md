@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-18
+reviewed_at: 2026-09-22
 ---
 # Housekeeping
 
@@ -107,6 +107,12 @@ templates append stdout to the same `housekeeping.log`, so no report line may ca
 **The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
 block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
 (ADR-0027). Its line shape is an interface with two consumers now, and nothing rotates it.
+The status page reads the newest block too — `remote=open` for pull requests waiting on a person,
+the flags for its cards — and the marker's `forge=github|gitlab|none|failed` field to say whether
+that data can be trusted: `failed` means the forge did not answer this run, so no `open` was seen
+(adr-20260922-the-status-page-stays-current-without-a-server). A non-dry run ends by redrawing the
+page in full when it exists (`jig_status_page_touch --full`), which also refreshes the counts the
+page's cheaper redraws reuse; that never changes the run's output or exit code.
 
 Outside: which config file a runtime keeps its hooks in and what shape it has — that
 belongs to the adapter (ADR-0024). This domain owns the hook *script*, not the runtime's

@@ -199,4 +199,15 @@ Risk/complexity class `T0`–`T4` assigned by the Agent that selects the workflo
 
 ## Human Gate
 
-A stage where the workflow stops until a human approves (T3, T4).
+A stage where the workflow stops until a human approves (T3, T4). The decision is written
+in `task.md`, and an approval is also recorded with `jig task gate <id> approved`, which
+pins the approved design.
+
+## Status Page
+
+`.ai/runtime/status.html`: one self-contained page written by `jig status --html` or
+`--open` that answers what needs the reader, what is running and how far the specifications
+are. Once it exists, the commands that change a task, a spec or a housekeeping result redraw
+it, and it reloads itself; one per clone, in the main checkout
+(adr-20260922-the-status-page-stays-current-without-a-server). Informal synonyms: dashboard,
+status view.

@@ -123,27 +123,59 @@ uncommitted changes. Worktrees you or your agent created by hand are never remov
 
 ## Seeing where things stand
 
-`jig status` answers in the terminal. For a view you can read like a web page — or send to someone
-who does not use a terminal — ask the agent to *"make the status page"*, or run:
+`jig status` answers in the terminal. For a page you can keep open in your browser while the agent
+works — or send to someone who does not use a terminal — ask the agent to *"open the status page"*,
+or run:
 
 ```bash
-jig status --html
+jig status --open
 ```
 
-It writes one file, `.ai/runtime/status.html` in your project, and prints its full path. The page
-shows:
+It writes one file, `.ai/runtime/status.html` in your project, prints its full path and opens it in
+your browser. The same command works in Git Bash, in PowerShell and in the macOS or Linux terminal.
+Where no browser can be opened — over SSH, for instance — the page is written anyway and the command
+tells you where it is. `jig status --html` writes the page without opening it.
 
-- every task in progress: its class, status, the branch it lands on, the worktree it runs in, whether
-  its review still holds (current, stale, or none yet — and whether a T4 task still needs one), and
-  each finding that stops it;
-- how far every specification's roadmap has got;
-- what waits for you: knowledge awaiting a decision, tasks to close after their change landed,
-  worktrees housekeeping had to keep;
-- the complete `jig status` text, folded away at the bottom.
+**The page keeps itself current.** Once it exists, every time the agent changes a task — starts it,
+records a review finding, reaches a new stage, stops to ask you something — Jig redraws the file, and
+the open page reloads itself every 10 seconds. You do not need to run anything again; the time at the
+top says when it was last drawn. It is drawn from your main project folder, so it shows every task,
+including those the agent works on in a separate worktree.
 
-To open it, double-click `status.html` in your file manager — on Windows, in File Explorer, open your
-project folder, then `.ai`, then `runtime`; on macOS, Finder hides folders whose name starts with a
-dot until you press Cmd+Shift+. (period). From a terminal:
+It answers four questions, in this order:
+
+1. **Needs you.** Each card says what happened and, in one line, what to do:
+
+   | Card | What to do |
+   |---|---|
+   | Autopilot stopped and is waiting for you | Answer the agent in that task's conversation; the card shows its question |
+   | A design is waiting for your decision | Read the design the agent showed you, then approve it or say what to change |
+   | A design changed after you approved it | Read what changed and approve it again |
+   | Ready for your step in git | Commit, push or open the pull request — whichever step the agent may not take in your project |
+   | A pull request is waiting for review or merge | Review it and merge it; the link opens it. Jig never merges |
+   | Merged: the task can be closed | Tell the agent to close the task |
+   | The work landed on a different branch than planned, the pull request was closed without merging, a worktree was kept | Look at it; only you can say what happens next |
+   | Knowledge is waiting for your decision | Ask the agent *"what's proposed?"* |
+
+   When there is nothing to do, it says *Nothing needs you right now*.
+2. **Running now.** Every task in progress: its class, status, the branch it lands on, the worktree
+   it runs in, whether its review still holds (current, stale, or none yet — and whether a T4 task
+   still needs one), and each finding that stops it. For a task on autopilot it also shows the stage
+   it is in, for how long, and how many of its two fixing attempts it used. Paused tasks are folded
+   away below.
+3. **Specifications.** How far every roadmap has got, phase by phase. For a specification built on
+   its own branch, the progress is read from that branch as your copy of it last saw it.
+4. **Details.** The counts at a glance, and the complete `jig status` text, folded away at the bottom.
+
+**Why some data is marked stale.** Whether a pull request is open or merged comes from housekeeping,
+which asks GitHub or GitLab once a day when an agent session starts. When its last run is older than
+that, or GitHub/GitLab did not answer, the page says *stale*; run `jig housekeeping` to update it. A
+pull request the agent opened itself appears at once, with its link. The knowledge counts come from
+the last full `jig status` and show their time too.
+
+To open the file by hand, double-click `status.html` in your file manager — on Windows, in File
+Explorer, open your project folder, then `.ai`, then `runtime`; on macOS, Finder hides folders whose
+name starts with a dot until you press Cmd+Shift+. (period). From a terminal:
 
 | System | Command |
 |---|---|
@@ -152,10 +184,10 @@ dot until you press Cmd+Shift+. (period). From a terminal:
 | macOS | `open .ai/runtime/status.html` |
 | Linux | `xdg-open .ai/runtime/status.html` |
 
-The page is a single file with nothing to download: it opens in any browser, offline, and follows your
-system's light or dark theme. It is a snapshot — it shows the moment it was made, printed at the top —
-so run the command again to refresh it. Running it changes nothing else in your project, and the file
-is never committed.
+The page is a single file with nothing to download and no script: it opens in any browser, offline,
+and follows your system's light or dark theme. Nothing but the page and the counts it reuses is
+written, both in `.ai/runtime/`, and neither is ever committed. A project where nobody opened the page
+never gets one.
 
 ## When the work turns out bigger
 

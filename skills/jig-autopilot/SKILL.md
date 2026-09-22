@@ -18,7 +18,9 @@ Classify, file and start the task with `jig-task` (or resume one that is filed).
 ```
 
 Say in one line what will happen: the class, the route, and where the run will end —
-an open pull request with `agent.git: pr`, or "ready for your commit" with `none`.
+an open pull request with `agent.git: pr`, or "ready for your commit" with `none`. Offer to
+open the status page with `.ai/scripts/jig status --open`, where the human can watch the run
+and sees first what it needs from them.
 
 ## 2. Run the route
 

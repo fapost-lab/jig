@@ -35,7 +35,10 @@ A helper that two commands must never disagree about lives in `lib/common.sh` in
 ("is this document a stub for an existing file") and `jig_knowledge_read_path` ("which file does an agent
 read for it"), `jig_valid_id` ("which name may become a
 task or spec directory" — a roadmap names task ids, so the two grammars may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
-`jig spec remove` both put things there). One command library never sources another: `context`
+`jig spec remove` both put things there), `jig_status_page_touch` with `jig_status_page_dirty` and
+`jig_status_page_flush` ("redraw the status page" — task, spec and housekeeping all trigger it, and
+none of them may source `status.sh`, so the redraw is a `jig status --refresh` process). One command
+library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 
 When a command needs another domain to *act* — not to answer — it runs that command through the
@@ -50,11 +53,12 @@ their entry points — `status` sources six (`spec` for its `specs:` count), `me
 sources `task` and `knowledge`. What they may not do is *recompute* the answer: a second implementation of "how many documents
 are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
 is invisible until someone reads both. A reporting command therefore consumes a peer's
-output, never reimplements it, and never writes anything — with one exception: `jig status --html`
-writes the status page, `.ai/runtime/status.html`, and nothing else
-(adr-20260921-the-status-page-is-the-one-file-a-report-writes). Where a peer only printed formatted
-text, it gains an unformatted producer the report calls (`spec_list_rows`), rather than the report
-parsing its columns. Setup a peer needs before its
+output, never reimplements it, and never writes anything — with one exception: `status` writes the
+status page, `.ai/runtime/status.html`, and the slow counts its redraws reuse,
+`.ai/runtime/status-counts`, and nothing else
+(adr-20260922-the-status-page-stays-current-without-a-server). Where a peer only printed formatted
+text, it gains an unformatted producer the report calls (`spec_list_rows`, `spec_phase_rows`,
+`_task_autopilot_facts`), rather than the report parsing its columns. Setup a peer needs before its
 functions work is exposed as a function of that peer (`km_init`) rather than transcribed —
 a copied prologue silently misses the step the original later gains.
 

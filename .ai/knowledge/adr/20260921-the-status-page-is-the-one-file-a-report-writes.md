@@ -1,7 +1,7 @@
 ---
 id: adr-20260921-the-status-page-is-the-one-file-a-report-writes
 type: adr
-status: accepted
+status: superseded
 date: 2026-09-21
 domains:
   - task

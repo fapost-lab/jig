@@ -1,25 +1,111 @@
 # cmd_status — version, init/manifest state, drift, pending knowledge
 # proposals, active tasks, housekeeping age (ARCHITECTURE.md, Scripts layout). Sourced by
 # scripts/jig; defines cmd_status.
-# Read-only: never writes anything, with one exception — `--html` writes the
-# status page, .ai/runtime/status.html, and nothing else (_status_html).
+# Read-only, with two exceptions, both in .ai/runtime/ and both about the
+# status page (adr-20260922-the-status-page-stays-current-without-a-server):
+# the page itself, .ai/runtime/status.html (`--html`, `--open`, `--refresh`),
+# and the counts it reuses between full runs, .ai/runtime/status-counts
+# (_status_counts_save).
 # shellcheck shell=bash
 
 cmd_status() {
-  local html=0
+  local mode=text
   while [ $# -gt 0 ]; do
     case "$1" in
-      --html) html=1; shift ;;
-      *) jig_die "status: unknown argument: $1 (usage: jig status [--html])" ;;
+      --html) [ "$mode" = open ] || mode=html; shift ;;
+      --open) mode=open; shift ;;
+      --refresh) mode=refresh; shift ;;
+      *) jig_die "status: unknown argument: $1 (usage: jig status [--html | --open])" ;;
     esac
   done
   jig_require_repo
-  _status_load
-  if [ "$html" = 1 ]; then
-    _status_html
+  if [ "$mode" != text ]; then
+    _status_page "$mode"
     return 0
   fi
+  _status_load
   _status_report
+  # A full report is also when the page's cached counts are refreshed — only
+  # where the page lives and only once it exists: `jig status` writes nothing
+  # in a project that never asked for the page.
+  if [ -f "$JIG_PROJECT/$JIG_AI_DIR/runtime/status.html" ] && [ -n "$_SC_AT" ] \
+     && [ "$(jig_config_clone_root)" = "$JIG_PROJECT" ]; then
+    _status_counts_save || true
+  fi
+}
+
+# --- the counts that cost seconds ------------------------------------------------
+#
+# Three answers take most of `jig status`'s time: knowledge awaiting a decision
+# (km_proposed_count), linked sources changed since acceptance
+# (km_changed_sources_count) and what `jig upgrade` would install
+# (upgrade_pending) — about three seconds together. A full report computes
+# them; the page's redraw after every task command reuses the last full run's
+# answers from .ai/runtime/status-counts and says how old they are, so the
+# redraw stays well under a second.
+
+_SC_READY=""      # set once the counts below are known for this process
+_SC_PROPOSALS=""  # knowledge documents awaiting a decision; empty: unknown
+_SC_SOURCES=""    # linked sources changed since acceptance; empty: unknown
+_SC_PENDING=""    # items `jig upgrade` would install; empty: cannot tell
+_SC_AT=""         # UTC time the counts were taken
+
+# _status_counts — compute the three counts now.
+_status_counts() {
+  local pending rc=0
+  _SC_PROPOSALS=$(km_proposed_count)
+  _SC_SOURCES=$(km_changed_sources_count)
+  # Omitted rather than 0 when it cannot be determined, most commonly because
+  # this install's source checkout no longer exists (see the drift line).
+  pending=$(upgrade_pending) || rc=$?
+  if [ "$rc" = 0 ]; then
+    _SC_PENDING=$(printf '%s\n' "$pending" | grep -c . || true)
+  else
+    _SC_PENDING=""
+  fi
+  _SC_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  _SC_READY=1
+}
+
+# _status_counts_cached — the counts the last full run saved; computed (and
+# saved) now when there are none yet, so a page first written by an older jig
+# pays the full cost once rather than showing nothing.
+_status_counts_cached() {
+  local file="$JIG_PROJECT/$JIG_AI_DIR/runtime/status-counts" key value
+  if [ ! -f "$file" ]; then
+    _status_counts
+    _status_counts_save || true
+    return 0
+  fi
+  _SC_PROPOSALS="" _SC_SOURCES="" _SC_PENDING="" _SC_AT=""
+  while IFS= read -r key || [ -n "$key" ]; do
+    value=${key#*: }
+    case "$key" in
+      "at: "*) _SC_AT=$value ;;
+      "proposals: "*) _SC_PROPOSALS=$value ;;
+      "sources_changed: "*) _SC_SOURCES=$value ;;
+      "pending: "*) _SC_PENDING=$value ;;
+    esac
+  done < "$file"
+  # Anything but a number is unknown: the file is ours, but it is a file.
+  case "$_SC_PROPOSALS" in '' | *[!0-9]*) _SC_PROPOSALS="" ;; esac
+  case "$_SC_SOURCES" in '' | *[!0-9]*) _SC_SOURCES="" ;; esac
+  case "$_SC_PENDING" in '' | *[!0-9]*) _SC_PENDING="" ;; esac
+  _SC_READY=1
+}
+
+# _status_counts_save — write the counts for the next redraw, atomically.
+_status_counts_save() {
+  local dir="$JIG_PROJECT/$JIG_AI_DIR/runtime" file tmp
+  file="$dir/status-counts"
+  tmp="$file.tmp.$$"
+  mkdir -p "$dir" || return 1
+  {
+    printf 'at: %s\n' "$_SC_AT"
+    printf 'proposals: %s\n' "${_SC_PROPOSALS:-unknown}"
+    printf 'sources_changed: %s\n' "${_SC_SOURCES:-unknown}"
+    printf 'pending: %s\n' "${_SC_PENDING:-unknown}"
+  } > "$tmp" && mv "$tmp" "$file"
 }
 
 # _status_load — source the peers whose answers this report consumes
@@ -49,6 +135,7 @@ _status_report() {
     return 0
   fi
   printf '%s\n' "initialised: yes"
+  [ -n "$_SC_READY" ] || _status_counts
   _status_config_local
   _status_agent_git
 
@@ -106,11 +193,8 @@ $rel"
   # install's source checkout no longer exists on this machine (domains/install):
   # that is a different, unknown state from "checked and found nothing
   # pending", and collapsing the two would misreport it as clean.
-  local pending pending_rc=0 pcount
-  pending=$(upgrade_pending) || pending_rc=$?
-  if [ "$pending_rc" = 0 ]; then
-    pcount=$(printf '%s\n' "$pending" | grep -c . || true)
-    printf '%s\n' "drift: $mcount modified, $xcount missing, $pcount pending"
+  if [ -n "$_SC_PENDING" ]; then
+    printf '%s\n' "drift: $mcount modified, $xcount missing, $_SC_PENDING pending"
   else
     printf '%s\n' "drift: $mcount modified, $xcount missing"
   fi
@@ -128,10 +212,10 @@ $rel"
   # decision is deliberately allowed to outlive the session that proposed
   # (ADR-0018) — so the only thing that makes it discoverable later is this
   # line. Counted, not listed: `jig knowledge proposed` does the listing.
-  local proposals
-  proposals=$(km_proposed_count)
-  if [ "$proposals" -gt 0 ]; then
-    printf 'proposals: %s awaiting decision (jig knowledge proposed)\n' "$proposals"
+  if [ -z "$_SC_PROPOSALS" ]; then
+    printf 'proposals: unknown (run jig status)\n'
+  elif [ "$_SC_PROPOSALS" -gt 0 ]; then
+    printf 'proposals: %s awaiting decision (jig knowledge proposed)\n' "$_SC_PROPOSALS"
   else
     printf 'proposals: none\n'
   fi
@@ -140,10 +224,8 @@ $rel"
   # after acceptance is still read — a merged edit went through the team's own
   # review — but a human has not approved it for agents, and without this line
   # `proposals: none` would be the only thing anyone saw (ADR-0036 as amended).
-  local sources_changed
-  sources_changed=$(km_changed_sources_count)
-  if [ "$sources_changed" -gt 0 ]; then
-    printf 'sources changed: %s (jig knowledge sources)\n' "$sources_changed"
+  if [ -n "$_SC_SOURCES" ] && [ "$_SC_SOURCES" -gt 0 ]; then
+    printf 'sources changed: %s (jig knowledge sources)\n' "$_SC_SOURCES"
   fi
 
   # Specifications (jig-idea). A spec is a plan outside .ai/knowledge/, so no
@@ -158,13 +240,12 @@ $rel"
     printf 'specs: none\n'
   fi
 
-  local found=0 state_file line worktrees default_base blocking bcount receipt_changed autopilot_note
-  _STATUS_FINISHED=0
-  worktrees=$(_task_worktrees)
-  default_base=$(cfg git.base_branch main)
-  for state_file in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
-    [ -f "$state_file" ] || continue
-    _status_task_facts "$state_file" "$worktrees" || continue
+  local found=0 rec line default_base blocking bcount autopilot_note
+  [ -n "$_STATUS_LIVE_READY" ] || _status_live_collect
+  default_base=$_STATUS_DEFAULT_BASE
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
     found=1
     line="task $_ST_ID class=$_ST_CLASS status=$_ST_STATUS"
     [ -z "$_ST_WT" ] || line="$line $_ST_WT_NOTE"
@@ -183,25 +264,34 @@ $rel"
     # reporting never recomputes a peer's answer (ARCHITECTURE.md, Scripts
     # layout).
     blocking=$(_task_blocking_findings "$_ST_ID")
-    bcount=$(_task_count_lines "$blocking")
-    [ "$bcount" -eq 0 ] || line="$line blocking=$bcount"
-    # Same predicate every gate uses (_task_receipt_changed, task.sh): a
-    # receipt that exists but no longer matches the reviewed state. A task
-    # with no receipt at all is not flagged here — that is "not reviewed yet",
-    # not "stale" (design.md §5).
-    receipt_changed=$(_task_receipt_changed "$_ST_ID")
-    [ -z "$receipt_changed" ] || line="$line review=stale"
+    if [ -n "$blocking" ]; then
+      bcount=$(_task_count_lines "$blocking")
+      [ "$bcount" -eq 0 ] || line="$line blocking=$bcount"
+    fi
+    # The answer `jig task receipt --check` gives (task_receipt_check,
+    # task.sh), read once per task in _status_live_collect: a receipt that
+    # exists but no longer matches the reviewed state. A task with no receipt
+    # at all is not flagged here — that is "not reviewed yet", not "stale".
+    case "$_ST_RECEIPT" in
+      "receipt: stale"*) line="$line review=stale" ;;
+    esac
     # Same predicate `jig task autopilot report` prints (_task_autopilot_note,
     # task.sh): a run mid-flight (`on`) or waiting on a human (`stopped`).
     # `done`, and a task that never ran one, add nothing (design.md, autopilot).
-    autopilot_note=$(_task_autopilot_note "$_ST_ID")
-    [ -z "$autopilot_note" ] || line="$line $autopilot_note"
+    # Asked only of a task whose state has a run at all; for any other the
+    # answer is empty.
+    if [ -n "$_ST_AUTOPILOT" ]; then
+      autopilot_note=$(_task_autopilot_note "$_ST_ID")
+      [ -z "$autopilot_note" ] || line="$line $autopilot_note"
+    fi
     printf '%s\n' "$line"
-  done
+  done <<EOF
+$_STATUS_LIVE
+EOF
   [ "$found" = 1 ] || printf '%s\n' "no active tasks"
   [ "$_STATUS_FINISHED" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$_STATUS_FINISHED"
 
-  printf 'current task: %s\n' "$(_status_current_task)"
+  printf 'current task: %s\n' "${_STATUS_CURRENT:-$(_status_current_task)}"
   printf 'housekeeping: %s\n' "$(_status_housekeeping_age)"
 
   # Tasks the last housekeeping run flagged (_status_hk_count).
@@ -228,36 +318,102 @@ $rel"
   _status_instructions
 }
 
-# _status_task_facts <state-file> <worktrees> — read one task's state into
-# the _ST_* globals both the text report and the page show. Returns 1, after
-# counting it in _STATUS_FINISHED, for a finished task: finished work is
-# counted, not listed, so on a long-lived branch it does not crowd out the
-# tasks actually in flight (same rule as `jig task list`, see _task_is_live).
-# <worktrees> is a `_task_worktrees` listing: a task started in its own
-# worktree is still listed where it was filed, and git says where its branch
-# is checked out (ADR-0029).
-_status_task_facts() {
-  local state_file="$1" worktrees="$2"
-  _ST_ID=$(sed -n 's/^task_id:[[:space:]]*//p' "$state_file" | head -n 1)
-  _ST_CLASS=$(sed -n 's/^class:[[:space:]]*//p' "$state_file" | head -n 1)
-  _ST_STATUS=$(sed -n 's/^status:[[:space:]]*//p' "$state_file" | head -n 1)
-  case "$_ST_STATUS" in
-    active | ready) ;;
-    *) _STATUS_FINISHED=$((_STATUS_FINISHED + 1)); return 1 ;;
-  esac
-  _ST_PAUSED=$(sed -n 's/^paused:[[:space:]]*//p' "$state_file" | head -n 1)
-  _ST_REASON=""
-  if [ "$_ST_PAUSED" = "true" ]; then
-    _ST_REASON=$(sed -n 's/^paused_reason:[[:space:]]*//p' "$state_file" | head -n 1)
-  fi
-  _ST_WT="" _ST_WT_NOTE=""
-  _ST_BRANCH=$(sed -n 's/^branch:[[:space:]]*//p' "$state_file" | head -n 1)
-  if [ -n "$_ST_BRANCH" ]; then
-    _ST_WT=$(_task_worktree_for "$_ST_BRANCH" "$worktrees")
-    [ -z "$_ST_WT" ] || _ST_WT_NOTE=$(_task_worktree_note "$_ST_WT")
-  fi
-  _ST_BASE=$(sed -n 's/^base_branch:[[:space:]]*//p' "$state_file" | head -n 1)
-  return 0
+# The live tasks, read once per report and shared by the text report and the
+# page: _STATUS_LIVE holds one record per task still in flight, fields joined
+# by the unit separator (\037) so that an empty one survives a `read`.
+# Finished tasks are counted in _STATUS_FINISHED, not listed: on a
+# long-lived branch they would crowd out the tasks actually in flight (same
+# rule as `jig task list`, see _task_is_live).
+_STATUS_LIVE=""
+_STATUS_LIVE_READY=""
+_STATUS_FINISHED=0
+_STATUS_WORKTREES=""
+_STATUS_DEFAULT_BASE=""
+_STATUS_US=$(printf '\037')
+
+# _status_task_rows — every workspace's `state`, in one awk pass rather than a
+# sed per key per task: the page is redrawn after every task command, and a
+# process per value made ten tasks cost seconds. One line per state file,
+# <task_id> <class> <status> <paused> <paused_reason> <branch> <base_branch>
+# <autopilot> <pr_url> <knowledge_consolidated>, joined by \037; each value is
+# what `sed -n 's/^<key>:[[:space:]]*//p' | head -n 1` gave, the first match.
+_status_task_rows() {
+  local f
+  set --
+  for f in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
+    if [ -f "$f" ]; then set -- "$@" "$f"; fi
+  done
+  [ $# -gt 0 ] || return 0
+  awk '
+    function out() {
+      if (have)
+        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
+          v["task_id"], v["class"], v["status"], v["paused"], v["paused_reason"],
+          v["branch"], v["base_branch"], v["autopilot"], v["pr_url"], v["knowledge_consolidated"]
+    }
+    FNR == 1 { out(); split("", v); split("", seen); have = 1 }
+    /^[^:]+:/ {
+      k = $0
+      sub(/:.*/, "", k)
+      if (!(k in seen)) { seen[k] = 1; x = $0; sub(/^[^:]*:[[:space:]]*/, "", x); v[k] = x }
+    }
+    END { out() }
+  ' "$@"
+}
+
+# _status_live_collect [page] — fill _STATUS_LIVE, _STATUS_FINISHED and
+# _STATUS_WORKTREES. Per live task it asks the peers once: where its branch is
+# checked out (git's own list, ADR-0029) and how many files wait there, and
+# the receipt line `jig task receipt --check` prints (task_receipt_check). With
+# `page`, also the answers only the page shows: the gate of a T3/T4 design
+# (_task_gate_state) and the autopilot run (_task_autopilot_facts).
+_status_live_collect() {
+  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc
+  local wt wt_note receipt gate facts us="$_STATUS_US"
+  _STATUS_FINISHED=0
+  _STATUS_LIVE=""
+  _STATUS_WORKTREES=$(_task_worktrees)
+  _STATUS_DEFAULT_BASE=$(cfg git.base_branch main)
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc <<EOF
+$row
+EOF
+    case "$status" in
+      active | ready) ;;
+      *) _STATUS_FINISHED=$((_STATUS_FINISHED + 1)); continue ;;
+    esac
+    [ "$paused" = true ] || reason=""
+    wt="" wt_note=""
+    if [ -n "$branch" ]; then
+      wt=$(_task_worktree_for "$branch" "$_STATUS_WORKTREES")
+      [ -z "$wt" ] || wt_note=$(_task_worktree_note "$wt")
+    fi
+    # task_receipt_check exits 1 for stale and for a T4 with none; its line
+    # is the answer either way.
+    receipt=$(task_receipt_check "$id" || true)
+    gate="" facts=""
+    if [ "$page" = page ]; then
+      case "$class" in
+        T3 | T4) gate=$(_task_gate_state "$id") ;;
+      esac
+      [ -z "$autopilot" ] || facts=$(_task_autopilot_facts "$id")
+    fi
+    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$facts
+"
+  done <<EOF
+$(_status_task_rows)
+EOF
+  _STATUS_LIVE_READY=1
+}
+
+# _status_rec <record> — one _STATUS_LIVE record into the _ST_* globals.
+# _ST_APFACTS is _task_autopilot_facts' line, tab-separated, or empty.
+_status_rec() {
+  IFS="$_STATUS_US" read -r _ST_ID _ST_CLASS _ST_STATUS _ST_PAUSED _ST_REASON _ST_BRANCH _ST_BASE \
+    _ST_AUTOPILOT _ST_PR_URL _ST_KC _ST_WT _ST_WT_NOTE _ST_RECEIPT _ST_GATE _ST_APFACTS <<EOF
+$1
+EOF
 }
 
 # _status_current_task — the workspace whose branch matches the checkout
@@ -313,28 +469,76 @@ _status_hk_count() {
   fi
 }
 
-# --- the status page (`jig status --html`) ---------------------------------------
+# --- the status page (`jig status --html | --open`) ------------------------------
 #
 # One self-contained HTML file for a person who does not live in a terminal
-# (.ai/specs/autopilot/, Phase 5): inline CSS, no script, no external asset,
-# so it opens from disk with the network off, and it follows the reader's
-# light or dark preference. It is a snapshot, rewritten whole on every run
-# under one fixed name, and it says when it was made.
+# (.ai/specs/autopilot/, Phase 5; adr-20260922-the-status-page-stays-current-without-a-server):
+# inline CSS, no script, no external asset, so it opens from disk with the
+# network off, and it follows the reader's light or dark preference. It
+# answers, in this order, what needs the reader, what is running, how far the
+# specifications are, and then everything `jig status` prints.
+#
+# It stays current without a server: a `<meta http-equiv="refresh">` reloads it
+# every 10 seconds, and the commands that change a task, a spec or a
+# housekeeping result redraw it (jig_status_page_touch, common.sh). One page
+# per clone, in the main checkout: a task worktree sees one task, and a reader
+# watching one tab should see them all.
 #
 # Everything on it is an answer this report already consumes — the same
 # helpers the text report and the completion gates call — and every value is
-# escaped with _status_h, because task ids, finding locations, spec titles and
-# paths are text people wrote.
+# escaped with _status_h, because task ids, reasons, finding locations, spec
+# titles and paths are text people wrote.
 
 # Script-global: the EXIT trap runs after _status_html has returned.
 _STATUS_HTML_TMP=""
+_STATUS_CURRENT=""  # the current task, asked once per page
 
-# _status_html — write .ai/runtime/status.html and print its path. Refuses on
-# a project that is not initialised: the page would create .ai/ in a
-# repository that never asked for it.
+# How often the open page reloads itself, in seconds (task.md, human gate).
+_STATUS_REFRESH=10
+
+# _status_page html|open|refresh — write the page (and open it). `refresh` is
+# the redraw the writers run: silent, nothing at all when there is no page
+# yet, and from the cached counts. Run in a worktree, every mode is handed to
+# the main checkout's own jig, which owns the page.
+_status_page() {
+  local mode="$1" root jig path
+  root=$(jig_config_clone_root)
+  if [ "$root" != "$JIG_PROJECT" ]; then
+    jig="$root/$JIG_AI_DIR/scripts/jig"
+    if [ "$mode" = refresh ]; then
+      [ -f "$jig" ] || return 0
+      (cd "$root" && bash "$jig" status --refresh)
+      return 0
+    fi
+    [ -f "$jig" ] || jig_die "status --$mode: the main checkout has no jig to write its page: $root"
+    path=$(cd "$root" && bash "$jig" status --html) || exit 1
+    printf '%s\n' "$path"
+    [ "$mode" != open ] || _status_open "$path"
+    return 0
+  fi
+
+  if [ ! -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ]; then
+    [ "$mode" != refresh ] || return 0
+    jig_die "status --$mode: project is not initialised; run: jig init"
+  fi
+  if [ "$mode" = refresh ]; then
+    [ -f "$JIG_PROJECT/$JIG_AI_DIR/runtime/status.html" ] || return 0
+    _status_load
+    _status_counts_cached
+    _status_html >/dev/null
+    return 0
+  fi
+  _status_load
+  _status_counts
+  _status_counts_save || true
+  path=$(_status_html)
+  printf '%s\n' "$path"
+  [ "$mode" != open ] || _status_open "$path"
+  return 0
+}
+
+# _status_html — write .ai/runtime/status.html and print its path.
 _status_html() {
-  [ -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ] \
-    || jig_die "status --html: project is not initialised; run: jig init"
   local dir="$JIG_PROJECT/$JIG_AI_DIR/runtime" out
   out="$dir/status.html"
   mkdir -p "$dir" || jig_die "status --html: cannot create $dir"
@@ -346,11 +550,52 @@ _status_html() {
   printf '%s\n' "$out"
 }
 
+# _status_open <path> — open the page in the default browser, with what the
+# system already has (ADR-0002): `open` on macOS, `cmd /c start` from Git Bash
+# (ADR-0037), `explorer.exe` inside WSL, `xdg-open` elsewhere. With none, or
+# when it fails — a server over SSH has no browser — the page is written all
+# the same and the reader is told where it is; never an error.
+_status_open() {
+  local path="$1" win
+  case "$(uname -s 2>/dev/null)" in
+    Darwin)
+      if command -v open >/dev/null 2>&1 && open "$path" >/dev/null 2>&1; then return 0; fi
+      ;;
+    MINGW* | MSYS* | CYGWIN*)
+      # MSYS rewrites arguments that look like paths unless conversion is off,
+      # and cmd.exe needs the path in Windows form (as _jig_junction does).
+      if command -v cmd >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1 \
+         && win=$(cygpath -w "$path") \
+         && MSYS2_ARG_CONV_EXCL='*' cmd /c start "" "$win" >/dev/null 2>&1; then
+        return 0
+      fi
+      ;;
+    *)
+      if command -v wslpath >/dev/null 2>&1 && command -v explorer.exe >/dev/null 2>&1 \
+         && win=$(wslpath -w "$path" 2>/dev/null); then
+        # explorer.exe exits 1 even when it opened the file.
+        explorer.exe "$win" >/dev/null 2>&1 || true
+        return 0
+      fi
+      if command -v xdg-open >/dev/null 2>&1 && xdg-open "$path" >/dev/null 2>&1; then return 0; fi
+      ;;
+  esac
+  printf 'status --open: could not open a browser here; open this file in your browser: %s\n' "$path" >&2
+  return 0
+}
+
 # _status_h <text> — <text> escaped for HTML text and attribute values.
 # sed, not ${var//&/...}: from bash 5.2 an `&` in that replacement means the
 # matched text (patsub_replacement), so the same line escapes differently on
 # macOS's bash 3.2 and a Linux bash.
+# Text with nothing to escape is printed as it is, without a sed process: the
+# page escapes a few hundred values, and the redraw runs after every task
+# command.
 _status_h() {
+  case "$1" in
+    *[\&\<\>\"\']*) ;;
+    *) printf '%s' "$1"; return 0 ;;
+  esac
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
     -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
 }
@@ -363,23 +608,136 @@ _status_html_item() {
 }
 
 # _status_html_count <label> <n> — a summary entry that needs attention
-# when <n> is not 0.
+# when <n> is not 0; "unknown" when <n> is empty.
 _status_html_count() {
-  if [ "$2" = 0 ]; then
+  if [ -z "$2" ]; then
+    _status_html_item "$1" "unknown" 0
+  elif [ "$2" = 0 ]; then
     _status_html_item "$1" "none" 0
   else
     _status_html_item "$1" "$2" 1
   fi
 }
 
+# _status_epoch <UTC ISO time> — seconds since the epoch, or nothing. BSD date
+# first (macOS), GNU date otherwise (Linux, Git Bash).
+_status_epoch() {
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null \
+    || date -u -d "$1" +%s 2>/dev/null \
+    || true
+}
+
+# _status_when <UTC ISO time> — the same moment in the reader's local time,
+# "YYYY-MM-DD HH:MM <zone>", like the page's own "updated" line; the input
+# unchanged when it cannot be read. BSD `date -r <seconds>`, else GNU `-d @`.
+_status_when() {
+  local e
+  e=$(_status_epoch "$1")
+  if [ -n "$e" ]; then
+    date -r "$e" '+%Y-%m-%d %H:%M %Z' 2>/dev/null \
+      || date -d "@$e" '+%Y-%m-%d %H:%M %Z' 2>/dev/null \
+      || printf '%s\n' "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+# _status_ago <UTC ISO time> — how long ago, in words a person reads at a
+# glance: "just now", "12 min", "3 h", "2 days"; empty when unparsable.
+_status_ago() {
+  local past now d
+  past=$(_status_epoch "$1")
+  [ -n "$past" ] || return 0
+  now=$(date -u +%s)
+  d=$((now - past))
+  if [ "$d" -lt 60 ]; then printf 'just now\n'
+  elif [ "$d" -lt 3600 ]; then printf '%d min\n' $((d / 60))
+  elif [ "$d" -lt 172800 ]; then printf '%d h\n' $((d / 3600))
+  else printf '%d days\n' $((d / 86400))
+  fi
+}
+
+# _status_hk_ids <regex> — the tasks whose line in the last housekeeping run
+# matches <regex>, distinct and in log order; nothing when housekeeping has
+# never logged. The one reader of the log's task lines here: the counts the
+# text report prints come from it too (_status_flagged).
+_status_hk_ids() {
+  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log"
+  [ -f "$hk_log" ] || return 0
+  _status_hk_ids_in "$hk_log" "$1"
+}
+
+_status_hk_ids_in() {
+  JIG_HK_RE="$2" awk '
+    # split("", seen) clears the array portably; `delete seen` is an
+    # extension not every awk on a supported machine has.
+    /^--- run / { split("", seen); n = 0; next }
+    $0 ~ ENVIRON["JIG_HK_RE"] {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^task=/) {
+          id = substr($i, 6)
+          if (!(id in seen)) { seen[id] = 1; ids[++n] = id }
+        }
+      }
+    }
+    END { for (i = 1; i <= n; i++) print ids[i] }
+  ' "$1"
+}
+
+# _status_hk_run — "<UTC time>\t<forge>" of the last housekeeping run, from its
+# `--- run` marker; <forge> is github|gitlab|none|failed, `-` when the marker
+# predates the field. Nothing when housekeeping has never logged a run.
+_status_hk_run() {
+  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log"
+  [ -f "$hk_log" ] || return 0
+  awk '
+    /^--- run / {
+      at = $3; forge = "-"
+      for (i = 4; i <= NF; i++) if ($i ~ /^forge=/) forge = substr($i, 7)
+    }
+    END { if (at != "") printf "%s\t%s\n", at, forge }
+  ' "$hk_log"
+}
+
+# _status_hk_stale <UTC time> <forge> — exit 0 when the pull request states of
+# that run cannot be trusted as current: the forge did not answer, or the run
+# is older than `housekeeping.cadence`, after which the session hook would
+# have run a new one.
+_status_hk_stale() {
+  local at="$1" forge="$2" cadence days past now
+  [ "$forge" != failed ] || return 0
+  cadence=$(cfg housekeeping.cadence 1d)
+  days=${cadence%d}
+  case "$days" in '' | *[!0-9]*) days=1 ;; esac
+  past=$(_status_epoch "$at")
+  [ -n "$past" ] || return 0
+  now=$(date -u +%s)
+  [ $((now - past)) -gt $((days * 86400)) ]
+}
+
+# _status_in <id> <list> — exit 0 when <id> is a line of <list>.
+_status_in() {
+  printf '%s\n' "$2" | grep -qxF -- "$1"
+}
+
 _status_html_page() {
   local project generated report
   project=$(basename "$JIG_PROJECT")
-  generated=$(date '+%Y-%m-%d %H:%M')
+  generated=$(date '+%Y-%m-%d %H:%M:%S %Z')
+  # Asked once: the report and the summary both show it.
+  _STATUS_CURRENT=$(_status_current_task)
   # The whole text report, as `jig status` prints it, so the page never shows
   # less than the terminal does. errexit is set again inside the
   # substitution, which does not inherit it.
+  # The tasks, read once for the report and the sections below.
+  _status_live_collect page
   report=$(set -e; _status_report)
+
+  _STATUS_HK_RUN=$(_status_hk_run)
+  _STATUS_HK_AT=$(printf '%s\n' "$_STATUS_HK_RUN" | cut -f 1)
+  _STATUS_HK_FORGE=$(printf '%s\n' "$_STATUS_HK_RUN" | cut -f 2)
+  _STATUS_HK_WHEN=""
+  [ -z "$_STATUS_HK_AT" ] || _STATUS_HK_WHEN=$(_status_when "$_STATUS_HK_AT")
 
   cat <<'HTML'
 <!DOCTYPE html>
@@ -389,19 +747,20 @@ _status_html_page() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 HTML
+  printf '<meta http-equiv="refresh" content="%s">\n' "$_STATUS_REFRESH"
   printf '<title>Jig status: %s</title>\n' "$(_status_h "$project")"
   cat <<'HTML'
 <style>
 :root {
   --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --panel: #f6f8fa;
   --ok-bg: #dafbe1; --ok-fg: #116329; --bad-bg: #ffebe9; --bad-fg: #a40e26;
-  --warn-bg: #fff8c5; --warn-fg: #7d4e00;
+  --warn-bg: #fff8c5; --warn-fg: #7d4e00; --accent: #0969da;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --panel: #151b23;
     --ok-bg: #12361f; --ok-fg: #7ee2a8; --bad-bg: #3c1618; --bad-fg: #ffa198;
-    --warn-bg: #3a2c05; --warn-fg: #e3b341;
+    --warn-bg: #3a2c05; --warn-fg: #e3b341; --accent: #4493f8;
   }
 }
 * { box-sizing: border-box; }
@@ -410,9 +769,17 @@ body { margin: 0; background: var(--bg); color: var(--fg);
 main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { font-size: 1.6rem; margin: 0 0 4px; }
 h2 { font-size: 1.15rem; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 1rem; margin: 20px 0 8px; }
 p { margin: 0 0 8px; }
+a { color: var(--accent); overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+.cards { display: grid; gap: 10px; }
+.card { background: var(--warn-bg); border: 1px solid var(--warn-fg); border-radius: 8px; padding: 12px 14px; }
+.card h3 { margin: 0 0 4px; color: var(--warn-fg); }
+.card p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.card .todo { font-weight: 600; }
+.nothing { padding: 14px; background: var(--ok-bg); color: var(--ok-fg); border-radius: 8px; font-weight: 600; }
 dl.summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin: 0; }
 .item { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .item dt { color: var(--muted); font-size: 0.85rem; }
@@ -431,10 +798,13 @@ td.id code { white-space: nowrap; }
 .badge.ok { background: var(--ok-bg); color: var(--ok-fg); border-color: transparent; }
 .badge.bad { background: var(--bad-bg); color: var(--bad-fg); border-color: transparent; }
 .badge.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; }
+.bar { display: inline-block; width: 120px; height: 8px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 999px; overflow: hidden; vertical-align: middle; margin-right: 8px; }
+.bar span { display: block; height: 100%; background: var(--ok-fg); }
 ul.findings { margin: 0; padding-left: 18px; }
 ul.findings li { color: var(--bad-fg); }
 .empty { padding: 14px; background: var(--panel); border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); }
-details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
 summary { cursor: pointer; }
 pre { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
@@ -443,13 +813,16 @@ pre { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 <main>
 HTML
   printf '<h1>Jig status</h1>\n'
-  printf '<p class="muted">Project <strong>%s</strong> · generated %s · jig %s</p>\n' \
+  printf '<p class="muted">Project <strong>%s</strong> · updated %s · jig %s</p>\n' \
     "$(_status_h "$project")" "$(_status_h "$generated")" "$(_status_h "$JIG_VERSION")"
-  printf '<p class="muted">A snapshot: run <code>jig status --html</code> again to refresh it.</p>\n'
+  printf '<p class="muted">This page refreshes itself every %s seconds while it is open, and jig redraws it whenever a task changes.</p>\n' \
+    "$_STATUS_REFRESH"
+  _status_html_freshness
 
-  _status_html_summary
+  _status_html_needs
   _status_html_tasks
   _status_html_specs
+  _status_html_summary
 
   printf '<section id="report">\n<h2>Full report</h2>\n'
   printf '<details><summary>What <code>jig status</code> prints</summary>\n<pre>%s</pre>\n</details>\n</section>\n' \
@@ -457,82 +830,233 @@ HTML
   printf '</main>\n</body>\n</html>\n'
 }
 
-# _status_html_summary — the counts the text report prints as single lines.
-_status_html_summary() {
-  printf '<section id="summary">\n<h2>At a glance</h2>\n<dl class="summary">\n'
-  _status_html_item "Current task" "$(_status_current_task)" 0
-  _status_html_count "Knowledge awaiting decision" "$(km_proposed_count)"
-  _status_html_count "Linked sources changed" "$(km_changed_sources_count)"
-  _status_html_count "Needs consolidation" "$(_status_hk_count needs-consolidation)"
-  _status_html_count "Worktrees kept" "$(_status_hk_count worktree-kept)"
-  _status_html_count "Landed on the wrong base" "$(_status_hk_count wrong-base)"
-  _status_html_item "Housekeeping last ran" "$(_status_housekeeping_age)" 0
-  printf '</dl>\n</section>\n'
+# _status_html_freshness — how old the two borrowed kinds of data are: pull
+# request states from the last housekeeping run, and the counts from the last
+# full `jig status`.
+_status_html_freshness() {
+  if [ -z "$_STATUS_HK_AT" ]; then
+    printf '<p class="muted">Housekeeping has not run yet: a pull request shows here only when jig opened it, until <code>jig housekeeping</code> runs.</p>\n'
+  elif [ "$_STATUS_HK_FORGE" = none ]; then
+    printf '<p class="muted">Housekeeping last ran at %s, with no GitHub or GitLab to ask: open pull requests are shown only for tasks jig opened them for.</p>\n' \
+      "$(_status_h "$_STATUS_HK_WHEN")"
+  elif _status_hk_stale "$_STATUS_HK_AT" "$_STATUS_HK_FORGE"; then
+    printf '<p class="muted">Pull request data from housekeeping at %s <span class="badge warn">stale</span> — run <code>jig housekeeping</code> to update it.</p>\n' \
+      "$(_status_h "$_STATUS_HK_WHEN")"
+  else
+    printf '<p class="muted">Pull request data from housekeeping at %s.</p>\n' "$(_status_h "$_STATUS_HK_WHEN")"
+  fi
+  if [ -n "$_SC_AT" ]; then
+    printf '<p class="muted">Knowledge and upgrade counts from the last full <code>jig status</code> at %s.</p>\n' \
+      "$(_status_h "$(_status_when "$_SC_AT")")"
+  fi
 }
 
-# _status_html_tasks — one row per live task: the same facts as the text
-# report's task lines (autopilot state as a badge beside the status), with the blocking findings' own lines
-# (_task_blocking_findings) and the receipt as `task receipt --check` answers
-# it (task_receipt_check), none included.
-_status_html_tasks() {
-  local found=0 state_file worktrees blocking bline receipt cls
-  _STATUS_FINISHED=0
-  worktrees=$(_task_worktrees)
-  printf '<section id="tasks">\n<h2>Tasks</h2>\n'
-  for state_file in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/state; do
-    [ -f "$state_file" ] || continue
-    _status_task_facts "$state_file" "$worktrees" || continue
-    if [ "$found" = 0 ]; then
-      found=1
-      printf '<div class="scroll"><table>\n'
-      printf '<thead><tr><th>Task</th><th>Class</th><th>Status</th><th>Base</th><th>Worktree</th><th>Review receipt</th><th>Blocking findings</th></tr></thead>\n<tbody>\n'
+# _status_card <title> <id> <detail> <todo> [url] [badge-html] — one "needs
+# you" card. <id> and <detail> may be empty; <url> becomes a link only when it
+# is https. <badge-html> is markup this file wrote, never a value.
+_status_card() {
+  printf '<div class="card"><h3>%s%s</h3>' "$(_status_h "$1")" "${6:+ $6}"
+  if [ -n "$2" ] || [ -n "$3" ]; then
+    printf '<p>'
+    [ -z "$2" ] || printf '<code>%s</code>' "$(_status_h "$2")"
+    [ -z "$2" ] || [ -z "$3" ] || printf ' · '
+    [ -z "$3" ] || printf '%s' "$(_status_h "$3")"
+    printf '</p>'
+  fi
+  case "${5:-}" in
+    https://*) printf '<p><a href="%s">%s</a></p>' "$(_status_h "$5")" "$(_status_h "$5")" ;;
+    ?*) printf '<p><code>%s</code></p>' "$(_status_h "$5")" ;;
+  esac
+  printf '<p class="todo">%s</p></div>\n' "$(_status_h "$4")"
+}
+
+# _status_html_needs — what only the reader can do, most urgent first: a
+# stopped autopilot run, a design at its gate, a finished task waiting for its
+# git step, a pull request to review or merge, a merged task to close, work
+# that landed wrong or was left in a worktree, knowledge to decide. Each card
+# says in plain words what to do. Nothing to do is said out loud too.
+_status_html_needs() {
+  local cards="" stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url hk_note pr_ids=""
+  local nc wrong kept closed open settled
+  hk_note=""
+  [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
+  level=$(jig_agent_git 2>/dev/null) || level=none
+  settled=$(_status_hk_ids ' remote=(merged|closed) ')
+
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    # 1. A stopped autopilot run waits on an answer (its journal's last stop).
+    if [ "$_ST_AUTOPILOT" = stopped ]; then
+      stop_reason=$(printf '%s\n' "$_ST_APFACTS" | cut -f 5)
+      stop_at=$(printf '%s\n' "$_ST_APFACTS" | cut -f 6)
+      [ -n "$stop_reason" ] && [ "$stop_reason" != "-" ] || stop_reason="no reason recorded"
+      ago=""
+      [ -z "$stop_at" ] || [ "$stop_at" = "-" ] || ago=$(_status_ago "$stop_at")
+      case "$ago" in
+        '') ;;
+        "just now") stop_reason="$stop_reason (just now)" ;;
+        *) stop_reason="$stop_reason ($ago ago)" ;;
+      esac
+      stopped="$stopped$(_status_card "Autopilot stopped and is waiting for you" "$_ST_ID" "$stop_reason" \
+        "Answer the agent in this task's session; it resumes the run." "" '<span class="badge warn">autopilot stopped</span>')
+"
+      continue
     fi
-    printf '<tr><td class="id"><code>%s</code></td><td>%s</td><td>%s' \
-      "$(_status_h "$_ST_ID")" "$(_status_h "${_ST_CLASS:--}")" "$(_status_h "$_ST_STATUS")"
-    if [ "$_ST_PAUSED" = "true" ]; then
-      printf ' <span class="badge warn">paused</span>'
-      [ -z "$_ST_REASON" ] || printf ' <span class="muted">%s</span>' "$(_status_h "$_ST_REASON")"
-    fi
-    # The text report's marker (_task_autopilot_note): a run in flight, or
-    # one waiting on a human, which is the case a reader most needs to see.
-    case "$(_task_autopilot_note "$_ST_ID")" in
-      autopilot=on) printf ' <span class="badge">autopilot</span>' ;;
-      autopilot=stopped) printf ' <span class="badge warn">autopilot stopped</span>' ;;
+    # 2. A design waits at its human gate, or changed after it was approved.
+    case "$_ST_GATE" in
+      waiting)
+        gates="$gates$(_status_card "A design is waiting for your decision" "$_ST_ID" "design.md in the task's workspace" \
+          "Read the design the agent showed you and approve it, or say what to change.")
+" ;;
+      changed)
+        gates="$gates$(_status_card "A design changed after you approved it" "$_ST_ID" "design.md in the task's workspace" \
+          "Read what changed and approve it again before the work goes on.")
+" ;;
     esac
-    printf '</td><td>%s</td>' "$(_status_h "$(jig_task_base "$_ST_ID")")"
-    if [ -n "$_ST_WT" ]; then
-      printf '<td class="path"><code>%s</code><br><span class="muted">%s uncommitted</span></td>' \
-        "$(_status_h "$_ST_WT")" "$(_status_h "${_ST_WT_NOTE##* uncommitted=}")"
-    else
-      printf '<td class="muted">-</td>'
+    # 3. Finished, and the next git step is the reader's (agent.git). Only
+    # once the knowledge decision is recorded: that is the last step before
+    # `jig task ship`, so an earlier `ready` is still the agent's.
+    if [ "$_ST_STATUS" = ready ] && [ "$_ST_KC" = true ] && [ -z "$_ST_PR_URL" ]; then
+      queue=""
+      case "$level" in
+        none) queue="Review the changes and commit them: the agent may not commit in this clone." ;;
+        commit) queue="Push the task's branch: the agent may commit but not push in this clone." ;;
+        push) queue="Open a pull request for the task's branch: the agent may push but not open one here." ;;
+      esac
+      [ -z "$queue" ] || git_steps="$git_steps$(_status_card "Ready for your step in git" "$_ST_ID" "agent.git: $level" "$queue")
+"
     fi
-    # task_receipt_check exits 1 for stale and for a T4 with none; its line
-    # is the answer either way.
-    receipt=$(task_receipt_check "$_ST_ID" || true)
-    receipt=${receipt#receipt: }
-    case "$receipt" in
-      current) cls="ok" ;;
-      stale* | *required*) cls="bad" ;;
-      *) cls="" ;;
-    esac
-    printf '<td><span class="badge%s">%s</span></td>' "${cls:+ $cls}" "$(_status_h "$receipt")"
-    blocking=$(_task_blocking_findings "$_ST_ID")
-    if [ -z "$blocking" ]; then
-      printf '<td class="muted">none</td></tr>\n'
-    else
-      printf '<td><ul class="findings">'
-      while IFS= read -r bline; do
-        [ -n "$bline" ] || continue
-        printf '<li><code>%s</code></li>' "$(_status_h "$bline")"
-      done < <(printf '%s\n' "$blocking")
-      printf '</ul><span class="muted">details: <code>jig task findings %s</code></span></td></tr>\n' \
-        "$(_status_h "$_ST_ID")"
+    # A pull request jig opened, unless housekeeping already saw it settled.
+    if [ -n "$_ST_PR_URL" ] && ! _status_in "$_ST_ID" "$settled"; then
+      pr_ids="$pr_ids$_ST_ID
+"
     fi
-  done
-  if [ "$found" = 1 ]; then
-    printf '</tbody>\n</table></div>\n'
+  done <<EOF
+$_STATUS_LIVE
+EOF
+  # Most urgent first, whatever order the workspaces came in.
+  cards="$stopped$gates$git_steps"
+
+  # 4. A pull request waits for review or merge: one jig opened (pr_url), or
+  # one the last housekeeping run saw open (a closed task's too).
+  open=$(_status_hk_ids ' remote=open ')
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    _status_in "$id" "$pr_ids" || pr_ids="$pr_ids$id
+"
+  done <<EOF
+$open
+EOF
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    url=$(task_state_get "$id" pr_url)
+    if _status_in "$id" "$open"; then
+      cards="$cards$(_status_card "A pull request is waiting for review or merge" "$id" "open as of $hk_note" \
+        "Review it and merge it; jig never merges." "$url")
+"
+    else
+      cards="$cards$(_status_card "A pull request is waiting for review or merge" "$id" "opened by jig task ship" \
+        "Review it and merge it; jig never merges." "$url")
+"
+    fi
+  done <<EOF
+$pr_ids
+EOF
+
+  # 5. Merged and ready to close (needs-consolidation, ADR-0030). 6. Work that
+  # landed elsewhere, a pull request closed unmerged, a worktree left behind:
+  # kept, and only a person can say what happens next.
+  nc=$(_status_hk_ids 'flags=[^ ]*needs-consolidation')
+  wrong=$(_status_hk_ids 'flags=[^ ]*wrong-base')
+  closed=$(_status_hk_ids 'flags=[^ ]*abandoned[?]')
+  kept=$(_status_hk_ids 'flags=[^ ]*worktree-kept')
+  cards="$cards$(_status_cards "$nc" "Merged: the task can be closed" "$hk_note" \
+    "Tell the agent to close this task (jig-consolidate).")"
+  cards="$cards$(_status_cards "$wrong" "The work landed on a different branch than planned" "$hk_note" \
+    "Check where its pull request was merged; the details are in .ai/runtime/housekeeping.log.")"
+  cards="$cards$(_status_cards "$closed" "The pull request was closed without merging" "$hk_note" \
+    "Reopen it, or tell the agent to abandon the task.")"
+  cards="$cards$(_status_cards "$kept" "A worktree was kept because it still holds work" "$hk_note" \
+    "Commit or discard what is left in the task's worktree; the next housekeeping removes it.")"
+
+  # 7. Knowledge nobody has agreed to yet reaches no agent (ADR-0016).
+  if [ -n "$_SC_PROPOSALS" ] && [ "$_SC_PROPOSALS" -gt 0 ]; then
+    cards="$cards$(_status_card "Knowledge is waiting for your decision" "" "$_SC_PROPOSALS document(s) proposed" \
+      "Ask the agent: what's proposed? (jig-accept)")
+"
+  fi
+  if [ -n "$_SC_SOURCES" ] && [ "$_SC_SOURCES" -gt 0 ]; then
+    cards="$cards$(_status_card "Adopted rule files changed since you approved them" "" "$_SC_SOURCES file(s)" \
+      "Ask the agent to go through the changed sources with you (jig-accept).")
+"
+  fi
+
+  printf '<section id="needs">\n<h2>Needs you</h2>\n'
+  if [ -n "$cards" ]; then
+    printf '<div class="cards">\n%s</div>\n' "$cards"
   else
-    printf '<p class="empty">No active tasks.</p>\n'
+    printf '<p class="nothing">Nothing needs you right now.</p>\n'
+    if [ -n "$_STATUS_HK_AT" ] && _status_hk_stale "$_STATUS_HK_AT" "$_STATUS_HK_FORGE"; then
+      printf '<p class="muted">Pull request data is stale, so a pull request waiting for you may be missing here.</p>\n'
+    fi
+  fi
+  printf '</section>\n'
+}
+
+# _status_cards <ids> <title> <detail> <todo> — one card per id, each ending
+# in a newline.
+_status_cards() {
+  local id
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    _status_card "$2" "$id" "$3" "$4"
+    printf '\n'
+  done <<EOF
+$1
+EOF
+}
+
+# _status_html_tasks — "Running now": one row per live task except a stopped
+# autopilot run, which is a card above. Autopilot runs first, then the other
+# started tasks, then ready ones, then tasks filed but not started; paused
+# tasks fold away below. The receipt is what `task receipt --check` answers
+# (task_receipt_check) and the blocking findings are _task_blocking_findings'
+# own lines.
+_status_html_tasks() {
+  local rec rows="" paused_rows="" rank row tab
+  tab=$(printf '\t')
+  printf '<section id="tasks">\n<h2>Running now</h2>\n'
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    [ "$_ST_AUTOPILOT" != stopped ] || continue
+    row=$(_status_html_task_row)
+    if [ "$_ST_PAUSED" = true ]; then
+      paused_rows="$paused_rows$row
+"
+      continue
+    fi
+    if [ "$_ST_AUTOPILOT" = on ]; then rank=1
+    elif [ -z "$_ST_BRANCH" ]; then rank=4
+    elif [ "$_ST_STATUS" = ready ]; then rank=3
+    else rank=2
+    fi
+    rows="$rows$rank$tab$row
+"
+  done <<EOF
+$_STATUS_LIVE
+EOF
+  if [ -n "$rows" ]; then
+    _status_html_task_table "$(printf '%s' "$rows" | sort -s -t "$tab" -k 1,1 | cut -f 2-)
+"
+  else
+    printf '<p class="empty">Nothing is running.</p>\n'
+  fi
+  if [ -n "$paused_rows" ]; then
+    printf '<details><summary>Paused</summary>\n'
+    _status_html_task_table "$paused_rows"
+    printf '</details>\n'
   fi
   if [ "$_STATUS_FINISHED" -gt 0 ]; then
     printf '<p class="muted">%d finished, not listed (<code>jig task list --all</code>).</p>\n' "$_STATUS_FINISHED"
@@ -540,10 +1064,93 @@ _status_html_tasks() {
   printf '</section>\n'
 }
 
-# _status_html_specs — `spec list`'s rows (spec_list_rows) and the open epics
-# `jig status` names (spec_epic_status).
+_status_html_task_table() {
+  printf '<div class="scroll"><table>\n'
+  printf '<thead><tr><th>Task</th><th>Class</th><th>Status</th><th>Stage</th><th>Base</th><th>Worktree</th><th>Review receipt</th><th>Blocking findings</th></tr></thead>\n<tbody>\n'
+  printf '%s' "$1"
+  printf '</tbody>\n</table></div>\n'
+}
+
+# _status_html_task_row — the row of the task _status_rec last read, on one
+# line.
+_status_html_task_row() {
+  local blocking bline receipt cls
+  printf '<tr><td class="id"><code>%s</code></td><td>%s</td><td>%s' \
+    "$(_status_h "$_ST_ID")" "$(_status_h "${_ST_CLASS:--}")" "$(_status_h "$_ST_STATUS")"
+  if [ "$_ST_PAUSED" = "true" ]; then
+    printf ' <span class="badge warn">paused</span>'
+    [ -z "$_ST_REASON" ] || printf ' <span class="muted">%s</span>' "$(_status_h "$_ST_REASON")"
+  fi
+  printf '</td><td>'
+  _status_html_stage
+  printf '</td><td>%s</td>' "$(_status_h "${_ST_BASE:-$_STATUS_DEFAULT_BASE}")"
+  if [ -n "$_ST_WT" ]; then
+    printf '<td class="path"><code>%s</code><br><span class="muted">%s uncommitted</span></td>' \
+      "$(_status_h "$_ST_WT")" "$(_status_h "${_ST_WT_NOTE##* uncommitted=}")"
+  else
+    printf '<td class="muted">-</td>'
+  fi
+  receipt=${_ST_RECEIPT#receipt: }
+  case "$receipt" in
+    current) cls="ok" ;;
+    stale* | *required*) cls="bad" ;;
+    *) cls="" ;;
+  esac
+  printf '<td><span class="badge%s">%s</span></td>' "${cls:+ $cls}" "$(_status_h "$receipt")"
+  blocking=$(_task_blocking_findings "$_ST_ID")
+  if [ -z "$blocking" ]; then
+    printf '<td class="muted">none</td></tr>'
+  else
+    printf '<td><ul class="findings">'
+    while IFS= read -r bline; do
+      [ -n "$bline" ] || continue
+      printf '<li><code>%s</code></li>' "$(_status_h "$bline")"
+    done < <(printf '%s\n' "$blocking")
+    printf '</ul><span class="muted">details: <code>jig task findings %s</code></span></td></tr>' \
+      "$(_status_h "$_ST_ID")"
+  fi
+}
+
+# _status_html_stage — where the task _status_rec last read is on its route.
+# Only an autopilot run records its stage (its journal, _task_autopilot_facts);
+# for any other task the files in its workspace are facts about files, not a
+# stage (ADR-0020), so none is claimed — except the gate a T3/T4 design waits
+# at (_task_gate_state).
+_status_html_stage() {
+  local repairs stage stage_at ago
+  if [ "$_ST_AUTOPILOT" = on ]; then
+    repairs=$(printf '%s\n' "$_ST_APFACTS" | cut -f 2)
+    stage=$(printf '%s\n' "$_ST_APFACTS" | cut -f 3)
+    stage_at=$(printf '%s\n' "$_ST_APFACTS" | cut -f 4)
+    [ -n "$stage" ] && [ "$stage" != "-" ] || stage="starting"
+    printf '<span class="badge">autopilot</span> %s' "$(_status_h "$stage")"
+    ago=""
+    [ -z "$stage_at" ] || [ "$stage_at" = "-" ] || ago=$(_status_ago "$stage_at")
+    case "$ago" in
+      '') ;;
+      "just now") printf ' <span class="muted">just started</span>' ;;
+      *) printf ' <span class="muted">for %s</span>' "$(_status_h "$ago")" ;;
+    esac
+    printf ' <span class="muted">repairs %s/2</span>' "$(_status_h "${repairs:-0}")"
+    return 0
+  fi
+  if [ -z "$_ST_BRANCH" ]; then
+    printf '<span class="muted">filed, not started</span>'
+    return 0
+  fi
+  case "$_ST_GATE" in
+    waiting) printf '<span class="badge warn">design at the gate</span>' ;;
+    changed) printf '<span class="badge warn">design changed after approval</span>' ;;
+    approved) printf '<span class="badge ok">design approved</span>' ;;
+    *) printf '<span class="muted">not tracked outside autopilot</span>' ;;
+  esac
+}
+
+# _status_html_specs — `spec list`'s rows (spec_list_rows), each spec's
+# progress by phase (spec_phase_rows) and the open epics `jig status` names
+# (spec_epic_status).
 _status_html_specs() {
-  local rows id title state epics eline
+  local rows phases id title state epics eline
   printf '<section id="specs">\n<h2>Specifications</h2>\n'
   rows=$(spec_list_rows)
   if [ -z "$rows" ]; then
@@ -558,6 +1165,13 @@ _status_html_specs() {
       "$(_status_h "$id")" "$(_status_h "$title")" "$(_status_h "$state")"
   done < <(printf '%s\n' "$rows")
   printf '</tbody>\n</table></div>\n'
+
+  phases=$(spec_phase_rows)
+  while IFS="$(printf '\t')" read -r id title state; do
+    [ -n "$id" ] || continue
+    _status_html_phases "$id" "$title" "$phases"
+  done < <(printf '%s\n' "$rows")
+
   epics=$(spec_epic_status)
   if [ -n "$epics" ]; then
     printf '<ul>\n'
@@ -568,6 +1182,47 @@ _status_html_specs() {
     printf '</ul>\n'
   fi
   printf '</section>\n'
+}
+
+# _status_html_phases <spec-id> <title> <spec_phase_rows> — one spec's phases.
+_status_html_phases() {
+  local want="$1" title="$2" id phase ptitle ndone total filed fog source shown_source="" pct
+  local body=""
+  while IFS="$(printf '\t')" read -r id phase ptitle ndone total filed fog source; do
+    [ "$id" = "$want" ] || continue
+    [ -z "$source" ] || shown_source="$source"
+    pct=0
+    [ "$total" -eq 0 ] || pct=$((ndone * 100 / total))
+    [ "$phase" != "-" ] || phase=""
+    [ "$ptitle" != "-" ] || ptitle=""
+    body="$body$(printf '<tr><td>%s</td><td>%s</td><td><span class="bar"><span style="width: %d%%"></span></span>%s/%s done</td><td>%s</td><td>%s</td></tr>' \
+      "$(_status_h "$phase")" "$(_status_h "$ptitle")" "$pct" "$(_status_h "$ndone")" "$(_status_h "$total")" \
+      "$(_status_h "$filed")" "$(_status_h "$fog")")
+"
+  done < <(printf '%s\n' "$3")
+  [ -n "$body" ] || return 0
+  printf '<h3><code>%s</code> %s</h3>\n' "$(_status_h "$want")" "$(_status_h "$title")"
+  [ -z "$shown_source" ] || printf '<p class="muted">From %s.</p>\n' "$(_status_h "$shown_source")"
+  printf '<div class="scroll"><table>\n'
+  printf '<thead><tr><th>Phase</th><th>Title</th><th>Progress</th><th>Filed</th><th>Fog</th></tr></thead>\n<tbody>\n'
+  printf '%s' "$body"
+  printf '</tbody>\n</table></div>\n'
+}
+
+# _status_html_summary — the counts the text report prints as single lines.
+_status_html_summary() {
+  printf '<section id="summary">\n<h2>At a glance</h2>\n<dl class="summary">\n'
+  _status_html_item "Current task" "$_STATUS_CURRENT" 0
+  _status_html_count "Knowledge awaiting decision" "$_SC_PROPOSALS"
+  _status_html_count "Linked sources changed" "$_SC_SOURCES"
+  _status_html_count "Needs consolidation" "$(_status_hk_count needs-consolidation)"
+  _status_html_count "Worktrees kept" "$(_status_hk_count worktree-kept)"
+  _status_html_count "Landed on the wrong base" "$(_status_hk_count wrong-base)"
+  _status_html_item "Housekeeping last ran" "$(_status_housekeeping_age)" 0
+  local agent_git
+  agent_git=$(_status_agent_git)
+  _status_html_item "agent.git" "${agent_git#agent.git: }" 0
+  printf '</dl>\n</section>\n'
 }
 
 # _status_framework_versions <project-version> — compares the project's
@@ -614,20 +1269,10 @@ _status_framework_versions() {
   printf '%s\n' "hint: run \`jig self-update\`, then \`jig upgrade --dry-run\`"
 }
 
-# _status_flagged <log> <flag> — distinct tasks the last housekeeping run
-# flagged with <flag>.
+# _status_flagged <log> <flag> — how many distinct tasks the last housekeeping
+# run flagged with <flag>; the same reader the page's cards use.
 _status_flagged() {
-  awk -v flag="$2" '
-    # split("", seen) clears the array portably; `delete seen` is an
-    # extension not every awk on a supported machine has.
-    /^--- run /            { split("", seen); n = 0; next }
-    $0 ~ ("flags=[^ ]*" flag) {
-      for (i = 1; i <= NF; i++) {
-        if ($i ~ /^task=/ && !($i in seen)) { seen[$i] = 1; n++ }
-      }
-    }
-    END { print n + 0 }
-  ' "$1"
+  _status_hk_ids_in "$1" "flags=[^ ]*$2" | grep -c . || true
 }
 
 # What .ai/config.local.yaml changes, and why a value in it does nothing

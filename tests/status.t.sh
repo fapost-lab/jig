@@ -1185,13 +1185,16 @@ test_status_html_writes_one_file_prints_its_path_and_changes_nothing_else() {
   assert_eq 0 "$RC"
   assert_eq "$(pwd -P)/.ai/runtime/status.html" "$OUT"
   assert_file .ai/runtime/status.html
-  assert_eq "status.html" "$(ls .ai/runtime)" "nothing but the page in .ai/runtime"
+  # The page and the counts its redraws reuse, nothing else.
+  assert_eq "status-counts
+status.html" "$(ls .ai/runtime)" "nothing but the page and its counts in .ai/runtime"
   assert_eq "$before" "$(git status --porcelain --ignored | grep -v '^!! .ai/runtime/' || true)"
 
   # A second run replaces the page rather than adding another.
   run jig status --html
   assert_eq 0 "$RC"
-  assert_eq "status.html" "$(ls .ai/runtime)"
+  assert_eq "status-counts
+status.html" "$(ls .ai/runtime)"
 }
 
 test_status_html_is_self_contained_and_follows_the_colour_scheme() {
@@ -1221,11 +1224,13 @@ test_status_html_empty_project_shows_every_section_and_its_empty_state() {
   assert_eq 0 "$RC"
   local page
   page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" '<section id="needs">'
   assert_contains "$page" '<section id="summary">'
   assert_contains "$page" '<section id="tasks">'
   assert_contains "$page" '<section id="specs">'
   assert_contains "$page" '<section id="report">'
-  assert_contains "$page" "No active tasks."
+  assert_contains "$page" '<p class="nothing">Nothing needs you right now.</p>'
+  assert_contains "$page" "Nothing is running."
   assert_contains "$page" "No specifications."
   assert_contains "$page" "<dt>Housekeeping last ran</dt><dd>never</dd>"
   assert_contains "$page" "<dt>Current task</dt><dd>none</dd>"
@@ -1271,7 +1276,7 @@ EOF2
   assert_contains "$page" '<span class="badge ok">current</span>'
   assert_contains "$page" '<span class="badge bad">none (required for T4)</span>'
   assert_contains "$page" '<span class="badge">none</span>'
-  assert_contains "$page" '<td class="id"><code>t2-unreviewed</code></td><td>T2</td><td>active</td><td>main</td>'
+  assert_contains "$page" '<td class="id"><code>t2-unreviewed</code></td><td>T2</td><td>active</td><td><span class="muted">filed, not started</span></td><td>main</td>'
 }
 
 test_status_html_lists_many_tasks_and_counts_finished_ones() {
@@ -1413,4 +1418,385 @@ test_status_html_shows_the_autopilot_state_the_text_report_shows() {
   jig task autopilot TASK-1 stop --reason "human gate" >/dev/null
   run jig status --html
   assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge warn">autopilot stopped</span>'
+}
+
+# --- the live status page (adr-20260922-the-status-page-stays-current-without-a-server)
+
+# status_page_section <page> <id> — one <section> of the page, by its id.
+status_page_section() {
+  printf '%s\n' "$1" | awk -v id="$2" '
+    index($0, "<section id=\"" id "\">") == 1 { on = 1 }
+    on { print }
+    on && $0 == "</section>" { exit }
+  '
+}
+
+test_status_page_reloads_itself_and_orders_what_needs_you_first() {
+  fixture_jig_repo
+  run jig status --html
+  assert_eq 0 "$RC"
+  local page order
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" '<meta http-equiv="refresh" content="10">'
+  assert_contains "$page" "This page refreshes itself every 10 seconds while it is open"
+  assert_not_contains "$page" "A snapshot"
+  order=$(printf '%s\n' "$page" | sed -n 's/^<section id="\([a-z]*\)">$/\1/p' | tr '\n' ' ')
+  assert_eq "needs tasks specs summary report " "$order"
+}
+
+test_status_page_refresh_is_silent_and_creates_no_page() {
+  fixture_jig_repo
+  run jig status --refresh
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  assert_no_file .ai/runtime/status.html
+  assert_no_file .ai/runtime/status-counts
+}
+
+test_status_page_refresh_on_an_uninitialised_project_does_nothing() {
+  fixture_repo
+  run jig status --refresh
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  assert_no_file .ai
+}
+
+test_status_page_refresh_reuses_the_cached_counts_and_says_how_old_they_are() {
+  # The page shows times in the reader's zone; pin it.
+  export TZ=UTC
+  fixture_jig_repo
+  jig status --html >/dev/null
+  printf 'at: 2026-01-02T03:04:05Z\nproposals: 7\nsources_changed: 2\npending: 3\n' > .ai/runtime/status-counts
+  run jig status --refresh
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  local page
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" "counts from the last full <code>jig status</code> at 2026-01-02 03:04 UTC"
+  assert_contains "$page" "Knowledge is waiting for your decision"
+  assert_contains "$page" "7 document(s) proposed"
+  assert_contains "$page" "2 file(s)"
+  assert_contains "$page" "proposals: 7 awaiting decision"
+  assert_contains "$page" "drift: 0 modified, 0 missing, 3 pending"
+}
+
+test_status_page_refresh_counts_once_when_there_is_no_cache() {
+  fixture_jig_repo
+  jig status --html >/dev/null
+  rm .ai/runtime/status-counts
+  run jig status --refresh
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/status-counts
+  assert_file_contains .ai/runtime/status-counts "proposals: 0"
+}
+
+test_status_page_plain_status_refreshes_the_counts_only_once_the_page_exists() {
+  fixture_jig_repo
+  jig status >/dev/null
+  assert_no_file .ai/runtime/status-counts "plain status writes nothing without a page"
+  jig status --html >/dev/null
+  printf 'at: 2000-01-01T00:00:00Z\nproposals: 9\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+  jig status >/dev/null
+  assert_file_contains .ai/runtime/status-counts "proposals: 0"
+  assert_not_contains "$(cat .ai/runtime/status-counts)" "2000-01-01"
+}
+
+test_status_page_shows_a_stopped_run_first_with_its_reason() {
+  fixture_jig_repo
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task new other --class T2 >/dev/null
+  jig task autopilot run-1 start >/dev/null
+  jig task autopilot run-1 stop --reason "which <db> to use & why" >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC"
+  local page needs
+  page=$(cat .ai/runtime/status.html)
+  needs=$(status_page_section "$page" needs)
+  assert_contains "$needs" 'Autopilot stopped and is waiting for you <span class="badge warn">autopilot stopped</span>'
+  assert_contains "$needs" "<code>run-1</code> · which &lt;db&gt; to use &amp; why (just now)"
+  assert_contains "$needs" "Answer the agent in this task&#39;s session; it resumes the run."
+  # Shown once: a stopped run is a card, not also a row under "Running now".
+  assert_not_contains "$(status_page_section "$page" tasks)" "<code>run-1</code>"
+}
+
+test_status_page_puts_a_stopped_run_before_a_design_at_its_gate() {
+  fixture_jig_repo
+  # Filed first, so the workspaces list it first.
+  fixture_task a-gate task/a-gate active "class:T3"
+  printf '# Design\n' > .ai/workspace/tasks/a-gate/design.md
+  jig task new z-run --class T2 >/dev/null
+  jig task start z-run >/dev/null
+  jig task autopilot z-run start >/dev/null
+  jig task autopilot z-run stop --reason "a question" >/dev/null
+  run jig status --html
+  local needs order
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  order=$(printf '%s\n' "$needs" | sed -n 's/.*<p><code>\([^<]*\)<.*/\1/p' | tr '\n' ' ')
+  assert_eq "z-run a-gate " "$order"
+}
+
+test_status_page_shows_the_stage_and_repairs_of_a_running_autopilot() {
+  fixture_jig_repo
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start >/dev/null
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge">autopilot</span> starting'
+  jig task autopilot run-1 stage implement >/dev/null
+  jig task autopilot run-1 repair --reason "flaky test" >/dev/null
+  # A stage reached minutes ago reads as such.
+  printf '2026-01-01T00:00:00Z\tstage\tverify\n' >> .ai/workspace/tasks/run-1/autopilot
+  run jig status --html
+  local tasks
+  tasks=$(status_page_section "$(cat .ai/runtime/status.html)" tasks)
+  assert_contains "$tasks" '<span class="badge">autopilot</span> verify <span class="muted">for '
+  assert_contains "$tasks" '<span class="muted">repairs 1/2</span>'
+}
+
+test_status_page_shows_a_design_waiting_at_its_gate_until_it_is_approved() {
+  fixture_jig_repo
+  jig task new big --class T3 >/dev/null
+  jig task start big >/dev/null
+  run jig status --html
+  assert_not_contains "$(cat .ai/runtime/status.html)" "A design is waiting" "no design yet, nothing to decide"
+
+  printf '# Design\n' > .ai/workspace/tasks/big/design.md
+  run jig status --html
+  assert_contains "$(status_page_section "$(cat .ai/runtime/status.html)" needs)" \
+    "A design is waiting for your decision</h3><p><code>big</code>"
+
+  jig task gate big approved >/dev/null
+  local page
+  page=$(cat .ai/runtime/status.html)
+  assert_not_contains "$page" "A design is waiting"
+  assert_contains "$page" '<span class="badge ok">design approved</span>'
+
+  printf 'changed\n' >> .ai/workspace/tasks/big/design.md
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" "A design changed after you approved it"
+}
+
+test_status_page_shows_a_finished_task_waiting_for_the_readers_git_step() {
+  fixture_jig_repo
+  fixture_task done-1 task/done-1 ready "class:T2" "knowledge_consolidated:true"
+  fixture_task early task/early ready "class:T2"
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "Ready for your step in git</h3><p><code>done-1</code> · agent.git: none"
+  assert_contains "$needs" "Review the changes and commit them"
+  # `ready` before the knowledge decision is still the agent's to finish.
+  assert_not_contains "$needs" "<code>early</code>"
+
+  printf 'agent.git: push\n' > .ai/config.local.yaml
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" "Open a pull request for the task&#39;s branch"
+}
+
+test_status_page_links_a_pull_request_jig_opened_and_one_housekeeping_saw() {
+  fixture_jig_repo
+  fixture_task shipped task/shipped ready "class:T2" "knowledge_consolidated:true" \
+    "pr_url:https://example.com/o/r/pull/7"
+  fixture_task waiting task/waiting consolidated "class:T2"
+  fixture_task landed task/landed ready "class:T2" "knowledge_consolidated:true" \
+    "pr_url:https://example.com/o/r/pull/8"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-22T00:00:00Z task=waiting status=consolidated remote=open via=forge action=preserve\n'
+    printf '2026-09-22T00:00:00Z task=landed status=ready remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" '<code>shipped</code> · opened by jig task ship</p><p><a href="https://example.com/o/r/pull/7">https://example.com/o/r/pull/7</a></p>'
+  assert_contains "$needs" "<code>waiting</code> · open as of housekeeping at "
+  # Merged by housekeeping's last word: a task to close, not a pull request.
+  assert_not_contains "$needs" "pull/8"
+  assert_contains "$needs" "Merged: the task can be closed</h3><p><code>landed</code>"
+  # Not the git step either: jig already opened the pull request.
+  assert_not_contains "$needs" "Ready for your step in git</h3><p><code>shipped</code>"
+}
+
+test_status_page_shows_what_housekeeping_left_for_a_person() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-01T00:00:00Z forge=github\n'
+    printf '2026-09-01T00:00:00Z task=old status=ready remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-22T00:00:00Z task=wb status=ready remote=unknown via=forge action=preserve flags=wrong-base\n'
+    printf '2026-09-22T00:00:00Z task=wk status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+    printf '2026-09-22T00:00:00Z task=cl status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+  } > .ai/runtime/housekeeping.log
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "The work landed on a different branch than planned</h3><p><code>wb</code>"
+  assert_contains "$needs" "A worktree was kept because it still holds work</h3><p><code>wk</code>"
+  assert_contains "$needs" "The pull request was closed without merging</h3><p><code>cl</code>"
+  # Only the last run counts.
+  assert_not_contains "$needs" "<code>old</code>"
+}
+
+test_status_page_says_when_pull_request_data_is_stale() {
+  export TZ=UTC
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  printf -- '--- run 2020-01-01T00:00:00Z forge=github\n' > .ai/runtime/housekeeping.log
+  run jig status --html
+  local page
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" 'Pull request data from housekeeping at 2020-01-01 00:00 UTC <span class="badge warn">stale</span>'
+  assert_contains "$page" "Pull request data is stale, so a pull request waiting for you may be missing here."
+
+  printf -- '--- run %s forge=failed\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .ai/runtime/housekeeping.log
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge warn">stale</span>'
+
+  printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .ai/runtime/housekeeping.log
+  run jig status --html
+  assert_not_contains "$(cat .ai/runtime/status.html)" "stale"
+
+  printf -- '--- run %s forge=none\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .ai/runtime/housekeeping.log
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" "with no GitHub or GitLab to ask"
+
+  rm .ai/runtime/housekeeping.log
+  run jig status --html
+  assert_contains "$(cat .ai/runtime/status.html)" "Housekeeping has not run yet"
+}
+
+test_status_page_orders_running_tasks_and_folds_paused_ones() {
+  fixture_jig_repo
+  fixture_task a-ready task/a-ready ready "class:T2"
+  fixture_task b-filed "" active "class:T2"
+  fixture_task c-active task/c-active active "class:T2"
+  fixture_task d-auto task/d-auto active "class:T2" "autopilot:on"
+  fixture_task e-paused task/e-paused active "class:T2" "paused:true" "paused_reason:on hold"
+  run jig status --html
+  local tasks ids
+  tasks=$(status_page_section "$(cat .ai/runtime/status.html)" tasks)
+  ids=$(printf '%s\n' "$tasks" | sed -n 's/^<tr><td class="id"><code>\([^<]*\)<.*/\1/p' | tr '\n' ' ')
+  assert_eq "d-auto c-active a-ready b-filed e-paused " "$ids"
+  assert_contains "$tasks" "<details><summary>Paused</summary>"
+  assert_contains "$tasks" '<span class="muted">not tracked outside autopilot</span>'
+  assert_contains "$tasks" '<span class="muted">filed, not started</span>'
+}
+
+test_status_page_shows_spec_progress_by_phase() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/idea-a
+  printf '%s\n' '# Idea A' > .ai/specs/idea-a/spec.md
+  # shellcheck disable=SC2016 # backticked task ids, literal
+  printf '%s\n' '# Roadmap' '' '## Phase 1 — First <step>' '' '- [x] one' '- [ ] `t-2` — two' \
+    '' '## Phase 2 — Second' '' '- [ ] fog: three' '' '## Phase 3 — Empty' '' '## Waves' '' '1. one' \
+    > .ai/specs/idea-a/roadmap.md
+  run jig status --html
+  local specs
+  specs=$(status_page_section "$(cat .ai/runtime/status.html)" specs)
+  assert_contains "$specs" "<tr><td><code>idea-a</code></td><td>Idea A</td><td>roadmap 1/3 done, 1 filed, fog 1</td></tr>"
+  assert_contains "$specs" '<h3><code>idea-a</code> Idea A</h3>'
+  assert_contains "$specs" '<tr><td>1</td><td>First &lt;step&gt;</td><td><span class="bar"><span style="width: 50%"></span></span>1/2 done</td><td>1</td><td>0</td></tr>'
+  assert_contains "$specs" '<tr><td>2</td><td>Second</td><td><span class="bar"><span style="width: 0%"></span></span>0/1 done</td><td>0</td><td>1</td></tr>'
+  assert_contains "$specs" '<tr><td>3</td><td>Empty</td>'
+  assert_not_contains "$specs" "Waves"
+}
+
+test_status_page_reads_the_phases_of_an_open_epic_from_its_branch() {
+  status_epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+  git checkout -q epic/idea-x
+  printf '%s\n' '' '## Phase 9 — On the epic' '' '- [x] done there' >> .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "progress on the epic"
+  git checkout -q main
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local specs
+  specs=$(status_page_section "$(cat .ai/runtime/status.html)" specs)
+  assert_contains "$specs" '<p class="muted">From epic/idea-x.</p>'
+  assert_contains "$specs" '<tr><td>9</td><td>On the epic</td>'
+}
+
+test_status_page_escapes_the_new_values_people_wrote() {
+  fixture_jig_repo
+  fixture_task esc task/esc ready "class:T2" "knowledge_consolidated:true" \
+    'pr_url:javascript:alert("x")<b>'
+  run jig status --html
+  local page
+  page=$(cat .ai/runtime/status.html)
+  assert_not_contains "$page" '<b>'
+  assert_not_contains "$page" 'href="javascript'
+  assert_contains "$page" '<p><code>javascript:alert(&quot;x&quot;)&lt;b&gt;</code></p>'
+}
+
+test_status_page_open_uses_the_systems_opener() {
+  fixture_jig_repo
+  local bin="$JIG_TEST_TMP.bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho Darwin\n' > "$bin/uname"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s.opened"\n' "$JIG_TEST_TMP" > "$bin/open"
+  chmod +x "$bin/uname" "$bin/open"
+  PATH="$bin:$PATH" run jig status --open
+  assert_eq 0 "$RC"
+  assert_eq "$(pwd -P)/.ai/runtime/status.html" "$OUT"
+  assert_eq "$(pwd -P)/.ai/runtime/status.html" "$(cat "$JIG_TEST_TMP.opened")"
+}
+
+test_status_page_open_from_git_bash_goes_through_cmd_start() {
+  fixture_jig_repo
+  local bin="$JIG_TEST_TMP.bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$bin/uname"
+  printf '#!/bin/sh\necho "C:\\\\win\\\\status.html"\n' > "$bin/cygpath"
+  # shellcheck disable=SC2016 # the stub expands these, not this shell
+  printf '#!/bin/sh\nprintf "%%s|" "$@" > "%s.opened"; printf "%%s" "$MSYS2_ARG_CONV_EXCL" >> "%s.opened"\n' \
+    "$JIG_TEST_TMP" "$JIG_TEST_TMP" > "$bin/cmd"
+  chmod +x "$bin/uname" "$bin/cygpath" "$bin/cmd"
+  PATH="$bin:$PATH" run jig status --open
+  assert_eq 0 "$RC"
+  assert_eq '/c|start||C:\win\status.html|*' "$(cat "$JIG_TEST_TMP.opened")"
+}
+
+test_status_page_open_without_a_browser_still_writes_the_page() {
+  fixture_jig_repo
+  local bin="$JIG_TEST_TMP.bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho Linux\n' > "$bin/uname"
+  printf '#!/bin/sh\nexit 3\n' > "$bin/xdg-open"
+  chmod +x "$bin/uname" "$bin/xdg-open"
+  PATH="$bin:$PATH" run jig status --open
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/status.html
+  assert_contains "$OUT" "$(pwd -P)/.ai/runtime/status.html"
+  assert_contains "$OUT" "open this file in your browser: $(pwd -P)/.ai/runtime/status.html"
+}
+
+test_status_page_from_a_worktree_is_the_main_checkouts_page() {
+  mkdir repo || return 1
+  cd repo || return 1
+  fixture_jig_repo
+  git add -A
+  git commit -q -m "jig init snapshot"
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  local wt main
+  main=$(pwd -P)
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  cd "$wt" || return 1
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_eq "$main/.ai/runtime/status.html" "$OUT"
+  assert_no_file "$wt/.ai/runtime/status.html"
+  # The main checkout sees every task, not only the worktree's own.
+  assert_contains "$(cat "$main/.ai/runtime/status.html")" "<code>T-2</code>"
 }
