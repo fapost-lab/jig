@@ -59,7 +59,7 @@ when: a phase with a two-task wave ends in two pull requests without a human bet
 tasks having run at the same time in their own worktrees; a stop in one task holds the next wave and
 reaches the human as one message; the "Autopilot" page covers phase runs.
 
-- [ ] Phase plan — `jig spec plan <id> --phase <n>`: each wave's items, their task ids and task
+- [ ] `phase-plan` — Phase plan — `jig spec plan <id> --phase <n>`: each wave's items, their task ids and task
   states, and which tasks may start now under the strict-wave rule; read by the coordinator and the
   status page
 - [ ] Phase run — `jig-autopilot` runs a filed phase: tasks of a wave in parallel worktrees up to
