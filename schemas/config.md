@@ -30,17 +30,34 @@ Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 ## Local overrides
 
 `.ai/config.local.yaml`, same format, gitignored, created by nobody but the person who wants
-it (ADR-0038) — by hand, or through `jig config set <key> <value> [...] --local [--dry-run]`,
-which writes only this file (the main checkout's, from a worktree), only local keys, and only
-values the readers accept: whole days for `housekeeping.cadence`, `<n>[dhms]` for the other
-durations, `true`/`false` for `housekeeping.fetch` and `autopilot.unattended`, a level for
-`agent.git`, whole minutes for `agent.ci_timeout`, 1 to 16 for `autopilot.parallel`, and never
-a line break, `#` or surrounding blanks. Every pair is checked before any is written; the file is replaced atomically; a key is
-replaced at its first line (the one `cfg` reads) or appended. It refuses without `--local`:
-nothing writes `.ai/config.yaml`, which the team edits by hand. `jig config show --local`
-prints the file. The `jig-setup` skill asks for the values and runs it. It is read before `.ai/config.yaml`, and only for the keys marked **Local**:
+it (ADR-0038). It is read before `.ai/config.yaml`, and only for the keys marked **Local**:
 their answer may differ between contributors without changing what the project does. A value
 for any other key is ignored. An empty value falls through to `.ai/config.yaml`.
+
+Written by hand, or through `jig config`, which writes only this file (the main checkout's,
+from a worktree) and refuses without `--local`: nothing writes `.ai/config.yaml`, which the
+team edits by hand. The `jig-setup` skill asks for the values and runs it.
+
+| Command | What it does |
+|---|---|
+| `jig config set <key> <value> [...] --local [--dry-run]` | sets local keys only, to values the readers accept; every pair is checked before any is written, the file is replaced atomically, and a key is replaced at its first line (the one `cfg` reads) or appended |
+| `jig config unset <key> [...] --local [--dry-run]` | removes every line setting each key — any key the file holds, ignored ones included, which is how a person clears out what no reader answers from; a key the file does not hold is reported and nothing is written |
+| `jig config show --local` | prints the file, then an `ignored:` line for each key in it that no reader answers from |
+
+Values `set` accepts, per key:
+
+| Key | Accepted |
+|---|---|
+| `housekeeping.cadence` | whole days (`3d` or `3`) |
+| `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after` | `<n>[dhms]` |
+| `housekeeping.fetch`, `autopilot.unattended` | `true` or `false` |
+| `agent.git` | `none`, `commit`, `push`, `pr`, `merge` |
+| `agent.ci_timeout` | whole minutes, 0 to 9999 |
+| `autopilot.parallel` | a whole number, 1 to 16 |
+| `git.worktree_root` | a path, unquoted |
+
+No value may hold a line break, a `#` (the file reads one as the start of a comment) or
+surrounding blanks.
 
 There is one file per clone. A task worktree reads the file in the checkout it was added
 from; a `.ai/config.local.yaml` inside the worktree is not read.

@@ -86,7 +86,11 @@ Usage: jig <command> [args]
   config set <key> <value> [...] --local [--dry-run]
                                  write your own settings to .ai/config.local.yaml;
                                  local keys only, values checked, never .ai/config.yaml
-  config show --local            print .ai/config.local.yaml
+  config unset <key> [...] --local [--dry-run]
+                                 remove keys from .ai/config.local.yaml, including
+                                 ones no reader answers from
+  config show --local            print .ai/config.local.yaml and the keys in it
+                                 that no reader answers from
   measure                        knowledge quality, process weight, change size
   doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release

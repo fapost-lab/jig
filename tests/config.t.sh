@@ -434,11 +434,37 @@ test_config_set_dies_without_ai_directory() {
 
 test_config_show_local_prints_file_verbatim() {
   fixture_jig_repo
-  printf '%s\n' "# comment" "agent.git: pr" "other: 1" > .ai/config.local.yaml
+  printf '%s\n' "# comment" "agent.git: pr" "housekeeping.cadence: 2d" > .ai/config.local.yaml
 
   run jig config show --local
   assert_eq 0 "$RC"
   assert_eq "$(cat .ai/config.local.yaml)" "$OUT"
+}
+
+# A key no reader answers from was printed like any other, so the command
+# presented junk as a setting. It is named after the file, with the command
+# that removes it — `jig config set` cannot.
+test_config_show_local_names_the_keys_no_reader_answers_from() {
+  fixture_jig_repo
+  printf '%s\n' "# comment" "agent.git: pr" "other: 1" "housekeeping.cadense: 2d" \
+    > .ai/config.local.yaml
+
+  run jig config show --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "agent.git: pr"
+  assert_contains "$OUT" "ignored: other (not a local key; jig config unset other --local)"
+  assert_contains "$OUT" "ignored: housekeeping.cadense (not a local key; jig config unset housekeeping.cadense --local)"
+  # A key the readers do answer from is not called ignored.
+  assert_not_contains "$OUT" "ignored: agent.git"
+}
+
+test_config_show_local_says_nothing_extra_when_every_key_is_local() {
+  fixture_jig_repo
+  printf '%s\n' "agent.git: pr" > .ai/config.local.yaml
+
+  run jig config show --local
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "ignored:"
 }
 
 test_config_show_local_no_file() {
@@ -457,6 +483,142 @@ test_config_show_without_local_refuses() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "only --local is supported"
   assert_contains "$OUT" ".ai/config.yaml is the team's file"
+}
+
+# --- jig config unset --local -------------------------------------------------
+#
+# `jig-setup` could show a person the keys in their own file that do nothing
+# and had no way to remove them, which left a hand edit of a file the tooling
+# owns as the only route (ADR-0001). `unset` takes any key the file holds —
+# the ignored ones are exactly the ones worth removing.
+
+test_config_unset_removes_a_key_and_leaves_the_rest() {
+  fixture_jig_repo
+  printf '%s\n' "# comment" "agent.git: pr" "housekeeping.cadence: 2d" > .ai/config.local.yaml
+
+  run jig config unset agent.git --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config: unset agent.git (.ai/config.local.yaml)"
+  assert_eq "$(printf '%s\n' '# comment' 'housekeeping.cadence: 2d')" \
+    "$(cat .ai/config.local.yaml)"
+  _assert_no_tmp_leftovers
+}
+
+test_config_unset_removes_a_key_no_reader_answers_from() {
+  fixture_jig_repo
+  printf '%s\n' "other: 1" "agent.git: pr" > .ai/config.local.yaml
+
+  run jig config unset other --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config: unset other (.ai/config.local.yaml)"
+  assert_eq "agent.git: pr" "$(cat .ai/config.local.yaml)"
+}
+
+test_config_unset_several_keys_in_one_call() {
+  fixture_jig_repo
+  printf '%s\n' "other: 1" "agent.git: pr" "autopilot.parallel: 3" > .ai/config.local.yaml
+
+  run jig config unset other autopilot.parallel --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config: unset other"
+  assert_contains "$OUT" "config: unset autopilot.parallel"
+  assert_eq "agent.git: pr" "$(cat .ai/config.local.yaml)"
+}
+
+# `cfg` reads the first line for a key, so a duplicate left behind would keep
+# setting a key reported as removed.
+test_config_unset_removes_every_line_of_the_key() {
+  fixture_jig_repo
+  printf '%s\n' "agent.git: pr" "housekeeping.cadence: 2d" "agent.git: merge" \
+    > .ai/config.local.yaml
+
+  run jig config unset agent.git --local
+  assert_eq 0 "$RC"
+  assert_eq "housekeeping.cadence: 2d" "$(cat .ai/config.local.yaml)"
+}
+
+test_config_unset_a_key_that_is_not_set_says_so_and_writes_nothing() {
+  fixture_jig_repo
+  printf '%s\n' "agent.git: pr" > .ai/config.local.yaml
+  local before
+  before=$(cat .ai/config.local.yaml)
+
+  run jig config unset housekeeping.cadence --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config: housekeeping.cadence is not set (.ai/config.local.yaml)"
+  assert_eq "$before" "$(cat .ai/config.local.yaml)"
+  _assert_no_tmp_leftovers
+}
+
+test_config_unset_no_file() {
+  fixture_jig_repo
+  assert_no_file .ai/config.local.yaml
+
+  run jig config unset agent.git --local
+  assert_eq 0 "$RC"
+  assert_eq "no local settings: .ai/config.local.yaml does not exist" "$OUT"
+  assert_no_file .ai/config.local.yaml
+}
+
+# stdout is the file that would be written and nothing else — `jig-setup`
+# shows a dry run to a person as the file — so the report goes to stderr, and
+# says "would unset" for a run that removed nothing. `run` merges the two
+# streams, so this one captures them apart.
+test_config_unset_dry_run_prints_the_file_on_stdout_and_the_report_on_stderr() {
+  fixture_jig_repo
+  printf '%s\n' "agent.git: pr" "other: 1" > .ai/config.local.yaml
+  local before out err
+  before=$(cat .ai/config.local.yaml)
+
+  out=$(jig config unset other --local --dry-run 2>/dev/null)
+  err=$(jig config unset other --local --dry-run 2>&1 >/dev/null)
+  assert_eq "agent.git: pr" "$out"
+  assert_contains "$err" "config: would unset other (.ai/config.local.yaml)"
+  assert_contains "$err" "config: dry run, nothing written to .ai/config.local.yaml"
+  assert_eq "$before" "$(cat .ai/config.local.yaml)"
+  _assert_no_tmp_leftovers
+}
+
+test_config_unset_without_local_refuses() {
+  fixture_jig_repo
+  printf '%s\n' "agent.git: pr" > .ai/config.local.yaml
+
+  run jig config unset agent.git
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "only --local is supported"
+  assert_eq "agent.git: pr" "$(cat .ai/config.local.yaml)"
+}
+
+test_config_unset_without_a_key_refuses() {
+  fixture_jig_repo
+
+  run jig config unset --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "missing key"
+}
+
+test_config_unset_unknown_flag_refuses() {
+  fixture_jig_repo
+
+  run jig config unset agent.git --local --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown flag: --bogus"
+}
+
+test_config_unset_a_name_the_file_could_not_hold_refuses() {
+  fixture_jig_repo
+
+  run jig config unset "agent git" --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a key name"
+}
+
+test_config_unset_is_listed_in_help() {
+  fixture_jig_repo
+
+  run jig config help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "jig config unset <key> [<key>...] --local [--dry-run]"
 }
 
 # --- readers unchanged (jig_agent_git, jig_ci_timeout) ---------------------

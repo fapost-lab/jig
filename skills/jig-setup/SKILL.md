@@ -16,10 +16,20 @@ by hand.
 .ai/scripts/jig config show --local
 ```
 
-Say in one line what is already set, or that nothing is. Then ask the questions below, **one
-per message**, in the person's words — no key names unless they ask. Each question says what
-the choice changes, offers the options, and names your recommendation with its reason. A
-person who says "keep the default" or "skip" moves on: nothing is written for that question.
+Say in one line what is already set, or that nothing is. Any `ignored:` line is a key no
+reader answers from — a misspelling, or a setting from a Jig that had it: name those, say they
+do nothing, and offer to remove them. On a yes:
+
+```
+.ai/scripts/jig config unset <key> [<key>...] --local
+```
+
+Then ask the questions below, **one per message**, in the person's words — no key names unless
+they ask. Each question says what the choice changes, offers the options, and names your
+recommendation with its reason. A person who says "keep the default" or "skip" moves on:
+nothing is written for that question. One who wants a setting they already have taken out of
+their own file is answered by `config unset` too — say that the key then answers from
+`.ai/config.yaml` if the team set it there, and from the default otherwise.
 
 ## 2. The questions
 

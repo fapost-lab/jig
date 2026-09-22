@@ -212,8 +212,9 @@ test_init_creates_expected_layout() {
   assert_file .codex/skills/jig-init/SKILL.md
 
   assert_file .gitignore
-  assert_file_contains .gitignore ".ai/workspace/"
-  assert_file_contains .gitignore ".ai/runtime/"
+  # Whole lines, and with no trailing slash: see the behaviour test below.
+  grep -qx '\.ai/workspace' .gitignore || fail ".gitignore lacks the exact rule .ai/workspace"
+  grep -qx '\.ai/runtime' .gitignore || fail ".gitignore lacks the exact rule .ai/runtime"
   # Test-run output at the repository root. conventions/shell.md once told
   # agents to write `run.log` there; one of those files reached the index.
   # Whole line, not a substring: `assert_file_contains` would accept a typo'd
@@ -224,6 +225,30 @@ test_init_creates_expected_layout() {
   assert_file_contains .gitignore ".claude/worktrees/"
 
   assert_contains "$OUT" "next:"
+}
+
+# A checkout can share another one's workspace through a directory link — a
+# coordinator running a roadmap phase from a second worktree does exactly that
+# when the main checkout is busy. Git sees a link as a file, and a rule ending
+# in `/` matches only a directory, so `.ai/workspace/` left every such checkout
+# reporting its own workspace as untracked, one `git add -A` away from
+# committing it.
+test_init_gitignore_covers_a_workspace_that_is_a_directory_link() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+
+  local shared
+  shared=$(mktemp -d "${TMPDIR:-/tmp}/jig-shared-workspace.XXXXXX") || return 1
+  mkdir -p "$shared/tasks"
+  rm -rf .ai/workspace
+  # The link is made the way jig makes one — a symbolic link, else an NTFS
+  # junction — so Windows is covered rather than skipped (convention-shell).
+  plant_dir_link "$shared" "$(pwd -P)/.ai/workspace"
+
+  git check-ignore -q .ai/workspace \
+    || fail ".ai/workspace is not ignored when it is a directory link"
+  rm -rf "$shared"
 }
 
 test_init_installs_document_templates_in_copy_mode() {
@@ -477,16 +502,39 @@ test_init_rerun_reinstalls_deleted_tracked_file() {
 
 test_init_gitignore_merges_without_duplicating() {
   fixture_repo
-  printf '.ai/workspace/\nnode_modules/\n' > .gitignore
+  printf '.ai/workspace\nnode_modules/\n' > .gitignore
 
   run jig init --from "$JIG_HOME"
   assert_eq 0 "$RC"
   assert_file_contains .gitignore "node_modules/"
-  assert_file_contains .gitignore ".ai/runtime/"
+  grep -qx '\.ai/runtime' .gitignore || fail ".gitignore lacks the exact rule .ai/runtime"
 
   local count
-  count=$(grep -c '^\.ai/workspace/$' .gitignore)
+  count=$(grep -c '^\.ai/workspace$' .gitignore)
   assert_eq 1 "$count"
+}
+
+# A project installed before the slash came off keeps its own `.ai/workspace/`
+# line: `init` matches rules as whole lines, so it adds the new one beside it
+# rather than replacing it. Both are wanted — the old rule still covers the
+# ordinary directory, and only the new one covers a workspace that is a
+# directory link. `jig upgrade` never touches .gitignore; a rerun of `init`
+# is what brings the line in.
+test_init_gitignore_adds_the_unslashed_workspace_rule_beside_an_older_one() {
+  fixture_repo
+  printf '.ai/workspace/\nnode_modules/\n' > .gitignore
+
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  grep -qx '\.ai/workspace' .gitignore \
+    || fail "init did not add the unslashed .ai/workspace rule"
+  grep -qx '\.ai/workspace/' .gitignore || fail "init dropped the project's own rule"
+
+  # And a second run adds neither again.
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(grep -c '^\.ai/workspace$' .gitignore)"
+  assert_eq 1 "$(grep -c '^\.ai/workspace/$' .gitignore)"
 }
 
 test_init_gitignore_appends_config_local_entry_once_across_reruns() {

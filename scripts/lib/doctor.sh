@@ -11,7 +11,7 @@
 #
 # A reporting command, in the narrow sense ARCHITECTURE.md carves out for
 # `status`/`measure`: it sources peer libraries and calls their functions
-# (jig_global_executable, jig_link_detect, upgrade_pending,
+# (jig_global_executable, jig_link_detect, upgrade_pending, manifest_source,
 # _status_framework_versions, adapter_*_session_hook_hint) rather than
 # recomputing any of their answers, and it never writes anything — including
 # through `upgrade_pending`, which is backed by `cmd_upgrade --dry-run`.
@@ -163,6 +163,12 @@ _doctor_check_jigcmd_global() {
 # its own ok/warn shape — recomputing the comparison here is exactly the
 # "second implementation of the same answer" ARCHITECTURE.md's Scripts
 # layout section warns against.
+#
+# It also leaves the outcome of that comparison in the caller's `version_state`
+# and `version_project` (cmd_doctor's locals, by the same dynamic scope the
+# counters above use), because the upgrade check below has to read it: the two
+# lines answer different questions and a reader who is not told so reads them
+# as a contradiction.
 _doctor_check_framework_version() {
   local proj_version out first hint
   if ! manifest_exists; then
@@ -170,6 +176,7 @@ _doctor_check_framework_version() {
     return 0
   fi
   proj_version=$(manifest_header_get jig.version)
+  version_project=$proj_version
   out=$(_status_framework_versions "$proj_version")
   # Its own "framework versions: " prefix is stripped, since _doctor_line
   # already prints the check name once; the rest of the line (project=...
@@ -178,8 +185,9 @@ _doctor_check_framework_version() {
   first=${first#framework versions: }
   hint=$(printf '%s\n' "$out" | sed -n 's/^hint: //p')
   case "$first" in
-    *mismatch*) _doctor_warn "framework version" "$first" "$hint" ;;
-    *) _doctor_ok "framework version" "$first" ;;
+    *mismatch*) version_state=mismatch; _doctor_warn "framework version" "$first" "$hint" ;;
+    *unavailable*) version_state=unavailable; _doctor_ok "framework version" "$first" ;;
+    *) version_state=current; _doctor_ok "framework version" "$first" ;;
   esac
 }
 
@@ -189,8 +197,19 @@ _doctor_check_framework_version() {
 # than reimplemented, and its "unknown" case is a fail here — unlike status,
 # where it is silently omitted — because doctor exists specifically to
 # surface an environment problem the user should act on.
+#
+# Pending items and the framework version answer different questions: pending
+# is this install measured against its source, the version is a number two
+# checkouts declare. The two part company whenever the source moves without a
+# release (the ordinary state of a framework checkout on an unmerged branch),
+# and equally when a framework-owned file is edited or deleted here, or a
+# profile is added to .ai/config.yaml — so the line says which question pending
+# answers and names the source, rather than naming a cause it has not checked.
+# A reader shown "current" above and "41 pending" here otherwise reads a plain
+# contradiction. `version_state` and `version_project` come from the version
+# check above, which runs first (cmd_doctor).
 _doctor_check_upgrade() {
-  local pending rc=0 n
+  local pending rc=0 n src=""
   pending=$(upgrade_pending) || rc=$?
   if [ "$rc" != 0 ]; then
     # shellcheck disable=SC2016
@@ -199,10 +218,19 @@ _doctor_check_upgrade() {
     return 0
   fi
   n=$(printf '%s\n' "$pending" | grep -c . || true)
-  if [ "$n" -gt 0 ]; then
-    _doctor_warn "upgrade check" "$n pending item(s)" "jig upgrade"
-  else
+  if [ "$n" -eq 0 ]; then
     _doctor_ok "upgrade check" "up to date"
+    return 0
+  fi
+  # upgrade_pending returned 0, so its dry run resolved the source root; a
+  # source that cannot be read at all lands in the fail branch above.
+  src=$(manifest_source 2>/dev/null) || src=""
+  if [ "$version_state" = current ] && [ -n "$src" ]; then
+    _doctor_warn "upgrade check" \
+      "$n pending item(s) although the version is the same ($version_project): pending measures this install against its source, $src" \
+      "jig upgrade"
+  else
+    _doctor_warn "upgrade check" "$n pending item(s)" "jig upgrade"
   fi
 }
 
@@ -358,6 +386,8 @@ cmd_doctor() {
   [ $# -eq 0 ] || jig_die "doctor: unknown argument: $1"
 
   local ok_count=0 warn_count=0 fail_count=0
+  # Set by _doctor_check_framework_version, read by _doctor_check_upgrade.
+  local version_state="" version_project=""
   local global_exe=""
   global_exe=$(jig_global_executable) || global_exe=""
 

@@ -261,6 +261,83 @@ EOF
   rm -rf "$src"
 }
 
+# --- pending items and the framework version answer different questions ------
+#
+# The report used to print "framework version: … current" and "upgrade check:
+# 41 pending item(s)" side by side with nothing tying them together, which
+# reads as a contradiction. The line now says which question pending answers
+# and against which source — not which of the two moved, which doctor has not
+# measured: a source ahead of the install and a framework file edited here
+# both produce pending items.
+
+test_doctor_pending_at_the_same_version_names_the_source() {
+  fixture_repo
+  local src version recorded
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src3.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" >/dev/null
+
+  mkdir -p "$src/skills/jig-newthing"
+  cat > "$src/skills/jig-newthing/SKILL.md" <<'EOF'
+---
+name: jig-newthing
+description: fixture skill added to the source after init
+---
+# jig-newthing
+Run `/jig-newthing` to do the thing.
+EOF
+
+  run jig_installed doctor
+  assert_eq 0 "$RC"
+  # The versions still agree, and the line says so rather than leaving the
+  # reader to reconcile it with "current" above.
+  assert_contains "$OUT" "ok    framework version:"
+  assert_contains "$OUT" " current"
+  # The source as the manifest recorded it (manifest_source), not as mktemp
+  # spelled it: a TMPDIR with a trailing slash makes the two differ.
+  version=$(sed -n 's/^jig\.version: //p' .ai/manifest)
+  recorded=$(sed -n 's/^jig\.source: //p' .ai/manifest)
+  assert_contains "$OUT" "although the version is the same ($version): pending measures this install against its source, $recorded"
+  assert_contains "$OUT" "fix: jig upgrade"
+
+  rm -rf "$src"
+}
+
+# The other half of the same rule: when the versions disagree, the version
+# line already carries the explanation and its hint, so the pending line adds
+# nothing and stays as it was.
+test_doctor_pending_at_a_different_version_stays_plain() {
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src4.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" >/dev/null
+
+  mkdir -p "$src/skills/jig-newthing"
+  cat > "$src/skills/jig-newthing/SKILL.md" <<'EOF'
+---
+name: jig-newthing
+description: fixture skill added to the source after init
+---
+# jig-newthing
+Run `/jig-newthing` to do the thing.
+EOF
+  # Only the recorded version moves: the install itself is untouched.
+  sed 's/^jig\.version: .*/jig.version: 0.0.1/' .ai/manifest > .ai/manifest.new
+  mv .ai/manifest.new .ai/manifest
+
+  run jig_installed doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  framework version: project=0.0.1"
+  assert_contains "$OUT" "mismatch"
+  assert_contains "$OUT" "warn  upgrade check:"
+  assert_not_contains "$OUT" "although the version is the same"
+
+  rm -rf "$src"
+}
+
 # --- session hook (mirrors status.sh's _status_session_hook contract) --------
 
 test_doctor_session_hook_claude_not_installed_warns() {

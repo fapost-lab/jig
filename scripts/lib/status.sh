@@ -1258,7 +1258,17 @@ _status_html_task_row() {
   fi
   printf '</td><td>'
   _status_html_stage
-  printf '</td><td>%s</td>' "$(_status_h "${_ST_BASE:-$_STATUS_DEFAULT_BASE}")"
+  # The Task Base, and only where there is one: it is recorded by `jig task
+  # start` (_task_start_base), and a task that has not started has none. The
+  # project default is not a safe stand-in — a task linked to a spec with an
+  # open epic is cut from the epic, so the default would be shown as fact and
+  # be wrong. The text page and `jig task list` already print the base only
+  # when it is there; an empty cell reads like the Worktree column's.
+  if [ -n "$_ST_BASE" ]; then
+    printf '</td><td>%s</td>' "$(_status_h "$_ST_BASE")"
+  else
+    printf '</td><td class="muted">-</td>'
+  fi
   if [ -n "$_ST_WT" ]; then
     printf '<td class="path"><code>%s</code><br><span class="muted">%s uncommitted</span></td>' \
       "$(_status_h "$_ST_WT")" "$(_status_h "${_ST_WT_NOTE##* uncommitted=}")"
