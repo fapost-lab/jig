@@ -1,6 +1,6 @@
 ---
 name: jig-init
-description: Bootstrap or refresh a project's durable knowledge with Jig. Use when setting up Jig in a repository, when `.ai/knowledge/` is empty or stale, or when the user says "init jig", "set up project knowledge", "analyze the project".
+description: Bootstrap or refresh a project's durable knowledge with Jig. Use when setting up Jig in a repository, when `.ai/knowledge/` is empty or stale, or when the user says "init jig", "set up Jig for this project", "set up project knowledge", "analyze the project".
 ---
 
 # jig-init — populate project knowledge
@@ -74,3 +74,7 @@ When the project is larger than the three global documents can honestly describe
 and offer `jig-map`: it proposes per-domain knowledge, and nothing it infers reaches an
 agent's context until a human accepts it. Do not run it as part of init — a map is a
 judgement about someone else's codebase and deserves its own gate.
+
+Offer `jig-setup` in one line: the person's own settings — how far their agent may go with
+git, whether autopilot may run without asking — are asked there, one question at a time, and
+written to their `.ai/config.local.yaml` only after a yes. Never run it as part of init.

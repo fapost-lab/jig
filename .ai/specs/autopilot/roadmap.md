@@ -51,7 +51,7 @@ site says how to start a run, where it stops and what to do at each stop.
   ever, a draft PR when repairs run out), and a finished run merges once CI passed, without
   overriding branch protection, then closes the task; ADR refining ADR-0009 (after: autopilot
   run — the defaults replace its stops)
-- [ ] `local-setup` — Local setup — the agent asks, in plain words and one question at a time, how far it may go
+- [x] `local-setup` — Local setup — the agent asks, in plain words and one question at a time, how far it may go
   with git, whether to stop and ask or decide and record, how many agents to run at once, how long to
   wait for CI and how long to keep finished work; shows the resulting `.ai/config.local.yaml` whole and
   writes it after a yes, through `jig config set <key> <value> --local`, which accepts only local keys

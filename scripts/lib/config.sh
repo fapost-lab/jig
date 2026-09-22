@@ -176,9 +176,16 @@ cfg_bool() {
 jig_agent_git() {
   local value
   value=$(cfg agent.git none)
-  case "$value" in
-    none | commit | push | pr | merge) printf '%s\n' "$value"; return 0 ;;
-    *) printf '%s\n' "$value"; return 1 ;;
+  printf '%s\n' "$value"
+  _cfg_agent_git_level "$value"
+}
+
+# _cfg_agent_git_level <value> — exit 0 when <value> is an agent.git level.
+# Shared by the reader above and `jig config set`, so the two cannot disagree.
+_cfg_agent_git_level() {
+  case "$1" in
+    none | commit | push | pr | merge) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -189,10 +196,20 @@ jig_agent_git() {
 jig_ci_timeout() {
   local value
   value=$(cfg agent.ci_timeout 30)
-  case "$value" in
-    '' | *[!0-9]* | ?????*) printf '%s\n' "$value"; return 1 ;;
-  esac
+  if ! _cfg_minutes "$value"; then
+    printf '%s\n' "$value"
+    return 1
+  fi
   printf '%s\n' "$((10#$value))"
+}
+
+# _cfg_minutes <value> — exit 0 when <value> is a whole number of minutes
+# agent.ci_timeout accepts: digits only, at most four of them.
+_cfg_minutes() {
+  case "$1" in
+    '' | *[!0-9]* | ?????*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # jig_unattended — exit 0 when this clone opted in to autopilot runs that ask
@@ -201,4 +218,210 @@ jig_ci_timeout() {
 # whose epic finish has no run to record it in.
 jig_unattended() {
   [ "$(cfg autopilot.unattended false)" = true ]
+}
+
+# jig_config_value_problem <key> <value> — print why <value> cannot be set for
+# the local key <key>, and exit 1; print nothing and exit 0 when it can. The
+# rules are the readers' own, so a value `jig config set` accepts is one every
+# reader understands the way the person meant it:
+# - housekeeping.cadence: whole days (`<n>d` or `<n>`), because the session
+#   hook and `jig status` read it in days and treat anything else as 1d;
+# - the other housekeeping durations: `<n>[dhms]`, `jig_duration_seconds`;
+# - housekeeping.fetch and autopilot.unattended: `true` or `false` — cfg_bool
+#   would take yes/1/on too, jig_unattended only `true`; the one spelling
+#   both read alike;
+# - agent.git and agent.ci_timeout: the checks of jig_agent_git and
+#   jig_ci_timeout;
+# - git.worktree_root: any path _cfg_read gives back unchanged.
+# Nothing may hold a line break, a `#` (_cfg_read cuts a comment there) or
+# surrounding blanks (it trims them).
+jig_config_value_problem() {
+  local key="$1" value="$2" nl cr
+  nl=$(printf '\nx'); nl=${nl%x}
+  cr=$(printf '\r')
+  case "$value" in
+    '') printf 'an empty value; leave the key out to use the default\n'; return 1 ;;
+    *"$nl"* | *"$cr"*) printf 'a line break\n'; return 1 ;;
+    *'#'*) printf "a '#', which the file reads as the start of a comment\n"; return 1 ;;
+    [[:space:]]* | *[[:space:]]) printf 'leading or trailing blanks\n'; return 1 ;;
+  esac
+  case "$key" in
+    housekeeping.cadence)
+      case "${value%d}" in
+        '' | *[!0-9]* | ?????????*) printf 'not a whole number of days (e.g. 1d, 3d)\n'; return 1 ;;
+      esac
+      ;;
+    housekeeping.trash_ttl | housekeeping.abandoned_ttl | housekeeping.stale_after)
+      case "${value%[dhms]}" in
+        '' | *[!0-9]* | ?????????*) printf 'not a duration (e.g. 7d, 12h, 30m, 90s)\n'; return 1 ;;
+      esac
+      ;;
+    housekeeping.fetch | autopilot.unattended)
+      case "$value" in
+        true | false) ;;
+        *) printf 'not true or false\n'; return 1 ;;
+      esac
+      ;;
+    agent.git)
+      _cfg_agent_git_level "$value" \
+        || { printf 'not a level: none, commit, push, pr or merge\n'; return 1; }
+      ;;
+    agent.ci_timeout)
+      _cfg_minutes "$value" \
+        || { printf 'not a whole number of minutes (0 to 9999)\n'; return 1; }
+      ;;
+    git.worktree_root)
+      case "$value" in
+        \"* | \'*) printf 'quoted; write the path without quotes\n'; return 1 ;;
+      esac
+      ;;
+    *) printf 'not a local key\n'; return 1 ;;
+  esac
+  return 0
+}
+
+# --- jig config ---------------------------------------------------------------
+# `jig config set <key> <value> [<key> <value>...] --local [--dry-run]` and
+# `jig config show --local`. Writes only the clone's .ai/config.local.yaml,
+# only keys in JIG_CFG_LOCAL_KEYS, only values the readers accept, and never
+# .ai/config.yaml: that file is the team's, edited by hand and reviewed like
+# code (ADR-0038).
+
+# Referenced from the EXIT trap, so global (convention-shell).
+_CONFIG_TMP=""
+
+cmd_config() {
+  local sub="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    set) _config_set "$@" ;;
+    show) _config_show "$@" ;;
+    help | -h | --help)
+      printf 'usage: jig config set <key> <value> [<key> <value>...] --local [--dry-run]\n'
+      printf '       jig config show --local\n'
+      printf 'local keys: %s\n' "$JIG_CFG_LOCAL_KEYS"
+      ;;
+    '') jig_die "config: missing subcommand (usage: jig config set|show ... --local)" ;;
+    *) jig_die "config: unknown subcommand: $sub (usage: jig config set|show ... --local)" ;;
+  esac
+}
+
+# _config_display_path <file> — <file> relative to the project when inside it.
+_config_display_path() {
+  case "$1" in
+    "$JIG_PROJECT"/*) printf '%s\n' "${1#"$JIG_PROJECT"/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+_config_refuse_project() {
+  jig_die "config $1: only --local is supported: .ai/config.yaml is the team's file, edited by hand and reviewed like code; your own settings go in .ai/config.local.yaml (jig config $1 ... --local)"
+}
+
+# _config_warn_ignored <shown path> — the warning `jig status` prints.
+_config_warn_ignored() {
+  jig_config_local_ignored \
+    || jig_warn "config: $1 is not ignored by git and can be committed (fix: jig init)"
+}
+
+_config_show() {
+  local local_flag=0 file shown
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) local_flag=1; shift ;;
+      *) jig_die "config show: unknown argument: $1 (usage: jig config show --local)" ;;
+    esac
+  done
+  [ "$local_flag" = 1 ] || _config_refuse_project show
+  jig_require_repo
+  file=$(jig_config_local_file)
+  shown=$(_config_display_path "$file")
+  if [ ! -f "$file" ]; then
+    printf 'no local settings: %s does not exist\n' "$shown"
+    return 0
+  fi
+  cat "$file"
+}
+
+# _config_apply <in> <out> <key> <value> — <in> with <key> set to <value>: the
+# first `<key>:` line replaced, the one `cfg` reads, else a line appended.
+# The value reaches awk through the environment, where a backslash in a path
+# stays a backslash (`awk -v` would read it as an escape).
+_config_apply() {
+  JIG_CFG_KEY="$3" JIG_CFG_VALUE="$4" awk '
+    BEGIN { k = ENVIRON["JIG_CFG_KEY"]; v = ENVIRON["JIG_CFG_VALUE"]; n = length(k) + 1 }
+    !done && substr($0, 1, n) == k ":" { print k ": " v; done = 1; next }
+    { print }
+    END { if (!done) print k ": " v }
+  ' "$1" > "$2"
+}
+
+_config_set() {
+  local local_flag=0 dry=0 n=0 key value problem file dir shown i
+  # The pairs, in order: an array, because a value is checked for line breaks
+  # below and must reach that check intact.
+  local args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) local_flag=1; shift ;;
+      --dry-run) dry=1; shift ;;
+      --*) jig_die "config set: unknown flag: $1 (usage: jig config set <key> <value> [<key> <value>...] --local [--dry-run])" ;;
+      *) args[n]="$1"; n=$((n + 1)); shift ;;
+    esac
+  done
+  [ "$local_flag" = 1 ] || _config_refuse_project set
+  if [ "$n" -eq 0 ] || [ $((n % 2)) -ne 0 ]; then
+    jig_die "config set: expected <key> <value> pairs (usage: jig config set <key> <value> [<key> <value>...] --local [--dry-run])"
+  fi
+
+  # Every pair is checked before anything is written: one bad value leaves
+  # the file as it was.
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    key=${args[i]}; value=${args[i + 1]}
+    if ! jig_config_local_key "$key"; then
+      jig_die "config set: $key is not a local key; the local file answers only for: $JIG_CFG_LOCAL_KEYS (anything else belongs to the team's .ai/config.yaml, edited by hand)"
+    fi
+    if ! problem=$(jig_config_value_problem "$key" "$value"); then
+      jig_die "config set: $key: invalid value '$value': $problem"
+    fi
+    i=$((i + 2))
+  done
+
+  jig_require_repo
+  file=$(jig_config_local_file)
+  dir=${file%/*}
+  shown=$(_config_display_path "$file")
+  [ -d "$dir" ] || jig_die "config set: no $JIG_AI_DIR/ directory at ${dir%/*}; run jig init there first"
+
+  _CONFIG_TMP="$file.tmp.$$"
+  trap 'rm -f "$_CONFIG_TMP" "$_CONFIG_TMP.next"' EXIT
+  if [ -f "$file" ]; then
+    cat "$file" > "$_CONFIG_TMP"
+  else
+    printf '%s\n' \
+      "# Your own Jig settings for this clone: gitignored, never committed." \
+      "# Only local keys are read from here (jig config set --local)." > "$_CONFIG_TMP"
+  fi
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    _config_apply "$_CONFIG_TMP" "$_CONFIG_TMP.next" "${args[i]}" "${args[i + 1]}"
+    mv "$_CONFIG_TMP.next" "$_CONFIG_TMP"
+    i=$((i + 2))
+  done
+
+  if [ "$dry" = 1 ]; then
+    cat "$_CONFIG_TMP"
+    rm -f "$_CONFIG_TMP"
+    printf 'config: dry run, nothing written to %s\n' "$shown" >&2
+    _config_warn_ignored "$shown"
+    return 0
+  fi
+  mv "$_CONFIG_TMP" "$file"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    printf 'config: %s: %s (%s)\n' "${args[i]}" "${args[i + 1]}" "$shown"
+    i=$((i + 2))
+  done
+  _config_warn_ignored "$shown"
 }
