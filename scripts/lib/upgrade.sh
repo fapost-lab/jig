@@ -71,6 +71,67 @@ _upgrade_csv() {
   printf '%s\n' "$out"
 }
 
+# _upgrade_same_dir <a> <b> — whether two paths name the same directory.
+# Compared as physical paths (`pwd -P`), the way manifest_write_entries
+# compares the source with the project: the same checkout can be reached
+# through a symlinked parent (a TMPDIR under /var on macOS) and spelled two
+# ways. A path that cannot be entered — a source checkout since deleted —
+# falls back to its own text, so it still equals itself; an empty path is
+# never equal to anything, because `cd ""` succeeds and would otherwise
+# answer with the current directory.
+_upgrade_same_dir() {
+  local a b
+  [ -n "$1" ] || return 1
+  [ -n "$2" ] || return 1
+  a=$(cd "$1" 2>/dev/null && pwd -P) || a="$1"
+  b=$(cd "$2" 2>/dev/null && pwd -P) || b="$2"
+  [ "$a" = "$b" ]
+}
+
+# _upgrade_records_source <source> <applied-count> — whether this run may
+# rewrite `.ai/manifest` with <source> in its header
+# (adr-20260922-upgrade-records-the-source-it-installed-from).
+#
+# An upgrade that applied nothing has not made the project an install of
+# <source>: every framework-owned path still comes from wherever it came from
+# before. Writing the header anyway would record a checkout no file of this
+# project came from, and the next plain `jig upgrade` would read from there
+# without anyone asking for it.
+#
+# The recorded source is writable whether or not anything was applied: there
+# the header only restates where the project already comes from, and
+# `jig.version` must keep following that checkout — in link mode the project
+# runs the source's scripts directly, so its version moves with the source
+# even when no link is created.
+_upgrade_records_source() {
+  local recorded
+  [ "$2" = 0 ] || return 0
+  recorded=$(manifest_source)
+  _upgrade_same_dir "$1" "$recorded"
+}
+
+# _upgrade_summary <placed> <kept> <removed> <conflicts> <manifest-state>
+# The one line every run ends with, in both modes, so that "nothing happened"
+# is reported rather than left to silence. `manifest <state>` is the part the
+# reader needs most: an upgrade can end with no file placed and no manifest
+# written at all, and until it said so that was invisible.
+_upgrade_summary() {
+  local line="jig upgrade: $1 placed, $2 kept"
+  if [ "$3" != 0 ]; then line="$line, $3 removed"; fi
+  _upgrade_out "$line, $4 conflict(s); manifest $5"
+}
+
+# _upgrade_kept_source_note <source> <mode> — why the manifest still names
+# another checkout, and the command that does change it. `init` is that
+# command: choosing where a project's framework comes from is an install
+# decision, and `upgrade` only carries an existing install forward.
+_upgrade_kept_source_note() {
+  local source="$1" link_flag=""
+  if [ "$2" = link ]; then link_flag=" --link"; fi
+  _upgrade_out "nothing was placed from $source, so this project stays installed from $(manifest_source)"
+  _upgrade_out "hint: to install it from that checkout instead, run \`jig init$link_flag --from $source\`"
+}
+
 # --- decision table (domains/install) ---------------------------------------------
 
 # _upgrade_process_path <rel> <stage-dir> <dry-run> <manifest-hash>
@@ -78,7 +139,9 @@ _upgrade_csv() {
 # Applies one row of the upgrade decision table to a single framework-owned
 # path and appends the resulting manifest line ("<hash> <path>") to the
 # caller's `new_entries` variable (dynamic scope; cmd_upgrade declares it
-# local). Prints one report line per non-trivial action.
+# local, along with the placed_count/kept_count/removed_count/conflict_count
+# tally this function keeps for the run summary). Prints one report line per
+# non-trivial action.
 #
 # The three hashes come precomputed from _upgrade_hash_table, empty when the
 # path is absent from the manifest, the project or the stage respectively, so
@@ -125,6 +188,9 @@ _upgrade_process_path() {
           cp -p "$staged_abs" "$local_abs"
         fi
         _upgrade_out "replace $rel"
+        placed_count=$((placed_count + 1))
+      else
+        kept_count=$((kept_count + 1))
       fi
       new_entries="$new_entries
 $staged_hash $rel"
@@ -135,19 +201,23 @@ $staged_hash $rel"
         cp -p "$staged_abs" "$local_abs"
       fi
       _upgrade_out "install $rel"
+      placed_count=$((placed_count + 1))
       new_entries="$new_entries
 $staged_hash $rel"
       ;;
     keep-modified)
       _upgrade_out "keep-modified $rel"
+      kept_count=$((kept_count + 1))
       new_entries="$new_entries
 $manifest_hash $rel"
       ;;
     keep-conflict)
       _upgrade_out "keep-conflict $rel"
+      conflict_count=$((conflict_count + 1))
       ;;
     keep-orphaned-modified)
       _upgrade_out "keep-orphaned-modified $rel"
+      kept_count=$((kept_count + 1))
       new_entries="$new_entries
 $manifest_hash $rel"
       ;;
@@ -159,6 +229,7 @@ $manifest_hash $rel"
       # manifest is a file in the project, and a path in it is not proof.
       if ! _upgrade_deletable "$rel"; then
         _upgrade_out "keep-outside $rel"
+        kept_count=$((kept_count + 1))
         new_entries="$new_entries
 $manifest_hash $rel"
         return 0
@@ -167,6 +238,7 @@ $manifest_hash $rel"
         rm -f "$local_abs"
       fi
       _upgrade_out "delete $rel"
+      removed_count=$((removed_count + 1))
       ;;
   esac
 }
@@ -300,15 +372,24 @@ _upgrade_link() {
     done
   done
 
-  if [ "$created_count" = 0 ] && [ "$conflict_count" = 0 ]; then
-    _upgrade_out "link mode: nothing to link ($kept_count already linked)"
+  if [ "$dry_run" = 1 ]; then
+    _upgrade_summary "$created_count" "$kept_count" 0 "$conflict_count" "unchanged (dry run)"
+    return 0
   fi
 
-  if [ "$dry_run" != 1 ]; then
+  # A link-mode run places or it does not: there is nothing in between, and
+  # no manifest body to keep either. So an upgrade whose every path was a
+  # conflict leaves the file exactly as it was, source and version included
+  # (adr-20260922-upgrade-records-the-source-it-installed-from).
+  if _upgrade_records_source "$source" "$created_count"; then
     local version adapters_manifest
     version=$(_upgrade_source_version "$source")
     adapters_manifest=$(_upgrade_csv "$active_adapters")
     manifest_write "$version" "$source" "$adapters_manifest" "link"
+    _upgrade_summary "$created_count" "$kept_count" 0 "$conflict_count" "updated"
+  else
+    _upgrade_summary "$created_count" "$kept_count" 0 "$conflict_count" "unchanged"
+    _upgrade_kept_source_note "$source" "link"
   fi
 }
 
@@ -402,6 +483,7 @@ cmd_upgrade() {
     > "$_UPGRADE_WORK/table"
 
   local new_entries="" rel mhash lhash shash t
+  local placed_count=0 kept_count=0 removed_count=0 conflict_count=0
   t=$(printf '\t')
   while IFS="$t" read -r rel mhash lhash shash; do
     [ -n "$rel" ] || continue
@@ -417,12 +499,28 @@ cmd_upgrade() {
   rm -rf "$_UPGRADE_STAGE"
   _UPGRADE_STAGE=""
 
-  if [ "$dry_run" != 1 ]; then
+  if [ "$dry_run" = 1 ]; then
+    _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" \
+      "unchanged (dry run)"
+    return 0
+  fi
+
+  # Same rule as link mode, and for the same reason: a run that copied and
+  # removed nothing has not installed this project from <source>, so the
+  # header must not name it. The body is unaffected either way — with no
+  # install, replace or delete, every entry it would write is the one the
+  # manifest already holds (keep-modified and keep-outside carry the recorded
+  # hash forward verbatim).
+  if _upgrade_records_source "$source" "$((placed_count + removed_count))"; then
     local version adapters_manifest
     version=$(_upgrade_source_version "$source")
     adapters_manifest=$(_upgrade_csv "$active_adapters")
     printf '%s\n' "$new_entries" | sed '/^$/d' \
       | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy"
+    _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "updated"
+  else
+    _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "unchanged"
+    _upgrade_kept_source_note "$source" "copy"
   fi
 }
 
@@ -444,9 +542,9 @@ cmd_upgrade() {
 # Output/exit contract:
 #   0  success; zero or more pending lines printed on stdout, one per line,
 #      each exactly one of cmd_upgrade's own "install "/"link "/"replace "
-#      report lines. Link mode's "link mode: nothing to link (N already
-#      linked)" summary is dropped — it is informational, not a pending
-#      per-path action.
+#      report lines. The run summary and the kept-source note are not matched
+#      by the filter below — they are informational, not pending per-path
+#      actions.
 #   3  pending state is unknown right now and nothing is printed. This is
 #      the expected outcome whenever the underlying dry run cannot complete
 #      at all — most notably when the framework source root cannot be
@@ -461,6 +559,6 @@ upgrade_pending() {
   out=$(cmd_upgrade --dry-run 2>&1) || rc=$?
   [ "$rc" = 0 ] || return 3
 
-  printf '%s\n' "$out" | grep -E '^(install|link|replace) ' | grep -v '^link mode:' || true
+  printf '%s\n' "$out" | grep -E '^(install|link|replace) ' || true
   return 0
 }

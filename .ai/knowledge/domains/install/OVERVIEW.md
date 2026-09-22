@@ -49,7 +49,13 @@ project owns.
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).
 - The upgrade decision table: install, replace, keep-modified, delete — decided per path
-  from the manifest hash, the on-disk file and the staged source.
+  from the manifest hash, the on-disk file and the staged source. Every run ends in one
+  summary line (`N placed, M kept, K conflict(s); manifest updated|unchanged`), and an
+  upgrade that applied nothing leaves `.ai/manifest` untouched instead of repointing
+  `jig.source`/`jig.version` at the checkout it was offered
+  (adr-20260922-upgrade-records-the-source-it-installed-from). The source already recorded
+  is the exception, written back whether or not anything was placed: in link mode the
+  project runs that checkout's scripts, so its version moves with it.
 - The adapter contract: where each runtime's skills live and how a skill is transformed
   on the way in.
 - The global framework: `install.sh` bootstraps a per-user checkout at the newest release
