@@ -68,7 +68,7 @@ reaches the human as one message; the "Autopilot" page covers phase runs.
 - [x] `phase-plan` — Phase plan — `jig spec plan <id> --phase <n>`: each wave's items, their task ids and task
   states, and which tasks may start now under the strict-wave rule; read by the coordinator and the
   status page
-- [ ] Phase run — `jig-autopilot` runs a filed phase: tasks of a wave in parallel worktrees up to
+- [x] `phase-run` — Phase run — `jig-autopilot` runs a filed phase: tasks of a wave in parallel worktrees up to
   `autopilot.parallel`, the coordinator owning spec files and the merge queue, bringing branches up to
   the base with re-review after each merge, gathering stops into one message (attended) or ending a
   stuck task as a draft (unattended), and checking reviewers' ledgers (after: phase plan — it decides
@@ -111,7 +111,7 @@ the version is raised in the final pull request from the epic.
 3. Autopilot run for a task
 4. Unattended mode; `worktree-leaves-on-landing`
 5. `local-setup`; phase plan
-6. Phase run
+6. `phase-run`
 7. Public docs pass
 
 <!--

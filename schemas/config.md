@@ -21,6 +21,7 @@ Absent keys take the default. Paths are not configurable.
 | `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr`, `merge` — `merge` also merges the pull request once CI passed, never past branch protection; an epic's only in an unattended run (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level, adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |
 | `autopilot.unattended` | `false` | only | `true`: an autopilot run asks nothing — each stop becomes a safe default recorded in the pull request — and an epic's final pull request may be merged (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
+| `autopilot.parallel` | `2` | only | how many tasks of a roadmap phase a phase run has agents building at once, 1 to 16; a task whose work is consolidated and waiting its turn to ship holds no slot, and the agents that repair the merge queue are outside the limit (adr-20260922-a-phase-run-is-coordinated) |
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
 | `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 
@@ -33,8 +34,8 @@ it (ADR-0038) — by hand, or through `jig config set <key> <value> [...] --loca
 which writes only this file (the main checkout's, from a worktree), only local keys, and only
 values the readers accept: whole days for `housekeeping.cadence`, `<n>[dhms]` for the other
 durations, `true`/`false` for `housekeeping.fetch` and `autopilot.unattended`, a level for
-`agent.git`, whole minutes for `agent.ci_timeout`, and never a line break, `#` or surrounding
-blanks. Every pair is checked before any is written; the file is replaced atomically; a key is
+`agent.git`, whole minutes for `agent.ci_timeout`, 1 to 16 for `autopilot.parallel`, and never
+a line break, `#` or surrounding blanks. Every pair is checked before any is written; the file is replaced atomically; a key is
 replaced at its first line (the one `cfg` reads) or appended. It refuses without `--local`:
 nothing writes `.ai/config.yaml`, which the team edits by hand. `jig config show --local`
 prints the file. The `jig-setup` skill asks for the values and runs it. It is read before `.ai/config.yaml`, and only for the keys marked **Local**:

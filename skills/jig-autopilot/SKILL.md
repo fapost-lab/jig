@@ -108,3 +108,21 @@ is merged but by `task ship`. Before shipping, put `jig task autopilot <id> repo
 body as they are. At `agent.git: merge`, `task ship` merges once CI passed or prints
 `not merged: <why>` — both are a finished run; say which. After `merged`, close the task
 (`jig-consolidate` §6) without asking, then `end`.
+
+## 6. A roadmap phase
+
+"Run phase N of `<spec>` on autopilot" is a **phase run**: a whole wave of the roadmap at once,
+each task built by its own agent in its own worktree, while you act as the **coordinator**. The
+mechanics — the loop, the prompt each task agent gets, what to do when one fails — are in
+[phase-run.md](references/phase-run.md). Three things hold whatever happens:
+
+- **The coordinator writes no code.** You file the wave, start the agents, ship each task and
+  keep the merge queue. The work itself is theirs.
+- **A task agent touches neither the spec nor the forge.** It never edits `.ai/specs/`, never
+  runs `jig spec done` (the script refuses in its branch) and never runs `jig task ship`. It
+  ends at consolidation, with the change staged and its commit message written.
+- **A stop holds the next wave, not this one.** The wave in flight finishes; the question goes
+  to the person in one message, in your session, and the wave after it waits for the answer.
+
+It needs `agent.git` at `pr` or better and a spec built on an epic. Without either, refuse the
+phase run, say which is missing, and offer to run the phase's tasks one at a time instead.

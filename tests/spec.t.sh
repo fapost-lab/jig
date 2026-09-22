@@ -514,6 +514,56 @@ EOF
     || fail "leftover tmp file after a successful spec done"
 }
 
+# In a phase run the coordinator checks items in the epic checkout after the
+# merge; an agent checking one from inside its own branch is how a wave's
+# branches conflict over neighbouring roadmap lines
+# (adr-20260922-a-phase-run-is-coordinated). The refusal is narrow: only in
+# the task's own branch, and only for a run started with --phase.
+test_spec_done_refuses_in_a_phase_runs_task_branch() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+1. Wave one
+- [ ] `T-1` — implement thing
+EOF
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start --phase alpha/1 >/dev/null
+
+  run jig spec "done" T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 runs in phase alpha/1"
+  assert_contains "$OUT" "the coordinator checks items after the merge"
+  grep -q '^- \[ \] `T-1` — implement thing$' .ai/specs/alpha/roadmap.md \
+    || fail "the roadmap was changed although spec done refused"
+
+  # The coordinator's own checkout is not the task's branch: it works there.
+  git checkout -q main
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: T-1 checked in .ai/specs/alpha/roadmap.md"
+}
+
+# A run that is not part of a phase run is untouched: the agent still checks
+# the item during consolidation, as ADR-0035 has it.
+test_spec_done_works_in_a_task_branch_outside_a_phase_run() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+1. Wave one
+- [ ] `T-1` — implement thing
+EOF
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: T-1 checked in .ai/specs/alpha/roadmap.md"
+}
+
 # The id is compared as an exact string, not a glob/regex: a "." in an id
 # must not act as "any character" and accidentally match a decoy item whose
 # backticked head differs only in that position.
@@ -2030,7 +2080,8 @@ test_spec_plan_first_wave_open_later_phase_waits_on_it() {
   # Wave 1: the checked item is done, the filed task with a workspace that
   # was never started may start, the unfiled item has to be filed first. Fog
   # sits in wave 2, which waits on wave 1.
-  assert_eq "wave${tab}1${tab}open
+  assert_eq "parallel${tab}2${tab}0
+wave${tab}1${tab}open
 item${tab}1${tab}T-done${tab}done${tab}roadmap${tab}false${tab}-${tab}done${tab}Shipped thing
 item${tab}1${tab}T-a${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Alpha work
 item${tab}1${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}file${tab}Beta work
@@ -2043,13 +2094,63 @@ blocker${tab}1${tab}-${tab}not-filed${tab}Beta work" "$OUT"
   # it is listed, and it never starts.
   run jig spec plan alpha --phase 2 --format tsv
   assert_eq 0 "$RC"
-  assert_eq "wave${tab}2${tab}waiting
+  assert_eq "parallel${tab}2${tab}0
+wave${tab}2${tab}waiting
 item${tab}2${tab}T-c${tab}no-workspace${tab}no${tab}false${tab}-${tab}wait${tab}Charlie
 wave${tab}3${tab}waiting
 item${tab}3${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}wait${tab}Delta
 item${tab}-${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}unscheduled${tab}Echo
 blocker${tab}1${tab}T-a${tab}not-started${tab}Alpha work
 blocker${tab}1${tab}-${tab}not-filed${tab}Beta work" "$OUT"
+}
+
+# `parallel <limit> <building>` is plan's answer to "how many more may I
+# start": only an agent still building one of the open wave's tasks holds a
+# slot, so a task whose knowledge decision is recorded — its work done, its
+# turn to ship not come — gives its slot back
+# (adr-20260922-a-phase-run-is-coordinated).
+test_spec_plan_parallel_counts_only_the_agents_still_building() {
+  fixture_jig_repo
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+
+## Waves
+
+1. Alpha; Bravo
+RM
+  local tab
+  tab=$(printf '\t')
+  jig task new T-a >/dev/null
+  jig task new T-b >/dev/null
+
+  # Nobody started a run yet: every slot is free.
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel${tab}2${tab}0"
+
+  jig task autopilot T-a start --phase alpha/1 >/dev/null
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel${tab}2${tab}1"
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "may start now: T-a, T-b (1 of 2 slots free)"
+
+  # T-a's agent finished: the work waits to ship, the slot is free again.
+  jig task set T-a knowledge_consolidated true >/dev/null
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel${tab}2${tab}0"
+
+  # Both building at the limit: no slot left, and the text says so.
+  jig task autopilot T-b start --phase alpha/1 >/dev/null
+  jig config set autopilot.parallel 1 --local >/dev/null
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "(0 of 1 slots free)"
 }
 
 test_spec_plan_text_form_names_what_may_start_and_what_to_file() {
@@ -2070,7 +2171,7 @@ wave 2 — waiting
 waiting on earlier waves:
   wave 1  T-a  not started  Alpha work
   wave 1  -    not filed    Beta work
-may start now: T-a
+may start now: T-a (2 of 2 slots free)
 to file first: Beta work" "$OUT"
 }
 
@@ -2197,7 +2298,8 @@ RM
   tab=$(printf '\t')
   run jig spec plan alpha --phase 2 --format tsv
   assert_eq 0 "$RC"
-  assert_eq "wave${tab}3${tab}waiting
+  assert_eq "parallel${tab}2${tab}0
+wave${tab}3${tab}waiting
 item${tab}3${tab}T-l${tab}no-workspace${tab}no${tab}false${tab}-${tab}wait${tab}Later
 blocker${tab}2${tab}T-z${tab}no-workspace${tab}Zulu
 problem${tab}1${tab}ambiguous${tab}twin

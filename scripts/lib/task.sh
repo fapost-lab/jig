@@ -74,7 +74,7 @@ _task_usage() {
       ;;
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft]\n' ;;
     autopilot)
-      printf 'usage: jig task autopilot <id> start\n'
+      printf 'usage: jig task autopilot <id> start [--phase <spec-id>/<n>]\n'
       printf '       jig task autopilot <id> stage <name>\n'
       printf '       jig task autopilot <id> repair --reason <text>\n'
       printf '       jig task autopilot <id> stop --reason <text>\n'
@@ -836,7 +836,7 @@ task_set() {
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
-      | autopilot | autopilot_repairs | autopilot_mode | gate | gate_design | gate_by | pr_url)
+      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -971,11 +971,13 @@ _task_autopilot_note() {
 # _task_autopilot_facts <id> — the run as data, for `report` and the status
 # page (ARCHITECTURE.md, Scripts layout: a report consumes an unformatted
 # producer rather than parsing a formatted one). One line,
-# `<state>\t<repairs>\t<stage>\t<stage-at>\t<stop-reason>\t<stop-at>`, every
-# empty field written `-` so a tab-split read cannot collapse it; nothing at
-# all for a task that never started a run. The stage is the last one the
-# current run reached — since its last `start` or `resume` — and the stop is
-# the journal's last, which is the one a `stopped` run is waiting on.
+# `<state>\t<repairs>\t<stage>\t<stage-at>\t<stop-reason>\t<stop-at>\t<phase>`,
+# every empty field written `-` so a tab-split read cannot collapse it;
+# nothing at all for a task that never started a run. The stage is the last
+# one the current run reached — since its last `start` or `resume` — and the
+# stop is the journal's last, which is the one a `stopped` run is waiting on.
+# <phase> is `autopilot_phase` when a coordinator started this run as one task
+# of a roadmap phase (adr-20260922-a-phase-run-is-coordinated).
 _task_autopilot_facts() {
   local id="$1" state file
   state=$(task_state_get "$id" autopilot)
@@ -983,12 +985,13 @@ _task_autopilot_facts() {
   file="$(task_dir "$id")/autopilot"
   {
     if [ -f "$file" ]; then cat "$file"; fi
-  } | awk -F '\t' -v state="$state" -v repairs="$(_task_autopilot_repairs "$id")" '
+  } | awk -F '\t' -v state="$state" -v repairs="$(_task_autopilot_repairs "$id")" \
+        -v phase="$(task_state_get "$id" autopilot_phase)" '
     $2 == "start" || $2 == "resume" { stage = ""; stage_at = "" }
     $2 == "stage" { stage = $3; stage_at = $1 }
     $2 == "stop"  { stop = $3; stop_at = $1 }
     function v(x) { return x == "" ? "-" : x }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s\n", state, repairs, v(stage), v(stage_at), v(stop), v(stop_at) }
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", state, repairs, v(stage), v(stage_at), v(stop), v(stop_at), v(phase) }
   '
 }
 
@@ -1017,15 +1020,58 @@ task_autopilot() {
   esac
 }
 
-# start: refused while a run is already `on`; on a `stopped` run it points at
-# `resume` rather than silently restarting; after `done`, or on a task that
-# never ran one, it starts a fresh run (design §2 open question 2: `resume`,
-# not `start`, is what resets the count — `start` here resets it too, but
-# only because there is no prior count left to preserve).
+# _task_autopilot_valid_phase <value> — exit 0 when <value> is `<spec-id>/<n>`:
+# a spec id by jig_valid_id (the grammar task and spec ids share, common.sh)
+# and a phase number, one slash between them. Neither is resolved against a
+# roadmap: a worktree cut before the wave's tags landed has no roadmap to
+# check against, and a wrong id here costs a journal line, not a wrong action.
+_task_autopilot_valid_phase() {
+  local value="$1" spec num
+  case "$value" in
+    */*/* | /* | */) return 1 ;;
+    */*) ;;
+    *) return 1 ;;
+  esac
+  spec=${value%/*}
+  num=${value##*/}
+  jig_valid_id "$spec" || return 1
+  case "$num" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
+# start [--phase <spec-id>/<n>]: refused while a run is already `on`; on a
+# `stopped` run it points at `resume` rather than silently restarting; after
+# `done`, or on a task that never ran one, it starts a fresh run (design §2
+# open question 2: `resume`, not `start`, is what resets the count — `start`
+# here resets it too, but only because there is no prior count left to
+# preserve).
+#
+# `--phase` marks the run as one task of a phase run: a coordinator started it
+# alongside the rest of a roadmap wave, owns the spec and ships the task
+# itself (adr-20260922-a-phase-run-is-coordinated). It is recorded as
+# `autopilot_phase`, so the two readers that must behave differently see it
+# without being told — `jig spec done` refuses in this task's branch, and the
+# status page sends the person to the coordinator's session instead of this
+# task's.
 _task_autopilot_start() {
   local id="$1"
   shift
-  [ $# -eq 0 ] || jig_die "task autopilot start: unknown argument: $1"
+  local phase=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --phase)
+        [ $# -ge 2 ] || jig_die "task autopilot start: --phase requires a value"
+        phase="$2"
+        shift 2 ;;
+      *) jig_die "task autopilot start: unknown argument: $1" ;;
+    esac
+  done
+  if [ -n "$phase" ]; then
+    _task_autopilot_valid_phase "$phase" \
+      || jig_die "task autopilot start: --phase takes <spec-id>/<n>, the spec and its phase number: $phase"
+  fi
   local dir
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task autopilot start: unknown task: $id"
@@ -1038,12 +1084,18 @@ _task_autopilot_start() {
   _task_rewrite_state "$dir" autopilot on
   _task_rewrite_state "$dir" autopilot_repairs 0
   _task_rewrite_state "$dir" autopilot_mode "$mode"
-  _task_autopilot_log "$id" start "$mode"
+  if [ -n "$phase" ]; then
+    _task_rewrite_state "$dir" autopilot_phase "$phase"
+    _task_autopilot_log "$id" start "$mode phase $phase"
+  else
+    _task_autopilot_log "$id" start "$mode"
+  fi
   if [ "$mode" = unattended ]; then
     printf 'autopilot: on (unattended)\n'
   else
     printf 'autopilot: on\n'
   fi
+  [ -z "$phase" ] || printf 'phase: %s\n' "$phase"
 }
 
 # _task_autopilot_mode <id> — the mode the current run recorded at `start`:
