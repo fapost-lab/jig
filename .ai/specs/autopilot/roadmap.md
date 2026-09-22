@@ -98,11 +98,15 @@ reaches the default branch as one release. Done when: the docs site's front page
 Comparison, the README and the navigation present agent git rights, review findings and receipts,
 autopilot (attended and unattended), the status page and phase runs as one path — not as pages
 each task added on its own; every page this epic touched is re-read against the shipped behaviour;
-the version is raised in the final pull request from the epic.
+CONTRIBUTING says which `jig` a contributor runs, since developing Jig with Jig means two
+installations on one machine; the version is raised in the final pull request from the epic.
 
 - [ ] Public docs pass — read the whole docs site and README as a new user would, bring the
   shared pages up to the epic's features, fix what the per-task pages say differently from what
-  shipped (after: every other item — it describes what they built)
+  shipped, and tell a contributor in CONTRIBUTING which `jig` runs where: this checkout's own
+  `.ai/scripts/jig` (link mode, a tracked symlink, so a worktree runs its own branch's code) against
+  the released one on `PATH`, which never delegates to a project's copy (after: every other item —
+  it describes what they built)
 
 ## Waves
 
