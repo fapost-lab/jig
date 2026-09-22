@@ -1805,8 +1805,9 @@ task_gate() {
   [ -f "$dir/state" ] || jig_die "task gate: unknown task: $id"
   [ "$decision" = approved ] || jig_die "task gate: unknown decision: $decision (expected approved)"
   if [ "$by" = agent ]; then
-    [ "$(task_state_get "$id" autopilot)" = on ] && [ "$(_task_autopilot_mode "$id")" = unattended ] \
-      || jig_die "task gate: --by agent is an unattended run's self-approval; $id has no unattended autopilot run on, so the gate is the human's"
+    if [ "$(task_state_get "$id" autopilot)" != on ] || [ "$(_task_autopilot_mode "$id")" != unattended ]; then
+      jig_die "task gate: --by agent is an unattended run's self-approval; $id has no unattended autopilot run on, so the gate is the human's"
+    fi
   fi
   class=$(task_state_get "$id" class)
   case "$class" in
