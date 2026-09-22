@@ -107,6 +107,29 @@ boundaries the user configured.
   started once single-task runs are proven. — rejected: phase first, because a phase run
   multiplies every flaw of the single run.
 
+- **A phase run follows the waves strictly** (decided 2026-09-22, when the fog on Phase 4 lifted).
+  A coordinator starts wave N only once every task of wave N−1 has merged, and a script
+  (`jig spec plan <id> --phase <n>`) reports each wave's items, their task ids and states, so which
+  tasks may start is a deterministic answer. — rejected: starting a task as soon as its own `after:`
+  dependencies merge, because `after:` is prose a model would have to read, and a wrong reading
+  starts work on a base that lacks what it needs.
+- **Parallel agents, a personal limit.** Tasks of one wave run at the same time, each in its own
+  worktree (ADR-0029) with its own autopilot agent and a reviewer in a fresh context; how many at
+  once is a local-only key `autopilot.parallel`, default 2. A runtime without subagents runs them one
+  after another.
+- **The coordinator owns the specification files and the merge queue.** Task agents never edit
+  `.ai/specs/` — adjacent roadmap lines edited by parallel branches conflict on every merge; the
+  coordinator files the wave's tasks in one change and runs `spec done` after each merge. Attended,
+  the human merges and the coordinator then brings every other branch of the wave up to the base
+  (merge, targeted tests, re-review for a stale receipt); unattended, the coordinator merges one at a
+  time and does the same.
+- **A stop holds the next wave, not the current one.** The rest of the wave continues. Attended, the
+  coordinator gathers every stopped task's question into one message; unattended there are no stops —
+  a task that ran out of repairs ends as a draft pull request, its wave counts as finished without it,
+  and nothing that depends on it starts.
+- **The phase run is a mode of `jig-autopilot`** ("run phase N on autopilot"), its mechanics in a
+  reference file so the single-task skill stays short.
+
 ## Open questions
 
 - Is the gate waiver local-only, or may a project forbid it in `config.yaml` (a ceiling the
@@ -133,3 +156,18 @@ Taken at normal depth as reversible; each is decided again at the task's design.
 - The dashboard is a static self-contained HTML file written by `jig status --html` into
   `.ai/runtime/`, opened by the user; no server. Test: it renders tasks, findings, receipts
   and spec progress with the browser offline.
+
+## Learned from running four tasks in parallel (2026-09-21)
+
+Recorded as facts, not assumptions: the evening ran routing evals, the status page, the autopilot run
+and the live status page as parallel agents in worktrees.
+
+- Worktree isolation held; the one test race came from a subagent working outside its worktree.
+- Parallel branches editing adjacent roadmap lines conflicted on merge.
+- Several agents running the full test suite at once saturated the machine; the maintainer ruled
+  that only targeted tests run locally and CI runs the full set.
+- Every merge into the base made the next branch's receipt stale, so a re-review per merge is the
+  price of an honest receipt.
+- A reviewer once reported closing a finding without running the command: the coordinator checks
+  the ledger, not the report.
+
