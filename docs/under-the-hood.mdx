@@ -99,8 +99,8 @@ The script answers from file metadata alone; the agent then reads the listed fil
 
 | Operation | When |
 |---|---|
-| `git fetch origin` | starting a task; creating an epic branch; housekeeping when `housekeeping.fetch` is on; `self-update` |
-| create a branch and switch to it | starting a task (unless `git.branch_per_task: false`) |
+| `git fetch origin` | starting a task; creating an epic branch; `jig spec ship`; housekeeping when `housekeeping.fetch` is on; `self-update` |
+| create a branch and switch to it | starting a task (unless `git.branch_per_task: false`); `jig spec ship` carrying a spec off the main branch to `spec/<id>` |
 | create a branch without switching | creating an epic branch |
 | `git worktree add` | starting a task in a separate worktree |
 | `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
@@ -108,10 +108,10 @@ The script answers from file metadata alone; the agent then reads the listed fil
 | `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, and it has no uncommitted changes or lock |
 
 **No script commits or pushes on its own** — apart from the Windows installer's first commit in a
-repository it created, the only one that does is `jig task ship`, and only as far as `agent.git` in
-your `.ai/config.local.yaml` allows (`none` by default: it does nothing). It commits what is already
-staged, pushes without `--force`, never skips hooks, and opens a pull request with `gh` or `glab`;
-it never merges. Starting a task refuses when tracked files have uncommitted changes (untracked
+repository it created, the only ones that do are `jig task ship` and `jig spec ship`, and only as far
+as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). They
+commit what is already staged, push without `--force`, never skip hooks, and open a pull request with
+`gh` or `glab`; they never merge. Starting a task refuses when tracked files have uncommitted changes (untracked
 files do not block it), so one task's work cannot become another's first commit.
 
 ### Network

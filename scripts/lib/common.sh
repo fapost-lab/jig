@@ -378,10 +378,10 @@ jig_fetch_branches() {
 # `forge` value, the one case a caller cannot paper over with "none".
 #
 # Shared rather than kept in housekeeping.sh: `housekeeping`'s remote-state
-# tier and `task ship`'s pull-request step both have to agree on which forge
-# this checkout uses, and one command library never sources another
-# (ARCHITECTURE.md, Scripts layout) — so the decision common to both lives
-# here.
+# tier and the pull-request step of `task ship` and `spec ship` (jig_ship_pr)
+# all have to agree on which forge this checkout uses, and one command library
+# never sources another (ARCHITECTURE.md, Scripts layout) — so the decision
+# common to them lives here.
 jig_forge_kind() {
   local want origin
   want=$(cfg forge auto)
@@ -430,7 +430,7 @@ jig_forge_kind() {
 # the whole line would keep only the last merge request. Each field is taken
 # at its first occurrence, whatever the key order: nested objects (author,
 # assignees) carry a `state` of their own, later on. Housekeeping and
-# `task ship` both read `glab` through this, so they cannot disagree on it.
+# jig_ship_pr both read `glab` through this, so they cannot disagree on it.
 jig_glab_fields() {
   sed 's/},[[:space:]]*{/}\
 {/g' | awk -v keys="$*" '
@@ -446,6 +446,149 @@ jig_glab_fields() {
       for (i = 2; i <= n; i++) row = row "\t" field(want[i])
       print row
     }'
+}
+
+# --- shipping a change ---------------------------------------------------------
+#
+# The git steps `jig task ship` and `jig spec ship` both take, as far as
+# `agent.git` allows (jig_agent_git, config.sh): commit what the agent staged,
+# push a branch, open a pull request. Shared here because the two commands must
+# never disagree about what may be committed, how a push is made or when a pull
+# request is a duplicate, and one command library never sources another
+# (ARCHITECTURE.md, Scripts layout). Each caller keeps its own gates — a task's
+# knowledge decision and review, a spec's mode — and decides which of these
+# steps to take; <who> prefixes every message with the command that was run.
+# Nothing here stages, forces a push, skips hooks or merges
+# (adr-20260921-agent-git-rights-are-a-local-setting).
+
+# Referenced from the EXIT trap jig_ship_pr sets for the pull request body it
+# cuts from a commit message, so it is script-global rather than `local`
+# (conventions/shell.md: a trap runs after its function returned). One ship
+# runs per dispatch, so this is the only EXIT trap in that process.
+_JIG_SHIP_BODY_TMP=""
+# The pull request's URL as jig_ship_pr found or opened it; empty when none.
+JIG_SHIP_URL=""
+
+# jig_ship_staged — the paths staged in the index, one per line.
+jig_ship_staged() {
+  git -C "$JIG_PROJECT" diff --cached --name-only 2>/dev/null | sed '/^$/d'
+}
+
+# jig_ship_check_staged <who> — refuse, changing nothing, when anything under
+# .ai/workspace/ or .ai/runtime/ is staged: those are never committed
+# (RULES.md).
+jig_ship_check_staged() {
+  local who="$1" bad="" p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in
+      "$JIG_AI_DIR/workspace/"* | "$JIG_AI_DIR/runtime/"*) bad="$bad
+$p" ;;
+    esac
+  done <<EOF
+$(jig_ship_staged)
+EOF
+  bad=$(printf '%s\n' "$bad" | sed '/^$/d')
+  if [ -n "$bad" ]; then
+    jig_die "$who: staged changes under $JIG_AI_DIR/workspace/ or $JIG_AI_DIR/runtime/ are not shippable:
+$bad"
+  fi
+}
+
+# jig_ship_commit <who> <message-file> — commit the index as it is: only what
+# is staged, never `-a`; hooks run, never --no-verify. An empty index is not an
+# error: the change may have been committed by an earlier run.
+jig_ship_commit() {
+  local who="$1" message_file="$2"
+  if [ -n "$(jig_ship_staged)" ]; then
+    git -C "$JIG_PROJECT" commit -F "$message_file" >/dev/null \
+      || jig_die "$who: git commit failed"
+    printf 'committed %s\n' "$(git -C "$JIG_PROJECT" rev-parse --short HEAD)"
+  else
+    printf 'nothing staged; no commit\n'
+  fi
+}
+
+# jig_ship_push <who> <branch> — push <branch> to origin and track it. Never
+# --force: a branch origin has moved past is refused by git, and the refusal
+# is the answer.
+jig_ship_push() {
+  local who="$1" branch="$2" out
+  if ! out=$(git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
+    jig_die "$who: git push failed:
+$out"
+  fi
+  printf 'pushed %s\n' "$branch"
+}
+
+# jig_ship_pr <who> <head> <base> <message-file> [<title>] [<body-file>] — open
+# a pull request from <head> into <base> through whichever forge this checkout
+# uses (jig_forge_kind), or report the one already open from <head> rather
+# than opening a second. The title defaults to the message's first line, the
+# body to the rest of it. With no usable forge it says the pull request is the
+# human's and returns 0. Leaves the URL in JIG_SHIP_URL, so it is called
+# directly, never in `$()`.
+# shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
+jig_ship_pr() {
+  local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" kind
+  JIG_SHIP_URL=""
+  kind=$(jig_forge_kind) || exit 1
+  if [ "$kind" = none ]; then
+    printf "no forge available; the pull request is the human's\n"
+    return 0
+  fi
+  [ -n "$title" ] || title=$(head -n 1 "$message_file")
+  if [ -z "$body_file" ]; then
+    _JIG_SHIP_BODY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-ship-body.XXXXXX")
+    trap '[ -z "${_JIG_SHIP_BODY_TMP:-}" ] || rm -f "$_JIG_SHIP_BODY_TMP"' EXIT
+    tail -n +2 "$message_file" > "$_JIG_SHIP_BODY_TMP"
+    body_file="$_JIG_SHIP_BODY_TMP"
+  fi
+  case "$kind" in
+    github) _jig_ship_pr_github "$who" "$head" "$base" "$title" "$body_file" ;;
+    gitlab) _jig_ship_pr_gitlab "$who" "$head" "$base" "$title" "$body_file" ;;
+  esac
+}
+
+# _jig_ship_pr_github <who> <head> <base> <title> <body-file>
+# shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
+_jig_ship_pr_github() {
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" url out
+  url=$(gh pr list --head "$head" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
+  case "$url" in '' | null) url="" ;; esac
+  if [ -n "$url" ]; then
+    JIG_SHIP_URL="$url"
+    printf 'pr %s (already open)\n' "$url"
+    return 0
+  fi
+  out=$(gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" 2>&1) \
+    || jig_die "$who: gh pr create failed:
+$out"
+  url=$(printf '%s\n' "$out" | tail -n 1)
+  JIG_SHIP_URL="$url"
+  printf 'pr %s\n' "$url"
+}
+
+# _jig_ship_pr_gitlab <who> <head> <base> <title> <body-file> — the same
+# through `glab`, whose JSON is read by jig_glab_fields, the reader
+# housekeeping uses.
+# shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
+_jig_ship_pr_gitlab() {
+  local who="$1" head="$2" base="$3" title="$4" body_file="$5" out url desc
+  out=$(glab mr list --source-branch "$head" --output json 2>/dev/null || printf '')
+  url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
+  if [ -n "$url" ]; then
+    JIG_SHIP_URL="$url"
+    printf 'pr %s (already open)\n' "$url"
+    return 0
+  fi
+  desc=$(cat "$body_file")
+  out=$(glab mr create --target-branch "$base" --source-branch "$head" --title "$title" --description "$desc" 2>&1) \
+    || jig_die "$who: glab mr create failed:
+$out"
+  url=$(printf '%s\n' "$out" | grep -oE 'https://[^[:space:]]+' | tail -n 1)
+  JIG_SHIP_URL="$url"
+  printf 'pr %s\n' "${url:-$out}"
 }
 
 # --- specification links ------------------------------------------------------

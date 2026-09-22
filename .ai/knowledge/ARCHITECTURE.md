@@ -37,7 +37,10 @@ read for it"), `jig_valid_id` ("which name may become a
 task or spec directory" — a roadmap names task ids, so the two grammars may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
 `jig spec remove` both put things there), `jig_status_page_touch` with `jig_status_page_dirty` and
 `jig_status_page_flush` ("redraw the status page" — task, spec and housekeeping all trigger it, and
-none of them may source `status.sh`, so the redraw is a `jig status --refresh` process). One command
+none of them may source `status.sh`, so the redraw is a `jig status --refresh` process),
+`jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push` and `jig_ship_pr` ("carry a change as far
+as `agent.git` allows" — `task ship` and `spec ship` take the same git steps and keep their own gates;
+adr-20260922-spec-work-ships-by-the-agent-git-level). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 
