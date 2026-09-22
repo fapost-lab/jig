@@ -119,3 +119,8 @@ decisions answer. It stands on a base per task (ADR-0039).
 > pull request as far as the clone's level allows, and a `Release:` line recorded at declaration says how
 > far the final pull request raises the version (adr-20260922-spec-work-ships-by-the-agent-git-level).
 > Merging the epic stays the human's.
+
+> **Amendment (2026-09-22).** A closed phase's workspace still waits for the epic to reach `main`; its
+> worktree does not. It is removed once the phase has landed on the epic, under the checks of ADR-0029
+> as amended the same day, because the records the epic's review reads are in the workspace, not in
+> the worktree.
