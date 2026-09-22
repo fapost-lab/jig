@@ -452,10 +452,15 @@ LOC
   fi
 
   parsed=$(printf '%s\n' "$text" | _spec_plan_parse)
-  printf '%s\n' "$parsed" | grep -qx 'waves' \
-    || jig_die "spec plan: $source has no \`## Waves\` list; a phase run starts tasks by wave"
+  # No reader here stops before the end of its input: bash writes a pipe line
+  # by line, and under pipefail the SIGPIPE a reader that quit early leaves
+  # printf with fails the check now and then (conventions/shell.md).
+  case $'\n'"$parsed"$'\n' in
+    *$'\n'waves$'\n'*) ;;
+    *) jig_die "spec plan: $source has no \`## Waves\` list; a phase run starts tasks by wave" ;;
+  esac
   local title
-  title=$(printf '%s\n' "$parsed" | awk -F '\t' -v p="$phase" '$1 == "phase" && $2 + 0 == p + 0 { print $3; exit }')
+  title=$(printf '%s\n' "$parsed" | awk -F '\t' -v p="$phase" '$1 == "phase" && $2 + 0 == p + 0 && !f { print $3; f = 1 }')
   printf '%s\n' "$parsed" | awk -F '\t' -v p="$phase" '$1 == "phase" && $2 + 0 == p + 0 { f = 1 } END { exit !f }' \
     || jig_die "spec plan: $source has no Phase $phase"
 
