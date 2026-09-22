@@ -54,13 +54,19 @@ site says how to start a run, where it stops and what to do at each stop.
 
 ## Phase 4 — Autopilot for a roadmap phase
 
-Goal: a filed phase of a spec runs task after task, wave by wave. Done when: a two-task phase
-ends in two pull requests without a human between them; the "Autopilot" page covers phase
-runs.
+Goal: a filed phase of a spec runs wave by wave, the tasks of a wave in parallel agents. Done
+when: a phase with a two-task wave ends in two pull requests without a human between them, the two
+tasks having run at the same time in their own worktrees; a stop in one task holds the next wave and
+reaches the human as one message; the "Autopilot" page covers phase runs.
 
-- [ ] fog: phase run — ordering across waves, what a stop in one task does to the rest, and
-  whether tasks of one wave run in parallel worktrees cannot be stated before single-task
-  runs are proven
+- [ ] Phase plan — `jig spec plan <id> --phase <n>`: each wave's items, their task ids and task
+  states, and which tasks may start now under the strict-wave rule; read by the coordinator and the
+  status page
+- [ ] Phase run — `jig-autopilot` runs a filed phase: tasks of a wave in parallel worktrees up to
+  `autopilot.parallel`, the coordinator owning spec files and the merge queue, bringing branches up to
+  the base with re-review after each merge, gathering stops into one message (attended) or ending a
+  stuck task as a draft (unattended), and checking reviewers' ledgers (after: phase plan — it decides
+  what may start; unattended mode — an unattended phase run merges through it)
 
 ## Phase 5 — Seeing and routing
 
@@ -96,8 +102,9 @@ the version is raised in the final pull request from the epic.
 2. Review receipt; status page; agent git rights reach spec work; live status page
 3. Autopilot run for a task
 4. Unattended mode
-5. fog: phase run
-6. Public docs pass
+5. Phase plan
+6. Phase run
+7. Public docs pass
 
 <!--
 Rules (jig-idea §8):
