@@ -1461,6 +1461,19 @@ test_status_page_refresh_on_an_uninitialised_project_does_nothing() {
   assert_no_file .ai
 }
 
+test_status_page_names_a_zero_offset_utc_whatever_date_calls_it() {
+  # Git Bash's `date` prints %Z as GMT under TZ=UTC; the page says UTC for
+  # any +0000 offset and keeps every other zone's own name.
+  run bash -c '
+    . "$JIG_HOME/scripts/lib/status.sh"
+    printf "2026-01-02 03:04 +0000 GMT\n" | _status_zone
+    printf "2026-01-02 03:04 +0300 EEST\n" | _status_zone
+  '
+  assert_eq 0 "$RC"
+  assert_eq "2026-01-02 03:04 UTC
+2026-01-02 03:04 EEST" "$OUT"
+}
+
 test_status_page_refresh_reuses_the_cached_counts_and_says_how_old_they_are() {
   # The page shows times in the reader's zone; pin it.
   export TZ=UTC
