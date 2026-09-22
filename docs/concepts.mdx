@@ -1,6 +1,6 @@
 ---
 title: "Concepts"
-description: "Risk classes and routes, project knowledge and its acceptance, specifications and epics, cleanup and measurement."
+description: "Risk classes and routes, what a review leaves behind, how far the agent goes, running without you, project knowledge, specifications and epics, cleanup and measurement."
 ---
 
 ## Risk classes and routes
@@ -25,6 +25,66 @@ what you decided and does not implement until you approve. A summary is never wh
 
 **Every route ends in consolidation**, even a typo fix: the task decides what the project should
 remember, and records "nothing" explicitly when that is the answer.
+
+## What a review leaves behind
+
+A review does not end in an opinion. It ends in two records that the rest of the route has to
+get past.
+
+**Findings** — each problem the review found, written down with a severity: P0 breaks data,
+security or a rule or decision the project recorded; P1 gives a wrong result on a path that will be used;
+P2 and P3 are worth fixing but do not block. A P0 or P1 stops the task mechanically: while one
+is open the agent cannot mark the task ready, cannot record what the project should remember,
+and cannot commit or open the pull request. A fix alone does not clear it — a second review
+confirms the fix. The other way out is a decision that it need not be fixed, and for a P0 or P1
+that decision is a human's.
+
+**The receipt** — what the review actually looked at: the code, the approved design, the list
+of findings. If any of it changes afterwards, the review no longer describes the change, and
+the task stops again until it has been reviewed once more. A T4 task cannot be finished without
+a receipt at all.
+
+Both are what keeps "reviewed" from meaning "someone said it was fine earlier"
+([Working with tasks](/working-with-tasks#review-findings)).
+
+## How far the agent goes
+
+Whether a finished task stays in your working tree or arrives as an open pull request is a
+setting, `agent.git`, with five levels: `none`, `commit`, `push`, `pr`, `merge`. It is
+**personal**: it lives in a gitignored file, it changes what your agent does in your copy of
+the project, and putting it in the shared file does nothing — one person's trust can never be
+switched on for the whole team.
+
+The levels are enforced by a script rather than by the agent's good intentions: `jig task ship`
+commits only what was staged, never force-pushes, never skips your Git hooks, refuses before
+the task's knowledge decision is recorded, and merges only at `merge`, only on green checks,
+and never past your repository's own branch protection
+([Letting the agent ship](/agent-ships)).
+
+## Running without you
+
+The routes above assume you are there between stages. Two things change that.
+
+**Autopilot** runs one task's route end to end without waiting: same stages, same gates, same
+rules. Two differences — the review is done by a *second* agent, which did not write the code,
+and fixing is capped at two attempts per run, after which Jig itself refuses a third and the
+run stops rather than circling. A run stops only where a human is genuinely needed: a design to
+approve, a problem it could not fix, a decision nobody has made, a step that would destroy
+something. It ends with a report of every stage, every repair and every stop
+([Autopilot](/autopilot)).
+
+**Unattended** is for when those questions are not yours to answer. Where a run would stop, it
+takes the careful, reversible option instead and writes down in the pull request exactly what it
+chose without you; where it could not finish, it opens a draft pull request that says so. It
+never dismisses a serious finding, never skips the review, and merges only what your CI proved
+([without stops](/autopilot#without-stops)).
+
+A run can also take a whole **phase** of a roadmap instead of one task. The agent becomes a
+coordinator: it files the phase's wave of items, gives each task its own worktree and its own
+agent, and those agents build at the same time while the coordinator ships them, keeps the
+merge queue and starts the next wave. It writes no code itself. This is the one place Jig runs
+several agents at once, and it needs an [epic branch](#epics) and the right to open pull
+requests ([running a whole phase](/autopilot#running-a-whole-phase)).
 
 ## Project knowledge
 

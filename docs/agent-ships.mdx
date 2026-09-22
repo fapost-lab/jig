@@ -167,5 +167,11 @@ agent tells you the change is ready for your review.
 
 ## Turn it off
 
-Remove the line from `.ai/config.local.yaml`, or set `agent.git: none`. The next task ends in your
-working tree again.
+```bash
+jig config unset agent.git --local
+```
+
+That removes the line, so the default — `none` — applies again; setting `agent.git: none` explicitly
+does the same thing. The next task ends in your working tree again. The same command takes back
+`autopilot.unattended`, and `jig config show --local` prints what is left
+([Configuration](/configuration#or-set-a-value-yourself)).

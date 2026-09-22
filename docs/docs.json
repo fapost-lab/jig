@@ -27,7 +27,11 @@
       },
       {
         "group": "Guides",
-        "pages": ["greenfield", "brownfield", "working-with-tasks", "agent-ships", "autopilot"]
+        "pages": ["greenfield", "brownfield", "working-with-tasks"]
+      },
+      {
+        "group": "Handing work over",
+        "pages": ["agent-ships", "autopilot"]
       },
       {
         "group": "Reference",
