@@ -29,7 +29,15 @@ Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 ## Local overrides
 
 `.ai/config.local.yaml`, same format, gitignored, created by nobody but the person who wants
-it (ADR-0038). It is read before `.ai/config.yaml`, and only for the keys marked **Local**:
+it (ADR-0038) — by hand, or through `jig config set <key> <value> [...] --local [--dry-run]`,
+which writes only this file (the main checkout's, from a worktree), only local keys, and only
+values the readers accept: whole days for `housekeeping.cadence`, `<n>[dhms]` for the other
+durations, `true`/`false` for `housekeeping.fetch` and `autopilot.unattended`, a level for
+`agent.git`, whole minutes for `agent.ci_timeout`, and never a line break, `#` or surrounding
+blanks. Every pair is checked before any is written; the file is replaced atomically; a key is
+replaced at its first line (the one `cfg` reads) or appended. It refuses without `--local`:
+nothing writes `.ai/config.yaml`, which the team edits by hand. `jig config show --local`
+prints the file. The `jig-setup` skill asks for the values and runs it. It is read before `.ai/config.yaml`, and only for the keys marked **Local**:
 their answer may differ between contributors without changing what the project does. A value
 for any other key is ignored. An empty value falls through to `.ai/config.yaml`.
 

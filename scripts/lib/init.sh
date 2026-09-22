@@ -710,6 +710,7 @@ cmd_init() {
     fi
   fi
   _init_out "next: run the jig-init skill to populate knowledge; see .ai/scripts/jig status"
+  _init_out "next: to choose how far the agent may go on its own, ask it to set up Jig for you (jig-setup)"
 
   # 10. instruction files ------------------------------------------------------
   # An AGENTS.md or CLAUDE.md the project already had is kept (step 5,

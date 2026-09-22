@@ -99,6 +99,33 @@ Some settings are a matter of personal taste rather than project policy. Put the
 Any other key in it is ignored. `jig status` shows what your local file changes, and warns if Git
 does not ignore it.
 
+### Let the agent ask you
+
+You do not need to know the keys. Say *"set up Jig for me"* (or name the skill: `/jig-setup` in
+Claude Code, `$jig-setup` in Codex). The agent asks one question at a time, in plain words, each with
+its recommendation: how far it may take a finished task, whether it may merge, whether autopilot may
+go on without asking you, how long to wait for CI and how long to keep finished work. It explains
+merging and running without questions before it asks about them, and never switches either on
+without your clear yes. Then it shows you the whole file it is about to write, and writes it only
+after you agree. `jig init` offers this at the end of its output.
+
+### Or set a value yourself
+
+```bash
+jig config set agent.git pr --local
+jig config set housekeeping.abandoned_ttl 7d housekeeping.trash_ttl 3d --local --dry-run
+jig config show --local
+```
+
+`jig config set` writes only `.ai/config.local.yaml` — in a task's worktree, the one in the main
+checkout that every worktree reads. It creates the file when it is missing, replaces a setting that
+is already there and adds one that is not. It accepts only the personal settings listed above, and
+only values Jig reads the way you mean them: whole days for `housekeeping.cadence`, a duration such
+as `7d` or `12h` for the other housekeeping settings, `true` or `false`, a level for `agent.git`,
+whole minutes for `agent.ci_timeout`. Anything else is refused and nothing is written, not even the
+other settings of the same command. `--dry-run` prints the file it would write. It refuses to work
+without `--local`: `.ai/config.yaml` is the team's file, changed by hand and reviewed like code.
+
 ## Verification profiles
 
 A profile knows how to check one stack. Jig runs the tools your project already uses, from the

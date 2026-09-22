@@ -83,6 +83,10 @@ Usage: jig <command> [args]
   spec remove <id> [--dry-run] [--abandon-unstarted]
                                  unlink a spec's open tasks and move the spec to trash
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
+  config set <key> <value> [...] --local [--dry-run]
+                                 write your own settings to .ai/config.local.yaml;
+                                 local keys only, values checked, never .ai/config.yaml
+  config show --local            print .ai/config.local.yaml
   measure                        knowledge quality, process weight, change size
   doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release
@@ -96,7 +100,7 @@ main() {
   case "$cmd" in
     help|-h|--help) jig_usage ;;
     version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
-    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure|doctor)
+    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure|doctor|config)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi
