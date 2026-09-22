@@ -849,12 +849,15 @@ jig_trash_dest() {
 
 _JIG_PAGE_DIRTY=""
 
-# jig_status_page_touch [--full] — redraw the clone's status page if it exists.
+# jig_status_page_touch [--full | --refresh] — redraw the clone's status page
+# if it exists.
 # One page per clone: a command run in a task worktree redraws the page of the
 # main checkout, with that checkout's own jig. A page nobody has opened yet
 # (`jig status --html` or `--open` writes the first one) is never created
 # here. --full recounts everything and refreshes the cached counts
-# (`status --html`); without it the redraw reads them (`status --refresh`).
+# (`status --html`); --refresh, the default, reads them (`status --refresh`).
+# Callers in this file pass the mode explicitly: shellcheck 0.9.0 reports
+# SC2120 on a function that reads $1 when every call it can see passes none.
 # Always returns 0 and prints nothing: a failed redraw never changes the
 # output or the exit code of the command that triggered it.
 jig_status_page_touch() {
@@ -878,7 +881,7 @@ jig_status_page_dirty() { _JIG_PAGE_DIRTY=1; }
 jig_status_page_flush() {
   [ -n "${_JIG_PAGE_DIRTY:-}" ] || return 0
   _JIG_PAGE_DIRTY=""
-  jig_status_page_touch
+  jig_status_page_touch --refresh
 }
 
 # Content hash used by the manifest (ADR-0003, domains/install). git is mandatory,
