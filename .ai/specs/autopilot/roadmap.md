@@ -67,6 +67,8 @@ reaches the human as one message; the "Autopilot" page covers phase runs.
   the base with re-review after each merge, gathering stops into one message (attended) or ending a
   stuck task as a draft (unattended), and checking reviewers' ledgers (after: phase plan — it decides
   what may start; unattended mode — an unattended phase run merges through it)
+- [ ] `worktree-leaves-on-landing` — A closed task's worktree leaves when its change lands on its base,
+  not with its workspace, so a phase run's worktrees do not pile up until the epic ends
 
 ## Phase 5 — Seeing and routing
 
