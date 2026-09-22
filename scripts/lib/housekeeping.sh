@@ -75,10 +75,11 @@ cmd_housekeeping() {
   fi
 
   local needs_consolidation=0 wrong_base=0 found=0
-  local state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt
+  local state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
 
   # Worktrees tasks were started in, from git's own list, read once per run.
-  # A task's worktree goes when its workspace goes (ADR-0029).
+  # A task's worktree goes when the task is closed and its branch landed on its
+  # own base, or when its workspace goes (ADR-0029 as amended 2026-09-22).
   local worktrees here
   worktrees=$(_task_worktrees)
   # The branch this checkout has out, which `_task_worktrees` leaves out of its
@@ -144,17 +145,30 @@ EOF
         *needs-consolidation*) needs_consolidation=1 ;;
       esac
 
-      # A worktree that has to stay keeps its workspace too. Purging the
-      # workspace would leave the worktree's link dangling beside whatever
-      # made it stay — and the uncertain direction is always preserve.
+      # A task's worktree goes when its workspace is purged, and also as soon
+      # as the task is closed and its branch landed on its own base — an epic
+      # included — whether or not the work has been released yet: the records
+      # a phase keeps for the epic's review live in the workspace, not in the
+      # worktree (ADR-0029 as amended 2026-09-22, ADR-0040).
+      # A worktree that has to stay keeps its workspace too when it is purged.
+      # Purging the workspace would leave the worktree's link dangling beside
+      # whatever made it stay — and the uncertain direction is always preserve.
       _HK_WT_LINE=""
       _HK_WT_NOTE=""
-      if [ "$action" = "purge" ] && [ -n "$branch" ]; then
+      retire=0
+      [ "$action" = "purge" ] && retire=1
+      [ "$st" = "consolidated" ] && [ "$remote" = "merged" ] && retire=1
+      if [ "$retire" = 1 ] && [ -n "$branch" ]; then
         wt=$(_task_worktree_for "$branch" "$worktrees")
         if [ -n "$wt" ] && ! _hk_worktree_retire "$dry" "$tid" "$wt"; then
-          action="preserve"
-          flags="worktree-kept"
-        elif [ -z "$wt" ] && [ "$branch" = "$here" ] && ! _hk_checkout_keep "$dry" "$tid"; then
+          if [ "$action" = "purge" ]; then
+            action="preserve"
+            flags="worktree-kept"
+          else
+            flags="${flags:+$flags,}worktree-kept"
+          fi
+        elif [ -z "$wt" ] && [ "$action" = "purge" ] && [ "$branch" = "$here" ] \
+             && ! _hk_checkout_keep "$dry" "$tid"; then
           action="preserve"
           flags="worktree-kept"
         fi
@@ -744,8 +758,9 @@ _hk_purge() {
 }
 
 # _hk_worktree_retire <dry> <task-id> <path> — remove the worktree a task was
-# started in, as its workspace is purged (ADR-0029). Non-zero, having said
-# why, when the worktree has to stay.
+# started in, once the task is closed and its branch landed on its own base, or
+# as its workspace is purged (ADR-0029 as amended). Non-zero, having said why,
+# when the worktree has to stay.
 #
 # The one deletion outside .ai/ (RULES.md), so it is narrow on purpose:
 # - git lists <path> as the worktree of the task's branch (the caller's lookup);
@@ -782,7 +797,10 @@ _hk_worktree_retire() {
   if [ -z "$reason" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || true)" ]; then
     reason="uncommitted-changes"
   fi
-  if [ -z "$reason" ] && [ "$ours" = 0 ] && _hk_worktree_locked "$path"; then
+  # A lock keeps any worktree. For one of ours git would refuse anyway; asking
+  # first names the real reason, which in a phase run is most likely a live
+  # agent, and keeps a dry run from promising a removal git would refuse.
+  if [ -z "$reason" ] && _hk_worktree_locked "$path"; then
     reason="locked"
   fi
   if [ -z "$reason" ] && [ "$ours" = 1 ] && [ "$dry" != 1 ]; then
@@ -953,7 +971,10 @@ _hk_record() {
     case ",$flags," in
       *,worktree-kept,*) group="needs"; note="$_HK_WT_NOTE" ;;
       *,wrong-base,*) group="needs"; note="$_HK_WRONG_NOTE" ;;
-      *,base-unreleased,*) group="waiting"; note="waiting for $base to reach $_HK_DEFAULT_BASE" ;;
+      *,base-unreleased,*)
+        group="waiting"
+        note="waiting for $base to reach $_HK_DEFAULT_BASE${_HK_WT_NOTE:+, $_HK_WT_NOTE}"
+        ;;
       *,needs-consolidation,*) group="needs"; note="merged but not consolidated, run jig-consolidate" ;;
       *,abandoned?,*) group="needs"; note="pull request closed, run jig task abandon or reopen it" ;;
       *)

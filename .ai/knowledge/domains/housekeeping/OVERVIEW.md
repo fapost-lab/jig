@@ -33,10 +33,12 @@ evidence it inferred itself.
   facts exist anywhere (ADR-0027).
 - The **Session Hook** and the scheduler examples — triggers, both optional, neither
   installed automatically (ADR-0024).
-- Removing a **Task Worktree** when the task's workspace is purged (ADR-0029). This is the
-  one deletion outside `.ai/`, and git performs it: `git worktree remove`, never with
-  `--force`. A worktree that has to stay keeps the workspace with it, flagged
-  `worktree-kept`, and `jig status` counts it. When git succeeds but the directory remains —
+- Removing a **Task Worktree** once the task is closed and its branch landed on its own
+  base, or when its workspace is purged, whichever comes first (ADR-0029 as amended
+  2026-09-22). This is the one deletion outside `.ai/`, and git performs it: `git worktree
+  remove`, never with `--force`. A worktree that has to stay is flagged `worktree-kept`, and
+  `jig status` counts it; at a purge it keeps the workspace with it, and beside
+  `base-unreleased` the workspace is kept anyway. When git succeeds but the directory remains —
   Windows leaves the Directory Links in it — only links and empty directories are removed
   there; anything else is reason `leftover` (ADR-0037).
 - Judging each task against **its own base** (`jig_task_base`, ADR-0039): ancestry, the
@@ -64,9 +66,14 @@ Read these before changing anything here; each is a rule someone paid for.
   the base. `merged` needs a reflog position the base did not contain at that time
   (`_hk_own_work`); a tie in time goes to the base, and a missing reflog means `unknown`.
   Compare positions, never reflog messages.
-- **A worktree goes only with its workspace, and only through git** (RULES.md,
-  ADR-0029). It must be listed with the task's branch, lie under `git.worktree_root`,
-  hold nothing under `.ai/workspace/tasks/` but links, and be clean. `git worktree remove`
+- **A worktree goes when its task is closed and landed, or with its workspace, and only
+  through git** (RULES.md, ADR-0029 as amended). A phase's workspace waits for its epic
+  (ADR-0040); its worktree does not, because nothing reads the worktree once the task is
+  closed. A merged task not yet closed keeps it: closing is the human's confirmation
+  (ADR-0030). It must be listed with the task's branch, lie under `git.worktree_root`,
+  hold nothing under `.ai/workspace/tasks/` but links, be clean and not be locked — the
+  lock is checked before git is asked, for jig's own worktrees too, so the reason reads
+  `locked`. `git worktree remove`
   deletes *ignored* files without asking, so the no-workspace-of-its-own check carries the
   whole weight for anything gitignored. Inside a worktree, housekeeping never sees the
   borrowed workspace: it finds workspaces with `find`, which does not follow links. Keep

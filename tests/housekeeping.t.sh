@@ -1706,6 +1706,169 @@ test_housekeeping_inside_a_worktree_leaves_the_borrowed_workspace_alone() {
   assert_file .ai/workspace/tasks/T-1/state
 }
 
+# --- a phase's worktree leaves when it lands on its epic (ADR-0029 as amended
+# 2026-09-22, ADR-0040) ------------------------------------------------------
+# The workspace of a phase waits for its epic to reach main; the worktree does
+# not: the workspace lives in the filing checkout, the worktree only links it.
+
+# hk_epic_worktree_task <id> <status> [unmerged] — a task started in its own
+# worktree under the default root, cut from epic/x with base_branch epic/x,
+# committed to and merged into epic/x (not into main) unless `unmerged`, then
+# left at <status>. Prints the worktree's physical path.
+hk_epic_worktree_task() {
+  local id="$1" status="$2" merge="${3:-merged}" fork wt
+  git rev-parse --verify --quiet refs/heads/epic/x >/dev/null || git branch epic/x
+  fork=$(git rev-parse epic/x)
+  jig task new "$id" >/dev/null
+  hk_tick
+  mkdir -p ../repo.worktrees
+  git worktree add -q -b "task/$id" "../repo.worktrees/$id" epic/x
+  wt=$(cd -P "../repo.worktrees/$id" && pwd -P)
+  mkdir -p "$wt/.ai/workspace/tasks"
+  hk_link "$(pwd -P)/.ai/workspace/tasks/$id" "$wt/.ai/workspace/tasks/$id"
+  sed "s|^created_at:|branch: task/$id\nbase_commit: $fork\nbase_branch: epic/x\ncreated_at:|" \
+    ".ai/workspace/tasks/$id/state" > ../s.tmp
+  mv ../s.tmp ".ai/workspace/tasks/$id/state"
+  printf 'work\n' > "$wt/$id.txt"
+  git -C "$wt" add "$id.txt"
+  hk_tick
+  git -C "$wt" commit -q -m "work for $id"
+  if [ "$merge" = merged ]; then
+    hk_tick
+    git checkout -q epic/x
+    git merge -q --no-ff -m "merge task/$id into epic/x" "task/$id"
+    git checkout -q main
+  fi
+  jig task set "$id" knowledge_consolidated true >/dev/null
+  case "$status" in
+    consolidated) jig task set "$id" status consolidated >/dev/null ;;
+    ready) jig task set "$id" status ready >/dev/null ;;
+  esac
+  printf '%s\n' "$wt"
+}
+
+test_housekeeping_removes_the_worktree_of_a_closed_phase_before_the_epic_lands() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_epic_worktree_task T-1 consolidated)
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remove worktree $wt"
+  assert_contains "$OUT" \
+    "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=base-unreleased"
+  assert_not_contains "$OUT" "worktree-kept"
+  assert_no_file "$wt"
+  assert_file .ai/workspace/tasks/T-1/state
+  git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null || fail "the task branch was deleted"
+  assert_file_contains .ai/runtime/housekeeping.log "task=T-1 worktree=$wt action=remove"
+
+  # The next run finds no worktree and keeps waiting for the epic, quietly.
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "waiting for epic/x to reach main: T-1"
+  assert_not_contains "$OUT" "needs you"
+}
+
+test_housekeeping_keeps_a_dirty_phase_worktree_flagged() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_epic_worktree_task T-1 consolidated)
+  printf 'not reviewed yet\n' > "$wt/draft.txt"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (uncommitted-changes)"
+  assert_contains "$OUT" \
+    "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=base-unreleased,worktree-kept"
+  assert_file "$wt/draft.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+
+  run jig status
+  assert_contains "$OUT" "worktrees kept: 1 task(s)"
+
+  run jig housekeeping
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "  worktree kept, it has uncommitted changes ($wt): T-1"
+}
+
+test_housekeeping_keeps_the_worktree_of_a_merged_task_not_yet_closed() {
+  # Closing is the human's confirmation (ADR-0030); until then the worktree
+  # stays beside the work, whatever the base.
+  hk_worktree_setup
+  local wt
+  wt=$(hk_epic_worktree_task T-1 ready)
+
+  run jig housekeeping --verbose
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "T-1 status=ready remote=merged via=ancestry action=preserve flags=needs-consolidation"
+  assert_file "$wt/T-1.txt"
+  assert_not_contains "$(cat .ai/runtime/housekeeping.log)" "worktree="
+}
+
+test_housekeeping_keeps_the_worktree_when_the_phase_has_not_landed() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_epic_worktree_task T-1 consolidated unmerged)
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "T-1 status=consolidated remote=unknown"
+  assert_file "$wt/T-1.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+  assert_not_contains "$(cat .ai/runtime/housekeeping.log)" "worktree="
+}
+
+test_housekeeping_dry_run_removes_no_phase_worktree() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_epic_worktree_task T-1 consolidated)
+
+  run jig housekeeping --dry-run --verbose
+  assert_contains "$OUT" "would-remove worktree $wt"
+  assert_file "$wt/T-1.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+  assert_no_file .ai/runtime/housekeeping.log
+}
+
+test_housekeeping_keeps_a_locked_worktree_of_its_own() {
+  # git would refuse a locked worktree anyway; asking first names the reason
+  # — in a phase run most likely a live agent — and keeps a dry run honest.
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+  git worktree lock "$wt"
+
+  run jig housekeeping --dry-run --verbose
+  assert_contains "$OUT" "worktree $wt kept (locked)"
+  assert_not_contains "$OUT" "would-remove worktree"
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "worktree $wt kept (locked)"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=worktree-kept"
+  assert_file "$wt/T-1.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+  assert_file_contains .ai/runtime/housekeeping.log "task=T-1 worktree=$wt action=keep reason=locked"
+}
+
+test_housekeeping_purges_the_phase_later_without_a_worktree() {
+  hk_worktree_setup
+  local wt
+  wt=$(hk_epic_worktree_task T-1 consolidated)
+  jig housekeeping >/dev/null
+  assert_no_file "$wt"
+
+  hk_tick
+  git merge -q --no-ff -m "merge epic/x into main" epic/x
+  : > .ai/runtime/housekeeping.log
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=purge"
+  assert_no_file .ai/workspace/tasks/T-1
+  assert_not_contains "$(cat .ai/runtime/housekeeping.log)" "worktree="
+}
+
 # --- the checkout guard (a purge target checked out in this checkout) -------
 # `_task_worktrees` never lists the checkout housekeeping itself runs from, so
 # a task whose branch is checked out right here, not in a worktree, needs its

@@ -54,8 +54,9 @@ artifacts and `state`. Informal synonyms: task dir, scratch.
 
 A git worktree created by `jig task start --worktree`, beside the repository under
 `git.worktree_root`, with the task's branch checked out. It borrows the task's Workspace
-through a Directory Link and owns none; Housekeeping removes it through git when it purges that
-Workspace (ADR-0029). Informal synonyms: agent tree, sandbox.
+through a Directory Link and owns none; Housekeeping removes it through git once the task is closed
+and its branch landed on its own base, or when it purges that Workspace, whichever comes first
+(ADR-0029 as amended). Informal synonyms: agent tree, sandbox.
 
 ## Directory Link
 
