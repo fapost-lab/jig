@@ -1859,6 +1859,63 @@ test_task_start_worktree_branches_from_the_base_not_head() {
   assert_eq "$(git rev-parse main)" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-1/state)"
 }
 
+# A phase run files a whole wave in one commit on the *local* epic and does
+# not push it: `jig_fresh_base_ref` takes the fresher of the local branch and
+# origin's, so every branch the wave cuts afterwards carries that same commit,
+# by the same SHA, and no two of them rewrite neighbouring roadmap lines
+# (adr-20260922-a-phase-run-is-coordinated).
+test_task_start_worktree_carries_an_unpushed_epic_commit_into_every_branch() {
+  task_setup_nested
+  git add -A
+  git commit -q -m "jig init snapshot"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+
+  mkdir -p .ai/specs/alpha
+  cat > .ai/specs/alpha/roadmap.md <<'RM'
+# alpha
+Epic: epic/alpha
+RM
+  git add -A
+  git commit -q -m "declare the epic"
+  git push -q origin main
+  git checkout -q -b epic/alpha
+  git push -q origin epic/alpha
+  git fetch -q origin
+
+  # The coordinator files the wave: both tags in one commit, left unpushed.
+  cat >> .ai/specs/alpha/roadmap.md <<'RM'
+
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+RM
+  local t tags
+  for t in T-a T-b; do
+    jig task new "$t" >/dev/null
+    printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> ".ai/workspace/tasks/$t/task.md"
+  done
+  git add .ai/specs/alpha/roadmap.md
+  git commit -q -m "file wave 1"
+  tags=$(git rev-parse HEAD)
+  ! git merge-base --is-ancestor "$tags" origin/epic/alpha \
+    || fail "the wave commit was expected to be local only, not pushed"
+
+  local wt_a wt_b
+  wt_a=$(jig task start T-a --worktree 2>/dev/null)
+  wt_b=$(jig task start T-b --worktree 2>/dev/null)
+  assert_eq "$tags" "$(git -C "$wt_a" rev-parse HEAD)"
+  assert_eq "$tags" "$(git -C "$wt_b" rev-parse HEAD)"
+  assert_eq "$tags" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-a/state)"
+  assert_eq "$tags" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-b/state)"
+  # Both see the wave's tags, so `jig spec plan` knows the tasks from the
+  # first minute rather than after the first merge.
+  grep -q "\`T-b\`" "$wt_a/.ai/specs/alpha/roadmap.md" || fail "T-a's worktree is missing the wave's tags"
+  grep -q "\`T-a\`" "$wt_b/.ai/specs/alpha/roadmap.md" || fail "T-b's worktree is missing the wave's tags"
+}
+
 test_task_start_worktree_honours_the_configured_root() {
   task_setup_nested
   printf 'git.worktree_root: ../elsewhere\n' >> .ai/config.yaml
@@ -3568,6 +3625,53 @@ test_task_autopilot_start_writes_state_and_journal() {
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\t')"
+}
+
+# --phase marks the run as one task of a roadmap phase run: a coordinator
+# started it, owns the spec and ships it
+# (adr-20260922-a-phase-run-is-coordinated).
+test_task_autopilot_start_with_a_phase_records_it_in_state_and_journal() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start --phase autopilot/4
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot: on"
+  assert_contains "$OUT" "phase: autopilot/4"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_phase: autopilot/4"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\tattended phase autopilot/4')"
+}
+
+test_task_autopilot_start_without_a_phase_records_none() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "phase:"
+  ! grep -q autopilot_phase .ai/workspace/tasks/T-1/state \
+    || fail "autopilot_phase was written for a run started without --phase"
+}
+
+test_task_autopilot_start_rejects_a_malformed_phase() {
+  task_setup
+  task_started T-1
+  local bad
+  for bad in autopilot 4 autopilot/ /4 autopilot/x autopilot/4/5 .bad/4; do
+    run jig task autopilot T-1 start --phase "$bad"
+    assert_eq 1 "$RC" "expected --phase $bad to be refused"
+    assert_contains "$OUT" "--phase takes <spec-id>/<n>"
+  done
+  run jig task autopilot T-1 start --phase
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--phase requires a value"
+}
+
+# autopilot_phase is the script's, like every other autopilot key.
+test_task_set_refuses_autopilot_phase() {
+  task_setup
+  task_started T-1
+  run jig task set T-1 autopilot_phase autopilot/4
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: key is not writable: autopilot_phase"
 }
 
 test_task_autopilot_start_already_running_dies() {

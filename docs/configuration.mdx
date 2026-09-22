@@ -95,6 +95,9 @@ Some settings are a matter of personal taste rather than project policy. Put the
   local only, like `agent.git`.
 - `autopilot.unattended` — `true` lets an autopilot run go on without asking you anything; local
   only. See [Autopilot: without stops](/autopilot#without-stops).
+- `autopilot.parallel` — how many tasks of a roadmap phase agents may build at the same time
+  (default 2, at most 16); local only. See
+  [Autopilot: running a whole phase](/autopilot#running-a-whole-phase).
 
 Any other key in it is ignored. `jig status` shows what your local file changes, and warns if Git
 does not ignore it.
@@ -122,7 +125,7 @@ checkout that every worktree reads. It creates the file when it is missing, repl
 is already there and adds one that is not. It accepts only the personal settings listed above, and
 only values Jig reads the way you mean them: whole days for `housekeeping.cadence`, a duration such
 as `7d` or `12h` for the other housekeeping settings, `true` or `false`, a level for `agent.git`,
-whole minutes for `agent.ci_timeout`. Anything else is refused and nothing is written, not even the
+whole minutes for `agent.ci_timeout`, a count from 1 to 16 for `autopilot.parallel`. Anything else is refused and nothing is written, not even the
 other settings of the same command. `--dry-run` prints the file it would write. It refuses to work
 without `--local`: `.ai/config.yaml` is the team's file, changed by hand and reviewed like code.
 

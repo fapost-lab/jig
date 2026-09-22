@@ -71,3 +71,11 @@ findings and receipt gates refuse to finish a task that is not reviewed as it st
 > (`approve` and `decide` events, refused in an attended run), exhausted repairs ending in a draft pull
 > request. The repair limit is unchanged. See
 > adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci.
+
+> **Amendment (2026-09-22).** A run may be one task of a **phase run**: `jig task autopilot <id>
+> start --phase <spec-id>/<n>` records `autopilot_phase`, and then the agent does not ship its own
+> task and does not touch the spec — the coordinator that started it owns `.ai/specs/`, runs
+> `jig task ship` and checks the roadmap item after the merge (`jig spec done` refuses in the task's
+> own branch). The route, the stages, the repair limit and the stops are unchanged; a stop is
+> answered in the coordinator's session, and it holds the next wave rather than the one in flight
+> (adr-20260922-a-phase-run-is-coordinated).

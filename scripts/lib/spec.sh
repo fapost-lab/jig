@@ -384,13 +384,25 @@ spec_epic_status() {
 # the housekeeping log. No fetch, no forge call.
 #
 # `--format tsv` is the machine form a coordinator reads, one row per line:
+#   parallel <limit> <building>
 #   wave    <n> <merged|open|waiting>
 #   item    <wave|-> <task-id|-> <state> <merged> <paused> <autopilot> <next> <title>
 #   blocker <wave> <task-id|-> <state> <title>
 #   problem <wave|-> <unmatched|ambiguous|repeated> <wave entry>
-# Each `wave` row is followed by its items; items of the phase in no wave
-# come after the waves, then the unmerged items of earlier waves that hold
-# the phase's first waiting wave, then every problem of the waves list.
+# The `parallel` row comes first; each `wave` row is followed by its items;
+# items of the phase in no wave come after the waves, then the unmerged items
+# of earlier waves that hold the phase's first waiting wave, then every problem
+# of the waves list.
+#
+# `parallel` answers how many more tasks of the open wave a coordinator may
+# start: <limit> is `autopilot.parallel` and <building> counts the open wave's
+# tasks an agent is still building (run `on`, knowledge not consolidated).
+# Plan answers "what may start now", and the limit is part of that answer, so
+# no reader of it counts slots itself. An `autopilot.parallel` no reader
+# understands answers 1 here — the safest count a report can name without
+# refusing to report. `jig config set` never writes such a value, so only a
+# hand-edited local file can hold one, and `jig status`'s `config.local:`
+# line shows it as it stands.
 # <state>: not-filed, fog, no-workspace, not-started, active, ready,
 # consolidated, abandoned, done (checked, no workspace here). <merged>: roadmap,
 # closed, housekeeping or no. <next>: start, running, file, fog, find,
@@ -464,8 +476,13 @@ LOC
   printf '%s\n' "$parsed" | awk -F '\t' -v p="$phase" '$1 == "phase" && $2 + 0 == p + 0 { f = 1 } END { exit !f }' \
     || jig_die "spec plan: $source has no Phase $phase"
 
-  local rows
-  rows=$(printf '%s\n' "$parsed" | _spec_plan_enrich | JIG_SP_PHASE="$phase" _spec_plan_decide)
+  local rows limit
+  # A report never refuses over a setting it only quotes: an autopilot.parallel
+  # no reader understands answers 1, the safest count. `jig config set`
+  # validates before writing, so only a hand-edited local file reaches this.
+  limit=$(jig_autopilot_parallel) || limit=1
+  rows=$(printf '%s\n' "$parsed" | _spec_plan_enrich \
+    | JIG_SP_PHASE="$phase" JIG_SP_PARALLEL="$limit" _spec_plan_decide)
   if [ "$format" = tsv ]; then
     [ -z "$rows" ] || printf '%s\n' "$rows"
     return 0
@@ -586,13 +603,21 @@ _spec_plan_parse() {
 }
 
 # _spec_plan_enrich — the parsed rows on stdin, each `item` row replaced by
-#   item <phase> <wave> <task-id|-> <state> <merged> <paused> <autopilot> <title>
+#   item <phase> <wave> <task-id|-> <state> <merged> <paused> <autopilot> <building> <title>
 # from the task's workspace in this checkout and the housekeeping log; every
 # other row passes through. Workspaces are read, never written: `state` is
 # `jig task`'s alone.
+#
+# <building> is 1 when an agent is still building this task — its run is `on`
+# and its knowledge is not consolidated yet — and 0 otherwise. That is the
+# slot `autopilot.parallel` counts: a task whose work is consolidated and only
+# waiting its turn to ship holds none
+# (adr-20260922-a-phase-run-is-coordinated). The field is internal to this
+# pipeline; _spec_plan_decide folds it into the `parallel` row and prints the
+# item row spec_plan documents.
 _spec_plan_enrich() {
   local merged_ids line iphase wave checked tid ikind ititle
-  local state merged paused autopilot tdir st
+  local state merged paused autopilot building tdir st
   merged_ids=" $(_spec_plan_hk_merged | tr '\n' ' ') "
   while IFS= read -r line; do
     case "$line" in
@@ -602,7 +627,7 @@ _spec_plan_enrich() {
     IFS=$'\t' read -r _ iphase wave checked tid ikind ititle <<ROW
 $line
 ROW
-    state="" merged=no paused=false autopilot=-
+    state="" merged=no paused=false autopilot=- building=0
     [ "$checked" != 1 ] || merged=roadmap
     if [ "$ikind" = fog ]; then
       state=fog
@@ -623,6 +648,9 @@ ROW
         fi
         autopilot=$(spec_task_state "$tdir" autopilot)
         [ -n "$autopilot" ] || autopilot=-
+        if [ "$autopilot" = on ] && [ "$(spec_task_state "$tdir" knowledge_consolidated)" != true ]; then
+          building=1
+        fi
         if [ "$merged" = no ] && [ "$st" = consolidated ]; then
           merged=closed
         fi
@@ -636,8 +664,8 @@ ROW
         esac
       fi
     fi
-    printf 'item\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$iphase" "$wave" "$tid" "$state" "$merged" "$paused" "$autopilot" "$ititle"
+    printf 'item\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$iphase" "$wave" "$tid" "$state" "$merged" "$paused" "$autopilot" "$building" "$ititle"
   done
 }
 
@@ -663,17 +691,22 @@ _spec_plan_hk_merged() {
   ' "$log"
 }
 
-# _spec_plan_decide — the enriched rows on stdin, the phase in JIG_SP_PHASE;
-# prints the TSV spec_plan documents. A wave is merged when every item in it
-# merged and none of its entries is a problem; it is open when every wave
-# numbered below it is merged. Only an open wave's items may start.
+# _spec_plan_decide — the enriched rows on stdin, the phase in JIG_SP_PHASE and
+# the slot limit in JIG_SP_PARALLEL; prints the TSV spec_plan documents. A wave
+# is merged when every item in it merged and none of its entries is a problem;
+# it is open when every wave numbered below it is merged. Only an open wave's
+# items may start, and at most one wave is open and not merged at a time — the
+# `parallel` row counts the agents building that wave's tasks. It counts them
+# whatever phase they belong to: the waves are one list over the whole roadmap,
+# and an agent building a neighbouring phase's task holds a slot on the same
+# machine.
 _spec_plan_decide() {
   awk -F '\t' '
-    BEGIN { OFS = "\t"; want = ENVIRON["JIG_SP_PHASE"] + 0 }
+    BEGIN { OFS = "\t"; want = ENVIRON["JIG_SP_PHASE"] + 0; limit = ENVIRON["JIG_SP_PARALLEL"] + 0 }
     $1 == "wave" { w = $2 + 0; if (!(w in known)) { known[w] = 1; nw++; wl[nw] = w }; next }
     $1 == "problem" { np++; pr[np] = $0; if ($2 != "-") bad[$2 + 0] = 1; next }
     $1 == "item" {
-      n++; ph[n] = $2; wv[n] = $3; id[n] = $4; st[n] = $5; mg[n] = $6; pa[n] = $7; ap[n] = $8; ti[n] = $9
+      n++; ph[n] = $2; wv[n] = $3; id[n] = $4; st[n] = $5; mg[n] = $6; pa[n] = $7; ap[n] = $8; bd[n] = $9; ti[n] = $10
       if (wv[n] != "-" && mg[n] == "no") unmerged[wv[n] + 0] = 1
       next
     }
@@ -700,6 +733,13 @@ _spec_plan_decide() {
         open[w] = prev
         if (!merged[w]) prev = 0
       }
+      building = 0
+      for (a = 1; a <= nw; a++) {
+        w = wl[a]
+        if (merged[w] || !open[w]) continue
+        for (i = 1; i <= n; i++) if (wv[i] != "-" && wv[i] + 0 == w && bd[i] + 0 == 1) building++
+      }
+      print "parallel", limit, building
       firstwait = ""
       for (a = 1; a <= nw; a++) {
         w = wl[a]; has = 0
@@ -745,10 +785,11 @@ _spec_plan_text() {
       t = ENVIRON["JIG_SP_TITLE"]
       printf "Phase %s%s\n", ENVIRON["JIG_SP_PHASE"], (t == "" || t == "-") ? "" : " — " t
       printf "roadmap: %s\n", ENVIRON["JIG_SP_SOURCE"]
-      items = 0; loose = 0; blockers = 0; start = ""; file = ""
+      items = 0; loose = 0; blockers = 0; start = ""; file = ""; limit = 0; building = 0
       for (r = 1; r <= NR; r++) {
         split(row[r], f, "\t")
-        if (f[1] == "wave") printf "wave %s — %s\n", f[2], f[3]
+        if (f[1] == "parallel") { limit = f[2] + 0; building = f[3] + 0 }
+        else if (f[1] == "wave") printf "wave %s — %s\n", f[2], f[3]
         else if (f[1] == "item") {
           items++
           if (f[2] == "-" && !loose) { print "not in any wave:"; loose = 1 }
@@ -765,7 +806,9 @@ _spec_plan_text() {
         }
       }
       if (!items) print "no items in this phase"
-      printf "may start now: %s\n", (start == "" ? "none" : start)
+      free = limit - building
+      if (free < 0) free = 0
+      printf "may start now: %s (%d of %d slots free)\n", (start == "" ? "none" : start), free, limit
       if (file != "") printf "to file first: %s\n", file
     }
   '
@@ -1521,19 +1564,45 @@ spec_task_state() {
   sed -n "s/^$2:[[:space:]]*//p" "$1/state" | head -n 1
 }
 
+# _spec_done_phase_refusal <task-id> <task-dir> — the reason `spec done` must
+# not run here, or nothing.
+#
+# A task of a phase run (`autopilot_phase`, set by `task autopilot start
+# --phase`) is one of a wave whose tasks all change neighbouring lines of the
+# same roadmap. Checking an item from inside the task's own branch is how
+# those branches conflict, so in a phase run the coordinator checks items in
+# the epic checkout after the merge, not the agent before it
+# (adr-20260922-a-phase-run-is-coordinated). The refusal is narrow on purpose:
+# only in the task's own branch, which is where an agent runs, and never in
+# the epic checkout the coordinator runs from.
+_spec_done_phase_refusal() {
+  local tid="$1" tdir="$2" phase branch here
+  phase=$(spec_task_state "$tdir" autopilot_phase)
+  [ -n "$phase" ] || return 0
+  branch=$(spec_task_state "$tdir" branch)
+  [ -n "$branch" ] || return 0
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --short HEAD 2>/dev/null) || here=""
+  [ "$here" = "$branch" ] || return 0
+  printf 'spec done: %s runs in phase %s; in a phase run the coordinator checks items after the merge, in the epic checkout. Leave the roadmap alone and finish consolidation.\n' \
+    "$tid" "$phase"
+}
+
 # spec_done <task-id> — check the roadmap items that name a linked task.
 #
 # Called by jig-consolidate when the knowledge decision is recorded, before the
 # commit, so the checkmark lands on the base branch in the same change as the
 # work (ADR-0035 as amended). An item names the task when its text starts with
 # the backticked id and a dash, the grammar `jig spec list` counts as filed.
+# A phase run is the exception: see _spec_done_phase_refusal.
 spec_done() {
   [ $# -ge 1 ] || jig_die "spec done: missing task id (usage: jig spec done <task-id>)"
   [ $# -eq 1 ] || jig_die "spec done: unexpected argument: $2"
-  local tid="$1" tdir sid roadmap tmp out rc=0
+  local tid="$1" tdir sid roadmap tmp out rc=0 refusal
   jig_require_init
   tdir=$(spec_task_dir "$tid") || jig_die "spec done: invalid task id: $tid"
   [ -f "$tdir/task.md" ] || jig_die "spec done: unknown task: $tid (no $JIG_AI_DIR/workspace/tasks/$tid/task.md)"
+  refusal=$(_spec_done_phase_refusal "$tid" "$tdir")
+  [ -z "$refusal" ] || jig_die "$refusal"
   sid=$(jig_spec_link "$tdir/task.md") || rc=$?
   [ "$rc" = 0 ] || jig_die "spec done: $tid links to more than one spec in its task.md"
   if [ -z "$sid" ]; then

@@ -129,6 +129,15 @@ line, so the checkmark reaches the base branch in the same change as the work; f
 no link it says so and changes nothing. If it reports that no roadmap item names the task, the
 roadmap and the task disagree: ask the human, and do not edit the roadmap by hand.
 
+**In a phase run this task is not yours to finish.** When `jig task show <id>` has an
+`autopilot_phase` line, a coordinator started this task as one of a roadmap wave
+(adr-20260922-a-phase-run-is-coordinated). Then: do not run `spec done` — it refuses in this
+branch, and the coordinator checks the item after the merge — and **stop after
+`knowledge_consolidated true`**. Stage the change, write the commit message to
+`.ai/workspace/tasks/<id>/commit-message` and the pull request body to `pr-body`, and report
+back. `jig task ship`, `jig task autopilot <id> end` and §6 below are the coordinator's: it
+ships one task at a time so that two of them cannot merge past each other.
+
 When it prints `roadmap complete`, the spec is closed in this same change: its decisions are knowledge
 now. Run the command it names. It first lists what knowledge does not hold — unchecked items, fog,
 open questions, untested assumptions; ask the human about each one, move it where they say (another
@@ -169,9 +178,11 @@ or the human says the work is finished.
 1. `knowledge_consolidated` must already be `true`. If it is not, run §1–§5 first; the
    knowledge then reaches the repository in a follow-up change.
 2. If fixes after the commit changed the intent, update the documents they touched.
-3. Ask the human whether a fix is still expected on this task. If one is, leave it open. In
-   an unattended autopilot run whose `task ship` printed `merged`, do not ask: close it now.
-   Nowhere else does a merge close a task without the human.
+3. Ask the human whether a fix is still expected on this task. If one is, leave it open. Two
+   exceptions, where the human already said yes: an unattended autopilot run whose `task ship`
+   printed `merged`, and a coordinator closing a task of its phase run whose pull request
+   merged (adr-20260922-a-phase-run-is-coordinated). Nowhere else does a merge close a task
+   without the human.
 
 ```
 .ai/scripts/jig task set <id> status consolidated

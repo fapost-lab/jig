@@ -93,3 +93,9 @@ contributor's agent starts committing.
 > human's except in an unattended autopilot run
 > (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci). The key stays local-only, and so are
 > `agent.ci_timeout` and `autopilot.unattended`.
+
+> **Amendment (2026-09-22).** One more local-only key: `autopilot.parallel` (1–16, default 2), how
+> many tasks of a roadmap phase a phase run has agents building at once. It is personal for the same
+> reason `agent.git` is — how many agents may work unwatched on one machine is not the project's
+> call — and `agent.git` below `pr` refuses a phase run outright
+> (adr-20260922-a-phase-run-is-coordinated).

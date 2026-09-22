@@ -13,10 +13,11 @@
 # reported by `jig status`. Adding a key here is a decision about that test,
 # not a convenience; record it in schemas/config.md.
 #
-# `agent.git`, `agent.ci_timeout` and `autopilot.unattended` are also in
-# JIG_CFG_LOCAL_ONLY_KEYS below: they answer *only* from this list, never
-# falling back to the project layer the way every other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after git.worktree_root agent.git agent.ci_timeout autopilot.unattended"
+# `agent.git`, `agent.ci_timeout`, `autopilot.unattended` and
+# `autopilot.parallel` are also in JIG_CFG_LOCAL_ONLY_KEYS below: they answer
+# *only* from this list, never falling back to the project layer the way every
+# other key here does.
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -28,9 +29,12 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # nothing and `agent.ci_timeout` bounds how long a merge waits for CI: both
 # decide what one person's agent does on their behalf, for the same reason
 # (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+# `autopilot.parallel` bounds how many task agents a phase run builds at once,
+# which is a question about one person's machine and their tolerance for
+# agents working unwatched, not about the project.
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -220,6 +224,34 @@ jig_unattended() {
   [ "$(cfg autopilot.unattended false)" = true ]
 }
 
+# jig_autopilot_parallel — print autopilot.parallel, how many tasks of a
+# roadmap phase a coordinator may have agents building at once (default 2), and
+# exit 0; for anything but a whole number in 1..16, print the value read and
+# exit 1, like jig_agent_git. Only agents *building* a task count: one whose
+# work is consolidated and waiting for its turn to ship holds no slot, and the
+# short-lived agents that repair the merge queue are outside the limit
+# (adr-20260922-a-phase-run-is-coordinated).
+jig_autopilot_parallel() {
+  local value
+  value=$(cfg autopilot.parallel 2)
+  if ! _cfg_parallel "$value"; then
+    printf '%s\n' "$value"
+    return 1
+  fi
+  printf '%s\n' "$((10#$value))"
+}
+
+# _cfg_parallel <value> — exit 0 when <value> is a count autopilot.parallel
+# accepts: digits only, 1 to 16. Shared by the reader above and
+# `jig config set`, so the two cannot disagree. The ceiling is not a measured
+# limit of any machine; it is low enough that a typo cannot start a swarm.
+_cfg_parallel() {
+  case "$1" in
+    '' | *[!0-9]* | ???*) return 1 ;;
+  esac
+  [ "$((10#$1))" -ge 1 ] && [ "$((10#$1))" -le 16 ]
+}
+
 # jig_config_value_problem <key> <value> — print why <value> cannot be set for
 # the local key <key>, and exit 1; print nothing and exit 0 when it can. The
 # rules are the readers' own, so a value `jig config set` accepts is one every
@@ -232,6 +264,7 @@ jig_unattended() {
 #   both read alike;
 # - agent.git and agent.ci_timeout: the checks of jig_agent_git and
 #   jig_ci_timeout;
+# - autopilot.parallel: the check of jig_autopilot_parallel;
 # - git.worktree_root: any path _cfg_read gives back unchanged.
 # Nothing may hold a line break, a `#` (_cfg_read cuts a comment there) or
 # surrounding blanks (it trims them).
@@ -269,6 +302,10 @@ jig_config_value_problem() {
     agent.ci_timeout)
       _cfg_minutes "$value" \
         || { printf 'not a whole number of minutes (0 to 9999)\n'; return 1; }
+      ;;
+    autopilot.parallel)
+      _cfg_parallel "$value" \
+        || { printf 'not a whole number of tasks (1 to 16)\n'; return 1; }
       ;;
     git.worktree_root)
       case "$value" in

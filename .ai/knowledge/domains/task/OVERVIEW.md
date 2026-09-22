@@ -133,8 +133,8 @@ from the author, so who may close or dismiss a finding is a rule of the skills
 (adr-20260922-the-status-page-stays-current-without-a-server). The page lists each live task with the
 lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`, `stale (…)`,
 `none`, `none (required for T4)`), `_task_worktree_note` and the task base; an autopilot run as
-`_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time —
-the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
+`_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time,
+and the run's phase — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
 (`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
 gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
 awk pass (`_status_task_rows`), so a renamed key empties a column there too.
@@ -161,9 +161,17 @@ content, built in a temporary index, never the real one, and it leaves out `.ai/
 writing must join that exclusion, or every task will read as unreviewed at its last step.
 
 **An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
-`jig task autopilot` owns two state keys, `autopilot` and `autopilot_repairs`, which `task set`
-refuses like every other script-owned key, and a journal file in the workspace. The only rule it
-enforces is the repair limit — two per run, a third refused with exit 3 and the run `stopped`; every
-other stop is `jig-autopilot`'s to take. A run changes none of the completion gates: a task on
-autopilot meets the same findings and receipt checks as any other.
+`jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode` and
+`autopilot_phase`, which `task set` refuses like every other script-owned key, and a journal file in
+the workspace. The only rule it enforces is the repair limit — two per run, a third refused with
+exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A run changes none of
+the completion gates: a task on autopilot meets the same findings and receipt checks as any other.
+
+`autopilot_phase: <spec-id>/<n>`, written by `start --phase`, says this run is one task of a phase
+run (adr-20260922-a-phase-run-is-coordinated): a coordinator started it and will ship it. This
+domain only records the fact; two readers act on it. `spec done` refuses in the task's own branch,
+so an agent cannot check its own roadmap item. And the status page turns the stopped-run card into
+one card per phase that sends the person to the coordinator's session instead of the task's — the
+same "one message for the wave" the coordinator gives in chat. The key is never cleared: it is what
+the run was.
 
