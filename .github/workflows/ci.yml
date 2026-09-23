@@ -362,3 +362,41 @@ jobs:
 
       - name: Check the changelog describes the version this branch declares
         run: .github/scripts/changelog-check.sh
+
+  # The one context a branch rule can require. A matrix job's name cannot be:
+  # `test` is named ${{ matrix.os }}, and when `scope` skips it the expression
+  # is never expanded, so GitHub reports a single skipped check called
+  # `matrix.os` and a rule naming `ubuntu-latest` waits forever for a status
+  # nobody will send — a pull request with a green CI that can never merge
+  # (seen on #86). `test-windows` has the same shape.
+  #
+  # This job's name never changes, `always()` makes it report on every event,
+  # and it gathers what the others ended as. A skipped job passes: skipping is
+  # how `scope` says the change needed no run, and how a job declares itself
+  # irrelevant to this event. Anything else — failure, cancellation — fails
+  # here, so the rule blocks the merge while the suite is still running and
+  # after it broke.
+  ci-ok:
+    needs: [scope, knowledge, test, test-windows, smoke-windows, changelog, epic-pr]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gather the results of every job
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          # An empty list would pass the loop without checking anything, so an
+          # expression that rendered to nothing fails here instead of reading
+          # as a green suite.
+          if [ -z "$(printf '%s' "$RESULTS" | tr -d ' ')" ]; then
+            echo "ci-ok: no job results were reported"
+            exit 1
+          fi
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) echo "ci-ok: a job ended as '$result'"; exit 1 ;;
+            esac
+          done
+          echo "ci-ok: every job passed or was skipped"
