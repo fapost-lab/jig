@@ -324,6 +324,35 @@ test_upgrade_copy_mode_records_the_source_it_placed_from() {
   rm -rf "$src"
 }
 
+# Reported 2026-09-23: an upgrade in a project installed in copy mode ended in
+# `.ai/scripts/jig: line 112: key: No such file or directory`, a line the
+# dispatcher it had just replaced does not contain. `cp` onto the destination
+# rewrites it in place, keeping the inode, and the destination here is the very
+# script bash is executing: once the file grew, bash read on from the offset it
+# had reached and ran whatever the *new* bytes said there. The new dispatcher
+# below is the installed one plus a trailing block, so a shell that reads past
+# the end of the file it started lands exactly on it and says so.
+test_upgrade_copy_mode_replaces_the_running_dispatcher_without_running_its_tail() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  src=$(cd "$src" && pwd)
+  _mk_source_v2 "$src"
+  cat >> "$src/scripts/jig" <<'EOF'
+
+printf 'TAIL-EXECUTED\n'
+exit 42
+EOF
+
+  run jig_installed upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "TAIL-EXECUTED"
+  assert_contains "$OUT" "replace .ai/scripts/jig"
+
+  rm -rf "$src"
+}
+
 # --- orphan deletion is scoped to `.ai/` and adapter skills dirs (_upgrade_deletable) ---
 
 # The ordinary case the decision table above only exercises inside `.ai/`:

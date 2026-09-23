@@ -19,7 +19,7 @@ paths:
   - scripts/lib/doctor.sh
   - scripts/jig.cmd
   - templates/gitattributes
-reviewed_at: 2026-09-22
+reviewed_at: 2026-09-23
 ---
 # Install
 
@@ -49,10 +49,14 @@ project owns.
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).
 - The upgrade decision table: install, replace, keep-modified, delete — decided per path
-  from the manifest hash, the on-disk file and the staged source. Every run ends in one
-  summary line (`N placed, M kept, K conflict(s); manifest updated|unchanged`), and an
-  upgrade that applied nothing leaves `.ai/manifest` untouched instead of repointing
-  `jig.source`/`jig.version` at the checkout it was offered
+  from the manifest hash, the on-disk file and the staged source. A file is placed by
+  copying it beside its destination and renaming over it, never by writing onto the
+  destination: one of the files an upgrade replaces is `.ai/scripts/jig`, the script the
+  shell is running at that moment, and a shell reads its script from an open descriptor as
+  it goes — rewriting that file in place makes it read the new bytes at the offset it had
+  reached. Every run ends in one summary line (`N placed, M kept, K conflict(s); manifest
+  updated|unchanged`), and an upgrade that applied nothing leaves `.ai/manifest` untouched
+  instead of repointing `jig.source`/`jig.version` at the checkout it was offered
   (adr-20260922-upgrade-records-the-source-it-installed-from). The source already recorded
   is the exception, written back whether or not anything was placed: in link mode the
   project runs that checkout's scripts, so its version moves with it.
