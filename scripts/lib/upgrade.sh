@@ -134,6 +134,26 @@ _upgrade_kept_source_note() {
 
 # --- decision table (domains/install) ---------------------------------------------
 
+# _upgrade_place <staged-abs> <local-abs> — copy one staged file into the
+# project through a temporary name beside it, then rename over the
+# destination.
+#
+# Never `cp` straight onto the destination: `cp` truncates and rewrites the
+# file in place, keeping its inode, and one of the files an upgrade replaces
+# is `.ai/scripts/jig` — the script bash is executing at that moment. Bash
+# reads a script incrementally from an open descriptor, so once the running
+# copy grew, it read on past the end of the version it had started and
+# executed whatever the new bytes happened to say at that offset. `rename`
+# gives the destination a new inode and leaves the one the running shell holds
+# open untouched, so it reaches its own end of file and exits. The temporary
+# lives in the destination's directory so the rename stays on one filesystem.
+_upgrade_place() {
+  local staged_abs="$1" local_abs="$2" tmp="$2.tmp.$$"
+  mkdir -p "$(dirname "$local_abs")"
+  cp -p "$staged_abs" "$tmp" || jig_die "upgrade: could not write $local_abs"
+  mv -f "$tmp" "$local_abs" || jig_die "upgrade: could not write $local_abs"
+}
+
 # _upgrade_process_path <rel> <stage-dir> <dry-run> <manifest-hash>
 #                       <local-hash> <staged-hash>
 # Applies one row of the upgrade decision table to a single framework-owned
@@ -184,8 +204,7 @@ _upgrade_process_path() {
     replace)
       if [ "$staged_hash" != "$local_hash" ]; then
         if [ "$dry_run" != 1 ]; then
-          mkdir -p "$(dirname "$local_abs")"
-          cp -p "$staged_abs" "$local_abs"
+          _upgrade_place "$staged_abs" "$local_abs"
         fi
         _upgrade_out "replace $rel"
         placed_count=$((placed_count + 1))
@@ -197,8 +216,7 @@ $staged_hash $rel"
       ;;
     install)
       if [ "$dry_run" != 1 ]; then
-        mkdir -p "$(dirname "$local_abs")"
-        cp -p "$staged_abs" "$local_abs"
+        _upgrade_place "$staged_abs" "$local_abs"
       fi
       _upgrade_out "install $rel"
       placed_count=$((placed_count + 1))

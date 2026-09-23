@@ -8,6 +8,14 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.15.1 — 2026-09-23
+
+- Fix: `jig upgrade` in copy mode replaced `.ai/scripts/jig` by rewriting it in place — the file the
+  shell was running at that moment. Once the new dispatcher was longer, the shell read on past the
+  end of the version it had started and ran whatever the new bytes said there, ending an otherwise
+  complete upgrade in an error from a line it had never executed. Every file is now written beside
+  its destination and renamed over it.
+
 ## 0.15.0 — 2026-09-23
 
 Agents that finish a task on their own.
