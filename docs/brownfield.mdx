@@ -1,50 +1,65 @@
 ---
-title: "Existing project"
-description: "Bring Jig into a codebase you already have, and adopt the documentation it already keeps."
+title: "Use Jig in an existing project"
+sidebarTitle: "Bring an existing project"
+description: "Help the agent understand your code and existing rules, then ask for a focused change."
 ---
 
-An existing project already knows things: how it is built, which words mean what, which rules the
-team follows. Some of that is written down — in `docs/`, in your own decision records, in
-`CONTRIBUTING.md`, in another AI tool's instruction file — and some lives only in the code. This
-guide takes such a project from installation to a first task, and spends most of its time on the
-part that matters most: turning what the project already has into knowledge every agent reads.
+Start with the project you already have. The agent learns how it works, records the important
+rules, and uses those notes when making changes.
 
-Each step reads: **you say** → **the agent does** → **under the hood** → **where you are needed**.
-You never have to name a skill; the agent picks it from what you ask. If it ever does not, name
-it: `/jig-task` in Claude Code, `$jig-task` in Codex.
+## 1. Connect Jig to the project
 
-## 1. Install and set up the project
-
-[Install Jig](/install) on your machine, then in the project folder run `jig init` and commit what
-it added. `jig init` recognises your stack from its manifests — `package.json`, `composer.json`,
-`pyproject.toml`, `go.mod` and others — and turns on the matching verification profiles.
+Follow [installation and setup](/install), using your existing project folder. Review and save
+what setup adds before starting a task.
 
 <Warning>
-  **Your own `AGENTS.md` or `CLAUDE.md` stays as it is.** `jig init` never edits them, so until they
-  carry the Jig section your agent does not know Jig's workflow. `jig init`, `jig status` and
-  `jig doctor` all say so when it is missing. Ask your agent *"connect Jig to my AGENTS.md"* — it
-  shows you the section and adds it once you agree — or add it by hand from
-  [the section on the install page](/install#2-set-up-a-project).
+  Existing `AGENTS.md` and `CLAUDE.md` files are preserved. If the agent does not recognize Jig,
+  ask it to “connect Jig to my AGENTS.md” and review the section it proposes to add.
 </Warning>
 
-## 2. Let the agent learn the project
+## 2. Check the agent's understanding
 
-**You say:** *"Set up Jig for this project."*
+```text Send to your agent
+Set up Jig for this project. Explain what the project does,
+its main parts, and the rules changes must follow.
+Use the existing code and documentation, and ask me about anything unclear.
+```
 
-**The agent does:** reads the manifests, entry points, directory layout and existing documents —
-not the whole codebase — and answers: what the system does and for whom, which parts it has and how
-they may depend on each other, which words name the core concepts, which rules are already enforced
-by lint, CI or tests. It writes three documents: `GLOSSARY.md`, `ARCHITECTURE.md` and `RULES.md` in
-`.ai/knowledge/`.
+The agent writes project notes and shows them to you. Correct anything it misunderstood before
+asking it to build on that understanding.
 
-**Under the hood:** the `jig-init` skill; `jig knowledge check` validates what it wrote.
+**You should have:** an agreed description of the project, the terms it uses, and its rules.
+If you already completed this during installation, continue to the next step.
 
-**Where you are needed:** the agent shows each document in full, because from the next session on
-they bind every agent in this repository. Where a term or a boundary is ambiguous it asks you instead
-of guessing. Read them; correct what is wrong; commit.
+<Accordion title="For developers: what the agent reads and writes">
+  `jig-init` reads manifests, entry points, the directory layout, and existing documents. It writes
+  `GLOSSARY.md`, `ARCHITECTURE.md`, and `RULES.md` under `.ai/knowledge/`, and validates them with
+  `jig knowledge check`. It asks about ambiguous boundaries and terms rather than inventing them.
 
-## 3. Adopt the documentation you already have
+  Setup detects verification profiles from the project's manifests. Those profiles run your own
+  tools; install the project's dependencies before expecting the checks to run.
+</Accordion>
 
+## 3. Bring in your existing rules
+
+If your team already keeps architecture notes, coding conventions, or instructions for other AI
+tools, ask the agent to use them:
+
+```text Send to your agent
+Adopt our existing docs into Jig. Show me which documents contain rules,
+where they disagree, and what you propose to use.
+```
+
+Then say **“Review the proposals.”** The agent shows what it wants future sessions to follow.
+Accept what is right, ask for corrections, or reject it. Ordinary user guides do not need to become
+rules for the agent.
+
+<Info>
+  Proposed rules wait for your decision. They do not become instructions for future tasks just
+  because the agent wrote them down. You can skip this step if you have no additional rules to adopt.
+</Info>
+
+<Accordion title="For developers: links, copies, conflicts, and acceptance">
 This is the step that makes Jig fit a project instead of sitting beside it. Without it you would
 have two sets of rules — yours and a new one — drifting apart.
 
@@ -80,7 +95,7 @@ knowledge. `jig status` counts what is waiting on its `proposals:` line.
 **Where you are needed:** everything. The agent shows its report and each proposed document — for a
 linked document, its path and size, and the file itself on request — and waits.
 
-## 4. Decide what the project agrees to
+### Accepting the proposed rules
 
 **You say:** *"Review the proposals."*
 
@@ -110,39 +125,31 @@ until a human has looked at the change; agents read the new text meanwhile.
   your documents into Jig's own structure: they stay yours, where they are.
 </Note>
 
-## 5. Work on the project
+</Accordion>
 
-From here on you describe work and the agent sizes it.
+## 4. Start with a change you can check
 
-**You say:** *"Fix the typo in the checkout button."*
+```text Send to your agent
+Add a message when the class schedule is empty.
+It should say "No classes yet — check back soon."
+Use Jig for this task and show me how to test the result.
+```
 
-**The agent does:** classifies it trivial (T0): makes the change, runs the checks, decides nothing
-new was learned. No workspace, no plan, no questions.
+The agent chooses the steps the work needs, makes the change, and runs the available checks.
+For larger work it may first show a plan or ask you to approve a design.
 
-**You say:** *"Payments should go through the new provider instead of the old one."*
+**Before finishing:** try the changed behaviour and ask what was tested, what was skipped, and
+whether anything still needs your attention.
 
-**The agent does:** this changes a boundary other parts depend on, so it classifies it architectural
-(T3) and names the route: discover, design, **your approval**, implement, architecture review,
-verify, consolidate. It creates a task on its own branch, reads the knowledge about payments —
-including the conventions you adopted in step 3 — and writes a design: what changes, which
-alternatives lost and why, what it would cost to undo.
+<Tip>
+  A small first task helps you see how Jig fits your project before handing over a large feature.
+</Tip>
 
-**Where you are needed:** at the human gate. The agent shows the design itself, with its own
-objections after it, and waits. After implementation it reviews the change against the project's
-boundaries and decisions, runs the checks, and asks what the project should remember: a new
-decision record, an updated rule, or nothing. That decision is recorded before the commit. After the
-change is merged, the next session asks you whether the task can be closed — a fix may still follow.
-
-[Working with tasks](/working-with-tasks) covers the rest of a task's life: pausing, resuming,
-abandoning, and several agents at once.
-
-## Things to know
-
-- **Verification runs your own tools.** `jig verify` runs the checks of your stack — `npm test`, the
-  linter, the type checker — from the project's own environment, and installs nothing. If the
-  dependencies are not installed, the checks fail; a skipped check is never reported as a pass.
-- **Tasks branch from your main branch.** `jig init` reads which one that is from the repository —
-  the remote's default, else `main` or `master`. If it guessed wrong, change `git.base_branch` in
-  `.ai/config.yaml` ([Configuration](/configuration)).
-- **Your team gets the same setup** once the `.ai/` folder and the skills are committed; nobody else
-  has to install anything for the project to work.
+<CardGroup cols={2}>
+  <Card title="Work with tasks" icon="list-check" href="/working-with-tasks">
+    Continue work, give feedback, and see what is waiting for you.
+  </Card>
+  <Card title="Inspect or manage it yourself" icon="terminal" href="/manual-control">
+    Commands for task state, context, checks, and personal settings.
+  </Card>
+</CardGroup>

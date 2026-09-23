@@ -1,22 +1,50 @@
 ---
-title: "Install"
-description: "Install Jig on macOS, Linux or Windows, connect it to a project and keep both up to date."
+title: "Install and set up"
+sidebarTitle: "Install and set up"
+description: "Prepare your computer, connect Jig to a project, and start your first conversation."
 ---
 
-Installing Jig is two steps: put the `jig` tool on your machine once, then set up each project
-that should use it. Jig needs Git and a coding agent — [Claude Code](https://claude.com/claude-code)
-or Codex. It needs no Node.js, Python, package manager or build step.
+Set up Jig once on your computer, then connect it to each project you want to work on.
+You can ask your AI agent to help with the project setup below.
+
+## Before you start
+
+You need three things:
+
+- **An AI coding app** such as [Claude Code](https://claude.com/product/claude-code) or
+  [Codex](https://openai.com/codex/), installed and signed in. It must be able to
+  open a folder on your computer and edit its files. You use your own AI account.
+- **A project folder.** An empty folder is fine for a new idea. For existing work, open the folder
+  that contains the project's files.
+- **Git**, the tool that saves the history of your files. If it is missing, follow
+  [Git's installation guide](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git).
+  The Windows installer below can install it for you.
+
+<Accordion title="What is a terminal, and where do I paste commands?">
+  A terminal is an app where you give your computer written commands. On macOS, open **Terminal**
+  using Spotlight. On Windows, open **PowerShell** from the Start menu. On Linux, open your
+  **Terminal** app.
+
+  Copy a command, paste it into the terminal, and press Enter. Wait for it to finish before
+  pasting the next one. Messages labelled **Send to your agent** go into your AI chat instead.
+</Accordion>
 
 ## 1. Install Jig on your machine
 
+Choose your operating system. These commands download and run Jig's installer; expand the details
+if you want to inspect the script or see what it changes first.
+
 <Tabs>
   <Tab title="macOS and Linux">
-    Paste one line into a terminal:
+    Paste this into Terminal:
 
     ```bash
     curl -fsSL https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh | bash
     ```
 
+    Open a **new terminal window** when it finishes.
+
+    <Accordion title="What the installer changes and system requirements">
     The installer:
 
     - clones Jig into `~/.local/share/jig`, at the newest release;
@@ -30,15 +58,25 @@ or Codex. It needs no Node.js, Python, package manager or build step.
 
     Jig needs Bash 3.2 or newer, Git and the standard Unix tools, all of which macOS and Linux have.
     WSL2 works as Linux; keep the project on the Linux filesystem, not under `/mnt/c`.
+    </Accordion>
   </Tab>
   <Tab title="Windows">
-    Open **Windows PowerShell** and paste one line. You do not need administrator rights or Git
-    beforehand:
+    Paste this into PowerShell:
 
     ```powershell
     irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1 | iex
     ```
 
+    Follow its questions. For a new project, you can let it create and set up your project folder.
+    Open a **new terminal window** when it finishes.
+
+    <Note>
+      If Git is missing, the installer installs it. It may ask for your name and email for Git;
+      these settings apply to other projects too. Use an empty folder for a new project:
+      when the installer creates a repository, its first saved version includes everything there.
+    </Note>
+
+    <Accordion title="Installer details, options, and uninstalling">
     It says what it does as it goes:
 
     1. **Git for Windows**, only when it is missing — through winget (it tells you this accepts
@@ -70,8 +108,19 @@ or Codex. It needs no Node.js, Python, package manager or build step.
 
     Claude Code runs Jig through Git Bash; Codex, which runs PowerShell, calls
     `.ai\scripts\jig.cmd`, which hands the command to Git Bash.
+    </Accordion>
   </Tab>
 </Tabs>
+
+In the new terminal, check that Jig can run:
+
+```bash
+jig doctor
+```
+
+**What to expect:** a list of checks, with a suggested fix for each warning. Project checks appear once you are inside a Git repository.
+If it says the project is not initialized, continue to step 2. If it says
+`command not found`, see [installation help](/troubleshooting#installation).
 
 <Accordion title="Read the script before running it, or install without it">
   To read the macOS/Linux installer first:
@@ -98,37 +147,65 @@ or Codex. It needs no Node.js, Python, package manager or build step.
 
 ## 2. Set up a project
 
-In your project folder — a Git repository — run once:
+Open your project folder in your AI coding app. Then send:
 
-```bash
-jig init
+```text Send to your agent
+Help me set up Jig in this folder. Check whether it is already a Git
+repository and whether Jig is initialized. Do only the missing setup.
+If there is existing work, show me what needs saving first.
+Make sure the agent instructions include Jig's workflow.
+Show me what was added and help me make the initial setup commit.
 ```
 
-It adds:
-
-- `.ai/` — project knowledge, configuration and Jig's scripts (so a teammate needs no global
-  install);
-- `AGENTS.md` and `CLAUDE.md` — the instructions your agent reads, **when they do not exist yet**;
-- the Jig skills for Claude Code (`.claude/skills/`) and Codex (`.codex/skills/`);
-- a few lines in `.gitignore` and `.gitattributes`.
-
-It detects your stack from its manifests (`package.json`, `composer.json`, `pyproject.toml` …) and
-turns on the matching verification profiles. Nothing is committed: review the change and commit
-it, so everyone who clones the project gets the same setup.
-
-**Commit right after `jig init`.** A task starts on its own branch, and Git cannot branch from a
-repository with no commits yet.
+A **repository** is a folder whose history Git tracks. A **commit** is a saved version of its
+files. That first saved version is needed before Jig can start tasks on separate branches.
 
 <Warning>
-  **Already have your own `AGENTS.md` or `CLAUDE.md`?** `jig init` never changes them. Until they
-  carry the Jig section, your agent does not know Jig's workflow and will not use its skills by
-  itself. `jig init`, `jig status` and `jig doctor` all tell you when this is the case.
-
-  The easy way: ask your agent *"connect Jig to my AGENTS.md"*. The `jig-init` skill shows you the
-  section and adds it once you agree. To do it by hand, append the section below to `AGENTS.md`;
-  for `CLAUDE.md`, add the line `@AGENTS.md` (or the same section, if your `CLAUDE.md` does not
-  import `AGENTS.md`).
+  **Already have agent instructions?** Jig preserves your existing `AGENTS.md` and `CLAUDE.md`.
+  Ask the agent to connect Jig to them and review the section it proposes. Until those files
+  include Jig's workflow, the agent may not use Jig automatically.
 </Warning>
+
+<Accordion title="For developers: set up an empty project by hand">
+  After installing Jig, run these commands in a terminal. Use Git Bash on Windows for this example.
+  Choose a new folder name rather than a folder holding existing work.
+
+  ```bash
+  mkdir my-project
+  cd my-project
+  git init
+  jig init
+  git status --short
+  ```
+
+  Review the generated files, then save this initial setup:
+
+  ```bash
+  git add .
+  git commit -m "Set up Jig"
+  ```
+
+  If Git asks for an identity, set your name and email for this repository, then retry the commit:
+
+  ```bash
+  git config user.name "Your Name"
+  git config user.email "you@example.com"
+  ```
+
+  For an existing repository, run only `jig init`, review the diff, and stage the setup files
+  explicitly. Do not include unrelated changes in the setup commit.
+</Accordion>
+
+<Accordion title="For developers: what project setup adds">
+  `jig init` adds `.ai/` (knowledge, configuration, scripts), skills in `.claude/skills/` and
+  `.codex/skills/`, and entries in `.gitignore` and `.gitattributes`. It creates `AGENTS.md` and
+  `CLAUDE.md` only when absent. It detects verification profiles from manifests such as
+  `package.json`, `composer.json`, and `pyproject.toml`.
+
+  `jig init` commits nothing. Commit the setup so teammates receive the same project copy of Jig.
+  An empty project starts with the generic profile; stack-specific profiles follow when you choose
+  the technology. Jig itself needs no Node.js, Python, or build step; your application may need them.
+</Accordion>
 
 <Accordion title="The Jig section for AGENTS.md">
 {/* jig:agents-section */}
@@ -193,16 +270,33 @@ new class requires.
 
 ## 3. Let the agent learn the project
 
-Open the project in your agent and say *"set up Jig for this project"* (or name the skill:
-`/jig-init` in Claude Code, `$jig-init` in Codex). The agent studies the code and writes the
-project's glossary, architecture and rules into `.ai/knowledge/`, shows you each document in
-full, and asks where a term or a boundary is ambiguous.
+```text Send to your agent
+Set up Jig for this project. Explain what you find in plain language
+and show me the project notes you write.
+```
 
-To choose what your agent may do on its own — commit, open pull requests, run on autopilot without
-asking you — say *"set up Jig for me"* ([personal settings](/configuration#let-the-agent-ask-you)).
+For existing code, the agent documents what the project does and the rules it follows. For an
+empty project, it offers to work through your idea first. You review its understanding before
+building on it.
 
-What happens next depends on where you start: a [new project](/greenfield) begins with an idea, an
-[existing project](/brownfield) with the documentation it already has.
+<Check>
+  **Setup is ready when** Jig runs, the initial setup is saved in Git, and your agent recognizes
+  Jig's workflow. You can now describe what you want to build or change.
+</Check>
+
+<CardGroup cols={2}>
+  <Card title="Build a new project" icon="seedling" href="/greenfield">
+    Turn your idea into a plan and ask for the first working result.
+  </Card>
+  <Card title="Improve an existing project" icon="folder-open" href="/brownfield">
+    Bring in your existing rules and start a focused change.
+  </Card>
+</CardGroup>
+
+<Tip>
+  You can leave permissions at their defaults. To choose what the agent may do on its own later,
+  say “set up Jig for me.” [See the choices](/agent-ships).
+</Tip>
 
 ## Keep Jig up to date
 

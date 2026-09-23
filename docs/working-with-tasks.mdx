@@ -1,25 +1,22 @@
 ---
-title: "Working with tasks"
+title: "Day-to-day work"
+sidebarTitle: "Day-to-day work"
 description: "A task's life: starting, pausing, resuming, abandoning, finishing — and several agents at once."
 ---
 
-A task is one piece of work with its own branch and a private workspace for its notes. You rarely
-manage tasks by hand: you say what you want, and the agent files, starts, pauses and closes them.
-This page explains what is going on, so you know what to ask for.
+A task is one change you want: fix a problem, add a feature, or improve a page. Describe the result
+in your AI chat. The agent works out the steps and keeps the notes it needs to continue later.
 
-## What a task is
+```text Send to your agent
+Add CSV export to the reports page. The file should include the date,
+customer name, and total for each visible row.
+Show me how to try it when it is ready.
+```
 
-When the agent starts a task it creates:
-
-- **a branch** of its own, cut from your main branch — or from an epic branch, when the task belongs
-  to a specification that is released at once ([New project](/greenfield));
-- **a workspace** in `.ai/workspace/tasks/<id>/` — the task description, analysis, plan or design,
-  whatever its route needs. Workspaces are local to your machine and never committed: they are
-  notes for the people and agents working on the task, not documentation.
-
-Durable knowledge the task produces goes to `.ai/knowledge/` and is committed with the code.
-
-Small work — a typo, a one-file fix that fits in one session — needs no workspace at all.
+<Tip>
+  Give an example of a correct result. “Export the rows I can see” is easier to check than
+  “make exports better.” If the task is large, ask the agent to break it into smaller parts.
+</Tip>
 
 ## Talking about tasks
 
@@ -34,6 +31,38 @@ You do not need commands; these are the kinds of things you say:
 | *"Pause this, the export format isn't decided yet."* | Pauses the task with your reason, optionally stashing the uncommitted work. |
 | *"Drop the caching task."* | Abandons it. |
 | *"Close what's merged."* | Asks you about each merged task, then closes the ones you confirm. |
+
+## What to do when the agent needs you
+
+| The agent says | Your next step |
+|---|---|
+| It needs a product decision | Explain the outcome you want, or ask for options and a recommendation. |
+| A design needs approval | Read it, ask for a plain-language explanation, then approve or request changes. |
+| A check failed | Ask what failed and what the agent needs to fix it. |
+| The change is ready | Try the result and ask what was checked and what is still missing. |
+| It needs you to save or merge the work | Ask it to explain the remaining step, or [choose what it may do for you](/agent-ships). |
+
+<Note>
+  **Continuing tomorrow?** Open the same project and name the task: “Continue the CSV export.”
+  If several tasks match, choose the one you mean. The task's notes help the agent pick up the work.
+</Note>
+
+<Accordion title="For developers: branches and task workspaces">
+
+
+When the agent starts a task it creates:
+
+- **a branch** of its own, cut from your main branch — or from an epic branch, when the task belongs
+  to a specification that is released at once ([New project](/greenfield));
+- **a workspace** in `.ai/workspace/tasks/<id>/` — the task description, analysis, plan or design,
+  whatever its route needs. Workspaces are local to your machine and never committed: they are
+  notes for the people and agents working on the task, not documentation.
+
+Durable knowledge the task produces goes to `.ai/knowledge/` and is committed with the code.
+
+Small work — a typo, a one-file fix that fits in one session — needs no workspace at all.
+
+</Accordion>
 
 ## A task's states
 
@@ -58,11 +87,13 @@ A merge alone does not close a task: a fix can still follow it. At the start of 
 checks which of your tasks were merged, names each one and asks whether it can be closed. Nothing
 is closed without your yes.
 
+<Accordion title="How finished task notes are cleaned up">
 What is left behind is cleaned up automatically. The workspace of a closed task is moved to a trash
 folder, and deleted from there after a week. A task whose remote state cannot be determined keeps its
 workspace. An abandoned task's workspace goes to the trash after two weeks, whatever its
 remote state. The trigger is a Claude Code session hook
 or a scheduler you choose ([Configuration](/configuration)).
+</Accordion>
 
 ## Review findings
 
@@ -95,6 +126,7 @@ jig task findings <task-id>
 
 ### When the change moved after review
 
+<Accordion title="For developers: review receipts and stale reviews">
 A review ends by pinning what it looked at: the code, the approved design and its list of findings.
 If any of them changes afterwards — a line of code edited, a finding closed by the agent that wrote
 the code — the review no longer describes the change, and the task stops again for the same three
@@ -107,6 +139,7 @@ A task of the highest risk class (T4) cannot be finished without such a pinned r
 To see whether the review still holds, ask *"is the review still current?"*, or run
 `jig task receipt <task-id> --check`. `jig status` marks a task whose review no longer holds with
 `review=stale`.
+</Accordion>
 
 ## Several agents at once
 
@@ -135,6 +168,15 @@ or run:
 jig status --open
 ```
 
+The page shows what needs your answer, which tasks are running, and how far the project's plans
+have progressed. Start with **Needs you**; each card tells you what to do next.
+
+<Info>
+  The page refreshes as Jig records changes. If it labels information as stale, ask the agent
+  to refresh the status before relying on it.
+</Info>
+
+<Accordion title="For developers: status files, refresh behaviour, and all card types">
 It writes one file, `.ai/runtime/status.html` in your project, prints its full path and opens it in
 your browser. The same command works in Git Bash, in PowerShell and in the macOS or Linux terminal.
 Where no browser can be opened — over SSH, for instance — the page is written anyway and the command
@@ -195,6 +237,7 @@ name starts with a dot until you press Cmd+Shift+. (period). From a terminal:
 The page is a single file with nothing to download and no script: it opens in any browser, offline,
 and follows your system's light or dark theme. Nothing but the page and the counts it reuses is
 written, both in `.ai/runtime/`, and neither is ever committed.
+</Accordion>
 
 ## When the work turns out bigger
 
