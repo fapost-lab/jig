@@ -132,6 +132,20 @@ This repository sets `verify.full_run: ci`: a plain `jig verify` checks what cha
 Documentation changes: in `docs/`, run `npx mint broken-links` and `npx mint validate` (Node is a
 maintainer tool here, not a dependency of Jig).
 
+### The one required check
+
+The branch rules on `main` and `epic/**` require **`ci-ok`** and nothing else. It is a job that
+needs every other one, runs with `always()`, and fails unless each ended as `success` or `skipped`
+— so the merge button stays off while the suite runs, and a skipped job counts as the answer
+`scope` gave.
+
+Do not require a matrix job by name. `test` is named `${{ matrix.os }}`; when `scope` skips it the
+expression is never expanded, and GitHub reports one skipped check called `matrix.os` instead of
+`ubuntu-latest` and `macos-latest`. A rule naming those waits for a status nobody will send, and
+the pull request cannot be merged although its CI is green. `test-windows`
+(`${{ matrix.shard }}/3`) behaves the same way. A new job therefore joins `ci-ok`'s `needs` rather
+than the rule.
+
 ### Routing evals
 
 A runtime picks a skill by its `description:`, so the descriptions have tests of their own.
