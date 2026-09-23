@@ -1,0 +1,151 @@
+---
+title: "Changelog"
+description: "What each release of Jig changed."
+---
+
+Jig is pre-1.0, so a minor version may change commands, the `.ai/` layout or the installer.
+Update the tool with `jig self-update`, then run `jig upgrade` in each project and commit the diff
+([Install](/install#keep-jig-up-to-date)). Releases are tagged on
+[GitHub](https://github.com/fapost-lab/jig/tags).
+
+## 0.15.0 — 2026-09-23
+
+Agents that finish a task on their own.
+
+- `agent.git` decides how far a finished task travels by itself — committed, pushed, an open pull
+  request, or merged once CI is green. It lives in your own gitignored `.ai/config.local.yaml`, and
+  the agent gets there with `jig task ship` and `jig spec ship` ([Handing over the git
+  work](/agent-ships)).
+- Autopilot: the `jig-autopilot` skill runs a task's whole route without waiting between stages and
+  stops only where a human is needed. `autopilot.unattended` is for runs nobody is watching — every
+  choice made in your place is written into the pull request ([Autopilot](/autopilot)).
+- Review findings are recorded with a severity, and an open P0 or P1 blocks the task from being
+  finished. A review receipt pins the tree that was reviewed, so code changed afterwards has to be
+  reviewed again.
+- The new `jig-setup` skill asks how far your agent may go, one question at a time, and writes the
+  answers to your personal settings with `jig config set --local`.
+- `jig status --html` and `jig status --open` write a status page that leads with what needs you —
+  stopped runs, gates, findings, open pull requests.
+- Fix: `jig upgrade` no longer rewrites `.ai/manifest` when it placed nothing.
+- The ignore template dropped its trailing slashes (`.ai/workspace/` became `.ai/workspace`), so a
+  workspace shared through a symlink is no longer reported as untracked. Existing projects can copy
+  the change into their own `.gitignore`.
+
+## 0.14.0 — 2026-09-18
+
+Rough edges, and the first pages of this site.
+
+- Jig now says when your own `AGENTS.md` or `CLAUDE.md` does not carry the Jig section — the reason
+  an agent silently ignores the workflow. `jig init`, `jig status` and `jig doctor` all report it.
+- `jig init` records the repository's actual base branch instead of assuming `main`.
+- The Windows installer explains, before acting, what it does on your behalf: the package
+  agreements it accepts, that the Git identity it sets is global, and that the session hook runs
+  housekeeping at every session start. `-NoSessionHook` skips the hook.
+- `jig upgrade` removes an orphaned file only inside `.ai/` or an adapter's skills folder; anything
+  else is kept and reported.
+- Smaller fixes: `jig help` documents `spec close` and `spec epic`; `jig task start` explains itself
+  in a repository without commits; `jig knowledge` suggests near misses for an unknown id; a
+  document with neither domains nor paths no longer disappears from the catalog.
+
+## 0.13.0 — 2026-09-18
+
+- Component boundaries become knowledge: the skills record what a boundary may, must and must not
+  do as a convention document, and a broken "must not" is a blocking review finding.
+- `jig-init` can set up a project that has no code yet — it carries the architecture, stack and
+  invariants decided in a `jig-idea` specification into the project's knowledge and turns on the
+  matching profiles.
+- `jig-idea` asks for two or three architecture options and a stack before a new project's spec is
+  written.
+
+## 0.12.0 — 2026-09-18
+
+- Seven more stacks have a profile: Python, Rust, .NET, JVM, Ruby, Dart and Swift, beside the
+  existing generic, shell, Node, Go, PHP and Laravel ones.
+- `jig verify` narrows check by check: linters run on the changed files, tests only where the stack
+  can tie a source file to its tests, and a change to a manifest, lockfile or tool config runs
+  everything.
+- Tools are taken from the project's own environment — `vendor/bin`, `node_modules/.bin`, a
+  virtualenv, `bundle exec` — never a global copy. A missing tool is skipped and says where it
+  looked.
+- A project can declare which paths affect which checks in `.ai/verify/<profile>.map`.
+- Changed: a first `jig init` turns on every stack it detects, not `generic` alone.
+
+## 0.11.0 — 2026-09-18
+
+- New decision records are named by date — `.ai/knowledge/adr/YYYYMMDD-<slug>.md` — so two branches
+  can each write an ADR without colliding on merge. Existing numbered ADRs keep their names and
+  their `ADR-NNNN` citations.
+
+## 0.10.0 — 2026-09-17
+
+- A document linked from your repository now reaches agents: a stub created with
+  `jig knowledge new <type> <slug> --source <path>` resolves to the source text in `jig context`,
+  instead of only sitting there proposed.
+- Drift is visible. A stub records the text that was approved; `jig status` counts the sources that
+  changed since, `jig knowledge sources --diff <id>` shows what changed, and
+  `jig knowledge reviewed <id>` approves it again.
+- `jig knowledge new <type> <slug> --copy <path>` takes in a rule file Git does not track, and
+  refuses until a secrets scan has been reviewed.
+- `jig knowledge adr-convention` reads your team's own ADR numbering, so an agent writes decision
+  records in your style.
+
+## 0.9.0 — 2026-09-17
+
+- `jig spec close <id>` closes a specification that has no epic, after listing the leftovers — open
+  questions, unchecked roadmap items — that a human has to move or drop first.
+- `jig spec epic <id> --finish` now removes the finished specification instead of marking its
+  roadmap line, and `--reopen` restores it from Git history.
+
+## 0.8.0 — 2026-09-17
+
+Also carries the 0.7.x work, which was never released on its own.
+
+- Personal settings: a gitignored `.ai/config.local.yaml` holds the keys that are yours rather than
+  the team's — housekeeping cadence and lifetimes, the worktree root. `jig status` and `jig doctor`
+  warn if the file is not ignored.
+- Epic branches: a specification can declare one, and `jig spec epic <id>` opens it. Phase tasks are
+  then cut from the epic, so a multi-phase feature reaches `main` as one pull request and one
+  release.
+- Every task records the branch it was cut from, so work landed somewhere else is flagged
+  `wrong-base` instead of being read as merged.
+- `verify.full_run: ci` lets a plain `jig verify` check only what changed and leaves the full suite
+  to CI.
+
+## 0.6.0 — 2026-09-16
+
+- Windows support, through Git Bash: a PowerShell installer, `jig.cmd` for runtimes that call Jig
+  natively, and junctions where symbolic links are not permitted.
+- New `jig doctor`: it checks the machine, the project and the agent's instructions, one line each,
+  with a fix for every warning.
+- Line endings and executable bits no longer depend on the machine — `jig init` merges the needed
+  `.gitattributes` rules.
+
+## 0.5.0 — 2026-09-15
+
+- A document your team already maintains can be adopted where it is:
+  `jig knowledge new <type> <slug> --source <path> --proposed` records a stub pointing at the file
+  instead of copying it. (Such a document started reaching agents in 0.10.0.)
+
+## 0.4.0 — 2026-09-15
+
+- `jig spec done <task-id>` and `jig spec remove <id>`: a task names the specification phase it
+  belongs to, and finishing it ticks the roadmap.
+
+## 0.3.0 — 2026-09-15
+
+- Specifications: `jig spec new` and `jig spec list`, and the `jig-idea` skill that stress-tests an
+  idea and keeps the result as a spec with a roadmap under `.ai/specs/`.
+- Claude Code runs housekeeping at the start of a session, through a session hook.
+
+## 0.2.0 — 2026-09-14
+
+The first release.
+
+- One-line install for macOS and Linux; `jig init` sets a project up for Claude Code and Codex.
+- Work is routed by risk, T0 to T4, with a task workspace and a branch of its own, a human gate
+  where the class asks for one, and consolidation at the end.
+- Project knowledge with proposals a human accepts, resolved per task by path, domain and stage.
+- `jig verify` with stack profiles, `jig housekeeping` for what tasks leave behind, `jig measure`,
+  and `jig self-update`.
+- Ten skills: `jig-task`, `jig-analyze`, `jig-implement`, `jig-review`, `jig-architecture-review`,
+  `jig-verify`, `jig-consolidate`, `jig-init`, `jig-map`, `jig-accept`.

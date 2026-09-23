@@ -72,6 +72,10 @@ new class requires.
   itself in link mode, so a new skill exists in `skills/` but not in `.claude/skills/` or
   `.codex/skills/` until then, and no runtime can see it. `jig verify` refuses to run
   while anything is pending, and `jig status` reports the count.
+- A release is written down as it is made: the pull request that raises `JIG_VERSION` adds that
+  version's section to `docs/changelog.mdx` — a line or two per user-visible change. CI's
+  `changelog` job refuses a pull request that declares an unreleased version the page does not
+  describe.
 - Task-specific notes live in `.ai/workspace/tasks/<id>/` (gitignored), never in the repo.
 - Before finishing a task, ask: what here should survive the task? Update
   `.ai/knowledge/` accordingly, or state `NO_DURABLE_KNOWLEDGE` — and record the decision

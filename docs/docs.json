@@ -43,7 +43,7 @@
       },
       {
         "group": "More",
-        "pages": ["comparison", "troubleshooting"]
+        "pages": ["comparison", "troubleshooting", "changelog"]
       }
     ]
   },

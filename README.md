@@ -61,6 +61,10 @@ A review records each problem it finds with a severity, and a serious one blocks
 finished whichever of the above you chose. Wherever you stop, `jig status` — in the terminal, or as
 a page you keep open in the browser — tells you what is waiting for you.
 
+## Changelog
+
+What each release changed: [jig.fapost.in/changelog](https://jig.fapost.in/changelog).
+
 ## Roadmap
 
 Nothing is planned right now.
