@@ -1,20 +1,34 @@
 ---
-title: "Letting the agent ship"
-description: "Let the agent commit, push and open the pull request for a finished task or a specification's epic — how to turn it on, what happens, and what stays yours."
+title: "Choose what the agent can do"
+sidebarTitle: "Choose what the agent can do"
+description: "Decide what the AI handles for you and when it should leave the next step to you."
 ---
 
-By default a finished task waits in your working tree: you read the diff, commit it and open the
-pull request yourself. If you trust the process, you can let the agent do that part. You then get a
-finished task back as an open pull request, and your review happens there.
+The agent can build a change and leave it for you to check, or also handle saving it and adding it
+to the project. **You choose where its work ends and yours begins.**
 
-This is a personal setting. It changes what the agent does in **your** copy of the repository only,
-and never what a colleague's agent does.
+By default, it changes the files on your computer and leaves the remaining steps to you. If you
+do not know those steps, ask the agent to explain them or help you choose a different setting.
+
+<Note>
+  These choices apply to your copy of the project. They do not change what a colleague's agent
+  may do. You can change your choice later.
+</Note>
 
 ## Turn it on
 
-The easiest way: ask your agent to *"set up Jig for me"*. It asks how far it may go, shows you the
-file and writes it after your yes ([Let the agent ask you](/configuration#let-the-agent-ask-you)).
-To do it by hand:
+Send this in your AI chat:
+
+```text Send to your agent
+Set up Jig for me. I want to understand what happens after you finish a task.
+Explain what you can do for me, what I would still need to do,
+and help me choose. Ask one question at a time, in plain language.
+```
+
+The agent explains the options, asks what you want, and shows the settings before saving them.
+You do not need to edit a file yourself.
+
+<Accordion title="For developers: configure Git permissions by hand">
 
 1. Create `.ai/config.local.yaml` in your project if it does not exist, and add one line:
 
@@ -49,7 +63,43 @@ Putting `agent.git` in the committed `.ai/config.yaml` does nothing: that file i
 everyone, and a shared value would switch every contributor's agent on. `jig status` and
 `jig doctor` warn when they find it there.
 
+</Accordion>
+
 ## Choose how far it goes
+
+Think about **what you want to happen when a change is ready**. These are three useful starting
+points; the agent can also help you choose a step in between.
+
+<CardGroup cols={1}>
+  <Card title="Leave the result for me to check" icon="hand">
+    The agent changes the files on your computer and reports what it did. This is the default.
+    You try the result; saving a version in the project's history and sharing it still need a
+    separate step.
+  </Card>
+  <Card title="Prepare everything for review" icon="clipboard-check">
+    The agent saves a version, sends it to your project's shared storage, and opens a review page
+    with the change and its checks. You or a developer reviews it and decides whether to add it
+    to the main version of the project.
+  </Card>
+  <Card title="Add checked changes automatically" icon="circle-check">
+    The agent also adds the change to the main version when the project's automatic checks pass
+    and its rules allow it. If something prevents that, it leaves the change waiting and explains why.
+  </Card>
+</CardGroup>
+
+<Tip>
+  **Not sure yet?** Ask: “What would I have to do myself with each option? Show me using a task
+  from this project.” Choose after you understand what will be left to you.
+</Tip>
+
+<Info>
+  **Adding a change to the project does not necessarily publish it.** A website becomes public
+  only through its publishing setup. Ask the agent whether that happens automatically in your project.
+</Info>
+
+<Accordion title="For developers: all five Git permission levels">
+  A **commit** saves a version in Git. A **push** sends it to the shared repository.
+  A **pull request** is the review page for a change; **merge** adds it to its target branch.
 
 | Level | The agent | What waits for you |
 |---|---|---|
@@ -61,9 +111,24 @@ everyone, and a shared value would switch every contributor's agent on. `jig sta
 
 Up to `pr`, merging is your decision. The same levels apply to a specification's epic
 ([Specs and epics](#specs-and-epics)).
+</Accordion>
 
-## The `merge` level
+<span id="the-merge-level" />
 
+## If you choose automatic completion
+
+This option needs automatic checks already set up for your project. The agent waits for them;
+if a check fails, no checks ran, or a required approval is missing, the change stays waiting.
+
+**What you do then:** read the agent's explanation. Ask it to fix a failure or explain whose
+approval is needed. It cannot simply ignore the project's rules to finish.
+
+<Note>
+  This choice concerns adding finished work to the project. It does not by itself let the agent
+  make every decision for you while building. [Autopilot](/autopilot) explains that separate choice.
+</Note>
+
+<Accordion title="For developers: automatic merging, CI, and branch protection">
 With `agent.git: merge`, `jig task ship` opens the pull request, waits for its checks and merges it —
 only when at least one check ran and every check passed (it waits up to `agent.ci_timeout` minutes,
 30 by default, set in the same file), the review left nothing serious open, the pull request is not
@@ -82,13 +147,24 @@ not merged: the forge refused: At least 1 approving review is required
 That is not an error: protection on your main branch is the limit your team keeps over one person's
 setting. The level works the same with GitLab. Together with `autopilot.unattended: true` it is how a
 run finishes without you ([Autopilot: without stops](/autopilot#without-stops)).
+</Accordion>
 
 ## What happens at the end of a task
 
-Nothing changes until the task is done. The agent still sizes the work, and for a risky task it
-still stops and waits for you to approve the design ([Working with tasks](/working-with-tasks)).
-Git rights do not skip that approval.
+The agent checks its work, records anything future sessions need to know, and takes the final
+steps you allowed. Ask it to make the result clear:
 
+```text Send to your agent
+What changed, and how do I try it?
+What checks passed, and what could not be checked?
+Is the work only on my computer, waiting for review, or already added to the project?
+What, if anything, do I need to do next?
+```
+
+You should get a result you can inspect and a clear next step. If the agent gives you a technical
+instruction you do not understand, ask it to explain the action and why it is needed.
+
+<Accordion title="For developers: what task shipping records and runs">
 When the work is finished and checked, the agent:
 
 1. records what the project should remember from the task — or that there is nothing;
@@ -109,9 +185,20 @@ When the work is finished and checked, the agent:
 
 The pull request goes into the branch the task was cut from: your main branch, or the epic branch
 of a specification released at once ([New project](/greenfield)). You do not have to pick it.
+</Accordion>
 
-## Specs and epics
+<span id="specs-and-epics" />
 
+## When a project takes several tasks
+
+You may want to collect several completed parts before releasing the whole feature. Tell the
+agent what should be usable first and when you want other people to receive it. It will help plan
+that work and explain the decisions that need you.
+
+Your choice above also governs how far the agent can take that larger piece of work. You do not
+need to learn the branch commands to discuss the release.
+
+<Accordion title="For developers: specifications, epic branches, and releases">
 The same setting covers the work of a [specification released at once](/greenfield): the spec
 reaching your main branch, the epic branch, and the epic's final pull request. The agent runs
 `jig spec ship <id>`, which works out which of the three it is from where your repository stands,
@@ -139,9 +226,25 @@ reaching main is committed on a branch of its own, never on main itself, and may
 the spec. The epic is pushed only as a fast-forward: when someone else moved it on the server, the
 push is refused and the agent tells you. The final pull request is refused until the epic holds the
 latest main.
+</Accordion>
 
-## Review, fix, merge
+<span id="review-fix-merge" />
 
+## Try the result and ask for changes
+
+Check the behaviour you asked for. For example, open the class schedule and try making a booking.
+If something is wrong, tell the agent what you did, what happened, and what you expected:
+
+```text Send to your agent
+The schedule looks right, but I can still book a class that is full.
+Please fix that in this task and show me how you checked it.
+```
+
+If the work is waiting on a review page, you can send that feedback before it is added to the
+project. If you allowed automatic completion, it may already have been added; tell the agent what
+needs correcting and let it check the task's current state.
+
+<Accordion title="For developers: updating a pull request and closing the task">
 Review the pull request as you would any other. When you ask for a change, the agent makes it in
 the same task and runs `jig task ship` again: it commits the fix, pushes it, and reports the
 pull request that is already open instead of opening a second one.
@@ -149,9 +252,21 @@ pull request that is already open instead of opening a second one.
 After you merge, the task is not closed yet — a fix may still follow. At the start of a later
 session the agent names the merged task and asks whether it can be closed. Nothing is closed
 without your yes.
+</Accordion>
 
-## What `jig task ship` will not do
+<span id="what-jig-task-ship-will-not-do" />
 
+## When the agent cannot finish
+
+It should tell you what stopped it and what needs to happen next. That might mean fixing a failed
+check, getting a person's approval, or completing a setup step.
+
+```text Send to your agent
+Explain what is stopping this task in plain language.
+What can you fix yourself, and what do you need me to decide or do?
+```
+
+<Accordion title="For developers: enforced limits of jig task ship">
 It is a script, so these limits hold whatever the agent intends:
 
 - it never force-pushes and never skips your Git hooks, and it merges only at `merge`, only on
@@ -164,9 +279,22 @@ It is a script, so these limits hold whatever the agent intends:
 
 When it refuses, the message says why and what to run. At `none` it does nothing at all, and the
 agent tells you the change is ready for your review.
+</Accordion>
 
 ## Turn it off
 
+To return to the default, say:
+
+```text Send to your agent
+Return Jig's Git permissions to the default: leave finished changes
+on my computer for me to review. Show me the setting before changing it.
+```
+
+This changes how future shipping steps are handled. It does not undo work already saved, sent,
+or added to the project. If you also enabled runs without questions, ask the agent to turn that
+separate setting off too.
+
+<Accordion title="For developers: reset the local settings">
 ```bash
 jig config unset agent.git --local
 ```
@@ -175,3 +303,4 @@ That removes the line, so the default — `none` — applies again; setting `age
 does the same thing. The next task ends in your working tree again. The same command takes back
 `autopilot.unattended`, and `jig config show --local` prints what is left
 ([Configuration](/configuration#or-set-a-value-yourself)).
+</Accordion>

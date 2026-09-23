@@ -1,0 +1,145 @@
+---
+title: "Manual control"
+description: "Inspect tasks, manage their lifecycle, resolve context, and run checks from the terminal."
+---
+
+Use these commands when you want to inspect or manage Jig yourself. Run them from your project
+folder. The examples use `jig` on your `PATH`; `.ai/scripts/jig` runs the project's installed copy
+explicitly. In PowerShell, use `.ai\scripts\jig.cmd` for that local copy.
+
+<Info>
+  **Commands keep the records; the agent does the work.** Creating a task in the terminal does
+  not start an AI session or write code. Return to your agent and ask it to continue the named task.
+</Info>
+
+## Inspect before changing anything
+
+```bash
+jig task list
+jig task current
+jig status
+jig doctor
+```
+
+`task list` shows the tasks; `task current` looks for the task on this branch. When several match,
+choose an explicit ID. `status` summarizes the project and `doctor` checks its setup.
+
+To create the browser status file without opening a browser:
+
+```bash
+jig status --html
+```
+
+Or use `jig status --open` to create and open it.
+[Read about the status page](/working-with-tasks#seeing-where-things-stand).
+
+## File a task, then start it
+
+For this example, assume a contained change already classified as T1. Use the appropriate
+[risk class](/concepts#risk-classes-and-routes) for your actual work.
+
+```bash
+jig task new booking-message --class T1
+jig task show booking-message
+```
+
+Fill in `.ai/workspace/tasks/booking-message/task.md`: the goal, scope, and what a correct result
+looks like. Filing the task does not switch branches. Begin work separately:
+
+```bash
+jig task start booking-message
+```
+
+By default, this switches to a task branch from the project's configured base. For a separate
+working copy, use `jig task start booking-message --worktree` instead, then work in the directory
+it prints. Tasks linked to a spec with an open epic start from that epic.
+
+<Warning>
+  Start from a repository with a commit and no uncommitted tracked changes. If other work is in
+  progress, pause its task or use a separate worktree; do not bundle it into this task's commit.
+</Warning>
+
+## Pause and resume
+
+```bash
+jig task pause booking-message --reason "Waiting for the final wording"
+jig task resume booking-message
+```
+
+Add `--stash` to the pause command when you also need to put uncommitted work aside. Resume reports
+what changed while the task was paused. Read that report before continuing.
+
+## Inspect the change and its review
+
+```bash
+jig task changes booking-message --base main
+jig task findings booking-message
+jig task receipt booking-message --check
+```
+
+Replace `main` with the task's actual base from `jig task show booking-message`. The change inventory
+includes committed and local changes; it does not prove that every change belongs to this task.
+Findings and the receipt tell you what was reviewed and whether that review still matches the work.
+A missing receipt can be expected before review or for a task whose route does not require one.
+
+## Ask which knowledge applies
+
+```bash
+jig context resolve --task booking-message --stage analyze --catalog
+```
+
+Read the required documents. The catalog lists other potentially useful documents; select those
+with `--ids` when needed. For an investigation without a task, pass explicit file selectors:
+
+```bash
+jig context resolve --no-task --files README.md --catalog
+```
+
+Replace `README.md` with the actual paths you are investigating. To record documents you have
+actually read, use `jig context acknowledge`; `jig context guard` checks that record.
+[How context works](/under-the-hood#knowledge-and-what-an-agent-reads).
+
+## Run the project's checks
+
+```bash
+jig verify --changed
+jig knowledge check
+```
+
+`--changed` requests checks for the changed files. Each profile says whether it narrowed its work
+or ran the full check. A plain `jig verify` follows the project's `verify.full_run` setting.
+[Configure verification](/configuration#verification).
+
+<Warning>
+  **Skipped is not passed.** Read the report even when the command exits successfully. Missing
+  tools or dependencies can leave checks unrun.
+</Warning>
+
+## Preview a personal setting
+
+This example previews letting the agent commit, push, and open pull requests:
+
+```bash
+jig config set agent.git pr --local --dry-run
+```
+
+To apply it, remove `--dry-run`. To return to the default, use:
+
+```bash
+jig config unset agent.git --local
+```
+
+Personal settings live in the ignored `.ai/config.local.yaml`.
+[Compare the permission levels](/agent-ships#choose-how-far-it-goes) before changing one.
+
+## Finish through the workflow
+
+Ask the agent to verify the result and record what the project should remember before shipping it.
+`jig task ship` follows your personal permissions and checks the task's completion records.
+After the change lands, confirm whether the task can close.
+
+<Tip>
+  `jig help` lists the full command surface. Use [Skills](/skills) for the agent procedures,
+  [Configuration](/configuration) for settings, and [Under the hood](/under-the-hood) for boundaries
+  and side effects.
+</Tip>

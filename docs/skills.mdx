@@ -12,11 +12,13 @@ fits what you asked; your `AGENTS.md` tells it to start work with `jig-task`. Wh
 wrong one or none, name it: `/jig-task` in Claude Code, `$jig-task` in Codex, and so on for every
 skill below.
 
+<Accordion title="For contributors: how skill descriptions are tested">
 Because the description is what the agent routes by, Jig tests the descriptions of its own skills:
 for every skill there are requests it must be picked for and requests a neighbouring skill must win
 instead, and Jig's CI fails when a description stops winning its own requests or starts taking a
 neighbour's. The check is a word-overlap score with no model behind it, so it catches descriptions
 that blur into each other or say too little to be picked, not every choice a model could make.
+</Accordion>
 
 ## Starting and shaping work
 

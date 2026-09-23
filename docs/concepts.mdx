@@ -1,7 +1,118 @@
 ---
 title: "Concepts"
-description: "Risk classes and routes, what a review leaves behind, how far the agent goes, running without you, project knowledge, specifications and epics, cleanup and measurement."
+description: "How Jig selects context for a task, keeps project knowledge, and guides work through plans, reviews, and checks."
 ---
+
+Use this page to look up the terms an agent mentions. You do not need to learn them before
+[starting a project](/greenfield).
+
+| Term | In plain language |
+|---|---|
+| Agent | The AI doing the work inside your coding app. |
+| Runtime | The coding app, such as Claude Code or Codex. |
+| Task | One piece of work, with a goal you can check. |
+| Skill | Instructions the agent follows for a kind of work. |
+| Knowledge | Project rules and decisions saved for future tasks. |
+| Context | The information available to the agent while it works on a task. |
+| Specification | A plan for work that has not been built yet. |
+| Human gate | A point where the agent needs your approval before continuing. |
+| Consolidation | Deciding what a finished task should leave in the project's notes. |
+
+## How Jig builds context for a task
+
+**Project knowledge is organized for selective reading.** The agent does not need to load the
+whole handbook every time you ask for a change. Jig helps it find the rules and decisions that
+apply to the work in front of it, while keeping other relevant material discoverable.
+
+Think of a well-organized reference library: a few essential rules stay on the desk, the books
+needed for the task are opened, and a short catalog points to anything else worth checking.
+
+<Steps>
+  <Step title="Keep the shared foundations">
+    The project's glossary, architecture, and core rules are always required. A focused task
+    still needs to respect the whole project's basic constraints.
+  </Step>
+  <Step title="Find what applies to this task">
+    The agent identifies the files and areas it is working on. Jig uses document metadata to
+    select the knowledge required for those files, topics, and the current stage of work.
+    If a selected document depends on another, that document is included too.
+  </Step>
+  <Step title="Read the essentials; browse the rest when needed">
+    Jig returns paths to the required documents and a compact catalog of other potentially
+    relevant material. The agent reads the required documents and can open additional ones
+    from their catalog entries. Listing a document does not load its full text.
+  </Step>
+  <Step title="Update the selection as the work grows">
+    When the agent reaches another part of the project or moves to a new stage, it asks for
+    context again. Newly relevant documents join the reading list. Documents changed since
+    the agent acknowledged reading them need another look.
+  </Step>
+</Steps>
+
+### An example: changing bookings
+
+Suppose you ask: **“Stop people booking a class that is already full.”** With knowledge mapped
+to the relevant areas, the reading list could look like this:
+
+| Material | How it is used |
+|---|---|
+| Project glossary, architecture, and core rules | Always required. |
+| Rules that apply to booking files | Read in full for this task. |
+| A decision those booking rules depend on | Included with the rules. |
+| Other booking documents | Discoverable through short catalog entries unless selected as required. |
+| A reporting guide with no matching scope or dependency | Its body is not required for this task. |
+
+If the work turns out to affect payments too, the agent expands the selection. It does not keep
+working with a reading list that only covers bookings.
+
+### Why this can save tokens
+
+Tokens are the pieces of text the AI processes. Loading fewer unrelated documents can use fewer
+input tokens and leave more context space for the task, its code, and the conversation.
+The catalog helps the agent discover additional knowledge without reading every document in full.
+
+<Note>
+  This is selective loading of **project knowledge**, not a cap on everything the AI reads.
+  Conversation history, code, tool results, and instructions from the coding app also use context.
+  Savings depend on the task, document sizes, and the agent's reading choices; Jig does not measure
+  token savings or promise a percentage.
+</Note>
+
+<Accordion title="For developers: selection rules, stages, and reading records">
+  `jig context resolve` selects documents deterministically from metadata. It makes no AI call
+  and returns paths for the agent to read, rather than injecting document bodies into the model.
+
+  | Metadata | Effect |
+  |---|---|
+  | `load: always` | Requires the document for every resolution. |
+  | `load: domain` | Requires it when one of its declared domains is selected. |
+  | `load: matched` (default) | Requires it for matching file paths or topics, an explicit ID, or a matching stage within an entered domain. Domain membership alone makes it discoverable in the catalog. |
+  | `requires` | Adds the selected document's dependencies transitively. |
+  | `summary` | Supplies the short description in a catalog entry. |
+
+  The catalog also includes active project-wide documents with neither paths nor domains.
+  Proposed and retired knowledge is excluded from normal resolution. A directory name alone
+  does not decide applicability: the document's metadata does.
+
+  **Stage selection is additive.** `--stage` can bring in additional guidance for the stage;
+  it never removes required globals, existing matches, or dependencies to make the context smaller.
+  `--ids` explicitly selects a catalog document when the agent needs its full content.
+
+  For example, in Jig's own repository, inspect what an edit to the introduction requires:
+
+  ```bash
+  jig context resolve --no-task --files docs/index.mdx --stage implement --catalog
+  ```
+
+  For a task with a workspace, `context acknowledge` records the hashes of documents the agent
+  says it read. `context pending` identifies required documents that are new or changed;
+  `context guard` fails while any remain unacknowledged. Unchanged documents keep their record
+  across stages. This records a reading claim, not comprehension or continued presence in the
+  model's context; it does not replace a handoff when an agent session changes.
+
+  See [Manual control](/manual-control#ask-which-knowledge-applies) for task-based commands and
+  [Under the hood](/under-the-hood#knowledge-and-what-an-agent-reads) for the limits of these records.
+</Accordion>
 
 ## Risk classes and routes
 
@@ -104,15 +215,10 @@ cannot say. It is committed with the code and reviewed in pull requests.
 
 ### Only what is relevant reaches the agent
 
-An agent never reads all of it. Each document declares in a few lines of metadata where it applies —
-file paths, domains, topics, stages — and the agent asks Jig for what applies to the files it is
-about to change. The answer comes in two parts:
-
-- **required** — documents the agent must read, because they govern the files or the stage;
-- **catalog** — one line per other document that may matter: the documents of the domains the work
-  is in, and every project-wide document. The agent opens one when it decides it is relevant.
-
-The three global documents are always required.
+The agent uses the [context selection process above](#how-jig-builds-context-for-a-task) to find
+what it needs. The three global documents remain required; other documents are selected through
+their metadata or discovered in the catalog. As the task's scope changes, the selection grows
+with it. This structure is what makes project knowledge usable without loading the whole library.
 
 ### Proposed knowledge waits for a human
 

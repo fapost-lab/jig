@@ -1,94 +1,108 @@
 ---
-title: "Introduction"
-description: "What Jig is, who it is for, and how working with it looks."
+title: "Build your project with AI"
+sidebarTitle: "Start here"
+description: "For first-time builders and experienced developers: a clear process for building software with AI."
 ---
 
-Jig is a framework for building software with an AI coding agent — Claude Code or Codex. You
-describe what you want in plain words; the agent decides how careful the work has to be, keeps
-the project's knowledge up to date, and stops to ask you where a human decision matters.
+**Jig helps you build software with an AI coding agent, whether you are new to programming or
+an experienced developer.** Start from an idea or improve an existing project, one manageable
+task at a time.
 
-Jig lives inside your project. It adds a folder of project knowledge, a set of skills your agent
-uses, and a small command-line tool the agent runs for the mechanical parts. Nothing is hosted,
-there is no telemetry, and no script ever calls an AI model: the agent makes the engineering
-decisions, the scripts only keep records straight.
+You explain the result you want. The agent plans the work, writes the code, checks it, and keeps
+notes that future sessions can use. You try the result and decide what should change.
 
-## How working with Jig looks
+<Info>
+  **You need an AI coding app first**, such as Claude Code or Codex, with your project folder open.
+  Jig adds a way of working to that app. It does not include an AI model or replace your AI account.
+</Info>
 
-You do not need to learn commands or skill names. You talk to your agent:
-
-> **You:** Add CSV export to the reports page.
->
-> **Agent:** This touches the report pipeline and the download endpoint, so I classify it as
-> structural (T2): analyze, plan, implement, review, verify. I have created the task
-> `csv-export` on its own branch. Here is what I found in the code and the plan …
-
-Behind that answer, the agent picked the `jig-task` skill, looked at the risk of the change,
-chose a route, created a task workspace and loaded only the project knowledge relevant to
-reports. The agent usually picks the right skill from what you say; when it does not, name it —
-`/jig-task` in Claude Code, `$jig-task` in Codex. A one-line typo fix gets a three-step route; a change to authentication gets design, your
-approval and an independent review.
-
-## What you get
+## Built for your level of experience
 
 <CardGroup cols={2}>
-  <Card title="Work sized by risk" icon="scale-balanced">
-    Five classes, from a typo to a change that touches security or money. The route grows with
-    the risk, never with habit.
+  <Card title="New to programming?" icon="seedling" href="/install">
+    Describe your idea in everyday language. Follow the setup guide, let the agent explain the
+    choices, and try what it builds. You do not need to know commands or design the code yourself.
   </Card>
-  <Card title="Knowledge that stays true" icon="book">
-    Terms, architecture, rules and decisions live in `.ai/knowledge/` next to the code. Every task
-    ends by deciding what it taught the project.
-  </Card>
-  <Card title="You decide where it matters" icon="user-check">
-    At a human gate the agent shows you the design itself — not a summary — and waits.
-  </Card>
-  <Card title="Your existing docs, adopted" icon="link">
-    Rules you already keep in `docs/`, your own ADRs or another tool's instruction files are linked
-    in place, not copied.
-  </Card>
-  <Card title="A review that can stop the work" icon="shield-halved">
-    A review records each problem with a severity, and a serious one keeps the task from being
-    finished until it is fixed or you wave it through.
-  </Card>
-  <Card title="One page that says what needs you" icon="list-check">
-    `jig status` — in the terminal, or as a page you keep open in the browser — answers one
-    question: what is waiting for a human, and what to do about it.
+  <Card title="Experienced developer?" icon="terminal" href="/manual-control">
+    Give your agent a repeatable workflow with project rules, reviews, and checks. Inspect the
+    changes, run commands yourself, and choose how much work to delegate.
   </Card>
 </CardGroup>
 
-## Then hand more of it over
+Both paths use the same framework. Start a [new project](/greenfield) or bring Jig into an
+[existing codebase](/brownfield).
 
-None of that asks you to trust the agent with your repository. When you decide to, you hand it
-over in steps. The first and the last are settings in **your** copy of the project, never a
-decision made for your colleagues; the middle one you grant a task at a time, by asking for it.
+## Spend tokens on the task, not the whole handbook
 
-1. **Let it ship.** One line, `agent.git`, says how far a finished task travels: left in your
-   working tree (the default), committed, pushed, or an open pull request you review.
-   [Letting the agent ship](/agent-ships).
-2. **Let it run the whole task.** On autopilot the agent goes from stage to stage without
-   waiting for you, has a *second* agent review the code, gives itself at most two attempts to
-   fix what the review or the checks found, and comes back with the change handed over — or
-   with the one question it could not answer itself. [Autopilot](/autopilot).
-3. **Let it run without questions.** If those questions are not yours to answer, it takes the
-   careful option instead and writes down in the pull request every choice it made in your
-   place. Together with the last `agent.git` level, `merge`, that is a change deployed without
-   you — but only once your own CI has proved it.
-   [Autopilot without stops](/autopilot#without-stops).
+AI reads text in small pieces called **tokens**. Loading a project's entire handbook into every
+task uses tokens even for pages the task does not need.
 
-You can stop at any step. The two settings are as easy to take back as to grant — `jig config
-unset` removes one and the default applies again — and autopilot is never on by default: it covers
-the one task you asked for it on. Wherever you stop, `jig status` is where you look
-([Seeing where things stand](/working-with-tasks#seeing-where-things-stand)).
+Jig organizes project knowledge so the agent starts with the core rules and the documents relevant
+to its work. Other useful material appears in a short catalog and can be opened when needed.
+For a booking change, that might mean booking rules without reading an unrelated reporting guide.
 
-## Where to start
+<Tip>
+  **Less unnecessary reading, more room for the work.** Selecting relevant documents can save
+  context space and input tokens compared with loading all project knowledge. The amount depends
+  on the project and task; Jig does not measure or guarantee a token reduction.
+</Tip>
+
+[See how Jig builds the agent's context →](/concepts#how-jig-builds-context-for-a-task)
+
+## Your first conversation
+
+Once Jig is [set up](/install), paste this into your AI chat and replace the example with your idea:
+
+```text
+I want to build a booking app for a small yoga studio.
+People should see available classes and reserve a place.
+Help me decide what belongs in the first version.
+Explain the choices in plain language and recommend a starting point.
+```
+
+The agent asks about your users and what they need, helps you choose a small first version, and
+writes down the plan. When you agree on it, ask it to start the first task.
+[Follow the complete example →](/greenfield)
+
+<Tip>
+  You can say “I don't know — explain the options and recommend one.” You bring the purpose and
+  the feedback; you do not have to arrive with a technical design.
+</Tip>
+
+## What working together looks like
+
+<Steps>
+  <Step title="Describe a result">
+    “Let visitors reserve a place in a class.” A concrete example gives the agent something to check.
+  </Step>
+  <Step title="Settle the important choices">
+    The agent looks at what the change affects. Bigger or riskier work needs a design for you to
+    approve before it starts building, unless you have explicitly enabled unattended runs.
+  </Step>
+  <Step title="Try what it built">
+    Ask how to open the result, what was tested, and what is still missing. Give feedback in the
+    same conversation; the agent can continue the task.
+  </Step>
+</Steps>
+
+<Note>
+  **A finished task is not automatically a live website.** Saving the work, merging it into the
+  project, and publishing it are separate steps. Ask your agent what remains before people can use it.
+</Note>
+
+## Learn what you need, when you need it
 
 <CardGroup cols={2}>
-  <Card title="New project" icon="seedling" href="/greenfield">
-    Start from an idea: specification, architecture, rules, then the first tasks.
+  <Card title="From idea to first version" icon="lightbulb" href="/greenfield">
+    Example messages, the decisions you make, and how to ask for the first working result.
   </Card>
-  <Card title="Existing project" icon="building" href="/brownfield">
-    Bring Jig into a codebase you already have, and adopt the documentation it keeps.
+  <Card title="Day-to-day work" icon="comments" href="/working-with-tasks">
+    Ask for changes, continue tomorrow, check progress, and understand what needs you.
+  </Card>
+  <Card title="Let the agent do more" icon="sliders" href="/agent-ships">
+    Choose how far the agent may take finished work. Start with the defaults and change them later.
+  </Card>
+  <Card title="For developers" icon="terminal" href="/manual-control">
+    Run commands yourself, inspect task state, and understand the files and checks behind the workflow.
   </Card>
 </CardGroup>
-
-Jig runs on macOS, Linux and Windows. [Install it](/install) first — one line in a terminal.

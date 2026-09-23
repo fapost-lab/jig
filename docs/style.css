@@ -1,10 +1,1 @@
-/* Keep the version badge inline with the banner text: Mintlify wraps every
-   image in a block with vertical margins. */
-#banner a > div:has(> img) {
-  margin: 0 0 0 0.25rem;
-  vertical-align: middle;
-}
-#banner a > div > img {
-  display: inline;
-  border-radius: 0;
-}
+/* Presentation uses Mintlify's built-in cards, steps, tabs, and callouts. */

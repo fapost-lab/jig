@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "JIG",
-  "description": "An agent SDLC framework: your AI agent works through risk-sized routes, with project knowledge and human gates.",
+  "description": "Build software with your AI agent: clear plans, checked changes, and project knowledge that lasts.",
   "favicon": "/favicon.svg",
   "colors": {
     "primary": "#2563EB",
@@ -10,8 +10,8 @@
     "dark": "#1D4ED8"
   },
   "banner": {
-    "content": "Jig is pre-1.0 and evolving fast: commands and skills may change between releases. [Follow development on GitHub](https://github.com/fapost-lab/jig). [![Latest version](https://img.shields.io/github/v/tag/fapost-lab/jig?sort=semver&label=version&color=93C5FD)](https://github.com/fapost-lab/jig/tags)",
-    "dismissible": false
+    "content": "Jig is evolving. See what changed in the [release notes](/changelog).",
+    "dismissible": true
   },
   "navbar": {
     "primary": {
@@ -22,28 +22,39 @@
   "navigation": {
     "groups": [
       {
-        "group": "Get started",
-        "pages": ["index", "install"]
+        "group": "Start here",
+        "pages": [
+          "index",
+          "install",
+          "greenfield",
+          "brownfield"
+        ]
       },
       {
-        "group": "Guides",
-        "pages": ["greenfield", "brownfield", "working-with-tasks"]
+        "group": "Work with your AI",
+        "pages": [
+          "working-with-tasks",
+          "agent-ships",
+          "autopilot",
+          "troubleshooting"
+        ]
       },
       {
-        "group": "Handing work over",
-        "pages": ["agent-ships", "autopilot"]
+        "group": "For developers",
+        "pages": [
+          "manual-control",
+          "under-the-hood",
+          "concepts",
+          "skills",
+          "configuration"
+        ]
       },
       {
-        "group": "Reference",
-        "pages": ["skills", "concepts", "configuration"]
-      },
-      {
-        "group": "Security and internals",
-        "pages": ["under-the-hood"]
-      },
-      {
-        "group": "More",
-        "pages": ["comparison", "troubleshooting", "changelog"]
+        "group": "About Jig",
+        "pages": [
+          "comparison",
+          "changelog"
+        ]
       }
     ]
   },
