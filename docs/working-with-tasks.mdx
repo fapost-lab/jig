@@ -145,7 +145,10 @@ records a review finding, reaches a new stage, stops to ask you something — Ji
 the open page reloads itself every 10 seconds. You do not need to run anything again; the time at the
 top says when it was last drawn. It is drawn from the checkout the tasks were filed in, which shows
 every task started there, including those the agent went on to work on in a separate worktree:
-starting a task in a worktree keeps its workspace where it was filed and links it across.
+starting a task in a worktree keeps its workspace where it was filed and links it across. Those
+redraws only refresh a page that is already there: until you run `jig status --html` or `--open`,
+nothing is written, and deleting `.ai/runtime/status.html` ends them — nothing recreates the page
+until you ask for it again.
 
 It answers four questions, in this order:
 
@@ -191,8 +194,7 @@ name starts with a dot until you press Cmd+Shift+. (period). From a terminal:
 
 The page is a single file with nothing to download and no script: it opens in any browser, offline,
 and follows your system's light or dark theme. Nothing but the page and the counts it reuses is
-written, both in `.ai/runtime/`, and neither is ever committed. A project where nobody opened the page
-never gets one.
+written, both in `.ai/runtime/`, and neither is ever committed.
 
 ## When the work turns out bigger
 
