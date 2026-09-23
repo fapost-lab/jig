@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-22
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -149,3 +149,39 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > housekeeping then removes only links and empty directories there, with `rmdir`, and anything else keeps
 > the task under `worktree-kept` with reason `leftover`. The claim above that "every framework symlink
 > is relative and committed" holds for link mode only, which still needs real symlinks.
+
+> **Amendment (2026-09-21).** "Agents here do not commit" is no longer a rule of the framework:
+> it is the default level, `none`, of the per-clone setting `agent.git`
+> (adr-20260921-agent-git-rights-are-a-local-setting). The alternative this decision rejected —
+> agents commit to their own branch and the human reviews a pull request — was reopened by the
+> maintainer on 2026-09-18 as an opt-in for one clone, never a project default. At `none`
+> everything above holds unchanged. At a higher level uncommitted work in a worktree is still
+> kept, and still not debris; it is just no longer the whole review queue.
+
+> **Amendment (2026-09-22).** "Removes a task's worktree when it purges the task's workspace, and only
+> then" is replaced: a task's worktree goes when the task is closed and its branch has landed on the
+> task's own base — an epic included, judged as housekeeping already judges it (ADR-0039), with no new
+> network call — or when its workspace is purged, whichever comes first. Three worktrees of closed
+> phases merged into `epic/autopilot` sat on disk because a phase's workspace waits for its epic
+> (ADR-0040) and the worktree waited with it; they were removed by hand, which is the cleanup by manual
+> discipline this decision rejected, and a phase run creates worktrees by the wave. The records a phase
+> keeps for the epic's review live in the workspace, in the filing checkout; the worktree only links to
+> them, and nothing reads it once the task is closed.
+>
+> The safety conditions are unchanged: git lists the worktree with the task's branch, it lies under
+> `git.worktree_root`, nothing under its `.ai/workspace/tasks/` is anything but a link, it has no
+> uncommitted changes, `git worktree remove` runs without `--force`, and the branch is never deleted.
+> One is sharpened: a lock now keeps a worktree of jig's own as well, checked before git is asked, with
+> reason `locked` instead of `git-refused`. Git refused a locked worktree anyway; the reason now says
+> what it most likely is in a phase run — a live agent — and a dry run no longer promises a removal git
+> would refuse. A worktree that has to stay while its workspace is kept anyway (`base-unreleased`) is
+> flagged `base-unreleased,worktree-kept` and counted like any other. A task that is merged but not yet
+> closed keeps its worktree: closing is the human's confirmation (ADR-0030), and a `merged` that turns
+> out wrong (ADR-0032) must not take the tree from beside the work.
+>
+> Removing the worktree in `jig task set <id> status consolidated`, or in `jig task ship`, was
+> considered and rejected: the task is often closed from inside its worktree, "landed" is housekeeping's
+> judgement, and ship runs before the merge. A live session in a clean, unlocked worktree can still lose
+> its working directory to a housekeeping run once its task is closed; closing is an agent's last step,
+> and a phase run's coordinator runs housekeeping only after a wave finishes. No automatic lock is taken
+> at `task start --worktree`.

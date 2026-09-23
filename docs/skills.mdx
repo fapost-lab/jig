@@ -12,11 +12,19 @@ fits what you asked; your `AGENTS.md` tells it to start work with `jig-task`. Wh
 wrong one or none, name it: `/jig-task` in Claude Code, `$jig-task` in Codex, and so on for every
 skill below.
 
+Because the description is what the agent routes by, Jig tests the descriptions of its own skills:
+for every skill there are requests it must be picked for and requests a neighbouring skill must win
+instead, and Jig's CI fails when a description stops winning its own requests or starts taking a
+neighbour's. The check is a word-overlap score with no model behind it, so it catches descriptions
+that blur into each other or say too little to be picked, not every choice a model could make.
+
 ## Starting and shaping work
 
 | Skill | When | What it does | What it asks you |
 |---|---|---|---|
 | `jig-task` | You describe work to do, or ask to continue something | Finds an existing task or classifies the new one by risk (T0–T4), creates its workspace and branch when the work needs them (small work that fits one session needs neither), names the route and starts the first stage. At session start, lists merged tasks waiting to be closed. | Which task, when several are live on the branch; whether each merged task can be closed. |
+| `jig-autopilot` | You hand a task over to be done without you ([Autopilot](/autopilot)) | Runs the task's whole route without waiting between stages, has a second agent review it, limits fixing to two attempts, and ends with the change handed over and a report. Given a phase of a roadmap instead of a task, it coordinates a wave of tasks built in parallel ([running a whole phase](/autopilot#running-a-whole-phase)). | Only at a stop: a design approval, a problem it could not fix, a decision nobody made, or a destructive step. |
+| `jig-setup` | After `jig init`, or whenever you want to change what your agent may do on its own | Asks you, one question at a time and with a recommendation, how far the agent may take a finished task, whether it may merge and whether autopilot may run without asking; shows the whole `.ai/config.local.yaml` it would write ([personal settings](/configuration#let-the-agent-ask-you)). | Each setting, one at a time; your yes before anything is written — and an explicit yes for merging and for running without questions. |
 | `jig-idea` | An idea that is not settled yet, work too big for one task, or a new project's architecture and stack | Questions the idea, stresses it, offers other shapes, and writes what survives as a specification with a roadmap in `.ai/specs/`. Starts no task and changes no code. Files a phase's tasks when asked. | Every decision, one at a time, each with its recommendation. |
 
 ## The stages of a route
@@ -27,10 +35,10 @@ Each class of task runs some of these, in order ([Concepts](/concepts#risk-class
 |---|---|---|---|
 | `jig-analyze` | Before a local or structural change; to investigate a problem | Establishes the cause, what the change touches, which rules and decisions bind it, and the real options. | One question when something is ambiguous. |
 | `jig-implement` | After analysis, or after you approved a design | Loads the knowledge the change must respect, makes the change and collects evidence that it works. | Nothing, unless the design turns out wrong. |
-| `jig-review` | After implementation of structural or bigger work | Reviews the actual diff against the requirements, the rules, the project's contracts and the evidence. | Nothing; reports findings. |
-| `jig-architecture-review` | Architectural and critical work, or on request | Checks the change against the system's boundaries, dependency directions, invariants and accepted decisions. | Nothing; reports findings. |
-| `jig-verify` | Before anything is declared done | Runs the project's checks and confirms the goal is actually met, not just that the tests are green. | Nothing; a red result sends the work back. |
-| `jig-consolidate` | At the end of every route, before the commit; again after the change is merged | Decides what the project should remember — updates knowledge or records that there is nothing — and closes the task once its change has landed. | Whether a merged task can be closed. |
+| `jig-review` | After implementation of structural or bigger work | Reviews the actual diff against the requirements, the rules, the project's contracts and the evidence, records each finding with a severity, and pins what it reviewed. | Whether a serious finding may be dismissed instead of fixed. |
+| `jig-architecture-review` | Architectural and critical work, or on request | Checks the change against the system's boundaries, dependency directions, invariants and accepted decisions; a violation is recorded as a blocking finding. | Whether a violated decision is wrong or the change is. |
+| `jig-verify` | Before anything is declared done | Runs the project's checks and confirms the goal is actually met, not just that the tests are green. Refuses to call the task ready while a serious review finding is unresolved. | Nothing; a red result or an open finding sends the work back. |
+| `jig-consolidate` | At the end of every route, before the commit; again after the change is merged | Decides what the project should remember — updates knowledge or records that there is nothing — hands the change over as far as `agent.git` allows (commit, push, pull request), and closes the task once its change has landed. | Whether a merged task can be closed. |
 
 Discovery, specification, alternatives, design and planning are stages of the larger routes, not
 separate skills: the agent writes those documents inside the task's workspace, and shows you the

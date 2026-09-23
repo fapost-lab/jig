@@ -39,10 +39,23 @@ Usage: jig <command> [args]
   init [--from <dir>] [--link] [--session-hook]
                                  bootstrap .ai/ in the current repository
   upgrade [--from <dir>]         update framework-owned files (manifest-aware)
-  status                         active tasks, housekeeping flags, drift
+  status [--html | --open]       active tasks, housekeeping flags, drift;
+                                 --html writes the status page to .ai/runtime/status.html,
+                                 --open writes it and opens it in the browser; once it
+                                 exists, task, spec and housekeeping commands keep it current
   task new|start|set|abandon ... task workspace and state (new files it, start begins it)
   task changes <id> --base <ref> inventory all change layers; --files and --format paths
   task artifacts <id> [...]      fixed-route inputs; --provided names conversation outputs
+  task finding add|set <id> ...  record a review finding and update its status
+  task findings <id> [--blocking]  list findings; --blocking exits 1 while any block completion
+  task ship <id> --message-file <f> [...]
+                                 commit/push/open a pull request, up to agent.git's level
+  task receipt <id> --stage review|architecture-review
+                                 pin what was reviewed; --check reports drift, exit 1 if stale
+  task autopilot <id> start|stage|repair|stop|resume|end|report
+                                 run a task's route without stopping between stages;
+                                 repair caps out at 2 and stops the run (exit 3)
+  task gate <id> approved        record the human's approval of a T3/T4 design
   context [...]                  relevant knowledge for a task
   context resolve [...]          required documents; --stage, --no-task, --catalog
   context pending|guard [...]    knowledge required but not yet acknowledged
@@ -70,6 +83,14 @@ Usage: jig <command> [args]
   spec remove <id> [--dry-run] [--abandon-unstarted]
                                  unlink a spec's open tasks and move the spec to trash
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
+  config set <key> <value> [...] --local [--dry-run]
+                                 write your own settings to .ai/config.local.yaml;
+                                 local keys only, values checked, never .ai/config.yaml
+  config unset <key> [...] --local [--dry-run]
+                                 remove keys from .ai/config.local.yaml, including
+                                 ones no reader answers from
+  config show --local            print .ai/config.local.yaml and the keys in it
+                                 that no reader answers from
   measure                        knowledge quality, process weight, change size
   doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release
@@ -83,7 +104,7 @@ main() {
   case "$cmd" in
     help|-h|--help) jig_usage ;;
     version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
-    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure|doctor)
+    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure|doctor|config)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi

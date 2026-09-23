@@ -1,0 +1,8 @@
+# jig-accept: deciding proposed knowledge with a human.
++ what's proposed
++ review the proposals waiting for a decision
++ accept the knowledge that was proposed
++ jig status mentions pending proposals, go through them
+- propose knowledge structure for the payments and shipping areas
+- review this change before it ships
+- update the knowledge after this change

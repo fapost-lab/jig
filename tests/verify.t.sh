@@ -1394,12 +1394,16 @@ test_verify_own_shell_map_decides_known_paths() {
     "profiles/shell/verify.sh" \
     "scripts/jig" \
     "templates/gitignore" \
+    "skills/jig-review/SKILL.md" \
+    "tests/routing/jig-review.cases" \
     "scripts/lib/task.sh")
   assert_contains "$out" "$(printf 'scripts/jig-session-hook\thousekeeping::')"
   assert_contains "$out" "$(printf 'adapters/claude/adapter.sh\tadapters::')"
   assert_contains "$out" "$(printf 'profiles/shell/verify.sh\tprofiles:: verify::')"
   assert_contains "$out" "$(printf 'scripts/jig\tdispatcher::')"
   assert_contains "$out" "$(printf 'templates/gitignore\tinit:: upgrade::')"
+  assert_contains "$out" "$(printf 'skills/jig-review/SKILL.md\trouting::')"
+  assert_contains "$out" "$(printf 'tests/routing/jig-review.cases\trouting::')"
   assert_contains "$out" "$(printf 'scripts/lib/task.sh\t?')"
 }
 

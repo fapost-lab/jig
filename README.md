@@ -40,6 +40,27 @@ Then, in your project, run `jig init`, commit, and tell your agent *"set up Jig 
 > will not know Jig's workflow until they carry the Jig section. Ask your agent to *"connect Jig to
 > my AGENTS.md"*, or [add it by hand](https://jig.fapost.in/install#2-set-up-a-project).
 
+## How much you hand over
+
+By default a finished task waits in your working tree for you to review and commit. From there you
+hand over in steps, and nothing you turn on reaches the rest of the team — the settings live in a
+gitignored file of your own:
+
+- **`agent.git`** — how far a finished task travels: committed, pushed, or an open pull request.
+  Only the last level, `merge`, also merges, and only once your CI is green
+  ([how](https://jig.fapost.in/agent-ships)).
+- **Autopilot** — ask for it on a task and the agent runs its whole route without waiting between
+  stages, has a second agent review the code, caps itself at two attempts to fix what the review or
+  the checks found, and comes back with the change handed over and a report
+  ([how](https://jig.fapost.in/autopilot)).
+- **`autopilot.unattended`** — for when the questions a run would ask are not yours to answer: it
+  takes the careful option instead and writes down in the pull request every choice it made in your
+  place ([how](https://jig.fapost.in/autopilot#without-stops)).
+
+A review records each problem it finds with a severity, and a serious one blocks the task from being
+finished whichever of the above you chose. Wherever you stop, `jig status` — in the terminal, or as
+a page you keep open in the browser — tells you what is waiting for you.
+
 ## Roadmap
 
 Nothing is planned right now.

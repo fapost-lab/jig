@@ -35,6 +35,80 @@ Adding or renaming anything framework-owned — a skill, a profile, a template �
 `jig upgrade` has placed it: until then a new skill exists in `skills/` but not in `.claude/skills/`
 or `.codex/skills/`. `jig verify` refuses to run while anything is pending.
 
+### Which `jig` you are running
+
+There are two, and they are never the same files:
+
+- **`.ai/scripts/jig`** — this checkout's own. The link is committed (Git stores it as a symlink,
+  not a copy) and it is relative, `.ai/scripts -> ../scripts`, so every `git worktree` resolves it
+  inside itself. A worktree therefore runs **its own branch's** scripts, which is what makes it safe
+  to develop a command and test it in the same working copy.
+- **`jig` on `PATH`** — the release. `install.sh` clones it into `~/.local/share/jig` and links
+  `~/.local/bin/jig` to it, so `which jig` answers with the link. Either way it resolves its own
+  location and loads the libraries sitting next to it, and it never redirects a call into a
+  project's `.ai/scripts`. Run it in this repository and you are testing the release against your
+  branch's files — occasionally what you want, and never what you meant while debugging a change.
+
+So in this repository, call `.ai/scripts/jig`. That is why the skills spell the path out wherever
+they hand over a command to run, rather than the shorter `jig`. Prose that merely names a command —
+in `AGENTS.md`, or in a skill's explanation — says `jig task set …` and means the same executable.
+
+If typing the path grates, a wrapper in `~/.zshrc` (or `~/.bashrc`) picks the project's copy when
+there is one and the release otherwise. It is a personal convenience, not something Jig installs or
+expects:
+
+```bash
+jig() {
+  local dir=$PWD
+  while [ -n "$dir" ]; do
+    if [ -x "$dir/.ai/scripts/jig" ]; then
+      "$dir/.ai/scripts/jig" "$@"
+      return
+    fi
+    dir=${dir%/*}
+  done
+  command jig "$@"
+}
+```
+
+`command jig` then still reaches the release, which is how you ask for it deliberately.
+
+### `jig upgrade` and which source it copies from
+
+`jig upgrade` needs a framework checkout to install from, and the two executables find one
+differently. The release on `PATH` brings its own: `~/.local/bin/jig` is a symlink and gets resolved,
+so it lands in `~/.local/share/jig`. A project's `.ai/scripts/jig` cannot do that — the path it
+resolves to stays `<project>/.ai/scripts`, whose parent is not a framework checkout — so it falls
+back to the source recorded in `.ai/manifest`.
+
+- **Here, your own `.ai/scripts/jig upgrade`.** This repository's manifest records `jig.source: .`,
+  itself, so the upgrade refreshes the links from the checkout you are working in. That is what you
+  want, and the release on `PATH` would not do it.
+- **In an ordinary project, either, with one catch.** The manifest names the checkout whoever
+  installed it used. When that path still exists, `jig self-update` moves it to the new release and
+  the project's own `.ai/scripts/jig upgrade` picks it up from there. When it does not — a
+  teammate's clone, a checkout since moved — the local one stops with `cannot determine the
+  framework source root`. `command jig upgrade` gets you out of that, because it brings its own
+  source and records it on the way.
+
+Calling the wrong one is not destructive. In link mode every framework path is a symlink the release
+did not create, so it meets `keep-conflict` on all of them, places nothing, leaves `.ai/manifest`
+untouched — and ends by saying exactly that:
+
+```text
+jig upgrade: 0 placed, 0 kept, 27 conflict(s); manifest unchanged
+nothing was placed from /home/you/.local/share/jig, so this project stays installed from /home/you/src/jig
+hint: to install it from that checkout instead, run `jig init --link --from /home/you/.local/share/jig`
+```
+
+That hint is the real way to move a project to another checkout: choosing where a project's framework
+comes from is an install decision, and `upgrade` only carries an existing install forward. An upgrade
+that places files from a new source records it; one that placed nothing changes nothing — not the
+files and not the manifest. So a project whose recorded checkout has gone keeps pointing at it
+whenever there was nothing to place: because its files already match the new source, or because they
+are symlinks the upgrade did not create. Then `jig init --from <dir>` (with `--link`, in link mode)
+is the way out, and the command prints that line itself.
+
 ## Tests
 
 ```bash
@@ -57,6 +131,29 @@ This repository sets `verify.full_run: ci`: a plain `jig verify` checks what cha
 
 Documentation changes: in `docs/`, run `npx mint broken-links` and `npx mint validate` (Node is a
 maintainer tool here, not a dependency of Jig).
+
+### Routing evals
+
+A runtime picks a skill by its `description:`, so the descriptions have tests of their own.
+`tests/routing/<skill>.cases` holds prompts the skill must win (`+ <prompt>`) and prompts it must not
+(`- <prompt>`, usually a neighbour's); `tests/routing.sh` scores every prompt against every
+description and prints one `ok`/`FAIL` line per case with the scores that decided it:
+
+```bash
+bash tests/routing.sh              # the report
+bash tests/run.sh routing::        # as part of the suite, which is how CI runs it
+```
+
+A prompt is won by the one skill whose description shares the most words with it, each word
+weighted by how few descriptions use it, with a phrase the description quotes (`"review"`) counting
+once more. It is word overlap, not a model: no key, no network, the same answer everywhere.
+
+- A new skill needs a case file with at least one `+` and one `-` line, or the check fails.
+- A changed description runs these tests locally and in CI (`.ai/verify/shell.map` routes
+  `skills/*/SKILL.md` to `routing::`). When it loses a case, reword the description before the case;
+  change the case only when the prompt was ambiguous in the first place.
+- Write most prompts as a user would ask them rather than copying the description's quoted phrases:
+  a case that only repeats the description proves little.
 
 ## Releases
 

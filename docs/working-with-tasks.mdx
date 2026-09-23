@@ -64,6 +64,50 @@ workspace. An abandoned task's workspace goes to the trash after two weeks, what
 remote state. The trigger is a Claude Code session hook
 or a scheduler you choose ([Configuration](/configuration)).
 
+## Review findings
+
+When a task is reviewed, each problem the review finds is written down in the task's workspace with a
+severity:
+
+| | Means | Stops the task |
+|---|---|---|
+| P0 | Breaks data or security, or goes against a rule or decision the project recorded | yes |
+| P1 | Gives a wrong result on a path that will be used | yes |
+| P2 | Worth fixing, but the code works without it | no |
+| P3 | A small thing | no |
+
+A P0 or P1 stops the task from being finished. Until it is resolved, the agent cannot mark the task
+ready, record what the project should remember, or commit and open the pull request
+([Letting the agent ship](/agent-ships)). A fix alone does not resolve it: the agent fixes the
+problem, and a second review confirms the fix and closes the finding.
+
+The other way out is to decide the problem does not need fixing — the review was wrong, or you accept
+it. For a P0 or P1 that decision is yours: the agent shows you the finding and asks, and writes your
+answer down with it. A P2 or P3 the agent may set aside on its own, with a reason.
+
+To see where a task stands, ask *"what did the review find?"*, or run:
+
+```bash
+jig task findings <task-id>
+```
+
+`jig status` marks a task that is stopped this way with `blocking=<n>`.
+
+### When the change moved after review
+
+A review ends by pinning what it looked at: the code, the approved design and its list of findings.
+If any of them changes afterwards — a line of code edited, a finding closed by the agent that wrote
+the code — the review no longer describes the change, and the task stops again for the same three
+steps until the change is reviewed once more. Committing the reviewed change does not count as a
+change; only its content does. The project's knowledge and specification files are not pinned: the
+agent writes them after the review, as the last step of every task.
+
+A task of the highest risk class (T4) cannot be finished without such a pinned review at all.
+
+To see whether the review still holds, ask *"is the review still current?"*, or run
+`jig task receipt <task-id> --check`. `jig status` marks a task whose review no longer holds with
+`review=stale`.
+
 ## Several agents at once
 
 One checkout holds one piece of uncommitted work. When an agent is already working and you want to
@@ -72,10 +116,83 @@ second working copy of the repository next to it (in `../<project>.worktrees/<id
 from the freshest main branch, and leaves the current work alone. Open a new agent session in that
 folder — the agent tells you the path; some runtimes can switch there on their own.
 
+An [autopilot run of a whole roadmap phase](/autopilot#running-a-whole-phase) does this for you:
+it puts every task of a wave in its own worktree and gives each one its own agent.
+
 Each worktree has its own branch and its own uncommitted changes; the task list in the original
 checkout still shows every task and where it runs. Review and commit in the worktree as you would
-anywhere. When the task is closed, the worktree is removed with it — but only if it has no
-uncommitted changes. Worktrees you or your agent created by hand are never removed.
+anywhere. When the task is closed and its change has landed on its base — an epic branch included —
+the worktree is removed, but only if it has no uncommitted changes and no lock. Worktrees you or your
+agent created by hand are never removed.
+
+## Seeing where things stand
+
+`jig status` answers in the terminal. For a page you can keep open in your browser while the agent
+works — or send to someone who does not use a terminal — ask the agent to *"open the status page"*,
+or run:
+
+```bash
+jig status --open
+```
+
+It writes one file, `.ai/runtime/status.html` in your project, prints its full path and opens it in
+your browser. The same command works in Git Bash, in PowerShell and in the macOS or Linux terminal.
+Where no browser can be opened — over SSH, for instance — the page is written anyway and the command
+tells you where it is. `jig status --html` writes the page without opening it.
+
+**The page keeps itself current.** Once it exists, every time the agent changes a task — starts it,
+records a review finding, reaches a new stage, stops to ask you something — Jig redraws the file, and
+the open page reloads itself every 10 seconds. You do not need to run anything again; the time at the
+top says when it was last drawn. It is drawn from the checkout the tasks were filed in, which shows
+every task started there, including those the agent went on to work on in a separate worktree:
+starting a task in a worktree keeps its workspace where it was filed and links it across.
+
+It answers four questions, in this order:
+
+1. **Needs you.** Each card says what happened and, in one line, what to do:
+
+   | Card | What to do |
+   |---|---|
+   | Autopilot stopped and is waiting for you | Answer the agent in that task's conversation; the card shows its question |
+   | A design is waiting for your decision | Read the design the agent showed you, then approve it or say what to change |
+   | A design changed after you approved it | Read what changed and approve it again |
+   | Ready for your step in git | Commit, push or open the pull request — whichever step the agent may not take in your project |
+   | A pull request is waiting for review or merge | Review it and merge it; the link opens it. Jig merges one itself only at `agent.git: merge`, once CI passed |
+   | Merged: the task can be closed | Tell the agent to close the task |
+   | The work landed on a different branch than planned, the pull request was closed without merging, a worktree was kept | Look at it; only you can say what happens next |
+   | Knowledge is waiting for your decision | Ask the agent *"what's proposed?"* |
+
+   When there is nothing to do, it says *Nothing needs you right now*.
+2. **Running now.** Every task in progress: its class, status, the branch it lands on, the worktree
+   it runs in, whether its review still holds (current, stale, or none yet — and whether a T4 task
+   still needs one), and each finding that stops it. For a task on autopilot it also shows the stage
+   it is in, for how long, and how many of its two fixing attempts it used. Paused tasks are folded
+   away below.
+3. **Specifications.** How far every roadmap has got, phase by phase. For a specification built on
+   its own branch, the progress is read from that branch as your copy of it last saw it.
+4. **Details.** The counts at a glance, and the complete `jig status` text, folded away at the bottom.
+
+**Why some data is marked stale.** Whether a pull request is open or merged comes from housekeeping,
+which asks GitHub or GitLab once a day when an agent session starts. When its last run is older than
+that, or GitHub/GitLab did not answer, the page says *stale*; run `jig housekeeping` to update it. A
+pull request the agent opened itself appears at once, with its link. The knowledge counts come from
+the last full `jig status` and show their time too.
+
+To open the file by hand, double-click `status.html` in your file manager — on Windows, in File
+Explorer, open your project folder, then `.ai`, then `runtime`; on macOS, Finder hides folders whose
+name starts with a dot until you press Cmd+Shift+. (period). From a terminal:
+
+| System | Command |
+|---|---|
+| Windows (Git Bash) | `start .ai/runtime/status.html` |
+| Windows (PowerShell) | `Invoke-Item .ai\runtime\status.html` |
+| macOS | `open .ai/runtime/status.html` |
+| Linux | `xdg-open .ai/runtime/status.html` |
+
+The page is a single file with nothing to download and no script: it opens in any browser, offline,
+and follows your system's light or dark theme. Nothing but the page and the counts it reuses is
+written, both in `.ai/runtime/`, and neither is ever committed. A project where nobody opened the page
+never gets one.
 
 ## When the work turns out bigger
 
@@ -86,6 +203,7 @@ Risk sets the floor: a one-line change to authentication is never trivial.
 
 ## Who commits
 
-Jig's scripts never push, and never commit — apart from the one first commit the Windows installer
-makes in a repository it created itself. Whether the agent may commit, push or open pull
-requests is your project's rule, written in your `AGENTS.md` or your runtime's settings — not Jig's.
+By default the agent does not commit: a finished task waits in your working tree, and you review the
+diff and commit it. One line in your own `.ai/config.local.yaml` — `agent.git: pr` — lets the agent
+commit, push and open the pull request instead; only `agent.git: merge` also merges, once CI passed.
+[Letting the agent ship](/agent-ships) explains the levels and what happens at the end of a task.

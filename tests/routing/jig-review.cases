@@ -1,0 +1,8 @@
+# jig-review: the task's diff against knowledge, rules and conventions.
++ review this change before it ships
++ check this change against our conventions
++ is this ready to merge
++ review the diff of my task
+- does this fit the architecture
+- run the tests and check it works
+- review the proposals waiting for a decision

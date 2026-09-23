@@ -25,6 +25,29 @@ _doctor_tools_bin() {
   printf '%s\n' "$dir"
 }
 
+# _doctor_global_bin <source-root> — a directory to put first on PATH so that
+# `jig` resolves to <source-root>/scripts/jig, the way the installer places it
+# (design.md §1). The framework-version line compares the project's manifest
+# against whatever `jig` PATH selects, so a test that asserts on that line has
+# to supply the global side itself: on a machine with no global install — a CI
+# runner, a colleague who only cloned the project — the line reads
+# "global=unavailable" and the comparison never happens.
+#
+# Prints <bin-dir>, or <source-root>/scripts when `ln -s` makes no real link
+# (Windows Git Bash copies instead of linking, and jig_global_executable only
+# ever recognises a path ending in /scripts/jig — install.sh's own PATH
+# fallback exists for the same reason).
+_doctor_global_bin() {
+  local src="$1" bin
+  bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-globalbin.XXXXXX") || return 1
+  if ln -s "$src/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
+    printf '%s\n' "$bin"
+  else
+    rm -f "$bin/jig"
+    printf '%s\n' "$src/scripts"
+  fi
+}
+
 # --- basic shape ---------------------------------------------------------------
 
 test_doctor_rejects_arguments() {
@@ -39,7 +62,8 @@ test_doctor_help_lists_doctor() {
 }
 
 test_doctor_outside_repository_reports_global_checks_only() {
-  mkdir outside && cd outside || return 1
+  mkdir outside || return 1
+  cd outside || return 1
   run jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "git: "
@@ -65,7 +89,8 @@ test_doctor_uninitialised_repository_warns_project_not_initialised() {
 # rather than relying on that default staying true.
 
 test_doctor_git_identity_warns_when_unset() {
-  mkdir work && cd work || return 1
+  mkdir work || return 1
+  cd work || return 1
   run jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "warn  git identity: not set:"
@@ -75,7 +100,8 @@ test_doctor_git_identity_warns_when_unset() {
 }
 
 test_doctor_git_identity_ok_when_set() {
-  mkdir work && cd work || return 1
+  mkdir work || return 1
+  cd work || return 1
   git config --global user.name "Doctor Test"
   git config --global user.email "doctor@example.com"
   run jig doctor
@@ -87,7 +113,8 @@ test_doctor_git_identity_ok_when_set() {
 
 test_doctor_directory_links_symlink_ok_on_this_machine() {
   skip_unless_symlinks
-  mkdir work && cd work || return 1
+  mkdir work || return 1
+  cd work || return 1
   run jig doctor
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ok    directory links: symlink"
@@ -257,6 +284,92 @@ EOF
   rm -rf "$src"
 }
 
+# --- pending items and the framework version answer different questions ------
+#
+# The report used to print "framework version: … current" and "upgrade check:
+# 41 pending item(s)" side by side with nothing tying them together, which
+# reads as a contradiction. The line now says which question pending answers
+# and against which source — not which of the two moved, which doctor has not
+# measured: a source ahead of the install and a framework file edited here
+# both produce pending items.
+
+test_doctor_pending_at_the_same_version_names_the_source() {
+  fixture_repo
+  local src version recorded bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src3.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" >/dev/null
+
+  mkdir -p "$src/skills/jig-newthing"
+  cat > "$src/skills/jig-newthing/SKILL.md" <<'EOF'
+---
+name: jig-newthing
+description: fixture skill added to the source after init
+---
+# jig-newthing
+Run `/jig-newthing` to do the thing.
+EOF
+
+  # The version line has a global jig to compare the manifest against only
+  # when PATH offers one; the fixture source is that global here, so the two
+  # versions agree by construction rather than by what the machine happens to
+  # have installed.
+  bin=$(_doctor_global_bin "$src")
+  run env PATH="$bin:$PATH" .ai/scripts/jig doctor
+  assert_eq 0 "$RC"
+  # The versions still agree, and the line says so rather than leaving the
+  # reader to reconcile it with "current" above.
+  assert_contains "$OUT" "ok    framework version:"
+  assert_contains "$OUT" " current"
+  # The source as the manifest recorded it (manifest_source), not as mktemp
+  # spelled it: a TMPDIR with a trailing slash makes the two differ.
+  version=$(sed -n 's/^jig\.version: //p' .ai/manifest)
+  recorded=$(sed -n 's/^jig\.source: //p' .ai/manifest)
+  assert_contains "$OUT" "although the version is the same ($version): pending measures this install against its source, $recorded"
+  assert_contains "$OUT" "fix: jig upgrade"
+
+  rm -rf "$src" "$bin"
+}
+
+# The other half of the same rule: when the versions disagree, the version
+# line already carries the explanation and its hint, so the pending line adds
+# nothing and stays as it was.
+test_doctor_pending_at_a_different_version_stays_plain() {
+  fixture_repo
+  local src bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src4.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" >/dev/null
+
+  mkdir -p "$src/skills/jig-newthing"
+  cat > "$src/skills/jig-newthing/SKILL.md" <<'EOF'
+---
+name: jig-newthing
+description: fixture skill added to the source after init
+---
+# jig-newthing
+Run `/jig-newthing` to do the thing.
+EOF
+  # Only the recorded version moves: the install itself is untouched.
+  sed 's/^jig\.version: .*/jig.version: 0.0.1/' .ai/manifest > .ai/manifest.new
+  mv .ai/manifest.new .ai/manifest
+
+  # The mismatch is between the manifest and a global jig, so the test puts
+  # one on PATH itself: the fixture source, which still declares its own
+  # version.
+  bin=$(_doctor_global_bin "$src")
+  run env PATH="$bin:$PATH" .ai/scripts/jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  framework version: project=0.0.1"
+  assert_contains "$OUT" "mismatch"
+  assert_contains "$OUT" "warn  upgrade check:"
+  assert_not_contains "$OUT" "although the version is the same"
+
+  rm -rf "$src" "$bin"
+}
+
 # --- session hook (mirrors status.sh's _status_session_hook contract) --------
 
 test_doctor_session_hook_claude_not_installed_warns() {
@@ -306,6 +419,51 @@ test_doctor_config_local_warns_when_not_gitignored() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "warn  config.local: not ignored by git, can be committed"
   assert_contains "$OUT" "fix: jig init"
+}
+
+# --- agent.git (design.md, .ai/specs/autopilot/) ------------------------------
+
+test_doctor_agent_git_ok_with_default() {
+  fixture_jig_repo
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    agent.git: none"
+}
+
+test_doctor_agent_git_ok_shows_the_local_level() {
+  fixture_jig_repo
+  printf 'agent.git: push\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    agent.git: push"
+}
+
+test_doctor_agent_git_warns_when_set_in_project_config() {
+  fixture_jig_repo
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git: set in .ai/config.yaml, ignored there"
+  assert_contains "$OUT" "fix: move it to .ai/config.local.yaml"
+}
+
+test_doctor_agent_git_warns_on_invalid_value() {
+  fixture_jig_repo
+  printf 'agent.git: yolo\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git: invalid value: yolo (expected none|commit|push|pr|merge)"
+  assert_contains "$OUT" "fix: set agent.git to none, commit, push, pr or merge in .ai/config.local.yaml"
+}
+
+test_doctor_agent_git_reports_both_an_ignored_project_value_and_an_invalid_local_one() {
+  fixture_jig_repo
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+  printf 'agent.git: yolo\n' > .ai/config.local.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  agent.git: set in .ai/config.yaml, ignored there"
+  assert_contains "$OUT" "warn  agent.git: invalid value: yolo (expected none|commit|push|pr|merge)"
 }
 
 # --- final tally line -----------------------------------------------------------

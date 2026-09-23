@@ -124,9 +124,17 @@ comment repeats these rules.
   depends only on earlier waves.
 - No dates and no point estimates: order is the priority.
 - **Released once, at the end?** When no phase gives a user anything on its own, the spec gets
-  an epic branch (ADR-0040): write `Epic: epic/<id>` on its own line after `Destination:`. The
-  line reaches the default branch with the spec; then `jig spec epic <id>` cuts the branch and
-  the human pushes it. A spec whose phases each ship on their own gets no line — ask when unsure.
+  an epic branch (ADR-0040). Ask the human now how far the epic's final pull request raises the
+  version — `patch`, `minor` or `major`, by the project's own rule, with one sentence of reason —
+  while they are here to answer; then `jig spec epic <id> --release <level>` writes the `Epic:` and
+  `Release:` lines. A spec whose phases each ship on their own gets no line — ask when unsure.
+- **Shipping the declaration and the epic.** The line reaches the default branch with the spec:
+  stage `.ai/specs/<id>/` and run `jig spec ship <id> --message-file <file>`; once that is merged,
+  `jig spec epic <id>` cuts the branch and `jig spec ship <id>` pushes it. `spec ship` goes as far
+  as `agent.git` allows and says where it stopped; exit 3, or a stop, means the rest is the
+  human's — say what is left, never finish it with git by hand. The same `spec ship` pushes the
+  epic after the latest default branch was merged into it; resolve a conflict in that merge, then
+  show the resolution to the human before pushing.
 
 Look up the facts the cut depends on ("where does this live", "is this one part of the
 code") yourself, in parallel subagents where possible, each with its source. Decide the cut
@@ -184,10 +192,23 @@ item is checked later by `jig spec done`, called from consolidation — never by
   into the epic and run `jig spec epic <id> --finish` on it. It removes the spec — its decisions are
   knowledge by now — and first lists what knowledge does not hold: unchecked items, fog, open
   questions, untested assumptions. Ask the human about each: move it to another spec or a task, or
-  drop it; then run `--finish --leftovers-handled`. The removal is committed with the version bump,
-  and the human opens the pull request from the epic into the default branch. If review of that pull
-  request needs a fix, `jig spec epic <id> --reopen` on the epic brings the spec back from git; fix it
-  as an ordinary task, and finish again.
+  drop it; then run `--finish --leftovers-handled`. It prints the recorded `release:` level; raise
+  the version by it (propose one, and let the human confirm, when it says `not recorded`), stage the
+  removal with the bump and run `jig spec ship <id> --message-file <file>`: it commits, pushes the
+  epic and opens the pull request into the default branch as far as `agent.git` allows. Reviewing
+  and merging that pull request is the human's — the merge is the release — except in an
+  unattended run, below. If review needs a fix,
+  `jig spec epic <id> --reopen` on the epic brings the spec back from git; fix it as an ordinary
+  task, finish again and ship again: the open pull request is reported, not duplicated.
+
+- **Finishing an epic unattended** (`autopilot.unattended: true`, nobody to ask): finish only
+  when every roadmap item that is not `fog:` is checked — otherwise report "the epic is not
+  finished" and stop there. Drop fog, open questions and untested assumptions with
+  `--leftovers-handled`, and quote each one verbatim in the pull request body under
+  `## Dropped without you`. Raise the version by the recorded level, `minor` when none was
+  recorded. At `agent.git: merge`, `spec ship` merges with a merge commit once CI passed, and
+  opens a `major` release as a draft that needs a human instead; `not merged: <why>` leaves the
+  pull request open — say why.
 
 - **Starting a new project from a spec**: copy `.ai/specs/<id>/` into that project, which needs
   Jig 0.3.0 or later. From then on its own Jig tracks the spec; nothing links the two copies.

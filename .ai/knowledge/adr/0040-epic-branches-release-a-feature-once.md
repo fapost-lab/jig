@@ -15,7 +15,7 @@ paths:
   - .github/scripts/epic-pr-check.sh
   - schemas/spec.md
 summary: Why a feature released once lives on an epic branch, how a spec declares, cuts and finishes it, and why phase workspaces wait for the epic to reach main.
-reviewed_at: 2026-09-18
+reviewed_at: 2026-09-22
 ---
 # ADR-0040: A feature released once lives on an epic branch until it is finished
 
@@ -113,3 +113,14 @@ decisions answer. It stands on a base per task (ADR-0039).
 
 > **Amendment (2026-09-18).** The open question of parallel branches picking the same ADR number is
 > answered by adr-20260918-adr-names-are-dated: a new ADR is named by its day and slug, not by a number.
+
+> **Amendment (2026-09-22).** "Pushing is the human's step" and "the human opens the pull request into
+> `main`" now hold at `agent.git: none`: `jig spec ship` carries the declaration, the epic and the final
+> pull request as far as the clone's level allows, and a `Release:` line recorded at declaration says how
+> far the final pull request raises the version (adr-20260922-spec-work-ships-by-the-agent-git-level).
+> Merging the epic stays the human's.
+
+> **Amendment (2026-09-22).** A closed phase's workspace still waits for the epic to reach `main`; its
+> worktree does not. It is removed once the phase has landed on the epic, under the checks of ADR-0029
+> as amended the same day, because the records the epic's review reads are in the workspace, not in
+> the worktree.

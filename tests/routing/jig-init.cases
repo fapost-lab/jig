@@ -1,0 +1,10 @@
+# jig-init: bootstrapping or refreshing a project's durable knowledge.
++ init jig in this repository
++ set up project knowledge for this codebase
++ analyze the project and set up its knowledge
++ the knowledge directory is empty, bootstrap it
+- map the knowledge into domains
+- analyze why the import job fails on large files
+- consolidate what we learned in this task
+- set up Jig for me
++ set up Jig for this project

@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-22
 ---
 # Task
 
@@ -60,8 +60,8 @@ tasks. Rename a field here and `spec.sh` changes with it.
 (ADR-0030). `knowledge_consolidated: true` is written at the end of every route, before the
 commit; `status: consolidated` closes the task after its change has landed, prompted by
 housekeeping's `needs-consolidation`. `task set` refuses the status while the flag is not
-`true`, and refuses `false` on a closed task. This is the only cross-key rule in
-`task_set`: every other key is validated on its own value alone.
+`true`, and refuses `false` on a closed task. Apart from the findings gates below, this is the
+only cross-key rule in `task_set`: every other key is validated on its own value alone.
 
 One consequence lands squarely on this domain, and ADR-0026 is the answer to it.
 Housekeeping can only establish that work landed when the task had a branch of its own: a
@@ -100,8 +100,78 @@ wrong from inside this domain's code:
   Nothing may delete or move a workspace through that link. `task artifacts`, which
   refuses links, accepts exactly this one.
 - Which worktree a task is in is *derived* from `git worktree list` on every call, never
-  stored. `task list` and `jig status` print it with the count of uncommitted files there,
-  because agents do not commit and that count is the human's review queue.
+  stored. `task list` and `jig status` print it with the count of uncommitted files there:
+  at `agent.git: none` that count is the human's review queue; at a higher level it is still a
+  fact worth showing, and the queue is what `jig status`'s `agent.git:` line names.
 - A task in a worktree is not `task current` in the filing checkout: its branch is checked
   out elsewhere, and ADR-0008's branch match is what decides.
+
+**`task ship` is the one command here that commits, pushes or opens a pull request**
+(adr-20260921-agent-git-rights-are-a-local-setting). It reads three things other parts of this
+domain own — `knowledge_consolidated`, `branch` and the task base through `jig_task_base` — and
+refuses on each before it touches git, so a renamed field turns into a refusal, not a commit on
+the wrong branch. How far it goes is `agent.git`, a local-only key of the config layer; the git
+steps themselves — commit, push, pull request — are `jig_ship_*` in `common.sh`, shared with
+`jig spec ship` (adr-20260922-spec-work-ships-by-the-agent-git-level), and the forge they open the
+pull request on is resolved by `jig_forge_kind`, the same answer housekeeping reads PR state from.
+At `merge` it also merges, through `jig_ship_merge`, after asking `_task_blocking_findings` and
+`_task_receipt_gate_message` once more; `--draft` opens a draft that is never merged, and is the one
+ship those completion gates and `knowledge_consolidated` do not refuse — it is how an unattended run
+whose repairs ran out shows where it stopped
+(adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+
+**The findings ledger is this domain's, and it adds two cross-key rules to `task set`**
+(adr-20260921-review-findings-block-completion). `status ready` and `knowledge_consolidated true`
+refuse while `_task_blocking_findings` answers — a P0 or P1 in `open` or `fixed` — and `task ship`
+asks the same function again, since a fix after consolidation can add a finding. That function is
+the single definition of "blocking": `jig status` prints its count as `blocking=<n>` by calling it,
+never by reading the file. The ledger records claims (ADR-0020): the script cannot tell a reviewer
+from the author, so who may close or dismiss a finding is a rule of the skills
+(`skills/jig-review/references/findings.md`), not of this code.
+
+**The status page shows this domain's answers verbatim, and this domain keeps it current**
+(adr-20260922-the-status-page-stays-current-without-a-server). The page lists each live task with the
+lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`, `stale (…)`,
+`none`, `none (required for T4)`), `_task_worktree_note` and the task base; an autopilot run as
+`_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time,
+and the run's phase — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
+(`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
+gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
+awk pass (`_status_task_rows`), so a renamed key empties a column there too.
+
+Every writer here — `_task_rewrite_state`, `_task_rewrite_state_remove`, `task new`'s state, the
+autopilot journal, the findings ledger, the receipt — calls `jig_status_page_dirty`, and `cmd_task`
+redraws the page once at its end. An exit that skips that end after a write must flush first:
+`jig_die` does, and so does the third repair's `return 3`. A new writer that does not mark, or a new
+early exit that does not flush, leaves the page a command behind.
+
+Keys record facts only this domain's commands know, all refused by `task set`: `gate`,
+`gate_design` and `gate_by`, written by `jig task gate <id> approved` — the approval of a T3/T4 design
+as data, pinned by the same hash a review receipt uses, so a design changed after approval is visible,
+and who gave it: `human`, or `agent` in an unattended run, where `--by agent` is refused unless the
+run's `autopilot_mode` (recorded by `autopilot start`) is `unattended` — and `pr_url`, written by
+`task ship` when it opened or found a pull request. `pr_url` is what ship
+did, not a merge state: ADR-0005 still holds, and housekeeping still derives whether it merged.
+
+**The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
+After the findings check, each gate asks one staleness function whether the working tree, the
+approved design or the ledger moved since the receipt, and a T4 task must have one. The tree is
+content, built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
+`.ai/specs/` because consolidation writes them after review. A new path that consolidation starts
+writing must join that exclusion, or every task will read as unreviewed at its last step.
+
+**An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
+`jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode` and
+`autopilot_phase`, which `task set` refuses like every other script-owned key, and a journal file in
+the workspace. The only rule it enforces is the repair limit — two per run, a third refused with
+exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A run changes none of
+the completion gates: a task on autopilot meets the same findings and receipt checks as any other.
+
+`autopilot_phase: <spec-id>/<n>`, written by `start --phase`, says this run is one task of a phase
+run (adr-20260922-a-phase-run-is-coordinated): a coordinator started it and will ship it. This
+domain only records the fact; two readers act on it. `spec done` refuses in the task's own branch,
+so an agent cannot check its own roadmap item. And the status page turns the stopped-run card into
+one card per phase that sends the person to the coordinator's session instead of the task's — the
+same "one message for the wave" the coordinator gives in chat. The key is never cleared: it is what
+the run was.
 

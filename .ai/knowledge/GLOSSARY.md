@@ -54,8 +54,9 @@ artifacts and `state`. Informal synonyms: task dir, scratch.
 
 A git worktree created by `jig task start --worktree`, beside the repository under
 `git.worktree_root`, with the task's branch checked out. It borrows the task's Workspace
-through a Directory Link and owns none; Housekeeping removes it through git when it purges that
-Workspace (ADR-0029). Informal synonyms: agent tree, sandbox.
+through a Directory Link and owns none; Housekeeping removes it through git once the task is closed
+and its branch landed on its own base, or when it purges that Workspace, whichever comes first
+(ADR-0029 as amended). Informal synonyms: agent tree, sandbox.
 
 ## Directory Link
 
@@ -199,4 +200,41 @@ Risk/complexity class `T0`–`T4` assigned by the Agent that selects the workflo
 
 ## Human Gate
 
-A stage where the workflow stops until a human approves (T3, T4).
+A stage where the workflow stops until a human approves (T3, T4). The decision is written
+in `task.md`, and an approval is also recorded with `jig task gate <id> approved`, which
+pins the approved design. In an unattended autopilot run it does not stop: the agent approves
+its own design with `--by agent`, and the pull request says so
+(adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+
+## Unattended Run
+
+An autopilot run in a clone with `autopilot.unattended: true`: it asks nothing, takes a recorded
+safe default at each stop and, at `agent.git: merge`, ends merged once CI passed. Its mode is
+fixed when the run starts. Informal synonyms: without stops, hands-off run.
+
+## Phase Run
+
+An autopilot run over a whole phase of a Specification's roadmap, wave by wave, instead of one
+task. Each task of a wave is built by its own Agent in its own Task Worktree; how many at once is
+`autopilot.parallel`. A task started as part of one records `autopilot_phase: <spec-id>/<n>` in its
+State, which is what makes `jig spec done` refuse in its branch and the Status Page send the
+person to the Coordinator. It needs `agent.git` at `pr` or better and an Epic Branch
+(adr-20260922-a-phase-run-is-coordinated). Informal synonyms: wave run, running a phase.
+
+## Coordinator
+
+The session that runs a Phase Run, in the checkout of the Epic Branch. It writes no code: it files
+each wave's tasks in one unpushed commit on the epic, starts an Agent per task, ships every task
+with `jig task ship`, keeps the merge queue and checks the roadmap items after each merge. Its
+session is where a stopped task of the phase is answered
+(adr-20260922-a-phase-run-is-coordinated). Informal synonyms: the coordinating session, the
+orchestrator.
+
+## Status Page
+
+`.ai/runtime/status.html`: one self-contained page written by `jig status --html` or
+`--open` that answers what needs the reader, what is running and how far the specifications
+are. Once it exists, the commands that change a task, a spec or a housekeeping result redraw
+it, and it reloads itself; one per clone, in the main checkout
+(adr-20260922-the-status-page-stays-current-without-a-server). Informal synonyms: dashboard,
+status view.

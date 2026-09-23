@@ -52,7 +52,7 @@ _measure_num() {
   n=$(printf '%s\n' "$1" \
     | sed -n "s/^$2//p" \
     | tr -cs '0-9' ' ' \
-    | awk -v i="$3" '{ print $i + 0; exit }')
+    | awk -v i="$3" 'NR == 1 { print $i + 0 }')
   [ -n "$n" ] || n=0
   printf '%s\n' "$n"
 }
@@ -69,7 +69,7 @@ _measure_median() {
   fi
   awk -v c="$col" '{ print $c }' "$f" \
     | sort -n \
-    | awk -v n="$n" 'NR == int((n + 1) / 2) { print; exit }'
+    | awk -v n="$n" 'NR == int((n + 1) / 2) { print }'
 }
 
 # _measure_floor_days <seconds> — whole days, rounded towards minus infinity.

@@ -35,7 +35,14 @@ A helper that two commands must never disagree about lives in `lib/common.sh` in
 ("is this document a stub for an existing file") and `jig_knowledge_read_path` ("which file does an agent
 read for it"), `jig_valid_id` ("which name may become a
 task or spec directory" — a roadmap names task ids, so the two grammars may not drift), `jig_trash_dest` ("where does this go in trash" — housekeeping and
-`jig spec remove` both put things there). One command library never sources another: `context`
+`jig spec remove` both put things there), `jig_status_page_touch` with `jig_status_page_dirty` and
+`jig_status_page_flush` ("redraw the status page" — task, spec and housekeeping all trigger it, and
+none of them may source `status.sh`, so the redraw is a `jig status --refresh` process),
+`jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push`, `jig_ship_pr` and `jig_ship_merge` ("carry a
+change as far as `agent.git` allows" — `task ship` and `spec ship` take the same git steps and keep their
+own gates; adr-20260922-spec-work-ships-by-the-agent-git-level, and for the merge
+adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci). One command
+library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 
 When a command needs another domain to *act* — not to answer — it runs that command through the
@@ -50,7 +57,12 @@ their entry points — `status` sources six (`spec` for its `specs:` count), `me
 sources `task` and `knowledge`. What they may not do is *recompute* the answer: a second implementation of "how many documents
 are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
 is invisible until someone reads both. A reporting command therefore consumes a peer's
-output, never reimplements it, and never writes anything. Setup a peer needs before its
+output, never reimplements it, and never writes anything — with one exception: `status` writes the
+status page, `.ai/runtime/status.html`, and the slow counts its redraws reuse,
+`.ai/runtime/status-counts`, and nothing else
+(adr-20260922-the-status-page-stays-current-without-a-server). Where a peer only printed formatted
+text, it gains an unformatted producer the report calls (`spec_list_rows`, `spec_phase_rows`,
+`_task_autopilot_facts`), rather than the report parsing its columns. Setup a peer needs before its
 functions work is exposed as a function of that peer (`km_init`) rather than transcribed —
 a copied prologue silently misses the step the original later gains.
 
@@ -142,7 +154,8 @@ touches the rest (ADR-0011).
 A third owner sits outside the split: `.ai/config.local.yaml` belongs to the person whose
 clone it is. It is gitignored, created by nobody but them, and never touched by `init` or
 `upgrade`; `cfg` reads it before `.ai/config.yaml`, for a fixed list of keys only
-(ADR-0038).
+(ADR-0038). A few of those keys are local-only — `agent.git` — and `cfg` never reads them from
+`.ai/config.yaml` at all (adr-20260921-agent-git-rights-are-a-local-setting).
 
 `copy` (default): framework files are copied into the project and hashed in
 `.ai/manifest`. `link` (developing the framework itself): `.ai/scripts`, profiles,

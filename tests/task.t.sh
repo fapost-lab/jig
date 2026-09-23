@@ -1859,6 +1859,63 @@ test_task_start_worktree_branches_from_the_base_not_head() {
   assert_eq "$(git rev-parse main)" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-1/state)"
 }
 
+# A phase run files a whole wave in one commit on the *local* epic and does
+# not push it: `jig_fresh_base_ref` takes the fresher of the local branch and
+# origin's, so every branch the wave cuts afterwards carries that same commit,
+# by the same SHA, and no two of them rewrite neighbouring roadmap lines
+# (adr-20260922-a-phase-run-is-coordinated).
+test_task_start_worktree_carries_an_unpushed_epic_commit_into_every_branch() {
+  task_setup_nested
+  git add -A
+  git commit -q -m "jig init snapshot"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+
+  mkdir -p .ai/specs/alpha
+  cat > .ai/specs/alpha/roadmap.md <<'RM'
+# alpha
+Epic: epic/alpha
+RM
+  git add -A
+  git commit -q -m "declare the epic"
+  git push -q origin main
+  git checkout -q -b epic/alpha
+  git push -q origin epic/alpha
+  git fetch -q origin
+
+  # The coordinator files the wave: both tags in one commit, left unpushed.
+  cat >> .ai/specs/alpha/roadmap.md <<'RM'
+
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+RM
+  local t tags
+  for t in T-a T-b; do
+    jig task new "$t" >/dev/null
+    printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> ".ai/workspace/tasks/$t/task.md"
+  done
+  git add .ai/specs/alpha/roadmap.md
+  git commit -q -m "file wave 1"
+  tags=$(git rev-parse HEAD)
+  ! git merge-base --is-ancestor "$tags" origin/epic/alpha \
+    || fail "the wave commit was expected to be local only, not pushed"
+
+  local wt_a wt_b
+  wt_a=$(jig task start T-a --worktree 2>/dev/null)
+  wt_b=$(jig task start T-b --worktree 2>/dev/null)
+  assert_eq "$tags" "$(git -C "$wt_a" rev-parse HEAD)"
+  assert_eq "$tags" "$(git -C "$wt_b" rev-parse HEAD)"
+  assert_eq "$tags" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-a/state)"
+  assert_eq "$tags" "$(sed -n 's/^base_commit: //p' .ai/workspace/tasks/T-b/state)"
+  # Both see the wave's tags, so `jig spec plan` knows the tasks from the
+  # first minute rather than after the first merge.
+  grep -q "\`T-b\`" "$wt_a/.ai/specs/alpha/roadmap.md" || fail "T-a's worktree is missing the wave's tags"
+  grep -q "\`T-a\`" "$wt_b/.ai/specs/alpha/roadmap.md" || fail "T-b's worktree is missing the wave's tags"
+}
+
 test_task_start_worktree_honours_the_configured_root() {
   task_setup_nested
   printf 'git.worktree_root: ../elsewhere\n' >> .ai/config.yaml
@@ -2064,3 +2121,2408 @@ test_task_pause_stash_refuses_a_task_checked_out_elsewhere() {
   fi
 }
 
+# --- ship (agent git rights: design.md, .ai/specs/autopilot/) ----------------
+
+# ship_cfg_local <key> <value> — set a key in .ai/config.local.yaml
+# (ADR-0038); creates the file, or appends the key when it is not there yet.
+# Mirrors housekeeping.t.sh's hk_cfg_local; duplicated because each test file
+# sources only itself.
+ship_cfg_local() {
+  local file=".ai/config.local.yaml"
+  touch "$file"
+  if grep -q "^$1:" "$file"; then
+    sed "s|^$1:.*|$1: $2|" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  else
+    printf '%s: %s\n' "$1" "$2" >> "$file"
+  fi
+}
+
+# ship_cfg <key> <value> — rewrite one line of the project's config.yaml.
+# Mirrors housekeeping.t.sh's hk_cfg.
+ship_cfg() {
+  sed "s|^$1:.*|$1: $2|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+}
+
+# ship_setup — a clean repository with a bare `origin`, task T-1 filed and
+# started on its own branch, and a commit message ready in msg.txt.
+# `agent.git` is left unset (default `none`) and `knowledge_consolidated`
+# left `false`; each test sets what it needs.
+ship_setup() {
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+}
+
+# ship_stage_change — one file, staged, belonging to the task.
+ship_stage_change() {
+  printf 'ship change\n' > ship.txt
+  git add ship.txt
+}
+
+# ship_stub_gh <existing-url-or-empty> — a fake `gh` for `task ship`'s pr
+# step. `gh auth status` succeeds; `gh pr list ...` prints <existing-url>
+# verbatim when given (standing in for the real `--jq` filter's answer) or
+# `null` for none (jq's own answer for an empty array); `gh pr create ...`
+# records its own arguments, one per line, to gh-create.argv and prints a
+# made-up URL.
+ship_stub_gh() {
+  local existing="${1:-}"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  pr)
+    shift
+    case "\$1" in
+      list)
+        if [ -n "$existing" ]; then
+          printf '%s\n' "$existing"
+        else
+          printf 'null\n'
+        fi
+        ;;
+      create)
+        shift
+        printf '%s\n' "\$@" > gh-create.argv
+        printf 'https://github.com/example/example/pull/99\n'
+        ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# ship_stub_glab <existing-url-or-empty> — a fake `glab` for `task ship`'s pr
+# step. `glab auth status` succeeds; `glab mr list ...` prints a compact
+# one-line JSON array with one object whose `web_url` is <existing-url>,
+# preceded by a nested object field (`assignee`) to prove the parser matches
+# `web_url` itself rather than splitting naively on braces or commas, or `[]`
+# for none, `glab`'s own answer for an empty list; `glab mr create ...`
+# records its own arguments, one per line, to glab-create.argv and prints a
+# made-up URL on its last line, the way real `glab` output trails one.
+ship_stub_glab() {
+  local existing="${1:-}"
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  mr)
+    shift
+    case "\$1" in
+      list)
+        if [ -n "$existing" ]; then
+          printf '[{"iid":7,"assignee":{"id":3,"username":"joe"},"web_url":"%s","title":"x"}]\n' "$existing"
+        else
+          printf '[]\n'
+        fi
+        ;;
+      create)
+        shift
+        printf '%s\n' "\$@" > glab-create.argv
+        printf 'Creating merge request for task/T-1 into main in example/example\nhttps://gitlab.example/example/example/-/merge_requests/99\n'
+        ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# ship_stub_glab_mr_create_fails — a fake `glab` whose `mr create` fails, for
+# task ship's error-handling test. `auth status` succeeds and `mr list`
+# reports no MR open yet, so the failing `create` is actually reached.
+ship_stub_glab_mr_create_fails() {
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  auth) exit 0 ;;
+  mr)
+    shift
+    case "$1" in
+      list) printf '[]\n' ;;
+      create) printf 'error: not authorized\n' >&2; exit 1 ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+test_task_ship_none_level_exits_3_and_changes_nothing() {
+  ship_setup
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task ship: agent.git is none in this clone; the human commits"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+
+test_task_ship_requires_knowledge_consolidated() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires knowledge_consolidated true"
+  assert_contains "$OUT" "jig task set T-1 knowledge_consolidated true"
+}
+
+test_task_ship_wrong_branch_refuses() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  git checkout -q main
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "current branch is main, but T-1 is on task/T-1"
+}
+
+test_task_ship_on_base_branch_refuses() {
+  task_setup_clean
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  _task_share_one_branch
+  git add -A
+  git commit -q -m "branch_per_task off"
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_cfg_local agent.git commit
+  printf 'msg\n' > msg.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is its own base"
+}
+
+test_task_ship_staged_workspace_path_refuses() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  local head_before
+  head_before=$(git rev-parse HEAD)
+  printf 'oops\n' > .ai/workspace/tasks/T-1/scratch.md
+  # -f: .ai/workspace is gitignored (transient state); this reproduces the
+  # one way such a path could still end up staged.
+  git add -f .ai/workspace/tasks/T-1/scratch.md
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "staged changes under .ai/workspace/ or .ai/runtime/ are not shippable"
+  assert_contains "$OUT" ".ai/workspace/tasks/T-1/scratch.md"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_ship_commit_level_commits_only_staged_and_does_not_push() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  # An untracked file that is not part of this task's staged change: `git
+  # commit -F` without `-a` must leave it alone.
+  printf 'not staged\n' > untouched.txt
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "stopped at commit: push is the human's"
+  assert_not_contains "$OUT" "pushed "
+  assert_eq "" "$(git status --porcelain -- ship.txt)"
+  assert_contains "$(git status --porcelain -- untouched.txt)" "?? untouched.txt"
+  assert_eq "" "$(git ls-remote origin task/T-1)"
+}
+
+test_task_ship_empty_index_prints_nothing_staged_no_commit() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "nothing staged; no commit"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_ship_push_level_pushes_and_stops() {
+  ship_setup
+  ship_cfg_local agent.git push
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: the pull request is the human's"
+  assert_contains "$(git ls-remote origin task/T-1)" "refs/heads/task/T-1"
+}
+
+test_task_ship_pr_level_creates_pr_into_base_branch() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_file gh-create.argv
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')" "pull request must target the task's own base"
+  assert_contains "$argv" "$(printf -- '--head\ntask/T-1')"
+  assert_contains "$argv" "$(printf -- '--title\nShip T-1')"
+}
+
+test_task_ship_pr_level_does_not_duplicate_an_existing_open_pr() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh "https://github.com/example/example/pull/7"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/7 (already open)"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_pr_level_creates_mr_with_gitlab() {
+  ship_setup
+  ship_cfg forge gitlab
+  ship_stub_glab ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "pr https://gitlab.example/example/example/-/merge_requests/99"
+  assert_file glab-create.argv
+  local argv
+  argv=$(cat glab-create.argv)
+  assert_contains "$argv" "$(printf -- '--target-branch\nmain')" "merge request must target the task's own base"
+  assert_contains "$argv" "$(printf -- '--source-branch\ntask/T-1')"
+  assert_contains "$argv" "$(printf -- '--title\nShip T-1')"
+}
+
+test_task_ship_pr_level_does_not_duplicate_an_existing_open_mr() {
+  ship_setup
+  ship_cfg forge gitlab
+  ship_stub_glab "https://gitlab.example/x/-/merge_requests/7"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://gitlab.example/x/-/merge_requests/7 (already open)"
+  assert_no_file glab-create.argv
+}
+
+test_task_ship_pr_level_gitlab_mr_create_failure_dies() {
+  ship_setup
+  ship_cfg forge gitlab
+  ship_stub_glab_mr_create_fails
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "glab mr create failed"
+}
+
+test_task_ship_pr_level_with_no_forge_stops_with_message() {
+  ship_setup
+  ship_cfg forge none
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no forge available; the pull request is the human's"
+  assert_not_contains "$OUT" "pr https"
+}
+
+test_task_ship_invalid_agent_git_level_dies() {
+  ship_setup
+  ship_cfg_local agent.git yolo
+  jig task set T-1 knowledge_consolidated true >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid agent.git: yolo (expected none|commit|push|pr|merge)"
+}
+
+test_task_ship_message_file_required() {
+  ship_setup
+  run jig task ship T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--message-file is required"
+}
+
+test_task_ship_message_file_missing_dies() {
+  ship_setup
+  run jig task ship T-1 --message-file nope.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--message-file: no such file: nope.txt"
+}
+
+test_task_ship_unknown_task_dies() {
+  task_setup
+  printf 'msg\n' > msg.txt
+  run jig task ship NOPE --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+# --- ship at agent.git: merge (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
+
+# mship_stub_gh — a fake, authenticated `gh` that can merge. Every call is
+# logged, one per line, to gh.log; its answers come from files in the test
+# directory, so each test sets only what differs:
+#   gh-checks    the pull request's check buckets, one per line (default: pass)
+#   gh-draft     `true`|`false` for `pr view` (default: false)
+#   gh-head      the head `pr view` reports (default: HEAD of this repository)
+#   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
+#   gh-merge.rc  the exit code of `pr merge` (default: 0)
+# `pr create` and `pr merge` record their arguments in gh-create.argv and
+# gh-merge.argv.
+mship_stub_gh() {
+  local dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/gh.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create") shift 2; printf '%s\n' "\$@" > "\$d/gh-create.argv"; printf 'https://github.com/example/example/pull/99\n' ;;
+  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git -C "\$d" rev-parse HEAD)")" ;;
+  "repo view") val gh-repo "true true true" ;;
+  "pr checks") val gh-checks pass ;;
+  "pr merge")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-merge.argv"
+    rc=\$(val gh-merge.rc 0)
+    [ "\$rc" -eq 0 ] || printf 'GraphQL: Base branch policy prohibits the merge\n' >&2
+    exit "\$rc" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# mship_stub_glab — the same for `glab`, logged to glab.log:
+#   glab-pipeline  the head pipeline's status, or `null` for none (default: success)
+#   glab-psha      the head pipeline's commit (default: HEAD of this repository)
+#   glab-draft     `true`|`false` (default: false)
+#   glab-project   merge_method and squash_option (default: merge default_off)
+#   glab-merge.rc  the exit code of `mr merge` (default: 0)
+mship_stub_glab() {
+  local dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/glab.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
+head=\$(git -C "\$d" rev-parse HEAD)
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "mr list") printf '[]\n' ;;
+  "mr create") shift 2; printf '%s\n' "\$@" > "\$d/glab-create.argv"; printf 'https://gitlab.example/example/example/-/merge_requests/99\n' ;;
+  "mr view")
+    p=\$(val glab-pipeline success)
+    if [ "\$p" = null ]; then pipe=null; else
+      pipe="{\"id\":5,\"sha\":\"\$(val glab-psha "\$head")\",\"status\":\"\$p\",\"user\":{\"id\":1,\"state\":\"active\"}}"
+    fi
+    printf '{"iid":99,"state":"opened","draft":%s,"sha":"%s","head_pipeline":%s}\n' "\$(val glab-draft false)" "\$head" "\$pipe" ;;
+  "api projects/:id")
+    read -r mm so <<EOF
+\$(val glab-project "merge default_off")
+EOF
+    printf '{"id":1,"namespace":{"id":2,"kind":"group"},"merge_method":"%s","squash_option":"%s"}\n' "\$mm" "\$so" ;;
+  "mr merge")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/glab-merge.argv"
+    rc=\$(val glab-merge.rc 0)
+    [ "\$rc" -eq 0 ] || printf 'ERROR: 405 Method Not Allowed\n' >&2
+    exit "\$rc" ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# mship_setup <github|gitlab> — ship_setup at agent.git: merge with the forge
+# stubbed, the knowledge decision recorded and a change staged. CI is given
+# no time to wait (agent.ci_timeout 0): each test settles on the first look.
+mship_setup() {
+  ship_setup
+  ship_cfg forge "$1"
+  if [ "$1" = github ]; then mship_stub_gh; else mship_stub_glab; fi
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+# assert_no_override <log> — nothing in <log> asked the forge to override its
+# rules or to merge later.
+assert_no_override() {
+  assert_not_contains "$(cat "$1")" "--admin"
+  assert_not_contains "$(cat "$1")" "--auto "
+  assert_not_contains "$(cat "$1")" "--auto-merge=true"
+}
+
+test_task_ship_merge_level_merges_on_green_checks_at_the_shipped_commit() {
+  mship_setup github
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  local argv
+  argv=$(cat gh-merge.argv)
+  assert_contains "$argv" "https://github.com/example/example/pull/99"
+  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "--merge"
+  assert_no_override gh.log
+}
+
+test_task_ship_merge_level_takes_squash_when_merge_commits_are_not_allowed() {
+  mship_setup github
+  printf 'false true true\n' > gh-repo
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged "
+  assert_contains "$(cat gh-merge.argv)" "--squash"
+  assert_not_contains "$(cat gh-merge.argv)" "--merge"
+}
+
+test_task_ship_merge_level_does_not_merge_without_any_check() {
+  mship_setup github
+  : > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: CI checked nothing"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_when_only_skipped_checks_ran() {
+  mship_setup github
+  printf 'skipping\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: CI checked nothing"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_on_a_red_check() {
+  mship_setup github
+  printf 'pass\nfail\npending\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_when_checks_outlast_the_timeout() {
+  mship_setup github
+  printf 'pass\npending\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the checks did not finish within 0 minutes (agent.ci_timeout)"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_forge_refusal_leaves_the_pr_open_and_exits_0() {
+  mship_setup github
+  printf '1\n' > gh-merge.rc
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the forge refused: GraphQL: Base branch policy prohibits the merge"
+  assert_file gh-merge.argv
+  assert_no_override gh.log
+}
+
+test_task_ship_merge_level_does_not_merge_a_draft() {
+  mship_setup github
+  printf 'true\n' > gh-draft
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_does_not_merge_a_pr_at_another_commit() {
+  mship_setup github
+  printf '0123456789abcdef0123456789abcdef01234567\n' > gh-head
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the pull request is at 0123456789abcdef0123456789abcdef01234567"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_draft_opens_a_draft_and_never_merges() {
+  mship_setup github
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+# Repairs ran out: the finding that stopped the run is still open and no
+# knowledge decision was made. A draft is still shipped, and never merged.
+test_task_ship_draft_ships_an_unfinished_task_with_its_blocking_finding() {
+  ship_setup
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  ship_stage_change
+  jig task finding add T-1 --severity P1 --where - --summary "still broken" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_draft_at_pr_level_opens_a_draft() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_not_contains "$OUT" "merged"
+}
+
+test_task_ship_pr_level_never_merges() {
+  mship_setup github
+  ship_cfg_local agent.git pr
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "merged"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_refuses_with_a_blocking_finding_and_merges_nothing() {
+  mship_setup github
+  jig task finding add T-1 --severity P1 --where - --summary "broken" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "blocking finding"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_refuses_with_a_stale_receipt_and_merges_nothing() {
+  mship_setup github
+  jig task receipt T-1 --stage review >/dev/null
+  printf 'changed after review\n' >> ship.txt
+  git add ship.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_with_no_forge_leaves_the_merge_to_the_human() {
+  ship_setup
+  ship_cfg forge none
+  ship_cfg_local agent.git merge
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no forge available; the pull request is the human's"
+  assert_contains "$OUT" "not merged: no forge available; the merge is the human's"
+}
+
+test_task_ship_merge_level_invalid_ci_timeout_dies() {
+  mship_setup github
+  ship_cfg_local agent.ci_timeout soon
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid agent.ci_timeout: soon (expected whole minutes)"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_merge_level_ignores_the_project_ci_timeout() {
+  mship_setup github
+  sed '/^agent.ci_timeout:/d' .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+  printf 'agent.ci_timeout: soon\n' >> .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+test_task_ship_merge_level_ignores_agent_git_merge_in_the_project_config() {
+  ship_setup
+  printf 'agent.git: merge\n' >> .ai/config.yaml
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC"
+}
+
+test_task_ship_merge_level_gitlab_merges_on_a_green_pipeline() {
+  mship_setup gitlab
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://gitlab.example/example/example/-/merge_requests/99"
+  local argv
+  argv=$(cat glab-merge.argv)
+  assert_contains "$argv" "$(printf '99\n--sha\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "--yes"
+  assert_contains "$argv" "--auto-merge=false"
+  assert_not_contains "$argv" "--squash"
+  assert_no_override glab.log
+}
+
+test_task_ship_merge_level_gitlab_squashes_where_the_project_squashes() {
+  mship_setup gitlab
+  printf 'merge always\n' > glab-project
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$(cat glab-merge.argv)" "--squash"
+}
+
+test_task_ship_merge_level_gitlab_does_not_merge_on_a_failed_pipeline() {
+  mship_setup gitlab
+  printf 'failed\n' > glab-pipeline
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_does_not_merge_without_a_pipeline() {
+  mship_setup gitlab
+  printf 'null\n' > glab-pipeline
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: CI checked nothing"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_waits_on_a_pipeline_for_an_older_commit() {
+  mship_setup gitlab
+  printf '0123456789abcdef0123456789abcdef01234567\n' > glab-psha
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the checks did not finish within 0 minutes"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_does_not_merge_a_draft() {
+  mship_setup gitlab
+  printf 'true\n' > glab-draft
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the merge request is a draft"
+  assert_no_file glab-merge.argv
+}
+
+test_task_ship_merge_level_gitlab_refusal_leaves_the_mr_open() {
+  mship_setup gitlab
+  printf '1\n' > glab-merge.rc
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the forge refused: ERROR: 405 Method Not Allowed"
+}
+
+test_task_ship_draft_with_gitlab_opens_a_draft_mr() {
+  mship_setup gitlab
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$(cat glab-create.argv)" "--draft"
+  assert_no_file glab-merge.argv
+}
+
+# --- findings ledger (design.md, findings-ledger) ------------------------------
+
+test_task_finding_add_assigns_ids_in_order() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:10 --summary "first"
+  assert_eq 0 "$RC"
+  assert_eq "F1" "$OUT"
+  run jig task finding add T-1 --severity P2 --where - --summary "second"
+  assert_eq 0 "$RC"
+  assert_eq "F2" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf 'F1\tP1\topen')"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf 'F2\tP2\topen')"
+}
+
+test_task_finding_add_invalid_severity_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P9 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid severity: P9"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_empty_summary_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where - --summary ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--summary must not be empty"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_tab_in_summary_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where - --summary "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--summary must be a single line with no tab"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_tab_in_where_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --severity P1 --where "$(printf 'a\tb')" --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--where must be a single line with no tab"
+  assert_no_file .ai/workspace/tasks/T-1/findings
+}
+
+test_task_finding_add_missing_flags_die() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding add T-1 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--severity is required"
+  run jig task finding add T-1 --severity P1 --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--where is required"
+  run jig task finding add T-1 --severity P1 --where -
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--summary is required"
+}
+
+test_task_finding_add_unknown_task_dies() {
+  task_setup
+  run jig task finding add NOPE --severity P1 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+# Validation runs before the ledger file is touched (conventions/shell.md,
+# atomic writes): a refused call leaves an existing ledger byte-identical.
+test_task_finding_add_failed_validation_leaves_file_unchanged() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where - --summary "first" >/dev/null
+  local before
+  before=$(cat .ai/workspace/tasks/T-1/findings)
+  run jig task finding add T-1 --severity P9 --where - --summary "x"
+  assert_eq 1 "$RC"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/T-1/findings)"
+  if ls .ai/workspace/tasks/T-1/findings.tmp.* >/dev/null 2>&1; then
+    fail "a failed validation left a tmp file behind"
+  fi
+}
+
+test_task_finding_set_dismissed_without_reason_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 dismissed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "dismissed requires --reason"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf '\topen\t')"
+}
+
+test_task_finding_set_dismissed_records_reason() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 dismissed --reason "not a real bug"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf 'dismissed\t-\tx')"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "not a real bug"
+}
+
+test_task_finding_set_dismissed_keeps_a_backslash_in_the_reason_literal() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 dismissed --reason 'path C:\temp\new is fine'
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(wc -l < .ai/workspace/tasks/T-1/findings | tr -d ' ')"
+  assert_eq 7 "$(awk -F '\t' '{ print NF }' .ai/workspace/tasks/T-1/findings)"
+  assert_eq 'path C:\temp\new is fine' "$(awk -F '\t' '{ print $7 }' .ai/workspace/tasks/T-1/findings)"
+}
+
+test_task_finding_set_reason_on_non_dismissed_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 fixed --reason "irrelevant"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is only valid with dismissed"
+}
+
+test_task_finding_set_invalid_status_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F1 nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid status: nope"
+}
+
+test_task_finding_set_unknown_finding_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task finding set T-1 F9 closed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown finding: F9"
+}
+
+test_task_finding_set_no_ledger_dies() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task finding set T-1 F1 closed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no findings recorded for task: T-1"
+}
+
+test_task_finding_set_closed_only_reopens() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 closed >/dev/null
+  run jig task finding set T-1 F1 fixed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "F1 is closed; only \`open\` follows it"
+  run jig task finding set T-1 F1 open
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/findings "$(printf '\topen\t')"
+}
+
+test_task_finding_set_dismissed_only_reopens_and_clears_reason() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 dismissed --reason "not applicable" >/dev/null
+  run jig task finding set T-1 F1 closed
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "F1 is dismissed; only \`open\` follows it"
+  run jig task finding set T-1 F1 open
+  assert_eq 0 "$RC"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/findings)" "not applicable"
+}
+
+test_task_findings_no_ledger() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task findings T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no findings"
+  assert_contains "$OUT" "blocking: 0"
+}
+
+test_task_findings_unknown_task_dies() {
+  task_setup
+  run jig task findings NOPE
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_findings_lists_and_counts_blocking() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where a.sh:1 --summary "blocking one" >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "not blocking" >/dev/null
+  run jig task findings T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "F1 P1 open a.sh:1 blocking one"
+  assert_contains "$OUT" "F2 P2 open - not blocking"
+  assert_contains "$OUT" "blocking: 1"
+}
+
+test_task_findings_blocking_flag_exits_1_when_blocking() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P0 --where - --summary "x" >/dev/null
+  run jig task findings T-1 --blocking
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "F1 P0 open -"
+  assert_contains "$OUT" "blocking: 1"
+}
+
+test_task_findings_blocking_flag_exits_0_when_nothing_blocks() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P3 --where - --summary "x" >/dev/null
+  run jig task findings T-1 --blocking
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "P3"
+  assert_contains "$OUT" "blocking: 0"
+}
+
+# --- findings ledger gates completion (design.md §4) ---------------------------
+
+test_task_set_status_ready_refuses_open_p1() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:1374 --summary "bad flag" >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "1 blocking finding (F1 P1 open scripts/lib/task.sh:1374)"
+  assert_contains "$OUT" "jig task finding set T-1 F1 closed"
+  assert_contains "$OUT" "jig task finding set T-1 F1 dismissed --reason <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+test_task_set_status_ready_refuses_fixed_p1() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 fixed >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "1 blocking finding (F1 P1 fixed -)"
+}
+
+test_task_set_status_ready_succeeds_once_closed() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P1 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 closed >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+test_task_set_status_ready_open_p2_does_not_block() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+# The spec's own scenario: a T2 task with a planted P1 cannot be consolidated.
+test_task_set_knowledge_consolidated_refuses_planted_p1_on_t2_task() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:42 --summary "planted finding" >/dev/null
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "blocking finding"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
+}
+
+test_task_set_knowledge_consolidated_dismissed_p0_does_not_block() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task finding add T-1 --severity P0 --where - --summary "x" >/dev/null
+  jig task finding set T-1 F1 dismissed --reason "false positive, agreed with the human" >/dev/null
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: true"
+}
+
+test_task_set_no_findings_file_unchanged_behaviour() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC"
+}
+
+# task ship refuses on a blocking finding even when knowledge_consolidated was
+# already true before the finding was planted (a fix landed after
+# consolidation), so it must recheck independently of that flag.
+test_task_ship_refuses_blocking_finding_planted_after_consolidation() {
+  ship_setup
+  ship_cfg_local agent.git pr
+  sed 's/^knowledge_consolidated:.*/knowledge_consolidated: true/' \
+    .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  jig task finding add T-1 --severity P0 --where - --summary "found after consolidation" >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "1 blocking finding (F1 P0 open -)"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+
+# --- review receipt (design.md, review-receipt) --------------------------------
+
+test_task_receipt_writes_all_keys() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  local expected_base
+  expected_base=$(sed -n 's/^base_commit:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+
+  run jig task receipt T-1 --stage review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stage: review"
+
+  assert_file .ai/workspace/tasks/T-1/receipt
+  local keys
+  keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/receipt | tr '\n' ' ')
+  assert_eq "stage reviewed_at tree base_commit head design findings " "$keys"
+
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: review"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "reviewed_at: $(date +%Y-%m-%d)"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "base_commit: $expected_base"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "findings: -"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/receipt)" "design: -"
+}
+
+test_task_receipt_reads_the_worktree_that_holds_the_task_branch() {
+  task_setup_nested
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 --worktree >/dev/null
+  local wt
+  wt=$(git worktree list --porcelain | awk '/^worktree /{ p = substr($0, 10) } /^branch refs\/heads\/task\/T-1$/{ print p }')
+  [ -n "$wt" ] || fail "task worktree not found"
+  # A commit of its own, so the worktree's HEAD differs from this checkout's.
+  printf 'x\n' > "$wt/committed.txt"
+  git -C "$wt" add committed.txt && git -C "$wt" commit -q -m "task commit"
+  run jig task receipt T-1 --stage review
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "head: $(git -C "$wt" rev-parse HEAD)"
+  # A change in the filing checkout is not the task's change.
+  printf 'unrelated\n' > unrelated.txt
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "receipt: current"
+  # A change in the task's own worktree is.
+  printf 'task work\n' > "$wt/work.txt"
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_refuses_when_the_task_branch_is_checked_out_nowhere() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  git checkout -q main
+  run jig task receipt T-1 --stage review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: task/T-1 is not checked out in any worktree; review the task where its branch is"
+  assert_no_file .ai/workspace/tasks/T-1/receipt
+}
+
+test_task_receipt_check_counts_an_unreadable_tree_as_changed() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  git checkout -q main
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_architecture_review_stage() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --stage architecture-review
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: architecture-review"
+}
+
+test_task_receipt_rereview_replaces_the_stage() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task receipt T-1 --stage architecture-review
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: architecture-review"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/receipt)" "stage: review"
+}
+
+test_task_receipt_unknown_task_dies() {
+  task_setup
+  run jig task receipt nope --stage review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: unknown task: nope"
+}
+
+test_task_receipt_no_args_dies_with_usage() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task receipt"
+}
+
+test_task_receipt_stage_requires_a_value_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --stage
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: --stage requires a value"
+}
+
+test_task_receipt_invalid_stage_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --stage bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: invalid stage: bogus (expected review|architecture-review)"
+}
+
+test_task_receipt_unknown_argument_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: unknown argument: --bogus"
+}
+
+test_task_receipt_check_and_stage_are_mutually_exclusive_dies() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --check --stage review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task receipt: --stage and --check are mutually exclusive"
+}
+
+test_task_receipt_check_none_for_t0_through_t3() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: none" "$OUT"
+}
+
+test_task_receipt_check_none_required_for_t4() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_eq "receipt: none (required for T4)" "$OUT"
+}
+
+test_task_receipt_check_current_right_after_writing() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+test_task_receipt_check_stale_after_a_tracked_code_edit_names_tree() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf '# edited\n' >> AGENTS.md
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree, reviewed $(date +%Y-%m-%d))"
+}
+
+test_task_receipt_check_stale_after_a_new_untracked_file() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf 'new\n' > untracked.txt
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_check_current_after_editing_knowledge_or_specs() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  mkdir -p .ai/knowledge/domains/foo .ai/specs/bar
+  printf 'x\n' > .ai/knowledge/domains/foo/OVERVIEW.md
+  printf 'x\n' > .ai/specs/bar/roadmap.md
+
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+test_task_receipt_check_current_after_committing_the_reviewed_content() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'work in progress\n' > work.txt
+  jig task receipt T-1 --stage review >/dev/null
+
+  git add work.txt
+  git commit -q -m "commit the reviewed content"
+
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+# The spec's own scenario: amending a commit after review, changing its
+# content, must go stale even though HEAD is not what the receipt pins.
+test_task_receipt_check_stale_after_an_amend_that_changes_content() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'work in progress\n' > work.txt
+  git add work.txt
+  git commit -q -m "wip"
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf 'different content\n' > work.txt
+  git add work.txt
+  git commit -q --amend -m "wip amended"
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree"
+}
+
+test_task_receipt_check_stale_after_editing_design_md_names_design() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf '# design v2\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (design"
+}
+
+test_task_receipt_check_stale_after_a_findings_change_names_findings() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+
+  jig task finding add T-1 --severity P2 --where - --summary "minor" >/dev/null
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (findings"
+}
+
+test_task_receipt_t4_design_hash_covers_spec_and_alternatives() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  printf '# spec\n' > .ai/workspace/tasks/T-1/spec.md
+  printf '# alt\n' > .ai/workspace/tasks/T-1/alternatives.md
+  jig task receipt T-1 --stage review >/dev/null
+
+  printf '# spec v2\n' > .ai/workspace/tasks/T-1/spec.md
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (design"
+}
+
+# The temporary index is thrown away on every path, real or not: whatever is
+# staged before `task receipt` runs must read back unchanged afterwards.
+test_task_receipt_does_not_touch_the_real_index() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'staged\n' > staged.txt
+  git add staged.txt
+
+  local before_cached before_ls
+  before_cached=$(git diff --cached --name-only)
+  before_ls=$(git ls-files -s)
+
+  run jig task receipt T-1 --stage review
+  assert_eq 0 "$RC"
+
+  assert_eq "$before_cached" "$(git diff --cached --name-only)"
+  assert_eq "$before_ls" "$(git ls-files -s)"
+}
+
+test_task_set_status_ready_refuses_stale_receipt() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  printf '# edited\n' >> AGENTS.md
+
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: review is stale: code changed since review on $(date +%Y-%m-%d) (tree); re-review and run: jig task receipt T-1 --stage review"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+test_task_set_knowledge_consolidated_refuses_stale_receipt() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  printf '# edited\n' >> AGENTS.md
+
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale: code changed since review on"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: false"
+}
+
+test_task_set_status_ready_refuses_t4_without_a_receipt() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: T4 needs a review receipt; run the independent review, then: jig task receipt T-1 --stage review"
+}
+
+test_task_set_status_ready_passes_t3_without_a_receipt() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+# task ship refuses on a stale receipt even when knowledge_consolidated was
+# already true before the code changed (a later edit, or a re-review nobody
+# ran), so it must recheck independently — same reason as the findings ledger
+# recheck above.
+test_task_ship_refuses_stale_receipt_planted_after_consolidation() {
+  ship_setup
+  ship_cfg_local agent.git pr
+  jig task receipt T-1 --stage review >/dev/null
+  sed 's/^knowledge_consolidated:.*/knowledge_consolidated: true/' \
+    .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  printf '# edited after review\n' >> AGENTS.md
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale: code changed since review on"
+  assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
+}
+
+# --- autopilot (design.md under .ai/workspace/tasks/autopilot-run) -------------
+#
+# `jig task autopilot <id> start|stage|repair|stop|resume|end|report`: a run
+# journal (`.ai/workspace/tasks/<id>/autopilot`) plus two script-owned state
+# keys (`autopilot`, `autopilot_repairs`). The repair limit (2 per run,
+# task.md human gate) is enforced here, not by a skill.
+
+test_task_autopilot_start_writes_state_and_journal() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\t')"
+}
+
+# --phase marks the run as one task of a roadmap phase run: a coordinator
+# started it, owns the spec and ships it
+# (adr-20260922-a-phase-run-is-coordinated).
+test_task_autopilot_start_with_a_phase_records_it_in_state_and_journal() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start --phase autopilot/4
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot: on"
+  assert_contains "$OUT" "phase: autopilot/4"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_phase: autopilot/4"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\tattended phase autopilot/4')"
+}
+
+test_task_autopilot_start_without_a_phase_records_none() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "phase:"
+  ! grep -q autopilot_phase .ai/workspace/tasks/T-1/state \
+    || fail "autopilot_phase was written for a run started without --phase"
+}
+
+test_task_autopilot_start_rejects_a_malformed_phase() {
+  task_setup
+  task_started T-1
+  local bad
+  for bad in autopilot 4 autopilot/ /4 autopilot/x autopilot/4/5 .bad/4; do
+    run jig task autopilot T-1 start --phase "$bad"
+    assert_eq 1 "$RC" "expected --phase $bad to be refused"
+    assert_contains "$OUT" "--phase takes <spec-id>/<n>"
+  done
+  run jig task autopilot T-1 start --phase
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--phase requires a value"
+}
+
+# autopilot_phase is the script's, like every other autopilot key.
+test_task_set_refuses_autopilot_phase() {
+  task_setup
+  task_started T-1
+  run jig task set T-1 autopilot_phase autopilot/4
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: key is not writable: autopilot_phase"
+}
+
+test_task_autopilot_start_already_running_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already running: T-1"
+}
+
+test_task_autopilot_start_on_a_stopped_run_points_to_resume() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "human gate" >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is stopped; run: jig task autopilot T-1 resume"
+}
+
+test_task_autopilot_start_after_done_starts_a_fresh_run() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
+}
+
+test_task_autopilot_start_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_start_invalid_id_dies() {
+  task_setup
+  run jig task autopilot ../nope start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid task id"
+}
+
+test_task_autopilot_start_unknown_argument_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown argument: --bogus"
+}
+
+test_task_autopilot_no_id_dies_with_usage() {
+  task_setup
+  run jig task autopilot
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot"
+}
+
+test_task_autopilot_unknown_action_dies_with_usage() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot"
+}
+
+test_task_autopilot_help_prints_multiline_usage() {
+  task_setup
+  run_split jig task autopilot --help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot <id> start"
+  assert_contains "$OUT" "jig task autopilot <id> stage <name>"
+  assert_contains "$OUT" "jig task autopilot <id> repair --reason <text>"
+  assert_contains "$OUT" "jig task autopilot <id> report"
+  assert_eq "" "$ERR"
+}
+
+test_task_autopilot_stage_logs_name() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage analyze
+  assert_eq 0 "$RC"
+  assert_eq "stage: analyze" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstage\tanalyze')"
+}
+
+test_task_autopilot_stage_invalid_name_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage "Bad Name"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid name: Bad Name"
+}
+
+test_task_autopilot_stage_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 stage analyze
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_stage_missing_name_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task autopilot"
+}
+
+test_task_autopilot_stage_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE stage analyze
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_repair_first_and_second_succeed() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason "fix lint"
+  assert_eq 0 "$RC"
+  assert_eq "repair 1/2" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 1"
+  run jig task autopilot T-1 repair --reason "fix test"
+  assert_eq 0 "$RC"
+  assert_eq "repair 2/2" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+}
+
+test_task_autopilot_repair_third_stops_the_run_and_exits_3() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+  run jig task autopilot T-1 repair --reason "r3"
+  assert_eq 3 "$RC"
+  assert_eq "stop: repair limit reached (2)" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstop\trepair limit reached (2): r3')"
+}
+
+test_task_autopilot_repair_requires_reason() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is required"
+}
+
+test_task_autopilot_repair_reason_requires_a_value_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason requires a value"
+}
+
+test_task_autopilot_repair_empty_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must not be empty"
+}
+
+test_task_autopilot_repair_tab_in_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must be a single line with no tab"
+}
+
+test_task_autopilot_repair_unknown_argument_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 repair --reason x --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown argument: --bogus"
+}
+
+test_task_autopilot_repair_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 repair --reason "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_repair_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE repair --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_stop_requires_reason() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is required"
+}
+
+test_task_autopilot_stop_sets_stopped_and_logs_reason() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop --reason "needs a human decision"
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: stopped" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstop\tneeds a human decision')"
+}
+
+test_task_autopilot_stop_empty_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop --reason ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must not be empty"
+}
+
+test_task_autopilot_stop_tab_in_reason_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stop --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must be a single line with no tab"
+}
+
+test_task_autopilot_stop_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 stop --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_stop_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE stop --reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_resume_resets_repairs_and_sets_on() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 stop --reason "gate" >/dev/null
+  run jig task autopilot T-1 resume
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tresume\t')"
+  # The reset is real, not cosmetic: two more repairs after resume must not
+  # trip the limit early.
+  run jig task autopilot T-1 repair --reason r2
+  assert_eq 0 "$RC"
+  assert_eq "repair 1/2" "$OUT"
+}
+
+test_task_autopilot_resume_not_stopped_dies() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not stopped: T-1"
+}
+
+test_task_autopilot_resume_never_started_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not stopped: T-1"
+}
+
+test_task_autopilot_resume_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_end_sets_done() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 end
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: done" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: done"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tend\t')"
+}
+
+test_task_autopilot_end_requires_active_run_dies() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 end
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run: T-1"
+}
+
+test_task_autopilot_end_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE end
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_report_no_run_exits_0() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_eq "no autopilot run" "$OUT"
+}
+
+test_task_autopilot_report_unknown_task_dies() {
+  task_setup
+  run jig task autopilot NOPE report
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_autopilot_report_shows_stages_repairs_stop_and_summary() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stage analyze >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+  jig task autopilot T-1 repair --reason "r3" >/dev/null || true
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" " start"
+  assert_contains "$OUT" " stage: analyze"
+  assert_contains "$OUT" " repair: r1"
+  assert_contains "$OUT" " repair: r2"
+  assert_contains "$OUT" " stop: repair limit reached (2): r3"
+  assert_contains "$OUT" "autopilot: stopped, repairs: 2/2"
+}
+
+test_task_autopilot_report_after_resume_and_end() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "gate" >/dev/null
+  jig task autopilot T-1 resume >/dev/null
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" " resume"
+  assert_contains "$OUT" " end"
+  assert_contains "$OUT" "autopilot: done, repairs: 0/2"
+}
+
+# task set (design's script-owned keys, schemas/state.md) --------------------
+
+test_task_set_refuses_autopilot_key() {
+  task_setup
+  task_started T-1
+  run jig task set T-1 autopilot on
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
+test_task_set_refuses_autopilot_repairs_key() {
+  task_setup
+  task_started T-1
+  run jig task set T-1 autopilot_repairs 0
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
+# Autopilot must not weaken the completion gate: a task on autopilot with an
+# open P1 finding still refuses `status ready`, exactly as it would off
+# autopilot (findings-ledger gate, task_set).
+test_task_set_status_ready_still_refuses_with_autopilot_on_and_an_open_p1_finding() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task finding add T-1 --severity P1 --where a.sh:1 --summary "bug" >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "blocking finding"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: ready"
+}
+
+# --- the live status page (common.sh jig_status_page_touch/_dirty/_flush;
+# adr-20260922-the-status-page-stays-current-without-a-server) ----------------
+#
+# `jig status --html` writes .ai/runtime/status.html; once it exists, every
+# task command that writes state/journal/findings/receipt redraws it
+# synchronously through the INSTALLED copy in the main checkout
+# (.ai/scripts/jig status --refresh), output discarded, failures ignored. A
+# project that never asked for the page gets none created for it.
+
+test_task_status_page_absent_task_new_creates_no_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  assert_no_file .ai/runtime/status.html
+}
+
+test_task_status_page_absent_task_set_creates_no_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task set T-1 status active >/dev/null
+  assert_no_file .ai/runtime/status.html
+}
+
+test_task_status_page_absent_autopilot_start_creates_no_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  assert_no_file .ai/runtime/status.html
+}
+
+test_task_status_page_new_task_appears_on_the_page() {
+  task_setup
+  jig status --html >/dev/null
+  jig task new T-9 >/dev/null
+  assert_file_contains .ai/runtime/status.html "<code>T-9</code>"
+}
+
+test_task_status_page_set_status_ready_changes_the_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+  assert_file_contains .ai/runtime/status.html "status=active"
+
+  jig task set T-1 status ready >/dev/null
+  assert_file_contains .ai/runtime/status.html "status=ready"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "status=active"
+}
+
+test_task_status_page_finding_add_line_appears() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+
+  run jig task finding add T-1 --severity P1 --where src/x.sh:10 --summary "bad thing"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/status.html "$OUT P1 open src/x.sh:10"
+}
+
+test_task_status_page_autopilot_stop_reason_appears() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+  jig task autopilot T-1 start >/dev/null
+
+  jig task autopilot T-1 stop --reason "needs a human decision" >/dev/null
+  assert_file_contains .ai/runtime/status.html "Autopilot stopped and is waiting for you"
+  assert_file_contains .ai/runtime/status.html "needs a human decision"
+}
+
+test_task_status_page_autopilot_third_repair_stop_appears() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig status --html >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+
+  run jig task autopilot T-1 repair --reason "r3"
+  assert_eq 3 "$RC"
+  assert_file_contains .ai/runtime/status.html "Autopilot stopped and is waiting for you"
+}
+
+# A failing redraw (a broken installed copy) must not change the triggering
+# command's own output or exit code, and must leave the page as it was:
+# jig_status_page_touch discards the redraw's output and ignores its failure.
+test_task_status_page_failing_redraw_does_not_change_output_exit_code_or_page() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig status --html >/dev/null
+  local page_before
+  page_before=$(cat .ai/runtime/status.html)
+
+  cat > .ai/scripts/jig <<'BROKEN'
+#!/bin/sh
+printf 'garbage on stdout\n'
+printf 'garbage on stderr\n' >&2
+exit 1
+BROKEN
+  chmod +x .ai/scripts/jig
+
+  run jig task set T-1 class T2
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  assert_eq "$page_before" "$(cat .ai/runtime/status.html)"
+}
+
+# A task command run in a task worktree redraws the MAIN checkout's page
+# (jig_config_clone_root), through that checkout's own installed jig.
+test_task_status_page_worktree_command_redraws_the_main_checkouts_page() {
+  task_setup_nested
+  jig task new T-1 --class T1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  jig status --html >/dev/null
+  assert_no_file "$wt/.ai/runtime/status.html"
+  assert_file_contains .ai/runtime/status.html "class=T1"
+
+  ( cd "$wt" && jig task set T-1 class T2 >/dev/null )
+
+  assert_file_contains .ai/runtime/status.html "class=T2"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "class=T1"
+}
+
+# --- the human gate (task_gate, _task_gate_state; ADR-0031) -------------------
+#
+# `jig task gate <id> approved` records a T3/T4 design's approval: only T3/T4,
+# only with a design.md in the workspace, writing `gate: approved` and
+# `gate_design: <hash>` (the same design hash a review receipt pins).
+
+test_task_gate_refused_for_t2() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 is T2; only T3 and T4 tasks have a human gate"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate:"
+}
+
+test_task_gate_refused_for_unclassified() {
+  task_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 is unclassified; only T3 and T4 tasks have a human gate"
+}
+
+test_task_gate_refused_without_design_md() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 has no design.md to approve"
+}
+
+test_task_gate_refused_for_a_decision_other_than_approved() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 rejected
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown decision: rejected"
+}
+
+test_task_gate_unknown_task_dies() {
+  task_setup
+  run jig task gate NOPE approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_gate_approved_writes_state_matching_the_receipts_design_pin() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC"
+  assert_eq "gate: approved" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
+
+  local gate_design receipt_design
+  gate_design=$(sed -n 's/^gate_design:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  [ -n "$gate_design" ] || fail "gate_design was not recorded"
+
+  jig task receipt T-1 --stage review >/dev/null
+  receipt_design=$(sed -n 's/^design:[[:space:]]*//p' .ai/workspace/tasks/T-1/receipt)
+  assert_eq "$receipt_design" "$gate_design" "gate_design must equal the receipt's design pin"
+}
+
+test_task_set_refuses_gate_and_pr_url_keys() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  local key
+  for key in gate gate_design pr_url; do
+    run jig task set T-1 "$key" x
+    assert_eq 1 "$RC" "task set accepted key [$key]"
+    assert_contains "$OUT" "not writable"
+  done
+}
+
+# --- the human gate on the status page ----------------------------------------
+
+test_task_status_page_gate_waiting_approved_and_changed_states() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
+  jig status --html >/dev/null
+
+  assert_file_contains .ai/runtime/status.html "A design is waiting for your decision"
+
+  jig task gate T-1 approved >/dev/null
+  assert_file_contains .ai/runtime/status.html "design approved"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "A design is waiting for your decision"
+
+  printf '# design v2\n' > .ai/workspace/tasks/T-1/design.md
+  # Editing a file in the workspace does not itself redraw; a task command does.
+  jig task set T-1 status active >/dev/null
+  assert_file_contains .ai/runtime/status.html "A design changed after you approved it"
+}
+
+# --- ship stores pr_url (design.md, .ai/specs/autopilot/) ---------------------
+
+test_task_ship_pr_level_records_pr_url_in_state() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/99"
+}
+
+test_task_ship_pr_level_already_open_pr_still_records_pr_url_in_state() {
+  ship_setup
+  ship_cfg forge github
+  ship_stub_gh "https://github.com/example/example/pull/7"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/7"
+}
+
+# --- unattended runs (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
+
+# unattended_local — opt this clone in to runs that ask nothing.
+unattended_local() {
+  printf 'autopilot.unattended: true\n' >> .ai/config.local.yaml
+}
+
+test_task_autopilot_start_records_the_attended_mode_by_default() {
+  task_setup
+  task_started T-1
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: attended"
+}
+
+test_task_autopilot_start_records_the_unattended_mode() {
+  task_setup
+  task_started T-1
+  unattended_local
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on (unattended)" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\tunattended')"
+}
+
+test_task_autopilot_unattended_in_the_project_config_is_ignored() {
+  task_setup
+  task_started T-1
+  printf 'autopilot.unattended: true\n' >> .ai/config.yaml
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: attended"
+}
+
+test_task_autopilot_mode_holds_when_the_key_changes_mid_run() {
+  task_setup
+  task_started T-1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "x" >/dev/null
+  : > .ai/config.local.yaml
+  jig task autopilot T-1 resume >/dev/null
+  run jig task autopilot T-1 decide --reason "kept the old API"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
+}
+
+test_task_autopilot_approve_and_decide_are_refused_in_an_attended_run() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 approve --reason "design"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "run is attended; stop and ask the human instead"
+  run jig task autopilot T-1 decide --reason "choice"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "run is attended"
+  if grep -q "$(printf '\t')decide$(printf '\t')" .ai/workspace/tasks/T-1/autopilot; then
+    fail "a refused decide was journaled"
+  fi
+}
+
+test_task_autopilot_approve_and_decide_need_a_running_run_and_a_reason() {
+  task_setup
+  task_started T-1
+  unattended_local
+  run jig task autopilot T-1 decide --reason "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run"
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 approve
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot approve: --reason is required"
+  run jig task autopilot T-1 decide --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must be a single line with no tab"
+}
+
+test_task_autopilot_report_lists_what_was_decided_and_self_approved() {
+  task_setup
+  task_started T-1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 approve --reason "design.md approved at the gate"
+  assert_eq 0 "$RC"
+  assert_eq "approve: design.md approved at the gate" "$OUT"
+  jig task autopilot T-1 decide --reason "kept the old flag name: renaming it breaks callers" >/dev/null
+  jig task autopilot T-1 decide --reason "did not delete the old directory" >/dev/null
+  jig task autopilot T-1 end >/dev/null
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "$(printf 'Decided without you:\n- kept the old flag name: renaming it breaks callers\n- did not delete the old directory')"
+  assert_contains "$OUT" "$(printf 'Approved by the agent, not a human:\n- design.md approved at the gate')"
+  assert_contains "$OUT" "autopilot: done, repairs: 0/2, unattended"
+}
+
+test_task_autopilot_report_has_no_blocks_for_an_attended_run() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 report
+  assert_not_contains "$OUT" "Decided without you"
+  assert_not_contains "$OUT" "Approved by the agent"
+  assert_not_contains "$OUT" "unattended"
+}
+
+test_task_autopilot_unattended_repair_limit_still_stops_with_exit_3() {
+  task_setup
+  task_started T-1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason "r1" >/dev/null
+  jig task autopilot T-1 repair --reason "r2" >/dev/null
+  run jig task autopilot T-1 repair --reason "r3"
+  assert_eq 3 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+}
+
+test_task_gate_by_agent_in_an_unattended_run_records_who_approved() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+
+  run jig task gate T-1 approved --by agent
+  assert_eq 0 "$RC"
+  assert_eq "gate: approved by the agent" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: agent"
+}
+
+test_task_gate_by_agent_is_refused_outside_an_unattended_run() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the gate is the human's"
+  jig task autopilot T-1 start >/dev/null
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  if grep -q '^gate:' .ai/workspace/tasks/T-1/state; then
+    fail "a refused self-approval recorded the gate"
+  fi
+}
+
+test_task_gate_records_a_human_by_default() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: human"
+  run jig task gate T-1 approved --by robot
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task gate: invalid --by: robot (expected human|agent)"
+}
+
+test_task_set_refuses_autopilot_mode_and_gate_by_keys() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  local key
+  for key in autopilot_mode gate_by; do
+    run jig task set T-1 "$key" x
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" "task set: key is not writable: $key"
+  done
+}

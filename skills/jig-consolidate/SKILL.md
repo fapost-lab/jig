@@ -117,14 +117,31 @@ Frontmatter is never hand-edited: the commands above own it (ADR-0001, ADR-0010)
 
 ```
 .ai/scripts/jig knowledge check
-.ai/scripts/jig spec done <id>
 .ai/scripts/jig task set <id> knowledge_consolidated true
 ```
 
-`spec done` checks the roadmap items that name the task when its `task.md` carries a `Spec:`
-line, so the checkmark reaches the base branch in the same change as the work; for a task with
-no link it says so and changes nothing. If it reports that no roadmap item names the task, the
-roadmap and the task disagree: ask the human, and do not edit the roadmap by hand.
+`task set … knowledge_consolidated true` refuses while a P0 or P1 review finding is unresolved,
+or when the change moved after its review; resolve the finding or re-review first ([findings](../jig-review/references/findings.md)).
+
+**In a phase run this task is not yours to finish.** When `jig task show <id>` has an
+`autopilot_phase` line, a coordinator started this task as one of a roadmap wave
+(adr-20260922-a-phase-run-is-coordinated). Then **stop here**: the rest of this section and §6
+are the coordinator's. Stage the change, write the commit message to
+`.ai/workspace/tasks/<id>/commit-message` and the pull request body to `pr-body`, and report
+back. The coordinator ships one task at a time so that two of them cannot merge past each
+other, runs `jig task ship` and `jig task autopilot <id> end` itself, and checks the roadmap
+item after the merge — `spec done` below refuses in this branch, by design.
+
+Every other run checks the roadmap here, before the commit:
+
+```
+.ai/scripts/jig spec done <id>
+```
+
+It checks the roadmap items that name the task when its `task.md` carries a `Spec:` line, so
+the checkmark reaches the base branch in the same change as the work; for a task with no link
+it says so and changes nothing. If it reports that no roadmap item names the task, the roadmap
+and the task disagree: ask the human, and do not edit the roadmap by hand.
 
 When it prints `roadmap complete`, the spec is closed in this same change: its decisions are knowledge
 now. Run the command it names. It first lists what knowledge does not hold — unchecked items, fog,
@@ -132,8 +149,22 @@ open questions, untested assumptions; ask the human about each one, move it wher
 spec through `jig-idea`, or a task) or drop it, and run it again with `--leftovers-handled`. A spec on
 an epic is closed on the epic by `--finish`, not here.
 
+Then hand the change over. Stage the task's changes — only this task's, hunk by hunk when
+the tree holds other work — write a commit message, and run:
+
+```
+.ai/scripts/jig task ship <id> --message-file <file>
+```
+
+It commits, pushes and opens the pull request into the task's base as far as `agent.git` in
+this clone allows, and says where it stopped. At `merge` it then waits for CI and prints
+`merged <url>` or `not merged: <why>`; a pull request left open is an ordinary end — say why.
+Exit 3 means `none`: tell the human the change is ready for their review and commit. The step it stopped at is the human's; never finish
+it by hand with git. The first line of the message is the pull request's title, the rest its
+body: the task's goal and what verified it.
+
 The status stays `ready`: the task is still current, and fixes from review of the commit
-or PR continue in it. If review changes the implementation, update the same documents; do
+or PR continue in it — stage the fix and run `task ship` again. If review changes the implementation, update the same documents; do
 not start a new task document for it.
 
 A task cut from an epic (`base_branch: epic/…`) lands when its pull request is merged into the
@@ -152,7 +183,11 @@ or the human says the work is finished.
 1. `knowledge_consolidated` must already be `true`. If it is not, run §1–§5 first; the
    knowledge then reaches the repository in a follow-up change.
 2. If fixes after the commit changed the intent, update the documents they touched.
-3. Ask the human whether a fix is still expected on this task. If one is, leave it open.
+3. Ask the human whether a fix is still expected on this task. If one is, leave it open. Two
+   exceptions, where the human already said yes: an unattended autopilot run whose `task ship`
+   printed `merged`, and a coordinator closing a task of its phase run whose pull request
+   merged (adr-20260922-a-phase-run-is-coordinated). Nowhere else does a merge close a task
+   without the human.
 
 ```
 .ai/scripts/jig task set <id> status consolidated

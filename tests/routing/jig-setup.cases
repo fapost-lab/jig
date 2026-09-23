@@ -1,0 +1,11 @@
+# jig-setup: a person's own settings in .ai/config.local.yaml, asked for in plain words.
++ set up Jig for me
++ configure my settings
++ change my personal settings for the agent
++ let the agent merge its own pull requests
++ how far may the agent go with git on its own
+- init jig in this repository
+- set up project knowledge for this codebase
+- take this task on autopilot
+- review this change before it ships
+- set up Jig for this project

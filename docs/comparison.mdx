@@ -5,9 +5,9 @@ description: "How Jig differs from Spec Kit, OpenSpec and BMad."
 
 Jig's unit is a project's engineering lifecycle — from project knowledge and sizing the work, through
 implementation and evidence, to deciding what the project should remember and cleaning up after.
-It is not a specification format, a prompt collection or a team of agents.
+It is not a specification format, a prompt collection or a cast of agent roles.
 
-## Five choices that shape it
+## Six choices that shape it
 
 1. **Judgement and mechanics are separate.** The agent analyzes, designs, reviews and decides what to
    remember, guided by skills. Shell scripts keep state, pick the relevant knowledge, run checks,
@@ -22,6 +22,10 @@ It is not a specification format, a prompt collection or a team of agents.
    Only what should outlive the task becomes knowledge; the workspace is cleaned up after the merge.
 5. **The process is installed like code.** Skills, scripts and profiles are committed with the
    project. Upgrades replace what the framework owns and keep what the project changed.
+6. **How far the agent may go is one person's setting.** Whether a finished task is left in the
+   working tree or arrives as a merged pull request, and whether it may run a whole task without
+   stopping to ask, lives in a gitignored file and is enforced by a script — never by the shared
+   project configuration, so no one grants that trust on a colleague's behalf.
 
 ## Next to similar tools
 
@@ -32,13 +36,19 @@ documentation as of 2026-09-10; it is not a feature checklist.
 |---|---|---|
 | [GitHub Spec Kit](https://github.github.com/spec-kit/) | An extensible, intent-driven process whose default is spec → plan → tasks → implement, with a large ecosystem of integrations and extensions. | The better fit when broad runtime coverage, reusable process extensions or spec-driven artifacts come first. Jig supports fewer runtimes and concentrates on one project-local lifecycle: risk classes, knowledge authority, deterministic state and cleanup. |
 | [OpenSpec](https://openspec.dev/docs/schemas/spec-driven) | Proposals, behaviour delta specs, design and tasks; archiving merges the deltas into canonical specs and keeps the history of changes. | The better fit when behavioural specifications are the source of truth. Jig keeps a broader set of engineering knowledge, and deliberately lets task notes disappear once what matters is recorded. |
-| [BMad Method](https://docs.bmad-method.org/) | An agile, AI-driven method with thinking, planning, build and review skills, project context and agent-oriented workflows. | The better fit when rich role-based planning and agent workflows are wanted. Jig does not orchestrate agents; it pairs runtime-independent skills with a deterministic control layer owned by the repository. |
+| [BMad Method](https://docs.bmad-method.org/) | An agile, AI-driven method with thinking, planning, build and review skills, project context and agent-oriented workflows. | The better fit when rich role-based planning and agent workflows are wanted. Jig has no cast of roles: it pairs runtime-independent skills with a deterministic control layer owned by the repository, and the one place it runs several agents at once is a roadmap phase, where a coordinator builds a wave of independent tasks in parallel worktrees and merges them in order. |
 
 ## When Jig fits
 
 Jig fits a team that wants the same process committed with the repository, cheap handling of routine
 changes, explicit human gates where mistakes are costly, knowledge that is accepted rather than
 assumed, and mechanics that can be tested without an AI model.
+
+It also fits someone building alone through an agent who cannot answer an engineering question and
+would rather have the change deployed: the same routes and the same review run unattended, the agent
+records every choice it made in your place, and your CI — not the agent's confidence — decides
+whether it merges. What it does not do is remove the need for CI; a project with no checks is never
+merged into by an agent.
 
 Its scope is deliberately narrow, and so is its reach: it supports two runtimes, Claude Code and
 Codex, and its measurement stops where telemetry would begin — it can tell how much process a change

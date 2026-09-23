@@ -43,10 +43,36 @@ EOF
     jig_require_repo
     printf "%s|%s|%s|%s|" "$(cfg housekeeping.trash_ttl)" "$(cfg_list profiles)" "$(cfg missing.key dflt)" "$(cfg profiles)"
     cfg_bool housekeeping.fetch && printf "T"
-    cfg_bool nope && printf "X" || printf "F"
+    if cfg_bool nope; then printf "X"; else printf "F"; fi
   '
   assert_eq 0 "$RC"
   assert_eq "7d|generic php|dflt|[generic, php]|TF" "$OUT"
+}
+
+# jig_has_line is how a script asks "is this a line of that text" without
+# piping printf into grep -q (conventions/shell.md, pipefail): whole lines,
+# compared as strings, never as patterns.
+test_jig_has_line_matches_whole_lines_as_strings() {
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"
+    text=$(printf "alpha\nb*ta\ngamma")
+    for probe in alpha "b*ta" gamma alph lpha "b?ta" beta ""; do
+      if jig_has_line "$probe" "$text"; then printf "%s=1 " "$probe"; else printf "%s=0 " "$probe"; fi
+    done
+    jig_has_line x "" || printf "empty=0"
+  '
+  assert_eq 0 "$RC"
+  assert_eq "alpha=1 b*ta=1 gamma=1 alph=0 lpha=0 b?ta=0 beta=0 =0 empty=0" "$OUT"
+}
+
+# No script pipes a shell value into a reader that can quit before the end of
+# its input: bash writes the pipe line by line, the writer dies of SIGPIPE and
+# pipefail turns a match into a failure about once in a hundred runs on Linux.
+test_no_script_pipes_printf_into_an_early_quitting_reader() {
+  local hits
+  hits=$(grep -rnE "(printf|echo)[^|#]*\|[[:space:]]*(grep -[a-zA-Z]*q|head([[:space:]]|$))" \
+    "$JIG_HOME/scripts" "$JIG_HOME/profiles" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
+  assert_eq "" "$hits"
 }
 
 # --- .ai/config.local.yaml (ADR-0038) ----------------------------------------
@@ -148,6 +174,88 @@ EOF
   '
   assert_eq 0 "$RC"
   assert_eq "9d|$main_root" "$OUT"
+}
+
+# --- JIG_CFG_LOCAL_ONLY_KEYS: agent.git (design.md, .ai/specs/autopilot/) ----
+# A value committed to .ai/config.yaml would hand every contributor's agent
+# the same git rights, so `cfg` must never read `agent.git` from the project
+# layer — only from .ai/config.local.yaml, or the `none` default.
+
+test_cfg_agent_git_in_project_config_is_never_read() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+agent.git: pr
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    cfg agent.git none
+  '
+  assert_eq 0 "$RC"
+  assert_eq "none" "$OUT"
+}
+
+test_cfg_agent_git_local_value_is_read() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+agent.git: pr
+EOF
+  cat > .ai/config.local.yaml <<'EOF'
+agent.git: commit
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    cfg agent.git none
+  '
+  assert_eq 0 "$RC"
+  assert_eq "commit" "$OUT"
+}
+
+test_jig_agent_git_default_is_none() {
+  fixture_repo
+  mkdir -p .ai
+  : > .ai/config.yaml
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_agent_git
+  '
+  assert_eq 0 "$RC"
+  assert_eq "none" "$OUT"
+}
+
+test_jig_agent_git_rejects_an_unknown_value_but_still_prints_it() {
+  fixture_repo
+  mkdir -p .ai
+  : > .ai/config.yaml
+  cat > .ai/config.local.yaml <<'EOF'
+agent.git: yolo
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_agent_git
+  '
+  assert_eq 1 "$RC"
+  assert_eq "yolo" "$OUT"
+}
+
+test_jig_config_project_ignored_reports_agent_git_set_in_project_config() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+agent.git: pr
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    jig_config_project_ignored
+  '
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 'agent.git\tpr')" "$OUT"
 }
 
 test_duration_seconds() {

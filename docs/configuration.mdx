@@ -86,10 +86,67 @@ Some settings are a matter of personal taste rather than project policy. Put the
 
 - `housekeeping.cadence`, `housekeeping.fetch`, `housekeeping.trash_ttl`,
   `housekeeping.abandoned_ttl`, `housekeeping.stale_after`;
-- `git.worktree_root`.
+- `git.worktree_root`;
+- `agent.git` — how far the agent takes a finished task, and a specification's epic: `none` (the default: you commit),
+  `commit`, `push`, `pr` or `merge`. This one is read **only** from your local file; in `.ai/config.yaml` it
+  is ignored, so it can never switch on for everyone. See
+  [Letting the agent ship](/agent-ships).
+- `agent.ci_timeout` — minutes the `merge` level waits for the pull request's checks (default 30);
+  local only, like `agent.git`.
+- `autopilot.unattended` — `true` lets an autopilot run go on without asking you anything; local
+  only. See [Autopilot: without stops](/autopilot#without-stops).
+- `autopilot.parallel` — how many tasks of a roadmap phase agents may build at the same time
+  (default 2, at most 16); local only. See
+  [Autopilot: running a whole phase](/autopilot#running-a-whole-phase).
 
-Any other key in it is ignored. `jig status` shows what your local file changes, and warns if Git
-does not ignore it.
+Any other key in it is ignored — no reader answers from it — but it is not silently lost: `jig
+config show --local` prints the file and names the keys nothing reads, and `jig config unset`
+removes them ([below](#or-set-a-value-yourself)). `jig status` shows what your local file changes,
+and warns if Git does not ignore it.
+
+### Let the agent ask you
+
+You do not need to know the keys. Say *"set up Jig for me"* (or name the skill: `/jig-setup` in
+Claude Code, `$jig-setup` in Codex). The agent asks one question at a time, in plain words, each with
+its recommendation: how far it may take a finished task, whether it may merge, whether autopilot may
+go on without asking you, how long to wait for CI and how long to keep finished work. It explains
+merging and running without questions before it asks about them, and never switches either on
+without your clear yes. Then it shows you the whole file it is about to write, and writes it only
+after you agree. `jig init` offers this at the end of its output.
+
+### Or set a value yourself
+
+```bash
+jig config set agent.git pr --local
+jig config set housekeeping.abandoned_ttl 7d housekeeping.trash_ttl 3d --local --dry-run
+jig config unset agent.git --local
+jig config show --local
+```
+
+`jig config set` writes only `.ai/config.local.yaml` — in a task's worktree, the one in the main
+checkout that every worktree reads. It creates the file when it is missing, replaces a setting that
+is already there and adds one that is not. It accepts only the personal settings listed above, and
+only values Jig reads the way you mean them: whole days for `housekeeping.cadence`, a duration such
+as `7d` or `12h` for the other housekeeping settings, `true` or `false`, a level for `agent.git`,
+whole minutes for `agent.ci_timeout`, a count from 1 to 16 for `autopilot.parallel`. Anything else is refused and nothing is written, not even the
+other settings of the same command. `--dry-run` prints the file it would write. It refuses to work
+without `--local`: `.ai/config.yaml` is the team's file, changed by hand and reviewed like code.
+
+`jig config unset` takes the other direction — it removes a setting, so the default applies again,
+which is how you give back a right you granted:
+
+```bash
+jig config unset agent.git autopilot.unattended --local
+```
+
+It accepts keys `config set` refuses too, so a key left over from an older version or a typo can be
+cleared rather than living in the file forever; removing a key that is not there is reported and is
+not an error. `jig config show --local` prints the file and, under it, one line per key nothing
+reads:
+
+```text
+ignored: nonsense.key (not a local key; jig config unset nonsense.key --local)
+```
 
 ## Verification profiles
 

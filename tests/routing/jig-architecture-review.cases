@@ -1,0 +1,7 @@
+# jig-architecture-review: boundaries, dependency directions, invariants, ADRs.
++ does this fit the architecture
++ did we break a boundary between the modules
++ architecture review of the new payment gateway
++ check the dependency directions and invariants after this refactor
+- review this change before it ships
+- what are our domains

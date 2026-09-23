@@ -30,6 +30,13 @@ never resolves it — `jig status` counts specs on its `specs:` line, and `jig s
 lists them with their roadmap progress. A spec released once, at the end, is built on an epic branch
 (`jig spec epic`): its tasks are cut from the epic and their pull requests go into it.
 
+`jig-autopilot` runs one task's route without waiting between stages and stops only where a
+human is needed; the route, the gates and `agent.git` stay what they are.
+
+`jig-setup` asks a person, one question at a time, how far their agent may go on its own and
+writes the answers to their gitignored `.ai/config.local.yaml` through
+`jig config set --local`; it never writes `.ai/config.yaml`.
+
 | Class | Route |
 |---|---|
 | T0 trivial | implement, verify, consolidate |

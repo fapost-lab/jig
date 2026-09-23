@@ -7,7 +7,7 @@ domains: [skills, sdlc]
 paths:
   - "skills/**"
 summary: Why a written rubric picks the task class and human gates are full stops.
-reviewed_at: 2026-09-14
+reviewed_at: 2026-09-22
 ---
 # ADR-0009: One entry skill routes by a fixed rubric; gates are explicit stops
 
@@ -71,3 +71,9 @@ help, and picks by effort rather than by risk.
 > **Amendment (2026-09-14).** `jig-idea` sits before the entry skill, not beside it: it tests
 > an idea and keeps a specification with a roadmap, but starts no task. Work on a roadmap item
 > still enters through `jig-task`. See ADR-0035.
+
+> **Amendment (2026-09-22).** In an unattended autopilot run (`autopilot.unattended: true`, a
+> local-only key) the gate is not a stop: the agent approves its own design with
+> `jig task gate <id> approved --by agent`, recorded as `gate_by: agent`, journaled, noted in `task.md`,
+> and the design goes verbatim into the pull request as approved by the agent, not a human. Everywhere
+> else the gate is still a full stop. See adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci.

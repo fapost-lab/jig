@@ -309,7 +309,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -323,7 +323,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -331,7 +331,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--finish [--leftovers-handled] | --reopen]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -512,6 +512,56 @@ EOF
 
   [ -z "$(find .ai/specs/alpha -maxdepth 1 -name 'roadmap.md.tmp.*')" ] \
     || fail "leftover tmp file after a successful spec done"
+}
+
+# In a phase run the coordinator checks items in the epic checkout after the
+# merge; an agent checking one from inside its own branch is how a wave's
+# branches conflict over neighbouring roadmap lines
+# (adr-20260922-a-phase-run-is-coordinated). The refusal is narrow: only in
+# the task's own branch, and only for a run started with --phase.
+test_spec_done_refuses_in_a_phase_runs_task_branch() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+1. Wave one
+- [ ] `T-1` — implement thing
+EOF
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start --phase alpha/1 >/dev/null
+
+  run jig spec "done" T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "T-1 runs in phase alpha/1"
+  assert_contains "$OUT" "the coordinator checks items after the merge"
+  grep -q '^- \[ \] `T-1` — implement thing$' .ai/specs/alpha/roadmap.md \
+    || fail "the roadmap was changed although spec done refused"
+
+  # The coordinator's own checkout is not the task's branch: it works there.
+  git checkout -q main
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: T-1 checked in .ai/specs/alpha/roadmap.md"
+}
+
+# A run that is not part of a phase run is untouched: the agent still checks
+# the item during consolidation, as ADR-0035 has it.
+test_spec_done_works_in_a_task_branch_outside_a_phase_run() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+1. Wave one
+- [ ] `T-1` — implement thing
+EOF
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start >/dev/null
+
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: T-1 checked in .ai/specs/alpha/roadmap.md"
 }
 
 # The id is compared as an exact string, not a glob/regex: a "." in an id
@@ -1840,4 +1890,1187 @@ test_spec_list_after_epic_finish_no_longer_lists_the_spec() {
   run jig spec list
   assert_eq 0 "$RC"
   assert_eq "" "$OUT"
+}
+
+# --- spec_phase_counts / spec_phase_rows (schemas/spec.md) --------------------
+#
+# The roadmap counted by section: a `## Phase <n> — <title>` heading opens a
+# phase, listed even with no items; every other `##` section, and anything
+# before the first heading, is counted under `-` and listed only when it has
+# items. `spec_progress` is their sum, so `jig spec list`'s total cannot
+# disagree with the per-phase breakdown the status page shows.
+
+# spec_phase_counts_of <roadmap.md> — call spec_phase_counts directly, the
+# same way housekeeping.t.sh's hk_decide calls a pure function: source the
+# libraries in a subshell and let its own stdout/exit code answer.
+spec_phase_counts_of() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/spec.sh"
+    spec_phase_counts "$1"
+  ' _ "$1"
+}
+
+# spec_mixed_roadmap <file> — a roadmap with a preamble item, a non-phase
+# "## Waves" section (plus a numbered list, never counted) and two phases.
+spec_mixed_roadmap() {
+  {
+    printf -- '- [ ] `T-0` - preamble filed item\n'
+    printf -- '- [ ] plain preamble item\n'
+    printf '\n'
+    printf '## Waves\n'
+    printf '1. Wave one\n'
+    printf '2. Wave two\n'
+    printf '\n'
+    printf -- '- [ ] `T-9` - waves section filed item\n'
+    printf -- '- [x] waves done item\n'
+    printf '\n'
+    printf '## Phase 1 — Design\n'
+    printf -- '- [x] `T-1` - phase1 done task\n'
+    printf -- '- [ ] fog: uncertain direction\n'
+    printf '\n'
+    printf '## Phase 2 — Build\n'
+    printf -- '- [ ] `T-2` - phase2 filed task\n'
+    printf -- '- [x] plain phase2 done item\n'
+  } > "$1"
+}
+
+test_spec_phase_counts_mixed_preamble_waves_and_phases() {
+  mkdir -p roadmap-fixture
+  spec_mixed_roadmap roadmap-fixture/roadmap.md
+
+  local tab out expected
+  tab=$(printf '\t')
+  out=$(spec_phase_counts_of roadmap-fixture/roadmap.md)
+  expected="-${tab}-${tab}0${tab}2${tab}1${tab}0
+-${tab}Waves${tab}1${tab}2${tab}1${tab}0
+1${tab}Design${tab}1${tab}2${tab}0${tab}1
+2${tab}Build${tab}1${tab}2${tab}1${tab}0"
+
+  assert_eq "$expected" "$out"
+}
+
+test_spec_list_output_unchanged_for_a_roadmap_mixing_phases_and_non_phase_sections() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/mixed
+  {
+    printf '# Mixed Sections\n'
+    printf '\n'
+    printf 'Body text.\n'
+  } > .ai/specs/mixed/spec.md
+  spec_mixed_roadmap .ai/specs/mixed/roadmap.md
+
+  run jig spec list
+  assert_eq 0 "$RC"
+  # The sum across every section: done=0+1+1+1=3, total=2+2+2+2=8,
+  # filed=1+1+0+1=3, fog=0+0+1+0=1 -- unchanged from before spec_phase_counts
+  # split the roadmap into per-section rows.
+  assert_eq "mixed   Mixed Sections   roadmap 3/8 done, 3 filed, fog 1" "$OUT"
+}
+
+# --- the live status page (jig_status_page_touch, common.sh) ------------------
+
+test_spec_status_page_new_spec_appears_on_the_page() {
+  fixture_jig_repo
+  jig status --html >/dev/null
+  jig spec new my-idea >/dev/null
+  assert_file_contains .ai/runtime/status.html "<code>my-idea</code>"
+}
+
+# --- spec plan (a phase run's waves) --------------------------------------------
+# Which tasks of a phase may start: the waves are one numbered list over the
+# whole roadmap, and wave N opens only once every item of every earlier wave
+# has merged. Merged comes from what is already answered — a checked item, a
+# closed task, the newest housekeeping run — never from a network call.
+
+# plan_spec <id> — a spec whose roadmap is read from stdin.
+plan_spec() {
+  mkdir -p ".ai/specs/$1"
+  printf '# %s\n' "$1" > ".ai/specs/$1/spec.md"
+  cat > ".ai/specs/$1/roadmap.md"
+}
+
+# plan_roadmap — two phases, four waves: a checked item, a filed task, an
+# unfiled item, fog, an item a later phase shares a wave with, and one item in
+# no wave at all.
+plan_roadmap() {
+  cat <<'RM'
+# Roadmap — Plan
+
+Destination: things happen.
+
+## Phase 1 — First
+
+- [x] `T-done` — Shipped thing — already merged
+- [ ] `T-a` — Alpha work — goal
+- [ ] Beta work — not filed yet (after: `T-a` — needs it)
+- [ ] fog: Gamma area — unclear
+
+## Phase 2 — Second
+
+- [ ] `T-c` — Charlie — goal
+- [ ] Delta — goal
+- [ ] Echo — goal, in no wave
+
+## Waves
+
+1. Shipped thing; `T-a`; beta WORK
+2. Gamma area; Charlie
+3. Delta
+RM
+}
+
+test_spec_plan_argument_errors() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+
+  run jig spec plan
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: missing spec id"
+  run jig spec plan alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: missing --phase <n>"
+  run jig spec plan alpha --phase
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: --phase requires a value"
+  run jig spec plan alpha --phase one
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: --phase takes a phase number: one"
+  run jig spec plan alpha --phase 1 --format json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: --format is text or tsv: json"
+  run jig spec plan alpha --phase 1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: unknown argument: --bogus"
+  run jig spec plan alpha beta --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: unexpected argument: beta"
+  run jig spec plan -- --phase 1
+  assert_eq 1 "$RC"
+  run jig spec plan .bad --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: invalid spec id: .bad"
+  run jig spec plan nope --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: no such spec, or it has no roadmap: .ai/specs/nope/roadmap.md"
+  run jig spec plan alpha --phase 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: .ai/specs/alpha/roadmap.md has no Phase 7"
+}
+
+test_spec_plan_refuses_a_roadmap_without_waves() {
+  fixture_jig_repo
+  printf '%s\n' '## Phase 1 — Only' '' '- [ ] `T-a` — Alpha — goal' | plan_spec alpha
+  run jig spec plan alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'spec plan: .ai/specs/alpha/roadmap.md has no `## Waves` list'
+}
+
+test_spec_plan_first_wave_open_later_phase_waits_on_it() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+  jig task new T-a >/dev/null
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  # Wave 1: the checked item is done, the filed task with a workspace that
+  # was never started may start, the unfiled item has to be filed first. Fog
+  # sits in wave 2, which waits on wave 1.
+  assert_eq "parallel${tab}2${tab}0
+wave${tab}1${tab}open
+item${tab}1${tab}T-done${tab}done${tab}roadmap${tab}false${tab}-${tab}done${tab}Shipped thing
+item${tab}1${tab}T-a${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Alpha work
+item${tab}1${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}file${tab}Beta work
+wave${tab}2${tab}waiting
+item${tab}2${tab}-${tab}fog${tab}no${tab}false${tab}-${tab}wait${tab}Gamma area
+blocker${tab}1${tab}T-a${tab}not-started${tab}Alpha work
+blocker${tab}1${tab}-${tab}not-filed${tab}Beta work" "$OUT"
+
+  # Phase 2 is spread over waves 2 and 3, and one of its items is in no wave:
+  # it is listed, and it never starts.
+  run jig spec plan alpha --phase 2 --format tsv
+  assert_eq 0 "$RC"
+  assert_eq "parallel${tab}2${tab}0
+wave${tab}2${tab}waiting
+item${tab}2${tab}T-c${tab}no-workspace${tab}no${tab}false${tab}-${tab}wait${tab}Charlie
+wave${tab}3${tab}waiting
+item${tab}3${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}wait${tab}Delta
+item${tab}-${tab}-${tab}not-filed${tab}no${tab}false${tab}-${tab}unscheduled${tab}Echo
+blocker${tab}1${tab}T-a${tab}not-started${tab}Alpha work
+blocker${tab}1${tab}-${tab}not-filed${tab}Beta work" "$OUT"
+}
+
+# `parallel <limit> <building>` is plan's answer to "how many more may I
+# start": only an agent still building one of the open wave's tasks holds a
+# slot, so a task whose knowledge decision is recorded — its work done, its
+# turn to ship not come — gives its slot back
+# (adr-20260922-a-phase-run-is-coordinated).
+test_spec_plan_parallel_counts_only_the_agents_still_building() {
+  fixture_jig_repo
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+
+## Waves
+
+1. Alpha; Bravo
+RM
+  local tab
+  tab=$(printf '\t')
+  jig task new T-a >/dev/null
+  jig task new T-b >/dev/null
+
+  # Nobody started a run yet: every slot is free.
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel${tab}2${tab}0"
+
+  jig task autopilot T-a start --phase alpha/1 >/dev/null
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel${tab}2${tab}1"
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "may start now: T-a, T-b (1 of 2 slots free)"
+
+  # T-a's agent finished: the work waits to ship, the slot is free again.
+  jig task set T-a knowledge_consolidated true >/dev/null
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parallel${tab}2${tab}0"
+
+  # Both building at the limit: no slot left, and the text says so.
+  jig task autopilot T-b start --phase alpha/1 >/dev/null
+  jig config set autopilot.parallel 1 --local >/dev/null
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "(0 of 1 slots free)"
+}
+
+test_spec_plan_text_form_names_what_may_start_and_what_to_file() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+  jig task new T-a >/dev/null
+
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_eq "Phase 1 — First
+roadmap: .ai/specs/alpha/roadmap.md
+wave 1 — open
+  T-done  done         done   Shipped thing
+  T-a     not started  start  Alpha work
+  -       not filed    file   Beta work
+wave 2 — waiting
+  -       fog          wait   Gamma area
+waiting on earlier waves:
+  wave 1  T-a  not started  Alpha work
+  wave 1  -    not filed    Beta work
+may start now: T-a (2 of 2 slots free)
+to file first: Beta work" "$OUT"
+}
+
+# Every way this checkout already knows a task merged opens the next wave:
+# its item checked, its task closed (ADR-0030 closes only after landing), or
+# the newest housekeeping run reporting remote=merged — an older run is not
+# read.
+test_spec_plan_merged_from_roadmap_closed_task_and_newest_housekeeping_run() {
+  fixture_jig_repo
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+- [ ] `T-c` — Charlie — goal
+- [ ] `T-d` — Delta — goal
+
+## Waves
+
+1. Alpha; Bravo; Charlie
+2. Delta
+RM
+  local t
+  for t in T-a T-b T-c T-d; do jig task new "$t" >/dev/null; done
+  jig task set T-a status ready >/dev/null
+  jig task set T-a knowledge_consolidated true >/dev/null
+  jig task set T-a status consolidated >/dev/null
+  jig task set T-b status ready >/dev/null
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-20T10:00:00Z forge=none\n'
+    printf '2026-09-20T10:00:01Z task=T-c status=active remote=merged via=ancestry action=preserve\n'
+    printf -- '--- run 2026-09-21T10:00:00Z forge=none\n'
+    printf '2026-09-21T10:00:01Z task=T-b status=ready remote=merged via=ancestry action=preserve flags=needs-consolidation\n'
+    printf '2026-09-21T10:00:01Z task=T-c status=active remote=unknown via=ancestry action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}T-a${tab}consolidated${tab}closed${tab}false${tab}-${tab}done${tab}Alpha"
+  assert_contains "$OUT" "item${tab}1${tab}T-b${tab}ready${tab}housekeeping${tab}false${tab}-${tab}done${tab}Bravo"
+  # T-c merged only in an older run: not merged, so wave 2 waits on it.
+  assert_contains "$OUT" "item${tab}1${tab}T-c${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Charlie"
+  assert_contains "$OUT" "wave${tab}2${tab}waiting"
+  assert_contains "$OUT" "blocker${tab}1${tab}T-c${tab}not-started${tab}Charlie"
+
+  # Once T-c's item is checked, wave 2 opens.
+  sed 's/^- \[ \] `T-c`/- [x] `T-c`/' .ai/specs/alpha/roadmap.md > roadmap.tmp
+  mv roadmap.tmp .ai/specs/alpha/roadmap.md
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "wave${tab}1${tab}merged"
+  assert_contains "$OUT" "wave${tab}2${tab}open"
+  assert_contains "$OUT" "item${tab}2${tab}T-d${tab}not-started${tab}no${tab}false${tab}-${tab}start${tab}Delta"
+  assert_not_contains "$OUT" "blocker"
+}
+
+test_spec_plan_reports_running_paused_autopilot_and_abandoned_tasks() {
+  epic_setup
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+- [ ] `T-c` — Charlie — goal
+
+## Waves
+
+1. Alpha; Bravo; Charlie
+RM
+  git add -A
+  git commit -q -m "spec"
+  jig task new T-a >/dev/null
+  jig task start T-a >/dev/null
+  git checkout -q main
+  jig task new T-b >/dev/null
+  jig task start T-b >/dev/null
+  git checkout -q main
+  jig task pause T-b >/dev/null
+  jig task autopilot T-b start >/dev/null
+  jig task new T-c >/dev/null
+  jig task abandon T-c >/dev/null
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}T-a${tab}active${tab}no${tab}false${tab}-${tab}running${tab}Alpha"
+  assert_contains "$OUT" "item${tab}1${tab}T-b${tab}active${tab}no${tab}true${tab}on${tab}running${tab}Bravo"
+  assert_contains "$OUT" "item${tab}1${tab}T-c${tab}abandoned${tab}no${tab}false${tab}-${tab}abandoned${tab}Charlie"
+
+  run jig spec plan alpha --phase 1
+  assert_contains "$OUT" "active, paused, autopilot on"
+}
+
+# A wave entry names an item by its title — ignoring case, backticks and
+# runs of spaces — or by its task id. What names nothing, several items, or an
+# item another entry names too is reported, never guessed; a wave with such
+# an entry is never merged, so it holds every wave after it.
+test_spec_plan_reports_unmatched_ambiguous_and_repeated_entries() {
+  fixture_jig_repo
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [x] Twin — one
+- [x] Twin — two
+- [x] `T-r` — Repeated — goal
+- [ ] `T-z` — Zulu — wrapped
+  onto a second line
+
+## Phase 2 — Second
+
+- [ ] `T-l` — Later — goal
+
+## Waves
+
+1. twin; Nothing like it; Repeated
+2. `T-r`; T-z
+3. Later
+RM
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 2 --format tsv
+  assert_eq 0 "$RC"
+  assert_eq "parallel${tab}2${tab}0
+wave${tab}3${tab}waiting
+item${tab}3${tab}T-l${tab}no-workspace${tab}no${tab}false${tab}-${tab}wait${tab}Later
+blocker${tab}2${tab}T-z${tab}no-workspace${tab}Zulu
+problem${tab}1${tab}ambiguous${tab}twin
+problem${tab}1${tab}unmatched${tab}Nothing like it
+problem${tab}1${tab}repeated${tab}Repeated
+problem${tab}2${tab}repeated${tab}\`T-r\`" "$OUT"
+
+  run jig spec plan alpha --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not in any wave:"
+  assert_contains "$OUT" 'problem: wave 1 entry "twin" names more than one roadmap item'
+  assert_contains "$OUT" 'problem: wave 1 entry "Nothing like it" names no roadmap item'
+  assert_contains "$OUT" 'problem: wave 2 entry "`T-r`" names an item another wave entry names too'
+}
+
+# Off the epic, the roadmap is the epic's — progress is made there
+# (ADR-0040) — read from its ref without a fetch, and the output names it.
+test_spec_plan_reads_an_open_epic_roadmap_from_its_branch() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null
+  git checkout -q epic/idea-x
+  printf '%s\n' '## Phase 1 — On the epic' '' '- [ ] `T-e` — Epic item — goal' '' '## Waves' '' '1. Epic item' \
+    >> .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "progress on the epic"
+  git checkout -q main
+
+  run jig spec plan idea-x --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "roadmap: epic/idea-x"
+  assert_contains "$OUT" "Epic item"
+
+  # On the epic, its own copy is read.
+  git checkout -q epic/idea-x
+  run jig spec plan idea-x --phase 1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "roadmap: .ai/specs/idea-x/roadmap.md"
+}
+
+test_spec_plan_epic_without_a_branch_here_fails() {
+  fixture_jig_repo
+  printf '%s\n' 'Destination: x.' '' 'Epic: epic/gone' '' '## Phase 1 — A' '' '## Waves' | plan_spec alpha
+  run jig spec plan alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: alpha is built on epic/gone, which this checkout has no branch of; fetch it first"
+}
+
+test_spec_plan_epic_with_a_name_git_rejects_fails_naming_it() {
+  fixture_jig_repo
+  printf '%s\n' 'Destination: x.' '' 'Epic: bad..branch' '' '## Phase 1 — A' '' '## Waves' | plan_spec alpha
+  run jig spec plan alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec plan: git rejects the epic branch name bad..branch in .ai/specs/alpha/roadmap.md"
+}
+
+test_spec_plan_is_read_only() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+  jig task new T-a >/dev/null
+  local before after
+  before=$(cat .ai/specs/alpha/roadmap.md .ai/workspace/tasks/T-a/state)
+  jig spec plan alpha --phase 1 >/dev/null
+  jig spec plan alpha --phase 1 --format tsv >/dev/null
+  after=$(cat .ai/specs/alpha/roadmap.md .ai/workspace/tasks/T-a/state)
+  assert_eq "$before" "$after"
+}
+
+# --- spec ship (adr-20260922-spec-work-ships-by-the-agent-git-level) -----------
+
+# sship_cfg_local <key> <value> — set a key in .ai/config.local.yaml, where
+# agent.git is read from (ADR-0038). Mirrors task.t.sh's ship_cfg_local;
+# duplicated because each test file sources only itself.
+sship_cfg_local() {
+  local file=".ai/config.local.yaml"
+  touch "$file"
+  if grep -q "^$1:" "$file"; then
+    sed "s|^$1:.*|$1: $2|" "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  else
+    printf '%s: %s\n' "$1" "$2" >> "$file"
+  fi
+}
+
+# sship_cfg <key> <value> — rewrite one line of the project's config.yaml.
+sship_cfg() {
+  sed "s|^$1:.*|$1: $2|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+}
+
+# sship_origin — a bare `origin` holding every branch this repository has now.
+sship_origin() {
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+}
+
+# sship_stub_gh <existing-url-or-empty> — a fake, authenticated `gh`: `pr list`
+# prints <existing-url> or `null`, `pr create` records its arguments, one per
+# line, in gh-create.argv and prints a made-up URL. As task.t.sh's ship_stub_gh.
+sship_stub_gh() {
+  local existing="${1:-}"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  pr)
+    shift
+    case "\$1" in
+      list) if [ -n "$existing" ]; then printf '%s\n' "$existing"; else printf 'null\n'; fi ;;
+      create) shift; printf '%s\n' "\$@" > gh-create.argv; printf 'https://github.com/example/example/pull/42\n' ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  sship_cfg forge github
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# sship_declared <id> — a spec with its Epic: line written, not committed, and
+# staged, on main: what `jig-idea` has at hand when it ships a declaration.
+sship_declared() {
+  epic_setup
+  jig spec new "$1" >/dev/null
+  jig spec epic "$1" >/dev/null
+  git add ".ai/specs/$1"
+  printf 'Declare %s\n\nThe spec and its epic.\n' "$1" > msg.txt
+}
+
+# sship_cut <id> — the Epic: line on main and on origin, the epic cut here and
+# not pushed yet; checkout on main.
+sship_cut() {
+  epic_setup
+  jig spec new "$1" >/dev/null
+  jig spec epic "$1" >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  sship_origin
+  jig spec epic "$1" >/dev/null 2>&1
+}
+
+# sship_finished <id> — on the epic, pushed, with the spec removed by
+# `--finish`, the removal and a version bump staged.
+sship_finished() {
+  epic_ready_to_finish "$1"
+  sship_origin
+  jig spec epic "$1" --finish --leftovers-handled >/dev/null 2>&1
+  printf '1.0.0\n' > VERSION
+  git add -A ".ai/specs/$1" VERSION
+  printf 'Release %s\n\nThe epic, finished.\n' "$1" > msg.txt
+}
+
+test_spec_ship_none_level_exits_3_and_changes_nothing() {
+  sship_declared idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "spec ship: agent.git is none in this clone"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_contains "$(git status --porcelain -- .ai/specs/idea-x)" "A  .ai/specs/idea-x/roadmap.md"
+}
+
+test_spec_ship_ignores_agent_git_in_the_project_config() {
+  sship_declared idea-x
+  printf 'agent.git: pr\n' >> .ai/config.yaml
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 3 "$RC"
+}
+
+test_spec_ship_invalid_agent_git_dies() {
+  sship_declared idea-x
+  sship_cfg_local agent.git yolo
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: invalid agent.git: yolo (expected none|commit|push|pr|merge)"
+}
+
+test_spec_ship_unknown_spec_dies() {
+  epic_setup
+  sship_cfg_local agent.git pr
+  run jig spec ship nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no spec nope here, and none removed in the history of this branch"
+}
+
+test_spec_ship_declare_at_commit_switches_off_main_and_commits() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  local main_sha
+  main_sha=$(git rev-parse main)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: declare"
+  assert_contains "$OUT" "switched to spec/idea-x"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "stopped at commit: push is the human's"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$main_sha" "$(git rev-parse main)" "nothing may be committed to main"
+  assert_eq "Declare idea-x" "$(git log -1 --format=%s)"
+}
+
+test_spec_ship_declare_requires_a_message_file() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declaring commits; --message-file is required"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_declare_refuses_staged_paths_outside_the_spec() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  printf 'other\n' > other.txt
+  git add other.txt
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a declaration commits only .ai/specs/idea-x/; staged outside it:"
+  assert_contains "$OUT" "other.txt"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_refuses_staged_workspace_paths() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  mkdir -p .ai/workspace/tasks/T-1
+  printf 'x\n' > .ai/workspace/tasks/T-1/notes.md
+  git add -f .ai/workspace/tasks/T-1/notes.md
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "staged changes under .ai/workspace/ or .ai/runtime/ are not shippable"
+}
+
+test_spec_ship_declare_refuses_when_its_branch_exists() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  git branch spec/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec/idea-x exists already; switch to it and run again"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_declare_at_pr_pushes_and_opens_the_pr_into_main() {
+  sship_declared idea-x
+  sship_origin
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: declare"
+  assert_contains "$OUT" "pushed spec/idea-x"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_contains "$OUT" 'once spec/idea-x is merged into main, run `jig spec epic idea-x` to cut epic/idea-x'
+  git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null \
+    || fail "spec/idea-x was not pushed"
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')"
+  assert_contains "$argv" "$(printf -- '--head\nspec/idea-x')"
+  assert_contains "$argv" "$(printf -- '--title\nDeclare idea-x')"
+}
+
+test_spec_ship_epic_at_push_pushes_the_cut_epic() {
+  sship_cut idea-x
+  sship_cfg_local agent.git push
+
+  run jig spec ship idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: epic"
+  assert_contains "$OUT" "pushed epic/idea-x"
+  assert_eq "$(git rev-parse epic/idea-x)" "$(git --git-dir=origin.git rev-parse refs/heads/epic/idea-x)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_epic_at_commit_leaves_the_push_to_the_human() {
+  sship_cut idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stopped at commit: pushing epic/idea-x is the human's"
+  if git --git-dir=origin.git rev-parse --verify --quiet refs/heads/epic/idea-x >/dev/null; then
+    fail "epic/idea-x was pushed at agent.git: commit"
+  fi
+}
+
+test_spec_ship_epic_refuses_what_is_staged() {
+  sship_cut idea-x
+  sship_cfg_local agent.git push
+  printf 'x\n' > x.txt
+  git add x.txt
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "pushing epic/idea-x commits nothing, and something is staged"
+}
+
+test_spec_ship_epic_never_forces_a_push_origin_moved_past() {
+  sship_cut idea-x
+  sship_cfg_local agent.git push
+  jig spec ship idea-x >/dev/null
+  git clone -q origin.git other
+  (cd other && git checkout -q epic/idea-x && printf 'theirs\n' > t.txt && git add t.txt \
+    && git commit -q -m theirs && git push -q origin epic/idea-x)
+  git checkout -q epic/idea-x
+  printf 'ours\n' > o.txt
+  git add o.txt
+  git commit -q -m ours
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: git push failed"
+}
+
+test_spec_ship_final_at_pr_commits_pushes_and_opens_the_pr_into_main() {
+  sship_finished idea-x
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: final"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed epic/idea-x"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_eq "" "$(git ls-files -- .ai/specs/idea-x)"
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')"
+  assert_contains "$argv" "$(printf -- '--head\nepic/idea-x')"
+  assert_contains "$argv" "$(printf -- '--title\nRelease idea-x')"
+}
+
+test_spec_ship_final_reports_an_open_pr_instead_of_a_second() {
+  sship_finished idea-x
+  sship_stub_gh "https://github.com/example/example/pull/7"
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/7 (already open)"
+  assert_no_file gh-create.argv
+}
+
+test_spec_ship_final_refuses_an_unstaged_removal() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+  git reset -q -- .ai/specs/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the removal of .ai/specs/idea-x/ is not staged"
+}
+
+test_spec_ship_final_refuses_an_epic_without_the_latest_main() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+  git stash -q
+  git checkout -q main
+  printf 'new\n' > new.txt
+  git add new.txt
+  git commit -q -m "new work on main"
+  git checkout -q epic/idea-x
+  git stash pop -q
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic/idea-x does not contain the latest main; merge main into it first"
+}
+
+test_spec_ship_final_runs_only_on_the_epic() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+  git commit -q -m "finish"
+  git checkout -q main
+  git merge -q --no-ff -m "release" epic/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "shipped from epic/idea-x — switch to it first"
+}
+
+# --- spec ship: the epic's final merge (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
+
+# mfin_stub_gh — a fake, authenticated `gh` that can merge, answering from
+# files in the test directory (as task.t.sh's mship_stub_gh; duplicated
+# because each test file sources only itself): gh-checks (default: pass),
+# gh-draft (false), gh-repo (true true true), gh-merge.rc (0). Every call is
+# logged to gh.log; `pr create` records its arguments in gh-create.argv and
+# the body it was given in gh-create.body, `pr merge` its arguments in
+# gh-merge.argv.
+mfin_stub_gh() {
+  local dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/gh.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-create.argv"
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = --body-file ]; then cat "\$2" > "\$d/gh-create.body"; fi
+      shift
+    done
+    printf 'https://github.com/example/example/pull/42\n' ;;
+  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(git -C "\$d" rev-parse HEAD)" ;;
+  "repo view") val gh-repo "true true true" ;;
+  "pr checks") val gh-checks pass ;;
+  "pr merge")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-merge.argv"
+    exit "\$(val gh-merge.rc 0)" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  sship_cfg forge github
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# mfin_finished <id> [<release>] [<roadmap-item>] — sship_finished with a
+# roadmap whose only work item is checked (or <roadmap-item> added unchecked)
+# and one unchecked fog item, declared with <release> when given; agent.git
+# merge, the unattended opt-in, CI given no time to wait, gh stubbed.
+mfin_finished() {
+  local id="$1" release="${2:-}" extra="${3:-}"
+  epic_setup
+  jig spec new "$id" >/dev/null
+  {
+    printf '# Roadmap — %s\n\nDestination: done.\n\n## Phase 1 — One\n\n' "$id"
+    printf -- '- [x] `t-1` — the one item\n'
+    [ -z "$extra" ] || printf -- '- [ ] %s\n' "$extra"
+    printf -- '- [ ] fog: later — cannot be stated yet\n'
+  } > ".ai/specs/$id/roadmap.md"
+  git add -A
+  git commit -q -m "add spec $id"
+  if [ -n "$release" ]; then
+    jig spec epic "$id" --release "$release" >/dev/null 2>&1
+  else
+    jig spec epic "$id" >/dev/null 2>&1
+  fi
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic "$id" >/dev/null 2>&1
+  git checkout -q "epic/$id"
+  sship_origin
+  jig spec epic "$id" --finish --leftovers-handled >/dev/null 2>&1
+  printf '1.1.0\n' > VERSION
+  git add -A ".ai/specs/$id" VERSION
+  printf 'Release %s\n\nThe epic, finished.\n' "$id" > msg.txt
+  mfin_stub_gh
+  sship_cfg_local agent.git merge
+  sship_cfg_local agent.ci_timeout 0
+  sship_cfg_local autopilot.unattended true
+}
+
+test_spec_ship_final_merges_in_an_unattended_run_with_a_merge_commit_only() {
+  mfin_finished idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: final"
+  assert_contains "$OUT" "release: minor (no Release: line; the unattended default)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+  local argv
+  argv=$(cat gh-merge.argv)
+  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "--merge"
+  assert_not_contains "$(cat gh.log)" "--admin"
+  assert_not_contains "$(cat gh.log)" "--auto"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+}
+
+test_spec_ship_final_prints_the_recorded_release_level() {
+  mfin_finished idea-x patch
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: patch"
+  assert_contains "$OUT" "merged "
+}
+
+test_spec_ship_final_at_merge_is_the_humans_outside_an_unattended_run() {
+  mfin_finished idea-x
+  sship_cfg_local autopilot.unattended false
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_contains "$OUT" "not merged: the epic's final merge is the release, and outside an unattended run it is the human's"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_unattended_in_the_project_config_does_not_merge() {
+  mfin_finished idea-x
+  sed '/^autopilot.unattended:/d' .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+  printf 'autopilot.unattended: true\n' >> .ai/config.yaml
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the epic's final merge is the release"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_does_not_merge_where_merge_commits_are_not_allowed() {
+  mfin_finished idea-x
+  printf 'false true true\n' > gh-repo
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the repository does not allow merge commits, and an epic merges only with one"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_major_release_opens_a_draft_that_needs_a_human() {
+  mfin_finished idea-x major
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: major"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$(cat gh-create.body)" "Needs a human: major release?"
+  assert_contains "$(cat gh-create.body)" "The epic, finished."
+  assert_contains "$OUT" "not merged: a major release needs a human; the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_does_not_merge_an_epic_with_unchecked_roadmap_items() {
+  mfin_finished idea-x "" '`t-2` — the item nobody finished'
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: the epic is not finished: 1 roadmap item(s) unchecked, first: \`t-2\` — the item nobody finished"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_does_not_merge_while_a_task_of_the_epic_is_not_in_it() {
+  mfin_finished idea-x
+  local c
+  c=$(git commit-tree -p HEAD -m "unmerged work" "HEAD^{tree}")
+  git branch task/t-9 "$c"
+  mkdir -p .ai/workspace/tasks/t-9
+  printf 'task_id: t-9\nstatus: ready\nbranch: task/t-9\nbase_branch: epic/idea-x\n' > .ai/workspace/tasks/t-9/state
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: task(s) cut from epic/idea-x not merged into it: t-9"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_ignores_an_abandoned_task_of_the_epic() {
+  mfin_finished idea-x
+  local c
+  c=$(git commit-tree -p HEAD -m "dropped work" "HEAD^{tree}")
+  git branch task/t-9 "$c"
+  mkdir -p .ai/workspace/tasks/t-9
+  printf 'task_id: t-9\nstatus: abandoned\nbranch: task/t-9\nbase_branch: epic/idea-x\n' > .ai/workspace/tasks/t-9/state
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+}
+
+test_spec_ship_final_does_not_merge_on_a_red_check() {
+  mfin_finished idea-x
+  printf 'fail\n' > gh-checks
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_at_merge_refuses_an_epic_without_the_latest_main() {
+  mfin_finished idea-x
+  git stash -q
+  git checkout -q main
+  printf 'new\n' > new.txt
+  git add new.txt
+  git commit -q -m "new work on main"
+  git checkout -q epic/idea-x
+  git stash pop -q
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic/idea-x does not contain the latest main"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_declare_at_merge_opens_the_pr_and_never_merges_it() {
+  sship_declared idea-x
+  sship_origin
+  mfin_stub_gh
+  sship_cfg_local agent.git merge
+  sship_cfg_local autopilot.unattended true
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: declare"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_not_contains "$OUT" "merged https"
+  assert_no_file gh-merge.argv
+}
+
+# --- spec epic: the next step by agent.git -------------------------------------
+
+test_spec_epic_declare_names_spec_ship_when_the_agent_commits() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  sship_cfg_local agent.git pr
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'stage .ai/specs/idea-x/ and run `jig spec ship idea-x` (agent.git: pr — it commits, pushes and opens the pull request into main)'
+  assert_not_contains "$OUT" "commit .ai/specs/idea-x/roadmap.md and merge it"
+}
+
+test_spec_epic_cut_names_spec_ship_when_the_agent_pushes() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  sship_cfg_local agent.git push
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'push it with `jig spec ship idea-x`'
+}
+
+test_spec_epic_cut_at_commit_leaves_the_push_to_the_human() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  sship_cfg_local agent.git commit
+
+  run jig spec epic idea-x
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'push it with `git push -u origin epic/idea-x` — yours at agent.git: commit'
+}
+
+test_spec_epic_finish_at_merge_says_the_merge_is_an_unattended_runs_only() {
+  epic_ready_to_finish idea-x
+  sship_cfg_local agent.git merge
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'and merges it once CI passed only in an unattended run)'
+}
+
+test_spec_epic_finish_names_spec_ship_and_what_stays_the_humans() {
+  epic_ready_to_finish idea-x
+  sship_cfg_local agent.git push
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'run `jig spec ship idea-x` (agent.git: push — it commits and pushes epic/idea-x; the pull request into main is yours)'
+}
+
+# --- the Release: line -----------------------------------------------------------
+
+test_spec_epic_release_is_written_under_the_epic_line() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+
+  run jig spec epic idea-x --release minor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/specs/idea-x/roadmap.md: Release: minor"
+  awk '/^Epic: epic\/idea-x$/{getline r; if (r == "Release: minor") found=1} END{exit !found}' \
+    .ai/specs/idea-x/roadmap.md || fail "Release: line not right under the Epic: line"
+}
+
+test_spec_epic_release_rejects_an_unknown_level() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+
+  run jig spec epic idea-x --release huge
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid release level: huge (expected patch|minor|major)"
+  assert_not_contains "$(cat .ai/specs/idea-x/roadmap.md)" "Epic:"
+}
+
+test_spec_epic_release_only_when_declaring() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+
+  run jig spec epic idea-x --release major
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declares epic/idea-x already; the release level is recorded when the epic is declared"
+
+  run jig spec epic idea-x --finish --release major
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--release goes with declaring the epic"
+}
+
+test_spec_epic_refuses_an_invalid_release_line() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x >/dev/null
+  printf 'Release: minor, probably\n' >> .ai/specs/idea-x/roadmap.md
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "records an invalid release level: minor, probably (expected Release: patch|minor|major)"
+}
+
+test_spec_epic_refuses_two_release_levels() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x --release minor >/dev/null
+  printf 'Release: major\n' >> .ai/specs/idea-x/roadmap.md
+
+  run jig spec epic idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "records more than one release level; keep one Release: line"
+}
+
+test_spec_epic_finish_reports_the_recorded_release() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  jig spec epic idea-x --release minor >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null 2>&1
+  git checkout -q epic/idea-x
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: minor"
+}
+
+test_spec_epic_finish_without_a_release_line_says_so() {
+  epic_ready_to_finish idea-x
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release: not recorded"
+}
+
+test_spec_ship_refuses_an_invalid_release_line() {
+  sship_declared idea-x
+  sship_cfg_local agent.git commit
+  printf 'Release: soon\n' >> .ai/specs/idea-x/roadmap.md
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "records an invalid release level: soon"
 }

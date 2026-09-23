@@ -36,7 +36,8 @@ project owns.
   map writes it. A first `init` without `--profiles` and without `.ai/config.yaml` writes
   the detected profiles into the config it creates; with `--profiles`, or when the config
   exists, detection only suggests (adr-20260918-init-activates-detected-profiles). Neither is `.ai/config.local.yaml`, which is not the project's either: it
-  belongs to the clone's owner and is never created by `init` (ADR-0038). `init` does write
+  belongs to the clone's owner and is never created by `init` — only by hand or by
+  `jig config set --local` at the owner's request (ADR-0038). `init` does write
   its line into `.gitignore`, through the same append-missing-lines merge as every other
   `templates/gitignore` line; `upgrade` never touches `.gitignore`, so an older project
   gets the line only from a repeated `init`, and `status`/`doctor` warn until it has it.

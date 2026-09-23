@@ -16,6 +16,7 @@ _HK_VIA=""          # tier that decided the last remote state: forge|ancestry|no
 _HK_FORGE_KIND=""   # github|gitlab|none — resolved once per run
 _HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state>" lines, fetched once per run (C1)
 _HK_STALE_REMOTE=0  # 1 when the fetch or the forge tier could not answer
+_HK_FORGE_TOKEN=""  # github|gitlab|none|failed — the run marker's forge= field
 _HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
 _HK_ROWS=""         # "<group>\t<task>\t<note>" per task, printed as the report
 _HK_WT_LINE=""      # what _hk_worktree_retire did, as a --verbose line
@@ -65,16 +66,20 @@ cmd_housekeeping() {
   # A run boundary in the log. Without it the log is an undifferentiated
   # append-only history, and any reader asking "what does the latest run say"
   # has to guess with a line count — which is how `jig status` came to report
-  # one unconsolidated task as three.
+  # one unconsolidated task as three. Its forge= field says whether the run's
+  # pull request states came from a forge (github|gitlab), from nowhere
+  # (none) or were missing because the forge did not answer (failed): the
+  # status page shows `remote=open` only as fresh as that.
   if [ "$dry" != 1 ]; then
-    _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ) forge=$_HK_FORGE_TOKEN"
   fi
 
   local needs_consolidation=0 wrong_base=0 found=0
-  local state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt
+  local state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
 
   # Worktrees tasks were started in, from git's own list, read once per run.
-  # A task's worktree goes when its workspace goes (ADR-0029).
+  # A task's worktree goes when the task is closed and its branch landed on its
+  # own base, or when its workspace goes (ADR-0029 as amended 2026-09-22).
   local worktrees here
   worktrees=$(_task_worktrees)
   # The branch this checkout has out, which `_task_worktrees` leaves out of its
@@ -140,17 +145,30 @@ EOF
         *needs-consolidation*) needs_consolidation=1 ;;
       esac
 
-      # A worktree that has to stay keeps its workspace too. Purging the
-      # workspace would leave the worktree's link dangling beside whatever
-      # made it stay — and the uncertain direction is always preserve.
+      # A task's worktree goes when its workspace is purged, and also as soon
+      # as the task is closed and its branch landed on its own base — an epic
+      # included — whether or not the work has been released yet: the records
+      # a phase keeps for the epic's review live in the workspace, not in the
+      # worktree (ADR-0029 as amended 2026-09-22, ADR-0040).
+      # A worktree that has to stay keeps its workspace too when it is purged.
+      # Purging the workspace would leave the worktree's link dangling beside
+      # whatever made it stay — and the uncertain direction is always preserve.
       _HK_WT_LINE=""
       _HK_WT_NOTE=""
-      if [ "$action" = "purge" ] && [ -n "$branch" ]; then
+      retire=0
+      [ "$action" = "purge" ] && retire=1
+      [ "$st" = "consolidated" ] && [ "$remote" = "merged" ] && retire=1
+      if [ "$retire" = 1 ] && [ -n "$branch" ]; then
         wt=$(_task_worktree_for "$branch" "$worktrees")
         if [ -n "$wt" ] && ! _hk_worktree_retire "$dry" "$tid" "$wt"; then
-          action="preserve"
-          flags="worktree-kept"
-        elif [ -z "$wt" ] && [ "$branch" = "$here" ] && ! _hk_checkout_keep "$dry" "$tid"; then
+          if [ "$action" = "purge" ]; then
+            action="preserve"
+            flags="worktree-kept"
+          else
+            flags="${flags:+$flags,}worktree-kept"
+          fi
+        elif [ -z "$wt" ] && [ "$action" = "purge" ] && [ "$branch" = "$here" ] \
+             && ! _hk_checkout_keep "$dry" "$tid"; then
           action="preserve"
           flags="worktree-kept"
         fi
@@ -197,6 +215,11 @@ EOF
 
   mkdir -p "$runtime"
   : > "$runtime/last-housekeeping"
+
+  # The status page shows this run's flags and pull requests, and a run is
+  # also when its cached counts are refreshed: a full redraw, when there is a
+  # page at all. Never changes this command's output or exit code.
+  jig_status_page_touch --full
 
   # Exit 3, not 1: a hook or a cron job must be able to tell "someone has to
   # consolidate this" from "the command crashed" (jig_die uses 1), and 2 is
@@ -394,73 +417,41 @@ _hk_fetch() {
   return 0
 }
 
-# _hk_forge_init — resolve which forge CLI to use and pull every pull request
-# in one call (alternatives.md C1). One network call per run, not per task:
-# this command may fire at the start of every agent session.
+# _hk_forge_init — resolve which forge CLI to use (jig_forge_kind, common.sh)
+# and pull every pull request in one call (alternatives.md C1). One network
+# call per run, not per task: this command may fire at the start of every
+# agent session.
 _hk_forge_init() {
-  _HK_FORGE_KIND="none"
   _HK_FORGE_PRS=""
+  _HK_FORGE_KIND=$(jig_forge_kind) || exit 1
+  _HK_FORGE_TOKEN=$_HK_FORGE_KIND
 
-  local want origin
-  want=$(cfg forge auto)
-  case "$want" in
-    none) return 0 ;;
-    auto|github|gitlab) ;;
-    *) jig_die "invalid forge: $want (expected auto|github|gitlab|none)" ;;
-  esac
-
-  origin=$(git -C "$JIG_PROJECT" remote get-url origin 2>/dev/null || printf '')
-  [ -n "$origin" ] || return 0
-
-  if [ "$want" = "auto" ]; then
-    case "$origin" in
-      *github.com*) want="github" ;;
-      *gitlab.com*|*gitlab.*) want="gitlab" ;;
-      *) return 0 ;;
-    esac
-  fi
-
-  case "$want" in
+  case "$_HK_FORGE_KIND" in
     github)
-      command -v gh >/dev/null 2>&1 || return 0
-      gh auth status >/dev/null 2>&1 || return 0
       _HK_FORGE_PRS=$(gh pr list --state all --limit 200 \
         --json headRefName,baseRefName,state \
         --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)"' 2>/dev/null || printf '__failed__')
       ;;
     gitlab)
-      command -v glab >/dev/null 2>&1 || return 0
-      glab auth status >/dev/null 2>&1 || return 0
-      # One JSON object per line first: `glab` returns a compact single-line
-      # array, and a greedy `.*` across the whole line would keep only the
-      # last merge request and silently drop every other one. Each field is
-      # then taken at its first occurrence, whatever the key order: nested
-      # objects (author, assignees) carry a `state` of their own, later on.
+      # A row needs a branch and a state; jig_glab_fields (common.sh) splits
+      # glab's compact array and drops objects without a source branch.
       _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
-        | sed 's/},[[:space:]]*{/}\
-{/g' \
-        | awk '
-            function field(key,   k) {
-              k = "\"" key "\":\""
-              if (!match($0, k "[^\"]*\"")) return ""
-              return substr($0, RSTART + length(k), RLENGTH - length(k) - 1)
-            }
-            {
-              h = field("source_branch"); b = field("target_branch"); st = field("state")
-              if (h != "" && st != "") print h "\t" b "\t" st
-            }' \
+        | jig_glab_fields source_branch target_branch state \
+        | awk -F '\t' '$3 != ""' \
         || printf '__failed__')
       ;;
+    *) return 0 ;;
   esac
 
   if [ "$_HK_FORGE_PRS" = "__failed__" ]; then
     # The tier is abandoned for the whole run rather than retried per task:
     # a forge that failed once will fail 40 times, slowly.
     _HK_FORGE_PRS=""
+    _HK_FORGE_KIND="none"
+    _HK_FORGE_TOKEN="failed"
     _HK_STALE_REMOTE=1
     return 0
   fi
-  _HK_FORGE_KIND="$want"
   return 0
 }
 
@@ -767,8 +758,9 @@ _hk_purge() {
 }
 
 # _hk_worktree_retire <dry> <task-id> <path> — remove the worktree a task was
-# started in, as its workspace is purged (ADR-0029). Non-zero, having said
-# why, when the worktree has to stay.
+# started in, once the task is closed and its branch landed on its own base, or
+# as its workspace is purged (ADR-0029 as amended). Non-zero, having said why,
+# when the worktree has to stay.
 #
 # The one deletion outside .ai/ (RULES.md), so it is narrow on purpose:
 # - git lists <path> as the worktree of the task's branch (the caller's lookup);
@@ -778,8 +770,11 @@ _hk_purge() {
 #   worktree remove` deletes ignored files silently, and a real workspace
 #   there is one this checkout knows nothing about;
 # - git does the deleting, without --force, so tracked changes and untracked
-#   files make it refuse. Agents do not commit: uncommitted work in a task
-#   worktree is the normal state before review, not debris.
+#   files make it refuse. At agent.git none (the default, config.sh) agents
+#   do not commit, so uncommitted work in a task worktree is the normal state
+#   before review, not debris; at a higher level `jig task ship` is what
+#   commits it, and the same refusal still protects whatever it has not
+#   reached yet.
 #
 # A worktree outside the root is left in place, and when it is clean and not
 # locked it no longer holds the workspace back: the task is closed, its work
@@ -796,13 +791,16 @@ _hk_worktree_retire() {
     esac
   fi
   if [ "$ours" = 1 ]; then
-    own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l 2>/dev/null | head -n 1) || own=""
+    own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l -print -quit 2>/dev/null) || own=""
     [ -z "$own" ] || reason="own-workspace"
   fi
   if [ -z "$reason" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || true)" ]; then
     reason="uncommitted-changes"
   fi
-  if [ -z "$reason" ] && [ "$ours" = 0 ] && _hk_worktree_locked "$path"; then
+  # A lock keeps any worktree. For one of ours git would refuse anyway; asking
+  # first names the real reason, which in a phase run is most likely a live
+  # agent, and keeps a dry run from promising a removal git would refuse.
+  if [ -z "$reason" ] && _hk_worktree_locked "$path"; then
     reason="locked"
   fi
   if [ -z "$reason" ] && [ "$ours" = 1 ] && [ "$dry" != 1 ]; then
@@ -973,7 +971,10 @@ _hk_record() {
     case ",$flags," in
       *,worktree-kept,*) group="needs"; note="$_HK_WT_NOTE" ;;
       *,wrong-base,*) group="needs"; note="$_HK_WRONG_NOTE" ;;
-      *,base-unreleased,*) group="waiting"; note="waiting for $base to reach $_HK_DEFAULT_BASE" ;;
+      *,base-unreleased,*)
+        group="waiting"
+        note="waiting for $base to reach $_HK_DEFAULT_BASE${_HK_WT_NOTE:+, $_HK_WT_NOTE}"
+        ;;
       *,needs-consolidation,*) group="needs"; note="merged but not consolidated, run jig-consolidate" ;;
       *,abandoned?,*) group="needs"; note="pull request closed, run jig task abandon or reopen it" ;;
       *)

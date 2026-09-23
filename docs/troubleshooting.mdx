@@ -36,6 +36,8 @@ each, and prints a fix for every warning. On Windows, run it in Git Bash, or as
 | Several tasks match the branch | Tell the agent which one to continue. |
 | `wrong-base` in the housekeeping report | A task's pull request was merged into a branch other than its base. It is kept; check where the work went. |
 | Tasks that are merged but not closed | Say *"close what's merged"*; the agent asks you about each one. |
+| The status page does not change | Look at the time at its top. If it is recent, nothing changed. If it is old, you may have an older copy open — open it again with `jig status --open`; in Firefox, automatic reloading can be turned off by the setting `accessibility.blockautorefresh`. |
+| The status page says pull request data is *stale* | Run `jig housekeeping`; it asks GitHub or GitLab again. |
 
 ## Verification and upgrades
 

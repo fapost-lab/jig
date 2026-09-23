@@ -1,0 +1,8 @@
+# jig-autopilot: one task run through its whole route without waiting between stages.
++ take the csv export on autopilot
++ do it end to end, finish it without me
++ autopilot this task
++ run the whole route unattended and hand me back a pull request
+- add a csv export to the reports
+- verify the task before we call it done
+- continue the task we started yesterday
