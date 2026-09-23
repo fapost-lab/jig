@@ -343,3 +343,22 @@ jobs:
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: .github/scripts/epic-pr-check.sh "$HEAD_REF"
+
+  # Refuses a pull request that releases a version the changelog does not
+  # describe (docs/changelog.mdx). The decision lives in
+  # .github/scripts/changelog-check.sh, which has tests; this job only runs
+  # it. It is independent of the suite: the question is about the text of the
+  # release, not about the code, and it should answer while the author is
+  # still writing the pull request.
+  #
+  # The check turns itself on when a branch raises JIG_VERSION and off again
+  # once that version is tagged, so a pull request that leaves the version
+  # alone passes without reading the page.
+  changelog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the changelog describes the version this branch declares
+        run: .github/scripts/changelog-check.sh

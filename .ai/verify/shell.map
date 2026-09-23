@@ -26,8 +26,10 @@ templates/**                    init:: upgrade::
 skills/*/SKILL.md               routing::
 tests/routing/**                routing::
 
-# A library of one script is tested through that script.
-.github/scripts/release-lib.sh  release-tag::
+# A library is tested through every script that sources it, not only the
+# first one that did: release-lib.sh decides "already released" for the
+# release tag, the epic gate and the changelog gate alike.
+.github/scripts/release-lib.sh  release-tag:: epic-pr-check:: changelog-check::
 # CI configuration is exercised by CI itself, not by tests/run.sh.
 .github/workflows/**            -
 

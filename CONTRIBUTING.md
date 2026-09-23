@@ -157,6 +157,12 @@ once more. It is word overlap, not a model: no key, no network, the same answer 
 
 ## Releases
 
+The pull request that raises the version also writes the release's entry in
+[`docs/changelog.mdx`](docs/changelog.mdx) — a `## <version> — <date>` section with a line or two
+per user-visible change: a new capability, a fix, a change someone has to act on. It is the only
+moment anyone knows what the version contains, so CI asks for it: the `changelog` job refuses a pull
+request whose `JIG_VERSION` has no tag yet and no section on that page.
+
 Raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request that should become the release:
 `major.minor.patch` without leading zeros — patch for a fix, minor for a new capability, major for a
 change that breaks commands, the `.ai/` layout, `init`/`upgrade` or the installer (before `1.0.0`,
