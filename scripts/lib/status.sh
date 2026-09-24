@@ -1564,13 +1564,23 @@ _status_session_hook() {
 # is how that stops being silent. The adapter answers (an empty hint means
 # connected), for the same reason as the session hook line above, and the line
 # is omitted when the source checkout holding the adapters is gone.
+#
+# Connected is not the whole answer, because a section nothing updates goes
+# stale where nobody looks: the marked-section state is reported too, and it
+# is the same for every runtime — the section lives in AGENTS.md whatever
+# reads it (adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 _status_instructions() {
-  local source a adir hint file
+  local source a adir hint file recorded section
   source=$(manifest_source 2>/dev/null) || return 0
   [ -n "$source" ] || return 0
   [ -d "$source/adapters" ] || return 0
   # shellcheck source=lib/profiles.sh
   . "$JIG_LIB/profiles.sh"
+  # shellcheck source=lib/section.sh
+  . "$JIG_LIB/section.sh"
+
+  recorded=$(manifest_instructions_section 2>/dev/null) || recorded=""
+  section=$(jig_section_report_state "$JIG_PROJECT/AGENTS.md" "$recorded")
 
   for a in $(cfg_list adapters "claude codex"); do
     adir=$(adapters_dir "$source/adapters" "$a") || continue
@@ -1582,6 +1592,10 @@ _status_instructions() {
     if [ -n "$hint" ]; then
       file=$("adapter_${a}_instructions_file")
       printf 'instructions (%s): no Jig section in %s (run the jig-init skill)\n' "$a" "$file"
+    elif [ "$section" = unmarked ]; then
+      printf 'instructions (%s): Jig section in AGENTS.md is not marked — upgrades cannot reach it (run the jig-init skill)\n' "$a"
+    elif [ "$section" = modified ]; then
+      printf 'instructions (%s): Jig section in AGENTS.md was changed here; upgrades keep your text\n' "$a"
     else
       printf 'instructions (%s): ok\n' "$a"
     fi

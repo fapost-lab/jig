@@ -306,6 +306,8 @@ cmd_init() {
   jig_require_repo
   # shellcheck source=lib/manifest.sh
   . "$JIG_LIB/manifest.sh"
+  # shellcheck source=lib/section.sh
+  . "$JIG_LIB/section.sh"
 
   # Cleanup net for _init_install_skill_staged's staging directory: fires on
   # a mid-install jig_die (e.g. a conflicting write) as well as on interrupt.
@@ -518,6 +520,14 @@ cmd_init() {
       "$JIG_PROJECT/.ai/templates/scheduler"
     _init_place_symlink "$(cd "$source/templates/spec" && pwd)" \
       "$JIG_PROJECT/.ai/templates/spec"
+    # The instructions template, for the same reason as the others and one
+    # more: it is where the `jig-init` skill reads the marked Jig section
+    # from when it offers to connect a project's own AGENTS.md, and a
+    # consumer project has no framework checkout to read it from (ADR-0011).
+    # A file symlink rather than a directory one; link mode requires real
+    # symbolic links anyway (jig_link_detect).
+    _init_place_symlink "$source/templates/AGENTS.md" \
+      "$JIG_PROJECT/.ai/templates/AGENTS.md"
     for p in $profiles_words; do
       pdir=$(profiles_dir "$source/profiles" "$p")
       [ -d "$pdir" ] \
@@ -558,6 +568,12 @@ cmd_init() {
     # `jig spec new` instantiates them in a project with no framework checkout.
     _init_copy_tree "$source/templates/spec" \
       "$JIG_PROJECT/.ai/templates/spec"
+    # The instructions template: framework-owned like the others, and the one
+    # the `jig-init` skill reads the marked Jig section from when it offers
+    # to connect a project's own AGENTS.md (ADR-0011). The project's own
+    # AGENTS.md is placed separately, in step 5, and stays project-owned.
+    _init_copy_framework_file "$source/templates/AGENTS.md" \
+      "$JIG_PROJECT/.ai/templates/AGENTS.md"
     for p in $profiles_words; do
       pdir=$(profiles_dir "$source/profiles" "$p")
       [ -d "$pdir" ] \
@@ -580,8 +596,49 @@ cmd_init() {
   [ -n "$version" ] || version="$JIG_VERSION"
   local adapters_manifest
   adapters_manifest=$(_init_words_to_csv "$adapters_words")
+
+  # The marked instructions section: `init` is the one command that starts
+  # tracking one, and it does so by *finding* markers, never by writing them
+  # into a file the project already had (`_init_place_if_absent` above leaves
+  # an existing AGENTS.md alone). One rule decides it:
+  #
+  #   record the section only when it is byte for byte what jig itself would
+  #   write — the marked region of the source's own templates/AGENTS.md;
+  #   otherwise carry whatever the manifest already holds, unchanged.
+  #
+  # Both halves matter, and both are about not taking someone's text.
+  #
+  # Recording only an identical section is what makes adoption safe: if the
+  # region already holds exactly the bytes jig would install, claiming it
+  # destroys nothing, because the very next upgrade would write those same
+  # bytes. That covers the two consented ways a pair legitimately appears —
+  # this run created AGENTS.md from the template, or a human agreed to the
+  # `jig-init` skill merging the section verbatim. Text that merely sits
+  # between markers somebody typed themselves is never adopted: upgrade keeps
+  # reporting `keep-conflict` until a human goes through the skill.
+  #
+  # Carrying the existing record forward, rather than re-deriving it, is what
+  # keeps `init` re-runnable. `init` is run again for unrelated reasons — to
+  # add an adapter, to switch profiles — and re-deriving the hash from disk
+  # would silently re-baseline a section a human had edited, turning the next
+  # upgrade's `keep-modified` into a `replace` that overwrites their words.
+  # An edit inside the region must stay switched off until a human agrees
+  # again; so must a section they removed on purpose
+  # (adr-20260924-jig-owns-a-marked-section-of-the-instructions, RULES.md).
+  local section_record
+  section_record=$(manifest_instructions_section)
+  if [ "$(jig_section_state "$JIG_PROJECT/AGENTS.md")" = ok ] \
+     && [ -f "$source/templates/AGENTS.md" ] \
+     && [ "$(jig_section_hash "$JIG_PROJECT/AGENTS.md")" \
+          = "$(jig_section_hash "$source/templates/AGENTS.md")" ]; then
+    section_record="$(jig_section_hash "$JIG_PROJECT/AGENTS.md") AGENTS.md"
+  fi
+
   if [ "$link" = 1 ]; then
-    manifest_write "$version" "$source" "$adapters_manifest" "link"
+    # manifest_write_entries with no body, rather than manifest_write, which
+    # is variadic over paths and has no room for the section argument.
+    manifest_write_entries "$version" "$source" "$adapters_manifest" "link" \
+      "$section_record" < /dev/null
   else
     # Never drop the manifest entry of a framework-owned path that still
     # exists locally, even if this run did not (re)write it (domains/install).
@@ -646,7 +703,7 @@ cmd_init() {
     fi
 
     manifest_write_entries "$version" "$source" "$adapters_manifest" "copy" \
-      < "$entries"
+      "$section_record" < "$entries"
     rm -rf "$_INIT_HASH_TMP"
     _INIT_HASH_TMP=''
   fi

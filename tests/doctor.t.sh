@@ -507,3 +507,24 @@ test_doctor_instructions_warns_for_a_foreign_claude_md() {
   assert_contains "$OUT" "warn  instructions (claude): no Jig section in CLAUDE.md"
   assert_contains "$OUT" "ok    instructions (codex): Jig section present"
 }
+
+# The two states `status` reports alongside "connected", from the same
+# jig_section_report_state, so the two commands cannot disagree
+# (adr-20260924-jig-owns-a-marked-section-of-the-instructions).
+test_doctor_instructions_warns_for_an_unmarked_section() {
+  fixture_jig_repo
+  grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  instructions (codex): Jig section in AGENTS.md is not marked"
+  assert_contains "$OUT" "fix: run the jig-init skill"
+}
+
+test_doctor_instructions_reports_a_changed_section() {
+  fixture_jig_repo
+  sed 's/^## Read first$/## Read first (ours)/' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  run jig doctor
+  assert_contains "$OUT" "ok    instructions (codex): Jig section changed here"
+}

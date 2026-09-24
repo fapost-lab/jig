@@ -15,7 +15,8 @@ paths:
   - install.sh
   - scripts/lib/self-update.sh
   - .github/scripts/release-tag.sh
-reviewed_at: 2026-09-22
+  - scripts/lib/section.sh
+reviewed_at: 2026-09-24
 ---
 # Install glossary
 
@@ -23,7 +24,9 @@ reviewed_at: 2026-09-22
 
 A path the framework installs and `upgrade` may replace. The complement is
 project-owned: created once and never overwritten, however far it has drifted from the
-template. The split is the whole safety story of `upgrade` (ADR-0003).
+template. The split is the whole safety story of `upgrade` (ADR-0003). It is per path with
+one exception, the Marked section below, which is framework-owned text inside a
+project-owned file.
 
 ## Copy mode / link mode
 
@@ -32,10 +35,23 @@ into the project and hashed, so drift is detectable per path. **Link**: framewor
 are relative symlinks into the source checkout, `jig.source` is `.`, and the manifest has
 no hash lines — used when developing the framework against itself.
 
+## Marked section
+
+The region of a project's `AGENTS.md` between `<!-- jig:begin -->` and `<!-- jig:end -->`:
+framework-owned text inside a project-owned file, and the only such region there is.
+`jig upgrade` replaces it while it still hashes to the manifest's `instructions.section`
+record, and keeps it otherwise. `jig init` is the only command that starts tracking one,
+and only when the region is byte for byte what jig itself would write — upgrade never
+adopts, and a record `init` already holds is carried forward, never re-derived, so a
+re-run cannot re-baseline a section a human edited. Parsed by `scripts/lib/section.sh`
+(adr-20260924-jig-owns-a-marked-section-of-the-instructions).
+Informal synonyms: the Jig section, the managed block.
+
 ## Manifest
 
 `.ai/manifest`: a header (`jig.version`, `jig.source`, `jig.mode`, `installed_at`,
-`adapters`) and, in copy mode, one hash line per installed path. Maintained by `init` and
+`adapters`, and `instructions.section` once a marked section is tracked) and, in copy
+mode, one hash line per installed path. Maintained by `init` and
 `upgrade`, never edited by hand. `init` chooses `jig.source`; `upgrade` writes it only for a
 source it actually installed from (adr-20260922-upgrade-records-the-source-it-installed-from).
 

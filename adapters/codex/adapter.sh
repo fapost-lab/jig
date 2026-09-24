@@ -91,8 +91,8 @@ adapter_codex_instructions_hint() {
     printf 'instructions: AGENTS.md is missing, so Codex will not follow the Jig workflow.\n'
   fi
   # shellcheck disable=SC2016  # `$jig-init` is Codex's invocation, not a variable
-  printf '  Run $jig-init to merge the Jig section, or copy it from\n'
-  printf '  .codex/skills/jig-init/references/agents-section.md into AGENTS.md.\n'
+  printf '  Run $jig-init to merge the Jig section, or copy it — markers included — from\n'
+  printf '  the marked part of .ai/templates/AGENTS.md into AGENTS.md.\n'
 }
 
 # adapter_codex_session_hook_hint <project-root>

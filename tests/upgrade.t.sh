@@ -648,3 +648,208 @@ test_sdd_upgrade_link_mode_exposes_references_in_both_adapters() {
   assert_symlink .codex/skills/jig-task
   _sdd_assert_reference_links
 }
+
+# --- the marked instructions section ------------------------------------------
+# adr-20260924-jig-owns-a-marked-section-of-the-instructions. The same three
+# outcomes as any other framework-owned path — replace, keep-modified,
+# install — applied to the region between the markers instead of to a file.
+
+# _mk_source_v2_section <dest> — source-v2 whose Jig section differs, which is
+# the only thing that makes an upgrade of the section non-trivial.
+_mk_source_v2_section() {
+  local dest="$1" tmp
+  _mk_source_v2 "$dest"
+  tmp="$dest/templates/AGENTS.md.tmp"
+  sed 's/^## Workflow$/## Workflow\n\nA brand new sentence from source-v2./' \
+    "$dest/templates/AGENTS.md" > "$tmp"
+  mv "$tmp" "$dest/templates/AGENTS.md"
+}
+
+test_upgrade_replaces_the_marked_instructions_section() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "replace AGENTS.md (Jig section)"
+  assert_file_contains AGENTS.md "A brand new sentence from source-v2."
+  # Everything outside the markers is the project's and must not move.
+  assert_file_contains AGENTS.md "## Working rules"
+  assert_file_contains .ai/manifest "instructions.section: "
+}
+
+test_upgrade_keeps_a_modified_instructions_section() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src before
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  # A human edits inside the markers: from here the section is theirs.
+  sed 's/^## Read first$/## Read first (our version)/' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  before=$(cat AGENTS.md)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-modified AGENTS.md (Jig section)"
+  assert_not_contains "$OUT" "replace AGENTS.md"
+  assert_eq "$before" "$(cat AGENTS.md)"
+}
+
+test_upgrade_keeps_a_section_whose_markers_were_removed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src before
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  before=$(cat AGENTS.md)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  # Removed on purpose stays removed, exactly as ADR-0024 concluded for a
+  # deleted session-hook line.
+  assert_contains "$OUT" "keep-modified AGENTS.md (Jig section)"
+  assert_eq "$before" "$(cat AGENTS.md)"
+}
+
+test_upgrade_reports_an_unmarked_agents_md_and_writes_nothing() {
+  fixture_repo
+  printf '# Our own rules\n\nUse tabs.\n' > AGENTS.md
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-unmarked AGENTS.md"
+  assert_eq "# Our own rules
+
+Use tabs." "$(cat AGENTS.md)"
+  assert_not_contains "$(cat .ai/manifest)" "instructions.section"
+}
+
+test_upgrade_reports_a_malformed_marker_pair() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src before
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  # A second begin marker: jig cannot tell which region is its own, so it
+  # refuses rather than guessing.
+  printf '<!-- jig:begin -->\n' >> AGENTS.md
+  before=$(cat AGENTS.md)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-malformed AGENTS.md (Jig section)"
+  assert_eq "$before" "$(cat AGENTS.md)"
+}
+
+test_upgrade_reports_conflict_for_markers_it_did_not_write() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  jig init --from "$JIG_HOME" >/dev/null
+  local src before
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  # Markers appear after init recorded nothing: jig never wrote this, so it
+  # does not adopt it behind the human's back.
+  printf '<!-- jig:begin -->\nsomething\n<!-- jig:end -->\n' >> AGENTS.md
+  before=$(cat AGENTS.md)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "keep-conflict AGENTS.md (Jig section)"
+  assert_eq "$before" "$(cat AGENTS.md)"
+}
+
+test_upgrade_dry_run_leaves_the_section_alone() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src before
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+  before=$(cat AGENTS.md)
+
+  run jig upgrade --from "$src" --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "replace AGENTS.md (Jig section)"
+  assert_eq "$before" "$(cat AGENTS.md)"
+}
+
+# A section update is pending work like any other, so `jig status` counts it
+# and `jig verify` refuses a stale install because of it — which is why the
+# report reuses the verb `replace` instead of inventing one.
+test_upgrade_pending_includes_a_section_replace() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+
+  run jig upgrade --from "$src" --dry-run
+  assert_contains "$(printf '%s\n' "$OUT" | grep -E '^(install|link|replace) ')" \
+    "replace AGENTS.md (Jig section)"
+}
+
+# And a project that keeps its own instructions is never blocked by that
+# choice: keep-unmarked is deliberately outside the pending filter.
+test_upgrade_pending_excludes_an_unmarked_section() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  jig init --from "$JIG_HOME" >/dev/null
+
+  run jig upgrade --from "$JIG_HOME" --dry-run
+  assert_contains "$OUT" "keep-unmarked AGENTS.md"
+  assert_eq "" "$(printf '%s\n' "$OUT" | grep -E '^(install|link|replace) ' || true)"
+}
+
+test_upgrade_installs_the_instructions_template_for_an_older_install() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  # An install made before the template was framework-owned.
+  rm -f .ai/templates/AGENTS.md
+  grep -v ' \.ai/templates/AGENTS\.md$' .ai/manifest > .ai/manifest.new
+  mv .ai/manifest.new .ai/manifest
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "install .ai/templates/AGENTS.md"
+  assert_file .ai/templates/AGENTS.md
+}
+
+# Link mode decides the section exactly as copy mode does — the record it rests
+# on is a manifest header key, and link mode writes a header too. design.md §13
+# asked for this explicitly, because "same function, both branches" is an
+# argument, not evidence.
+test_upgrade_link_mode_replaces_the_marked_instructions_section() {
+  skip_unless_symlinks
+  fixture_repo
+  local src tmp
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-srclink.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --link --from "$src" >/dev/null
+  assert_file_contains .ai/manifest "instructions.section: "
+
+  tmp="$src/templates/AGENTS.md.tmp"
+  sed 's/^## Workflow$/## Workflow\n\nA brand new sentence from source-v2./' \
+    "$src/templates/AGENTS.md" > "$tmp"
+  mv "$tmp" "$src/templates/AGENTS.md"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "replace AGENTS.md (Jig section)"
+  assert_file_contains AGENTS.md "A brand new sentence from source-v2."
+  assert_file_contains AGENTS.md "## Working rules"
+}

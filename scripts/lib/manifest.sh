@@ -83,11 +83,26 @@ manifest_hash_of() {
   done < "$file"
 }
 
-# manifest_write_entries <version> <source> <adapters> <mode>
+# manifest_write_entries <version> <source> <adapters> <mode> [<instructions-section>]
 # Internal primitive: reads already-computed "<hash> <path>" lines from
 # stdin and writes the whole manifest atomically (temp file + mv). Used by
 # manifest_write below and directly by upgrade, which must preserve the
 # existing hash of locally modified files instead of recomputing it.
+#
+# <instructions-section> is the optional `instructions.section` header value,
+# "<hash> <path>": the hash of the marked section jig last wrote into the
+# project's instructions file, and the file it wrote it into. Omitted or
+# empty, the key is not written and jig claims ownership of no section.
+#
+# A header key, not a body entry, because the body is whole-file ownership
+# keyed by path: every reader splits an entry on its first space, so there is
+# no room for a third column, and a pseudo-path such as `AGENTS.md#jig` would
+# enter manifest_paths and then be hashed, walked and reported as a missing
+# file by readers that have every right to assume a path is a path. The
+# header is where facts about the install already live — version, source,
+# mode, adapters — and an unknown key there is invisible to every existing
+# reader, so an older jig meeting a newer manifest reports no phantom drift
+# (adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 #
 # When <source> is the project itself (self-install/dogfooding, typically
 # with --link), the absolute path is machine-specific and would break the
@@ -98,7 +113,7 @@ manifest_hash_of() {
 # <source> may not have been (e.g. a TMPDIR under a symlinked /var on
 # macOS) even though both name the same directory.
 manifest_write_entries() {
-  local version="$1" source="$2" adapters="$3" mode="$4" file tmp
+  local version="$1" source="$2" adapters="$3" mode="$4" section="${5:-}" file tmp
   local source_real project_real
   source_real=$(cd "$source" 2>/dev/null && pwd -P) || source_real="$source"
   project_real=$(cd "$JIG_PROJECT" 2>/dev/null && pwd -P) || project_real="$JIG_PROJECT"
@@ -114,6 +129,9 @@ manifest_write_entries() {
     printf 'jig.mode: %s\n' "$mode"
     printf 'installed_at: %s\n' "$(jig_today)"
     printf 'adapters: [%s]\n' "$adapters"
+    if [ -n "$section" ]; then
+      printf 'instructions.section: %s\n' "$section"
+    fi
     printf -- '---\n'
     sort -k2,2
   } > "$tmp"
@@ -131,6 +149,16 @@ manifest_source() {
   else
     printf '%s\n' "$src"
   fi
+}
+
+# manifest_instructions_section
+# Prints the recorded `instructions.section` header value, "<hash> <path>",
+# or nothing when jig has never written a marked section into this project.
+# Its absence is what tells init and upgrade that no section is theirs to
+# replace — the difference between "we wrote this and may update it" and
+# "somebody else's text that happens to sit between markers".
+manifest_instructions_section() {
+  manifest_header_get instructions.section
 }
 
 # manifest_write <version> <source> <adapters> <mode> [path...]

@@ -4,6 +4,12 @@ This project uses Jig, a vendor-neutral agent SDLC framework. Project knowledge 
 `.ai/knowledge/`; the development process is provided by `jig-*` skills backed by
 deterministic scripts in `.ai/scripts/`.
 
+<!-- jig:begin -->
+<!-- Everything between the jig markers is written by `jig upgrade`, so improvements to
+     what Jig tells an agent reach this file on their own. Change anything in here and
+     jig keeps your version and stops updating the section; `jig status` says so.
+     Your own rules belong below the end marker, where nothing overwrites them. -->
+
 ## Read first
 
 - `.ai/knowledge/GLOSSARY.md` — canonical terms; use them in code and docs.
@@ -58,6 +64,7 @@ with `jig task set <id> knowledge_consolidated true`. After the change has lande
 Risk sets the floor: a one-line change to authentication is not trivial. When a task
 turns out bigger, re-classify with `jig task set <id> class Tn` and run the stages the
 new class requires.
+<!-- jig:end -->
 
 ## Working rules
 
