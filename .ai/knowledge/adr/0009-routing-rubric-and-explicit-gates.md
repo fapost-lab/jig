@@ -88,4 +88,8 @@ help, and picks by effort rather than by risk.
 > sets the floor" in the same document. The decision here is unchanged — a written rubric
 > decides the class, and both tie-breaks stand. What is new is a constraint on editing it: an
 > example list under a class is an illustration, and turning it back into something an agent
-> can match against re-breaks the rubric.
+> can match against re-breaks the rubric. The same test has a human-facing half in
+> `docs/concepts.mdx`, shorter and without the reference's example lists; the two move
+> together, because a rubric edit that leaves the site describing the old rule gives the
+> person at the gate and the agent different meanings for the same class
+> (convention-documentation).
