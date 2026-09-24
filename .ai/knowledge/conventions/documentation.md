@@ -8,13 +8,15 @@ paths:
   - README.md
   - CONTRIBUTING.md
   - .github/scripts/changelog-check.sh
-summary: "How a behaviour claim earns its place in the docs: run it, paste the output, and check it against the branch the release is cut from."
+  - AGENTS.md
+  - templates/AGENTS.md
+summary: How a behaviour claim earns its place in the docs — run it, paste the output, check it against the release branch — and how an instruction agents read is written so it beats the runtime's own default.
 reviewed_at: 2026-09-24
 ---
 # Documentation conventions
 
-Practices for the user-facing site and the repository's own guides. They exist because
-the rationale column names what each one cost.
+Practices for the user-facing site, the repository's own guides, and the instruction files
+agents read. They exist because the rationale column names what each one cost.
 
 ## Practice
 
@@ -24,6 +26,8 @@ the rationale column names what each one cost.
 | While an epic is open, check a behaviour claim against the branch the release is cut from, not the branch under your feet. | An epic branch is behind `main`, which merges into it before the release. A pass documented the epic's `jig upgrade` behaviour although `main` had already fixed it, so the text would have shipped describing a bug that no longer existed. |
 | A concept that both the site and a skill reference define is changed in both, in the same change. Where the full definition is too long for the site, the site carries the test the reader has to apply and the reference stays the complete one; what it may not carry is the superseded rule. | `docs/concepts.mdx` went on telling a human that the critical class is "Security, secrets, destructive operations, money" after `skills/jig-task/references/classification.md` had replaced that closed list with a risk test (ADR-0009, amendment of 2026-09-24). For as long as that lasted, the person at the human gate and the agent that classified the task meant different things by T4, and a disagreement of that kind surfaces as an argument about wording rather than about risk. Nothing catches it: the site is prose no test reads, and the rubric is a skill reference no test reads either. |
 | A release is described as it is made: the pull request that raises `JIG_VERSION` adds that version's section to `docs/changelog.mdx`, a line or two per user-visible change. | The first fourteen releases shipped without a page, so the changelog had to be reconstructed from tags, commits and ADRs afterwards — at the one moment nobody remembers what a version contained, and at the cost of claims a reviewer then had to check against `git show`. Asking the author to remember is the maintenance this repository automates instead, so the `changelog` job refuses a pull request whose unreleased `JIG_VERSION` has no section (`.github/scripts/changelog-check.sh`). |
+| An instruction that has to beat a runtime's own default is written as a table row indexed by the moment it is needed, whose third column names the path the agent would otherwise take. Eight rows is the ceiling. | `AGENTS.md` said in prose "start work with the `jig-task` skill" and never said "and not with your own background tasks". A reviewer reported following a table of exactly this shape for a whole session without a miss, while resolving the prose about Jig the other way. The third column is what does the work: it names the default the agent is already reaching for, at the moment of reaching for it. Length is the other half — a table of twenty rows stops being read for the same reason prose does. |
+| A rule whose full form lives in a skill reference still carries its deciding question where the agent meets the rule first. | The class was described in `AGENTS.md` by one word — "local", "critical" — while the risk test that decides it lived in `skills/jig-task/references/classification.md`, which an agent opens only once it is already inside `jig-task`. An agent that took the short way classified from the word. Rewriting the rubric does not fix that: it improves a document the agent has to arrive at first. Copying the rubric up would break ADR-0001, so the deciding question moves up and the full test stays down. |
 
 ## Example
 
