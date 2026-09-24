@@ -1,0 +1,123 @@
+---
+id: adr-20260924-windows-runs-on-a-pull-request-that-touches-platform-behaviour
+type: adr
+status: accepted
+date: 2026-09-24
+domains:
+  - verify
+paths:
+  - .github/workflows/ci.yml
+  - .github/scripts/ci-windows-scope.sh
+  - tests/ci-windows-scope.t.sh
+summary: "Why the full Windows suite runs on a pull request whose diff touches line endings, MSYS paths, directory links, a Windows-only file or CI, and passes over the rest: the signal, the numbers behind it, and why it matches no literal carriage return."
+---
+# Windows runs on a pull request whose diff touches platform behaviour
+
+## Context
+
+ADR-0037 put the full Windows suite outside pull requests: three shards are about 25
+minutes, the runners are slow, and every change would pay — including the prose changes
+that are a fifth of this repository's pull requests. A `smoke-windows` job covered pull
+requests instead, and the full suite ran on `main`, nightly, and by hand.
+
+On 2026-09-24 that cost a red `main`. Pull request #93 taught `jig_section_write` to keep a
+file's own line endings, and §9 of its design said so in as many words — a Windows checkout
+has `core.autocrlf=true`. Nothing ran that on Windows. The pull request merged green, `main`
+went red, and the fix (#96) found two defects, not one: under Git Bash `grep`, `sed` and
+`awk` drop the CR before the regular expression sees it, so the code rewrote every
+`AGENTS.md` from CRLF to LF and the test that was supposed to catch it asserted zero on any
+file. Review could not have caught this. It read the code; the answer needed the code run on
+Windows.
+
+Running Windows on every pull request fixes it and costs the 25 minutes ADR-0037 declined to
+spend. The question is whether a cheaper signal exists: one that catches a change like #93
+and passes over a change that cannot behave differently on Windows.
+
+It does. Measured over the 96 pull requests merged before this decision, reconstructing each
+one's diff from its merge commit: 77 run the full suite today, and the signal below selects
+22 — 23% of all pull requests, 29% of the ones that would otherwise pay. #93 is among them.
+
+The measurement also ruled things out. A signal built from the obvious candidates —
+`mv`/`rm`/`cp` on paths, `symlink` anywhere, `chmod`, drive letters and path separators —
+selects 47 of 96, half the history, which buys nothing. It was broad for reasons worth
+recording: `s:/` inside a `sed` expression reads as a drive letter, `symlink` and `chmod`
+appear throughout a repository whose own install mode is symlinks, and the Windows shards
+already skip the tests those two guard by capability (`skip_unless_symlinks`,
+`skip_unless_readonly_dirs`). There was a signal with no check standing behind it.
+
+## Decision
+
+- **A pull request runs the Windows shards when its diff touches platform behaviour**, and
+  `smoke-windows` keeps running on every pull request as before. `main`, the nightly run and
+  a manual dispatch are unchanged: they run Windows whatever changed.
+- **The signal is the Windows failure classes ADR-0037 named**, not a guess at fragility.
+  Content rules, matched case-insensitively against the added and removed lines of a diff:
+  line endings (`\r`, `\015`, `crlf`, `autocrlf`, `eol=`, `text=auto`); MSYS path
+  translation (`cygpath`, `MSYS`, `exec-path`); directory links (`junction`, `jig_link_`);
+  and the platform named outright (`windows`, `git bash`, `powershell`, `ADR-0037`, `NTFS`).
+  Path rules, matched against any changed path: `.github/**`, `*.ps1`, `jig.cmd`,
+  `*gitattributes`.
+- **A change that names Windows runs on Windows.** It is the loosest rule and the one that
+  matters most: #93's author was reasoning about this platform in writing, and nothing was
+  running that reasoning. It is also nearly free — dropping it selects 20 instead of 22.
+- **Prose is decided by location, not by extension**: `docs/`, `.ai/knowledge/`, `.ai/specs/`,
+  `*.mdx` and Markdown at the repository root are read by people and reach no behaviour.
+  `templates/AGENTS.md` is therefore not prose — it is a shipped file whose line endings
+  reach a user's project, and it is Markdown. Three variants of this filter were measured;
+  all three select the same 22, so the one that leaves no hole was taken.
+- **The rules are plain ASCII, and a literal carriage return is deliberately not matched.**
+  MSYS `grep`, `sed` and `awk` drop CR before the pattern sees it — half of what #96 had to
+  undo — so a rule matching one would answer differently depending on where it ran. A
+  decision about platform-dependence must not itself be platform-dependent. It costs
+  nothing: matching a literal CR as well selects the same 22.
+- **A miss costs a red `main`, not a released defect.** `main` and the nightly run still
+  execute the full Windows suite, and `release` still waits for every shard. This is a
+  narrowing of when the net is raised earlier, never a removal of the net that existed.
+- **Unmeasurable is `windows`**, the way an unmeasurable scope is `full` (ADR-0041): no base,
+  a base of zeros, a base absent from the history, a failing diff, an empty change.
+- **The decision lives in `.github/scripts/ci-windows-scope.sh`, which has tests**
+  (`tests/ci-windows-scope.t.sh`); the `scope` job runs it and publishes one output,
+  `windows`, and `test-windows` reads `full` and `windows` and nothing else. The event check
+  that used to sit on the job moves into `scope`, so there is one place that decides.
+
+## Alternatives
+
+- **Run the Windows shards on every pull request.** The honest fix, and the one ADR-0037
+  already weighed and declined. It spends 25 minutes on the 74 of 96 pull requests that
+  cannot behave differently on Windows.
+- **Leave it as it was and rely on `main`.** This is what produced the red `main` — twice,
+  because the next merge inherited the defect and its own run failed on it.
+- **Decide by paths alone** (`scripts/lib/**`, `.github/`, `install.ps1`). Cheaper to read
+  and impossible to fool, but `scripts/lib/**` alone appears in 59 of 96 pull requests. A
+  path signal coarse enough to catch #93 catches most of the history with it.
+- **Decide by the broad content candidates** — file moves, `symlink`, `chmod`, path
+  separators. 47 of 96, and for the reasons in Context most of those matches stand in front
+  of tests that skip on Windows anyway.
+- **Extend `ci-scope.sh` with a second output.** One diff, one map parse, one classification.
+  Rejected on two counts: the script's shape is a walk that exits at the first path forcing
+  `full`, and a second dimension means removing the early exit and rewriting its tests; and
+  the verify map answers "which tests does this path affect", which is not "is this prose" —
+  a path a project maps `-` is still code that ships.
+- **Match a literal carriage return in the diff.** Precise in principle, platform-dependent
+  in practice, and worth nothing measured. See Decision.
+- **Let the author opt in with a label or a commit trailer.** It is the discipline this
+  framework exists to remove: #93's author documented the Windows behaviour in the design and
+  still would have had to remember to add the label.
+
+## Consequences
+
+- A pull request that touches line endings, path translation, directory links, a
+  Windows-only file or CI itself costs about 25 minutes more and answers before the merge
+  rather than after it. Measured on history, that is 22 of 96.
+- The Windows failure classes are now written down in two places that must agree: this ADR
+  and the script's header. A new class found on Windows is a new rule in the script, a test
+  beside it, and a line here.
+- A change to `.github/` always runs Windows, so this repository's CI configuration is
+  checked on the platforms it configures — including the pull request that introduced this
+  decision.
+- ADR-0037's consequence "the full Windows suite ... runs outside pull requests" is narrowed
+  by this decision. `smoke-windows` on every pull request, the nightly run and the release
+  waiting for every shard all stand unchanged.
+- The signal can be fooled by a change that behaves differently on Windows without saying so
+  in any of these words. That is the accepted residual risk, and `main` is where it surfaces,
+  exactly as before this decision.
