@@ -22,5 +22,7 @@ its named check supports completion. Unavailable checks and omitted requirements
 visible gaps; deferring scope requires an explicit user decision, not a green suite.
 Review every criterion before reviewing code quality, including behavior with no diff.
 
-Once `plan.md` is written, show it to the user verbatim
+Write `plan.md` with `jig task artifact write <id> plan --from <file>`, not with your
+editing tools: in a task worktree the workspace is reached through a link, and jig is what
+knows where it leads. Once it is written, show it to the user verbatim
 ([show the document](show-the-document.md)). For T2 that adds no stop to the route.

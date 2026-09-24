@@ -50,7 +50,13 @@ higher class in `jig-task/references/classification.md`, say so and re-classify:
 ## 4. Report
 
 For T2 and above, write the analysis in `task.md` under Notes so the next session does not
-redo the work, then show the user what you wrote, verbatim
+redo the work:
+
+```
+.ai/scripts/jig task artifact append <id> task --from <file>
+```
+
+Then show the user what you wrote, verbatim
 ([show the document](../jig-task/references/show-the-document.md)) — not a second, shorter
 version of it. Without a workspace, a few sentences to the user are the report. For T3
 and T4 this feeds `design.md`.

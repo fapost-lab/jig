@@ -32,6 +32,7 @@ cmd_task() {
     current) task_current "$@" ;;
     changes) task_changes "$@" ;;
     artifacts) task_artifacts "$@" ;;
+    artifact) task_artifact "$@" ;;
     finding) task_finding "$@" ;;
     findings) task_findings "$@" ;;
     receipt) task_receipt "$@" ;;
@@ -51,7 +52,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|finding|findings|receipt|ship|autopilot|gate ...\n' ;;
+    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree]\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -63,6 +64,11 @@ _task_usage() {
     current) printf 'usage: jig task current\n' ;;
     changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
     artifacts) printf 'usage: jig task artifacts <id> [--provided discovery,design,...]\n' ;;
+    artifact)
+      printf 'usage: jig task artifact write <id> <kind> [--from <file>|-]\n'
+      printf '       jig task artifact append <id> <kind> [--from <file>|-]\n'
+      printf '       <kind>: task discovery spec alternatives design plan review verification handoff\n'
+      ;;
     finding)
       printf 'usage: jig task finding add <id> --severity P0|P1|P2|P3 --where <path[:line]|-> --summary <text>\n'
       printf '       jig task finding set <id> <F-id> open|fixed|closed|dismissed [--reason <text>]\n'
@@ -439,6 +445,27 @@ _task_rewrite_state_remove() {
         print line
       }
     }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+  jig_status_page_dirty
+}
+
+# _task_touch_state <dir> — refresh `updated_at` and mark the status page,
+# for a write that changed a workspace without changing a key. Rewriting an
+# artifact is such a write: state carries no artifact field, but a task whose
+# plan was rewritten today is not a task last touched last week, and a status
+# page that still shows the old date says the task is untouched (ADR-0008:
+# the page never shows less than the files do). Same atomic write as
+# _task_rewrite_state, and a no-op when the state file is gone.
+_task_touch_state() {
+  local dir="$1" file tmp today
+  file="$dir/state"
+  [ -f "$file" ] || return 0
+  tmp="$dir/state.tmp.$$"
+  today=$(jig_today)
+  awk -v today="$today" '
+    /^updated_at:/ { print "updated_at: " today; next }
+    { print }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
   jig_status_page_dirty
@@ -2207,6 +2234,30 @@ task_changes() {
   fi
 }
 
+# _task_workspace_root <id> <command> — the physical directory holding this
+# task's artifacts and `state`, with the one path check every command that
+# reads or writes an artifact must pass (RULES.md: the check lives at a single
+# function, not once per caller).
+#
+# A linked task directory can point outside the validated checkout workspace.
+# The one link accepted is the one `task start --worktree` makes: to this same
+# task's workspace in another worktree of this repository. <command> names the
+# caller in the refusals, so the message still says which verb refused.
+_task_workspace_root() {
+  local id="$1" cmd="$2" root tasks_root
+  root=$(task_dir "$id") || return 1
+  [ -f "$root/state" ] || jig_die "$cmd: unknown task: $id"
+  if [ -L "$root" ]; then
+    _task_borrowed_workspace "$id" \
+      || jig_die "$cmd: linked task workspace is unsupported unless it is this task's workspace in another worktree"
+    return 0
+  fi
+  root=$(cd -P "$root" && pwd -P) || jig_die "$cmd: cannot inspect workspace"
+  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" && pwd -P) || return 1
+  case "$root" in "$tasks_root"/"$id") ;; *) jig_die "$cmd: workspace outside task root" ;; esac
+  printf '%s\n' "$root"
+}
+
 _task_artifact_kind() {
   case "$1" in discovery | spec | alternatives | design | plan | review | verification | handoff) return 0 ;; *) return 1 ;; esac
 }
@@ -2249,20 +2300,7 @@ task_artifacts() {
   [ $# -ge 1 ] || jig_die "$(_task_usage artifacts)"
   local id="$1" root class provided="" seen=0 kinds kind fact stage inputs semantic availability facts="" t
   shift
-  root=$(task_dir "$id") || return 1
-  [ -f "$root/state" ] || jig_die "task artifacts: unknown task: $id"
-  # A linked task directory can point outside the validated checkout
-  # workspace. The one link accepted is the one `task start --worktree` makes:
-  # to this same task's workspace in another worktree of this repository.
-  if [ -L "$root" ]; then
-    root=$(_task_borrowed_workspace "$id") \
-      || jig_die "task artifacts: linked task workspace is unsupported unless it is this task's workspace in another worktree"
-  else
-    root=$(cd -P "$root" && pwd -P) || jig_die "task artifacts: cannot inspect workspace"
-    local tasks_root
-    tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" && pwd -P) || return 1
-    case "$root" in "$tasks_root"/"$id") ;; *) jig_die "task artifacts: workspace outside task root" ;; esac
-  fi
+  root=$(_task_workspace_root "$id" "task artifacts") || return 1
   class=$(task_state_get "$id" class)
   _task_valid_class "$class" || jig_die "task artifacts: invalid or missing class: $class"
   while [ $# -gt 0 ]; do
@@ -2300,6 +2338,132 @@ task_artifacts() {
     printf '%s: %s; inputs: %s\n  unassessed: %s\n' "$stage" "$availability" "$inputs" "$semantic"
   done < <(_task_artifact_route "$class")
   printf 'Presence and provided claims do not prove approval, quality or completion; state unchanged.\n'
+}
+
+# --- artifact writes (ADR-0029: a worktree never writes through the link) ----
+
+# The kinds `task artifact` will write. One wider than _task_artifact_kind
+# above, which serves `--provided` and has no use for `task`: `task.md` is
+# where jig-analyze puts its analysis and where an unattended run records the
+# gate it approved, so it is the most edited document of all. The two
+# predicates stay separate on purpose — widening the `--provided` vocabulary
+# would let a caller claim an input that is never an input.
+_task_artifact_writable_kind() {
+  case "$1" in task | discovery | spec | alternatives | design | plan | review | verification | handoff) return 0 ;; *) return 1 ;; esac
+}
+
+# task_artifact write|append <id> <kind> [--from <file>|-]
+#
+# Writes one of a task's artifacts, so that nothing but jig needs to know
+# where a task's workspace physically is. That is the point of the verb: in a
+# task worktree the workspace is reached through a link (ADR-0029), an agent's
+# editing tools refuse a path that resolves outside their sandbox, and the
+# workaround — writing the link with plain shell — is a rule against the
+# tool's own default, which is the class of rule agents break.
+#
+# Four things a shell redirection does not do:
+#   1. resolves the workspace through _task_workspace_root, accepting exactly
+#      the borrowed link and no other;
+#   2. writes atomically (tmp + mv), so an interrupted write leaves the old
+#      document whole rather than half a new one;
+#   3. takes a closed vocabulary of kinds, so a misspelt name cannot become a
+#      file `task artifacts` will never look at;
+#   4. refreshes `updated_at` and redraws the status page, so a rewritten plan
+#      does not leave the task looking untouched from outside.
+#
+# Content comes from the caller: `--from <file>`, or stdin with `--from -` or
+# with no --from at all. In a worktree that file is inside the worktree, which
+# is inside the sandbox, so the agent writes it with its ordinary tools and
+# hands jig the path.
+#
+# No {{TASK_ID}} substitution happens here, unlike `task new --from`: that one
+# seeds a template, this one stores a document its author already finished,
+# where a `{{TASK_ID}}` is text and not a placeholder. The duplication between
+# the two is one `mv`, and deliberate.
+task_artifact() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage artifact)"
+  local mode="$1"
+  shift
+  case "$mode" in
+    write | append) ;;
+    *) jig_die "$(_task_usage artifact)" ;;
+  esac
+  [ $# -ge 2 ] || jig_die "$(_task_usage artifact)"
+  local id="$1" kind="$2" from="" seen=0
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from)
+        [ $# -ge 2 ] || jig_die "task artifact: --from requires a value"
+        [ "$seen" -eq 0 ] || jig_die "task artifact: duplicate --from"
+        seen=1
+        from="$2"
+        shift 2 ;;
+      *) jig_die "task artifact: unknown argument: $1" ;;
+    esac
+  done
+  _task_artifact_writable_kind "$kind" \
+    || jig_die "task artifact: unknown kind: $kind (one of: task discovery spec alternatives design plan review verification handoff)"
+
+  # Validated before the workspace is touched, so an unreadable source never
+  # gets as far as the temporary file (task_new --from does the same).
+  if [ -n "$from" ] && [ "$from" != "-" ]; then
+    [ -e "$from" ] || jig_die "task artifact: --from: no such file: $from"
+    [ -f "$from" ] || jig_die "task artifact: --from: not a regular file: $from"
+    [ -r "$from" ] || jig_die "task artifact: --from: file not readable: $from"
+  fi
+
+  local root dest tmp
+  root=$(_task_workspace_root "$id" "task artifact") || return 1
+  dest="$root/$kind.md"
+  tmp="$dest.tmp.$$"
+  # A link is refused rather than resolved. `mv` would replace it and `append`
+  # would read through it, out of the workspace and back in — and
+  # `task artifacts` already treats an artifact that leaves the workspace as
+  # unavailable. Whoever put the link there gets to say what happens to it.
+  if [ -L "$dest" ]; then
+    jig_die "task artifact: $kind.md is a link; remove it first if this document should live in the workspace"
+  fi
+
+  # The new content is captured first, whole, and only then is anything in the
+  # workspace touched. An empty capture is refused rather than written: a
+  # `write` fed the output of a command that failed would otherwise blank the
+  # document, and blanking a plan is the one destructive act this verb can
+  # perform. `task artifacts` would report the result as `unavailable
+  # (empty)` — true, and too late.
+  if [ -z "$from" ] || [ "$from" = "-" ]; then
+    cat > "$tmp"
+  else
+    cat "$from" > "$tmp"
+  fi
+  if [ ! -s "$tmp" ]; then
+    # The one path this command removes: the temporary file it created itself,
+    # this run, inside the workspace directory _task_workspace_root validated
+    # (RULES.md wants the path validated to be inside `.ai/` and shaped like a
+    # workspace entry before a script deletes it; this one is both).
+    rm -f "$tmp"
+    jig_die "task artifact: refusing to write an empty $kind: nothing on the input"
+  fi
+
+  if [ "$mode" = "append" ] && [ -s "$dest" ]; then
+    local joined="$dest.join.$$"
+    # A document that does not end in a newline would otherwise run into the
+    # one appended after it, silently joining a heading to the line above.
+    {
+      cat "$dest"
+      if [ -n "$(tail -c 1 "$dest")" ]; then printf '\n'; fi
+      cat "$tmp"
+    } > "$joined"
+    mv "$joined" "$tmp"
+  fi
+
+  mv "$tmp" "$dest"
+  _task_touch_state "$root"
+  # An absolute path when the workspace is borrowed: it is in another
+  # worktree, and a relative one would be read against the wrong root
+  # (ADR-0029: paths in reports are absolute).
+  jig_relpath "$dest" "$JIG_PROJECT"
 }
 
 # --- ship (agent git rights: design.md, .ai/specs/autopilot/) ----------------

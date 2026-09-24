@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-09-24
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -185,3 +185,30 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > its working directory to a housekeeping run once its task is closed; closing is an agent's last step,
 > and a phase run's coordinator runs housekeeping only after a wave finishes. No automatic lock is taken
 > at `task start --worktree`.
+
+> **Amendment (2026-09-24).** "Task artifacts are written there with plain shell commands" — the
+> 2026-09-11 amendment's last clause — is replaced by a verb: `jig task artifact write|append <id>
+> <kind> [--from <file>|-]`. The observation behind it stands, and so does the link; what was wrong
+> was leaving the consequence as advice. It was advice nobody gave: the fact lived in this amendment,
+> which an agent writing `plan.md` is not reading, and no skill mentioned it, so each session
+> rediscovered the refusal by hitting it and then guessed its way around.
+>
+> Prose could not have fixed it either. "Here, write task documents with shell redirection" is an
+> instruction against the runtime's own default, and that is the class of rule agents break.
+> So the mechanic moves into the script (ADR-0001), and the skills call it.
+>
+> The verb earns its place on four counts a redirection does not cover: it resolves the workspace
+> through `_task_workspace_root` — the shared check that accepts this one borrowed link and refuses
+> every other, now used for reading and writing alike; it writes atomically, tmp then `mv`; it takes a
+> closed vocabulary of nine kinds, so a misspelt name cannot become a file `task artifacts` never looks
+> at; and it refreshes `updated_at` and redraws the status page. The last one was the silent failure:
+> a `plan.md` written around jig left the task looking untouched from outside, which in a worktree is
+> the only view anyone else has.
+>
+> Two smaller refusals come with it, both protecting a document that already exists: empty input is
+> never written, because a `write` fed the output of a command that failed would otherwise blank the
+> document; and an artifact that is a link is refused rather than followed or replaced, consistent with
+> `task artifacts`, which already reports an artifact pointing out of the workspace as unavailable.
+>
+> Nothing about the workspace's location changes. The alternatives this decision rejected — moving the
+> workspace into the worktree, or copying it — stay rejected, for the reasons given above.

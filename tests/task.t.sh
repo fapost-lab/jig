@@ -1247,11 +1247,17 @@ test_sdd_artifacts_empty_external_and_internal_links() {
 test_sdd_artifacts_rejects_invalid_claims_and_class() {
   sdd_task_setup
   local provided
-  for provided in '' ',design' 'design,' 'design,,spec' approval implementation 'design,design'; do
+  # `task` is writable by `jig task artifact` (nine kinds) but is deliberately
+  # not a valid `--provided` claim here (eight kinds): `_task_artifact_kind`
+  # and `_task_artifact_writable_kind` are separate predicates on purpose.
+  for provided in '' ',design' 'design,' 'design,,spec' approval implementation 'design,design' task; do
     run jig task artifacts scoped --provided "$provided"
     assert_eq 1 "$RC"
     assert_contains "$OUT" 'task artifacts:'
   done
+  run jig task artifacts scoped --provided task
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unknown provided kind: task'
   run jig task artifacts scoped --provided
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'requires a value'
@@ -1265,6 +1271,209 @@ test_sdd_artifacts_rejects_invalid_claims_and_class() {
   run jig task artifacts unknown
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'unknown task'
+}
+
+# --- artifact write|append (ADR-0029: a worktree never writes through the link) --
+
+test_task_artifact_write_replaces_and_append_joins_with_a_newline_boundary() {
+  sdd_task_setup
+  local root=.ai/workspace/tasks/scoped
+
+  # write, with content from a file
+  printf 'first draft\n' > src.md
+  run jig task artifact write scoped plan --from src.md
+  assert_eq 0 "$RC"
+  assert_eq "$root/plan.md" "$OUT"
+  assert_file_contains "$root/plan.md" 'first draft'
+
+  # write replaces the whole document, not just what changed
+  run jig task artifact write scoped plan <<< 'second draft'
+  assert_eq 0 "$RC"
+  assert_not_contains "$(cat "$root/plan.md")" 'first draft'
+  assert_file_contains "$root/plan.md" 'second draft'
+
+  # --from - is the same stdin source as omitting --from entirely
+  run jig task artifact write scoped plan --from - <<< 'third draft, explicit stdin'
+  assert_eq 0 "$RC"
+  assert_file_contains "$root/plan.md" 'third draft, explicit stdin'
+
+  # append creates the file when it is absent
+  assert_no_file "$root/handoff.md"
+  run jig task artifact append scoped handoff <<< 'note one'
+  assert_eq 0 "$RC"
+  assert_eq "$root/handoff.md" "$OUT"
+  assert_file_contains "$root/handoff.md" 'note one'
+
+  # append onto a document that does not end in a newline inserts one, so the
+  # two documents never run into a single line
+  printf 'no trailing newline' > "$root/handoff.md"
+  run jig task artifact append scoped handoff <<< 'note two'
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 'no trailing newline\nnote two')" "$(cat "$root/handoff.md")"
+
+  # append onto a document that already ends in a newline does not double it
+  printf 'line one\n' > "$root/handoff.md"
+  run jig task artifact append scoped handoff <<< 'line two'
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 'line one\nline two')" "$(cat "$root/handoff.md")"
+}
+
+test_task_artifact_rejects_unknown_kind_and_accepts_the_nine_writable_kinds() {
+  sdd_task_setup
+  run jig task artifact write scoped bogus <<< 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unknown kind: bogus'
+
+  local kind
+  for kind in task discovery spec alternatives design plan review verification handoff; do
+    run jig task artifact write scoped "$kind" <<< "content for $kind"
+    assert_eq 0 "$RC" "kind $kind should be writable"
+    assert_file_contains ".ai/workspace/tasks/scoped/$kind.md" "content for $kind"
+  done
+}
+
+# The data-loss guard: a `write` or `append` fed nothing must not blank an
+# existing document, and must not leave a kind that was never written behind.
+test_task_artifact_empty_input_is_refused_for_write_and_append() {
+  sdd_task_setup
+  local root=.ai/workspace/tasks/scoped
+  printf 'do not lose me\n' > "$root/plan.md"
+
+  run jig task artifact write scoped plan < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'refusing to write an empty plan'
+  assert_file_contains "$root/plan.md" 'do not lose me'
+
+  run jig task artifact append scoped plan < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'refusing to write an empty plan'
+  assert_file_contains "$root/plan.md" 'do not lose me'
+
+  run jig task artifact write scoped handoff < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'refusing to write an empty handoff'
+  assert_no_file "$root/handoff.md"
+
+  # An empty --from file is refused the same way as empty stdin.
+  : > empty.md
+  run jig task artifact write scoped plan --from empty.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'refusing to write an empty plan'
+  assert_file_contains "$root/plan.md" 'do not lose me'
+}
+
+test_task_artifact_from_argument_validation() {
+  sdd_task_setup
+  run jig task artifact write scoped plan --from no-such-file.md < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'no such file: no-such-file.md'
+
+  mkdir adir
+  run jig task artifact write scoped plan --from adir < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'not a regular file: adir'
+
+  run jig task artifact write scoped plan --from a --from b < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'duplicate --from'
+
+  run jig task artifact write scoped plan --from < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '--from requires a value'
+
+  run jig task artifact write scoped plan --bogus < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unknown argument: --bogus'
+}
+
+test_task_artifact_from_unreadable_file_dies_before_writing() {
+  # The write this test forces to fail succeeds wherever chmod 000 does not
+  # block reads: as root, and in Git Bash on NTFS.
+  skip_unless_unreadable_files
+  sdd_task_setup
+  local root=.ai/workspace/tasks/scoped
+  printf 'do not lose me\n' > "$root/plan.md"
+  printf 'unreadable\n' > secret.md
+  chmod 000 secret.md
+
+  run jig task artifact write scoped plan --from secret.md < /dev/null
+  chmod 644 secret.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'file not readable: secret.md'
+  assert_file_contains "$root/plan.md" 'do not lose me'
+}
+
+test_task_artifact_help_and_usage_on_missing_or_invalid_arguments() {
+  sdd_task_setup
+  run jig task artifact --help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'usage: jig task artifact write <id> <kind> [--from <file>|-]'
+  assert_contains "$OUT" 'jig task artifact append <id> <kind> [--from <file>|-]'
+
+  run jig task artifact < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'usage: jig task artifact write'
+
+  run jig task artifact bogus-mode scoped plan < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'usage: jig task artifact write'
+
+  run jig task artifact write < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'usage: jig task artifact write'
+
+  run jig task artifact write scoped < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'usage: jig task artifact write'
+}
+
+test_task_artifact_unknown_task_dies() {
+  task_setup
+  run jig task artifact write no-such-task plan < /dev/null
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'unknown task: no-such-task'
+}
+
+test_task_artifact_write_refreshes_updated_at_and_becomes_present_in_artifacts() {
+  sdd_task_setup
+  sed 's/^updated_at:.*/updated_at: 2020-01-01/' .ai/workspace/tasks/scoped/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/scoped/state
+  assert_file_contains .ai/workspace/tasks/scoped/state 'updated_at: 2020-01-01'
+
+  run jig task artifact write scoped plan <<< 'the plan'
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/scoped/state "updated_at: $(date +%Y-%m-%d)"
+  assert_not_contains "$(cat .ai/workspace/tasks/scoped/state)" 'updated_at: 2020-01-01'
+
+  run jig task artifacts scoped
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'plan           present'
+}
+
+# The whole reason the verb exists: in a task worktree the workspace is
+# reached through a link (ADR-0029), so a write issued from inside the
+# worktree must still land in the ORIGINAL checkout's workspace. Modeled on
+# test_task_start_worktree_borrows_the_workspace_by_link below.
+test_task_artifact_worktree_writes_through_the_borrowed_link() {
+  skip_unless_symlinks
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt owner content_file result rc
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  owner=$(cd .ai/workspace/tasks/T-1 && pwd -P)
+
+  content_file="$PWD/content.txt"
+  printf 'plan written from the worktree\n' > "$content_file"
+  result=$(cd "$wt" && jig task artifact write T-1 plan --from - < "$content_file" 2>&1)
+  rc=$?
+  assert_eq 0 "$rc" "$result"
+  # An absolute path: the destination is outside the worktree, so a relative
+  # one would be read against the wrong root (ADR-0029: reports are absolute
+  # when the workspace is borrowed).
+  assert_eq "$owner/plan.md" "$result"
+  assert_file_contains "$owner/plan.md" 'plan written from the worktree'
+  # The worktree sees it too, but only because the link resolves there.
+  assert_file_contains "$wt/.ai/workspace/tasks/T-1/plan.md" 'plan written from the worktree'
 }
 
 # --- branch per task (ADR-0008; a task lives on one branch) ------------------
@@ -2055,6 +2264,29 @@ test_task_artifacts_refuses_a_link_to_anywhere_else() {
   run jig task artifacts T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "linked task workspace is unsupported"
+}
+
+test_task_artifact_refuses_a_link_to_anywhere_else() {
+  # Mirrors test_task_artifacts_refuses_a_link_to_anywhere_else above: the one
+  # link `_task_workspace_root` accepts is to this task's own workspace in
+  # another worktree of this repository, and both write and append go through
+  # that same check before anything is touched.
+  skip_unless_symlinks
+  task_setup
+  mkdir -p elsewhere/T-1
+  printf 'task_id: T-1\nclass: T2\nstatus: active\n' > elsewhere/T-1/state
+  mkdir -p .ai/workspace/tasks
+  ln -s "$PWD/elsewhere/T-1" .ai/workspace/tasks/T-1
+
+  run jig task artifact write T-1 plan <<< 'nope'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "linked task workspace is unsupported"
+  assert_no_file elsewhere/T-1/plan.md
+
+  run jig task artifact append T-1 plan <<< 'nope'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "linked task workspace is unsupported"
+  assert_no_file elsewhere/T-1/plan.md
 }
 
 test_task_start_worktree_failure_leaves_nothing_behind() {

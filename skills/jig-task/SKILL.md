@@ -103,6 +103,18 @@ that path only. If your runtime can switch this session into an existing worktre
 and run every command from there; otherwise tell the user to open a new agent session in
 that path. Either way, do not continue the task from here.
 
+Write the task's own documents through jig, there and everywhere else — never with your
+editing tools, and never with a shell redirection:
+
+```
+.ai/scripts/jig task artifact write <id> plan --from <file>
+.ai/scripts/jig task artifact append <id> task --from -
+```
+
+`<kind>` is `task`, `discovery`, `spec`, `alternatives`, `design`, `plan`, `review`,
+`verification` or `handoff`, and the content comes from a file you wrote or from stdin.
+In a worktree the workspace is only borrowed, and jig is what knows where it really is.
+
 When the user already wrote the task as a document, take it from disk instead of
 retyping it, and split it as §"When the task arrives written" says:
 

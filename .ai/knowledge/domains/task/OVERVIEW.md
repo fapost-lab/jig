@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-22
+reviewed_at: 2026-09-24
 ---
 # Task
 
@@ -37,7 +37,9 @@ about *how* to classify belongs in this domain's documents.
 reports fixed-route information dependencies without assessing approval or completion
 (ADR-0020). `task changes` requires an explicit base and inventories all Git layers;
 the agent establishes task/hunk ownership and reads patches (ADR-0022). Neither command
-changes task state or decides the next stage.
+changes task state or decides the next stage. `task artifact`, which writes one, touches
+state only to refresh `updated_at`: a date is not a lifecycle field, and no status, class
+or gate moves because a document was rewritten.
 
 ## Where this domain ends
 
@@ -97,8 +99,18 @@ wrong from inside this domain's code:
 
 - The workspace never moves. The worktree gets a link to it, so everything that reads a
   workspace works there unchanged, and the filing checkout keeps listing every task.
-  Nothing may delete or move a workspace through that link. `task artifacts`, which
-  refuses links, accepts exactly this one.
+  Nothing may delete or move a workspace through that link. `_task_workspace_root` is
+  where that is decided, for reading and for writing alike: it refuses every link but
+  this one, and `task artifacts` and `task artifact` both go through it. A third command
+  that reaches an artifact adds a call, never a second copy of the check (RULES.md).
+- Writing an artifact is `task artifact write|append`, not a shell redirection, and the
+  reason is the worktree. An agent's editing tools refuse a path that resolves outside
+  their sandbox, which the link does; telling agents in prose to use shell there is a rule
+  against their tool's own default, and those are the rules that get broken. So the
+  command owns four things at once — resolving the link, writing atomically, taking a
+  closed vocabulary of kinds, and refreshing `updated_at` — and the skills call it. The
+  last of those is the one that bites silently: a `plan.md` written around jig leaves the
+  task looking untouched from outside.
 - Which worktree a task is in is *derived* from `git worktree list` on every call, never
   stored. `task list` and `jig status` print it with the count of uncommitted files there:
   at `agent.git: none` that count is the human's review queue; at a higher level it is still a
