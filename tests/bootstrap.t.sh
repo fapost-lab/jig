@@ -571,3 +571,140 @@ test_bootstrap_a_failed_carry_leaves_the_destination_free() {
   [ ! -e "$root/wt/vendor" ] \
     || fail "a failed carry left its destination in place; the next run would call it finished"
 }
+
+# F8 (P1). Staging used to sit beside the destination as
+# `<path>.jig-partial.<pid>`. A project ignores `vendor/`; it does not ignore
+# `vendor.jig-partial.60347`. An interrupted carry therefore left an untracked
+# path, and `git worktree remove` without --force -- the only removal jig
+# performs -- refused that worktree for the rest of its life. Staging lives
+# under `.ai/runtime/` now, which jig's own gitignore covers, so even remains a
+# kill -9 leaves behind cannot strand the tree.
+test_bootstrap_staging_leftovers_cannot_strand_the_worktree() {
+  skip_unless_symlinks
+  bootstrap_setup_php
+  # jig init already wrote and tracked .gitignore, so no `git add -f` is
+  # needed -- only a brand new one hits this machine's gitignore-of-.gitignore.
+  printf 'vendor/\n' >> .gitignore
+  git add .gitignore
+  git commit -q -m "ignore derived state"
+  mkdir -p vendor/pkg
+  printf 'v\n' > vendor/pkg/f
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_eq "" "$(git -C "$wt" status --porcelain)" "the carry itself must leave a clean tree"
+
+  # what an interrupted carry would leave
+  mkdir -p "$wt/.ai/runtime/bootstrap/vendor"
+  printf 'half\n' > "$wt/.ai/runtime/bootstrap/vendor/f"
+
+  assert_eq "" "$(git -C "$wt" status --porcelain)" \
+    "staging remains must be invisible to git, or they strand the worktree"
+
+  rm "$wt/.ai/workspace/tasks/T-1"
+  run git worktree remove "$wt"
+  assert_eq 0 "$RC" "git worktree remove refused a worktree holding staging remains: $OUT"
+}
+
+# F8, the other half: a carry must not leave a `jig-partial` name anywhere git
+# can see, and repeated failures must not pile up. The staging directory is
+# cleared on the way in and swept on the way out.
+test_bootstrap_a_failed_carry_leaves_no_untracked_remains() {
+  bootstrap_setup_nested
+  local root
+  root=$(pwd -P)/tree
+  mkdir -p "$root/wt/.ai" "$root/owner/vendor/pkg"
+  printf 'v\n' > "$root/owner/vendor/pkg/f"
+
+  local n=0
+  while [ "$n" -lt 3 ]; do
+    n=$((n + 1))
+    (
+      # shellcheck disable=SC2034
+      JIG_AI_DIR=.ai
+      # shellcheck disable=SC2329
+      jig_info() { :; }
+      # shellcheck disable=SC2329
+      jig_warn() { :; }
+      # shellcheck source=/dev/null
+      . "$JIG_HOME/scripts/lib/bootstrap.sh"
+      # shellcheck disable=SC2329
+      profiles_carry() { printf 'php\tvendor\n'; }
+      # shellcheck disable=SC2329
+      profiles_lock() { :; }
+      # shellcheck disable=SC2329
+      profiles_install() { :; }
+      # shellcheck disable=SC2329
+      cfg_list_lines() { :; }
+      # shellcheck disable=SC2329
+      jig_copy_dir() { mkdir -p "$2/partial"; return 1; }
+      jig_bootstrap_worktree "$root/owner" "$root/wt" "task start"
+    ) >/dev/null 2>&1
+  done
+
+  [ -z "$(find "$root/wt" -name '*jig-partial*' 2>/dev/null)" ] \
+    || fail "a carry left a jig-partial path where git would see it"
+  [ ! -e "$root/wt/vendor" ] || fail "a failed carry left its destination in place"
+  [ -z "$(ls -A "$root/wt/.ai/runtime/bootstrap" 2>/dev/null)" ] \
+    || fail "three failed carries piled up in the staging directory"
+}
+
+# F7 (P3, but it carries the weight of the mirror's trade-off). The mirror was
+# accepted on the promise that `jig task bootstrap` brings in a package added
+# later. The outer "already there, leave it alone" check used to swallow that
+# promise whole, because a mirror *is* an existing destination.
+test_task_bootstrap_adds_a_package_added_after_the_worktree_was_made() {
+  skip_unless_symlinks
+  bootstrap_setup_nested
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  mkdir -p packages/one
+  printf 'one\n' > packages/one/index.js
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_symlink "$wt/packages/one"
+  assert_no_file "$wt/packages/two"
+
+  # a package installed in the owning checkout afterwards
+  mkdir -p packages/two
+  printf 'two\n' > packages/two/index.js
+
+  run jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  assert_symlink "$wt/packages/two" \
+    "jig task bootstrap must bring in a package added after the worktree was made"
+  assert_eq "two" "$(cat "$wt/packages/two/index.js")"
+  assert_contains "$OUT" "packages"
+}
+
+# F7's safety half: topping up is only ever jig's own mirror. A directory git
+# tracks is the worktree's own, and adding links inside it would make the tree
+# untracked-dirty -- stranding it exactly as F8 did.
+test_bootstrap_does_not_top_up_a_git_tracked_directory() {
+  skip_unless_symlinks
+  bootstrap_setup_nested
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  mkdir -p packages/tracked
+  printf 'tracked\n' > packages/tracked/index.js
+  git add -A
+  git commit -q -m "packages is tracked here"
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  [ ! -L "$wt/packages/tracked" ] || fail "a git-tracked entry was replaced by a link"
+
+  mkdir -p packages/untracked_pkg
+  printf 'later\n' > packages/untracked_pkg/index.js
+
+  run jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  [ ! -e "$wt/packages/untracked_pkg" ] \
+    || fail "topped up a directory git tracks; the worktree is now untracked-dirty"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+}

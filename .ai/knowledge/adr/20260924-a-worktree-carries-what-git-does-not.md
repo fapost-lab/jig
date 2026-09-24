@@ -209,13 +209,23 @@ python, and is a separate decision.
   rests on — would take them for finished work. The rename is atomic and within one directory, so
   no window exists in which the destination is partial. It is conventions/shell.md's rule for the
   manifest, applied to a tree.
-- **A new deletion outside `.ai/`, and RULES.md names it.** What a failed carry built beside the
-  destination is removed, bounded to a path that did not exist when the carry reached it, that
-  this run created, that resolves physically inside the task worktree, and that is never the
-  worktree root. A removal that does not succeed is reported rather than assumed: `rm -rf` exits
-  0 having deleted nothing, so the only answer worth having is whether the path is gone. Because
-  the destination itself is never occupied by a partial result, a failure here costs a warning
-  and some leftover bytes, never a carry mistaken for done.
+- **The staging directory is `.ai/runtime/bootstrap` inside the worktree**, and that location is
+  load-bearing rather than tidy. Staging beside the destination was tried first and reintroduced
+  the failure this whole design exists to avoid: a project ignores `vendor/`, and
+  `vendor.jig-partial.60347` is not `vendor/`, so an interrupted carry left an untracked path and
+  `git worktree remove` without `--force` — the only removal jig performs — refused that worktree
+  permanently. Under `.ai/runtime/` git ignores the remains (jig's own gitignore lists it without
+  a trailing slash, so a directory and a link both match), and a `kill -9` that defeats every trap
+  still cannot strand a worktree. The rename stays within one filesystem, so it stays atomic.
+- **The run clears its staging directory on the way in and sweeps it on the way out**, by a trap,
+  so remains do not accumulate across repeated `jig task bootstrap` runs. The directory is jig's
+  own, so nothing in it is anyone else's to keep.
+- **This adds no deletion outside `.ai/`.** What a failed carry built is removed, and it is always
+  inside `.ai/runtime/bootstrap`; RULES.md therefore gains a shape, not a fifth exception. A
+  carried path at its destination is never deleted, because a rename is what puts it there. A
+  removal that does not succeed is reported rather than assumed: `rm -rf` exits 0 having deleted
+  nothing when a directory inside the tree is not writable, and a copy keeps the source's modes,
+  so the only answer worth having is whether the path is gone.
 - **The destination is validated physically before anything is created.** `mkdir -p` and `cp`
   follow a symlink that is already in the worktree, so a link at an intermediate component of a
   declared path would let the carry write outside the tree. The owning checkout's side had this
@@ -232,4 +242,8 @@ python, and is a separate decision.
   package installed later in another session belongs to *that* session's task, and reaches this
   tree the ordinary way: through the base, once that work lands on the default branch.
   `jig task bootstrap <id>` brings one in when it really is wanted here and now — an operation
-  in its own right, not a workaround for the mirror.
+  in its own right, not a workaround for the mirror. It does so by topping the mirror up with
+  entries added since, which is why a destination that already exists is not simply skipped for a
+  shared directory: git-tracked content is still left alone, but a mirror an earlier carry made is
+  jig's to complete. Without that the trade above would have been accepted on a promise the code
+  did not keep.
