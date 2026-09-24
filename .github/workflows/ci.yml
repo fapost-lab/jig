@@ -189,9 +189,23 @@ jobs:
   # The whole suite on Windows under Git Bash, with the git settings a Windows
   # user gets out of the box: core.autocrlf=true and no native symlinks, so
   # `ln -s` copies and links fall back to junctions. Every process start is
-  # slow there, so the suite runs in three shares at once (JIG_TEST_SHARD) and
+  # slow there, so the suite runs in six shares at once (JIG_TEST_SHARD) and
   # skips the one check that reads only this repository's own knowledge and says
   # nothing about the platform (JIG_TEST_SKIP; it still runs on Linux and macOS).
+  #
+  # Six is where the measured curve stops paying for itself: three shares took
+  # 30 minutes and six take 15, while every doubling after that buys about
+  # three more minutes and spends twice the runners, out of a concurrency
+  # budget shared with every other pull request in flight. The measurements
+  # are in adr-20260925-windows-runs-in-six-shares.
+  #
+  # How many shares there are is the length of the matrix below and is written
+  # nowhere else: `strategy.job-total` is the number of jobs the matrix made,
+  # so the name and the denominator cannot drift from it. They used to be two
+  # more copies of the number, and the dangerous direction was silent — a
+  # matrix raised with the denominator left behind reruns the same thirds and
+  # reports green. tests/ci-workflow.t.sh guards what is left of that.
+  #
   # It runs on main (a release waits for every share), by hand, nightly, and on
   # a pull request whose diff touches something Windows decides differently —
   # line endings, MSYS path translation, directory links, a file that exists
@@ -201,7 +215,7 @@ jobs:
   # one output. Every other pull request is covered by smoke-windows below,
   # as every pull request was before.
   test-windows:
-    name: windows-latest (Git Bash) ${{ matrix.shard }}/3
+    name: windows-latest (Git Bash) ${{ matrix.shard }}/${{ strategy.job-total }}
     needs: scope
     if: needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'
     runs-on: windows-latest
@@ -209,7 +223,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6]
     defaults:
       run:
         shell: bash
@@ -239,7 +253,7 @@ jobs:
 
       - name: Tests
         env:
-          JIG_TEST_SHARD: ${{ matrix.shard }}/3
+          JIG_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           JIG_TEST_SKIP: knowledge::test_real_repository_knowledge_passes_with_no_failures
         run: tests/run.sh
 
