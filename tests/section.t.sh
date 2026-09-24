@@ -125,6 +125,8 @@ test_section_write_replaces_only_the_region() {
   assert_not_contains "$(cat AGENTS.md)" "framework line one"
   # The markers survive, or the next upgrade could never find the region.
   assert_eq ok "$(jig_section_state AGENTS.md)"
+  # And the other direction: an LF file is not handed CRLF on the way out.
+  assert_eq 0 "$(tr -cd '\r' < AGENTS.md | wc -c | tr -d ' ')"
 }
 
 test_section_write_keeps_the_files_own_line_endings() {
@@ -136,10 +138,22 @@ test_section_write_keeps_the_files_own_line_endings() {
   # still ends CRLF. A mixed-ending file would show up as a diff over the
   # whole file on the reader's next commit, which is the visible half of the
   # damage; the invisible half is that the markers stop matching.
-  assert_eq 6 "$(grep -c "$(printf '\r')$" AGENTS.md | tr -d ' ')"
+  #
+  # Counted as bytes, because the CR is counted on the one platform that can
+  # produce it and there grep cannot see it: under Git Bash grep takes the CR
+  # as part of the line separator, so `grep -c '<CR>$'` answers 0 on a file
+  # whose every line ends CRLF. An assertion made with grep passed on Linux,
+  # could not pass on Windows whatever the code did, and so measured nothing
+  # anywhere.
+  assert_eq 6 "$(tr -cd '\r' < AGENTS.md | wc -c | tr -d ' ')"
   assert_eq 6 "$(wc -l < AGENTS.md | tr -d ' ')"
   assert_eq "new one
 new two" "$(jig_section_read AGENTS.md)"
+  # The bytes themselves, since the counts alone would accept a CR in the
+  # wrong place. `$(...)` drops the final newline from both sides.
+  assert_eq \
+    "$(printf 'own\r\n<!-- jig:begin -->\r\nnew one\r\nnew two\r\n<!-- jig:end -->\r\ntail\r\n')" \
+    "$(cat AGENTS.md)"
 }
 
 test_section_write_refuses_a_malformed_file() {
