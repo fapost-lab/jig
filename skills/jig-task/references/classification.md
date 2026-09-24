@@ -1,25 +1,42 @@
 # Task classification rubric
 
-Pick the class from the signals below, then run the route. Signals are read in order:
-the first class whose signals fit is the answer. When two classes fit, apply the
-tie-break rule at the bottom.
+Answer the risk test first, then name the class. The class is the **highest** one whose
+risk test is answered yes — not the first whose examples happen to match. The examples
+under each class illustrate the test; they are not a checklist, and they never cover all
+the work there is. Work that appears in none of them still has a class.
+
+## The risk test
+
+Three questions about this change being wrong after it ships. Answer them before you look
+at any class.
+
+1. **Reversibility.** It shipped and it was wrong — what takes it back? `git revert` is
+   cheap. Data already changed, mail already sent, money already moved, another system
+   already told: there is nothing to revert.
+2. **Radius.** Does the mistake stop with us, or reach users, money, or somebody else's
+   system?
+3. **Detectability.** Do we find the mistake, or does the person it hurt tell us? Silent
+   corruption costs more than a loud outage.
 
 ## T0 — Trivial
 
-One obvious change with no design choice and no new behaviour.
+*Risk test:* one commit takes it back, the radius is this repository, a mistake is visible
+at once. One obvious change, no design choice, no new behaviour.
 
-Signals: typo, wording, comment, formatting, a rename confined to one file, a version
-bump, a doc fix. Reverting it is trivial and nothing depends on the change.
+Looks like: typo, wording, comment, formatting, a rename confined to one file, a version
+bump, a doc fix.
 
 Route: **implement → verify → consolidate**. No workspace, no artifacts; consolidation is
 the `NO_DURABLE_KNOWLEDGE` or knowledge decision stated in the report.
 
 ## T1 — Local
 
-Behaviour changes inside one component, and the shape of the change is obvious.
+*Risk test:* a revert takes it back, the radius is one component, a mistake shows up in a
+test or on the next run. Behaviour changes inside one component and the shape of the
+change is obvious.
 
-Signals: a bug fix with a known cause, a small feature inside an existing module, a test
-added for existing code. No new dependency, no change to a contract another component
+Looks like: a bug fix with a known cause, a small feature inside an existing module, a
+test added for existing code. No new dependency, no change to a contract another component
 relies on, no data shape change.
 
 Route: **analyze → implement → verify → consolidate**. Workspace only if the task spans
@@ -27,10 +44,12 @@ sessions.
 
 ## T2 — Structural
 
-Several components move together, or an internal contract changes.
+*Risk test:* a revert still takes it back, but the radius crosses components — code you
+did not edit behaves differently. Several components move together, or an internal
+contract changes.
 
-Signals: a new module inside existing boundaries, a signature or interface used by other
-components, a refactor across files, a new command or endpoint following an existing
+Looks like: a new module inside existing boundaries, a signature or interface used by
+other components, a refactor across files, a new command or endpoint following an existing
 pattern, a change whose blast radius you cannot state without looking.
 
 Route: **analyze → plan → implement → review → verify → consolidate**. Workspace with
@@ -38,26 +57,54 @@ Route: **analyze → plan → implement → review → verify → consolidate**.
 
 ## T3 — Architectural
 
-The shape of the system changes.
+*Risk test:* a revert restores the code but not the decision — the shape of the system
+changed, and whatever was built on that shape stays built on it.
 
-Signals: a new domain or boundary, a change in dependency direction, a new external
+Looks like: a new domain or boundary, a change in dependency direction, a new external
 dependency or service, a persistence or data-shape change, a change that touches an
 invariant in `RULES.md`, or a decision with real alternatives worth recording.
+
+**T2 against T3 is the boundary that costs most to get wrong** — more than T3 against T4,
+where both classes stop at a human gate. T2 has no gate at all, so a T3 filed as T2 is an
+architectural decision nobody saw. If the change makes a decision others will have to live
+with after the revert, it is T3.
 
 Route: **discover → design → HUMAN GATE → implement → architecture review → verify →
 consolidate**. Workspace with `design.md`; the gate is a full stop (see SKILL.md).
 
 ## T4 — Critical
 
-A mistake is expensive and hard to undo.
+*Risk test:* a revert does not undo it — something left the machine or changed on disk —
+**or** the mistake reaches people who did not ask for it, **or** nobody notices until the
+harm is done. Any one of the three is enough.
 
-Signals: authentication, authorization, secrets; destructive or irreversible data
-operations; migrations on live data; money, billing, compliance; anything with no
-rollback path; a security fix with a known exploit.
+Looks like: authentication, authorization, secrets; destructive or irreversible data
+operations; migrations on live data; money, billing, compliance; a security fix with a
+known exploit.
+
+It also looks like these, which is where the class is usually missed, because none of them
+sound dangerous:
+
+- a mass send — email, push notifications, webhooks: what went out cannot be recalled;
+- a change to permissions or visibility: who can see what;
+- a write into somebody else's system (payments, warehouse, CRM);
+- a background job that walks a whole table;
+- a change of storage format with no migration back;
+- a scheduler or cron entry: the mistake repeats itself on its own;
+- an index or cache rebuild that runs for hours.
 
 Route: **discover → specify → alternatives → design → HUMAN GATE → implement →
 independent review → regression and security verification → consolidate**. Workspace
 with `spec.md` and `design.md`; review runs in a fresh context.
+
+## Not T4, however alarming it sounds
+
+- **Reading** any of the above: a report over payments, a query against live data, logging
+  what a job would have done.
+- A change behind a flag that is off, or in code nothing calls yet.
+- A fixture, a seed, or a local test database.
+- A rename or a wording change in a file that happens to be named `auth`. The word is not
+  the test; ask what a mistake would cost.
 
 ## Tie-break
 
