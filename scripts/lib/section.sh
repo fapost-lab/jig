@@ -142,35 +142,46 @@ jig_section_report_state() {
 # leaves whatever is reading the old file alone, and a half-written AGENTS.md
 # is a file the framework cannot rebuild.
 jig_section_write() {
-  local file="$1" section="$2" tmp="$1.tmp.$$" crlf=0 marker cr
+  local file="$1" section="$2" tmp="$1.tmp.$$" crlf=0 first cr
 
   [ "$(jig_section_state "$file")" = ok ] || return 1
 
-  # Detect the file's line endings from the marker line itself: it is the
-  # line this function splices around, so it is the one whose ending the
-  # result has to match.
-  marker=$(grep -E "$_JIG_SECTION_BEGIN_RE" "$file" | sed -n '1p')
-  case "$marker" in
-    *"$(printf '\r')") crlf=1 ;;
-  esac
   cr=$(printf '\r')
+
+  # Detect the file's line endings with the shell's own `read`, never with a
+  # text tool. Under Git Bash grep, sed and awk take the CR of a CRLF file as
+  # part of the line separator and drop it before any pattern sees it: on a
+  # file whose every line ends CRLF, `grep -c '<CR>$'` answers 0 and
+  # `grep -E '^<!-- jig:begin -->[[:space:]]*$' | sed -n 1p` hands back a
+  # marker with no CR on it. Reading the line through the shell keeps the
+  # byte, which is why `_verify_map_check` has to strip it there.
+  IFS= read -r first < "$file" || :
+  case "$first" in
+    *"$cr") crlf=1 ;;
+  esac
 
   # Carry the destination's mode across by copying it first and then
   # truncating that copy: `> "$tmp"` keeps the inode `cp -p` just gave the
   # right permissions.
   cp -p "$file" "$tmp" || jig_die "upgrade: could not write $file"
   {
-    # head: everything up to and including the begin marker, byte for byte,
-    # so the file's own line endings survive above the section.
+    # head: everything up to and including the begin marker.
     awk -v b="$_JIG_SECTION_BEGIN_RE" '{ print } $0 ~ b { exit }' "$file"
-    # body: the new section, normalised and then given the file's endings.
-    if [ "$crlf" = 1 ]; then
-      tr -d '\r' < "$section" | sed "s/\$/$cr/"
-    else
-      tr -d '\r' < "$section"
-    fi
+    # body: the new section.
+    cat "$section"
     # tail: the end marker and everything after it.
     awk -v e="$_JIG_SECTION_END_RE" '$0 ~ e { f = 1 } f { print }' "$file"
+  } | {
+    # The endings are applied once, to the whole result, rather than trusted
+    # to survive three separate tools. The awk above cannot pass a CR through
+    # on Windows — it never saw one — so the head and the tail arrive here
+    # normalised whatever the file was, and a per-part "byte for byte" copy
+    # would silently rewrite a Windows project's CRLF AGENTS.md as LF.
+    if [ "$crlf" = 1 ]; then
+      tr -d '\r' | sed "s/\$/$cr/"
+    else
+      tr -d '\r'
+    fi
   } > "$tmp"
   mv -f "$tmp" "$file" || jig_die "upgrade: could not write $file"
 }
