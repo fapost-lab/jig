@@ -61,6 +61,7 @@ jobs:
       actions: read
     outputs:
       full: ${{ steps.scope.outputs.full }}
+      windows: ${{ steps.scope.outputs.windows }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,6 +93,22 @@ jobs:
           case "$line" in
             light*) echo "full=false" >> "$GITHUB_OUTPUT" ;;
             *) echo "full=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          # Whether the Windows shards run, per
+          # adr-20260924-windows-runs-on-a-pull-request-that-touches-platform-behaviour.
+          # Only a pull request asks: main, the nightly run and a manual
+          # dispatch run every platform whatever changed. The event check
+          # lives here rather than on the job, which now reads one output.
+          if [ "$EVENT" = pull_request ]; then
+            win=$(.github/scripts/ci-windows-scope.sh "$PR_BASE")
+          else
+            win="windows ($EVENT runs every platform)"
+          fi
+          echo "windows: $win"
+          case "$win" in
+            skip*) echo "windows=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "windows=true" >> "$GITHUB_OUTPUT" ;;
           esac
 
   # The light scope: what a documentation change can still break is the
@@ -175,12 +192,18 @@ jobs:
   # slow there, so the suite runs in three shares at once (JIG_TEST_SHARD) and
   # skips the one check that reads only this repository's own knowledge and says
   # nothing about the platform (JIG_TEST_SKIP; it still runs on Linux and macOS).
-  # It runs on main (a release waits for every share) and by hand, not on every
-  # pull request; smoke-windows below covers those.
+  # It runs on main (a release waits for every share), by hand, nightly, and on
+  # a pull request whose diff touches something Windows decides differently —
+  # line endings, MSYS path translation, directory links, a file that exists
+  # only for Windows, or a change that names the platform itself. That
+  # decision is .github/scripts/ci-windows-scope.sh, which has tests and a
+  # header explaining the rules; the `scope` job runs it and this job reads
+  # one output. Every other pull request is covered by smoke-windows below,
+  # as every pull request was before.
   test-windows:
     name: windows-latest (Git Bash) ${{ matrix.shard }}/3
     needs: scope
-    if: github.event_name != 'pull_request' && needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
