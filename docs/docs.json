@@ -53,6 +53,7 @@
         "group": "About Jig",
         "pages": [
           "comparison",
+          "known-issues",
           "changelog"
         ]
       }
