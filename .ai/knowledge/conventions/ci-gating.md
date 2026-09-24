@@ -5,7 +5,7 @@ status: active
 domains: []
 paths:
   - ".github/workflows/**"
-summary: Why the branch rules require only the ci-ok job, and why a matrix job's name can never be a required check.
+summary: Why the branch rules require only the ci-ok job, why a matrix job's name can never be a required check, and how a throwaway probe branch answers a routing question in a minute instead of 25.
 reviewed_at: 2026-09-24
 ---
 # CI gating
@@ -36,6 +36,10 @@ Its step reads `${{ join(needs.*.result, ' ') }}` and fails on anything that is 
 
 ## Probing the workflow itself
 
+This section is a practice, not a rule the workflow enforces, and nothing in the repository
+holds a copy of a probe: the branch is deleted as soon as it has answered, so a reader
+cannot check one out. What is written down is how to build the next one.
+
 A change to the workflow's own routing — a new output, a new `if:`, a job that must skip —
 cannot be answered locally: nothing on a developer's machine evaluates a GitHub expression.
 Waiting for the real suite to answer costs what the suite costs, and on Windows that is
@@ -48,11 +52,12 @@ stand-in jobs on `ubuntu-latest` that carry the real `if:` expression and do not
 a change that already happened. Run it with `gh workflow run ci.yml --ref <branch>`, read
 which stand-in ran and which skipped, and delete the branch.
 
-Two runs used it: `probe/section-crlf-windows`, which answered a Windows question in 29
-seconds instead of 25 minutes, and `probe/windows-scope`, which proved that
-`adr-20260924-windows-runs-on-a-pull-request-that-touches-platform-behaviour` routes #93 to
-the Windows shards and an ordinary change past them — a minute for the answer, and the same
-answer the runner gives for real.
+Two probes have paid for it, and both are history now. One answered in 29 seconds, instead
+of 25 minutes, whether `jig_section_write` kept a CRLF file's endings under Git Bash. The
+other asked `ci-windows-scope.sh` about the diff of #93 and about an ordinary change, and
+got the routing
+`adr-20260924-windows-runs-on-a-pull-request-that-touches-platform-behaviour` predicts — a
+minute for the answer the real runner takes 25 to give.
 
 ## Rationale
 

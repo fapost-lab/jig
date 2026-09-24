@@ -9,7 +9,7 @@ paths:
   - .github/workflows/ci.yml
   - .github/scripts/ci-windows-scope.sh
   - tests/ci-windows-scope.t.sh
-summary: "Why the full Windows suite runs on a pull request whose diff touches line endings, MSYS paths, directory links, a Windows-only file or CI, and passes over the rest: the signal, the numbers behind it, and why it matches no literal carriage return."
+summary: "Why the full Windows suite runs on a pull request whose diff touches line endings, MSYS paths, directory links, a Windows-only file or a CI workflow, and passes over the rest: the signal, the numbers behind it, and why it matches no literal carriage return."
 ---
 # Windows runs on a pull request whose diff touches platform behaviour
 
@@ -33,13 +33,17 @@ Running Windows on every pull request fixes it and costs the 25 minutes ADR-0037
 spend. The question is whether a cheaper signal exists: one that catches a change like #93
 and passes over a change that cannot behave differently on Windows.
 
-It does. Measured over the 96 pull requests merged before this decision, reconstructing each
-one's diff from its merge commit: 77 run the full suite today, and the signal below selects
-22 — 23% of all pull requests, 29% of the ones that would otherwise pay. #93 is among them.
+It does. Measured over the 99 pull requests merged before this decision — every merged pull
+request numbered below #101 — by rebuilding each one's diff the way CI sees it, from the
+`main` tip the merge commit sat on to the merge commit, and running today's `ci-scope.sh`
+and `ci-windows-scope.sh` over it: 77 run the full suite today, and the signal below selects
+22 — 22% of all pull requests, 29% of the ones that would otherwise pay. #93 is among them.
+Rebuilding the branch's own diff instead, from the merge base to the branch head, gives the
+same 77 and the same 22, so the numbers do not rest on which of the two a reader picks.
 
 The measurement also ruled things out. A signal built from the obvious candidates —
 `mv`/`rm`/`cp` on paths, `symlink` anywhere, `chmod`, drive letters and path separators —
-selects 47 of 96, half the history, which buys nothing. It was broad for reasons worth
+selects 47 of 99, half the history, which buys nothing. It was broad for reasons worth
 recording: `s:/` inside a `sed` expression reads as a drive letter, `symlink` and `chmod`
 appear throughout a repository whose own install mode is symlinks, and the Windows shards
 already skip the tests those two guard by capability (`skip_unless_symlinks`,
@@ -55,16 +59,21 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
   line endings (`\r`, `\015`, `crlf`, `autocrlf`, `eol=`, `text=auto`); MSYS path
   translation (`cygpath`, `MSYS`, `exec-path`); directory links (`junction`, `jig_link_`);
   and the platform named outright (`windows`, `git bash`, `powershell`, `ADR-0037`, `NTFS`).
-  Path rules, matched against any changed path: `.github/**`, `*.ps1`, `jig.cmd`,
-  `*gitattributes`.
+  Path rules, matched against any changed path: `.github/workflows/**`, `*.ps1`, `jig.cmd`,
+  `*gitattributes`. Only the workflows: a workflow decides which platforms run at all, while
+  a script under `.github/` that CI executes on `ubuntu-latest` alone — the release tag, the
+  epic gate, the changelog gate — is ordinary code and is read by the content rules like any
+  other.
 - **A change that names Windows runs on Windows.** It is the loosest rule and the one that
   matters most: #93's author was reasoning about this platform in writing, and nothing was
   running that reasoning. It is also nearly free — dropping it selects 20 instead of 22.
-- **Prose is decided by location, not by extension**: `docs/`, `.ai/knowledge/`, `.ai/specs/`,
-  `*.mdx` and Markdown at the repository root are read by people and reach no behaviour.
-  `templates/AGENTS.md` is therefore not prose — it is a shipped file whose line endings
-  reach a user's project, and it is Markdown. Three variants of this filter were measured;
-  all three select the same 22, so the one that leaves no hole was taken.
+- **Prose is Markdown that is not a template.** A template is checked first and is never
+  prose: `templates/AGENTS.md` is a shipped file whose line endings reach a user's project,
+  and it happens to be Markdown — it is the file #93 was about. Everything else that is
+  Markdown is prose wherever it sits, knowledge, specs, schemas, skills, the docs site and a
+  checklist under `.github/` alike, because a person is its only reader. Four variants of
+  this filter were measured; all four select the same 22, so the one that leaves no hole was
+  taken.
 - **The rules are plain ASCII, and a literal carriage return is deliberately not matched.**
   MSYS `grep`, `sed` and `awk` drop CR before the pattern sees it — half of what #96 had to
   undo — so a rule matching one would answer differently depending on where it ran. A
@@ -83,15 +92,15 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
 ## Alternatives
 
 - **Run the Windows shards on every pull request.** The honest fix, and the one ADR-0037
-  already weighed and declined. It spends 25 minutes on the 74 of 96 pull requests that
-  cannot behave differently on Windows.
+  already weighed and declined. It spends 25 minutes on the 77 of 99 pull requests the
+  signal passes over.
 - **Leave it as it was and rely on `main`.** This is what produced the red `main` — twice,
   because the next merge inherited the defect and its own run failed on it.
 - **Decide by paths alone** (`scripts/lib/**`, `.github/`, `install.ps1`). Cheaper to read
-  and impossible to fool, but `scripts/lib/**` alone appears in 59 of 96 pull requests. A
+  and impossible to fool, but `scripts/lib/**` alone appears in 60 of 99 pull requests. A
   path signal coarse enough to catch #93 catches most of the history with it.
 - **Decide by the broad content candidates** — file moves, `symlink`, `chmod`, path
-  separators. 47 of 96, and for the reasons in Context most of those matches stand in front
+  separators. 47 of 99, and for the reasons in Context most of those matches stand in front
   of tests that skip on Windows anyway.
 - **Extend `ci-scope.sh` with a second output.** One diff, one map parse, one classification.
   Rejected on two counts: the script's shape is a walk that exits at the first path forcing
@@ -107,14 +116,16 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
 ## Consequences
 
 - A pull request that touches line endings, path translation, directory links, a
-  Windows-only file or CI itself costs about 25 minutes more and answers before the merge
-  rather than after it. Measured on history, that is 22 of 96.
+  Windows-only file or a CI workflow costs about 25 minutes more and answers before the merge
+  rather than after it. Measured on history, that is 22 of 99.
 - The Windows failure classes are now written down in two places that must agree: this ADR
   and the script's header. A new class found on Windows is a new rule in the script, a test
   beside it, and a line here.
-- A change to `.github/` always runs Windows, so this repository's CI configuration is
-  checked on the platforms it configures — including the pull request that introduced this
-  decision.
+- A change to a workflow always runs Windows, so what decides which platforms run is checked
+  on them — including the pull request that introduced this decision. The rest of `.github/`
+  buys nothing on its own, which is the point: on this history every pull request that
+  touched a gate script touched `ci.yml` with it, so the narrowing changed no verdict, only
+  the reason the script gives for one.
 - ADR-0037's consequence "the full Windows suite ... runs outside pull requests" is narrowed
   by this decision. `smoke-windows` on every pull request, the nightly run and the release
   waiting for every shard all stand unchanged.

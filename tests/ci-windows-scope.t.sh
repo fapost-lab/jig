@@ -217,7 +217,38 @@ test_ci_windows_scope_ci_change_runs_windows() {
 
   run cw_scope "$repo" "$base"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "windows (.github/workflows/ci.yml changes CI)"
+  assert_contains "$OUT" "windows (.github/workflows/ci.yml decides which platforms CI runs)"
+}
+
+# Only the workflows decide which platforms run. A script under .github/ that
+# CI executes on ubuntu-latest alone — the release tag, the epic gate, the
+# changelog gate — is ordinary code, read by the content rules like any other,
+# and buys no Windows shards on its own.
+test_ci_windows_scope_ubuntu_only_ci_script_is_skipped() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" .github/scripts/changelog-check.sh 'grep -c release docs/changelog.mdx'
+  cw_commit "$repo" "change a gate that only ever runs on Linux"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "skip (1 changed files touch nothing Windows decides differently)"
+}
+
+# ... and the same script does reach Windows once its text says so.
+test_ci_windows_scope_ci_script_naming_the_platform_runs_windows() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" .github/scripts/ci-scope.sh '# paths are spelled the MSYS way here'
+  cw_commit "$repo" "teach the scope script about path spelling"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "touches 'MSYS'"
 }
 
 test_ci_windows_scope_powershell_file_runs_windows() {
@@ -278,6 +309,23 @@ test_ci_windows_scope_documentation_about_line_endings_is_skipped() {
   assert_contains "$OUT" "skip (3 changed files touch nothing Windows decides differently)"
 }
 
+# Markdown is prose wherever it sits — a schema, a skill, a checklist that
+# lives under .github/ beside the workflows. A person is its only reader.
+test_ci_windows_scope_markdown_anywhere_is_prose() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" .github/WINDOWS_RELEASE_CHECKLIST.md "Install Git for Windows by hand."
+  cw_write "$repo" schemas/verify-map.md "A CRLF checkout is out of scope here."
+  cw_write "$repo" skills/jig-init/SKILL.md "Mention PowerShell for the Windows reader."
+  cw_commit "$repo" "write prose about Windows in three more places"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "skip (3 changed files touch nothing Windows decides differently)"
+}
+
 # Documentation is decided by where a file is, not by its extension: a
 # template is a shipped file whose line endings reach a user's project, and
 # it happens to be Markdown.
@@ -293,4 +341,46 @@ test_ci_windows_scope_template_markdown_is_not_prose() {
   run cw_scope "$repo" "$base"
   assert_eq 0 "$RC"
   assert_contains "$OUT" "windows (scripts/lib/section.sh touches 'CRLF')"
+}
+
+# --- the search must survive a large diff ------------------------------------
+
+# Under `pipefail`, piping the search into a reader that stops before the end
+# of its input (`head -n 1`, `grep -q`) kills the writer with SIGPIPE as soon
+# as the output outgrows a pipe buffer; 141 fails the command substitution and
+# a match that was already found reads back as "no match". That is the failure
+# conventions/shell.md is written about, and this script had it: a diff of
+# 20 000 lines, every one of them matching, classified as `skip`.
+#
+# Every line below matches, so `skip` here can only mean the search broke.
+test_ci_windows_scope_large_diff_still_finds_the_match() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  mkdir -p "$repo/scripts/lib"
+  awk 'BEGIN { for (i = 0; i < 20000; i++) print "# a windows line" }' \
+    > "$repo/scripts/lib/big.sh"
+  cw_commit "$repo" "a diff far larger than a pipe buffer"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "windows (scripts/lib/big.sh touches 'windows')"
+}
+
+# `grep -m 1` stops after the first matching line, but `-o` prints every match
+# found on it, so one comment naming two things at once returns two lines. The
+# reason is one line, and the whole output is asserted to prove it: #72 and
+# #83 both touch a line reading "Git Bash" and "MSYS" together.
+test_ci_windows_scope_two_matches_on_one_line_report_one() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" scripts/lib/common.sh '# Git Bash spells this the MSYS way'
+  cw_commit "$repo" "name two platform facts in one line"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_eq "windows (scripts/lib/common.sh touches 'Git Bash')" "$OUT"
 }
