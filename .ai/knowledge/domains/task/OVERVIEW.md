@@ -70,6 +70,18 @@ Housekeeping can only establish that work landed when the task had a branch of i
 task whose `branch` is the base branch resolves to `unknown` forever (ADR-0025). So a task
 gets a branch of its own — but at `jig task start`, not at `jig task new`.
 
+**That branch's name carries the task id and nothing else.** `_task_branch_name` substitutes
+one placeholder, `{id}`, refuses a `git.branch_template` without it, and leaves the rest of the
+judgement to `git check-ref-format`. The semantic type of the work — the `feat/`, `fix/`, `docs/`
+prefixes many projects put in front of a branch — stays out on purpose and lives in the pull
+request title and the commit message. There is nothing here to substitute it from: a task's
+`class` is `T0`–`T4`, a class of risk rather than a type of work, and a `type` field added to
+carry it would fail every part of `conventions/required-records.md` — the agent that fills it is
+the agent that reads it, no fact in the repository can contradict it, and it has an obvious
+default. It would be answered on every task for one reader, `git branch`. A project whose own
+convention is `feat/|fix/|docs/` drops that rule rather than teaching Jig to reproduce it,
+because the two only diverge once Jig, not a person, cuts the branch.
+
 **Filing and beginning are different acts**, and the distinction is carried by an absence:
 
 - A filed task has **no `branch` and no `base_commit`**. That absence is what keeps it out
