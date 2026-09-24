@@ -154,23 +154,25 @@ A worktree is a Git checkout, so it starts with exactly what Git tracks — no `
 Starting a task with `--worktree` carries that state across for you: your project's
 [verification profiles](/configuration#verification-profiles) declare what their stack needs
 (PHP's `vendor`, Node's `node_modules`, Laravel's `.env`), and the project can add its own with
-`worktree.carry` and `worktree.share` in [`.ai/config.yaml`](/configuration#git-and-branches). It
-copies what each worktree must have its own of, and shares by link what must stay a single copy
-under edit, such as a `packages/` directory.
-
-A shared directory is recreated in the worktree with each of its entries linked, rather than
-linked as a whole — that is what keeps Git able to ignore it, and so keeps the worktree one Jig
-can clean up later. The trade is that a package you add to your main checkout afterwards does not
-appear in a worktree that already exists. In practice that costs little: a worktree exists for one
-task, and what the directory held when the worktree was made is what that task needs — a package
-you install later belongs to whatever you are doing then, and reaches this tree the usual way,
-through its base branch. When you do want it here and now, `jig task bootstrap <id>` brings it in.
+`worktree.carry` in [`.ai/config.yaml`](/configuration#git-and-branches). It
+copies what each worktree must have its own of.
 
 Jig only carries what your project keeps out of Git, and it checks rather than assumes: after
 placing something it asks Git what it now sees in the worktree, and takes straight back out
 anything Git noticed, telling you to add that path to `.gitignore` first. The reason is narrow but
 absolute — a worktree holding anything Git can see cannot be removed afterwards, so Jig would be
 leaving you a folder to delete by hand.
+
+<Warning>
+**Do not declare a directory of separate repositories as `worktree.carry`.** If you keep
+sibling packages next to your project — separate Git repositories wired in as Composer path
+repositories, say, under an ignored `packages/` — carrying is not a way to get them into a
+worktree. A copy gives that worktree its own clone of each one. Work you do there is invisible
+to the checkout beside it, and because the path is ignored, `git worktree remove` deletes it
+without a word when the task is done — taking uncommitted *and* committed work with it.
+Jig does not yet serve this layout; support for it is being designed separately. Until then,
+work on those packages in your main checkout rather than in a worktree.
+</Warning>
 
 Carrying is never required to succeed — if the owning checkout has nothing to carry either, Jig
 says so and names the install command to run yourself, rather than installing anything over the

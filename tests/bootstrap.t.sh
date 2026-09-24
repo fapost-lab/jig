@@ -32,7 +32,7 @@ bootstrap_setup_nested() {
 bootstrap_ignore() {
   printf 'vendor/\nnode_modules/\npackages/\ndata/\nconfig/\n.env\n' >> .gitignore
   git add .gitignore
-  git commit -q -m "keep derived and shared state out of git"
+  git commit -q -m "keep derived state out of git"
 }
 
 # bootstrap_setup_php — bootstrap_setup_nested, but with a composer.json in
@@ -99,48 +99,7 @@ test_bootstrap_carries_a_project_declared_path() {
   assert_contains "$ERR" "carried data"
 }
 
-# --- share: link rather than copy (item 3, 4) --------------------------------
 
-test_bootstrap_share_links_a_file_and_writes_reach_the_owner() {
-  skip_unless_symlinks
-  bootstrap_setup_nested
-  mkdir -p config
-  printf 'v1\n' > config/shared.txt
-  printf 'worktree.share: [config/shared.txt]\n' >> .ai/config.yaml
-  jig task new T-1 >/dev/null
-
-  run_split jig task start T-1 --worktree
-  assert_eq 0 "$RC"
-  local wt="$OUT"
-  assert_symlink "$wt/config/shared.txt"
-  assert_contains "$ERR" "shared config/shared.txt"
-
-  printf 'v2 from the worktree\n' > "$wt/config/shared.txt"
-  assert_eq "v2 from the worktree" "$(cat config/shared.txt)" \
-    "a write through the shared link did not reach the owning checkout"
-}
-
-# A shared directory is mirrored -- created for real, each of its entries a
-# link -- rather than linked whole (bootstrap.sh's _bootstrap_share comment):
-# git does not apply a trailing-slash ignore pattern like `packages/` to a
-# symlink, so a linked-whole directory would read as untracked forever and
-# `git worktree remove` would refuse the worktree for good.
-test_bootstrap_share_of_a_directory_mirrors_it_entry_by_entry() {
-  skip_unless_symlinks
-  bootstrap_setup_nested
-  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
-  mkdir -p packages/left
-  printf 'left pkg\n' > packages/left/index.js
-  jig task new T-1 >/dev/null
-
-  run_split jig task start T-1 --worktree
-  assert_eq 0 "$RC"
-  local wt="$OUT"
-  assert_dir "$wt/packages"
-  [ ! -L "$wt/packages" ] || fail "the shared directory itself must not be a symlink"
-  assert_symlink "$wt/packages/left"
-  assert_eq "$(cd packages/left && pwd -P)" "$(cd "$wt/packages/left" && pwd -P)"
-}
 
 # --- a clean worktree that `git worktree remove` can actually delete (item 5) -
 
@@ -152,8 +111,8 @@ test_bootstrap_leaves_a_worktree_git_worktree_remove_can_delete() {
   # gitignore-of-.gitignore trap this machine has.
   printf 'vendor/\npackages/\n' >> .gitignore
   git add .gitignore
-  git commit -q -m "ignore derived and shared state"
-  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  git commit -q -m "ignore derived state"
+  printf 'worktree.carry: [packages]\n' >> .ai/config.yaml
   mkdir -p vendor/pkg packages/left
   printf 'autoload\n' > vendor/pkg/autoload.php
   printf 'left pkg\n' > packages/left/index.js
@@ -392,9 +351,9 @@ test_cfg_list_lines_reads_a_bare_scalar() {
 
 test_cfg_list_lines_strips_quotes() {
   fixture_jig_repo
-  printf 'worktree.share: ["x y", "z"]\n' >> .ai/config.yaml
+  printf 'worktree.carry: ["x y", "z"]\n' >> .ai/config.yaml
 
-  run _cfg_list_lines worktree.share
+  run _cfg_list_lines worktree.carry
   assert_eq 0 "$RC"
   assert_eq "$(printf 'x y\nz')" "$OUT"
 }
@@ -407,9 +366,9 @@ test_cfg_list_lines_does_not_expand_a_glob_shaped_item() {
   fixture_jig_repo
   mkdir -p packages/one packages/two
   touch packages/one/f packages/two/g
-  printf 'worktree.share: [packages/*]\n' >> .ai/config.yaml
+  printf 'worktree.carry: [packages/*]\n' >> .ai/config.yaml
 
-  run _cfg_list_lines worktree.share
+  run _cfg_list_lines worktree.carry
   assert_eq 0 "$RC"
   assert_eq "packages/*" "$OUT"
 }
@@ -459,9 +418,8 @@ test_bootstrap_refuses_the_ai_directory_at_any_depth() {
 # this whole design leans on -- so it is normalised, not refused with a message
 # about dot segments.
 test_bootstrap_normalises_a_trailing_slash_in_a_declaration() {
-  skip_unless_symlinks
   bootstrap_setup_nested
-  printf 'worktree.share: [packages/]\n' >> .ai/config.yaml
+  printf 'worktree.carry: [packages/]\n' >> .ai/config.yaml
   mkdir -p packages/left
   printf 'pkg\n' > packages/left/index.js
   jig task new T-1 >/dev/null
@@ -469,7 +427,7 @@ test_bootstrap_normalises_a_trailing_slash_in_a_declaration() {
   run_split jig task start T-1 --worktree
   assert_eq 0 "$RC"
   assert_not_contains "$ERR" "not a plain repository-relative path"
-  assert_symlink "$OUT/packages/left"
+  assert_eq "pkg" "$(cat "$OUT/packages/left/index.js")"
 }
 
 # F2 (P1) and F3 (P1). A carry that fails partway must remove what it made:
@@ -665,84 +623,14 @@ test_bootstrap_a_failed_carry_leaves_no_untracked_remains() {
     || fail "three failed carries piled up in the staging directory"
 }
 
-# F7 (P3, but it carries the weight of the mirror's trade-off). The mirror was
-# accepted on the promise that `jig task bootstrap` brings in a package added
-# later. The outer "already there, leave it alone" check used to swallow that
-# promise whole, because a mirror *is* an existing destination.
-test_task_bootstrap_adds_a_package_added_after_the_worktree_was_made() {
-  skip_unless_symlinks
+# F11 (P2). The carry's safety rests entirely on the project keeping the
+# declared path out of git, and nothing used to check that. A project that
+# declares a path in neither git nor .gitignore got a cheerful success and a
+# worktree `git worktree remove` would refuse for good. The refusal names
+# .gitignore, because that is the fix.
+test_bootstrap_refuses_a_carry_git_would_see() {
   bootstrap_setup_nested
-  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
-  mkdir -p packages/one
-  printf 'one\n' > packages/one/index.js
-  jig task new T-1 >/dev/null
-
-  run_split jig task start T-1 --worktree
-  assert_eq 0 "$RC"
-  local wt="$OUT"
-  assert_symlink "$wt/packages/one"
-  assert_no_file "$wt/packages/two"
-
-  # a package installed in the owning checkout afterwards
-  mkdir -p packages/two
-  printf 'two\n' > packages/two/index.js
-
-  run jig task bootstrap T-1
-  assert_eq 0 "$RC"
-  assert_symlink "$wt/packages/two" \
-    "jig task bootstrap must bring in a package added after the worktree was made"
-  assert_eq "two" "$(cat "$wt/packages/two/index.js")"
-  assert_contains "$OUT" "packages"
-}
-
-# F10 (P1), and the shape of the whole class it ended. The danger was never
-# "a directory git tracks" -- that was a proxy, and it answered in a different
-# case than the filesystem did. The danger is a worktree git can see into,
-# because `git worktree remove` without --force then refuses it forever. So
-# the carry acts and asks git what it now reports, and takes back whatever it
-# made appear.
-#
-# `libs/` here is tracked and *not* ignored, which is the case that actually
-# strands a tree. A directory that is both tracked and ignored is safe and is
-# kept -- git reports nothing either way -- which the old proxy rule would
-# have refused for no reason.
-test_bootstrap_takes_back_a_top_up_git_would_see() {
-  skip_unless_symlinks
-  bootstrap_setup_nested
-  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
-  mkdir -p libs/one
-  printf 'one\n' > libs/one/index.js
-  git add -A
-  git commit -q -m "libs is tracked and not ignored"
-  jig task new T-1 >/dev/null
-
-  run_split jig task start T-1 --worktree
-  assert_eq 0 "$RC"
-  local wt="$OUT"
-  assert_eq "" "$(git -C "$wt" status --porcelain)"
-
-  # a package added to the owning checkout afterwards; linking it into the
-  # worktree would be visible to git, so it must not survive the attempt
-  mkdir -p libs/two
-  printf 'two\n' > libs/two/index.js
-
-  run jig task bootstrap T-1
-  assert_eq 0 "$RC"
-  assert_contains "$OUT" "git does not ignore"
-  [ ! -e "$wt/libs/two" ] && [ ! -L "$wt/libs/two" ] \
-    || fail "a top-up git can see was left in the worktree, which strands it"
-  assert_eq "" "$(git -C "$wt" status --porcelain)" \
-    "the worktree must be exactly as clean as the carry found it"
-}
-
-# F11 (P2). The mirror's safety rested entirely on the project having the
-# directory in .gitignore, and nothing checked that. A project with a shared
-# directory in neither git nor .gitignore got a cheerful `shared packages` and
-# a worktree `git worktree remove` would refuse for good.
-test_bootstrap_refuses_a_share_git_would_see() {
-  skip_unless_symlinks
-  bootstrap_setup_nested
-  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
+  printf 'worktree.carry: [libs]\n' >> .ai/config.yaml
   mkdir -p libs/one
   printf 'one\n' > libs/one/index.js
   jig task new T-1 >/dev/null
@@ -753,7 +641,7 @@ test_bootstrap_refuses_a_share_git_would_see() {
   assert_contains "$ERR" "git does not ignore"
   assert_contains "$ERR" ".gitignore"
   [ ! -e "$wt/libs" ] && [ ! -L "$wt/libs" ] \
-    || fail "a share git can see was left in the worktree, which strands it"
+    || fail "a carry git can see was left in the worktree, which strands it"
   assert_eq "" "$(git -C "$wt" status --porcelain)"
 }
 
@@ -834,35 +722,6 @@ test_bootstrap_take_back_asks_git_rather_than_its_own_list() {
     "the undo reported success while git still saw what the placement left"
 }
 
-# F13, end to end and on the reproducer itself: a shared directory git does
-# not ignore, holding an entry whose name contains a newline. The refusal is
-# detected correctly; what must also happen is that the failed undo is named,
-# because the worktree is now one housekeeping can never remove.
-test_bootstrap_reports_an_undo_it_could_not_finish() {
-  skip_unless_symlinks
-  skip_unless_control_char_names
-  bootstrap_setup_nested
-  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
-  mkdir -p libs/one
-  printf 'one\n' > libs/one/index.js
-  git add -A
-  git commit -q -m "libs is tracked and not ignored"
-  jig task new T-1 >/dev/null
-
-  run_split jig task start T-1 --worktree
-  assert_eq 0 "$RC"
-  local wt="$OUT"
-
-  # a package whose name the newline-separated accounting cannot carry
-  mkdir -p "libs/$(printf 'a\nb')"
-  printf 'two\n' > "libs/$(printf 'a\nb')/index.js"
-
-  run jig task bootstrap T-1
-  assert_eq 0 "$RC"
-  assert_contains "$OUT" "git does not ignore"
-  assert_contains "$OUT" "the worktree needs you" \
-    "an undo that could not finish must be named, not reported as a clean refusal"
-}
 
 # F14 (P1). The backstop that closed F12 used to ask by name — is there a
 # `<dst>/<staged basename>` — and a carried tree that legitimately holds a
@@ -891,55 +750,3 @@ test_bootstrap_carries_a_tree_holding_an_entry_of_its_own_name() {
   assert_eq "" "$(git -C "$wt" status --porcelain)"
 }
 
-# F15 (P3). A top-up that failed partway used to warn and then report success
-# in the same run, because the entries linked before the failure left
-# _BOOTSTRAP_LINKED non-zero. A person could not tell from the output whether
-# to run it again.
-test_bootstrap_a_partial_top_up_reports_once() {
-  skip_unless_symlinks
-  bootstrap_setup_nested
-  local root
-  root=$(pwd -P)/tree
-  mkdir -p "$root/wt/.ai" "$root/owner/libs/one" "$root/owner/libs/two" \
-    "$root/wt/libs"
-  git -C "$root/wt" init -q .
-  git -C "$root/wt" -c user.email=t@e -c user.name=t commit -q --allow-empty -m base
-  printf 'libs/\n' > "$root/wt/.gitignore"
-  git -C "$root/wt" add -f .gitignore
-  git -C "$root/wt" -c user.email=t@e -c user.name=t commit -q -m ignore
-
-  (
-    # shellcheck disable=SC2034
-    JIG_AI_DIR=.ai
-    # shellcheck disable=SC2329
-    jig_info() { printf 'INFO %s\n' "$*"; }
-    # shellcheck disable=SC2329
-    jig_warn() { printf 'WARN %s\n' "$*"; }
-    # shellcheck source=/dev/null
-    . "$JIG_HOME/scripts/lib/bootstrap.sh"
-    # shellcheck disable=SC2329
-    profiles_carry() { :; }
-    # shellcheck disable=SC2329
-    profiles_lock() { :; }
-    # shellcheck disable=SC2329
-    profiles_install() { :; }
-    # shellcheck disable=SC2329
-    cfg_list_lines() { [ "$1" = worktree.share ] && printf 'libs\n'; return 0; }
-    _jig_link_n=0
-    # a mirror that fails on its second entry
-    # shellcheck disable=SC2329
-    jig_link_dir() {
-      _jig_link_n=$((_jig_link_n + 1))
-      [ "$_jig_link_n" -lt 2 ] || return 1
-      ln -s "$1" "$2"
-    }
-    jig_bootstrap_worktree "$root/owner" "$root/wt" "task bootstrap"
-  ) > "$root/out" 2>&1
-
-  grep -q 'could not finish adding what is new in libs' "$root/out" \
-    || fail "a partial top-up did not name its partial result: $(cat "$root/out")"
-  if grep -q 'added what is new in' "$root/out"; then
-    fail "a partial top-up also reported success: $(cat "$root/out")"
-  fi
-  assert_eq "" "$(git -C "$root/wt" status --porcelain)"
-}

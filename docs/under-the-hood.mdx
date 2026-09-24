@@ -113,11 +113,9 @@ The script answers from file metadata alone; the agent then reads the listed fil
   what was skipped.
 - **`jig task start --worktree`**, and **`jig task bootstrap`**, which repeats it, carry into the
   worktree whatever your project's checks need that Git does not track — `vendor/`, `node_modules`,
-  `.env` — as declared by the active profiles' `carry` and the project's own `worktree.carry` and
-  `worktree.share` in `.ai/config.yaml`. Only a path the worktree does not already have is touched;
-  a path under `.ai/` is always refused. Derived state (each tree's own) is copied; a source of
-  truth still under edit (a `packages/` directory) is linked instead, so both trees see the same
-  files. Never fatal: a carry that fails partway leaves the worktree and its branch exactly as they
+  `.env` — as declared by the active profiles' `carry` and the project's own `worktree.carry`
+  in `.ai/config.yaml`. Only a path the worktree does not already have is touched;
+  a path under `.ai/` is always refused. Never fatal: a carry that fails partway leaves the worktree and its branch exactly as they
   are, for `jig task bootstrap` to try again.
 
 ### Git

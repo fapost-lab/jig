@@ -14,7 +14,7 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/config.sh
   - "profiles/*/profile.yaml"
-summary: Why a task worktree is given vendor, node_modules and .env from the checkout beside it rather than an install, what is copied and what is shared by link, and the measurements that chose the method.
+summary: Why a task worktree is given vendor, node_modules and .env by copying them from the checkout beside it rather than installing, how the carry proves with git that what it placed cannot strand the worktree, and the measurements that chose the copy method.
 reviewed_at: 2026-09-24
 ---
 # ADR: A task worktree carries the state git does not track, from the checkout beside it
@@ -55,36 +55,21 @@ install from the network.** Four reasons, in the order that decides the matter:
   a person, never run). Shipped: `php` → `vendor`, `node` → `node_modules`,
   `laravel` → `.env`. The reader already ignores keys nobody asks for, so no profile needed
   migrating.
-- A project declares its own layout in `.ai/config.yaml`: `worktree.carry` and
-  `worktree.share`. Both optional. The common case needs neither line, because profiles are
-  detected.
+- A project declares its own layout in `.ai/config.yaml`, with `worktree.carry`. It is
+  optional; the common case needs no line at all, because profiles are detected.
 
-**`share` is not a profile key and must not become one.** What is shared rather than copied is
-always a project's layout, never a property of a stack; a profile that guessed it would guess
-wrong.
+**One nature of state is carried: derived state, each tree's own** — `vendor`, `node_modules`,
+`.env`. It is copied, because a copy is what such state wants: each tree needs its own, and
+nothing is lost when a tree goes.
 
-**Two actions, told apart by the nature of the state, not by the kind of file.**
-
-- **copy** — derived state, each tree's own: `vendor`, `node_modules`, `.env`.
-- **share** — a source of truth under edit, which must stay single: `packages/`, separate git
-  repositories wired in through composer path repositories. A copy would be a second clone of
-  each package; an edit made in the worktree would sit in a clone the owning checkout cannot
-  see, and the two would diverge in silence until a push.
+**State that must stay single is deliberately out of scope**, not forgotten. A directory of
+separate git repositories wired in as composer path repositories — `packages/` — is a source of
+truth under edit, and copying it is not a lesser version of serving it but a different and worse
+thing: see the risk named under Consequences, and the `worktree-share` task, which holds that
+analysis whole.
 
 **Only what the worktree does not already have is carried.** A path git brings itself is left
-alone, which needs no list of exceptions: in two of the three live projects examined,
-`packages/` is tracked by the parent repository, so the declaration is a no-op there.
-
-**A shared directory is mirrored, not linked whole** — the directory is created in the
-worktree and each of its entries is linked. This is forced by git, not chosen for taste: a
-project keeps such a directory out of git with a trailing-slash pattern (`packages/`), and git
-does not apply that pattern to a symlink. A linked directory therefore reads as an untracked
-path, and `git worktree remove` without `--force` refuses the worktree for the rest of its
-life — housekeeping would hold the task under `worktree-kept` forever and the tree would have
-to go by hand, which is the cleanup by manual discipline ADR-0029 exists to avoid. A real
-directory matches the pattern the project already has, so nothing is asked of the person.
-Measured, both ways, on 2026-09-24. A per-worktree `info/exclude` was tried first and does not
-work: git reads that file from the common directory, so it cannot describe one worktree.
+alone, which needs no list of exceptions.
 
 **Nothing is ever installed.** When there is nothing to carry, the profile's `install` command
 is named for a person to run. Running it was rejected: `task start` is not a build command,
@@ -102,7 +87,7 @@ remedy (`.gitignore`).
 This replaced four separate guards that each predicted the same answer and each got it wrong in
 its own way: a path's spelling compared case-sensitively, a staging name the project's ignore rule
 did not cover, `git ls-files` asked in one case while `-e` and `-d` answered in another, and a
-shared directory nobody had ignored at all. Every one of them was a proxy for "will git see this",
+a declared directory nobody had ignored at all. Every one of them was a proxy for "will git see this",
 and every proxy has another door — case folding, unicode normalisation on HFS+, `core.ignorecase`,
 a symlinked component. Four review rounds found four doors. Asking git has none, because it is the
 same question, put to the same program, that housekeeping will put to it later.
@@ -125,11 +110,14 @@ different case and is kept: git reports nothing either way, so nothing is strand
 **The undo is proved the same way the placement is.** Taking a refused placement back out acts on
 a recorded list of what was made, and that list is not what says it worked — git is asked again
 afterwards, and an undo that did not restore the worktree is reported as one the person has to
-look at. A list is accounting, and accounting has gaps: it is newline-separated, so an entry whose
-own name holds a newline arrives as two lines naming nothing. Trusting the list there would report
-a clean refusal over a worktree `git worktree remove` refuses for good. The newline is only the
-reproducer; any gap, present or future, is a silent stranding for as long as the accounting is
-also the proof.
+look at. A list is accounting, and accounting has gaps. The gap that proved it was reached through
+a mechanism no longer here: the list is newline-separated, and a mirror built its lines from entry
+names found inside a shared directory, so an entry whose own name held a newline arrived as two
+lines naming nothing — nothing was removed, and a clean refusal was reported over a worktree
+`git worktree remove` refuses for good. What carries now records one validated path per placement,
+so that particular gap is closed by construction. The principle is kept anyway, because it is
+cheap and because the next gap will not announce itself: for as long as the accounting is also the
+proof, any gap in it is a silent stranding.
 
 **A rename that landed is told from one that nested by identity, not by name.** Placing a path is a
 rename onto a destination re-tested immediately before, and a backstop catches what slips through
@@ -195,15 +183,16 @@ Relocatability was measured rather than assumed. `vendor/composer/*.php` compute
 at runtime and holds no absolute host path; `node_modules/.bin/*` entries are relative symlinks.
 Composer path repositories appear in `vendor/` as **relative** symlinks
 (`vendor/bpartner/sso-server -> ../../packages/sso-server/`), with no absolute one found, so
-after a copy they resolve inside the worktree and land in the shared directory — the tree stays
-self-contained. All three copy methods preserve symlinks as symlinks.
+after a copy they resolve inside the worktree — where they find whatever the project put there,
+which for a path-repository layout is the open question the `worktree-share` task inherits.
+All three copy methods preserve symlinks as symlinks.
 
 **`python` deliberately declares nothing.** A virtualenv is not relocatable: copied elsewhere,
 `.venv/bin/python` works and reports the new prefix, but every console script — `pip`, `pytest`,
 `ruff`, `mypy` — keeps an absolute shebang into the original `.venv`, so `pip --version` from the
 copy reports the *owner's* site-packages. `pytest` in a worktree would run against the
 neighbouring tree's environment while appearing to work: the same silent divergence that makes
-`packages/` shared rather than copied. Rewriting shebangs was rejected — editing another tool's
+`packages/` a case this decision does not serve by copying. Rewriting shebangs was rejected — editing another tool's
 files during `task start` is not the framework's business. A wheel cache is the right carrier for
 python, and is a separate decision.
 
@@ -213,18 +202,7 @@ python, and is a separate decision.
   toolchain on the host, which the motivating project does not have, and a network, which a
   sandbox may not have. Kept only as a sentence naming the command.
 - **Hard links (`cp -R -l`).** Rejected on the measurements above.
-- **Copy `packages/` like everything else.** Rejected: a second clone of each package's
-  repository, diverging silently from the first.
-- **Link a shared directory whole.** Rejected: git does not match a trailing-slash ignore
-  pattern against a symlink, so the worktree is permanently un-removable by housekeeping.
 - **A per-worktree `info/exclude`.** Tried and rejected: git reads it from the common directory.
-- **Declare `share` in `profile.yaml`.** Rejected: sharing is a project's layout; a stack cannot
-  know it.
-- **Derive the shared paths from `composer.json`'s `path` repositories.** Attractive — it would
-  remove the declaration for composer projects — but it needs JSON parsing in POSIX sh without
-  `jq`, and the live projects examined point at three different directories (`./nova`,
-  `./packages/*`, `./nova-components/*`), so the parse is not the easy case it looks like.
-  Deferred, not refused.
 - **A `worktree.bootstrap: false` project switch.** Rejected: nobody would fill it; `--no-bootstrap`
   covers the one run that wants it.
 - **Roll the worktree back when the carry fails.** Rejected: the tree and the branch are what a
@@ -236,13 +214,9 @@ python, and is a separate decision.
 - `jig task start --worktree` now writes into the new worktree, and on a large `node_modules`
   takes seconds rather than being instant. It says what it carried, with what and how long it
   took, and names every skip and refusal.
-- **An edit to a shared package made from a worktree is not isolated in the task's branch.**
-  This is an accepted trade, not a defect: the package lives in its own history, so the edit is
-  not isolated today either, with or without jig. Sharing preserves exactly what happens without
-  jig — one checkout of the package, edited from wherever.
 - A new command, `jig task bootstrap`, and a new flag, `--no-bootstrap`.
-- Three new `profile.yaml` keys (`carry`, `lock`, `install`) and two new config keys
-  (`worktree.carry`, `worktree.share`). Config keys are team keys in `.ai/config.yaml`;
+- Three new `profile.yaml` keys (`carry`, `lock`, `install`) and one new config key
+  (`worktree.carry`). It is a team key in `.ai/config.yaml`;
   `jig config set` does not accept them, by the existing rule that it writes only local keys.
 - `cfg_list_lines` exists beside `cfg_list`, because `cfg_list` returns one space-separated line
   that every caller consumes with a bareword `for`, which would let a glob-shaped path expand
@@ -275,9 +249,9 @@ python, and is a separate decision.
   this run created is ever moved, and a move that fails leaves the path and says so: a worktree a
   person must look at is the honest outcome, where silence would leave one nobody can remove.
 - **Containment judges a link by where it lies, not by where it points.** `cd -P` through a
-  symlink answers about its target, so an entry a mirror made looked as if it were outside the
-  worktree and was skipped by the take-back. Moving or removing a link never touches its target,
-  so the location is the only thing that matters.
+  symlink answers about its target, so a link lying in the worktree looked as if it were outside
+  it and was skipped by the take-back. Moving or removing a link never touches its target, so the
+  location is the only thing that matters.
 - **The staging directory is `.ai/runtime/bootstrap` inside the worktree**, and that location is
   load-bearing rather than tidy. Staging beside the destination was tried first and reintroduced
   the failure this whole design exists to avoid: a project ignores `vendor/`, and
@@ -304,15 +278,18 @@ python, and is a separate decision.
   opens the real `.ai/runtime` and a case-sensitive test refuses nothing there — the same reason
   `km_source_problem` lowercases `.git`. Spelling is not the only way in, so the physical check
   above refuses a destination resolving into the worktree's `.ai/` however it got there.
-- A package added to the owning checkout after a worktree exists does not appear in that
-  worktree by itself, where a whole-directory link would have shown it. That costs close to
-  nothing, and not because new packages are rare — a worktree exists for one task, so the
-  contents of the shared directory at the moment it was created are what that task needs. A
-  package installed later in another session belongs to *that* session's task, and reaches this
-  tree the ordinary way: through the base, once that work lands on the default branch.
-  `jig task bootstrap <id>` brings one in when it really is wanted here and now — an operation
-  in its own right, not a workaround for the mirror. It does so by topping the mirror up with
-  entries added since, which is why a destination that already exists is not simply skipped for a
-  shared directory: git-tracked content is still left alone, but a mirror an earlier carry made is
-  jig's to complete. Without that the trade above would have been accepted on a promise the code
-  did not keep.
+- **A carried path that contains a separate git repository can take a person's work away with
+  the worktree, silently.** Measured on 2026-09-24, not reasoned about: a project with
+  `packages/` in `.gitignore`, holding a real repository with its own `.git`, declared as
+  `worktree.carry`. The carry copies the repository wholesale, so the worktree gets a *second
+  clone*. Work done there — a commit in that clone, and an uncommitted file beside it — is
+  invisible to the parent: `git status --porcelain` in the worktree is empty, because the path
+  is ignored. `git worktree remove` without `--force` refuses on tracked changes and untracked
+  files but **deletes ignored files silently** (ADR-0029 measured that too), so it returns 0 and
+  takes the clone with it. The commit was in no other clone and the owning checkout never saw
+  it; it is simply gone, with no message at any point.
+
+  This is why a directory of separate repositories under edit **must not** be declared as
+  `worktree.carry`, and why that is not offered anywhere as a stand-in for sharing. The carry is
+  for derived state, which by definition can be thrown away. Whether the carry should refuse a
+  declared path that contains a `.git` outright is a decision, not a fix, and is open.

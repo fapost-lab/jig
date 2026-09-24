@@ -5,18 +5,18 @@
 # node_modules/, .env — and a worktree without them is a tree whose checks
 # cannot run. What is carried is declared, never guessed: a profile declares
 # its stack's derived state (`carry` in profile.yaml), a project declares its
-# own layout (`worktree.carry`, `worktree.share` in .ai/config.yaml).
+# own layout (`worktree.carry` in .ai/config.yaml).
 #
-# Two actions, told apart by the nature of the state and not by the kind of
-# file:
-#   copy  — derived state, each tree's own: vendor, node_modules, .env
-#   share — one source of truth under edit, shared by link: packages
-# A copy of a shared package would be a second clone of its repository, and
-# edits made through one would diverge from the other in silence.
+# One action, and one nature of state: **derived state, each tree's own** —
+# vendor, node_modules, .env — copied from the checkout that owns the worktree.
+# State that must stay single because it is a source of truth under edit, such
+# as a directory of separate repositories wired in as path repositories, is not
+# served by copying and is not carried here at all: see the `worktree-share`
+# task, which holds that analysis whole.
 #
 # Sourced by scripts/lib/task.sh, which sources scripts/lib/profiles.sh first.
-# Depends on common.sh (jig_info, jig_warn, jig_copy_dir, jig_link_dir) and
-# config.sh (cfg_list_lines), both already sourced by the dispatcher.
+# Depends on common.sh (jig_info, jig_warn, jig_copy_dir) and config.sh
+# (cfg_list_lines), both already sourced by the dispatcher.
 # bash 3.2 compatible.
 # shellcheck shell=bash
 
@@ -24,10 +24,6 @@
 # clear on the way out. Cleared here so a value inherited from the environment
 # is never mistaken for one this process set.
 _JIG_BOOTSTRAP_STAGING=""
-
-# How many links the last _bootstrap_share call made: what tells a mirror that
-# gained entries from one that was already complete.
-_BOOTSTRAP_LINKED=0
 
 # Exactly what the current placement created in the worktree, one path per
 # line, so that a placement git turns out to see can be taken back precisely.
@@ -316,23 +312,19 @@ _bootstrap_inside() {
   return 1
 }
 
-# _bootstrap_declared — `<source><TAB><action><TAB><path>` for everything this
-# project declares, profiles first, then the project's own lists. <source> is
-# a profile name or `project`, and is what an install hint is looked up from.
+# _bootstrap_declared — `<source><TAB><path>` for everything this project
+# declares, profiles first, then the project's own list. <source> is a profile
+# name or `project`, and is what an install hint is looked up from.
 _bootstrap_declared() {
   local name item
   while IFS="$(printf '\t')" read -r name item; do
     [ -n "$item" ] || continue
-    printf '%s\tcopy\t%s\n' "$name" "$item"
+    printf '%s\t%s\n' "$name" "$item"
   done < <(profiles_carry)
   while IFS= read -r item; do
     [ -n "$item" ] || continue
-    printf 'project\tcopy\t%s\n' "$item"
+    printf 'project\t%s\n' "$item"
   done < <(cfg_list_lines worktree.carry)
-  while IFS= read -r item; do
-    [ -n "$item" ] || continue
-    printf 'project\tshare\t%s\n' "$item"
-  done < <(cfg_list_lines worktree.share)
   return 0
 }
 
@@ -355,50 +347,6 @@ _bootstrap_stale() {
   return 0
 }
 
-# _bootstrap_share <src-abs> <dst-abs> — share one declared path into the
-# worktree, by link rather than by copy. Counts what it linked in
-# _BOOTSTRAP_LINKED, so the caller can tell a mirror that gained entries from
-# one that was already complete.
-#
-# A file is linked directly. A directory is *mirrored* — the directory is
-# created and each of its entries linked — instead of being linked whole, and
-# the reason is git, not taste. A project keeps such a directory out of git
-# with a trailing-slash pattern (`packages/`), and git does not apply that
-# pattern to a symlink: a linked directory reads as an untracked path, and
-# `git worktree remove` without --force then refuses the worktree for the rest
-# of its life. Housekeeping would keep the task under `worktree-kept` forever
-# and the tree would have to go by hand, which is the cleanup by manual
-# discipline ADR-0029 exists to avoid. A real directory matches the pattern
-# the project already has, so nothing is asked of the person.
-#
-# Adding only what is missing is what lets the same function top up a mirror
-# an earlier carry made, which is how a package added to the owning checkout
-# afterwards reaches an existing worktree. An entry already in <dst> is never
-# replaced: it may be the worktree's own, and it is not this function's.
-_bootstrap_share() {
-  local src="$1" dst="$2" entry base
-  if [ ! -d "$src" ]; then
-    jig_link_dir "$src" "$dst" || return 1
-    _BOOTSTRAP_LINKED=$((_BOOTSTRAP_LINKED + 1))
-    _BOOTSTRAP_MADE="$_BOOTSTRAP_MADE$dst
-"
-    return 0
-  fi
-  mkdir -p "$dst" 2>/dev/null || return 1
-  for entry in "$src"/* "$src"/.[!.]*; do
-    [ -e "$entry" ] || [ -L "$entry" ] || continue
-    base=${entry##*/}
-    if [ -e "$dst/$base" ] || [ -L "$dst/$base" ]; then
-      continue
-    fi
-    jig_link_dir "$entry" "$dst/$base" || return 1
-    _BOOTSTRAP_LINKED=$((_BOOTSTRAP_LINKED + 1))
-    _BOOTSTRAP_MADE="$_BOOTSTRAP_MADE$dst/$base
-"
-  done
-  return 0
-}
-
 # jig_bootstrap_worktree <owner-abs> <tree-abs> <verb> — carry the declared
 # state from the owning checkout into the worktree.
 #
@@ -409,9 +357,9 @@ _bootstrap_share() {
 # and every skip is reported. Always returns 0.
 jig_bootstrap_worktree() {
   local owner="$1" tree="$2" verb="$3"
-  local src dst staged ok source action path problem started elapsed baseline
+  local src dst staged ok source path problem started elapsed baseline
   local staged_inode nested
-  local carried="" shared="" topped="" missing="" seen=""
+  local carried="" missing="" seen=""
   local owner_root tree_root
 
   owner_root=$(cd -P "$owner" 2>/dev/null && pwd -P) || return 0
@@ -434,7 +382,7 @@ jig_bootstrap_worktree() {
 
   started=$(date +%s 2>/dev/null || printf '0')
 
-  while IFS="$(printf '\t')" read -r source action path; do
+  while IFS="$(printf '\t')" read -r source path; do
     [ -n "$path" ] || continue
     path=$(_bootstrap_trim_slash "$path")
 
@@ -456,49 +404,9 @@ jig_bootstrap_worktree() {
     src="$owner_root/$path"
     dst="$tree_root/$path"
 
-    # Something is already at the destination. If git brought it, it is the
-    # worktree's own and is never touched. A shared directory an earlier carry
-    # mirrored is the one exception: topping it up with entries added to the
-    # owning checkout since is precisely what makes `jig task bootstrap` able
-    # to bring in a package added later, which is the escape the mirror's
-    # trade-off was accepted with.
+    # Something is already at the destination: git brought it, so it is the
+    # worktree's own and is never touched. The carry only ever fills a gap.
     if [ -e "$dst" ] || [ -L "$dst" ]; then
-      if [ "$action" != share ] || [ ! -d "$dst" ] || [ -L "$dst" ] \
-         || [ ! -d "$src" ]; then
-        continue
-      fi
-      if [ ! -e "$src" ] && [ ! -L "$src" ]; then
-        continue
-      fi
-      # No test of whether git tracks this directory: that was a proxy, and it
-      # answered a different question than the `-e`/`-d` tests beside it, on a
-      # filesystem that folds case. What is added is added, then git is asked
-      # what it now sees, and anything it saw is taken straight back out.
-      _BOOTSTRAP_LINKED=0
-      _BOOTSTRAP_MADE=""
-      ok=0
-      _bootstrap_share "$src" "$dst" || ok=1
-      if [ "$_BOOTSTRAP_LINKED" != 0 ] \
-         && [ -n "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]; then
-        jig_warn "$verb: not adding to $path: git does not ignore what that would put in the worktree, and anything git can see there stops the worktree from ever being removed; add it to .gitignore, then carry it again"
-        if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" \
-             "$_BOOTSTRAP_MADE" "$baseline"; then
-          jig_warn "$verb: and could not take it back out of $path; the worktree needs you"
-          # What the undo could not remove is now the worktree's condition,
-          # not this run's doing. Judging the paths still to come against a
-          # baseline that no longer describes the tree would refuse every one
-          # of them for someone else's dirt; the person has been told.
-          baseline=$(_bootstrap_dirt "$tree_root")
-        fi
-      elif [ "$ok" != 0 ]; then
-        # One line, not two. A failed top-up used to warn and then report
-        # success in the same run, because entries linked before the failure
-        # left _BOOTSTRAP_LINKED non-zero; a person could not tell from the
-        # output whether to run it again.
-        jig_warn "$verb: could not finish adding what is new in $path; part of it may be in the worktree, so carry it again"
-      elif [ "$_BOOTSTRAP_LINKED" != 0 ]; then
-        topped="$topped $path"
-      fi
       continue
     fi
     if [ ! -e "$src" ] && [ ! -L "$src" ]; then
@@ -534,11 +442,7 @@ jig_bootstrap_worktree() {
     staged="$_JIG_BOOTSTRAP_STAGING/$(printf '%s' "$path" | tr '/' '_')"
     _bootstrap_discard "$_JIG_BOOTSTRAP_STAGING" "$staged" >/dev/null 2>&1 || true
     ok=0
-    _BOOTSTRAP_LINKED=0
-    case "$action" in
-      share) _bootstrap_share "$src" "$staged" || ok=1 ;;
-      *) jig_copy_dir "$src" "$staged" || ok=1 ;;
-    esac
+    jig_copy_dir "$src" "$staged" || ok=1
     # The destination is tested again here, not only before the copy: a copy
     # of a large tree takes seconds, and anything that appeared at <dst> in the
     # meantime would swallow the rename — `mv` moves *into* an existing
@@ -583,10 +487,7 @@ jig_bootstrap_worktree() {
             baseline=$(_bootstrap_dirt "$tree_root")
           fi
         else
-          case "$action" in
-            share) shared="$shared $path" ;;
-            *) carried="$carried $path" ;;
-          esac
+          carried="$carried $path"
         fi
         continue
       fi
@@ -603,12 +504,6 @@ jig_bootstrap_worktree() {
 
   if [ -n "$carried" ]; then
     jig_info "$verb: carried $(_bootstrap_join "$carried") ($_JIG_COPY_KIND, ${elapsed}s)"
-  fi
-  if [ -n "$shared" ]; then
-    jig_info "$verb: shared $(_bootstrap_join "$shared")"
-  fi
-  if [ -n "$topped" ]; then
-    jig_info "$verb: added what is new in $(_bootstrap_join "$topped")"
   fi
   _bootstrap_missing_report "$missing" "$verb"
   _bootstrap_stale "$owner_root" "$tree_root" "$verb"
