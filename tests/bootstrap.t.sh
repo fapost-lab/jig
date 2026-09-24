@@ -501,3 +501,73 @@ test_bootstrap_discard_removes_its_own_remains_and_nothing_else() {
     *) fail "discard check exited $rc" ;;
   esac
 }
+
+# F6 (P2). `rm -rf` exits 0 having deleted nothing when a directory inside the
+# tree is not writable -- and a copy keeps the source's modes, so a carried
+# tree can contain one. The cleanup used to swallow that and report success,
+# which put the remains back where the outer loop reads them as already
+# carried: F2's hole, reopened from the other end.
+test_bootstrap_discard_does_not_report_a_removal_that_failed() {
+  skip_unless_readonly_dirs
+  bootstrap_setup_nested
+  local root
+  root=$(pwd -P)/tree
+  mkdir -p "$root/carried/locked"
+  printf 'x\n' > "$root/carried/locked/file.txt"
+  chmod 500 "$root/carried/locked"
+
+  local rc=0
+  (
+    # shellcheck disable=SC2034
+    JIG_AI_DIR=.ai
+    # shellcheck disable=SC2329
+    jig_info() { :; }
+    # shellcheck disable=SC2329
+    jig_warn() { :; }
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+    _bootstrap_discard "$root" "$root/carried"
+  ) || rc=$?
+  chmod 700 "$root/carried/locked" 2>/dev/null || true
+
+  [ "$rc" -ne 0 ] || fail "discard reported success for a removal that did not happen"
+}
+
+# F6, the property that actually matters: whatever the cleanup manages, the
+# destination must never hold a half-finished carry, because the next run --
+# `jig task bootstrap`, the repair this design relies on -- reads an existing
+# destination as finished work. Each path is staged beside its destination and
+# renamed in, so a failure leaves the destination untouched.
+test_bootstrap_a_failed_carry_leaves_the_destination_free() {
+  bootstrap_setup_nested
+  local root
+  root=$(pwd -P)/tree
+  mkdir -p "$root/wt" "$root/owner/vendor/pkg"
+  printf 'v\n' > "$root/owner/vendor/pkg/f"
+
+  (
+    # shellcheck disable=SC2034
+    JIG_AI_DIR=.ai
+    # shellcheck disable=SC2329
+    jig_info() { :; }
+    # shellcheck disable=SC2329
+    jig_warn() { :; }
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+    # shellcheck disable=SC2329
+    profiles_carry() { printf 'php\tvendor\n'; }
+    # shellcheck disable=SC2329
+    profiles_lock() { :; }
+    # shellcheck disable=SC2329
+    profiles_install() { :; }
+    # shellcheck disable=SC2329
+    cfg_list_lines() { :; }
+    # a copy that creates something and then fails
+    # shellcheck disable=SC2329
+    jig_copy_dir() { mkdir -p "$2/partial"; return 1; }
+    jig_bootstrap_worktree "$root/owner" "$root/wt" "task start"
+  ) >/dev/null 2>&1
+
+  [ ! -e "$root/wt/vendor" ] \
+    || fail "a failed carry left its destination in place; the next run would call it finished"
+}

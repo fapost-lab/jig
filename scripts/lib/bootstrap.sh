@@ -126,9 +126,16 @@ _bootstrap_dest_ok() {
 _bootstrap_discard() {
   local root="$1" dst="$2"
   [ -n "$dst" ] || return 0
-  [ "$dst" != "$root" ] || return 0
-  _bootstrap_dest_ok "$root" "$dst" || return 0
+  [ "$dst" != "$root" ] || return 1
+  _bootstrap_dest_ok "$root" "$dst" || return 1
   rm -rf "$dst" 2>/dev/null || true
+  # `rm -rf` reports nothing useful here and cannot be trusted to have worked:
+  # a copy keeps the source's modes, so one mode-500 directory inside a
+  # carried tree makes the whole delete a no-op that still exits 0. The answer
+  # is the only one that means anything — is the path gone.
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    return 1
+  fi
   return 0
 }
 
@@ -240,7 +247,7 @@ _bootstrap_share() {
 # and every skip is reported. Always returns 0.
 jig_bootstrap_worktree() {
   local owner="$1" tree="$2" verb="$3"
-  local src dst source action path problem started elapsed
+  local src dst staged ok source action path problem started elapsed
   local carried="" shared="" missing="" seen=""
   local owner_root tree_root
 
@@ -297,28 +304,33 @@ jig_bootstrap_worktree() {
       continue
     fi
 
-    # Both branches discard what they made when they fail, and for the same
-    # reason: the loop above takes an existing <dst> for already carried, so
-    # remains left behind would be mistaken for a finished carry by every
-    # later run, `jig task bootstrap` included.
+    # Built beside its destination and renamed into place, so that <dst>
+    # exists only when a carry finished. The loop above reads an existing
+    # <dst> as already carried, and cleaning up after the fact cannot be
+    # relied on to restore that: a copy keeps the source's modes, so a
+    # read-only directory inside a carried tree defeats `rm -rf` while
+    # leaving the remains exactly where the next run — `jig task bootstrap`
+    # included — would mistake them for finished work. The rename is atomic
+    # and within one directory, so no window exists where <dst> is partial.
+    # This is conventions/shell.md's rule for the manifest, applied to a tree.
+    staged="$dst.jig-partial.$$"
+    _bootstrap_discard "$tree_root" "$staged" >/dev/null 2>&1 || true
+    ok=0
     case "$action" in
-      share)
-        if _bootstrap_share "$src" "$dst"; then
-          shared="$shared $path"
-        else
-          _bootstrap_discard "$tree_root" "$dst"
-          jig_warn "$verb: could not share $path into the worktree"
-        fi
-        ;;
-      *)
-        if jig_copy_dir "$src" "$dst"; then
-          carried="$carried $path"
-        else
-          _bootstrap_discard "$tree_root" "$dst"
-          jig_warn "$verb: could not carry $path into the worktree"
-        fi
-        ;;
+      share) _bootstrap_share "$src" "$staged" || ok=1 ;;
+      *) jig_copy_dir "$src" "$staged" || ok=1 ;;
     esac
+    if [ "$ok" = 0 ] && mv "$staged" "$dst" 2>/dev/null; then
+      case "$action" in
+        share) shared="$shared $path" ;;
+        *) carried="$carried $path" ;;
+      esac
+      continue
+    fi
+    jig_warn "$verb: could not carry $path into the worktree"
+    if ! _bootstrap_discard "$tree_root" "$staged"; then
+      jig_warn "$verb: and could not clear what it left at $staged; remove it by hand"
+    fi
   done < <(_bootstrap_declared)
 
   elapsed=$(( $(date +%s 2>/dev/null || printf '0') - started ))

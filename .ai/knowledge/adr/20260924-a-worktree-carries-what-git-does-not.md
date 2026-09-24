@@ -100,7 +100,8 @@ physically, because a symlinked parent leads out without a single `..`.
 
 **The carry is the last step and is never fatal.** It runs after the branch, the workspace link
 and the state writes, so a failure leaves a fully started task in a tree short of a dependency —
-not a broken task. Nothing is rolled back, because the tree and the branch are exactly what a
+not a broken task, and not a tree holding half of one: each path is staged beside its destination
+and renamed in, so the destination appears only once the carry is complete. Nothing is rolled back, because the tree and the branch are exactly what a
 retry needs. `jig task bootstrap <id>` is that retry: idempotent by construction, working from
 the owning checkout or from inside the worktree. Without it the only repair is by hand, and a
 second `task start` refuses on the path that now exists.
@@ -200,12 +201,21 @@ python, and is a separate decision.
 - A worktree can now be stale rather than absent: a lock file differing between the owning
   checkout and the worktree is reported as a warning, never a refusal. The tree works; it is of
   the wrong vintage.
-- **A new deletion outside `.ai/`, and RULES.md names it.** A carry that fails partway removes
-  the destination it just made, because the loop reads an existing destination as already carried:
-  remains would be taken for a finished carry by every later run, `jig task bootstrap` included,
-  and the repair this decision relies on would repair nothing. It is bounded to a path that did
-  not exist when the carry reached it, that this run created, that resolves physically inside the
-  task worktree, and that is never the worktree root.
+- **Each path is built beside its destination and renamed into place**, so the destination
+  exists only when a carry finished. The loop reads an existing destination as already carried,
+  and cleaning up after a failure cannot be relied on to restore that: a copy keeps the source's
+  modes, so a single read-only directory inside a carried tree defeats `rm -rf` while leaving the
+  remains exactly where the next run — `jig task bootstrap` included, the repair this decision
+  rests on — would take them for finished work. The rename is atomic and within one directory, so
+  no window exists in which the destination is partial. It is conventions/shell.md's rule for the
+  manifest, applied to a tree.
+- **A new deletion outside `.ai/`, and RULES.md names it.** What a failed carry built beside the
+  destination is removed, bounded to a path that did not exist when the carry reached it, that
+  this run created, that resolves physically inside the task worktree, and that is never the
+  worktree root. A removal that does not succeed is reported rather than assumed: `rm -rf` exits
+  0 having deleted nothing, so the only answer worth having is whether the path is gone. Because
+  the destination itself is never occupied by a partial result, a failure here costs a warning
+  and some leftover bytes, never a carry mistaken for done.
 - **The destination is validated physically before anything is created.** `mkdir -p` and `cp`
   follow a symlink that is already in the worktree, so a link at an intermediate component of a
   declared path would let the carry write outside the tree. The owning checkout's side had this
