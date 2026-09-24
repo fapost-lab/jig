@@ -38,7 +38,8 @@ Then, in your project, run `jig init`, commit, and tell your agent *"set up Jig 
 
 > **Already have your own `AGENTS.md` or `CLAUDE.md`?** `jig init` never changes them, so your agent
 > will not know Jig's workflow until they carry the Jig section. Ask your agent to *"connect Jig to
-> my AGENTS.md"*, or [add it by hand](https://jig.fapost.in/install#2-set-up-a-project).
+> my AGENTS.md"*, or [add it by hand](https://jig.fapost.in/install#2-set-up-a-project) — keeping the
+> `<!-- jig:begin -->` / `<!-- jig:end -->` lines, so `jig upgrade` keeps that section current.
 
 ## How much you hand over
 

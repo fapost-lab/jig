@@ -25,7 +25,8 @@ runtime.
 sources `lib/version.sh`, `lib/common.sh`, `lib/config.sh`, then sources
 `lib/<command>.sh` and calls `cmd_<command>`. One library file per command, one test
 file per command (`tests/<command>.t.sh`). Shared parsers live in their own libraries
-(`lib/frontmatter.sh`, `lib/manifest.sh`) and are sourced by the commands that need them.
+(`lib/frontmatter.sh`, `lib/manifest.sh`, `lib/section.sh`) and are sourced by the commands
+that need them.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`
@@ -87,9 +88,13 @@ and version.
   prints what is missing when the instruction file the runtime reads does not carry Jig's
   workflow (the marker is a mention of `jig-task`; Claude also accepts `@AGENTS.md` when
   `AGENTS.md` carries it), prints nothing when it does. `init` repeats it as a warning,
-  `status` and `doctor` report it. A project's own `AGENTS.md`/`CLAUDE.md` is never edited
-  by a script (ADR-0003): the `jig-init` skill merges the section with the human's consent.
-  Paired with `adapter_<name>_instructions_file`, which names that file for the reports.
+  `status` and `doctor` report it. A script never *adds* the section to a project's own
+  `AGENTS.md`/`CLAUDE.md` (ADR-0003): the `jig-init` skill merges it with the human's
+  consent. Paired with `adapter_<name>_instructions_file`, which names that file for the
+  reports. The hint answers only "does this runtime see Jig at all"; whether the section
+  is marked, and therefore whether upgrades reach it, is vendor-neutral — it is one
+  question about `AGENTS.md`, and `status` and `doctor` ask it of
+  `jig_section_report_state`, not of an adapter.
 - `adapter_<name>_install_session_hook <project-root>` — called only by
   `init --session-hook`. Creates the runtime's config file with the hook entry **when
   that file is absent**, printing the created path; exits 2, touching nothing, when a
@@ -147,9 +152,24 @@ parses it — never the profile — so every profile reads the same decisions (A
 ## Install modes
 
 Framework-owned in a project: `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/knowledge/`,
-`.ai/templates/scheduler/`, `.ai/templates/spec/` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/specs/`, `.ai/verify/`, `.ai/config.yaml`, `AGENTS.md`.
+`.ai/templates/scheduler/`, `.ai/templates/spec/`, `.ai/templates/AGENTS.md` and the installed skills. Project-owned: `.ai/knowledge/`, `.ai/specs/`, `.ai/verify/`, `.ai/config.yaml`, `AGENTS.md`.
 The split matters to `upgrade`, which carries framework-owned files forward and never
 touches the rest (ADR-0011).
+
+`AGENTS.md` is project-owned with exactly one hole in it: the region between
+`<!-- jig:begin -->` and `<!-- jig:end -->` is the framework's, and `upgrade` replaces it
+under the same install / replace / keep-modified table it applies to a whole file. What
+jig last wrote there is recorded as one manifest **header** key,
+`instructions.section: <hash> <path>` — not a body entry, because the body is whole-file
+ownership keyed by path and every reader splits an entry on its first space. Upgrade never
+claims a region it has no record of; adoption happens once, through the `jig-init` skill
+with a human's consent, and `jig init` records it only when the region is byte for byte
+what jig would write — and never re-derives a record it already holds, so re-running
+`init` cannot re-baseline a section a human edited. The parser is
+`scripts/lib/section.sh` (`jig_section_*`), shared by init, upgrade, status and doctor —
+one function produces the text for hashing, comparing and writing, so the three cannot
+disagree about what the section is
+(adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 
 A third owner sits outside the split: `.ai/config.local.yaml` belongs to the person whose
 clone it is. It is gitignored, created by nobody but them, and never touched by `init` or

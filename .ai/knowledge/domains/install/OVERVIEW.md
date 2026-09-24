@@ -19,7 +19,8 @@ paths:
   - scripts/lib/doctor.sh
   - scripts/jig.cmd
   - templates/gitattributes
-reviewed_at: 2026-09-23
+  - scripts/lib/section.sh
+reviewed_at: 2026-09-24
 ---
 # Install
 
@@ -29,10 +30,11 @@ project owns.
 ## Responsibility
 
 - The framework-owned / project-owned split: `.ai/scripts/`, `.ai/profiles/`,
-  `.ai/templates/knowledge/`, `.ai/templates/scheduler/`, `.ai/templates/spec/` and the
+  `.ai/templates/knowledge/`, `.ai/templates/scheduler/`, `.ai/templates/spec/`,
+  `.ai/templates/AGENTS.md` and the
   installed skills are carried forward by upgrade; `.ai/knowledge/`, `.ai/specs/`,
   `.ai/verify/`, `.ai/config.yaml` and `AGENTS.md` are never touched (ADR-0003,
-  ADR-0011, ADR-0041). `init` does not create `.ai/verify/` either: a project that wants a
+  ADR-0011, ADR-0041) — with the single exception of `AGENTS.md`'s marked section, below. `init` does not create `.ai/verify/` either: a project that wants a
   map writes it. A first `init` without `--profiles` and without `.ai/config.yaml` writes
   the detected profiles into the config it creates; with `--profiles`, or when the config
   exists, detection only suggests (adr-20260918-init-activates-detected-profiles). Neither is `.ai/config.local.yaml`, which is not the project's either: it
@@ -44,8 +46,30 @@ project owns.
 - A project's own `AGENTS.md` or `CLAUDE.md` is kept by `init`, and then no agent there is
   told about Jig. `init` warns, `status` and `doctor` keep reporting it, from each adapter's
   `adapter_<name>_instructions_hint`; the text to merge is
-  `skills/jig-init/references/agents-section.md`, a copy of the template's "Read first" and
-  "Workflow" that a test keeps equal to `templates/AGENTS.md`.
+  the marked region of `templates/AGENTS.md`, installed as the framework-owned
+  `.ai/templates/AGENTS.md` so a project with no framework checkout has it. That template
+  is the single source of the section; `docs/install.mdx` carries the only other copy, for
+  pasting by hand, and a test holds the two equal — markers included, because a section
+  pasted without them is a section nothing updates.
+- **The marked section is the one part of a project-owned file that upgrade writes.**
+  Between `<!-- jig:begin -->` and `<!-- jig:end -->` in `AGENTS.md`, `jig upgrade` applies
+  the same table it applies to a file: `replace` when the region still hashes to what the
+  manifest header records under `instructions.section: <hash> <path>`, `keep-modified` when
+  it does not or when the markers were removed, `keep-malformed` when the pair cannot be
+  read unambiguously, `keep-unmarked` when there is nothing of jig's there, and
+  `keep-conflict` when markers exist that jig has no record of writing. Upgrade never
+  adopts a section: only `jig init` records one, and only when the region is byte for
+  byte the marked region of the source's own `templates/AGENTS.md` — claiming an identical
+  region destroys nothing, while somebody's own words between markers are never taken. An
+  existing record is carried forward, never re-derived, so a re-run of `init` cannot
+  re-baseline a section a human edited. `replace AGENTS.md (Jig section)` is inside
+  `upgrade_pending`'s filter, so a stale section is pending work like any other path;
+  `keep-unmarked` is deliberately outside it, so a project that keeps its own instructions
+  is never blocked from verifying by that choice. The parser is `scripts/lib/section.sh`
+  (`jig_section_*`): it compares and hashes the region normalised to LF and writes it back
+  in the file's own line endings, so a CRLF checkout neither reads as modified nor ends up
+  with mixed endings (ADR-0037,
+  adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).
 - The upgrade decision table: install, replace, keep-modified, delete — decided per path
@@ -110,8 +134,10 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
 
 - `scripts/lib/init.sh` — `cmd_init`, `_init_place_symlink`, `_init_copy_framework_file`.
 - `scripts/lib/upgrade.sh` — `cmd_upgrade`, `_upgrade_build_staged`,
-  `_upgrade_process_path`, `_upgrade_link`.
-- `scripts/lib/manifest.sh` — the manifest reader and writer.
+  `_upgrade_process_path`, `_upgrade_section`, `_upgrade_link`.
+- `scripts/lib/manifest.sh` — the manifest reader and writer;
+  `manifest_instructions_section` reads the marked section's record.
+- `scripts/lib/section.sh` — `jig_section_state|read|hash|report_state|write`.
 - `adapters/<runtime>/adapter.sh` — the three functions each adapter must define.
 - `install.sh` — the per-user bootstrap; cannot source libraries, so it carries copies of the
   release-ordering helpers.

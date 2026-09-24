@@ -163,7 +163,9 @@ files. That first saved version is needed before Jig can start tasks on separate
 <Warning>
   **Already have agent instructions?** Jig preserves your existing `AGENTS.md` and `CLAUDE.md`.
   Ask the agent to connect Jig to them and review the section it proposes. Until those files
-  include Jig's workflow, the agent may not use Jig automatically.
+  include Jig's workflow, the agent may not use Jig automatically. Keep the
+  `<!-- jig:begin -->` and `<!-- jig:end -->` lines around the section it adds: they are what lets
+  later `jig upgrade` runs keep it current.
 </Warning>
 
 <Accordion title="For developers: set up an empty project by hand">
@@ -210,6 +212,12 @@ files. That first saved version is needed before Jig can start tasks on separate
 <Accordion title="The Jig section for AGENTS.md">
 {/* jig:agents-section */}
 ````markdown
+<!-- jig:begin -->
+<!-- Everything between the jig markers is written by `jig upgrade`, so improvements to
+     what Jig tells an agent reach this file on their own. Change anything in here and
+     jig keeps your version and stops updating the section; `jig status` says so.
+     Your own rules belong below the end marker, where nothing overwrites them. -->
+
 ## Read first
 
 - `.ai/knowledge/GLOSSARY.md` — canonical terms; use them in code and docs.
@@ -264,6 +272,7 @@ with `jig task set <id> knowledge_consolidated true`. After the change has lande
 Risk sets the floor: a one-line change to authentication is not trivial. When a task
 turns out bigger, re-classify with `jig task set <id> class Tn` and run the stages the
 new class requires.
+<!-- jig:end -->
 ````
 {/* /jig:agents-section */}
 </Accordion>
@@ -311,8 +320,11 @@ jig upgrade              # in a project: update its copy of Jig
 
 `self-update` refuses a checkout with uncommitted changes and changes no project. `upgrade` fetches
 nothing: it copies from the Jig on your machine, updates only files Jig installed and you did not
-edit, removes the ones Jig no longer ships unless you edited them, keeps and reports the edited ones, and never touches project knowledge, configuration or
-your `AGENTS.md`. `jig status` tells you when the project's copy is older than the tool. Review the
+edit, removes the ones Jig no longer ships unless you edited them, keeps and reports the edited ones, and never touches project knowledge or configuration.
+In `AGENTS.md` it updates one thing — the section between `<!-- jig:begin -->` and
+`<!-- jig:end -->`, and only while that section is still exactly what Jig last wrote there, so
+improvements to Jig's own instructions reach your project without you doing anything. Edit inside
+those markers and Jig keeps your version instead. `jig status` tells you when the project's copy is older than the tool. Review the
 diff and commit it.
 
 Run `jig doctor` any time something seems off: it checks the tool, the project and the agent

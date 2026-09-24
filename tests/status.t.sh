@@ -1085,6 +1085,30 @@ test_status_instructions_reports_a_missing_agents_md() {
   assert_contains "$OUT" "instructions (claude): no Jig section in CLAUDE.md"
 }
 
+# Connected is not the same as reachable: a section nothing updates goes stale
+# where nobody looks, so `jig status` names that state separately
+# (adr-20260924-jig-owns-a-marked-section-of-the-instructions).
+test_status_instructions_reports_an_unmarked_section() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions (codex): Jig section in AGENTS.md is not marked"
+  assert_contains "$OUT" "upgrades cannot reach it"
+}
+
+test_status_instructions_reports_a_changed_section() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  sed 's/^## Read first$/## Read first (our version)/' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions (codex): Jig section in AGENTS.md was changed here"
+}
+
 # --- autopilot (design.md under .ai/workspace/tasks/autopilot-run) -------------
 
 test_status_marks_autopilot_on_for_a_running_task() {
