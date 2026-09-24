@@ -61,7 +61,7 @@ is invisible until someone reads both. A reporting command therefore consumes a 
 output, never reimplements it, and never writes anything — with one exception: `status` writes the
 status page, `.ai/runtime/status.html`, and the slow counts its redraws reuse,
 `.ai/runtime/status-counts`, and nothing else
-(adr-20260922-the-status-page-stays-current-without-a-server). Where a peer only printed formatted
+(adr-20260924-the-status-page-keeps-the-readers-place). Where a peer only printed formatted
 text, it gains an unformatted producer the report calls (`spec_list_rows`, `spec_phase_rows`,
 `_task_autopilot_facts`), rather than the report parsing its columns. Setup a peer needs before its
 functions work is exposed as a function of that peer (`km_init`) rather than transcribed —

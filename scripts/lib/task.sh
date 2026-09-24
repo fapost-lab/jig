@@ -1853,7 +1853,7 @@ task_receipt_check() {
   return 1
 }
 
-# --- the human gate (adr-20260922-the-status-page-stays-current-without-a-server)
+# --- the human gate (adr-20260924-the-status-page-keeps-the-readers-place)
 #
 # A T3/T4 design is approved by a human in conversation, and the jig-task
 # skill writes the decision into task.md in prose (ADR-0031). `jig task gate`

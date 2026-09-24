@@ -1256,7 +1256,13 @@ test_status_html_is_self_contained_and_follows_the_colour_scheme() {
   assert_not_contains "$page" "https://"
   assert_not_contains "$page" "src="
   assert_not_contains "$page" "href="
-  assert_not_contains "$page" "<script"
+  # One inline script, with no attributes, and nothing it could load from.
+  assert_eq 1 "$(printf '%s\n' "$page" | grep -c '<script')"
+  assert_contains "$page" "<script>
+(function () {"
+  assert_not_contains "$page" "fetch("
+  assert_not_contains "$page" "XMLHttpRequest"
+  assert_not_contains "$page" "innerHTML"
   assert_not_contains "$page" "<link"
   assert_not_contains "$page" "<img"
   assert_not_contains "$page" "@import"
@@ -1444,7 +1450,8 @@ test_status_html_escapes_every_value_people_wrote() {
   assert_eq 0 "$RC"
   local page
   page=$(cat .ai/runtime/status.html)
-  assert_not_contains "$page" "<script>"
+  assert_eq 1 "$(printf '%s\n' "$page" | grep -c '<script>')"
+  assert_not_contains "$page" "<script>alert"
   assert_not_contains "$page" "<b>wait</b>"
   assert_not_contains "$page" "<i>Idea</i>"
   assert_contains "$page" "F1 P1 open &lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;q&quot; &#39;s"
@@ -1498,7 +1505,7 @@ test_status_html_shows_the_autopilot_state_the_text_report_shows() {
   assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge warn">autopilot stopped</span>'
 }
 
-# --- the live status page (adr-20260922-the-status-page-stays-current-without-a-server)
+# --- the live status page (adr-20260924-the-status-page-keeps-the-readers-place)
 
 # status_page_section <page> <id> — one <section> of the page, by its id.
 status_page_section() {
@@ -1515,11 +1522,34 @@ test_status_page_reloads_itself_and_orders_what_needs_you_first() {
   assert_eq 0 "$RC"
   local page order
   page=$(cat .ai/runtime/status.html)
-  assert_contains "$page" '<meta http-equiv="refresh" content="10">'
+  assert_contains "$page" '<noscript><meta http-equiv="refresh" content="10"></noscript>'
+  assert_eq 1 "$(printf '%s\n' "$page" | grep -c 'http-equiv="refresh"')"
   assert_contains "$page" "This page refreshes itself every 10 seconds while it is open"
+  assert_contains "$page" "var every = 10 * 1000, quiet = 3000;"
   assert_not_contains "$page" "A snapshot"
   order=$(printf '%s\n' "$page" | sed -n 's/^<section id="\([a-z]*\)">$/\1/p' | tr '\n' ' ')
   assert_eq "needs tasks specs summary report " "$order"
+}
+
+test_status_page_keeps_the_readers_place_with_a_pause_hidden_without_script() {
+  fixture_jig_repo
+  run jig status --html
+  assert_eq 0 "$RC"
+  local page script
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" '<div id="autorefresh" class="autorefresh" hidden>'
+  assert_contains "$page" '<button type="button" id="autorefresh-toggle"></button>'
+  assert_contains "$page" '<details id="full-report"><summary>What <code>jig status</code> prints</summary>'
+  # The script finds what it restores by id, so no id may be used twice.
+  assert_eq "" "$(printf '%s\n' "$page" | grep -o ' id="[^"]*"' | sort | uniq -d)"
+  # The script comes after the page it restores, and states only what it
+  # keeps: the pause, the open <details> and the scroll offset, per tab.
+  assert_eq "</main>" "$(printf '%s\n' "$page" | grep -n -e '^</main>$' -e '^<script>$' | head -n 1 | cut -d: -f2)"
+  script=$(printf '%s\n' "$page" | sed -n '/^<script>$/,/^<\/script>$/p')
+  assert_contains "$script" "sessionStorage"
+  assert_not_contains "$script" "localStorage"
+  assert_contains "$script" "location.reload()"
+  assert_contains "$script" "document.hidden"
 }
 
 test_status_page_refresh_is_silent_and_creates_no_page() {
@@ -1862,7 +1892,7 @@ test_status_page_orders_running_tasks_and_folds_paused_ones() {
   tasks=$(status_page_section "$(cat .ai/runtime/status.html)" tasks)
   ids=$(printf '%s\n' "$tasks" | sed -n 's/^<tr><td class="id"><code>\([^<]*\)<.*/\1/p' | tr '\n' ' ')
   assert_eq "d-auto c-active a-ready b-filed e-paused " "$ids"
-  assert_contains "$tasks" "<details><summary>Paused</summary>"
+  assert_contains "$tasks" '<details id="paused"><summary>Paused</summary>'
   assert_contains "$tasks" '<span class="muted">not tracked outside autopilot</span>'
   assert_contains "$tasks" '<span class="muted">filed, not started</span>'
 }
