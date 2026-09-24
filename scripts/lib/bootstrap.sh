@@ -232,32 +232,63 @@ EOF
   printf '%s' "$out"
 }
 
-# _bootstrap_take_back <tree-root> <staging> <made> — undo a placement that
-# made the worktree visible to git. <made> lists, one per line, exactly what
-# this run created; nothing else is ever touched.
+# _bootstrap_take_back <tree-root> <staging> <made> <baseline> — undo a
+# placement that made the worktree visible to git, and exit 0 only when git
+# agrees the worktree is back at <baseline>. <made> lists, one per line,
+# exactly what this run created; nothing else is ever touched.
 #
 # Each is moved into the staging directory and deleted there, so the deletion
-# still happens inside `.ai/runtime/` and the invariant in RULES.md holds. A
-# move that fails leaves the path in place and is reported by the caller: an
-# undo that cannot finish is a worktree a person has to look at, which is
-# honest, where a silent failure would be a worktree nobody can remove.
+# still happens inside `.ai/runtime/` and the invariant in RULES.md holds.
+#
+# **The list is what the undo acts on; git is what says whether it worked.**
+# This is the same principle the placement was rebuilt on, and it was missing
+# here — the one place where an answer was still being predicted. The list is
+# newline-separated, so an entry whose own name holds a newline reaches this
+# loop as two lines that name nothing; both are skipped, nothing is removed,
+# and reporting a clean refusal would leave a worktree `git worktree remove`
+# refuses for the rest of its life. A newline is only the reproducer: any gap
+# in the accounting, present or future, is a silent stranding as long as the
+# accounting is also the proof. So the proof is git's, and a skip needs no
+# bookkeeping of its own — if it left something behind, git reports it.
+#
+# An entry not shaped like an absolute path inside the worktree is skipped
+# before `_bootstrap_under` is asked, because that test resolves a relative
+# path against the current directory: a mangled line such as a bare `b` could
+# otherwise name something in the caller's own directory.
 _bootstrap_take_back() {
-  local tree_root="$1" staging="$2" made="$3" p n=0 tmp rc=0
+  local tree_root="$1" staging="$2" made="$3" baseline="$4" p n=0 tmp
   while IFS= read -r p; do
     [ -n "$p" ] || continue
+    case "$p" in "$tree_root"/?*) ;; *) continue ;; esac
     _bootstrap_under "$tree_root" "$p" || continue
     [ -e "$p" ] || [ -L "$p" ] || continue
     n=$((n + 1))
     tmp="$staging/undo.$n.$$"
     if mv "$p" "$tmp" 2>/dev/null; then
       _bootstrap_discard "$staging" "$tmp" >/dev/null 2>&1 || true
-    else
-      rc=1
     fi
   done <<EOF
 $made
 EOF
-  return "$rc"
+  [ -z "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]
+}
+
+# _bootstrap_inode <path> — <path>'s inode number, or nothing when it cannot
+# be read. What tells one object from another, where a name cannot: after a
+# rename that landed, the destination *is* the thing that was staged.
+#
+# `ls -di` because there is no portable `stat`: BSD and GNU disagree on every
+# flag, and Git Bash ships the GNU one on a platform that is neither. `-d`
+# answers about a symlink itself rather than its target, and about a directory
+# rather than its contents. A filesystem that reports no real inode numbers
+# answers the same value for both paths, and the caller then falls back to the
+# test that does not need identity.
+_bootstrap_inode() {
+  # SC2012 warns about parsing `ls` for filenames; no filename is read here —
+  # one quoted path goes in and the first field of the first line, a number,
+  # comes out. `find -printf '%i'` is GNU-only and so is not the alternative.
+  # shellcheck disable=SC2012
+  ls -di "$1" 2>/dev/null | awk 'NR==1 {print $1; exit}'
 }
 
 # _bootstrap_join <words> — space-separated words, comma separated for a
@@ -379,6 +410,7 @@ _bootstrap_share() {
 jig_bootstrap_worktree() {
   local owner="$1" tree="$2" verb="$3"
   local src dst staged ok source action path problem started elapsed baseline
+  local staged_inode nested
   local carried="" shared="" topped="" missing="" seen=""
   local owner_root tree_root
 
@@ -444,18 +476,28 @@ jig_bootstrap_worktree() {
       # what it now sees, and anything it saw is taken straight back out.
       _BOOTSTRAP_LINKED=0
       _BOOTSTRAP_MADE=""
-      if ! _bootstrap_share "$src" "$dst"; then
-        jig_warn "$verb: could not add what is new in $path to the worktree"
-      fi
-      if [ "$_BOOTSTRAP_LINKED" != 0 ]; then
-        if [ -n "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]; then
-          jig_warn "$verb: not adding to $path: git does not ignore what that would put in the worktree, and anything git can see there stops the worktree from ever being removed; add it to .gitignore, then carry it again"
-          if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" "$_BOOTSTRAP_MADE"; then
-            jig_warn "$verb: and could not take it back out of $path; the worktree needs you"
-          fi
-        else
-          topped="$topped $path"
+      ok=0
+      _bootstrap_share "$src" "$dst" || ok=1
+      if [ "$_BOOTSTRAP_LINKED" != 0 ] \
+         && [ -n "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]; then
+        jig_warn "$verb: not adding to $path: git does not ignore what that would put in the worktree, and anything git can see there stops the worktree from ever being removed; add it to .gitignore, then carry it again"
+        if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" \
+             "$_BOOTSTRAP_MADE" "$baseline"; then
+          jig_warn "$verb: and could not take it back out of $path; the worktree needs you"
+          # What the undo could not remove is now the worktree's condition,
+          # not this run's doing. Judging the paths still to come against a
+          # baseline that no longer describes the tree would refuse every one
+          # of them for someone else's dirt; the person has been told.
+          baseline=$(_bootstrap_dirt "$tree_root")
         fi
+      elif [ "$ok" != 0 ]; then
+        # One line, not two. A failed top-up used to warn and then report
+        # success in the same run, because entries linked before the failure
+        # left _BOOTSTRAP_LINKED non-zero; a person could not tell from the
+        # output whether to run it again.
+        jig_warn "$verb: could not finish adding what is new in $path; part of it may be in the worktree, so carry it again"
+      elif [ "$_BOOTSTRAP_LINKED" != 0 ]; then
+        topped="$topped $path"
       fi
       continue
     fi
@@ -506,9 +548,28 @@ jig_bootstrap_worktree() {
       jig_warn "$verb: $path appeared in the worktree while it was being carried; left alone"
       ok=1
     fi
+    staged_inode=$(_bootstrap_inode "$staged")
     if [ "$ok" = 0 ] && mv "$staged" "$dst" 2>/dev/null; then
-      # And if the rename still landed inside something, take it straight back.
-      if [ -e "$dst/${staged##*/}" ]; then
+      # And if the rename still landed *inside* something that appeared in the
+      # window the re-test above cannot close, take it straight back.
+      #
+      # Told apart by identity, never by name. A rename that landed makes <dst>
+      # the very object that was staged, so its inode is the one <staged> had;
+      # a rename that nested leaves <dst> the directory that was already there,
+      # with another inode. Asking by name instead — is there a <dst>/<staged
+      # basename> — cannot tell that from a carried tree legitimately holding a
+      # top-level entry of its own name, which `carry: [data]` over a `data/data/`
+      # does on the first try: the backstop then moved the real `data/data` into
+      # staging, deleted it there, and reported that nothing had been touched.
+      # Where a filesystem reports no usable inodes both reads come back equal
+      # and the backstop simply stands down; the re-test above is what closes
+      # the window that matters, and this only catches what slips through it.
+      nested=0
+      if [ -n "$staged_inode" ] && [ -e "$dst/${staged##*/}" ] \
+         && [ "$(_bootstrap_inode "$dst")" != "$staged_inode" ]; then
+        nested=1
+      fi
+      if [ "$nested" = 1 ]; then
         mv "$dst/${staged##*/}" "$staged" 2>/dev/null || true
         jig_warn "$verb: could not put $path in the worktree without nesting it; left alone"
       else
@@ -516,8 +577,10 @@ jig_bootstrap_worktree() {
 "
         if [ -n "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]; then
           jig_warn "$verb: not carrying $path: git does not ignore it, and anything git can see in a worktree stops that worktree from ever being removed; add it to .gitignore, then carry it again"
-          if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" "$_BOOTSTRAP_MADE"; then
+          if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" \
+               "$_BOOTSTRAP_MADE" "$baseline"; then
             jig_warn "$verb: and could not take $path back out; the worktree needs you"
+            baseline=$(_bootstrap_dirt "$tree_root")
           fi
         else
           case "$action" in

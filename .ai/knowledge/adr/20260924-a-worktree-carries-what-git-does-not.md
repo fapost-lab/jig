@@ -111,6 +111,36 @@ The precondition this makes explicit, rather than assuming: **a path is carried 
 keeps it out of git.** That is what every project with an install step already does, and where it
 does not, the carry says so and does nothing.
 
+**A declared path that is untracked and not ignored is refused, and the price of refusing it is
+accepted.** The price is not small and is named here rather than discovered later: such a project
+gets a worktree in which its checks do not run — precisely the harm this decision exists to end.
+The trade is "the tree is useless" in place of "the tree can never be deleted", and it was taken
+for three reasons. A useless tree is visible immediately and is fixed by one line in `.gitignore`,
+which the refusal itself names; an undeletable tree is discovered weeks later and is fixed by hand,
+which RULES.md forbids as cleanup by manual discipline. The case is narrow: a `vendor/` that is
+untracked and unignored means the owning checkout is itself sitting under thousands of `??` lines.
+And the refusal is not silent — it says what to do. A path that is *tracked* and ignored is a
+different case and is kept: git reports nothing either way, so nothing is stranded.
+
+**The undo is proved the same way the placement is.** Taking a refused placement back out acts on
+a recorded list of what was made, and that list is not what says it worked — git is asked again
+afterwards, and an undo that did not restore the worktree is reported as one the person has to
+look at. A list is accounting, and accounting has gaps: it is newline-separated, so an entry whose
+own name holds a newline arrives as two lines naming nothing. Trusting the list there would report
+a clean refusal over a worktree `git worktree remove` refuses for good. The newline is only the
+reproducer; any gap, present or future, is a silent stranding for as long as the accounting is
+also the proof.
+
+**A rename that landed is told from one that nested by identity, not by name.** Placing a path is a
+rename onto a destination re-tested immediately before, and a backstop catches what slips through
+that window: `mv` moves *into* a directory that appeared meanwhile, burying the carried tree a level
+down. The backstop compares the inode the staged tree had against the destination's afterwards,
+because the name test it replaced — is there a `<dst>/<staged basename>` — cannot tell a nested
+rename from a carried tree that legitimately holds a top-level entry of its own name, which
+`carry: [data]` over a `data/data/` does on the first try. Where a filesystem reports no usable
+inodes both reads come back equal and the backstop stands down; the re-test is what closes the
+window that matters.
+
 **`.ai/` is refused, always and by name.** A worktree borrows exactly one workspace by link
 (ADR-0029); a copy would give the task two `state` files diverging from the first write. So is
 an absolute path, a path with dot segments, a path holding a space, tab or newline, a path that
@@ -230,7 +260,16 @@ python, and is a separate decision.
   manifest, applied to a tree.
 - **A carry can now decline.** A declared path the project neither tracks nor ignores is placed,
   seen, and taken back, with a message naming `.gitignore` as the fix. That is a visible refusal
-  where the alternative was a worktree nobody could remove and no warning at all.
+  where the alternative was a worktree nobody could remove and no warning at all. The tree it
+  hands back is then one whose checks do not run, and that price is accepted above rather than
+  worked around.
+- **`git status` runs after every path placed, not once for the run.** It has to: asked once at
+  the end it says the worktree is dirty without saying which path dirtied it, and there would be
+  nothing to take back precisely. Where the project ignores what it declares — the ordinary case —
+  the cost is nothing, because git walks only what it can see. Where it does not, **the refusal is
+  slow**: each status walks every untracked file in the tree before the placement is taken back
+  out, and there is one such walk per declared path. That is the case a project sees once, on the
+  run that tells it to edit `.gitignore`.
 - **Taking back is a move, not a new deletion.** What was placed is moved into the staging
   directory and deleted there, so every deletion still happens inside `.ai/runtime/`. Only what
   this run created is ever moved, and a move that fails leaves the path and says so: a worktree a

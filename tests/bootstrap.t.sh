@@ -796,3 +796,150 @@ test_bootstrap_leaves_a_destination_that_appeared_mid_carry_alone() {
   [ ! -e "$root/wt/vendor/vendor" ] \
     || fail "the rename nested the carried tree inside the destination"
 }
+
+# F13 (P1). The undo used to report success from its own bookkeeping without
+# asking git, which is the one place the rebuilt placement's principle had not
+# been applied. `_BOOTSTRAP_MADE` is newline-separated, and an entry whose own
+# name holds a newline reaches the undo as two lines that name nothing: every
+# guard skipped, nothing removed, and a clean refusal reported over a worktree
+# `git worktree remove` refuses for the rest of its life.
+#
+# The accounting is not what is tested here — a gap in it is the point. The
+# undo is driven with a list that does not describe what was placed, and it
+# must still say so, because the answer comes from git.
+test_bootstrap_take_back_asks_git_rather_than_its_own_list() {
+  skip_unless_symlinks
+  bootstrap_setup_nested
+  local root
+  root=$(pwd -P)/tree
+  mkdir -p "$root/wt" "$root/owner/libs"
+  git -C "$root/wt" init -q .
+  git -C "$root/wt" -c user.email=t@e -c user.name=t commit -q --allow-empty -m base
+  mkdir -p "$root/wt/.ai/runtime/bootstrap"
+
+  local rc=0
+  (
+    # shellcheck disable=SC2034
+    JIG_AI_DIR=.ai
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+
+    baseline=$(_bootstrap_dirt "$root/wt")
+    # a placement git can see, recorded under a name that does not match it
+    ln -s "$root/owner/libs" "$root/wt/stray"
+    _bootstrap_take_back "$root/wt" "$root/wt/.ai/runtime/bootstrap" \
+      "$root/wt/not-what-was-made" "$baseline"
+  ) || rc=$?
+  assert_eq 1 "$rc" \
+    "the undo reported success while git still saw what the placement left"
+}
+
+# F13, end to end and on the reproducer itself: a shared directory git does
+# not ignore, holding an entry whose name contains a newline. The refusal is
+# detected correctly; what must also happen is that the failed undo is named,
+# because the worktree is now one housekeeping can never remove.
+test_bootstrap_reports_an_undo_it_could_not_finish() {
+  skip_unless_symlinks
+  skip_unless_control_char_names
+  bootstrap_setup_nested
+  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
+  mkdir -p libs/one
+  printf 'one\n' > libs/one/index.js
+  git add -A
+  git commit -q -m "libs is tracked and not ignored"
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+
+  # a package whose name the newline-separated accounting cannot carry
+  mkdir -p "libs/$(printf 'a\nb')"
+  printf 'two\n' > "libs/$(printf 'a\nb')/index.js"
+
+  run jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "git does not ignore"
+  assert_contains "$OUT" "the worktree needs you" \
+    "an undo that could not finish must be named, not reported as a clean refusal"
+}
+
+# F14 (P1). The backstop that closed F12 used to ask by name — is there a
+# `<dst>/<staged basename>` — and a carried tree that legitimately holds a
+# top-level entry of its own name answers yes without any race. `carry: [data]`
+# over a `data/data/` therefore reported "left alone" while placing a tree with
+# `data/data` missing from it, and because the destination then existed, every
+# later `jig task bootstrap` skipped the path in silence for good.
+test_bootstrap_carries_a_tree_holding_an_entry_of_its_own_name() {
+  bootstrap_setup_nested
+  # `data/` is already in .gitignore (bootstrap_ignore)
+  printf 'worktree.carry: [data]\n' >> .ai/config.yaml
+  mkdir -p data/data/inner data/other
+  printf 'inner\n' > data/data/inner/f
+  printf 'other\n' > data/other/f
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_not_contains "$ERR" "without nesting it" \
+    "a tree holding an entry of its own name was mistaken for a nested rename"
+  assert_eq "inner" "$(cat "$wt/data/data/inner/f" 2>/dev/null)" \
+    "the carried tree lost the entry that shares its name"
+  assert_eq "other" "$(cat "$wt/data/other/f" 2>/dev/null)"
+  assert_no_file "$wt/data/data/data" "the rename nested the carried tree"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+}
+
+# F15 (P3). A top-up that failed partway used to warn and then report success
+# in the same run, because the entries linked before the failure left
+# _BOOTSTRAP_LINKED non-zero. A person could not tell from the output whether
+# to run it again.
+test_bootstrap_a_partial_top_up_reports_once() {
+  skip_unless_symlinks
+  bootstrap_setup_nested
+  local root
+  root=$(pwd -P)/tree
+  mkdir -p "$root/wt/.ai" "$root/owner/libs/one" "$root/owner/libs/two" \
+    "$root/wt/libs"
+  git -C "$root/wt" init -q .
+  git -C "$root/wt" -c user.email=t@e -c user.name=t commit -q --allow-empty -m base
+  printf 'libs/\n' > "$root/wt/.gitignore"
+  git -C "$root/wt" add -f .gitignore
+  git -C "$root/wt" -c user.email=t@e -c user.name=t commit -q -m ignore
+
+  (
+    # shellcheck disable=SC2034
+    JIG_AI_DIR=.ai
+    # shellcheck disable=SC2329
+    jig_info() { printf 'INFO %s\n' "$*"; }
+    # shellcheck disable=SC2329
+    jig_warn() { printf 'WARN %s\n' "$*"; }
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+    # shellcheck disable=SC2329
+    profiles_carry() { :; }
+    # shellcheck disable=SC2329
+    profiles_lock() { :; }
+    # shellcheck disable=SC2329
+    profiles_install() { :; }
+    # shellcheck disable=SC2329
+    cfg_list_lines() { [ "$1" = worktree.share ] && printf 'libs\n'; return 0; }
+    _jig_link_n=0
+    # a mirror that fails on its second entry
+    # shellcheck disable=SC2329
+    jig_link_dir() {
+      _jig_link_n=$((_jig_link_n + 1))
+      [ "$_jig_link_n" -lt 2 ] || return 1
+      ln -s "$1" "$2"
+    }
+    jig_bootstrap_worktree "$root/owner" "$root/wt" "task bootstrap"
+  ) > "$root/out" 2>&1
+
+  grep -q 'could not finish adding what is new in libs' "$root/out" \
+    || fail "a partial top-up did not name its partial result: $(cat "$root/out")"
+  if grep -q 'added what is new in' "$root/out"; then
+    fail "a partial top-up also reported success: $(cat "$root/out")"
+  fi
+  assert_eq "" "$(git -C "$root/wt" status --porcelain)"
+}
