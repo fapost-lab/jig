@@ -212,3 +212,24 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 >
 > Nothing about the workspace's location changes. The alternatives this decision rejected — moving the
 > workspace into the worktree, or copying it — stay rejected, for the reasons given above.
+
+> **Amendment (2026-09-24, carrying).** "Worktrees need no install step here" is true of this
+> repository and false of almost every project jig serves. It was generalised from the one case in
+> front of it: jig is shell with no dependencies, so its own worktrees start complete. A project
+> with an install step keeps `vendor/`, `node_modules/` and `.env` outside git, and a fresh
+> worktree is therefore a tree its own checks cannot run in — which made the supported road worse
+> than the manual one, and an agent that goes around jig by hand is not fixed by an instruction.
+>
+> `jig task start <id> --worktree` now carries that state in from the checkout beside it, and
+> `jig task bootstrap <id>` carries it again when the first attempt failed
+> (adr-20260924-a-worktree-carries-what-git-does-not). The rest of this decision is untouched:
+> the workspace is still borrowed by exactly one link and never copied — the carry refuses any
+> path inside `.ai/` by name — the worktree still lives under `git.worktree_root`, and git still
+> removes it, without `--force`, under the same conditions.
+>
+> One of those conditions turned out to constrain *how* state may be shared. Housekeeping can
+> only remove a worktree git reports as clean, and git does not match a trailing-slash ignore
+> pattern such as `packages/` against a symlink. A shared directory linked whole therefore reads
+> as untracked and makes the worktree un-removable for the rest of its life. It is mirrored
+> instead — a real directory whose entries are links — so the project's existing ignore pattern
+> keeps applying and this decision's cleanup keeps working.

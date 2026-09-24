@@ -24,7 +24,7 @@
   manifest records it with the hash jig installed, the file is unchanged, the new version no
   longer ships it, and the path — relative, without `..` — lies under `.ai/` or an adapter's
   skills directory (`.claude/skills/`, `.codex/skills/`); anything else is kept and reported
-  `keep-outside`. (ADR-0024) Moving to trash is not deleting, and it has two users: housekeeping moves
+  `keep-outside`. (ADR-0024) The carry into a task worktree is the fifth: when copying or linking a declared path fails partway, `jig task start --worktree` and `jig task bootstrap` remove only that destination — a path that did not exist when the carry reached it, that this run created, that lies physically inside the task worktree (checked before anything is made, because `mkdir -p` and `cp` follow a link that is already there) and that is never the worktree root itself. Remains left behind would be read as a finished carry by every later run, `jig task bootstrap` included. (adr-20260924-a-worktree-carries-what-git-does-not) Moving to trash is not deleting, and it has two users: housekeeping moves
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish`, and a
   partial restore of `epic --reopen` — only after checking that the id is valid and the directory
   resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)

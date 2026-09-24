@@ -12,6 +12,8 @@ Absent keys take the default. Paths are not configurable.
 | `git.branch_per_task` | `true` | | `jig task start` creates and checks out a branch |
 | `git.branch_template` | `task/{id}` | | branch name; `{id}` is the task id |
 | `git.worktree_root` | `../<project>.worktrees` | yes | where `jig task start --worktree` puts worktrees |
+| `worktree.carry` | `[]` | | extra paths this project needs copied into a new worktree, beyond what the active profiles already declare (`vendor`, `node_modules`, `.env`) |
+| `worktree.share` | `[]` | | paths linked into a new worktree instead of copied — a source of truth under edit that must stay single (`packages/`, a path-repository) |
 | `forge` | `auto` | | `auto`, `github`, `gitlab`, `none` |
 | `housekeeping.cadence` | `1d` | yes | session hook runs housekeeping when the last run is older |
 | `housekeeping.fetch` | `true` | yes | allow `git fetch` during housekeeping |

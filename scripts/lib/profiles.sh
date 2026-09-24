@@ -268,3 +268,53 @@ profiles_check_requires() {
   done
   return 0
 }
+
+# --- worktree bootstrap declarations -----------------------------------------
+# A task worktree starts as a git checkout, so it holds nothing git does not
+# track: no vendor/, no node_modules/, no .env. A profile declares what its
+# stack keeps outside git, and `jig task start --worktree` carries it over
+# from the owning checkout (adr-20260924-a-worktree-carries-what-git-does-not).
+
+# _profiles_declared <key> — `<profile><TAB><item>` for every item the active
+# profiles declare under <key>, first-occurrence order, an item never repeated
+# whichever profile named it first. Reads the profiles installed in this
+# project: those are the ones it actually runs, and `upgrade` keeps a copy a
+# user edited (ADR-0003).
+_profiles_declared() {
+  local key="$1" root name dir item seen=""
+  root=$(profiles_installed_dir)
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    dir=$(profiles_dir "$root" "$name") || return 1
+    [ -d "$dir" ] || continue
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      case "$seen" in
+        *"<$item>"*) continue ;;
+      esac
+      seen="$seen<$item>"
+      printf '%s\t%s\n' "$name" "$item"
+    done < <(_profiles_list_lines "$dir" "$key")
+  done < <(profiles_active | tr ' ' '\n')
+  return 0
+}
+
+# profiles_carry — `<profile><TAB><path>` for each path the active profiles
+# declare as derived state to copy into a new task worktree.
+profiles_carry() { _profiles_declared carry; }
+
+# profiles_lock — `<profile><TAB><path>` for each lock file the active
+# profiles name. A lock file that differs between the owning checkout and the
+# worktree means carried state is stale, not wrong.
+profiles_lock() { _profiles_declared lock; }
+
+# profiles_install <profile> — the command that installs <profile>'s
+# dependencies from the network, or nothing. It is printed for a human to run,
+# never executed: `task start` is not a build command, the agent's sandbox may
+# hold no network, and the case this whole mechanism exists for is a host with
+# no toolchain at all, where running it could not work anyway (adr-20260924-a-worktree-carries-what-git-does-not).
+profiles_install() {
+  local dir
+  dir=$(profiles_dir "$(profiles_installed_dir)" "$1") || return 0
+  profile_get "$dir" install
+}

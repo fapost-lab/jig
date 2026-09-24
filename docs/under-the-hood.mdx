@@ -111,6 +111,14 @@ The script answers from file metadata alone; the agent then reads the listed fil
   toolchains download dependencies by themselves. Jig installs nothing. A missing tool is a skip,
   never a pass; when every check is skipped, the run still exits successfully, and the report says
   what was skipped.
+- **`jig task start --worktree`**, and **`jig task bootstrap`**, which repeats it, carry into the
+  worktree whatever your project's checks need that Git does not track — `vendor/`, `node_modules`,
+  `.env` — as declared by the active profiles' `carry` and the project's own `worktree.carry` and
+  `worktree.share` in `.ai/config.yaml`. Only a path the worktree does not already have is touched;
+  a path under `.ai/` is always refused. Derived state (each tree's own) is copied; a source of
+  truth still under edit (a `packages/` directory) is linked instead, so both trees see the same
+  files. Never fatal: a carry that fails partway leaves the worktree and its branch exactly as they
+  are, for `jig task bootstrap` to try again.
 
 ### Git
 
@@ -138,7 +146,10 @@ Project Git operations use your Git remote. Shipping and housekeeping also use y
 command-line tool: with `forge: auto` and `gh` or `glab` installed and signed in, housekeeping lists pull requests
 to learn whether a task was merged — also during a dry run, which otherwise skips `git fetch`.
 `forge: none` turns forge lookup off. Installation and self-update also access the framework
-source and releases; the Windows installer can download Git, as described above.
+source and releases; the Windows installer can download Git, as described above. Carrying state
+into a worktree touches no network either: a profile's `install` command is printed for you to
+run, never executed, even when there is nothing to carry because the owning checkout is not
+installed itself.
 
 ## Deletion
 

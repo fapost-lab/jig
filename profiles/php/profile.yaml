@@ -3,3 +3,6 @@ name: php
 description: PHP projects using Composer.
 detect: [composer.json]
 scope: [changed, map]
+carry: [vendor]
+lock: [composer.lock]
+install: composer install

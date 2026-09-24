@@ -163,6 +163,28 @@ cfg_list() {
   cfg "$1" "${2:-}" | tr -d '[]' | tr ',' ' ' | tr -s ' ' | sed 's/^ //; s/ $//'
 }
 
+# cfg_list_lines <key> — items of an inline list `key: [a, b]`, one per line,
+# quotes stripped; nothing when the key is absent or empty. A bare scalar is
+# read as a one-item list, and `a, b` without brackets splits the same way.
+#
+# The reader to use for paths. cfg_list prints one space-separated line, and
+# every caller consumes it with a bareword `for p in $list`, which lets bash
+# apply pathname expansion to a glob-shaped item and silently replace the
+# literal pattern with whatever files happen to match — or with nothing.
+# Same hazard, same answer and same shape as _profiles_list_lines in
+# scripts/lib/profiles.sh.
+cfg_list_lines() {
+  local raw
+  raw=$(cfg "$1" "")
+  [ -n "$raw" ] || return 0
+  case "$raw" in
+    \[*\]) raw=$(printf '%s' "$raw" | sed 's/^\[//; s/\]$//') ;;
+  esac
+  printf '%s\n' "$raw" | tr ',' '\n' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"\(.*\)"$/\1/' \
+    | sed '/^$/d'
+}
+
 # cfg_bool <key> [default] — exit 0 when the value is true/yes/1.
 cfg_bool() {
   case "$(cfg "$1" "${2:-false}")" in

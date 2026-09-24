@@ -3,3 +3,7 @@ name: python
 description: Python projects (ruff, mypy, pytest from the project's own environment).
 detect: [pyproject.toml, requirements.txt, setup.py, setup.cfg, Pipfile]
 scope: [changed, map]
+# No `carry`: a virtualenv is not relocatable. Copied to another path its
+# console scripts (pip, pytest, ruff) keep an absolute shebang into the
+# original .venv, so they run against the other tree's interpreter and
+# site-packages while appearing to work (measured 2026-09-24, adr-20260924-a-worktree-carries-what-git-does-not).

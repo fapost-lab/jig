@@ -24,6 +24,7 @@ cmd_task() {
     new) task_new "$@" ;;
     set) task_set "$@" ;;
     start) task_start "$@" ;;
+    bootstrap) task_bootstrap "$@" ;;
     abandon) task_abandon "$@" ;;
     pause) task_pause "$@" ;;
     resume) task_resume "$@" ;;
@@ -52,9 +53,10 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
-    start) printf 'usage: jig task start <id> [--worktree]\n' ;;
+    start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap]\n' ;;
+    bootstrap) printf 'usage: jig task bootstrap <id>\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
     abandon) printf 'usage: jig task abandon <id>\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
@@ -631,14 +633,17 @@ task_new() {
 task_start() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage start)"
-  local id="$1" worktree=0
+  local id="$1" worktree=0 bootstrap=1
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --worktree) worktree=1; shift ;;
+      --no-bootstrap) bootstrap=0; shift ;;
       *) jig_die "task start: unknown argument: $1" ;;
     esac
   done
+  [ "$bootstrap" = 1 ] || [ "$worktree" = 1 ] \
+    || jig_die "task start: --no-bootstrap says what not to carry into a worktree; it needs --worktree"
   local dir
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task start: unknown task: $id"
@@ -669,7 +674,7 @@ task_start() {
     || jig_die "task start: the repository has no commits yet; commit something first (even a README), then start the task"
 
   if [ "$worktree" -eq 1 ]; then
-    _task_start_in_worktree "$id" "$dir" "$base"
+    _task_start_in_worktree "$id" "$dir" "$base" "$bootstrap"
     return 0
   fi
 
@@ -715,7 +720,7 @@ task_start() {
 # switching one there, where the runtime allows it, or opening a new one — is
 # the agent's and the human's step, not jig's (ADR-0029 as amended).
 _task_start_in_worktree() {
-  local id="$1" dir="$2" base="$3" branch path owner base_commit
+  local id="$1" dir="$2" base="$3" bootstrap="${4:-1}" branch path owner base_commit
   cfg_bool git.branch_per_task true \
     || jig_die "task start: --worktree needs git.branch_per_task: true (one branch cannot be checked out in two worktrees)"
   branch=$(_task_branch_name "$id")
@@ -750,10 +755,77 @@ _task_start_in_worktree() {
   _task_rewrite_state "$dir" branch "$branch"
   _task_rewrite_state "$dir" base_commit "$base_commit"
   _task_rewrite_state "$dir" base_branch "$base"
+
+  # Only now, with the task started and its workspace linked, is the state git
+  # does not track carried over. Last, and never fatal: a tree missing a
+  # dependency is not a broken task, and what a failed carry leaves behind --
+  # the tree and the branch -- is exactly what `jig task bootstrap` needs to
+  # try again (adr-20260924-a-worktree-carries-what-git-does-not).
+  if [ "$bootstrap" = 1 ]; then
+    _task_carry_into "$JIG_PROJECT" "$path" "task start"
+  fi
+
   _task_base_hint "$id" "$base"
   _task_paused_hint "$id" " there"
   jig_info "task start: $id is on $branch in its own worktree; open a new agent session in $path"
   printf '%s\n' "$path"
+}
+
+# _task_carry_into <owner-abs> <tree-abs> <verb> — load the bootstrap library
+# and carry the declared state into a task worktree. A wrapper so that
+# `task start --worktree` and `task bootstrap` load the same two libraries the
+# same way, and so that every other task command pays for neither (verify.sh
+# sources profiles.sh on the same terms).
+_task_carry_into() {
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+  # shellcheck source=lib/bootstrap.sh
+  . "$JIG_LIB/bootstrap.sh"
+  jig_bootstrap_worktree "$1" "$2" "$3"
+}
+
+# task_bootstrap <id> — carry the declared state into the task's existing
+# worktree again.
+#
+# It exists because the carry is deliberately the last and least important
+# step of `task start --worktree`: when it fails halfway — no disk left, a
+# path declared wrong — the worktree and the branch are fine and must not be
+# rolled back, but a second `task start` refuses on the path that now exists.
+# Without this verb the only repair is by hand, which is the cleanup by manual
+# discipline RULES.md rejects (adr-20260924-a-worktree-carries-what-git-does-not).
+#
+# Idempotent by construction: it carries only what the worktree does not have,
+# the same rule `task start` uses, so running it twice changes nothing.
+#
+# It works from either side. Run in the owning checkout, git says where the
+# task's branch is checked out; run inside the task's own worktree, the
+# borrowed workspace link says which checkout owns it.
+task_bootstrap() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage bootstrap)"
+  local id="$1" dir branch tree owner workspace
+  shift
+  [ $# -eq 0 ] || jig_die "task bootstrap: unknown argument: $1"
+
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task bootstrap: unknown task: $id"
+  branch=$(task_state_get "$id" branch)
+  [ -n "$branch" ] || jig_die "task bootstrap: $id has not been started yet"
+
+  if workspace=$(_task_borrowed_workspace "$id"); then
+    tree=$(cd -P "$JIG_PROJECT" && pwd -P) \
+      || jig_die "task bootstrap: cannot resolve this checkout"
+    owner=${workspace%"/$JIG_AI_DIR/workspace/tasks/$id"}
+  else
+    owner=$(cd -P "$JIG_PROJECT" && pwd -P) \
+      || jig_die "task bootstrap: cannot resolve this checkout"
+    tree=$(_task_worktree_for "$branch" "$(_task_worktrees)")
+    [ -n "$tree" ] || jig_die "task bootstrap: $id has no worktree of its own"
+  fi
+  [ -d "$owner" ] || jig_die "task bootstrap: cannot find the checkout that owns $id"
+  [ "$owner" != "$tree" ] || jig_die "task bootstrap: $id is not in a worktree of its own"
+
+  _task_carry_into "$owner" "$tree" "task bootstrap"
 }
 
 # _task_base_hint <id> <base> — a task cut from anything but the project's base

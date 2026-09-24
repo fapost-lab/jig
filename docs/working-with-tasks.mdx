@@ -149,6 +149,18 @@ second working copy of the repository next to it (in `../<project>.worktrees/<id
 from the freshest main branch, and leaves the current work alone. Open a new agent session in that
 folder — the agent tells you the path; some runtimes can switch there on their own.
 
+A worktree is a Git checkout, so it starts with exactly what Git tracks — no `vendor/`,
+`node_modules/` or `.env`, since every project with an install step keeps those out of Git.
+Starting a task with `--worktree` carries that state across for you: your project's
+[verification profiles](/configuration#verification-profiles) declare what their stack needs
+(PHP's `vendor`, Node's `node_modules`, Laravel's `.env`), and the project can add its own with
+`worktree.carry` and `worktree.share` in [`.ai/config.yaml`](/configuration#git-and-branches). It
+copies what each worktree must have its own of, and links what must stay a single copy under
+edit, such as a `packages/` directory. Carrying is never required to succeed — if the owning
+checkout has nothing to carry either, Jig says so and names the install command to run yourself,
+rather than installing anything over the network. Run `jig task bootstrap <id>` to try again once
+you have, or start with `--no-bootstrap` to skip the carry for that run.
+
 An [autopilot run of a whole roadmap phase](/autopilot#running-a-whole-phase) does this for you:
 it puts every task of a wave in its own worktree and gives each one its own agent.
 
