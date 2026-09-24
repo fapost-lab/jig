@@ -166,6 +166,12 @@ task, and what the directory held when the worktree was made is what that task n
 you install later belongs to whatever you are doing then, and reaches this tree the usual way,
 through its base branch. When you do want it here and now, `jig task bootstrap <id>` brings it in.
 
+Jig only carries what your project keeps out of Git, and it checks rather than assumes: after
+placing something it asks Git what it now sees in the worktree, and takes straight back out
+anything Git noticed, telling you to add that path to `.gitignore` first. The reason is narrow but
+absolute — a worktree holding anything Git can see cannot be removed afterwards, so Jig would be
+leaving you a folder to delete by hand.
+
 Carrying is never required to succeed — if the owning checkout has nothing to carry either, Jig
 says so and names the install command to run yourself, rather than installing anything over the
 network. Run `jig task bootstrap <id>` to try again once you have, or start with `--no-bootstrap`

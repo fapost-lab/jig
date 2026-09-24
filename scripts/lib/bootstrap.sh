@@ -29,6 +29,10 @@ _JIG_BOOTSTRAP_STAGING=""
 # gained entries from one that was already complete.
 _BOOTSTRAP_LINKED=0
 
+# Exactly what the current placement created in the worktree, one path per
+# line, so that a placement git turns out to see can be taken back precisely.
+_BOOTSTRAP_MADE=""
+
 # _bootstrap_first_segment <path> — the first component of a relative path.
 _bootstrap_first_segment() {
   case "$1" in
@@ -96,11 +100,18 @@ _bootstrap_path_problem() {
 # _bootstrap_dest_ok adds what a carry destination needs on top of it.
 _bootstrap_under() {
   local root="$1" probe="$2" dir
-  while [ ! -e "$probe" ] && [ "$probe" != "/" ] && [ "$probe" != "$root" ]; do
+  while [ ! -e "$probe" ] && [ ! -L "$probe" ] && [ "$probe" != "/" ] && [ "$probe" != "$root" ]; do
     probe=$(dirname "$probe")
   done
-  [ -e "$probe" ] || return 1
-  [ -d "$probe" ] || probe=$(dirname "$probe")
+  [ -e "$probe" ] || [ -L "$probe" ] || return 1
+  # A symlink is judged by where it lies, never by where it points: `cd -P`
+  # through one answers about the target, and a link into the owning checkout
+  # would then look as if it were outside the worktree — which is exactly
+  # backwards, since moving or removing a link never touches its target. Every
+  # entry a mirror makes is such a link.
+  if [ -L "$probe" ] || [ ! -d "$probe" ]; then
+    probe=$(dirname "$probe")
+  fi
   dir=$(cd -P "$probe" 2>/dev/null && pwd -P) || return 1
   case "$dir/" in
     "$root"/* | "$root"/) return 0 ;;
@@ -181,14 +192,72 @@ _bootstrap_discard() {
   return 0
 }
 
-# _bootstrap_git_tracks <tree-root> <path> — exit 0 when git tracks anything at
-# or under <path> in the worktree, i.e. git brought it and it is not a carry's
-# to touch. Distinguishes that from a directory a previous carry mirrored,
-# which may still be topped up.
-_bootstrap_git_tracks() {
-  local hit
-  hit=$(git -C "$1" ls-files -- "$2" 2>/dev/null | sed -n '1p')
-  [ -n "$hit" ]
+# _bootstrap_dirt <tree-root> — what git reports in the worktree, sorted, one
+# entry per line. Ignored files are not listed, which is the whole point.
+#
+# This is the question that matters, asked of the only thing that can answer
+# it. Everything a carry puts in a worktree must be invisible to git, because
+# `git worktree remove` without `--force` — the only removal jig performs —
+# refuses a worktree with anything untracked in it, and then housekeeping can
+# never clean that tree up (ADR-0029).
+#
+# Four separate findings were the same failure reached by different routes: a
+# path spelled in another case, a staging name the project's ignore rule did
+# not cover, a shared directory nobody had ignored. Each was found by asking
+# whether git *would* see something — from the path's spelling, from an ignore
+# pattern, from `git ls-files`. Every such question is a proxy, and every proxy
+# has another door: case folding, unicode normalisation in HFS+,
+# `core.ignorecase`, a symlinked component. So the question is no longer asked
+# by proxy. The carry acts, then looks at what git now reports, and takes back
+# anything it made appear.
+_bootstrap_dirt() {
+  git -C "$1" status --porcelain 2>/dev/null | LC_ALL=C sort
+}
+
+# _bootstrap_new_dirt <tree-root> <baseline> — the lines git reports now that
+# it did not report in <baseline>. Empty when the carry changed nothing git
+# can see, which is the condition for keeping what was just placed.
+_bootstrap_new_dirt() {
+  local baseline="$2" line out=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case $'\n'"$baseline"$'\n' in
+      *$'\n'"$line"$'\n'*) continue ;;
+    esac
+    out="$out$line
+"
+  done <<EOF
+$(_bootstrap_dirt "$1")
+EOF
+  printf '%s' "$out"
+}
+
+# _bootstrap_take_back <tree-root> <staging> <made> — undo a placement that
+# made the worktree visible to git. <made> lists, one per line, exactly what
+# this run created; nothing else is ever touched.
+#
+# Each is moved into the staging directory and deleted there, so the deletion
+# still happens inside `.ai/runtime/` and the invariant in RULES.md holds. A
+# move that fails leaves the path in place and is reported by the caller: an
+# undo that cannot finish is a worktree a person has to look at, which is
+# honest, where a silent failure would be a worktree nobody can remove.
+_bootstrap_take_back() {
+  local tree_root="$1" staging="$2" made="$3" p n=0 tmp rc=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _bootstrap_under "$tree_root" "$p" || continue
+    [ -e "$p" ] || [ -L "$p" ] || continue
+    n=$((n + 1))
+    tmp="$staging/undo.$n.$$"
+    if mv "$p" "$tmp" 2>/dev/null; then
+      _bootstrap_discard "$staging" "$tmp" >/dev/null 2>&1 || true
+    else
+      rc=1
+    fi
+  done <<EOF
+$made
+EOF
+  return "$rc"
 }
 
 # _bootstrap_join <words> — space-separated words, comma separated for a
@@ -280,6 +349,8 @@ _bootstrap_share() {
   if [ ! -d "$src" ]; then
     jig_link_dir "$src" "$dst" || return 1
     _BOOTSTRAP_LINKED=$((_BOOTSTRAP_LINKED + 1))
+    _BOOTSTRAP_MADE="$_BOOTSTRAP_MADE$dst
+"
     return 0
   fi
   mkdir -p "$dst" 2>/dev/null || return 1
@@ -291,6 +362,8 @@ _bootstrap_share() {
     fi
     jig_link_dir "$entry" "$dst/$base" || return 1
     _BOOTSTRAP_LINKED=$((_BOOTSTRAP_LINKED + 1))
+    _BOOTSTRAP_MADE="$_BOOTSTRAP_MADE$dst/$base
+"
   done
   return 0
 }
@@ -305,7 +378,7 @@ _bootstrap_share() {
 # and every skip is reported. Always returns 0.
 jig_bootstrap_worktree() {
   local owner="$1" tree="$2" verb="$3"
-  local src dst staged ok source action path problem started elapsed
+  local src dst staged ok source action path problem started elapsed baseline
   local carried="" shared="" topped="" missing="" seen=""
   local owner_root tree_root
 
@@ -321,6 +394,11 @@ jig_bootstrap_worktree() {
   trap '_bootstrap_sweep' EXIT INT TERM
   _bootstrap_sweep
   mkdir -p "$_JIG_BOOTSTRAP_STAGING" 2>/dev/null || true
+
+  # What git already reports in this worktree, before the carry touches it. A
+  # fresh worktree reports nothing; one `jig task bootstrap` runs in may hold a
+  # person's own work, and that is theirs, not this run's doing.
+  baseline=$(_bootstrap_dirt "$tree_root")
 
   started=$(date +%s 2>/dev/null || printf '0')
 
@@ -354,17 +432,30 @@ jig_bootstrap_worktree() {
     # trade-off was accepted with.
     if [ -e "$dst" ] || [ -L "$dst" ]; then
       if [ "$action" != share ] || [ ! -d "$dst" ] || [ -L "$dst" ] \
-         || [ ! -d "$src" ] || _bootstrap_git_tracks "$tree_root" "$path"; then
+         || [ ! -d "$src" ]; then
         continue
       fi
       if [ ! -e "$src" ] && [ ! -L "$src" ]; then
         continue
       fi
+      # No test of whether git tracks this directory: that was a proxy, and it
+      # answered a different question than the `-e`/`-d` tests beside it, on a
+      # filesystem that folds case. What is added is added, then git is asked
+      # what it now sees, and anything it saw is taken straight back out.
       _BOOTSTRAP_LINKED=0
-      if _bootstrap_share "$src" "$dst"; then
-        [ "$_BOOTSTRAP_LINKED" = 0 ] || topped="$topped $path"
-      else
+      _BOOTSTRAP_MADE=""
+      if ! _bootstrap_share "$src" "$dst"; then
         jig_warn "$verb: could not add what is new in $path to the worktree"
+      fi
+      if [ "$_BOOTSTRAP_LINKED" != 0 ]; then
+        if [ -n "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]; then
+          jig_warn "$verb: not adding to $path: git does not ignore what that would put in the worktree, and anything git can see there stops the worktree from ever being removed; add it to .gitignore, then carry it again"
+          if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" "$_BOOTSTRAP_MADE"; then
+            jig_warn "$verb: and could not take it back out of $path; the worktree needs you"
+          fi
+        else
+          topped="$topped $path"
+        fi
       fi
       continue
     fi
@@ -406,14 +497,41 @@ jig_bootstrap_worktree() {
       share) _bootstrap_share "$src" "$staged" || ok=1 ;;
       *) jig_copy_dir "$src" "$staged" || ok=1 ;;
     esac
-    if [ "$ok" = 0 ] && mv "$staged" "$dst" 2>/dev/null; then
-      case "$action" in
-        share) shared="$shared $path" ;;
-        *) carried="$carried $path" ;;
-      esac
-      continue
+    # The destination is tested again here, not only before the copy: a copy
+    # of a large tree takes seconds, and anything that appeared at <dst> in the
+    # meantime would swallow the rename — `mv` moves *into* an existing
+    # directory, which would bury the carried tree one level down and leave the
+    # destination looking empty while the report said it was carried.
+    if [ "$ok" = 0 ] && { [ -e "$dst" ] || [ -L "$dst" ]; }; then
+      jig_warn "$verb: $path appeared in the worktree while it was being carried; left alone"
+      ok=1
     fi
-    jig_warn "$verb: could not carry $path into the worktree"
+    if [ "$ok" = 0 ] && mv "$staged" "$dst" 2>/dev/null; then
+      # And if the rename still landed inside something, take it straight back.
+      if [ -e "$dst/${staged##*/}" ]; then
+        mv "$dst/${staged##*/}" "$staged" 2>/dev/null || true
+        jig_warn "$verb: could not put $path in the worktree without nesting it; left alone"
+      else
+        _BOOTSTRAP_MADE="$dst
+"
+        if [ -n "$(_bootstrap_new_dirt "$tree_root" "$baseline")" ]; then
+          jig_warn "$verb: not carrying $path: git does not ignore it, and anything git can see in a worktree stops that worktree from ever being removed; add it to .gitignore, then carry it again"
+          if ! _bootstrap_take_back "$tree_root" "$_JIG_BOOTSTRAP_STAGING" "$_BOOTSTRAP_MADE"; then
+            jig_warn "$verb: and could not take $path back out; the worktree needs you"
+          fi
+        else
+          case "$action" in
+            share) shared="$shared $path" ;;
+            *) carried="$carried $path" ;;
+          esac
+        fi
+        continue
+      fi
+    else
+      if [ "$ok" = 0 ]; then
+        jig_warn "$verb: could not carry $path into the worktree"
+      fi
+    fi
     _bootstrap_discard "$_JIG_BOOTSTRAP_STAGING" "$staged" >/dev/null 2>&1 || true
   done < <(_bootstrap_declared)
 

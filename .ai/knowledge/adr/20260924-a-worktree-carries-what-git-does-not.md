@@ -92,6 +92,25 @@ the agent's sandbox may have no network, and — decisively — nothing to carry
 checkout has no `vendor/` either, so the project is not installed there and the host may have
 no toolchain at all, which is the very case this mechanism exists for.
 
+**The carry proves its own safety instead of predicting it.** Everything it puts in a worktree
+must be invisible to git, because `git worktree remove` without `--force` — the only removal jig
+performs — refuses a worktree with anything untracked in it, and housekeeping can then never clean
+that tree up (ADR-0029). So the carry records what git reports before it starts, places a path,
+asks git again, and takes straight back out anything it made appear, reporting it and naming the
+remedy (`.gitignore`).
+
+This replaced four separate guards that each predicted the same answer and each got it wrong in
+its own way: a path's spelling compared case-sensitively, a staging name the project's ignore rule
+did not cover, `git ls-files` asked in one case while `-e` and `-d` answered in another, and a
+shared directory nobody had ignored at all. Every one of them was a proxy for "will git see this",
+and every proxy has another door — case folding, unicode normalisation on HFS+, `core.ignorecase`,
+a symlinked component. Four review rounds found four doors. Asking git has none, because it is the
+same question, put to the same program, that housekeeping will put to it later.
+
+The precondition this makes explicit, rather than assuming: **a path is carried only if the project
+keeps it out of git.** That is what every project with an install step already does, and where it
+does not, the carry says so and does nothing.
+
 **`.ai/` is refused, always and by name.** A worktree borrows exactly one workspace by link
 (ADR-0029); a copy would give the task two `state` files diverging from the first write. So is
 an absolute path, a path with dot segments, a path holding a space, tab or newline, a path that
@@ -209,6 +228,17 @@ python, and is a separate decision.
   rests on — would take them for finished work. The rename is atomic and within one directory, so
   no window exists in which the destination is partial. It is conventions/shell.md's rule for the
   manifest, applied to a tree.
+- **A carry can now decline.** A declared path the project neither tracks nor ignores is placed,
+  seen, and taken back, with a message naming `.gitignore` as the fix. That is a visible refusal
+  where the alternative was a worktree nobody could remove and no warning at all.
+- **Taking back is a move, not a new deletion.** What was placed is moved into the staging
+  directory and deleted there, so every deletion still happens inside `.ai/runtime/`. Only what
+  this run created is ever moved, and a move that fails leaves the path and says so: a worktree a
+  person must look at is the honest outcome, where silence would leave one nobody can remove.
+- **Containment judges a link by where it lies, not by where it points.** `cd -P` through a
+  symlink answers about its target, so an entry a mirror made looked as if it were outside the
+  worktree and was skipped by the take-back. Moving or removing a link never touches its target,
+  so the location is the only thing that matters.
 - **The staging directory is `.ai/runtime/bootstrap` inside the worktree**, and that location is
   load-bearing rather than tidy. Staging beside the destination was tried first and reintroduced
   the failure this whole design exists to avoid: a project ignores `vendor/`, and

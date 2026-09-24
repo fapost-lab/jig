@@ -20,6 +20,19 @@ bootstrap_setup_nested() {
   fixture_jig_repo
   git add -A
   git commit -q -m "jig init snapshot"
+  bootstrap_ignore
+}
+
+# bootstrap_ignore — keep out of git the paths these tests carry, which is
+# what every project with an install step does and what the carry now
+# requires: anything it puts in a worktree that git can see would strand that
+# worktree, so the carry refuses it. jig init already wrote and tracked
+# .gitignore, so no `git add -f` is needed here -- only a brand new .gitignore
+# hits this machine's gitignore-of-.gitignore.
+bootstrap_ignore() {
+  printf 'vendor/\nnode_modules/\npackages/\ndata/\nconfig/\n.env\n' >> .gitignore
+  git add .gitignore
+  git commit -q -m "keep derived and shared state out of git"
 }
 
 # bootstrap_setup_php — bootstrap_setup_nested, but with a composer.json in
@@ -34,6 +47,7 @@ bootstrap_setup_php() {
   jig init --from "$JIG_HOME" >/dev/null
   git add -A
   git commit -q -m "jig init snapshot"
+  bootstrap_ignore
 }
 
 # run_split <command...> — as run() (tests/lib/assert.sh), but stdout and
@@ -681,30 +695,104 @@ test_task_bootstrap_adds_a_package_added_after_the_worktree_was_made() {
   assert_contains "$OUT" "packages"
 }
 
-# F7's safety half: topping up is only ever jig's own mirror. A directory git
-# tracks is the worktree's own, and adding links inside it would make the tree
-# untracked-dirty -- stranding it exactly as F8 did.
-test_bootstrap_does_not_top_up_a_git_tracked_directory() {
+# F10 (P1), and the shape of the whole class it ended. The danger was never
+# "a directory git tracks" -- that was a proxy, and it answered in a different
+# case than the filesystem did. The danger is a worktree git can see into,
+# because `git worktree remove` without --force then refuses it forever. So
+# the carry acts and asks git what it now reports, and takes back whatever it
+# made appear.
+#
+# `libs/` here is tracked and *not* ignored, which is the case that actually
+# strands a tree. A directory that is both tracked and ignored is safe and is
+# kept -- git reports nothing either way -- which the old proxy rule would
+# have refused for no reason.
+test_bootstrap_takes_back_a_top_up_git_would_see() {
   skip_unless_symlinks
   bootstrap_setup_nested
-  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
-  mkdir -p packages/tracked
-  printf 'tracked\n' > packages/tracked/index.js
+  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
+  mkdir -p libs/one
+  printf 'one\n' > libs/one/index.js
   git add -A
-  git commit -q -m "packages is tracked here"
+  git commit -q -m "libs is tracked and not ignored"
   jig task new T-1 >/dev/null
 
   run_split jig task start T-1 --worktree
   assert_eq 0 "$RC"
   local wt="$OUT"
-  [ ! -L "$wt/packages/tracked" ] || fail "a git-tracked entry was replaced by a link"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
 
-  mkdir -p packages/untracked_pkg
-  printf 'later\n' > packages/untracked_pkg/index.js
+  # a package added to the owning checkout afterwards; linking it into the
+  # worktree would be visible to git, so it must not survive the attempt
+  mkdir -p libs/two
+  printf 'two\n' > libs/two/index.js
 
   run jig task bootstrap T-1
   assert_eq 0 "$RC"
-  [ ! -e "$wt/packages/untracked_pkg" ] \
-    || fail "topped up a directory git tracks; the worktree is now untracked-dirty"
+  assert_contains "$OUT" "git does not ignore"
+  [ ! -e "$wt/libs/two" ] && [ ! -L "$wt/libs/two" ] \
+    || fail "a top-up git can see was left in the worktree, which strands it"
+  assert_eq "" "$(git -C "$wt" status --porcelain)" \
+    "the worktree must be exactly as clean as the carry found it"
+}
+
+# F11 (P2). The mirror's safety rested entirely on the project having the
+# directory in .gitignore, and nothing checked that. A project with a shared
+# directory in neither git nor .gitignore got a cheerful `shared packages` and
+# a worktree `git worktree remove` would refuse for good.
+test_bootstrap_refuses_a_share_git_would_see() {
+  skip_unless_symlinks
+  bootstrap_setup_nested
+  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
+  mkdir -p libs/one
+  printf 'one\n' > libs/one/index.js
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "git does not ignore"
+  assert_contains "$ERR" ".gitignore"
+  [ ! -e "$wt/libs" ] && [ ! -L "$wt/libs" ] \
+    || fail "a share git can see was left in the worktree, which strands it"
   assert_eq "" "$(git -C "$wt" status --porcelain)"
+}
+
+# F12 (P3). A directory that appears at the destination while a large tree is
+# being copied would swallow the rename: `mv` moves *into* an existing
+# directory, leaving vendor/vendor/ and a destination that looks empty while
+# the report says it was carried.
+test_bootstrap_leaves_a_destination_that_appeared_mid_carry_alone() {
+  bootstrap_setup_nested
+  local root
+  root=$(pwd -P)/tree
+  mkdir -p "$root/wt/.ai" "$root/owner/vendor/pkg"
+  printf 'v\n' > "$root/owner/vendor/pkg/f"
+
+  (
+    # shellcheck disable=SC2034
+    JIG_AI_DIR=.ai
+    # shellcheck disable=SC2329
+    jig_info() { :; }
+    # shellcheck disable=SC2329
+    jig_warn() { printf '%s\n' "$*"; }
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+    # shellcheck disable=SC2329
+    profiles_carry() { printf 'php\tvendor\n'; }
+    # shellcheck disable=SC2329
+    profiles_lock() { :; }
+    # shellcheck disable=SC2329
+    profiles_install() { :; }
+    # shellcheck disable=SC2329
+    cfg_list_lines() { :; }
+    # a copy that takes long enough for the destination to appear under it
+    # shellcheck disable=SC2329
+    jig_copy_dir() { mkdir -p "$2"; mkdir -p "$root/wt/vendor"; return 0; }
+    jig_bootstrap_worktree "$root/owner" "$root/wt" "task start"
+  ) > "$root/out" 2>&1
+
+  grep -q 'appeared in the worktree while it was being carried' "$root/out" \
+    || fail "a destination that appeared mid-carry was not reported: $(cat "$root/out")"
+  [ ! -e "$root/wt/vendor/vendor" ] \
+    || fail "the rename nested the carried tree inside the destination"
 }
