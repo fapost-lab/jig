@@ -35,8 +35,10 @@ document changed after it, go back to the gate with the changed sections
 
 ## 2. Follow the plan, one step at a time
 
-Before editing, record starting HEAD and existing changes in the task artifact; distinguish
-pre-existing work using the [scope reference](../jig-review/references/change-scope.md).
+Before editing, record starting HEAD and existing changes in the task artifact
+(`jig task artifact append <id> plan --from -`, never your editing tools — see
+[jig-task](../jig-task/SKILL.md) §3); distinguish pre-existing work using the
+[scope reference](../jig-review/references/change-scope.md).
 Use [requirements and planning](../jig-task/references/requirements-and-planning.md):
 if `plan.md` exists, work through it and tick each step after its named check succeeds. If the plan
 turns out wrong, fix the plan first and say what changed. Do not silently diverge.
