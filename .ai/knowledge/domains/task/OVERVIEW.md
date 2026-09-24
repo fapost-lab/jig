@@ -142,7 +142,7 @@ from the author, so who may close or dismiss a finding is a rule of the skills
 (`skills/jig-review/references/findings.md`), not of this code.
 
 **The status page shows this domain's answers verbatim, and this domain keeps it current**
-(adr-20260922-the-status-page-stays-current-without-a-server). The page lists each live task with the
+(adr-20260924-the-status-page-keeps-the-readers-place). The page lists each live task with the
 lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`, `stale (…)`,
 `none`, `none (required for T4)`), `_task_worktree_note` and the task base; an autopilot run as
 `_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time,

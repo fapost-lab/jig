@@ -1,7 +1,7 @@
 ---
 id: adr-20260922-the-status-page-stays-current-without-a-server
 type: adr
-status: accepted
+status: superseded
 date: 2026-09-22
 domains:
   - task

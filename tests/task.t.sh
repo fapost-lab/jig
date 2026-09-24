@@ -4320,7 +4320,7 @@ test_task_set_status_ready_still_refuses_with_autopilot_on_and_an_open_p1_findin
 }
 
 # --- the live status page (common.sh jig_status_page_touch/_dirty/_flush;
-# adr-20260922-the-status-page-stays-current-without-a-server) ----------------
+# adr-20260924-the-status-page-keeps-the-readers-place) ---------------------
 #
 # `jig status --html` writes .ai/runtime/status.html; once it exists, every
 # task command that writes state/journal/findings/receipt redraws it
