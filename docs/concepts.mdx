@@ -116,19 +116,48 @@ The catalog helps the agent discover additional knowledge without reading every 
 
 ## Risk classes and routes
 
-Every piece of work gets a class from its risk — what it could break and how hard that is to undo
-— never from how much typing it takes. The class decides the route.
+Every piece of work gets a class from its risk — what a mistake would cost and how hard it is to
+undo — never from how much typing it takes. The class decides the route.
 
-| Class | Typical work | Route |
+**The class comes from three questions**, asked about this change being wrong after it shipped:
+
+- **What takes it back?** A revert is cheap. Data already changed, mail already sent, money already
+  moved, another system already told — there is nothing to revert.
+- **How far does the mistake reach?** Does it stop with your repository, or reach your users, your
+  money, or somebody else's system?
+- **Who finds it?** A test and the next run, or the person it hurt? Silent corruption costs more
+  than a loud outage.
+
+The class is the **highest** one whose answers fit — not the first one whose examples look familiar.
+
+| Class | The answers that put it here | Route |
 |---|---|---|
-| **T0** trivial | Wording, formatting, an obvious documentation edit | implement → verify → consolidate |
-| **T1** local | A contained change with an obvious solution | analyze → implement → verify → consolidate |
-| **T2** structural | Several components, or an internal contract | analyze → plan → implement → review → verify → consolidate |
-| **T3** architectural | Boundaries, dependencies, lifecycle semantics | discover → design → **human gate** → implement → architecture review → verify → consolidate |
-| **T4** critical | Security, secrets, destructive operations, money | discover → specify → alternatives → design → **human gate** → implement → independent review → verify → consolidate |
+| **T0** trivial | One commit takes it back; nothing leaves this repository; a mistake is visible at once | implement → verify → consolidate |
+| **T1** local | A revert takes it back; one component is affected; a test or the next run shows the mistake | analyze → implement → verify → consolidate |
+| **T2** structural | A revert still takes it back, but code you did not touch behaves differently | analyze → plan → implement → review → verify → consolidate |
+| **T3** architectural | A revert restores the code but not the decision, and what was built on that decision stays built on it | discover → design → **human gate** → implement → architecture review → verify → consolidate |
+| **T4** critical | A revert does not undo it, **or** the mistake reaches people who did not ask for it, **or** nobody notices until the harm is done | discover → specify → alternatives → design → **human gate** → implement → independent review → verify → consolidate |
+
+Day to day that usually means: wording and formatting are T0; a contained fix inside one module is
+T1; a refactor across files, or a signature other code relies on, is T2; a new boundary, dependency
+or data shape is T3. Those are illustrations of the answers above, not a list to match against —
+work that appears in none of them still has a class.
+
+**T4 is the class most often missed**, because the work rarely sounds dangerous. Authentication,
+secrets, irreversible data operations, migrations on live data, money and billing are the obvious
+half. The other half is not: a mass send of email or notifications, a change to who can see what, a
+write into somebody else's system, a job that walks a whole table in the background, a scheduler
+entry that repeats the mistake on its own, a storage format with no way back. What they have in
+common is not a subject area — it is that the mistake has left the machine.
+
+**The word is not the test.** Reading any of the above is not T4: a report over payments, a query
+against live data. Neither is a change behind a flag that is off, a test fixture, or a rename in a
+file that happens to be called `auth`. Ask what a mistake would cost, not what the file is named.
 
 **Risk sets the floor.** A one-line change to authentication is never T0. When work turns out bigger
-than it looked, the agent re-classifies it and runs the stages the new class requires.
+than it looked, the agent re-classifies it and runs the stages the new class requires; when it is
+unsure what a mistake would cost, it takes the higher class: a review nobody needed costs less than
+a change nobody can undo.
 
 **At a human gate** the agent shows you the document itself — the design, and for T4 the
 specification and the alternatives — word for word, with its own objections after it. It records
