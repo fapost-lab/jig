@@ -7,7 +7,7 @@ domains: [skills, sdlc]
 paths:
   - "skills/**"
 summary: Why a written rubric picks the task class and human gates are full stops.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-09-24
 ---
 # ADR-0009: One entry skill routes by a fixed rubric; gates are explicit stops
 
@@ -77,3 +77,15 @@ help, and picks by effort rather than by risk.
 > `jig task gate <id> approved --by agent`, recorded as `gate_by: agent`, journaled, noted in `task.md`,
 > and the design goes verbatim into the pull request as approved by the agent, not a human. Everywhere
 > else the gate is still a full stop. See adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci.
+
+> **Amendment (2026-09-24).** "Lists the signals for T0–T4" described a rubric that lost to
+> its own illustration. Under each class's abstract heading stood a concrete list, so the
+> agent matched the list — cheaper than reasoning about the heading — and work no list named
+> fell to a lower class. The rubric now leads with a risk test (reversibility, radius,
+> detectability) and the lists follow it as open examples, labelled `Looks like:` and stated
+> not to be a checklist. The class is the **highest** one whose test is answered yes, not the
+> first whose examples match; the file previously said the opposite, which contradicted "risk
+> sets the floor" in the same document. The decision here is unchanged — a written rubric
+> decides the class, and both tie-breaks stand. What is new is a constraint on editing it: an
+> example list under a class is an illustration, and turning it back into something an agent
+> can match against re-breaks the rubric.

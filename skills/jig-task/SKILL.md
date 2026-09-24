@@ -56,8 +56,10 @@ close without asking, and do not hold up the work the user came for while waitin
 
 ## 2. Classify
 
-Read `references/classification.md` and pick T0–T4 from the signals. State the class and
-the one signal that decided it, in a single sentence. Do not narrate the rubric.
+Read `references/classification.md`, answer its risk test — what a mistake would cost and
+what takes it back — and pick T0–T4 from that answer, never from whichever example reads
+closest. State the class and the answer that decided it, in a single sentence. Do not
+narrate the rubric.
 
 If the description is too vague to classify, ask one question. One, not a list.
 

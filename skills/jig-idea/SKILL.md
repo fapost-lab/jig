@@ -163,7 +163,7 @@ Check the result:
 "File the tasks for phase N": for each item of that phase with no task id and not `fog:`.
 
 1. Classify it with [the rubric](../jig-task/references/classification.md); say the class and
-   the signal that decided it in one sentence.
+   the risk-test answer that decided it in one sentence.
 2. File it from an excerpt — a heading, the link line, the item's goal, its boundary, its
    dependencies with their reasons:
 
