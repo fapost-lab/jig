@@ -1832,6 +1832,14 @@ test_status_page_links_a_pull_request_jig_opened_and_one_housekeeping_saw() {
   needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
   assert_contains "$needs" '<code>shipped</code> · opened by jig task ship</p><p><a href="https://example.com/o/r/pull/7">https://example.com/o/r/pull/7</a></p>'
   assert_contains "$needs" "<code>waiting</code> · open as of housekeeping at "
+  # The two cards differ in what they claim, because they know different
+  # things. jig opened `shipped`'s pull request itself, so the present tense
+  # and the imperative are earned. `waiting`'s state is borrowed from a
+  # housekeeping run that may be a cadence old -- it is stated in the past, and
+  # the first thing it asks for is a refresh, not a merge.
+  assert_contains "$needs" "A pull request is waiting for review or merge</h3><p><code>shipped</code>"
+  assert_contains "$needs" "A pull request was open at the last housekeeping run</h3><p><code>waiting</code>"
+  assert_contains "$needs" "Run jig housekeeping to refresh, then review and merge what is still open."
   # Merged by housekeeping's last word: a task to close, not a pull request.
   assert_not_contains "$needs" "pull/8"
   assert_contains "$needs" "Merged: the task can be closed</h3><p><code>landed</code>"
