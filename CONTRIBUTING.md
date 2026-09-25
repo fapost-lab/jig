@@ -111,23 +111,28 @@ is the way out, and the command prints that line itself.
 
 ## Tests
 
+This repository sets `verify.full_run: ci`: a plain `jig verify` checks what changed, through
+[`.ai/verify/shell.map`](.ai/verify/shell.map), and CI runs the full set on every pull request. So
+`jig verify` is what you run to check a change, and a name filter is how you rerun one file while you
+work on it. Keep the unfiltered set for the moment you mean to run everything: it takes 5–6 minutes
+on an idle machine, and the machine is shared — eight agents that each started it at once turned
+those six minutes into forty, and blocked two reviews for the best part of an hour.
+
 ```bash
-bash tests/run.sh                  # everything, in parallel, one job per CPU
+.ai/scripts/jig verify             # what this change touched — start here
 bash tests/run.sh knowledge::      # one file's tests
 bash tests/run.sh knowledge::test_reject
 .ai/scripts/jig knowledge check
+bash tests/run.sh                  # everything, in parallel, one job per CPU — CI's job
 ```
 
 `JIG_TEST_JOBS=1` runs the tests one at a time, or sets another width. `JIG_TEST_SHARD=2/3` runs every
 third test starting with the second, so a slow platform can split the suite across machines.
-`JIG_TEST_SKIP=file::test,...` reports the named tests as skipped.
+`JIG_TEST_SKIP=file::test,...` reports the named tests as skipped. `tests/install.t.ps1` runs only on
+Windows CI.
 
 Run `shellcheck` on every changed shell file, tests included; CI runs an older ShellCheck that can
 flag what a newer local one lets through.
-
-This repository sets `verify.full_run: ci`: a plain `jig verify` checks what changed, through
-[`.ai/verify/shell.map`](.ai/verify/shell.map), and CI runs the full set on every pull request.
-`tests/install.t.ps1` runs only on Windows CI.
 
 Documentation changes: in `docs/`, run `npx mint broken-links` and `npx mint validate` (Node is a
 maintainer tool here, not a dependency of Jig).
