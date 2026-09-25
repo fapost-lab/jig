@@ -1831,7 +1831,10 @@ test_verify_waits_for_a_live_record_then_proceeds_once_it_is_freed() {
   until grep -q "waiting for it" verify-out.log 2>/dev/null; do
     if ! kill -0 "$verify_pid" 2>/dev/null; then
       kill "$holder_pid" 2>/dev/null || true
-      fail "verify finished without ever saying it was waiting: $(cat verify-out.log)"
+      # The record's own state names the branch that failed: still
+      # `/elsewhere` means the run looked somewhere else, rewritten means it
+      # judged the holder dead and took it over.
+      fail "verify finished without ever saying it was waiting: $(cat verify-out.log); record now: $(cat .ai/runtime/verify/busy/run 2>&1); holder alive: $(kill -0 "$holder_pid" 2>/dev/null && echo yes || echo no); stat -f: [$(stat -f '%m' .ai/runtime/verify/busy/run 2>&1)]; stat -c: [$(stat -c '%Y' .ai/runtime/verify/busy/run 2>&1)]"
     fi
     if [ $((SECONDS - start)) -ge 60 ]; then
       kill "$holder_pid" 2>/dev/null || true
@@ -2200,4 +2203,76 @@ EOF
   assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
   assert_not_contains "$OUT" "nothing here checks this project"
+}
+
+# --- the record's freshness must survive either stat -------------------------
+#
+# `stat -f '%m' <file>` is the BSD form. Under GNU coreutils `-f` means
+# --file-system, so the format string is read as a FILE operand: that operand
+# errors, the real file then prints a **file-system block on stdout**, and the
+# command exits non-zero. Code that picks the fallback on the exit status
+# therefore keeps the block and appends the GNU answer to it, and whoever reads
+# the result holds several lines where a number was expected.
+#
+# That is not hypothetical: it shipped. `_verify_busy_mtime` chose on the exit
+# status, so on Linux and in Git Bash the holder of a record was never once seen
+# as live and `jig verify` waited for nothing at all — while macOS, whose stat
+# answers the first form, passed every local run. CI found it on three
+# platforms at once.
+#
+# The stub is hermetic: it answers `-c` from a value this test supplies, so the
+# test exercises the fallback on every platform, including the ones where the
+# real `stat` would have answered the first form.
+test_verify_sees_a_live_record_when_the_first_stat_answers_like_gnu() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 5m --local >/dev/null
+  _fixture_probe_profile probe ""
+
+  mkdir -p stub
+  cat > stub/stat <<'STUB'
+#!/bin/sh
+if [ "$1" = "-f" ]; then
+  shift
+  for a in "$@"; do
+    [ -e "$a" ] && printf '  File: "%s"\n    ID: 0 Namelen: 255\n' "$a"
+  done
+  exit 1
+fi
+if [ "$1" = "-c" ]; then
+  printf '%s\n' "${JIG_TEST_FAKE_MTIME:-}"
+  exit 0
+fi
+exit 1
+STUB
+  chmod +x stub/stat
+
+  sleep 120 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  PATH="$PWD/stub:$PATH" JIG_TEST_FAKE_MTIME="$(date +%s)" \
+    "$JIG_BIN" verify --profile probe > gnu-out.log 2>&1 &
+  local verify_pid=$!
+  local start=$SECONDS
+  until grep -q "waiting for it" gnu-out.log 2>/dev/null; do
+    if ! kill -0 "$verify_pid" 2>/dev/null; then
+      kill "$holder_pid" 2>/dev/null || true
+      fail "the run never saw the record under a GNU-shaped stat: $(cat gnu-out.log); record now: $(cat .ai/runtime/verify/busy/run 2>&1)"
+    fi
+    if [ $((SECONDS - start)) -ge 60 ]; then
+      kill "$holder_pid" 2>/dev/null || true
+      kill "$verify_pid" 2>/dev/null || true
+      fail "no waiting line within 60s under a GNU-shaped stat: $(cat gnu-out.log)"
+    fi
+    sleep 1
+  done
+
+  kill "$holder_pid" 2>/dev/null || true
+  local rc=0
+  wait "$verify_pid" || rc=$?
+  assert_eq 0 "$rc"
+  assert_file_contains gnu-out.log "verify: waited"
+  wait 2>/dev/null || true
 }

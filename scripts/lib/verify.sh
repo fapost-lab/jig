@@ -170,14 +170,36 @@ _verify_busy_ttl() {
   printf '%s\n' "$seconds"
 }
 
-# _verify_busy_mtime <file> — the file's mtime in seconds, or nothing. The same
-# BSD-then-GNU pair the session hook and the checkout record use; with `-f`,
-# GNU stat reads the next argument as a file name and fails, which is what
-# makes the fallback correct rather than lucky.
+# _verify_busy_mtime <file> — the file's mtime in seconds, or nothing.
+#
+# The BSD-then-GNU pair the session hook and the checkout record use, but
+# **chosen on the value, never on the exit status** — and that distinction is
+# the whole of this comment, because getting it wrong silently disabled the
+# lock on every GNU system.
+#
+# `stat -f '%m' <file>` under GNU coreutils does not simply fail: `-f` means
+# --file-system, so `%m` is read as a FILE operand, which errors, and then the
+# real file prints a **file-system block on stdout**. The command exits
+# non-zero, so `cmd && return 0` falls through to the GNU form and appends the
+# real mtime to that block. The caller then holds several lines where it
+# expected a number, rejects them, and reads the record's holder as gone: on
+# Linux and in Git Bash the record was never once seen as live, and
+# `jig verify` never waited for anything. It passed on macOS, where BSD stat
+# answers the first form, which is exactly how it reached CI.
+#
+# `_jig_checkout_mtimes` survives the same idiom only because it reads its
+# output line by line and skips what is not numeric. This reads one file, so it
+# checks the value it got instead.
 _verify_busy_mtime() {
-  stat -f '%m' "$1" 2>/dev/null && return 0
-  stat -c '%Y' "$1" 2>/dev/null && return 0
-  return 1
+  local out
+  out=$(stat -f '%m' "$1" 2>/dev/null) || out=""
+  case "$out" in
+    '' | *[!0-9]*) out=$(stat -c '%Y' "$1" 2>/dev/null) || out="" ;;
+  esac
+  case "$out" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$out"
 }
 
 # _verify_busy_value <file> <key> — the first `<key>: <value>` line, read by the
