@@ -1586,3 +1586,317 @@ test_verify_shell_profile_widens_lint_to_whole_tree_when_shellcheckrc_changes() 
   assert_contains "$OUT" "scope: .shellcheckrc changed, whole tree"
   assert_file_contains sc-linted.log tracked.sh
 }
+
+# --- a run that dies is not a pass (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) ---
+# A profile that started and did not finish is a third outcome, `incomplete`,
+# never folded into `fail`: exit 3 is the profile itself saying so, and
+# 128+N is the profile killed by a signal, which every stack profile reports
+# through jp_run/jp_incomplete (scripts/lib/profile.sh) without being taught
+# to.
+
+test_verify_profile_exit_3_is_incomplete() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/dies
+  cat > .ai/profiles/dies/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "dies: a check: incomplete (simulated)"
+exit 3
+EOF
+  chmod +x .ai/profiles/dies/verify.sh
+
+  run jig verify --profile dies
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT dies: incomplete"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 0 skip, 1 incomplete"
+  assert_contains "$OUT" \
+    "verify: the run did not finish, so it neither passed nor failed — run it again"
+}
+
+test_verify_profile_killed_by_signal_is_incomplete() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/killed
+  cat > .ai/profiles/killed/verify.sh <<'EOF'
+#!/usr/bin/env bash
+kill -9 $$
+EOF
+  chmod +x .ai/profiles/killed/verify.sh
+
+  run jig verify --profile killed
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT killed: incomplete (killed by signal 9)"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 0 skip, 1 incomplete"
+}
+
+test_verify_incomplete_outranks_fail() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/failing .ai/profiles/dies
+  cat > .ai/profiles/failing/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "failing: a check: fail"
+exit 1
+EOF
+  chmod +x .ai/profiles/failing/verify.sh
+  cat > .ai/profiles/dies/verify.sh <<'EOF'
+#!/usr/bin/env bash
+exit 3
+EOF
+  chmod +x .ai/profiles/dies/verify.sh
+
+  run jig verify --profile failing,dies
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT failing: fail"
+  assert_contains "$OUT" "RESULT dies: incomplete"
+  assert_contains "$OUT" "verify: 2 profiles, 0 pass, 1 fail, 0 skip, 1 incomplete"
+}
+
+# Guards the tally format itself: an ordinary passing run still names the
+# incomplete field, at zero, and exits 0.
+test_verify_ordinary_pass_tally_names_zero_incomplete() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+
+  run jig verify --profile generic
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: 1 profiles, 1 pass, 0 fail, 0 skip, 0 incomplete"
+}
+
+# --- one run per clone (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) ---
+# `jig verify` takes a run record shared by every worktree of the clone
+# (`.ai/runtime/verify/busy/run`) and waits while another run holds it. CI is
+# unset and JIG_VERIFY_BUSY_HELD is unset for every test (tests/run.sh), so
+# the mechanism runs for real here unless a test sets verify.busy_ttl: 0.
+
+test_verify_writes_and_removes_the_busy_record() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/probe
+  cat > .ai/profiles/probe/verify.sh <<'EOF'
+#!/usr/bin/env bash
+if [ -f .ai/runtime/verify/busy/run ]; then
+  cp .ai/runtime/verify/busy/run seen-record.txt
+fi
+exit 0
+EOF
+  chmod +x .ai/profiles/probe/verify.sh
+
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_file_contains seen-record.txt "checkout: $(pwd -P)"
+  assert_file_contains seen-record.txt "pid: "
+  assert_no_file .ai/runtime/verify/busy
+}
+
+# A worktree and its main checkout share one record: `jig_config_clone_root`
+# resolves both to the same `.ai/runtime/verify` under the main checkout, so
+# a run started in the worktree writes and reads it there, never under the
+# worktree's own `.ai`.
+test_verify_busy_record_resolves_to_main_checkout_from_worktree() {
+  mkdir repo
+  cd repo || fail "setup"
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local main_root
+  main_root=$(pwd -P)
+
+  git worktree add -q ../wt -b wt-branch >/dev/null
+
+  mkdir -p ../wt/.ai/profiles/probe
+  cat > "../wt/.ai/profiles/probe/verify.sh" <<EOF
+#!/usr/bin/env bash
+if [ -f "$main_root/.ai/runtime/verify/busy/run" ]; then
+  cp "$main_root/.ai/runtime/verify/busy/run" seen-record.txt
+fi
+exit 0
+EOF
+  chmod +x "../wt/.ai/profiles/probe/verify.sh"
+
+  # The record names the checkout the run is in, not the one it lives in, and
+  # that is the whole claim: a worktree writes into the clone's main checkout.
+  # Compared against `pwd -P`, never a raw string (conventions/shell.md).
+  local wt_root
+  wt_root=$(cd "$main_root/../wt" && pwd -P)
+
+  run bash -c 'cd ../wt && "$JIG_BIN" verify --profile probe'
+  assert_eq 0 "$RC"
+  assert_file_contains ../wt/seen-record.txt "checkout: $wt_root"
+  assert_file_contains ../wt/seen-record.txt "pid: "
+  assert_no_file ../wt/.ai/runtime/verify
+  assert_no_file "$main_root/.ai/runtime/verify/busy"
+}
+
+# A record whose pid is alive makes a run wait; when the holder dies the
+# waiter takes over and reports having waited. verify.busy_ttl is set small
+# so the record expires on its own even if the kill below misfires — the
+# test cannot hang.
+test_verify_waits_for_a_live_record_then_proceeds_once_it_is_freed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 6s --local >/dev/null
+
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  ( sleep 2; kill "$holder_pid" 2>/dev/null ) &
+
+  run jig verify --profile generic
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT generic: pass"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+# A dead pid (reaped before the record is even read) is taken over on the
+# first poll: no wait is reported.
+test_verify_takes_over_a_dead_pid_record_at_once() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 20s --local >/dev/null
+
+  local dead_pid
+  ( exit 0 ) &
+  dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$dead_pid" > .ai/runtime/verify/busy/run
+
+  run jig verify --profile generic
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT generic: pass"
+}
+
+# CI turns the whole mechanism off: a live record is neither waited for nor
+# touched.
+test_verify_ci_env_ignores_a_live_record_and_leaves_it_untouched() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 20s --local >/dev/null
+
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  run env CI=1 "$JIG_BIN" verify --profile generic
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT generic: pass"
+  assert_file_contains .ai/runtime/verify/busy/run "checkout: /elsewhere"
+  assert_file_contains .ai/runtime/verify/busy/run "pid: $holder_pid"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+# verify.busy_ttl: 0 is the escape hatch: a live record is ignored outright,
+# nothing waits and nothing is written.
+test_verify_busy_ttl_zero_disables_the_mechanism() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 0 --local >/dev/null
+
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  run jig verify --profile generic
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT generic: pass"
+  assert_file_contains .ai/runtime/verify/busy/run "checkout: /elsewhere"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+# Registering a key in JIG_CFG_LOCAL_KEYS is not one edit but three (see
+# tests/checkout.t.sh's own checkout.busy_ttl test): the list, the value
+# check in jig_config_value_problem, and schemas/config.md.
+test_verify_busy_ttl_config_set_accepts_duration_and_rejects_garbage() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+
+  run jig config set verify.busy_ttl 5m --local
+  assert_eq 0 "$RC"
+
+  run jig config show --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify.busy_ttl: 5m"
+  assert_not_contains "$OUT" "ignored: verify.busy_ttl"
+
+  run jig config set verify.busy_ttl nonsense --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a duration"
+}
+
+# --- the jp_* interface exception (adr-20260918 amendment 2026-09-25) --------
+#
+# The amendment claims two things about changing jp_run's verdict for a killed
+# check. Both are claims about profiles nobody here wrote, so both are run, not
+# argued.
+
+# A profile written without scripts/lib/profile.sh — the shape every profile had
+# before jp_* existed, where any non-zero from the check is a failure — is not
+# reached by the library change at all.
+test_verify_a_library_free_profile_reads_a_killed_check_as_before() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/oldstyle
+  cat > .ai/profiles/oldstyle/verify.sh <<'EOF'
+#!/usr/bin/env bash
+set -u
+# `sh -c` so the signal reaches a child of this shell: a bare `kill -9 $$` in a
+# test names the runner, not the subshell under test.
+if sh -c 'kill -9 $$'; then
+  echo "oldstyle: check: pass"
+  exit 0
+else
+  echo "oldstyle: check: fail"
+  exit 1
+fi
+EOF
+  chmod +x .ai/profiles/oldstyle/verify.sh
+
+  run jig verify --profile oldstyle
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "oldstyle: check: fail"
+  assert_contains "$OUT" "RESULT oldstyle: fail"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 1 fail, 0 skip, 0 incomplete"
+}
+
+# A profile that does use the library gets the third state — and its exit code
+# stays non-zero, which is the whole safety argument: a consumer that only asks
+# whether the code is zero reads `incomplete` exactly as it read a failure.
+test_verify_jp_run_reports_a_killed_check_as_incomplete_and_still_nonzero() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/vialib
+  cat > .ai/profiles/vialib/verify.sh <<'EOF'
+#!/usr/bin/env bash
+set -eu
+set -o pipefail
+. "$(dirname "$0")/../../scripts/lib/profile.sh"
+jp_begin vialib
+jp_run tests "" sh -c 'kill -9 $$'
+jp_end
+EOF
+  chmod +x .ai/profiles/vialib/verify.sh
+
+  run jig verify --profile vialib
+  assert_eq 3 "$RC"
+  [ "$RC" -ne 0 ] || fail "incomplete must stay non-zero for a zero-or-not consumer"
+  assert_contains "$OUT" "vialib: tests: incomplete (killed by signal 9)"
+  assert_contains "$OUT" "RESULT vialib: incomplete"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 0 skip, 1 incomplete"
+}

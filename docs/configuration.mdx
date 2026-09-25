@@ -55,6 +55,7 @@ selected.
 | Setting | Default | What it does |
 |---|---|---|
 | `checkout.busy_ttl` | `12h` | How long Jig still treats a record of work in this checkout as a live session. Every Jig run writes one, so a session that is around keeps refreshing its own; past this age the record is ignored — never deleted. |
+| `verify.busy_ttl` | `30m` | How long a running `jig verify` holds this clone. A second `jig verify` — in this checkout or in any worktree of it — waits for the first instead of competing with it for the machine, saying so while it waits. Past this age the record is ignored, so a run longer than this can be run over; raise it if your suite takes longer. `0` never waits. In CI the mechanism is off, because parallel jobs there are the point. |
 
 ### Knowledge
 
@@ -98,7 +99,7 @@ Some settings are a matter of personal taste rather than project policy. Put the
 
 - `housekeeping.cadence`, `housekeeping.fetch`, `housekeeping.trash_ttl`,
   `housekeeping.abandoned_ttl`, `housekeeping.stale_after`;
-- `checkout.busy_ttl`;
+- `checkout.busy_ttl`, `verify.busy_ttl`;
 - `git.worktree_root`;
 - `agent.git` — how far the agent takes a finished task, and a specification's epic: `none` (the default: you commit),
   `commit`, `push`, `pr` or `merge`. This one is read **only** from your local file; in `.ai/config.yaml` it

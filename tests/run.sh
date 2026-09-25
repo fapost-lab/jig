@@ -16,6 +16,15 @@
 # failure count, because a check that quietly stopped running must stay
 # visible as something other than green (RULES.md, ADR-0013).
 #
+# A test killed by a signal is a fourth outcome, `not completed`, and the run
+# exits 3 rather than 1. bash reports a child that died on signal N as 128+N,
+# so `Killed: 9` arrives as 137, and a worker killed before it could write its
+# result leaves none at all. Neither is a failing test, and reading them as one
+# cost hours four times in one night with the cause never in the code
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). What this
+# cannot see is a test that was starved rather than killed and failed in the
+# ordinary way; that one still reads as a failure.
+#
 # JIG_TEST_SHARD=<i>/<n> runs one share of the suite: every n-th test in
 # discovery order, starting at the i-th, so the slow tests of one file spread
 # across shares. JIG_TEST_SKIP=<file::test>[,...] reports the named tests as
@@ -85,7 +94,9 @@ enter_test_env() {
   # and CI sets CI: neither describes the project a test builds. A test that
   # runs a profile directly inherited JIG_VERIFY_FILES naming this
   # repository's changes and took the scoped path (ADR-0041).
-  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED CI
+  # JIG_VERIFY_BUSY_HELD is the run record this suite's own `jig verify` holds
+  # for this clone; a test builds its own project and must queue on its own.
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_BUSY_HELD CI
   # The runtime's own session id names a checkout record when nothing else
   # does (adr-20260924-a-checkout-records-what-is-happening-in-it), so a suite
   # run from inside an agent session would write records a CI run does not —
@@ -136,6 +147,8 @@ run_test() {
     local reason
     reason=$(sed -n 's/^SKIP: //p' "$RESULTS/$idx.log" | tail -n 1)
     printf 'skip %s (%s)\n' "$full" "$reason"
+  elif [ "$rc" -ge 128 ]; then
+    printf 'KILLED %s (signal %s)\n' "$full" "$((rc - 128))"
   else
     printf 'FAIL %s\n' "$full"
     [ "$jobs" -gt 1 ] || sed 's/^/     | /' "$RESULTS/$idx.log"
@@ -206,20 +219,43 @@ fi
 pass=0
 fail=0
 skip=0
+dead=0
 while IFS="$t" read -r -u 4 idx file name full; do
   rc=missing
   [ -f "$RESULTS/$idx.result" ] && IFS="$t" read -r rc _ < "$RESULTS/$idx.result"
-  if [ "$rc" = 0 ]; then
-    pass=$((pass + 1))
-  elif [ "$rc" = 77 ]; then
-    skip=$((skip + 1))
-  else
-    fail=$((fail + 1))
-    if [ "$jobs" -gt 1 ]; then
-      printf '\nFAIL %s\n' "$full"
-      sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
-    fi
-  fi
+  case "$rc" in
+    0) pass=$((pass + 1)) ;;
+    77) skip=$((skip + 1)) ;;
+    # No result file at all, or an empty one: the worker was killed before it
+    # could write its code. The test neither passed nor failed, and it is the
+    # case an overloaded machine produces most often. A torn write that happens
+    # to leave a valid-looking number is not detectable here and reads as that
+    # number — the same honest limit as a starved test that failed normally.
+    missing | '')
+      dead=$((dead + 1))
+      printf '\nNOT COMPLETED %s (no result: the worker did not finish)\n' "$full"
+      ;;
+    *[!0-9]*)
+      fail=$((fail + 1))
+      if [ "$jobs" -gt 1 ]; then
+        printf '\nFAIL %s\n' "$full"
+        sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
+      fi
+      ;;
+    *)
+      if [ "$rc" -ge 128 ]; then
+        dead=$((dead + 1))
+        printf '\nNOT COMPLETED %s (killed by signal %s)\n' "$full" "$((rc - 128))"
+        sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
+      else
+        fail=$((fail + 1))
+        if [ "$jobs" -gt 1 ]; then
+          printf '\nFAIL %s\n' "$full"
+          sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
+        fi
+      fi
+      ;;
+  esac
 done 4< "$list"
 
 # Where the time went: the slowest tests, to the second. Collected before it is
@@ -236,5 +272,12 @@ EOF
   printf 'wall: %ss, %s job(s)\n' "$((SECONDS - start_all))" "$jobs"
 fi
 
-printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
+printf '\n%d passed, %d failed, %d skipped, %d not completed\n' \
+  "$pass" "$fail" "$skip" "$dead"
+# Not completed outranks failed: a run something was killed in is not evidence,
+# so the failures in it cannot be trusted either. Exit 3 means "run it again".
+if [ "$dead" -gt 0 ]; then
+  printf 'tests/run.sh: the run did not finish, so it neither passed nor failed\n'
+  exit 3
+fi
 [ "$fail" -eq 0 ]

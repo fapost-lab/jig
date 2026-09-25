@@ -225,3 +225,69 @@ test_runner_shard_and_skip_still_apply_with_two_jobs() {
   assert_contains "$OUT" "skip a::test_4_keep (JIG_TEST_SKIP)"
   assert_contains "$OUT" "2 passed, 0 failed, 1 skipped"
 }
+
+# --- not completed (a killed test is a third outcome) -----------------------
+# adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass: a test
+# killed by a signal is neither a pass nor a failure. bash reports a child
+# that died on signal N as 128+N. Each test execs a fresh `sh` to kill: a
+# test function runs inside run_test's own `( ... )` subshell, and bash's
+# `$$` there still names the *original* shell process (unlike `$BASHPID`,
+# not available in bash 3.2), so a plain `kill -9 $$` would reach for the
+# outer runner instead of the one process under test.
+
+rn_write_killed_fixture() {
+  cat > root/tests/d.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_dies() { exec sh -c 'kill -9 $$'; }
+EOF
+}
+
+rn_write_fail_and_kill_fixture() {
+  cat > root/tests/e.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_bad() { fail "boom"; }
+test_2_dies() { exec sh -c 'kill -9 $$'; }
+EOF
+}
+
+test_runner_killed_test_is_reported_as_not_completed() {
+  rn_build_suite
+  rn_write_killed_fixture
+
+  rn_run "" "" ""
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "KILLED d::test_1_dies (signal 9)"
+  assert_contains "$OUT" "NOT COMPLETED d::test_1_dies (killed by signal 9)"
+  assert_contains "$OUT" "0 passed, 0 failed, 0 skipped, 1 not completed"
+  assert_contains "$OUT" \
+    "tests/run.sh: the run did not finish, so it neither passed nor failed"
+}
+
+test_runner_not_completed_outranks_failed() {
+  rn_build_suite
+  rn_write_fail_and_kill_fixture
+
+  rn_run "" "" ""
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "FAIL e::test_1_bad"
+  assert_contains "$OUT" "NOT COMPLETED e::test_2_dies (killed by signal 9)"
+  assert_contains "$OUT" "0 passed, 1 failed, 0 skipped, 1 not completed"
+}
+
+test_runner_ordinary_summary_names_zero_not_completed() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" ""
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+}
+
+test_runner_failure_only_summary_still_exits_1() {
+  rn_build_suite
+  rn_write_c_fixture
+
+  rn_run "" "" ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "2 passed, 1 failed, 0 skipped, 0 not completed"
+}

@@ -29,3 +29,10 @@ knowledge.require_frontmatter: true   # `jig knowledge check` fails on missing f
 # CI runs tests/run.sh on Linux and macOS for every pull request (.github/workflows/ci.yml),
 # so a local `jig verify` checks what changed; .ai/verify/shell.map says which tests that is.
 verify.full_run: ci
+
+# verify.busy_ttl: how long a running `jig verify` holds this clone. A second
+# run — here or in any worktree of it — waits for the first instead of
+# competing with it for the machine. Past this age the record is ignored, so
+# raise it if your suite takes longer than this. `0` never waits; in CI the
+# mechanism is off, because parallel jobs there are the point.
+# verify.busy_ttl: 30m

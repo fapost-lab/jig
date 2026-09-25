@@ -14,6 +14,12 @@
 # unless CI is set or --full is given. A project map
 # (.ai/verify/<profile>.map) is parsed here, never in a profile, and handed to
 # profiles declaring `scope: [changed, map]` as JIG_VERIFY_MAPPED.
+#
+# One run per clone, and a run that dies is not a pass
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass): a run
+# takes a record every worktree of the clone can see and waits while another
+# holds it, and a profile that was killed rather than failed is reported as a
+# third outcome, `incomplete`, with exit code 3.
 # bash 3.2 compatible: no associative arrays, no ${var,,}, no mapfile.
 # shellcheck shell=bash
 
@@ -115,6 +121,249 @@ _verify_map_apply() {
   done < "$files"
 }
 
+# --- one run per clone -------------------------------------------------------
+#
+# Eight agents, each obeying "avoid simultaneous duplicate full runs" with one
+# run of its own, produced eight full sets on one machine: load average 364, a
+# set that takes 5-6 minutes alone taking forty, and two reviews stalled at 40
+# and 50 minutes. The rule was written for one actor and says nothing about a
+# population, so nobody broke it. What was missing is a fact the machine can
+# see for itself.
+#
+# Waiting, not refusing: run serially and the eight sets finish at 6, 12, 18 …
+# 48 minutes — seven of the eight answers sooner than under contention, the
+# average at 27 minutes against forty, only the last later by one set's length.
+# What settles it is everything else on the machine: the two reviews that
+# stalled at 40 and 50 minutes were not running a suite, they were queued
+# behind eight of them. A refusal would break CI and honest parallel work; a
+# warning is the same prose that already failed.
+
+# _verify_busy_dir — where the record lives, or nothing.
+#
+# The clone's main checkout, which `jig_config_clone_root` already computes by
+# reading git's own files — one answer from every worktree, no `git` process.
+# ADR-0038 made reading there a named exception to ADR-0008; this extends it to
+# writing, because what is being protected belongs to no checkout: the CPU is
+# one per clone, and the eight runs were in eight different worktrees.
+_verify_busy_dir() {
+  local root
+  root=$(jig_config_clone_root) || return 1
+  [ -n "$root" ] || return 1
+  printf '%s/%s/runtime/verify\n' "$root" "$JIG_AI_DIR"
+}
+
+# _verify_busy_ttl — how long a record still counts, in seconds. `0` is a
+# duration the grammar already spells, and it switches the whole mechanism off:
+# the escape for someone who genuinely wants parallel local runs, without a new
+# flag to learn.
+#
+# One key with a working default, never one a person must fill. The duration
+# grammar is the framework's one (`jig_duration_seconds`), and a mistyped value
+# leaves the default standing rather than taking `jig verify` down.
+_verify_busy_ttl() {
+  local raw seconds
+  raw=$(cfg verify.busy_ttl "30m")
+  seconds=$(jig_duration_seconds "$raw" 2>/dev/null) || seconds=""
+  case "$seconds" in
+    '' | *[!0-9]*) seconds=1800 ;;
+  esac
+  printf '%s\n' "$seconds"
+}
+
+# _verify_busy_mtime <file> — the file's mtime in seconds, or nothing. The same
+# BSD-then-GNU pair the session hook and the checkout record use; with `-f`,
+# GNU stat reads the next argument as a file name and fails, which is what
+# makes the fallback correct rather than lucky.
+_verify_busy_mtime() {
+  stat -f '%m' "$1" 2>/dev/null && return 0
+  stat -c '%Y' "$1" 2>/dev/null && return 0
+  return 1
+}
+
+# _verify_busy_value <file> <key> — the first `<key>: <value>` line, read by the
+# shell alone. The CR is stripped explicitly because `read` keeps one where sed
+# would not, and this record may be written under Windows.
+_verify_busy_value() {
+  local file="$1" key="$2" line
+  [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case "$line" in
+      "$key: "*)
+        printf '%s\n' "${line#"$key": }"
+        return 0
+        ;;
+    esac
+  done < "$file"
+  return 1
+}
+
+# _verify_busy_holder <dir> <ttl> — "<age in seconds> <checkout>" when a live
+# run holds the record, nothing when none does.
+#
+# Two independent tests, and the record is live only when both pass:
+#
+#   1. `kill -0 <pid>` — a shell builtin, not `ps`, which ADR-0002 rules out
+#      and which behaves differently under Git Bash anyway. This is the normal
+#      path: a run killed by the sandbox gives the clone back at the next poll,
+#      and that is exactly the death this task was written about.
+#   2. the record's mtime is within the ttl — the backstop for when (1) is
+#      wrong: another user's process reads as dead (EPERM), a recycled pid
+#      reads as alive. Both errors are bounded. "Wrongly dead" is today's
+#      behaviour; "wrongly alive" waits no longer than the ttl.
+#
+# A record with no readable pid falls back to the ttl alone, so a torn read can
+# only cost a wait, never a wrong start.
+_verify_busy_holder() {
+  local dir="$1" ttl="$2" file mtime now age pid checkout
+  file="$dir/busy/run"
+  [ -f "$file" ] || return 1
+  mtime=$(_verify_busy_mtime "$file") || return 1
+  case "$mtime" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  now=$(date +%s)
+  if [ "$now" -lt "$mtime" ]; then age=0; else age=$((now - mtime)); fi
+  [ "$age" -le "$ttl" ] || return 1
+  pid=$(_verify_busy_value "$file" pid) || pid=""
+  case "$pid" in
+    '' | *[!0-9]*) ;;
+    "$$") return 1 ;;
+    *) kill -0 "$pid" 2>/dev/null || return 1 ;;
+  esac
+  checkout=$(_verify_busy_value "$file" checkout) || checkout=""
+  [ -n "$checkout" ] || checkout="another checkout"
+  printf '%s %s\n' "$age" "$checkout"
+}
+
+# _verify_busy_claim <dir> — take the record, or fail.
+#
+# `mkdir` is the claim. Under ADR-0002 it is the one atomic primitive available
+# on POSIX and in Git Bash alike, and atomicity is the whole point: with a plain
+# flag file, eight waiters wake together when the holder leaves and produce the
+# eight simultaneous sets again. The kernel is the arbiter, so the reclaim of an
+# expired record races safely too.
+#
+# The body is written straight into the claimed directory rather than through a
+# temporary: only the claimant can write there, a reader that catches a partial
+# file falls back to the ttl, and a leftover temporary would make `rmdir` refuse
+# for good.
+_verify_busy_claim() {
+  local dir="$1"
+  mkdir "$dir/busy" 2>/dev/null || return 1
+  printf 'checkout: %s\npid: %s\n' "$JIG_PROJECT" "$$" > "$dir/busy/run" 2>/dev/null || {
+    rmdir "$dir/busy" 2>/dev/null || true
+    return 1
+  }
+  return 0
+}
+
+# _verify_busy_release <dir> — give the record back.
+#
+# The shape ADR-0035 allows `jig spec new`: one named file removed, then
+# `rmdir`, which refuses a directory that is not empty. No `rm -rf` on a
+# computed path anywhere, and the path is checked to be the one this code
+# builds before anything is deleted (RULES.md).
+_verify_busy_release() {
+  local dir="$1"
+  [ -n "$dir" ] || return 0
+  case "$dir" in
+    */"$JIG_AI_DIR"/runtime/verify) ;;
+    *) return 0 ;;
+  esac
+  rm -f "$dir/busy/run" 2>/dev/null || true
+  rmdir "$dir/busy" 2>/dev/null || true
+  return 0
+}
+
+# _verify_busy_acquire — hold the clone for this run, waiting while another has
+# it. Sets JIG_VERIFY_BUSY to the directory when the record is ours, so the
+# EXIT trap gives it back, and prints one line to stdout when a wait happened:
+# the evidence belongs in the report, while the waiting itself goes to stderr,
+# where it cannot become part of output a caller reads.
+#
+# Nothing here may fail `jig verify`. Every path that cannot answer gives up and
+# lets the run go ahead: a record that cannot be taken is a missed serialisation,
+# which is today's behaviour, while a refusal would be a new way to break.
+_verify_busy_acquire() {
+  local dir ttl holder age checkout waited=0 announced=0 said=0 ago futile=0
+
+  # CI parallelism is deliberate and each job has a machine of its own. `CI` is
+  # the signal this command already trusts for `verify.full_run` (ADR-0041), so
+  # the mechanism is off there rather than queueing jobs meant to run at once.
+  [ -z "${CI:-}" ] || return 0
+
+  ttl=$(_verify_busy_ttl)
+  [ "$ttl" -gt 0 ] || return 0
+  dir=$(_verify_busy_dir) || return 0
+  [ -n "$dir" ] || return 0
+
+  # A `jig verify` started by a run that already holds this clone — a suite that
+  # verifies its own project — must not wait for itself.
+  [ "${JIG_VERIFY_BUSY_HELD:-}" != "$dir" ] || return 0
+
+  # A directory that cannot be made at all — a read-only clone root, a
+  # permission the agent does not have — is not a reason to refuse to verify.
+  mkdir -p "$dir" 2>/dev/null || return 0
+
+  while :; do
+    if _verify_busy_claim "$dir"; then
+      JIG_VERIFY_BUSY="$dir"
+      export JIG_VERIFY_BUSY_HELD="$dir"
+      if [ "$waited" -gt 0 ]; then
+        printf 'verify: waited %s for the run in %s\n' \
+          "$(jig_checkout_ago "$waited")" "$checkout"
+      fi
+      return 0
+    fi
+    holder=$(_verify_busy_holder "$dir" "$ttl") || holder=""
+    if [ -z "$holder" ]; then
+      # Nobody live is behind the record: take it back, by the two bounded
+      # deletions above, and let the loop claim it. `mkdir` still decides
+      # between two reclaimers.
+      _verify_busy_release "$dir"
+      # Neither claiming nor reclaiming worked, and nobody is holding it: the
+      # filesystem is answering no, not another run. A few attempts allow for
+      # losing the reclaim race to a neighbour; after that, verify anyway. A
+      # record that cannot be taken is a missed serialisation, which is what
+      # every run did until today — spinning here would be a new way to hang.
+      futile=$((futile + 1))
+      if [ "$futile" -ge 5 ]; then
+        jig_info "verify: cannot take the run record in $dir; running without it"
+        return 0
+      fi
+      continue
+    fi
+    futile=0
+    age=${holder%% *}
+    checkout=${holder#* }
+    ago=$(jig_checkout_ago "$age")
+    if [ "$announced" = 0 ]; then
+      announced=1
+      jig_info "verify: another run holds this clone (in $checkout, started $ago ago); waiting for it"
+      jig_info "  two sets at once make both slower than running them in turn;" \
+        "set verify.busy_ttl: 0 in .ai/config.local.yaml never to wait"
+    elif [ $((waited - said)) -ge 60 ]; then
+      said="$waited"
+      jig_info "verify: still waiting ($(jig_checkout_ago "$waited"))"
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+}
+
+# _verify_cleanup — the one EXIT trap: temporary files and the run record. Its
+# variables are script-global, never `local`, because the trap runs after the
+# function that set them has returned (conventions/shell.md).
+_verify_cleanup() {
+  rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}" 2>/dev/null || true
+  if [ -n "${JIG_VERIFY_BUSY:-}" ]; then
+    _verify_busy_release "$JIG_VERIFY_BUSY"
+    JIG_VERIFY_BUSY=""
+  fi
+  return 0
+}
+
 cmd_verify() {
   jig_require_init
   # shellcheck source=lib/profiles.sh
@@ -131,8 +380,10 @@ cmd_verify() {
   local list_only=0 profile_given=0 profiles_words="" p pdir raw tok
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
   local header="" base_branch base_ref mb map map_ok map_err
+  local incomplete=0
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
+  JIG_VERIFY_BUSY=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --changed) scope=1; explicit=1; shift ;;
@@ -254,15 +505,22 @@ cmd_verify() {
   # fw_pending_rc != 0: pending state unknown (e.g. no source checkout on
   # this machine, domains/install) — proceed and verify the profiles normally.
 
+  # One trap for both the temporary files and the run record: the record has to
+  # come back on every exit, not only on a run that narrowed.
+  trap '_verify_cleanup' EXIT INT TERM
+
   if [ "$scope" = 1 ]; then
     JIG_VERIFY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-files.XXXXXX") \
       || jig_die "verify: cannot create temporary file"
-    trap 'rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}"' EXIT INT TERM
     _verify_changed_files "$base" > "$JIG_VERIFY_TMP"
     nfiles=$(grep -c . < "$JIG_VERIFY_TMP" || true)
   fi
 
   [ -z "$header" ] || printf '%s\n' "$header"
+
+  # Taken here, after every refusal above has had its chance: nobody should
+  # wait for the clone only to be told their arguments were wrong.
+  _verify_busy_acquire
 
   profiles_check_requires
 
@@ -351,13 +609,38 @@ cmd_verify() {
       JIG_VERIFY_MAP_TMP=""
     fi
 
+    # A run that died is neither a pass nor a fail. Exit code 3 is a profile
+    # saying so; 128+N is the profile itself killed by a signal, which no
+    # profile has to be taught — `Killed: 9` and `Terminated: 15` reach every
+    # stack the same way.
     case "$rc" in
       0) pass=$((pass + 1)); printf 'RESULT %s: pass%s\n' "$p" "$note" ;;
       2) skip=$((skip + 1)); printf 'RESULT %s: skip%s\n' "$p" "$note" ;;
-      *) failn=$((failn + 1)); printf 'RESULT %s: fail%s\n' "$p" "$note" ;;
+      3)
+        incomplete=$((incomplete + 1))
+        printf 'RESULT %s: incomplete%s\n' "$p" "$note"
+        ;;
+      *)
+        if [ "$rc" -ge 128 ]; then
+          incomplete=$((incomplete + 1))
+          printf 'RESULT %s: incomplete (killed by signal %d)%s\n' "$p" "$((rc - 128))" "$note"
+        else
+          failn=$((failn + 1))
+          printf 'RESULT %s: fail%s\n' "$p" "$note"
+        fi
+        ;;
     esac
   done
 
-  printf 'verify: %d profiles, %d pass, %d fail, %d skip\n' "$total" "$pass" "$failn" "$skip"
+  printf 'verify: %d profiles, %d pass, %d fail, %d skip, %d incomplete\n' \
+    "$total" "$pass" "$failn" "$skip" "$incomplete"
+  # Incomplete outranks fail: a run something was killed in is not evidence, so
+  # the failures in it cannot be trusted either. Nothing is lost — a real
+  # failure comes back on the next run, and an artefact of an overloaded
+  # machine does not. Exit 3 means "run it again", never "it is broken".
+  if [ "$incomplete" -gt 0 ]; then
+    printf 'verify: the run did not finish, so it neither passed nor failed — run it again\n'
+    return 3
+  fi
   [ "$failn" -eq 0 ]
 }

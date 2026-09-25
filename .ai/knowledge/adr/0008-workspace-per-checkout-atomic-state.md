@@ -64,3 +64,24 @@ write the same `state` file.
 > its clone, found through git's own `.git` and `commondir` files (ADR-0038). It is a setting
 > of the clone, not task data, and it is only read — nothing is written, moved or owned
 > through that path. Workspaces stay exactly as above: no lookup, no shared location.
+
+> **Amendment (2026-09-25).** A third named exception, and the first that **writes**: state
+> that belongs to the clone rather than to any checkout lives in the main checkout's
+> gitignored `.ai/runtime/`, reached the same way the second exception reads
+> `.ai/config.local.yaml` — through git's own `.git` and `commondir` files
+> (`jig_config_clone_root`). Two things use it: the live status page, which has been written
+> there since 2026-09-22 (adr-20260922-the-status-page-stays-current-without-a-server), and
+> `jig verify`'s run record
+> (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). The test that admits
+> something here is not "is it convenient" but **whose it is**: one page per clone and one
+> test run per clone are facts about the clone, because the reader and the CPU are one for
+> all its worktrees, whereas a workspace is a fact about the checkout that filed it.
+> Everything such a path holds is gitignored, derived, and rebuilt if it is lost; nothing
+> here is task data, and workspaces stay exactly as above — no lookup, no shared location.
+>
+> This is narrower than it looks, and the case that shows the line is
+> adr-20260924-a-checkout-records-what-is-happening-in-it, which considered a shared
+> per-clone directory for *its* record and rejected it. That record answers "what is
+> happening in **this checkout**", so a shared home would have made it answer the wrong
+> question. The rejection is about the record's subject, not about the location, and it
+> stands.
