@@ -132,6 +132,18 @@ dirty-tree refusal: start this task in its own worktree. There is no `--force` a
 `--here`: ADR-0029 records that the dirty-tree refusal "was overridden with `--force`
 every time".
 
+> **That refusal is decided here and built in a successor task.** Said plainly, because the
+> alternative is a reader looking for it in `task_start` and concluding the decision was
+> never implemented. `scripts/lib/task.sh` is held by another branch that changes
+> `task_start` itself, with six tasks queued behind it, and the two halves of this decision
+> are separable: the observing half answers "is this checkout busy", which is worth having
+> before and regardless of whether anything refuses on the answer. What remains is one
+> condition in `task_start`, reading `jig_checkout_busy <id-being-started>` — which already
+> excludes the task being started, this session's own id, expired records, work that lives
+> in another worktree and leftover temporaries — and refusing with the worktree named. No
+> other part of this decision waits on it, and the reading side ships without it: until then
+> the record is reported by `jig status` and nothing refuses.
+
 **A record's freshness window is `checkout.busy_ttl`, 12 hours by default**, read through
 the one duration grammar the framework already has (`jig_duration_seconds`); an
 unparseable value leaves the default standing rather than taking the command down. Long on
