@@ -2091,8 +2091,20 @@ test_task_new_in_a_worktree_is_filed_where_every_other_task_is() {
   # And it outlives the tree it was written in. `git worktree remove` without
   # --force deletes ignored files without a word, so before this the statement
   # went with the worktree and nothing said so.
-  git worktree remove "$wt" || fail "the worktree could not be removed"
-  [ ! -d "$wt" ] || fail "the worktree is still there"
+  run git worktree remove "$wt"
+  [ "$RC" -eq 0 ] || fail "git worktree remove refused the worktree (rc=$RC): $OUT"
+  if [ -d "$wt" ]; then
+    fail "the worktree is still there
+    remove: rc=$RC out=[$OUT]
+    still listed by git: [$(git worktree list --porcelain | tr '\n' '|')]
+    left in the tree: [$(ls -a "$wt" 2>&1 | tr '\n' ' ')]
+    left in .ai/workspace: [$(ls -a "$wt/.ai/workspace" 2>&1 | tr '\n' ' ')]
+    the tasks path there: -L=$(if [ -L "$wt/.ai/workspace/tasks" ]; then echo yes; else echo no; fi) -d=$(if [ -d "$wt/.ai/workspace/tasks" ]; then echo yes; else echo no; fi) readlink=[$(readlink "$wt/.ai/workspace/tasks" 2>&1)]
+    the owner's tasks: [$(ls -a .ai/workspace/tasks 2>&1 | tr '\n' ' ')]
+    the owner's T-1 state: $(if [ -f .ai/workspace/tasks/T-1/state ]; then echo present; else echo MISSING; fi)
+    the owner's T-2 state: $(if [ -f .ai/workspace/tasks/T-2/state ]; then echo present; else echo MISSING; fi)
+    task show T-2 says: [$(jig task show T-2 2>&1 | head -2 | tr '\n' ' ')]"
+  fi
   assert_contains "$(jig task show T-2)" "task_id: T-2"
 }
 
