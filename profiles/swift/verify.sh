@@ -26,14 +26,6 @@ set -o pipefail
 
 jp_begin swift
 
-if ! command -v swift >/dev/null 2>&1; then
-  jp_skip "build" "swift not found on PATH"
-  jp_skip "test" "swift not found on PATH"
-  jp_end
-fi
-
-v=$(jp_version swift --version)
-
 # _swift_builtin <path> — ALL for anything but documentation; nothing for a
 # path that cannot affect a build or a test.
 _swift_builtin() {
@@ -43,6 +35,31 @@ _swift_builtin() {
   esac
   return 0
 }
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if ! command -v swift >/dev/null 2>&1; then
+    jp_plan build skip "swift not found on PATH"
+    jp_plan test skip "swift not found on PATH"
+  else
+    selection=$(jp_decide _swift_builtin)
+    if jp_scoped && [ -z "$selection" ]; then
+      jp_plan build skip "only documentation changed"
+      jp_plan test skip "only documentation changed"
+    else
+      jp_plan build full "swift checks cannot narrow by file"
+      jp_plan test full "swift checks cannot narrow by file"
+    fi
+  fi
+  exit 0
+fi
+
+if ! command -v swift >/dev/null 2>&1; then
+  jp_skip "build" "swift not found on PATH"
+  jp_skip "test" "swift not found on PATH"
+  jp_end
+fi
+
+v=$(jp_version swift --version)
 
 SWIFT_NOTE=""
 SWIFT_SKIP=0

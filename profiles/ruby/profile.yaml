@@ -2,4 +2,4 @@
 name: ruby
 description: Ruby projects (rubocop, rspec or minitest, all through bundle exec).
 detect: [Gemfile]
-scope: [changed, map]
+scope: [changed, map, explain]

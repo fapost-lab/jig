@@ -70,12 +70,34 @@ _rb_test_check_name() {
 RB_TEST=$(_rb_test_check_name)
 
 if ! command -v bundle >/dev/null 2>&1; then
+  if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+    jp_plan rubocop skip "bundle not found on PATH"
+    jp_plan "$RB_TEST" skip "bundle not found on PATH"
+    exit 0
+  fi
   jp_skip rubocop "bundle not found on PATH"
   jp_skip "$RB_TEST" "bundle not found on PATH"
   jp_end
 fi
 
 # --- rubocop -------------------------------------------------------------
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if [ ! -f Gemfile.lock ] || ! _rb_gem_locked rubocop; then
+    jp_plan rubocop skip "rubocop not listed in Gemfile.lock"
+  elif jp_scoped && jp_changed_any .rubocop.yml; then
+    jp_plan rubocop full ".rubocop.yml changed"
+  elif jp_scoped; then
+    files=$(jp_changed rb rake)
+    if [ -z "$files" ]; then
+      jp_plan rubocop skip "no changed .rb or .rake files"
+    else
+      jp_plan rubocop filtered "changed files: $(printf '%s\n' "$files" | paste -sd, -)"
+    fi
+  else
+    jp_plan rubocop full "full scope"
+  fi
+else
 
 if [ ! -f Gemfile.lock ]; then
   jp_skip rubocop "no Gemfile.lock"
@@ -104,6 +126,7 @@ else
   else
     jp_run rubocop "$v" bundle exec rubocop
   fi
+fi
 fi
 
 # --- rspec / minitest ------------------------------------------------------
@@ -199,6 +222,35 @@ _rb_run_narrowed() {
   fi
   return 0
 }
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  case "$RB_TEST" in
+    rspec)
+      filters=$(jp_decide _rb_builtin_test)
+      ;;
+    minitest)
+      if _rb_minitest_via_rake && ! _rb_minitest_via_rails; then
+        jp_plan minitest full "rake test cannot narrow by file"
+        exit 0
+      fi
+      filters=$(jp_decide _rb_builtin_test)
+      ;;
+    *)
+      jp_plan test skip "no rspec or minitest runner found"
+      exit 0
+      ;;
+  esac
+  if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if [ ! -e "$f" ]; then filters=ALL; break; fi
+    done <<EOF
+$filters
+EOF
+  fi
+  jp_plan_selection "$RB_TEST" "$filters" "test files"
+  exit 0
+fi
 
 case "$RB_TEST" in
   rspec)

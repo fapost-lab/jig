@@ -109,9 +109,18 @@ actually read, use `jig context acknowledge`; `jig context guard` checks that re
 ## Run the project's checks
 
 ```bash
+jig verify --explain
 jig verify --changed
 jig knowledge check
 ```
+
+`--explain` previews each check as full, filtered, skipped or conditional without running
+the checks or waiting for another verification. It uses the same scope choice as a plain
+`jig verify`; combine it with `--changed`, `--full`, `--base` or `--profile` to preview
+those choices. Conditional means a tool such as Go or Jest would have to inspect the
+project before the final set is known, so a full run remains possible. The preview is
+not verification: exit 0 means a plan was printed, exit 2 means an installed profile
+could not explain its plan, and exit 1 means the preview failed.
 
 `--changed` requests checks for the changed files. Each profile says whether it narrowed its work
 or ran the full check. A plain `jig verify` follows the project's `verify.full_run` setting.

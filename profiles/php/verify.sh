@@ -104,6 +104,56 @@ _php_builtin() {
 
 # --- phpunit / pest ------------------------------------------------------
 
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  test_bin=$(_php_tool phpunit)
+  test_check=phpunit
+  if [ -z "$test_bin" ]; then
+    test_bin=$(_php_tool pest)
+    test_check=pest
+  fi
+  if [ -z "$test_bin" ]; then
+    jp_plan phpunit skip "$PHP_WHERE"
+  else
+    filters=$(jp_decide _php_builtin)
+    if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ ! -e "$f" ]; then filters=ALL; break; fi
+      done <<EOF
+$filters
+EOF
+    fi
+    jp_plan_selection "$test_check" "$filters" "test files"
+  fi
+
+  for check in phpstan pint; do
+    tool=$(_php_tool "$check")
+    if [ -z "$tool" ]; then
+      jp_plan "$check" skip "$PHP_WHERE"
+    elif [ "$check" = phpstan ] && jp_scoped && jp_changed_any phpstan.neon phpstan.neon.dist; then
+      jp_plan "$check" full "phpstan configuration changed"
+    elif jp_scoped; then
+      files=$(jp_changed php)
+      if [ -z "$files" ]; then
+        jp_plan "$check" skip "no changed .php files"
+      else
+        jp_plan "$check" filtered "changed .php files: $(printf '%s\n' "$files" | paste -sd, -)"
+      fi
+    else
+      jp_plan "$check" full "full scope"
+    fi
+  done
+
+  if ! command -v composer >/dev/null 2>&1; then
+    jp_plan "composer validate" skip "composer not found in PATH"
+  elif jp_scoped && ! jp_changed_any composer.json composer.lock; then
+    jp_plan "composer validate" skip "composer.json/composer.lock not changed"
+  else
+    jp_plan "composer validate" full "manifest validation"
+  fi
+  exit 0
+fi
+
 test_bin=$(_php_tool phpunit)
 test_check=phpunit
 if [ -z "$test_bin" ]; then

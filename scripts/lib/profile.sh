@@ -31,6 +31,40 @@ JP_RAN=0
 JP_SCOPED=0
 JP_INCOMPLETE=0
 
+# jp_plan <check> <state> <reason> — one line of the optional explain
+# protocol. Keep it separate from jp_run/jp_skip: installed user profiles
+# depend on their existing meanings and exit codes.
+jp_plan() {
+  local check="$1" state="$2" reason="$3"
+  if [ "$JP_SCOPED" = 1 ] && [ ! -s "$JIG_VERIFY_FILES" ]; then
+    state=skip
+    reason="scope: changed, no changed files"
+  fi
+  case "$state" in
+    full|filtered|skip|conditional) ;;
+    *) return 1 ;;
+  esac
+  reason=${reason//$'\n'/, }
+  printf 'PLAN %s: %s: %s (%s)\n' "$JP_PROFILE" "$check" "$state" "$reason"
+}
+
+# jp_plan_selection <check> <selection> <label> — a common shape for checks
+# whose narrowed filters come from jp_decide. Callers handle missing filters
+# and tool-specific uncertainty before using this helper.
+jp_plan_selection() {
+  local check="$1" selection="$2" label="$3" listed
+  if ! jp_scoped; then
+    jp_plan "$check" full "full scope"
+  elif [ -z "$selection" ]; then
+    jp_plan "$check" skip "no changed file maps to this check"
+  elif [ "$selection" = ALL ]; then
+    jp_plan "$check" full "changed paths require the full set"
+  else
+    listed=$(printf '%s\n' "$selection" | paste -sd, -)
+    jp_plan "$check" filtered "$label: $listed"
+  fi
+}
+
 # jp_begin <profile> — start a profile run: name it and read the scope.
 jp_begin() {
   JP_PROFILE="$1"

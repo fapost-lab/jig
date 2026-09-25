@@ -30,7 +30,7 @@ set -o pipefail
 
 jp_begin rust
 
-if ! command -v cargo >/dev/null 2>&1; then
+if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ] && ! command -v cargo >/dev/null 2>&1; then
   jp_skip "fmt" "cargo not found on PATH"
   jp_skip "clippy" "cargo not found on PATH"
   jp_skip "test" "cargo not found on PATH"
@@ -185,6 +185,32 @@ $c
 }
 
 # --- cargo fmt ---------------------------------------------------------------
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    jp_plan fmt skip "cargo not found on PATH"
+    jp_plan clippy skip "cargo not found on PATH"
+    jp_plan test skip "cargo not found on PATH"
+    exit 0
+  fi
+  if ! _rust_scope; then
+    jp_plan fmt skip "$RUST_SKIP_REASON"
+    jp_plan clippy skip "$RUST_SKIP_REASON"
+    jp_plan test skip "$RUST_SKIP_REASON"
+  else
+    if [ -n "$RUST_ARGS" ]; then
+      scope_state=filtered
+      scope_reason="crates $(printf '%s\n' "$RUST_ARGS" | paste -sd, -)"
+    else
+      scope_state=full
+      scope_reason="full crate set"
+    fi
+    jp_plan fmt conditional "$scope_state if rustfmt is installed; otherwise skip; component probe not run"
+    jp_plan clippy conditional "$scope_state if clippy is installed; otherwise skip; component probe not run"
+    jp_plan test "$scope_state" "$scope_reason"
+  fi
+  exit 0
+fi
 
 if cargo fmt --version >/dev/null 2>&1; then
   v=$(jp_version cargo fmt --version)

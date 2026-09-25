@@ -207,6 +207,59 @@ _shell_test_names() {
 
 # --- shellcheck --------------------------------------------------------------
 
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  # shell is older than the shared profile library. Source it only for the
+  # new plan format; the ordinary verification path keeps its own verdicts.
+  # shellcheck source=../../scripts/lib/profile.sh
+  . "$(dirname "$0")/../../scripts/lib/profile.sh"
+  jp_begin shell
+
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    jp_plan shellcheck skip "shellcheck not found"
+  elif [ "$scoped" = 1 ] && grep -qE '(^|/)\.shellcheckrc$' "$JIG_VERIFY_FILES"; then
+    scripts=$(_shell_all_scripts)
+    if [ -z "$scripts" ]; then
+      jp_plan shellcheck skip "no shell scripts found"
+    else
+      jp_plan shellcheck full ".shellcheckrc changed; whole script set"
+    fi
+  elif [ "$scoped" = 1 ]; then
+    scripts=$(_shell_changed_scripts)
+    if [ -z "$scripts" ]; then
+      jp_plan shellcheck skip "no changed shell scripts"
+    else
+      jp_plan shellcheck filtered "changed scripts: $(printf '%s\n' "$scripts" | paste -sd, -)"
+    fi
+  else
+    scripts=$(_shell_all_scripts)
+    if [ -z "$scripts" ]; then
+      jp_plan shellcheck skip "no shell scripts found"
+    else
+      jp_plan shellcheck full "full script set"
+    fi
+  fi
+
+  if [ ! -x tests/run.sh ]; then
+    jp_plan tests/run.sh skip "not found or not executable"
+  elif [ "$scoped" = 0 ]; then
+    jp_plan tests/run.sh full "full scope"
+  else
+    filters=$(_shell_test_filters | LC_ALL=C sort -u)
+    case $'\n'"$filters"$'\n' in *$'\n'ALL$'\n'*) filters=ALL ;; esac
+    if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+      names=$(_shell_test_names)
+      while IFS= read -r filter; do
+        [ -n "$filter" ] || continue
+        case "$names" in *"$filter"*) ;; *) filters=ALL; break ;; esac
+      done <<EOF
+$filters
+EOF
+    fi
+    jp_plan_selection tests/run.sh "$filters" "test filters"
+  fi
+  exit 0
+fi
+
 if command -v shellcheck >/dev/null 2>&1; then
   # Every shellcheck verdict names the version that produced it. Rule sets
   # move between releases — SC2015 fires in 0.10.0 and not in 0.11.0 — so the

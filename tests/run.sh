@@ -159,7 +159,7 @@ enter_test_env() {
   # repository's changes and took the scoped path (ADR-0041).
   # JIG_VERIFY_BUSY_HELD is the run record this suite's own `jig verify` holds
   # for this clone; a test builds its own project and must queue on its own.
-  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_BUSY_HELD CI
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_EXPLAIN JIG_VERIFY_BUSY_HELD CI
   # The runtime's own session id names a checkout record when nothing else
   # does (adr-20260924-a-checkout-records-what-is-happening-in-it), so a suite
   # run from inside an agent session would write records a CI run does not —

@@ -212,6 +212,45 @@ $(_go_reverse_dependents "$targets" "$depmap")"
 
 # --- tool --------------------------------------------------------------------
 
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if ! command -v go >/dev/null 2>&1; then
+    jp_plan vet skip "go not found in PATH"
+    jp_plan test skip "go not found in PATH"
+    exit 0
+  fi
+  pkg_patterns=$(jp_decide _go_builtin)
+  if ! jp_scoped; then
+    jp_plan vet full "full scope"
+    jp_plan test full "full scope"
+  elif [ -z "$pkg_patterns" ]; then
+    jp_plan vet skip "no changed file maps to a package"
+    jp_plan test skip "no changed file maps to a package"
+  elif [ "$pkg_patterns" = ALL ]; then
+    jp_plan vet full "module-wide change"
+    jp_plan test full "module-wide change"
+  else
+    missing=""
+    while IFS= read -r pattern; do
+      [ -n "$pattern" ] || continue
+      dir=$(_go_dir_of_pattern "$pattern")
+      if ! _go_pkg_has_go_files "$dir"; then
+        missing="$pattern"
+        break
+      fi
+    done <<EOF
+$pkg_patterns
+EOF
+    if [ -n "$missing" ]; then
+      jp_plan vet full "package $missing has no .go files"
+      jp_plan test full "package $missing has no .go files"
+    else
+      jp_plan_selection vet "$pkg_patterns" "packages"
+      jp_plan test conditional "changed packages: $(printf '%s\n' "$pkg_patterns" | paste -sd, -); importers require go list; full set possible"
+    fi
+  fi
+  exit 0
+fi
+
 go=""
 if command -v go >/dev/null 2>&1; then
   go=$(command -v go)

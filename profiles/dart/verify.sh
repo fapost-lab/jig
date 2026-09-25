@@ -38,6 +38,70 @@ if _dart_is_flutter; then
   DART_RUNNER=flutter
 fi
 
+# The same mapping is used by the run and by the preliminary plan.
+_dart_builtin_test() {
+  local f="$1" rest
+  if jp_path_matches "$f" "$DART_ALL_GLOBS"; then
+    printf 'ALL\n'
+    return 0
+  fi
+  case "$f" in
+    *.md|*.rst|docs/*|.ai/*) return 0 ;;
+  esac
+  case "$f" in
+    *.dart) ;;
+    *) printf 'ALL\n'; return 0 ;;
+  esac
+  case "$f" in
+    *_test.dart) printf '%s\n' "$f"; return 0 ;;
+  esac
+  case "$f" in
+    lib/*)
+      rest=${f#lib/}
+      rest=${rest%.dart}
+      printf 'test/%s_test.dart\n' "$rest"
+      ;;
+    *) printf 'ALL\n' ;;
+  esac
+  return 0
+}
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  for check in analyze format; do
+    tool="$DART_RUNNER"
+    if [ "$check" = format ]; then tool=dart; fi
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      jp_plan "$check" skip "$tool not found on PATH"
+    elif jp_scoped && jp_changed_any pubspec.yaml pubspec.lock analysis_options.yaml; then
+      jp_plan "$check" full "pubspec or analysis options changed"
+    elif jp_scoped; then
+      files=$(jp_changed dart)
+      if [ -z "$files" ]; then
+        jp_plan "$check" skip "no changed .dart files"
+      else
+        jp_plan "$check" filtered "changed .dart files: $(printf '%s\n' "$files" | paste -sd, -)"
+      fi
+    else
+      jp_plan "$check" full "full scope"
+    fi
+  done
+  if ! command -v "$DART_RUNNER" >/dev/null 2>&1; then
+    jp_plan test skip "$DART_RUNNER not found on PATH"
+  else
+    filters=$(jp_decide _dart_builtin_test)
+    if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ ! -e "$f" ]; then filters=ALL; break; fi
+      done <<EOF
+$filters
+EOF
+    fi
+    jp_plan_selection test "$filters" "test files"
+  fi
+  exit 0
+fi
+
 # --- analyze ---------------------------------------------------------------
 
 if ! command -v "$DART_RUNNER" >/dev/null 2>&1; then
@@ -100,37 +164,6 @@ else
 fi
 
 # --- test --------------------------------------------------------------------
-
-# _dart_builtin_test <path> — the tests a changed path needs: itself for a
-# *_test.dart file, test/<rest>_test.dart for a changed lib/<rest>.dart, ALL
-# for a project-wide file or anything that maps to nothing, nothing for
-# documentation.
-_dart_builtin_test() {
-  local f="$1" rest
-  if jp_path_matches "$f" "$DART_ALL_GLOBS"; then
-    printf 'ALL\n'
-    return 0
-  fi
-  case "$f" in
-    *.md|*.rst|docs/*|.ai/*) return 0 ;;
-  esac
-  case "$f" in
-    *.dart) ;;
-    *) printf 'ALL\n'; return 0 ;;
-  esac
-  case "$f" in
-    *_test.dart) printf '%s\n' "$f"; return 0 ;;
-  esac
-  case "$f" in
-    lib/*)
-      rest=${f#lib/}
-      rest=${rest%.dart}
-      printf 'test/%s_test.dart\n' "$rest"
-      ;;
-    *) printf 'ALL\n' ;;
-  esac
-  return 0
-}
 
 if ! command -v "$DART_RUNNER" >/dev/null 2>&1; then
   jp_skip test "$DART_RUNNER not found on PATH"

@@ -2,4 +2,4 @@
 name: go
 description: Go modules (go vet, go test from the module's own toolchain).
 detect: [go.mod]
-scope: [changed, map]
+scope: [changed, map, explain]

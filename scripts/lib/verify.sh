@@ -399,10 +399,10 @@ cmd_verify() {
   # entirely; an entirely empty value (`--profile ''`) is checked up front
   # since piping an empty string through `tr`/`read` yields zero lines, not
   # one empty line, and would otherwise be dropped rather than rejected.
-  local list_only=0 profile_given=0 profiles_words="" p pdir raw tok
+  local list_only=0 explain=0 profile_given=0 profiles_words="" p pdir raw tok
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
   local header="" base_branch base_ref mb map map_ok map_err
-  local incomplete=0 covered=0
+  local incomplete=0 covered=0 explained=0 unknown=0 plan_output plan_bad
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
   JIG_VERIFY_BUSY=""
@@ -431,10 +431,15 @@ cmd_verify() {
         shift 2
         ;;
       --list) list_only=1; shift ;;
+      --explain) explain=1; shift ;;
       *) jig_die "verify: unknown argument: $1" ;;
     esac
   done
   profiles_words="${profiles_words# }"
+
+  if [ "$list_only" = 1 ] && [ "$explain" = 1 ]; then
+    jig_die "verify: --list cannot be combined with --explain"
+  fi
 
   [ "$profile_given" = 1 ] || profiles_words=$(profiles_active)
 
@@ -542,7 +547,11 @@ cmd_verify() {
 
   # Taken here, after every refusal above has had its chance: nobody should
   # wait for the clone only to be told their arguments were wrong.
-  _verify_busy_acquire
+  if [ "$explain" = 0 ]; then
+    _verify_busy_acquire
+  else
+    printf 'verify: plan only — no checks have run\n'
+  fi
 
   profiles_check_requires
 
@@ -552,8 +561,13 @@ cmd_verify() {
     pdir=$(profiles_dir "$installed_dir" "$p")
 
     if [ ! -d "$pdir" ]; then
-      printf 'FAIL %s: not installed (run jig upgrade)\n' "$p"
-      failn=$((failn + 1))
+      if [ "$explain" = 1 ]; then
+        printf 'PLAN %s: unknown (not installed; run jig upgrade)\n' "$p"
+        unknown=$((unknown + 1))
+      else
+        printf 'FAIL %s: not installed (run jig upgrade)\n' "$p"
+        failn=$((failn + 1))
+      fi
       continue
     fi
 
@@ -568,8 +582,19 @@ cmd_verify() {
     fi
 
     if [ ! -f "$pdir/verify.sh" ]; then
-      printf 'SKIP %s: no verify.sh\n' "$p"
-      skip=$((skip + 1))
+      if [ "$explain" = 1 ]; then
+        printf 'PLAN %s: unknown (no verify.sh)\n' "$p"
+        unknown=$((unknown + 1))
+      else
+        printf 'SKIP %s: no verify.sh\n' "$p"
+        skip=$((skip + 1))
+      fi
+      continue
+    fi
+
+    if [ "$explain" = 1 ] && ! profiles_supports "$pdir" explain; then
+      printf 'PLAN %s: unknown (profile does not support explain)\n' "$p"
+      unknown=$((unknown + 1))
       continue
     fi
 
@@ -584,7 +609,7 @@ cmd_verify() {
       fi
     fi
 
-    if [ "$scope_ok" = 1 ] && [ "$nfiles" -eq 0 ]; then
+    if [ "$scope_ok" = 1 ] && [ "$nfiles" -eq 0 ] && [ "$explain" = 0 ]; then
       skip=$((skip + 1))
       printf 'RESULT %s: skip (scope: changed, no changed files)\n' "$p"
       continue
@@ -594,12 +619,17 @@ cmd_verify() {
     # the same decisions. A broken map fails this profile without running it
     # — a line silently skipped would narrow the checks the wrong way.
     map_ok=0
-    if [ "$scope_ok" = 1 ] && profiles_supports "$pdir" map; then
+    if [ "$scope_ok" = 1 ] && [ "$nfiles" -gt 0 ] && profiles_supports "$pdir" map; then
       map="$JIG_AI_DIR/verify/$p.map"
       if [ -f "$JIG_PROJECT/$map" ]; then
         if ! map_err=$(_verify_map_check "$JIG_PROJECT/$map"); then
-          failn=$((failn + 1))
-          printf 'RESULT %s: fail (map %s:%s)\n' "$p" "$map" "$map_err"
+          if [ "$explain" = 1 ]; then
+            failn=$((failn + 1))
+            printf 'PLAN %s: error (map %s:%s)\n' "$p" "$map" "$map_err"
+          else
+            failn=$((failn + 1))
+            printf 'RESULT %s: fail (map %s:%s)\n' "$p" "$map" "$map_err"
+          fi
           continue
         fi
         JIG_VERIFY_MAP_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-map.XXXXXX") \
@@ -619,19 +649,35 @@ cmd_verify() {
     # from Windows (or by any checkout that lost the executable bit, e.g.
     # `upgrade`'s keep-modified path copying a user file) has mode 100644,
     # and the result of a check must not depend on file mode.
-    if [ "$map_ok" = 1 ]; then
+    if [ "$explain" = 1 ]; then
+      if [ "$map_ok" = 1 ]; then
+        plan_output=$( cd "$JIG_PROJECT" \
+          && JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
+             JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" bash "$pdir/verify.sh" )
+      elif [ "$scope_ok" = 1 ]; then
+        plan_output=$( cd "$JIG_PROJECT" \
+          && unset JIG_VERIFY_MAPPED \
+          && JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
+             bash "$pdir/verify.sh" )
+      else
+        plan_output=$( cd "$JIG_PROJECT" \
+          && unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
+          && JIG_VERIFY_EXPLAIN=1 bash "$pdir/verify.sh" )
+      fi
+    elif [ "$map_ok" = 1 ]; then
       ( cd "$JIG_PROJECT" \
+        && unset JIG_VERIFY_EXPLAIN \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
            JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" \
            bash "$pdir/verify.sh" )
     elif [ "$scope_ok" = 1 ]; then
       ( cd "$JIG_PROJECT" \
-        && unset JIG_VERIFY_MAPPED \
+        && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_MAPPED \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
            bash "$pdir/verify.sh" )
     else
       ( cd "$JIG_PROJECT" \
-        && unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
+        && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
         && bash "$pdir/verify.sh" )
     fi
     rc=$?
@@ -639,6 +685,19 @@ cmd_verify() {
     if [ "$map_ok" = 1 ]; then
       rm -f "$JIG_VERIFY_MAP_TMP"
       JIG_VERIFY_MAP_TMP=""
+    fi
+
+    if [ "$explain" = 1 ]; then
+      plan_bad=$(printf '%s\n' "$plan_output" \
+        | grep -vE "^PLAN $p: .+: (full|filtered|skip|conditional) \\(.+\\)$") || plan_bad=""
+      if [ "$rc" -ne 0 ] || [ -z "$plan_output" ] || [ -n "$plan_bad" ]; then
+        printf 'PLAN %s: error (profile explain contract failed)\n' "$p"
+        failn=$((failn + 1))
+      else
+        printf '%s\n' "$plan_output"
+        explained=$((explained + 1))
+      fi
+      continue
     fi
 
     # A run that died is neither a pass nor a fail. Exit code 3 is a profile
@@ -663,6 +722,14 @@ cmd_verify() {
         ;;
     esac
   done
+
+  if [ "$explain" = 1 ]; then
+    printf 'verify: %d profiles explained, %d unknown, %d error; no checks ran\n' \
+      "$explained" "$unknown" "$failn"
+    if [ "$failn" -gt 0 ] || [ "$total" -eq 0 ]; then return 1; fi
+    if [ "$unknown" -gt 0 ]; then return 2; fi
+    return 0
+  fi
 
   printf 'verify: %d profiles, %d pass, %d fail, %d skip, %d incomplete\n' \
     "$total" "$pass" "$failn" "$skip" "$incomplete"

@@ -2,4 +2,4 @@
 name: jvm
 description: JVM projects on Gradle or Maven (Gradle `check`, Maven `test`; project wrapper first).
 detect: [build.gradle, build.gradle.kts, settings.gradle, settings.gradle.kts, pom.xml]
-scope: [changed, map]
+scope: [changed, map, explain]

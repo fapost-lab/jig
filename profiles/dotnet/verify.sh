@@ -56,15 +56,24 @@ _dotnet_always_all_changed() {
 DOTNET_WHERE="not found on PATH"
 
 if ! command -v dotnet >/dev/null 2>&1; then
+  if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+    jp_plan format skip "$DOTNET_WHERE"
+    jp_plan test skip "$DOTNET_WHERE"
+    exit 0
+  fi
   jp_skip "format" "$DOTNET_WHERE"
   jp_skip "test" "$DOTNET_WHERE"
   jp_end
 fi
 
 dotnet=$(command -v dotnet)
-v=$(jp_version "$dotnet" --version)
+if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ]; then
+  v=$(jp_version "$dotnet" --version)
+fi
 
 # --- format --------------------------------------------------------------------
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ]; then
 
 if jp_scoped && ! _dotnet_always_all_changed; then
   files=$(jp_changed cs fs vb)
@@ -86,6 +95,7 @@ elif jp_scoped; then
   jp_run "format" "$v, scope: sln/build config changed, whole project" "$dotnet" format --verify-no-changes
 else
   jp_run "format" "$v" "$dotnet" format --verify-no-changes
+fi
 fi
 
 # --- test ------------------------------------------------------------------
@@ -183,6 +193,32 @@ _dotnet_test() {
   if [ "$failed" = 0 ]; then jp_pass "test" "$note"; else jp_fail "test" "$note"; fi
   return 0
 }
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if jp_scoped && _dotnet_always_all_changed; then
+    jp_plan format full "solution or build configuration changed"
+  elif jp_scoped; then
+    files=$(jp_changed cs fs vb)
+    if [ -z "$files" ]; then
+      jp_plan format skip "no changed .cs/.fs/.vb files"
+    else
+      jp_plan format filtered "changed files: $(printf '%s\n' "$files" | paste -sd, -)"
+    fi
+  else
+    jp_plan format full "full scope"
+  fi
+  filters=$(jp_decide _dotnet_builtin)
+  if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if [ ! -e "$f" ]; then filters=ALL; break; fi
+    done <<EOF
+$filters
+EOF
+  fi
+  jp_plan_selection test "$filters" "test projects"
+  exit 0
+fi
 
 if ! jp_scoped; then
   _dotnet_test "$v"

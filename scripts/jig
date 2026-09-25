@@ -71,7 +71,7 @@ Usage: jig <command> [args]
   context resolve [...]          required documents; --stage, --no-task, --catalog
   context pending|guard [...]    knowledge required but not yet acknowledged
   context acknowledge [...]      record documents as read
-  verify                         run active profiles' checks
+  verify                         run active profiles' checks (or preview with --explain)
   knowledge check                validate .ai/knowledge
   knowledge new <type> <slug>    create a knowledge document (jig knowledge for types)
   knowledge paths [...]          report or maintain documents' paths coverage

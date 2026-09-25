@@ -62,6 +62,16 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 - A new capability gets a name in `profile.yaml`'s `scope` list and is passed only to
   profiles that name it. Adding a capability that older profiles could observe by default
   would break profiles written before it existed.
+- `jig verify --explain` asks a profile for a plan only when it declares `scope: [..., explain]`.
+  A profile in this mode MUST name every check as full, filtered, skipped or conditional;
+  a conditional answer MUST name a possible full run. It MUST NOT run a project tool,
+  probe its version or change the project. The coordinator MUST NOT take the clone's
+  busy record, run an older profile lacking the capability, or read a plan as a check's
+  verdict. A missing plan is an error, not a successful preview. The existing
+  `jp_*` run and verdict functions retain their meanings for installed user profiles.
+  Where a profile has separate plan and run branches, a test MUST compare their check
+  names and skip decisions on the same inputs, so a changed run branch cannot leave
+  a green but blind preview.
 - **A run that dies without a failure is not a pass, so it is not claimed as one.** `Killed: 9`
   and `Terminated: 15` reach a waiting process as 128+N, and until they had an outcome of their
   own they were indistinguishable from a failing test. On one night that misreading cost four
@@ -105,7 +115,7 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.
 - **A test suite run by a narrowed profile must not pass the scope on.** `tests/run.sh`
-  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_BUSY_HELD`
+  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_EXPLAIN`, `JIG_VERIFY_BUSY_HELD`
   and `CI` for every test:
   a test that runs a profile directly otherwise takes the scope of the run that started the
   suite.
