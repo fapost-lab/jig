@@ -1917,6 +1917,253 @@ test_status_page_shows_what_housekeeping_left_for_a_person() {
   assert_not_contains "$needs" "<code>old</code>"
 }
 
+# --- a flag this disk disproves (_status_flagged_ids) ------------------------
+#
+# The cut is the cost of asking again. A task's own status and a worktree's
+# existence are read for nothing while the page is drawn, so a card they
+# contradict is not built; what the forge saw costs a request the page never
+# makes on the write path, and stays borrowed. Each test below carries both
+# halves — what the recheck must drop, beside what it must leave alone — so a
+# recheck taken out shows up as red rather than as a green that means nothing
+# (conventions/detectors.md).
+
+test_status_forgets_a_consolidation_flag_the_task_state_disproves() {
+  fixture_jig_repo
+  # Both were flagged by the same run, by the same line. Only one of them has
+  # been closed since.
+  fixture_task closed-since task/closed-since consolidated "class:T2"
+  fixture_task open-still task/open-still active "class:T2"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=closed-since status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=open-still status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local page needs
+  page=$(cat .ai/runtime/status.html)
+  needs=$(status_page_section "$page" needs)
+  assert_not_contains "$needs" "Merged: the task can be closed</h3><p><code>closed-since</code>"
+  assert_contains "$needs" "Merged: the task can be closed</h3><p><code>open-still</code>"
+  # The counts name the same tasks as the cards, in both reports: a reader
+  # sent to look for a second task would find nothing.
+  assert_contains "$page" '<dt>Needs consolidation</dt><dd>1</dd>'
+  run jig status
+  assert_contains "$OUT" "needs consolidation: 1 task(s)"
+}
+
+test_status_forgets_a_worktree_flag_once_that_worktree_is_gone() {
+  fixture_jig_repo
+  local here
+  here=$(pwd)
+  mkdir -p .ai/runtime "$here/kept-tree"
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=still-there worktree=%s/kept-tree action=keep reason=uncommitted-changes\n' "$here"
+    printf '2026-09-25T12:00:00Z task=still-there status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+    printf '2026-09-25T12:00:00Z task=deleted-by-hand worktree=%s/no-such-tree action=keep reason=uncommitted-changes\n' "$here"
+    printf '2026-09-25T12:00:00Z task=deleted-by-hand status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local page needs
+  page=$(cat .ai/runtime/status.html)
+  needs=$(status_page_section "$page" needs)
+  assert_contains "$needs" "A worktree was kept because it still holds work</h3><p><code>still-there</code>"
+  assert_not_contains "$needs" "<code>deleted-by-hand</code>"
+  assert_contains "$page" '<dt>Worktrees kept</dt><dd>1</dd>'
+  run jig status
+  assert_contains "$OUT" "worktrees kept: 1 task(s)"
+}
+
+test_status_forgets_a_closed_pull_request_flag_once_the_task_is_abandoned() {
+  fixture_jig_repo
+  # housekeeping_decide drops this flag for a task already abandoned
+  # (abandoned:closed) — it would ask a question that has been answered. The
+  # page said it anyway until the next run.
+  fixture_task answered task/answered abandoned "class:T2"
+  fixture_task unanswered task/unanswered active "class:T2"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=answered status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+    printf '2026-09-25T12:00:00Z task=unanswered status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_not_contains "$needs" "The pull request was closed without merging</h3><p><code>answered</code>"
+  assert_contains "$needs" "The pull request was closed without merging</h3><p><code>unanswered</code>"
+}
+
+test_status_still_borrows_what_only_the_forge_knows() {
+  fixture_jig_repo
+  # Closed exactly like the task whose consolidation card disappears above,
+  # and this card stays: where the work landed cannot be read off this disk.
+  # The cut is the cost of the answer, not the kind of card.
+  fixture_task landed-elsewhere task/landed-elsewhere consolidated "class:T2"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=landed-elsewhere status=ready remote=unknown via=forge action=preserve flags=wrong-base\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  local page needs
+  page=$(cat .ai/runtime/status.html)
+  needs=$(status_page_section "$page" needs)
+  assert_contains "$needs" "The work landed on a different branch than planned</h3><p><code>landed-elsewhere</code>"
+  # Still stamped with the run it was borrowed from.
+  assert_contains "$needs" "<code>landed-elsewhere</code> · housekeeping at "
+  assert_contains "$page" '<dt>Landed on the wrong base</dt><dd>1</dd>'
+  run jig status
+  assert_contains "$OUT" "wrong base: 1 task(s)"
+}
+
+test_status_keeps_a_flag_it_has_no_way_to_check() {
+  fixture_jig_repo
+  # A recheck may only contradict, never invent. No workspace for the first
+  # task, and no `worktree=` line for the second: the page cannot tell, so it
+  # goes on saying what the run said.
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=no-workspace status=ready remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=no-path-logged status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "Merged: the task can be closed</h3><p><code>no-workspace</code>"
+  assert_contains "$needs" "A worktree was kept because it still holds work</h3><p><code>no-path-logged</code>"
+}
+
+test_status_asks_you_to_close_the_pull_request_of_a_task_you_abandoned() {
+  fixture_jig_repo
+  # `task abandon` never touches the forge, so the pull request stays open and
+  # the flag is right. The ask was not: it told the reader to merge work
+  # nobody wants. `consolidated` beside it keeps the merge ask, which is the
+  # half of this that must not move.
+  fixture_task given-up task/given-up abandoned "class:T2"
+  fixture_task closed-clean task/closed-clean consolidated "class:T2"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=given-up status=abandoned remote=open via=forge action=preserve\n'
+    printf '2026-09-25T12:00:00Z task=closed-clean status=consolidated remote=open via=forge action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs abandoned_card
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "A pull request was open for a task you abandoned</h3><p><code>given-up</code>"
+  assert_contains "$needs" "close on the forge what is still open, or reopen the task"
+  # The card that replaced the wrong one must not carry the wrong ask -- and
+  # must not claim in the present tense what it borrowed: the page knows the
+  # task was abandoned, not that the pull request is open right now. It is as
+  # borrowed as the card below it and says so the same way.
+  abandoned_card=$(printf '%s\n' "$needs" | grep 'task you abandoned')
+  assert_not_contains "$abandoned_card" "review and merge"
+  assert_not_contains "$abandoned_card" "Review it and merge it"
+  assert_not_contains "$abandoned_card" "is still open for a task"
+  assert_contains "$abandoned_card" "It may have been closed or merged since"
+  # Still borrowed: only the forge knows the pull request is open.
+  assert_contains "$needs" "<code>given-up</code> · open as of housekeeping at "
+  # A closed task with an open pull request is not the same thing, and keeps
+  # the merge ask.
+  assert_contains "$needs" "A pull request was open at the last housekeeping run</h3><p><code>closed-clean</code>"
+}
+
+test_status_asks_nothing_about_a_bad_id_on_the_pull_request_path_either() {
+  fixture_jig_repo
+  # The sister of the guard in _status_hk_recheck, and it needs its own stand:
+  # that one is reached through `flags=`, this one through ` remote=open `,
+  # and a test of the first says nothing about the second. Both readings here
+  # -- pr_url and status -- run on ids that came out of the log.
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=../evil status=active remote=open via=forge action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  # run() folds stderr into OUT, so a refusal shows up here either way. An
+  # unguarded read would take task_dir into jig_die, which redraws the page
+  # in the middle of drawing it.
+  assert_not_contains "$OUT" "invalid task id"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "A pull request was open at the last housekeeping run"
+}
+
+test_status_asks_nothing_about_an_id_the_log_should_not_hold() {
+  fixture_jig_repo
+  # A report may not fail on a peer's data, and `task_dir` dies on an id like
+  # this -- through jig_die, which redraws the page being drawn. The card is
+  # kept and nothing is said on stderr.
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=../evil status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "needs consolidation: 1 task(s)"
+  # run() folds stderr into OUT, so this catches the refusal either way.
+  assert_not_contains "$OUT" "invalid task id"
+}
+
+test_status_reads_a_kept_worktree_path_that_holds_spaces() {
+  fixture_jig_repo
+  # The log writes the path unquoted, so it cannot be read as a field. Read
+  # that way this path comes back truncated, is not a directory, and the card
+  # would vanish although the worktree is right there.
+  local here
+  here=$(pwd)
+  mkdir -p .ai/runtime "$here/tree with spaces"
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=spaced worktree=%s/tree with spaces action=keep reason=uncommitted-changes\n' "$here"
+    printf '2026-09-25T12:00:00Z task=spaced status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "A worktree was kept because it still holds work</h3><p><code>spaced</code>"
+}
+
+test_status_does_not_take_one_task_id_for_another_it_begins_with() {
+  fixture_jig_repo
+  # `task=wk` must not answer for `task=wk2`: the id is matched on the whole
+  # field. Read as a substring, wk2 would borrow wk's live worktree and keep
+  # a card its own deleted tree has disproved.
+  local here
+  here=$(pwd)
+  mkdir -p .ai/runtime "$here/wk-tree"
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=wk worktree=%s/wk-tree action=keep reason=uncommitted-changes\n' "$here"
+    printf '2026-09-25T12:00:00Z task=wk status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+    printf '2026-09-25T12:00:00Z task=wk2 worktree=%s/wk2-tree action=keep reason=uncommitted-changes\n' "$here"
+    printf '2026-09-25T12:00:00Z task=wk2 status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "<code>wk</code>"
+  assert_not_contains "$needs" "<code>wk2</code>"
+}
+
 test_status_page_says_when_pull_request_data_is_stale() {
   export TZ=UTC
   fixture_jig_repo

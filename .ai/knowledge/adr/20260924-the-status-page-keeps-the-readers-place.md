@@ -12,7 +12,7 @@ paths:
   - scripts/lib/common.sh
 supersedes: adr-20260922-the-status-page-stays-current-without-a-server
 summary: Why the status page is reloaded by one static inline script that waits while the reader is busy, keeps their scroll position and open details in sessionStorage and offers a pause, with the meta refresh left in noscript — and why it still has no server.
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 ---
 # The status page keeps the reader's place: one static inline script reloads it, waits while they read, remembers what they opened and offers a pause
 
@@ -92,6 +92,33 @@ it does not (checked in headless Chrome on a real `file://` page, 2026-09-24).
     fetched on the write path; `gate`/`gate_design` are written by `jig task gate <id> approved`
     and `pr_url` by `jig task ship`; the last housekeeping run's `--- run` marker carries
     `forge=github|gitlab|none|failed`.
+
+    *Amended 2026-09-25.* "Already stored" is a snapshot, and a snapshot can be wrong by the
+    time the page is drawn: a housekeeping flag kept telling the reader to close a task they
+    had closed, and would have kept a worktree card past a worktree they had deleted. What is
+    ruled out above is a network request on the write path, not a peer asked again — so the
+    page now asks the free ones. `_status_flagged_ids` drops a flag before a card is built
+    from it when a free local read answers what that card asks for: the task's own `status`
+    for `needs-consolidation` (closed) and `abandoned?` (abandoned), and whether the kept
+    worktree is still on disk for `worktree-kept`. Those three, and no others. The counts in
+    both reports go through the same function, so they cannot disagree with the cards.
+
+    The test is whether the card's *ask* has been answered, and answered where the page can
+    see it for free. `wrong-base` fails the second half — only the forge and the history know
+    where work landed. The pull-request cards fail the first: closing a task does not merge
+    its pull request, so "review and merge it" still stands for a `consolidated` task. Both
+    stay borrowed, past tense, "as of" their run. And a recheck may only contradict, never
+    invent: an id with no state file, a kept worktree with no path in the log, an id
+    `jig_valid_id` refuses — the page keeps repeating what the run said rather than asking a
+    peer that would `jig_die` inside a report.
+
+    One card is corrected rather than dropped, which is the third thing a free local answer
+    is good for. `task abandon` does not touch the forge, so a task the person gave up on
+    keeps its pull request open, and the page asked them to review and merge work nobody
+    wants. Neither test above applies: the flag is not disproved, and nothing was done that
+    the card can stop asking for. What the local `status` settles is the imperative — so the
+    card keeps the borrowed fact and the "as of" mark, and asks for the pull request to be
+    closed or the task reopened. `abandoned` only.
   - One file with one fixed name written atomically, every value escaped by `_status_h`, a link
     only for an `https://` address, no external asset of any kind, an uninitialised project
     refused by `--html`/`--open` (and silently skipped by `--refresh`), and plain `jig status`
