@@ -239,6 +239,50 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > `worktree` field: it would be a kept copy of a fact git computes and this decision already
 > publishes.
 
+> **Amendment (2026-09-24, carrying).** "Worktrees need no install step here" is true of this
+> repository and false of almost every project jig serves. It was generalised from the one case in
+> front of it: jig is shell with no dependencies, so its own worktrees start complete. A project
+> with an install step keeps `vendor/`, `node_modules/` and `.env` outside git, and a fresh
+> worktree is therefore a tree its own checks cannot run in — which made the supported road worse
+> than the manual one, and an agent that goes around jig by hand is not fixed by an instruction.
+>
+> `jig task start <id> --worktree` now carries that state in from the checkout beside it, and
+> `jig task bootstrap <id>` carries it again when the first attempt failed
+> (adr-20260924-a-worktree-carries-what-git-does-not). The rest of this decision is untouched:
+> the workspace is still borrowed by exactly one link and never copied — the carry refuses any
+> path inside `.ai/` by name — the worktree still lives under `git.worktree_root`, and git still
+> removes it, without `--force`, under the same conditions.
+>
+> One of those conditions turned out to constrain *how* state may be carried, and the carry is
+> built around it. Housekeeping can only remove a worktree git reports as clean, so the carry
+> places a path, asks git what it now reports, and takes straight back out anything it made
+> appear, naming `.gitignore` as the remedy. A declared path the project neither tracks nor
+> ignores is refused rather than carried.
+>
+> A second consequence belongs here rather than there, because it is *this* decision that owns
+> the removal: `git worktree remove` without `--force` deletes ignored files **silently**, as
+> measured above. A carried path holding a separate git repository therefore starts out a trap.
+> The worktree gets a second clone; work done in it is invisible to the parent, because the path
+> is ignored; and the commit exists in no other clone. Measured end to end on 2026-09-25 —
+> removing such a worktree took the work away, committed and uncommitted alike, with no message
+> at any point.
+>
+> The amendment below closes that for the removal jig performs: the cleanup asks git what it would
+> delete silently, looks for repositories among those paths, asks each one's own git, and holds the
+> worktree when the answer is work that is nowhere else. What no decision here can close is the
+> bare command — `git worktree remove` run by hand is git's contract and behaves exactly as it did.
+> So the danger has changed address rather than gone, and it is worth saying what is *not* held:
+> an ignored path that is no repository still goes, which is `.env` and a local database. Carrying
+> a directory of separate repositories remains unsupported regardless, because the second clone is
+> the defect and a held worktree is not a working one.
+>
+> Sharing one by link is a separate decision, held by the `worktree-share` task. Note for whoever
+> takes it: linking a directory whole reads as untracked, because git does not match a
+> trailing-slash ignore pattern such as `packages/` against a symlink, and that alone would make
+> the worktree un-removable for the rest of its life. A mirror — a real directory whose entries
+> are links — was built for this and then removed again; it is **a mechanism no longer here**, and
+> its measurements and findings live with that task.
+
 > **Amendment (2026-09-25).** The Consequences above measured that `git worktree remove` "deletes
 > *ignored* files silently", and stopped there. It still does, and that is no longer the end of the
 > reasoning: a repository nested inside an ignored folder went with the worktree, unpushed commits

@@ -4,3 +4,4 @@ description: Laravel applications (extends the php profile).
 detect: [artisan]
 requires: [php]
 scope: [changed, map]
+carry: [.env]

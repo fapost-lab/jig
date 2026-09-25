@@ -61,6 +61,11 @@ By default, this switches to a task branch from the project's configured base. F
 working copy, use `jig task start booking-message --worktree` instead, then work in the directory
 it prints. Tasks linked to a spec with an open epic start from that epic.
 
+A new worktree also gets whatever `vendor/`, `node_modules/` or `.env` your project's profiles (and
+[`worktree.carry`](/configuration#git-and-branches)) declare — see
+[carrying state into a worktree](/working-with-tasks#several-agents-at-once). Add `--no-bootstrap`
+to skip that for this run, or repeat it later with `jig task bootstrap booking-message`.
+
 ## Pause and resume
 
 ```bash

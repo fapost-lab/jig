@@ -37,6 +37,7 @@ selected.
 | `git.branch_per_task` | `true` | Starting a task creates and switches to its own branch. With `false`, a task records the branch you are on instead — for projects that work on one branch by choice. |
 | `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id. |
 | `git.worktree_root` | `../<project>.worktrees` | Where a task started in a separate worktree is placed ([several agents at once](/working-with-tasks#several-agents-at-once)). |
+| `worktree.carry` | `[]` | Extra paths copied into a new worktree, beyond what the active profiles already declare — for state your project keeps outside Git that a profile does not know about. See [carrying state into a worktree](/working-with-tasks#several-agents-at-once). |
 | `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address. Without the tool, or with `none`, Jig falls back to what Git itself can show. |
 
 ### Housekeeping

@@ -28,7 +28,16 @@
   manifest records it with the hash jig installed, the file is unchanged, the new version no
   longer ships it, and the path — relative, without `..` — lies under `.ai/` or an adapter's
   skills directory (`.claude/skills/`, `.codex/skills/`); anything else is kept and reported
-  `keep-outside`. (ADR-0024) Moving to trash is not deleting, and it has two users: housekeeping moves
+  `keep-outside`. (ADR-0024) The carry into a task worktree adds a third shape rather than a
+  fifth exception: `jig task start --worktree` and `jig task bootstrap` delete only inside a
+  worktree's `.ai/runtime/bootstrap`, the staging directory where they build a declared path
+  before renaming it into place, and only a path that resolves physically inside that directory
+  and is not the directory itself. A carried path at its destination is never deleted, because
+  a rename is what puts it there and it therefore only ever appears complete. The staging
+  directory sits under `.ai/runtime/` so that git ignores it: anything a carry leaves in a
+  worktree that git does not ignore reads as untracked, and `git worktree remove` without
+  `--force` — the only removal jig performs — then refuses that worktree for good.
+  (adr-20260924-a-worktree-carries-what-git-does-not) Moving to trash is not deleting, and it has two users: housekeeping moves
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish`, and a
   partial restore of `epic --reopen` — only after checking that the id is valid and the directory
   resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)
