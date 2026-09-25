@@ -8,6 +8,12 @@
 # filters. `**` and `*` both match across `/`. A path no line matches is
 # decided by the profile's built-in rules: a script maps to the test file
 # named after it, anything else runs everything.
+#
+# A `-` is the one decision a run cannot confirm: it claims the path reaches
+# no test, and a targeted run is green whether that is true or the filter was
+# aimed elsewhere. Argue one the other way round, by damaging something the
+# path must reach and watching the red land where the line says
+# (conventions/detectors.md).
 
 # The session hook has no test file of its own; its tests live with the
 # command it triggers.
@@ -19,6 +25,12 @@ scripts/jig.cmd                 init:: install::
 
 adapters/**                     adapters::
 profiles/**                     profiles:: verify::
+# One template is read by a third suite: tests/adapters.t.sh opens
+# templates/AGENTS.md directly, both for the marked region's own
+# well-formedness and to hold docs/install.mdx's pasted copy against it.
+# Measured: damaging that region turns adapters:: red, and the line below
+# does not name it.
+templates/AGENTS.md             init:: upgrade:: adapters::
 templates/**                    init:: upgrade::
 
 # A skill description is what a runtime routes by, and the routing evals
@@ -44,7 +56,48 @@ tests/*.t.ps1                   install::
 .gitattributes                  -
 .claude/settings.json           -
 .ai/config.yaml                 -
+# The same, for the record of what is installed here. This repository
+# installs itself in link mode, so `jig upgrade` rewrites .ai/manifest
+# whenever a framework-owned file is placed, which is often; unnamed, it
+# fell to the built-in rule for an unknown path and ran the whole suite.
+# That is the run this map's gap was found in — four changed files, one of
+# them this one, 2065 tests — where the other three together ask for 111.
+# What reads this file is `jig verify`'s own staleness gate, not a test: it
+# refuses before any profile runs when the manifest says a framework file
+# is still to be placed. Measured: with this file overwritten with one line
+# of junk, init::, upgrade::, status::, doctor::, adapters::, section::,
+# ci-windows-scope:: and knowledge:: stayed green, 610 tests.
+.ai/manifest                    -
 
 # Except this map: tests/verify.t.sh checks it, and CI reads it to decide
 # how much of the suite a change needs (.github/scripts/ci-scope.sh).
 .ai/verify/**                   verify::test_verify_own_shell_map
+
+# --- prose ------------------------------------------------------------------
+# The shell profile already answers "no test" for *.md and docs/*, so the
+# four lines below change no verdict on their own. They are here because a
+# `-` is a claim about this repository that someone must be able to read,
+# review and disprove; inherited from a built-in, the same claim is made
+# silently, by a file this project does not own.
+
+# This repository's own instructions. Every test that touches an AGENTS.md
+# either plants one in its temporary repository or reads the one `jig init`
+# generated there from templates/AGENTS.md; none reads this file. The marked
+# section it takes part in is tested through templates/AGENTS.md and
+# scripts/lib/section.sh, which have their own lines above — naming those
+# tests here would run 154 of them for a change none of them can see.
+# What would end this: fifteen tests build a throwaway install source with
+# `cp -R "$JIG_HOME"/.`, so the day `init` or `upgrade` reads
+# <source>/AGENTS.md, this file reaches them without a word.
+AGENTS.md                       -
+CLAUDE.md                       -
+CONTRIBUTING.md                 -
+README.md                       -
+
+# The documentation site, with one page that is not prose. The Jig section of
+# docs/install.mdx is a copy of the marked region of templates/AGENTS.md, for
+# a reader who has to paste it by hand, and one test is what keeps the copy
+# from drifting. Left to the built-in rule for docs/*, that test ran on no
+# change to the page it guards.
+docs/install.mdx                adapters::test_docs_agents_section_matches_the_template
+docs/**                         -

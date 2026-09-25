@@ -8,13 +8,21 @@ paths:
   - "tests/ci-*.t.sh"
   - "tests/*-check.t.sh"
   - tests/dispatcher.t.sh
+  - ".ai/verify/**"
 summary: A detector's green is indistinguishable from its blind, so a planted sample it must report ships in the same change as the detector.
+reviewed_at: 2026-09-25
 ---
 # Detectors
 
 A detector is a check that reads this repository's own artifacts and is expected to pass:
 the pipe guard in `tests/dispatcher.t.sh`, the scope and gate scripts under
 `.github/scripts/`, and the tests that drive them.
+
+The project verify map (`.ai/verify/shell.map`) is one too, and its blind case is the
+cheapest to write: every `-` line claims a path affects no test, and a targeted run
+comes back green whether the claim is true or the filter was simply pointed elsewhere.
+A `-` is therefore argued the other way round — by damaging something the path *must*
+reach and watching the red appear where the line says it should.
 
 ## Practice
 
@@ -25,6 +33,11 @@ the pipe guard in `tests/dispatcher.t.sh`, the scope and gate scripts under
 | The sample carries what the detector must stay silent about, beside what it must report. | A detector that reports everything is as useless as one that reports nothing, and the exemptions are where the cost sits: eleven places in `scripts/lib/` rely on the pipe guard passing `sed … \| head -n 1`. One fixture holding both shapes makes an over-wide rule fail on the spot. |
 
 ## Example
+
+`.ai/verify/shell.map` keeps both halves on adjacent lines: `docs/install.mdx` names the
+one test that holds its pasted section against `templates/AGENTS.md`, and `docs/**`
+below it claims the rest of the site reaches nothing. `tests/verify.t.sh` asserts the
+pair together, so a map that decided nothing at all would fail on the first half.
 
 `tests/dispatcher.t.sh` keeps the pipe guard and its samples side by side.
 `test_no_script_pipes_into_an_early_quitting_reader` scans the real directories and must

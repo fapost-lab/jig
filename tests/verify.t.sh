@@ -1396,6 +1396,11 @@ test_verify_own_shell_map_decides_known_paths() {
     "templates/gitignore" \
     "skills/jig-review/SKILL.md" \
     "tests/routing/jig-review.cases" \
+    "templates/AGENTS.md" \
+    "AGENTS.md" \
+    "docs/install.mdx" \
+    "docs/concepts.mdx" \
+    ".ai/manifest" \
     "scripts/lib/task.sh")
   assert_contains "$out" "$(printf 'scripts/jig-session-hook\thousekeeping::')"
   assert_contains "$out" "$(printf 'adapters/claude/adapter.sh\tadapters::')"
@@ -1404,6 +1409,17 @@ test_verify_own_shell_map_decides_known_paths() {
   assert_contains "$out" "$(printf 'templates/gitignore\tinit:: upgrade::')"
   assert_contains "$out" "$(printf 'skills/jig-review/SKILL.md\trouting::')"
   assert_contains "$out" "$(printf 'tests/routing/jig-review.cases\trouting::')"
+  # One template is read by a suite the general templates/** line does not
+  # name, and the specific line above it must win.
+  assert_contains "$out" "$(printf 'templates/AGENTS.md\tinit:: upgrade:: adapters::')"
+  # Prose, and the one page that is not prose. Both halves are asserted
+  # together on purpose (conventions/detectors.md): a map that reports nothing
+  # passes this test as easily as a correct one, so the line it must report
+  # sits beside the lines it must stay silent about.
+  assert_contains "$out" "$(printf 'docs/install.mdx\tadapters::test_docs_agents_section_matches_the_template')"
+  assert_contains "$out" "$(printf 'docs/concepts.mdx\t-')"
+  assert_contains "$out" "$(printf 'AGENTS.md\t-')"
+  assert_contains "$out" "$(printf '.ai/manifest\t-')"
   assert_contains "$out" "$(printf 'scripts/lib/task.sh\t?')"
 }
 
