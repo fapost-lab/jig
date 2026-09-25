@@ -455,8 +455,19 @@ EOF
   got=$(sed -n 's/^\(.*\) \.ai\/profiles\/shell\/verify\.sh$/\1/p' .ai/manifest)
   assert_eq "$want" "$got"
 
+  # Upgrade installed the profile; give its smoke run an applicable check.
+  # Without this runner the result depends on whether the host has shellcheck:
+  # a profile that skips every check correctly returns 3, not a false pass.
+  mkdir -p tests
+  cat > tests/run.sh <<'EOF'
+#!/usr/bin/env sh
+test -f .ai/profiles/shell/verify.sh
+EOF
+  chmod +x tests/run.sh
   run jig verify --profile shell
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "shell: tests/run.sh: pass"
+  assert_contains "$OUT" "RESULT shell: pass"
 }
 
 # --- path traversal in config-driven profile/adapter names -----------------
