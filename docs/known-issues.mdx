@@ -53,45 +53,6 @@ it there. If you also want it reachable from inside the worktree, ask your agent
 rather than making the link by hand — on Windows `ln -s` quietly copies instead of linking, and a
 second copy of a task is the problem you have just undone.
 
-## `jig task ship` pushes a branch with no commits, then fails
-
-{/* closed by jig task: ship-refuses-empty-index — remove this entry in the PR that merges the fix */}
-
-`jig task ship` hands finished work over: it commits what has been staged, pushes the branch, and
-opens the pull request. When nothing has been staged, the first step does nothing and says so — and
-the rest of the run carries on regardless:
-
-```text
-nothing staged; no commit
-pushed task/my-task
-```
-
-The branch arrives on the server carrying no work, and the run then stops on the pull request, with
-a message from GitHub rather than from Jig:
-
-```text
-jig: error: task ship: gh pr create failed:
-GraphQL: No commits between main and task/my-task (createPullRequest)
-```
-
-The sentence that explains it is the first one, `nothing staged; no commit`, and it goes by as
-information rather than as a refusal — so the error you are left looking at is about pull requests,
-while the actual problem is that nothing was saved.
-
-This happens only when the branch has no commits of its own yet. If an earlier run already
-committed the work, an empty staging area is normal and everything proceeds.
-
-**What to do instead.** Nothing is lost — but nothing was shipped either, and the work is still
-sitting in your project unsaved. Ask your agent to stage it and ship again:
-
-```text Send to your agent
-`jig task ship` pushed the branch with no commits. Stage the task's changes, confirm
-`git status` shows them staged, and ship again.
-```
-
-The empty branch may stay on the server. It is harmless, and the real commit goes to the same place
-once it exists.
-
 ## A task that has already started cannot be moved into a worktree
 
 {/* closed by jig task: task-move-to-worktree — remove this entry in the PR that merges the fix */}

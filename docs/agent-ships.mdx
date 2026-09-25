@@ -272,6 +272,11 @@ It is a script, so these limits hold whatever the agent intends:
 - it never force-pushes and never skips your Git hooks, and it merges only at `merge`, only on
   green checks and never past your repository's protection;
 - it commits only what was staged, never "everything in the folder";
+- it refuses when nothing is staged while tracked files still hold changes — shipping then would
+  carry whatever the branch already holds and leave your change behind, and nothing afterwards
+  would look wrong;
+- it refuses when the branch has no commit your main branch does not, before it pushes anything
+  or asks your forge for a pull request;
 - it refuses, changing nothing, until the task's knowledge decision is recorded;
 - it refuses on any branch but the task's own, and on the main branch itself;
 - it refuses when task notes (`.ai/workspace/`) or Jig's runtime files (`.ai/runtime/`) are staged —
