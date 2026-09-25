@@ -44,7 +44,14 @@ jig task show booking-message
 ```
 
 Fill in `.ai/workspace/tasks/booking-message/task.md`: the goal, scope, and what a correct result
-looks like. Filing the task does not switch branches. Begin work separately:
+looks like. Filing the task does not switch branches.
+
+<Warning>
+  Start from a repository with a commit and no uncommitted tracked changes. If other work is in
+  progress, pause its task or use a separate worktree; do not bundle it into this task's commit.
+</Warning>
+
+Begin work separately:
 
 ```bash
 jig task start booking-message
@@ -58,11 +65,6 @@ A new worktree also gets whatever `vendor/`, `node_modules/` or `.env` your proj
 [`worktree.carry`](/configuration#git-and-branches)) declare — see
 [carrying state into a worktree](/working-with-tasks#several-agents-at-once). Add `--no-bootstrap`
 to skip that for this run, or repeat it later with `jig task bootstrap booking-message`.
-
-<Warning>
-  Start from a repository with a commit and no uncommitted tracked changes. If other work is in
-  progress, pause its task or use a separate worktree; do not bundle it into this task's commit.
-</Warning>
 
 ## Pause and resume
 
