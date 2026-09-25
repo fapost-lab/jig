@@ -3,11 +3,19 @@
 # Paths are NOT configurable: .ai/knowledge, .ai/workspace, .ai/runtime are fixed.
 # Any key that is absent takes the default built into the scripts.
 #
-# Settings that are yours alone (the housekeeping.* keys and git.worktree_root)
-# go in .ai/config.local.yaml: same format, gitignored, one file per clone. It
-# wins over this file for those keys only; `jig status` shows what it changes.
-# agent.git (none | commit | push | pr: how far the agent takes a finished task)
-# is read from .ai/config.local.yaml only, never from this file.
+# Settings that are yours alone go in .ai/config.local.yaml: same format,
+# gitignored, one file per clone. It wins over this file for the keys it is
+# allowed to answer (the housekeeping.* ones, checkout.busy_ttl and
+# git.worktree_root), and `jig status` shows what it changes. Four more are
+# read from there and never from this file at all, because a value committed
+# here would decide for every contributor what their own agent may do on their
+# behalf: agent.git (how far the agent takes a finished task), agent.ci_timeout,
+# autopilot.unattended and autopilot.parallel.
+#
+# `jig config keys` lists every key this version reads, its default, and which
+# of the two files answers for it. Run it after an upgrade: nothing edits this
+# file but you (ADR-0024), so a key added by a newer Jig is one this file will
+# go on saying nothing about, and `jig doctor` names those.
 
 profiles: [generic]                   # generic is always active
 adapters: [claude, codex]
@@ -26,6 +34,9 @@ housekeeping.fetch: true              # allow `git fetch` during housekeeping
 housekeeping.trash_ttl: 7d            # trash entries older than this are deleted
 housekeeping.abandoned_ttl: 14d       # abandoned workspaces are purged after this
 housekeeping.stale_after: 60d         # older active tasks are reported as STALE_CANDIDATE
+
+# checkout.busy_ttl: 12h              # how long a record of work in this checkout still counts
+#   as a live session; every jig run refreshes its own, and an older one is ignored, never deleted
 
 knowledge.require_frontmatter: true   # `jig knowledge check` fails on missing frontmatter
 
