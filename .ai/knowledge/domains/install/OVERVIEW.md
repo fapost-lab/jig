@@ -20,7 +20,7 @@ paths:
   - scripts/jig.cmd
   - templates/gitattributes
   - scripts/lib/section.sh
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 ---
 # Install
 
@@ -113,6 +113,39 @@ project owns.
   minor for a new capability, major for a change that breaks commands, the `.ai/` layout, the
   `init`/`upgrade` contract or the installer — minor instead while below `1.0.0`. A version never
   goes back.
+
+### The project's config file is documentation, and jig never edits it
+
+`.ai/config.yaml` is the team's: committed, reviewed like code, written by nobody but a person
+(ADR-0024). An absent key takes its default, so a file a version behind still works — and that
+is the trap, because the file is also the only place anyone ever sees *which* keys exist. After
+`jig upgrade` it goes on describing the version it was written for, and a capability the new
+version brought is one nobody was offered.
+
+The answer is a report, never a write. `jig_config_keys` (`scripts/lib/config.sh`) is the one
+list of `<key> <default>` this framework reads; `jig_config_unmentioned` and
+`jig_config_unknown` compare a project's file against it, and where that is said was decided,
+not defaulted:
+
+- `jig upgrade` prints one line at the end of a real run. That is the moment the two part
+  company, and it is said once.
+- `jig doctor` repeats it on demand, and `jig config keys` prints the whole inventory. Doctor
+  already reported the mirror case — a local-only key written into the project file, where
+  nothing reads it — and both halves of one question belong in one command.
+- `jig status` does not. An unmentioned key is something to look at, not something a task is
+  waiting on, and a line printed at every session start stops being read.
+
+Two rules keep the report from crying wolf. A commented line counts as a mention, because the
+file documents as much as it configures and the template ships keys exactly that way — read
+strictly, a project would be told on its first day that it is missing three of them. And
+`JIG_CFG_LOCAL_ONLY_KEYS` is left out entirely: `cfg` never reads the project layer for those,
+so naming one would ask a person to write a line that does nothing.
+
+The inventory is written by hand, which is the part that would rot. `tests/config.t.sh` is what
+stops it: it greps every `cfg`, `cfg_bool`, `cfg_list` and `cfg_list_lines` call out of
+`scripts/` and refuses to pass unless the call sites, the inventory, `schemas/config.md`,
+`templates/config.yaml` and `docs/configuration.mdx` agree on one set of keys and one set of
+defaults. A key is added in all five places, or the suite names the one that was forgotten.
 
 ## Boundaries
 

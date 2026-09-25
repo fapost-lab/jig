@@ -102,6 +102,8 @@ Usage: jig <command> [args]
                                  ones no reader answers from
   config show --local            print .ai/config.local.yaml and the keys in it
                                  that no reader answers from
+  config keys                    every key jig reads, its default, which file
+                                 answers for it, and what .ai/config.yaml omits
   measure                        knowledge quality, process weight, change size
   doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release

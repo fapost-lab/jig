@@ -2635,6 +2635,13 @@ task_ship() {
   jig_ship_check_staged "task ship"
   jig_ship_commit "task ship" "$message_file"
 
+  # Before the first step that leaves this machine (common.sh, "what a ship
+  # may send out"). Asked here rather than just before the push: "this branch
+  # carries no work" is the same answer at every level, and at `commit` the
+  # human is the one who pushes next — telling them now is what stops the
+  # empty branch one step later.
+  jig_ship_require_commits "task ship" "$branch" "$base"
+
   if [ "$level" = commit ]; then
     printf "stopped at commit: push is the human's\n"
     return 0

@@ -667,3 +667,140 @@ test_jig_ci_timeout_default_leading_zeros_and_failure() {
   assert_eq 1 "$RC"
   assert_eq "abc" "$OUT"
 }
+
+# --- the key inventory agrees with the code and the three texts --------------
+#
+# `jig_config_keys` (config.sh) is written by hand. These four tests are the
+# machine that keeps it honest, and they are the reason the report built on it
+# can be trusted: the list of keys a project is told about is only as good as
+# its agreement with the code that reads them, and nothing but a test computes
+# that agreement. RULES.md says the same of its own deletion paragraph, which
+# lapsed four times because nothing did.
+
+# _config_normalise — a `<key><TAB><default>` stream with each default reduced
+# to the space-separated form a reader is handed: `[claude, codex]` is how a
+# person writes a list in the file, `claude codex` is what `cfg_list` gets as
+# its default, and the two must not be called a disagreement.
+_config_normalise() {
+  awk -F'\t' '{
+    d = $2
+    gsub(/[][]/, "", d); gsub(/,/, " ", d)
+    gsub(/  +/, " ", d); sub(/^ /, "", d); sub(/ $/, "", d)
+    print $1 "\t" d
+  }' | sort -u
+}
+
+# _config_declared — the inventory, normalised.
+_config_declared() {
+  bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_config_keys | awk "{ key = \$1; \$1 = \"\"; sub(/^ /, \"\"); print key \"\t\" \$0 }"
+  ' | _config_normalise
+}
+
+# _config_read_sites — `<key><TAB><default>` for every literal call to a
+# config reader in the framework's own scripts, computed, not listed. Comment
+# lines are skipped, and a key written as a variable cannot match, so a reader
+# called with one would go unseen — today none is, and the inventory test
+# below is what would notice it as a missing key.
+_config_read_sites() {
+  # shellcheck disable=SC2016  # an awk program, not a shell expansion
+  find "$JIG_HOME/scripts" -type f \( -name jig -o -name jig-session-hook -o -name '*.sh' \) -print0 \
+    | xargs -0 awk '
+        /^[[:space:]]*#/ { next }
+        {
+          line = $0
+          while (match(line, /(^|[^A-Za-z0-9_.])(cfg|cfg_bool|cfg_list|cfg_list_lines)[ \t]+[a-z][A-Za-z0-9_.]*/)) {
+            seg = substr(line, RSTART, RLENGTH)
+            line = substr(line, RSTART + RLENGTH)
+            n = split(seg, part, /[ \t]+/)
+            rest = line
+            sub(/^[ \t]+/, "", rest)
+            dflt = ""
+            if (substr(rest, 1, 1) == "\"") {
+              body = substr(rest, 2)
+              if (match(body, /"/)) dflt = substr(body, 1, RSTART - 1)
+            } else if (match(rest, /^[^ \t)|;&]+/)) {
+              dflt = substr(rest, RSTART, RLENGTH)
+            }
+            print part[n] "\t" dflt
+          }
+        }
+    ' | _config_normalise
+}
+
+test_config_inventory_matches_every_reader_call_site() {
+  fixture_repo
+  local declared sites worktree_default
+  declared=$(_config_declared)
+  sites=$(_config_read_sites)
+
+  # `git.worktree_root` is the one key whose real default is not at its call
+  # site: `cfg git.worktree_root ""`, and _task_worktree_root then builds
+  # `../<project>.worktrees` from the project's own directory name, which no
+  # literal could hold. Asserted rather than waved through, so that a literal
+  # appearing there later fails here and has to be reconciled.
+  worktree_default=$(printf '%s\n' "$sites" | awk -F'\t' '$1 == "git.worktree_root" { print $2 }')
+  assert_eq "" "$worktree_default" \
+    "git.worktree_root now passes a default at its call site; reconcile it with jig_config_keys"
+  sites=$(printf '%s\n' "$sites" \
+    | sed "s|^git\.worktree_root$(printf '\t')\$|git.worktree_root$(printf '\t')../<project>.worktrees|")
+
+  # sort -u collapses repeated reads of one key, so two rows for the same key
+  # mean two different defaults for it — which this comparison reports as
+  # surely as a key nobody declared.
+  assert_eq "$declared" "$sites" \
+    "jig_config_keys and the cfg/cfg_bool/cfg_list call sites in scripts/ disagree"
+}
+
+test_config_inventory_matches_the_schema_table() {
+  fixture_repo
+  local declared schema tab
+  tab=$(printf '\t')
+  declared=$(_config_declared)
+  schema=$(sed -n "s/^| \`\([a-z][A-Za-z0-9_.]*\)\` | \`\([^\`]*\)\` |.*/\1${tab}\2/p" \
+    "$JIG_HOME/schemas/config.md" | _config_normalise)
+  assert_eq "$declared" "$schema" \
+    "jig_config_keys and the table in schemas/config.md disagree"
+}
+
+test_config_inventory_is_covered_by_the_template_and_the_docs() {
+  fixture_repo
+  local key esc missing_template="" missing_docs=""
+
+  # Every key a project's own file may answer for has to be in the template,
+  # commented or not: a project installed today would otherwise be told on its
+  # first day that it is missing a key Jig never offered it.
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    esc=${key//./\\.}
+    grep -qE "^#?[[:space:]]*${esc}:" "$JIG_HOME/templates/config.yaml" \
+      || missing_template="$missing_template $key"
+  done < <(bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    while read -r key rest; do
+      jig_config_local_only_key "$key" || printf "%s\n" "$key"
+    done < <(jig_config_keys)
+  ')
+  assert_eq "" "$missing_template" "templates/config.yaml never mentions:$missing_template"
+
+  # And every key, local-only included, is named on the page a person reads.
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    grep -qF "\`$key\`" "$JIG_HOME/docs/configuration.mdx" \
+      || missing_docs="$missing_docs $key"
+  done < <(_config_declared | cut -f1)
+  assert_eq "" "$missing_docs" "docs/configuration.mdx never names:$missing_docs"
+}
+
+test_config_local_key_lists_are_inside_the_inventory() {
+  fixture_repo
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    for key in $JIG_CFG_LOCAL_KEYS $JIG_CFG_LOCAL_ONLY_KEYS; do
+      jig_config_key_known "$key" || printf "%s\n" "$key"
+    done
+  '
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT" "these local keys are in no jig_config_keys row: $OUT"
+}

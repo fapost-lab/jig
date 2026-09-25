@@ -853,3 +853,39 @@ test_upgrade_link_mode_replaces_the_marked_instructions_section() {
   assert_file_contains AGENTS.md "A brand new sentence from source-v2."
   assert_file_contains AGENTS.md "## Working rules"
 }
+
+# --- what the project's own config.yaml does not mention ----------------------
+
+test_upgrade_names_config_keys_the_project_file_does_not_mention() {
+  fixture_jig_repo
+  grep -v 'verify.full_run' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  local before
+  before=$(cat .ai/config.yaml)
+
+  run jig upgrade
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/config.yaml does not mention 1 key(s) this version reads, each on its default: verify.full_run"
+  # shellcheck disable=SC2016  # a literal backticked command name
+  assert_contains "$OUT" 'hint: `jig config keys` lists them'
+  # The whole point: an upgrade says what changed underneath and changes
+  # nothing in the team's file (ADR-0024).
+  assert_eq "$before" "$(cat .ai/config.yaml)" "upgrade touched .ai/config.yaml"
+}
+
+test_upgrade_says_nothing_about_config_keys_when_the_file_mentions_them_all() {
+  fixture_jig_repo
+  run jig upgrade
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "does not mention"
+}
+
+test_upgrade_dry_run_says_nothing_about_config_keys() {
+  fixture_jig_repo
+  grep -v 'verify.full_run' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+
+  run jig upgrade --dry-run
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "does not mention"
+}
