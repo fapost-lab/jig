@@ -1583,6 +1583,202 @@ test_housekeeping_keeps_a_worktree_with_uncommitted_work_and_its_workspace() {
   assert_contains "$OUT" "  worktree kept, it has uncommitted changes ($wt): T-1"
 }
 
+# hk_worktree_ignores <pattern> — a project that ignores <pattern>, committed
+# before a task is started so the worktree is cut with the rule in it.
+hk_worktree_ignores() {
+  printf '%s\n' "$1" >> .gitignore
+  git add .gitignore
+  hk_tick
+  git commit -q -m "ignore $1"
+}
+
+# hk_nested_repo <dir> — a repository of its own, with a commit and no remote:
+# work that exists in no other repository.
+hk_nested_repo() {
+  mkdir -p "$1"
+  git -C "$1" init -q
+  printf 'notes\n' > "$1/notes.txt"
+  git -C "$1" add notes.txt
+  git -C "$1" commit -q -m "never pushed"
+}
+
+test_housekeeping_keeps_a_worktree_holding_an_unpushed_repository() {
+  # The blind spot this closes: git deletes ignored files without a word, so a
+  # repository started or cloned inside one goes with the worktree, and its
+  # unpushed commits go with it. The only git that knows is its own.
+  hk_worktree_setup
+  local wt
+  hk_worktree_ignores 'local/'
+  wt=$(hk_worktree_task T-1)
+  hk_nested_repo "$wt/local/notebook"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (nested-repository)"
+  assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=preserve flags=worktree-kept"
+  assert_file "$wt/local/notebook/notes.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+
+  run jig housekeeping
+  assert_contains "$OUT" "needs you (1):"
+  assert_contains "$OUT" "holds a git repository with work that is nowhere else ($wt/local/notebook): T-1"
+}
+
+test_housekeeping_keeps_a_worktree_whose_carried_clone_holds_a_local_commit() {
+  # The layout `worktree-bootstrap` measured, and the sharpest case there is:
+  # `worktree.carry` puts an ignored path holding a real clone into the worktree,
+  # and a commit is made inside that clone. The clone's tree is left clean and it
+  # has a remote, so neither of the first two questions can fire — this is the
+  # test of the third, and of the case where the commit exists in that clone and
+  # in no repository anywhere else.
+  hk_worktree_setup
+  local wt sha
+  hk_worktree_ignores 'vendor/'
+  wt=$(hk_worktree_task T-1)
+  mkdir -p "$wt/vendor"
+  git clone -q . "$wt/vendor/dep" || fail "could not clone into the worktree"
+  printf 'patched\n' > "$wt/vendor/dep/patch.txt"
+  git -C "$wt/vendor/dep" add patch.txt
+  git -C "$wt/vendor/dep" commit -q -m "fix applied in the carried clone"
+  sha=$(git -C "$wt/vendor/dep" rev-parse HEAD)
+  # The other two questions must not be what answers, or this test proves nothing
+  # about the third.
+  [ -z "$(git -C "$wt/vendor/dep" status --porcelain)" ] \
+    || fail "the carried clone is dirty; question one would answer, not question three"
+  git -C "$wt/vendor/dep" remote | grep -q . \
+    || fail "the carried clone has no remote; question two would answer, not question three"
+  # And the worktree around it looks empty, which is the whole defect.
+  [ -z "$(git -C "$wt" status --porcelain)" ] || fail "the worktree is not clean; the blind spot is elsewhere"
+  git cat-file -t "$sha" >/dev/null 2>&1 && fail "this checkout already has the commit; it is not work that is nowhere else"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (nested-repository)"
+  assert_file "$wt/vendor/dep/patch.txt"
+  assert_file .ai/workspace/tasks/T-1/state
+  git -C "$wt/vendor/dep" cat-file -t "$sha" >/dev/null 2>&1 || fail "the commit did not survive"
+}
+
+test_housekeeping_keeps_a_worktree_whose_ignored_repository_has_an_unborn_head() {
+  # "Has a commit" is not "HEAD resolves". After `git checkout --orphan` a
+  # repository's commits are still on another branch while HEAD is unborn, and a
+  # check that asks about HEAD reads that as an empty repository and deletes the
+  # only copy of the work (measured, git 2.48.1).
+  hk_worktree_setup
+  local wt
+  hk_worktree_ignores 'local/'
+  wt=$(hk_worktree_task T-1)
+  hk_nested_repo "$wt/local/notebook"
+  git -C "$wt/local/notebook" checkout -q --orphan fresh
+  git -C "$wt/local/notebook" rm -q --cached notes.txt
+  rm -f "$wt/local/notebook/notes.txt"
+  git -C "$wt/local/notebook" rev-parse --verify --quiet HEAD >/dev/null 2>&1 \
+    && fail "HEAD still resolves; the measured layout is not the one under test"
+  [ -z "$(git -C "$wt/local/notebook" status --porcelain)" ] \
+    || fail "the nested repository is dirty; question one would answer, not the commit check"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (nested-repository)"
+  assert_file .ai/workspace/tasks/T-1/state
+}
+
+test_housekeeping_keeps_a_worktree_whose_ignored_path_has_a_space_in_its_name() {
+  # git quotes a path with a space in it unless asked with `-z`, and a command
+  # substitution drops the NUL bytes `-z` produces. Getting either half wrong
+  # loses the path, and with it the repository inside it.
+  hk_worktree_setup
+  local wt
+  hk_worktree_ignores 'with space/'
+  wt=$(hk_worktree_task T-1)
+  hk_nested_repo "$wt/with space/notebook"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (nested-repository)"
+  assert_contains "$OUT" "$wt/with space/notebook"
+  assert_file "$wt/with space/notebook/notes.txt"
+}
+
+test_housekeeping_keeps_a_worktree_when_git_will_not_say_what_it_ignores() {
+  # The ignored files are the ones git deletes without a word, so a git that
+  # cannot list them is an unanswered question, and an unanswered question keeps
+  # the worktree here — it must never read as "nothing is ignored".
+  hk_worktree_setup
+  local wt
+  wt=$(hk_worktree_task T-1)
+  printf 'gitdir: /nowhere/at/all\n' > "$wt/.git"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (ignored-unknown)"
+  assert_file "$wt/.git"
+  assert_file .ai/workspace/tasks/T-1/state
+
+  run jig housekeeping
+  assert_contains "$OUT" "git would not say which of its files are ignored"
+}
+
+test_housekeeping_removes_a_worktree_whose_ignored_repository_is_pushed() {
+  # And the other half: a dependency cloned into an ignored folder is not work
+  # that exists nowhere else. Keeping a worktree for one would stop the
+  # cleanup cleaning at all, since that is what an installed tree looks like.
+  hk_worktree_setup
+  local wt
+  hk_worktree_ignores 'local/'
+  wt=$(hk_worktree_task T-1)
+  mkdir -p "$wt/local"
+  git clone -q . "$wt/local/dep" || fail "could not clone into the worktree"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remove worktree $wt"
+  assert_no_file "$wt"
+  assert_no_file .ai/workspace/tasks/T-1
+}
+
+test_housekeeping_removes_a_worktree_whose_ignored_repository_is_pinned_to_a_tag() {
+  # The form that caught the first draft of this out (measured, git 2.48.1): a
+  # dependency cloned with --single-branch --branch <tag> has no remote-tracking
+  # ref at all, only refs/tags/<tag>, so "not on any remote" is true of its only
+  # commit and the pin read as unpushed work. A worktree with a pinned
+  # dependency in it would then never be cleaned up.
+  hk_worktree_setup
+  local wt
+  hk_worktree_ignores 'local/'
+  git tag -a v1.0 -m v1.0
+  wt=$(hk_worktree_task T-1)
+  mkdir -p "$wt/local"
+  git clone -q --single-branch --branch v1.0 . "$wt/local/dep" \
+    || fail "could not clone the pinned dependency"
+  git -C "$wt/local/dep" show-ref | grep -q 'refs/remotes/' \
+    && fail "the pinned clone has a remote-tracking ref; the case is no longer the one measured"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remove worktree $wt"
+  assert_no_file "$wt"
+}
+
+test_housekeeping_names_the_ignored_files_a_removed_worktree_took() {
+  # Nothing can tell a .env from a built folder, so the cleanup does not keep
+  # the worktree for one. What it can do is stop being silent about it: the
+  # log names what went, so "what was in there" has an answer afterwards.
+  hk_worktree_setup
+  local wt
+  hk_worktree_ignores 'local/'
+  wt=$(hk_worktree_task T-1)
+  mkdir -p "$wt/local"
+  printf 'TOKEN=secret\n' > "$wt/local/.env"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_no_file "$wt"
+  # Jig's own ignored paths are left out: the borrowed workspace is a link and
+  # the runtime directory is derived.
+  assert_file_contains .ai/runtime/housekeeping.log "action=remove ignored=local/"
+}
+
 test_housekeeping_keeps_a_worktree_holding_a_workspace_of_its_own() {
   # `git worktree remove` deletes ignored files without a word, and a real
   # workspace inside the worktree is one this checkout knows nothing about.

@@ -289,7 +289,17 @@ python, and is a separate decision.
   takes the clone with it. The commit was in no other clone and the owning checkout never saw
   it; it is simply gone, with no message at any point.
 
-  This is why a directory of separate repositories under edit **must not** be declared as
-  `worktree.carry`, and why that is not offered anywhere as a stand-in for sharing. The carry is
-  for derived state, which by definition can be thrown away. Whether the carry should refuse a
-  declared path that contains a `.git` outright is a decision, not a fix, and is open.
+  Jig's own cleanup no longer walks into this: before removing a worktree it asks git what it
+  would delete silently, finds the repositories among those paths and asks each one's own git,
+  and holds the worktree when the work is nowhere else
+  (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). What that cannot reach is
+  `git worktree remove` run by hand, which is git's contract and unchanged. So the measurement
+  above still describes the bare command exactly, and the address of the danger is what moved.
+
+  It is why a directory of separate repositories under edit **must not** be declared as
+  `worktree.carry`, and why that is not offered anywhere as a stand-in for sharing: the second
+  clone is the defect, and a worktree the cleanup declines to remove is a held tree, not a
+  working arrangement. The carry is for derived state, which by definition can be thrown away —
+  and derived state is also what the new guard deliberately does *not* hold, `.env` and a local
+  database among it. Whether the carry should refuse a declared path that contains a `.git`
+  outright is a decision, not a fix, and is open.

@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -235,11 +235,20 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 >
 > A second consequence belongs here rather than there, because it is *this* decision that owns
 > the removal: `git worktree remove` without `--force` deletes ignored files **silently**, as
-> measured above. So a carried path that holds a separate git repository is a trap. The worktree
-> gets a second clone; work done in it is invisible to the parent because the path is ignored;
-> and removing the worktree takes that work with it — committed and uncommitted alike, the commit
-> having existed in no other clone — without a single message. Measured end to end on 2026-09-25.
-> Carrying such a directory is therefore not supported.
+> measured above. A carried path holding a separate git repository therefore starts out a trap.
+> The worktree gets a second clone; work done in it is invisible to the parent, because the path
+> is ignored; and the commit exists in no other clone. Measured end to end on 2026-09-25 —
+> removing such a worktree took the work away, committed and uncommitted alike, with no message
+> at any point.
+>
+> The amendment below closes that for the removal jig performs: the cleanup asks git what it would
+> delete silently, looks for repositories among those paths, asks each one's own git, and holds the
+> worktree when the answer is work that is nowhere else. What no decision here can close is the
+> bare command — `git worktree remove` run by hand is git's contract and behaves exactly as it did.
+> So the danger has changed address rather than gone, and it is worth saying what is *not* held:
+> an ignored path that is no repository still goes, which is `.env` and a local database. Carrying
+> a directory of separate repositories remains unsupported regardless, because the second clone is
+> the defect and a held worktree is not a working one.
 >
 > Sharing one by link is a separate decision, held by the `worktree-share` task. Note for whoever
 > takes it: linking a directory whole reads as untracked, because git does not match a
@@ -247,3 +256,12 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > the worktree un-removable for the rest of its life. A mirror — a real directory whose entries
 > are links — was built for this and then removed again; it is **a mechanism no longer here**, and
 > its measurements and findings live with that task.
+
+> **Amendment (2026-09-25).** The Consequences above measured that `git worktree remove` "deletes
+> *ignored* files silently", and stopped there. It still does, and that is no longer the end of the
+> reasoning: a repository nested inside an ignored folder went with the worktree, unpushed commits
+> and all, while `git status --porcelain` reported the tree as clean. The safety conditions gain one
+> — no repository inside the ignored paths holds work that is nowhere else — and the cleanup asks
+> each such repository's own git, because nothing outside it knows
+> (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). Ignored files that are not a
+> repository still go; a removal now names them in the housekeeping log.

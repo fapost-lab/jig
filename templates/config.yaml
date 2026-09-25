@@ -17,8 +17,8 @@ git.branch_per_task: true             # `jig task start` creates and checks out 
 git.branch_template: task/{id}        # {id} is the task id; validated by git itself
 # git.worktree_root: ../<project>.worktrees   # where `jig task start --worktree` puts worktrees
 # worktree.carry: [.env.testing]        # extra paths copied into a new worktree, beyond profiles
-#   never a directory holding its own git repository: removing the worktree deletes the copy
-#   silently, with the work in it — see https://jig.fapost.in/working-with-tasks
+#   never a directory holding its own git repository: the worktree gets a second clone, and
+#   `git worktree remove` by hand deletes it silently — see https://jig.fapost.in/working-with-tasks
 forge: auto                           # auto | github | gitlab | none
 
 housekeeping.cadence: 1d              # session hook runs housekeeping if last run is older
