@@ -59,18 +59,24 @@ _profiles_dedup() {
   printf '%s\n' "${result# }"
 }
 
-# profiles_is_fallback <profile-dir> — true when the profile covers every
-# project rather than a stack, which `detect: always` is the declaration of.
+# profiles_is_fallback <profile-dir> — true when the profile declares that it
+# claims nothing about the code: `verifies: nothing` in its profile.yaml.
 #
-# Read from the data, never from the name: `generic` is the only profile that
-# ships this way today, but the question being asked is "does this profile say
-# anything about *this* project's stack", and `detect` is where a profile
-# answers it. A fallback that skips means nothing here was checked because
-# nothing covers the project; a stack profile that skips means the stack was
-# recognised and its tools are missing — a different problem with a different
-# answer (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+# **Declared, never inferred, and in particular never read off `detect`.**
+# `detect` answers when a profile *applies*; this answers what it *asserts*.
+# They coincide in `generic` and nowhere else by necessity: a secret scanner or
+# a licence-header check is exactly the kind of profile that should apply
+# everywhere and does make a claim about the code. Reading `detect: always` as
+# "claims nothing" would put such a profile in the wrong bucket, and the day its
+# tool was missing it would report that nothing checks the project and ship
+# unverified — the very inversion this distinction exists to prevent.
+#
+# Absence means the profile verifies something, which is the cautious default:
+# a profile written before this field existed keeps refusing when its checks all
+# skip, rather than quietly becoming unverifiable
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
 profiles_is_fallback() {
-  [ "$(profile_get "$1" detect)" = "always" ]
+  [ "$(profile_get "$1" verifies)" = "nothing" ]
 }
 
 # profiles_supports <profile-dir> <capability> — true when the profile's

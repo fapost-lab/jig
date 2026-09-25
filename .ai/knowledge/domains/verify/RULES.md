@@ -41,8 +41,14 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   (nothing to install, nothing to wait for — do not refuse, and do not say `ok`: say that
   nothing here checks this project, and have `jig task ship` say it again where it has
   consequences). Collapsing the two either way is a defect, and a test that cannot tell them
-  apart does not cover this rule. The answer comes from `detect: always`, read by
-  `profiles_is_fallback` — never from a profile's name.
+  apart does not cover this rule. **The profile declares which it is** — `verifies: nothing`,
+  read only by `profiles_is_fallback` — and it is never inferred, least of all from
+  `detect: always`: `detect` says when a profile applies, not what it asserts, and a profile
+  that applies everywhere and does check something (a secret scanner, a licence-header check)
+  would otherwise ship unverified the day its tool went missing. Absence means the profile
+  verifies something, which is the cautious default. It cannot be computed from a run — a
+  profile with no checks and one whose checks could not run give identical skips and exit 2,
+  and `jig task ship` must answer without running anything at all.
 - **Incomplete outranks fail**, in `cmd_verify`, in `jp_end`, in `profiles/shell/verify.sh`
   and in `tests/run.sh` alike. A run something was killed in is not evidence, so the failures
   beside it are not evidence either.

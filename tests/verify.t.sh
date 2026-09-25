@@ -805,10 +805,10 @@ test_verify_changed_empty_file_list_skips_supporting_profile_without_running() {
   git commit -q -m "add probe profile"
 
   run jig verify --changed --profile probe
-  # Nothing that covers a stack took part — the fixture profile declares
-  # `detect: always`, which is what a fallback is — so the run says nothing
-  # was checked and does not refuse: there is nothing here to install.
-  assert_eq 0 "$RC"
+  # The fixture profile claims something about the code — it declares no
+  # `verifies: nothing` — so a run in which it checked nothing is refused:
+  # something could have been checked here and was not.
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: pass"
   assert_no_file probe.ran
@@ -1296,10 +1296,10 @@ test_verify_map_scope_empty_changed_file_list_skips_before_reading_the_map() {
   git commit -q -m "add probe profile with a broken map, nothing left uncommitted"
 
   run jig verify --changed --profile probe
-  # Nothing that covers a stack took part — the fixture profile declares
-  # `detect: always`, which is what a fallback is — so the run says nothing
-  # was checked and does not refuse: there is nothing here to install.
-  assert_eq 0 "$RC"
+  # The fixture profile claims something about the code — it declares no
+  # `verifies: nothing` — so a run in which it checked nothing is refused:
+  # something could have been checked here and was not.
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: fail"
   assert_no_file probe.ran
@@ -2169,5 +2169,35 @@ EOF
   assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
   # It must not be mistaken for the other state, which does not refuse.
+  assert_not_contains "$OUT" "nothing here checks this project"
+}
+
+# The fourth bench, and the one that says why the claim is declared rather than
+# read off `detect`. A secret scanner or a licence-header check is exactly the
+# profile that should apply everywhere *and* assert something about the code.
+# Inferring "claims nothing" from `detect: always` would put it in the wrong
+# bucket, and the day its tool went missing it would report that nothing checks
+# the project and let the change ship unverified — the inversion this whole
+# distinction exists to prevent. Revert `profiles_is_fallback` to reading
+# `detect` and this test is what turns red.
+test_verify_a_profile_that_applies_everywhere_but_checks_something_is_not_a_fallback() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/secrets
+  # Applies to every project, like generic — and unlike generic it claims
+  # something about the code, so it declares no `verifies: nothing`.
+  printf 'name: secrets\ndescription: fixture scanner that applies to every project.\ndetect: always\n' \
+    > .ai/profiles/secrets/profile.yaml
+  cat > .ai/profiles/secrets/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "secrets: scan: skip (its scanner is not installed)"
+exit 2
+EOF
+  chmod +x .ai/profiles/secrets/verify.sh
+
+  run jig verify --profile generic,secrets
+  # Something could have been checked here and was not: refuse.
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
   assert_not_contains "$OUT" "nothing here checks this project"
 }

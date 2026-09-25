@@ -209,9 +209,24 @@ to check.** Collapsing them either way is a defect:
   nothing here checks this project, and `jig task ship` says it again at the moment of
   shipping, where it has consequences, rather than only in a run ten minutes earlier.
 
-Which of the two it is comes from the data, never from a profile's name: `detect: always` is
-how a profile declares that it covers every project rather than a stack, and
-`profiles_is_fallback` is the one place that reads it.
+**Which of the two it is, the profile declares** — `verifies: nothing` in its `profile.yaml`,
+read in one place, `profiles_is_fallback`. Not its name, and **not `detect`**: `detect`
+answers when a profile applies, and an earlier draft of this decision read `always` as "claims
+nothing" because the two coincide in `generic`. They coincide there by accident. A secret
+scanner or a licence-header check is exactly the profile that should apply everywhere *and*
+assert something about the code; read off `detect`, it would land in the wrong bucket, and the
+day its tool went missing it would announce that nothing checks the project and let the change
+ship unverified — the same inversion this cut exists to prevent, arriving through the back
+door. Absence of the field means the profile verifies something, so a profile written before
+it existed keeps refusing rather than quietly becoming unverifiable.
+
+**It has to be declared, because nothing in a run can answer it.** A profile with no checks
+and a profile whose checks could not run produce the same run data: skips, exit 2. What
+differs is the reason, and a reason is prose, which this domain forbids `cmd_verify` to decide
+anything from. `jig task ship` settles the question anyway: it must say that nothing verifies
+this project **without running anything**, so the answer must be data a file carries. Anyone
+who later finds the field redundant and reaches for `detect` again should read this paragraph
+first.
 
 **The `generic` profile no longer passes, and that is the root rather than the arithmetic.**
 It answered `pass` on the strength of one test — "is this a git repository" — which cannot be
