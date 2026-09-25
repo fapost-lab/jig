@@ -66,13 +66,14 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   go ahead. The rule this replaces — "avoid simultaneous duplicate full runs" — was obeyed by
   every one of the eight agents that between them produced load average 364; it was written for
   one actor and said nothing about a population.
-- **A profile answers `pass` only for a check that could have failed on this project.** A
-  test that is true wherever the profile can run at all is a guard, not evidence, and a
-  profile whose every check is one of those skips. `generic` asserted "is this a git
-  repository", which `jig_require_repo` has already refused by then, and that one vacuous
-  pass kept a whole run green while every real check skipped. `jp_end` already encodes the
-  rule — exit 2 when no applicable check ran — and a profile that predates the library is
-  not exempt from it.
+- **A profile answers `pass` only for a check that could have come out false on this
+  project.** A test that is true wherever the profile can run at all is not a check — it is
+  an entry in a tally, and a tally entry is indistinguishable from evidence to everything
+  downstream. `generic` asserted "is this a git repository", which `jig_require_repo` has
+  already refused by then; that one entry kept `pass > 0`, and `pass > 0` painted green every
+  run in which each real check had skipped. Such a test is a guard: it may fail the run, and
+  it may not pass it. `jp_end` already encodes the rule — exit 2 when no applicable check ran
+  — and a profile that predates the library is not exempt from it.
 - **A narrowing that selects nothing is not a pass.** A profile that narrows its tests
   confirms every filter selects at least one test before running it; one that selects none
   runs the full set and says why. A runner reports an empty selection as `0 passed`, exit 0,

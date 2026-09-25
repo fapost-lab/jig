@@ -199,14 +199,17 @@ says so and returns 3. The two cases share the code because they are one answer 
 was produced** — and a caller has one thing to do about either: not treat it as green. The
 printed line says which of the two it was.
 
-**The `generic` profile no longer passes**, and that is what made the hole reachable rather
-than theoretical. It answered `pass` on the strength of one test — "is this a git repository"
-— which cannot be false anywhere jig runs, because `jig_require_repo` has already refused by
-then. One vacuous pass was enough to keep `pass > 0` and make the whole run green while every
-real check skipped. It is a guard, not evidence, so it can fail and it can no longer pass:
-the profile now reports `skip` and exits 2. This applies an existing rule rather than adding
-one — `jp_end` has always exited 2 for a profile that ran no applicable check, and `generic`
-predates the library that says so.
+**The `generic` profile no longer passes, and that is the root rather than the arithmetic.**
+It answered `pass` on the strength of one test — "is this a git repository" — which cannot be
+false anywhere jig runs at all, because `jig_require_repo` has already refused by then. **A
+check that cannot come out false where the tool runs is not a check; it is an entry in a
+tally.** That entry is what kept `pass > 0`, and `pass > 0` is what painted green every run
+in which each real check had skipped. Fixing only the run-level arithmetic would have left
+the hole open, because the count was never wrong — the thing being counted was. It is a
+guard, not evidence, so it can fail and it can no longer pass: the profile now reports `skip`
+and exits 2. This applies an existing rule rather than adding one — `jp_end` has always
+exited 2 for a profile that ran no applicable check, and `generic` predates the library that
+says so.
 
 **Incomplete outranks fail** at every level. A run something was killed in is not evidence, so
 the failures beside it cannot be trusted either — which is precisely what happened to the
