@@ -1105,8 +1105,12 @@ EOF
     [ -n "$id" ] || continue
     url=$(task_state_get "$id" pr_url)
     if _status_in "$id" "$open"; then
-      cards="$cards$(_status_card "A pull request is waiting for review or merge" "$id" "open as of $hk_note" \
-        "Review it and merge it; jig merges one itself only at agent.git: merge, on green CI." "$url")
+      # Borrowed knowledge: housekeeping asks the forge once a cadence, so this
+      # one may have been merged since. Past tense, and the first thing asked
+      # for is a refresh -- the imperative below it is the one the reader acts
+      # on, so it must not tell them to merge what may already be merged.
+      cards="$cards$(_status_card "A pull request was open at the last housekeeping run" "$id" "open as of $hk_note" \
+        "It may have been merged since: jig last asked the forge then. Run jig housekeeping to refresh, then review and merge what is still open." "$url")
 "
     else
       cards="$cards$(_status_card "A pull request is waiting for review or merge" "$id" "opened by jig task ship" \
