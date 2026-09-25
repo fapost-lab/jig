@@ -59,6 +59,26 @@ _profiles_dedup() {
   printf '%s\n' "${result# }"
 }
 
+# profiles_is_fallback <profile-dir> — true when the profile declares that it
+# claims nothing about the code: `verifies: nothing` in its profile.yaml.
+#
+# **Declared, never inferred, and in particular never read off `detect`.**
+# `detect` answers when a profile *applies*; this answers what it *asserts*.
+# They coincide in `generic` and nowhere else by necessity: a secret scanner or
+# a licence-header check is exactly the kind of profile that should apply
+# everywhere and does make a claim about the code. Reading `detect: always` as
+# "claims nothing" would put such a profile in the wrong bucket, and the day its
+# tool was missing it would report that nothing checks the project and ship
+# unverified — the very inversion this distinction exists to prevent.
+#
+# Absence means the profile verifies something, which is the cautious default:
+# a profile written before this field existed keeps refusing when its checks all
+# skip, rather than quietly becoming unverifiable
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+profiles_is_fallback() {
+  [ "$(profile_get "$1" verifies)" = "nothing" ]
+}
+
 # profiles_supports <profile-dir> <capability> — true when the profile's
 # profile.yaml lists <capability> under `scope`. Support is declared, never
 # inferred: profiles are copied into projects (ADR-0003) and `upgrade` keeps

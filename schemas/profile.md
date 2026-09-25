@@ -99,3 +99,38 @@ table above is the whole list of keys that mean anything.
 The file's *presence* is checked, even though its contents are not: it is part of the
 install manifest, so a profile directory missing its `profile.yaml` is reported as drift
 by `jig status` and makes `jig verify` refuse the stale install (ADR-0017).
+
+## `verifies`
+
+Optional, and the profile's claim about the code rather than a setting. The one value is
+`nothing`:
+
+```yaml
+verifies: nothing
+```
+
+It says this profile asserts nothing about the project — whatever it runs is a guard, which
+may fail a run and may not pass one. `generic` carries it and nothing else does. A project in
+which only such profiles are active is told that nothing verifies it, by `jig verify` and
+again by `jig task ship`, and is **not** refused over it: there is nothing to install and
+nothing to wait for. Where a profile that does claim something has all its checks skip — its
+tools are missing — `jig verify` refuses instead, because something could have been checked
+and was not (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+
+**Absence means the profile verifies something**, which is the cautious default: a profile
+written before this field existed keeps refusing rather than quietly becoming unverifiable.
+
+**It is declared, never inferred, and in particular is not `detect: always` under another
+name.** `detect` answers when a profile *applies*; `verifies` answers what it *asserts*. They
+coincide in `generic` alone, and by accident: a secret scanner or a licence-header check is
+exactly the profile that should apply everywhere **and** claim something about the code.
+Reading the claim off `detect` would put such a profile in the wrong bucket, and the day its
+tool went missing it would report that nothing checks the project and let the change ship
+unverified.
+
+**It cannot be computed from a run, and that is why it is declared.** A profile with no checks
+and a profile whose checks could not run both produce the same thing: skips and exit 2. The
+reason differs, but a check's reason is prose, and `cmd_verify` decides nothing from a
+profile's prose (`domains/verify/RULES.md`). `jig task ship` settles it: it must say that
+nothing verifies this project **without running anything at all**, so the answer has to be
+data a file carries, not an outcome a run produces.

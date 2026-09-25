@@ -106,7 +106,9 @@ test_profile_laravel_skips_without_artisan_or_php() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles laravel >/dev/null
   run jig verify --profile laravel
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "laravel: artisan test: skip (artisan or php not found)"
   assert_contains "$OUT" "RESULT laravel: skip"
 }

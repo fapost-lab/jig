@@ -28,6 +28,30 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   decide pass or fail — profiles are user-modifiable and their prose is not an API.
 - Exit code 2 means skip and must stay distinguishable from 0. Collapsing skip into pass
   would let an unrunnable check report success.
+- Exit code 3 means **no verdict was produced**: the check started and did not finish, or
+  nothing was checked at all. It must stay distinguishable from both 0 and 1. A profile
+  killed by a signal (128+N) means the first and needs no profile change to say so.
+  `jig verify` exits 3 for either, and the line it prints says which.
+- **A run where nothing passed and nothing failed is not a pass, and the two ways that happens
+  are told apart.** `cmd_verify` ended in `[ "$failn" -eq 0 ]`, so a set of pure skips answered
+  0 — success on a project not one line of which had been examined, read as success by
+  `jig task ship` and the autopilot. What decides is **whether there was anything to check**: a
+  profile covering the stack took part and its checks all skipped (the tools are missing —
+  refuse, exit 3), or only fallback profiles took part, so nothing covers the project at all
+  (nothing to install, nothing to wait for — do not refuse, and do not say `ok`: say that
+  nothing here checks this project, and have `jig task ship` say it again where it has
+  consequences). Collapsing the two either way is a defect, and a test that cannot tell them
+  apart does not cover this rule. **The profile declares which it is** — `verifies: nothing`,
+  read only by `profiles_is_fallback` — and it is never inferred, least of all from
+  `detect: always`: `detect` says when a profile applies, not what it asserts, and a profile
+  that applies everywhere and does check something (a secret scanner, a licence-header check)
+  would otherwise ship unverified the day its tool went missing. Absence means the profile
+  verifies something, which is the cautious default. It cannot be computed from a run — a
+  profile with no checks and one whose checks could not run give identical skips and exit 2,
+  and `jig task ship` must answer without running anything at all.
+- **Incomplete outranks fail**, in `cmd_verify`, in `jp_end`, in `profiles/shell/verify.sh`
+  and in `tests/run.sh` alike. A run something was killed in is not evidence, so the failures
+  beside it are not evidence either.
 - The changed-file list is computed once, in `_verify_changed_files`, and shared. Two
   profiles must never disagree about what changed in the same run.
 - The changed-file list includes staged, unstaged and untracked files: a project is
@@ -38,6 +62,31 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 - A new capability gets a name in `profile.yaml`'s `scope` list and is passed only to
   profiles that name it. Adding a capability that older profiles could observe by default
   would break profiles written before it existed.
+- **A run that dies without a failure is not a pass, so it is not claimed as one.** `Killed: 9`
+  and `Terminated: 15` reach a waiting process as 128+N, and until they had an outcome of their
+  own they were indistinguishable from a failing test. On one night that misreading cost four
+  investigations — three attempts and two hours for one author, 24 phantom `verify::` failures
+  for one reviewer — and not once was the cause in the code. Exit code 3 means "run it again",
+  never "it is broken". What this catches is death **by a signal**; a test starved rather than
+  killed still reads as an ordinary failure, and that limit is stated rather than papered over
+  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+- **One test run per clone, and the second one waits.** `jig verify` claims a record every
+  worktree of the clone can see (`<clone root>/.ai/runtime/verify/busy/`, taken with `mkdir`
+  because eight waiters must not wake together) and waits while another run holds it. A record
+  is live only while `kill -0` on its pid succeeds *and* its mtime is within `verify.busy_ttl`;
+  `0` switches the mechanism off, and `CI` switches it off by itself, because parallelism there
+  is deliberate. Nothing in it may fail `jig verify`: a record that cannot be taken lets the run
+  go ahead. The rule this replaces — "avoid simultaneous duplicate full runs" — was obeyed by
+  every one of the eight agents that between them produced load average 364; it was written for
+  one actor and said nothing about a population.
+- **A profile answers `pass` only for a check that could have come out false on this
+  project.** A test that is true wherever the profile can run at all is not a check — it is
+  an entry in a tally, and a tally entry is indistinguishable from evidence to everything
+  downstream. `generic` asserted "is this a git repository", which `jig_require_repo` has
+  already refused by then; that one entry kept `pass > 0`, and `pass > 0` painted green every
+  run in which each real check had skipped. Such a test is a guard: it may fail the run, and
+  it may not pass it. `jp_end` already encodes the rule — exit 2 when no applicable check ran
+  — and a profile that predates the library is not exempt from it.
 - **A narrowing that selects nothing is not a pass.** A profile that narrows its tests
   confirms every filter selects at least one test before running it; one that selects none
   runs the full set and says why. A runner reports an empty selection as `0 passed`, exit 0,
@@ -56,9 +105,18 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.
 - **A test suite run by a narrowed profile must not pass the scope on.** `tests/run.sh`
-  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED` and `CI` for every test:
+  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_BUSY_HELD`
+  and `CI` for every test:
   a test that runs a profile directly otherwise takes the scope of the run that started the
   suite.
+- **This repository's `tests/run.sh` takes the clone's run record as well, and that is local
+  to it.** The framework promises the record through `jig verify` only; a project's own runner
+  is outside the contract. Here it is inside, because the review skills ask for targeted runs
+  by test name and `jig verify` cannot express one — it narrows by changed file — so the raw
+  runner is the ordinary way to run a targeted set rather than an edit-time convenience. It
+  takes no record in a tree that is not a jig project, and none when it inherits
+  `JIG_VERIFY_BUSY_HELD` from the `jig verify` that started it
+  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
 - **The raw test runner is not the evidence path.** `tests/run.sh` reads no configuration:
   it does not know `verify.full_run`, never consults `.ai/verify/<profile>.map`, and prints
   no mode header — so its output cannot be the narrowed-mode evidence a task is closed on.

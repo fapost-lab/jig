@@ -129,7 +129,13 @@ EOF
   assert_file .ai/profiles/shell/verify.sh
 
   run jig verify --profile shell
-  assert_eq 0 "$RC"
+  # The freshly linked shell profile finds no linter and no test runner here,
+  # so every check skips and the run says it checked nothing, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). What
+  # this test is about — that the symlink was made and is usable — is the
+  # RESULT line, not the exit code.
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT shell: skip"
 
   # a non-symlink file in the way is a conflict, not an overwrite
   run jig verify --list --profile shell
@@ -449,8 +455,19 @@ EOF
   got=$(sed -n 's/^\(.*\) \.ai\/profiles\/shell\/verify\.sh$/\1/p' .ai/manifest)
   assert_eq "$want" "$got"
 
+  # Upgrade installed the profile; give its smoke run an applicable check.
+  # Without this runner the result depends on whether the host has shellcheck:
+  # a profile that skips every check correctly returns 3, not a false pass.
+  mkdir -p tests
+  cat > tests/run.sh <<'EOF'
+#!/usr/bin/env sh
+test -f .ai/profiles/shell/verify.sh
+EOF
+  chmod +x tests/run.sh
   run jig verify --profile shell
-  assert_eq 0 "$RC"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "shell: tests/run.sh: pass"
+  assert_contains "$OUT" "RESULT shell: pass"
 }
 
 # --- path traversal in config-driven profile/adapter names -----------------

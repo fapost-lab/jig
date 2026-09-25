@@ -140,6 +140,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The ubuntu image ships shellcheck and the macOS image does not, and
+      # nothing here installed it: the smoke step below therefore ran the real
+      # linter on Linux and found none on macOS, where every check skipped and
+      # the step **passed anyway**. Our own gate was green having verified
+      # nothing — the exact blindness this repository's `jig verify` now
+      # refuses (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+      # Installing the linter is the side of that which keeps the step
+      # meaningful; accepting the refusal would have written the blindness down
+      # as normal. It is also why this is the first step here that installs a
+      # tool rather than reporting one.
+      - name: Install shellcheck (the macOS image has none)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+
       # Printed, not asserted. The point is that a disagreement between
       # platforms is legible in the log rather than being a mystery — pinning
       # a version is impossible anyway, since jig has no dependency manager

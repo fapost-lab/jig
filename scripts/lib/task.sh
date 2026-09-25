@@ -2655,6 +2655,37 @@ task_artifact() {
 # a merge that did not happen, ends in a plain status line, not an error:
 # "none" is the one outcome a caller must tell apart from every other exit,
 # which is why it alone is exit 3.
+# _task_ship_unverified_notice — say, at the moment the change leaves the
+# machine, that nothing verifies this project.
+#
+# The person hears it here rather than only in a `jig verify` ten minutes
+# earlier, because here is where it has consequences. It is deliberately not a
+# refusal: when no profile covers the project there is nothing to install and
+# nothing to wait for, so refusing would stop work over a state nobody can
+# resolve. A stack profile whose tools are missing is the other case entirely
+# — there `jig verify` refuses, because something could have been checked and
+# was not (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+#
+# Nothing here may fail the ship: every path that cannot answer gives up.
+_task_ship_unverified_notice() {
+  local installed p pdir covered=0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh" 2>/dev/null || return 0
+  installed=$(profiles_installed_dir 2>/dev/null) || return 0
+  [ -n "$installed" ] || return 0
+  for p in $(profiles_active 2>/dev/null); do
+    pdir=$(profiles_dir "$installed" "$p" 2>/dev/null) || continue
+    [ -d "$pdir" ] || continue
+    if ! profiles_is_fallback "$pdir"; then
+      covered=1
+      break
+    fi
+  done
+  [ "$covered" = 0 ] || return 0
+  printf 'task ship: no profile covers this project, so nothing verifies it; this ships unverified\n'
+  return 0
+}
+
 task_ship() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
@@ -2732,6 +2763,8 @@ task_ship() {
   [ -n "$branch" ] || jig_die "task ship: $id has not been started (no branch); run \`jig task start $id\` first"
   [ "$cur" = "$branch" ] || jig_die "task ship: current branch is $cur, but $id is on $branch; switch branches first"
   [ "$branch" != "$base" ] || jig_die "task ship: $id's branch is its own base ($base); nothing task-specific to ship"
+
+  _task_ship_unverified_notice
 
   jig_ship_check_staged "task ship"
   jig_ship_commit "task ship" "$message_file"

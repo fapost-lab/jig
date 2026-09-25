@@ -187,7 +187,9 @@ test_profile_dotnet_detected_for_fsproj() {
 test_profile_dotnet_skips_every_check_without_toolchain() {
   _dotnet_install
   _dotnet_no_tools jig verify --profile dotnet
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "dotnet: format: skip (not found on PATH)"
   assert_contains "$OUT" "dotnet: test: skip (not found on PATH)"
   assert_contains "$OUT" "RESULT dotnet: skip"

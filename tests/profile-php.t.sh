@@ -152,7 +152,9 @@ test_profile_php_detected_for_composer_json() {
 test_profile_php_full_mode_skips_every_check_without_toolchain() {
   _php_install
   _php_no_tools jig verify --profile php
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "php: phpunit: skip (not found in vendor/bin)"
   assert_contains "$OUT" "php: phpstan: skip (not found in vendor/bin)"
   assert_contains "$OUT" "php: pint: skip (not found in vendor/bin)"

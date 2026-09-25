@@ -119,8 +119,14 @@ cmd_example() {
 - Assert behaviour, not only exit codes: file presence, symlink targets, manifest lines,
   output substrings via `run cmd; assert_contains "$OUT" ...`.
 - Every negative path that ends in `jig_die` has a test asserting the message.
-- During edits, use `tests/run.sh <name-filter>` for the affected behavior; reuse valid
-  results across stages and avoid simultaneous duplicate full runs. Wait on the run's own
+- During edits, use `tests/run.sh <name-filter>` for the affected behavior, and reuse valid
+  results across stages. **Do not rely on remembering not to run a second full set**: that
+  sentence used to end here on its own, every agent kept it, and eight of them still produced
+  eight simultaneous sets and load average 364 — a rule for one actor says nothing about a
+  population. `jig verify` now holds a record the whole clone can see and waits for a run that
+  is already going (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass), so the
+  evidence path serialises itself; a raw `tests/run.sh` does not, which is one more reason the
+  run that counts goes through `jig verify`. Wait on the run's own
   handle — `tests/run.sh >"${TMPDIR:-/tmp}/jig-run.log" 2>&1 & wait $!` — and read that
   exit code; a `pgrep -f` poll matches its own command line and never returns.
   **Write the log outside the repository.** This line used to say `>run.log`, and every
