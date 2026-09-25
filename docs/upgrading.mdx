@@ -1,0 +1,135 @@
+---
+title: "Upgrading"
+description: "What jig upgrade does for you, what it deliberately leaves to you, and the steps this release asks for by hand."
+---
+
+You install Jig once and upgrade it many times. [Install](/install#keep-jig-up-to-date) covers the
+two commands; this page is about what happens afterwards — what the upgrade did on its own, what it
+left for you, and why the line between them is where it is.
+
+```bash
+jig self-update          # the tool on your machine
+jig upgrade --dry-run    # in a project: what would change
+jig upgrade              # in a project: update its copy of Jig
+```
+
+## What the upgrade does, and what it leaves alone
+
+`jig upgrade` copies from the Jig on your machine. It replaces the files Jig installed and you did
+not edit, removes the ones Jig no longer ships unless you edited them, and keeps and reports
+everything else. Review the diff and commit it.
+
+Three things it will not do, and none of them are oversights.
+
+**It does not edit `.ai/config.yaml`.** That file belongs to your team, and nothing but a person
+edits it. A key your file does not mention takes its default, so a config written for an older
+version keeps working — which is also the trap, because that file is the only place anyone ever
+sees which settings exist. So the upgrade *reports* the gap instead of closing it. At the end of a
+real run (not a dry run) it prints a line like:
+
+```text
+.ai/config.yaml does not mention 2 key(s) this version reads, each on its default: worktree.carry, checkout.busy_ttl
+hint: `jig config keys` lists them; that file is yours to change or leave as it is
+```
+
+That second line means what it says. Read the list, decide whether any of it is worth having, and
+leave the file alone if none of it is. Nothing is wrong with a project that mentions no keys at
+all.
+
+**It does not install your project's tools.** Jig runs your checks; it does not provide them. If a
+verification profile for your stack is active and its tools are missing, that is yours to fix with
+`npm install`, `composer install`, a virtual environment, or whatever your project uses.
+
+**It does not claim a region of a file your project already had.** Jig keeps the section between
+`<!-- jig:begin -->` and `<!-- jig:end -->` in your `AGENTS.md` current — but only for a project
+whose manifest records that Jig may. That record is written by `jig init`, on markers you agreed
+to, and the first time Jig takes over part of a file you wrote is a moment that belongs to you
+rather than to a command that ran while you were making coffee.
+
+## From 0.15 to 0.16
+
+This release has three steps that only you can take. None of them happens automatically, and the
+first two change whether Jig keeps working the way you expect. See the
+[changelog](/changelog) for everything else in the release.
+
+<Steps>
+  <Step title="Run the jig-init skill, so upgrades can reach your AGENTS.md">
+    Ask your agent to run the `jig-init` skill. It adds the markers and records Jig's claim to that
+    section, with your consent, and from then on improvements to Jig's own instructions arrive with
+    each upgrade.
+
+    Adding the markers by hand does **not** do it: without the recorded claim, `jig upgrade`
+    reports `keep-unmarked AGENTS.md` and changes nothing, however well-formed your markers are.
+
+    If your Jig section has also drifted from Jig's own text, markers alone are still not enough —
+    no claim gets recorded, and the upgrade reports `keep-modified` instead. Reconcile the text
+    first, against `.ai/templates/AGENTS.md`, and then mark it.
+  </Step>
+
+  <Step title="Install the tools your project's checks need">
+    `jig verify` used to answer `ok` when a profile for your stack was active and every one of its
+    checks had been skipped for a missing tool. It now refuses — exit 3, *nothing was checked, so
+    this is not a pass* — and `jig task ship` will not ship on it.
+
+    `jig verify --list` shows which profiles are installed; install what they need. If your project
+    is covered by no profile at all, nothing changes for you: Jig says so plainly and does not
+    block you, because there is nothing you could install to resolve it.
+  </Step>
+
+  <Step title="If you wrote a profile that checks nothing by design, say so">
+    A profile that asserts nothing about the code — one that exists to carry shared setup, say —
+    needs `verifies: nothing` in its `profile.yaml`. Absence means the profile claims it verifies
+    something, which is the cautious default: without the line, the day its tool goes missing it
+    refuses rather than quietly reporting that nothing checks your project.
+
+    This applies only to profiles you wrote yourself. Every profile Jig ships already declares it.
+  </Step>
+</Steps>
+
+## Checking that it took
+
+Three commands answer it, and you do not need to remember which does what — run `jig doctor` first
+and follow what it says.
+
+```bash
+jig doctor
+```
+
+The lines to look for:
+
+```text
+ok    instructions (claude): Jig section present and kept current
+ok    config keys: 2 not mentioned in .ai/config.yaml, each on its default: worktree.carry, checkout.busy_ttl (jig config keys)
+```
+
+A `warn` reading `Jig section in AGENTS.md is not marked, so upgrades cannot reach it` means step
+one is still outstanding. One reading `no Jig section in AGENTS.md` means Jig's instructions never
+reached your agent at all, which is worth fixing before anything else.
+
+One line deserves a second look because it is reported as **ok** rather than a warning:
+
+```text
+ok    instructions (claude): Jig section changed here; upgrades keep your text
+```
+
+That is not a problem — it is Jig respecting an edit someone made inside the markers — but it does
+mean this project will not receive improvements to that section. If the edit was deliberate, leave
+it. If nobody remembers making it, reconcile against `.ai/templates/AGENTS.md`.
+
+```bash
+jig config keys
+```
+
+Lists every setting this version reads, its default, and where its current value comes from — your
+project's file, your personal one, or the default. Use it after reading the upgrade's closing line,
+to see what the new version brought.
+
+```bash
+jig verify
+```
+
+The one that proves step two. A pass means checks ran. `nothing was checked, so this is not a pass`
+with exit 3 means tools are still missing. `nothing here checks this project` with exit 0 means no
+profile covers your stack — not something an upgrade can fix, and not something that blocks you.
+Run `jig verify --explain` first if you want to see what a run will expand to before spending the
+time on it.

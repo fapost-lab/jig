@@ -1,0 +1,100 @@
+---
+title: "What's next"
+description: "What Jig is being fixed and built next, and in what order."
+---
+
+This page says what is coming and in which order. It carries no dates: what is written here is the
+order the work is taken in, and that is the only thing anyone can promise honestly about software
+written a task at a time.
+
+The order is not a ranking of how interesting the work is. It is what a mistake costs the person
+who meets it. Things that take work away from you come first, however small they are to fix. Things
+that tell you something untrue about the state of your project come next, because you cannot act on
+a report you cannot trust. Things that merely cost time come after those. New capabilities come
+last, and wait for all of it.
+
+[Known issues](/known-issues) describes the faults themselves — what you see, what it costs, and
+what to do instead until each one is fixed.
+
+## First: what takes work away from you
+
+**The installer must refuse a home folder, not warn about it.** Taking the defaults on Windows can
+end with your user profile turned into a Git repository holding an index of everything in it. A
+home folder, a drive root, or a folder already inside another repository will be refused outright,
+and the flag that skips the questions will not skip the refusal — agreeing to a question is not the
+same as turning off a guard.
+
+**An interrupted upgrade must be repeatable.** Today, interrupting `jig upgrade` leaves files it
+already placed looking hand-edited, and Jig then declines to touch them again — permanently, with
+no way back that Jig itself offers. The work here includes deciding honestly between the two real
+answers: an upgrade that can resume where it stopped, or one that either happens completely or not
+at all. The second is more truthful and more expensive, and whichever is chosen will be written
+down with its cost.
+
+**A task must not be closed while its work is unmerged.** Ending an autopilot run marks the task
+finished without anyone asking whether its pull request landed. The task then disappears from
+`jig status` at exactly the moment it needed watching. Neither the automatic path nor the manual
+one asks the question today, so the fix is to put the question where both of them pass.
+
+**Housekeeping must never wait for a password nobody will type.** A fetch against a remote that
+asks for credentials hangs, and because housekeeping records that it ran only after finishing, the
+next session starts another one. The count grows per session. Both halves get fixed: the fetch
+learns that no one is at the keyboard, and the record stops depending on reaching the end.
+
+**What you type must be stored exactly as you typed it.** A reason or a note containing a backslash
+is reinterpreted on its way into a task's state, so a Windows path like `C:\temp` is silently
+mangled — and a value carrying the right two characters can write a second line into the state
+file, which is enough to make a task that never started look started. The correct mechanism is
+already used elsewhere in Jig; this puts it everywhere a value is written.
+
+**An interrupted command must not leave its scratch files in your project.** Jig writes a new file
+beside the old one and renames it into place, so a command that dies halfway can never leave you
+half a file. What it does leave is the spare copy, and nothing cleans it up afterwards.
+
+## Then: what tells you something untrue
+
+**Redrawing the status page must not impersonate a session.** The page refreshes itself by running
+Jig again, through the same path an ordinary command takes. So the refresh overwrites the checkout's
+record of what is actually happening in it, and it can swallow the "HEAD moved underneath you"
+warning that was meant for the session working next to you — the one case that warning exists for.
+
+**Jig's own required check must tell a skipped job from a passed one.** The single check that gates
+every change to Jig treats a job that was skipped as a job that succeeded. A broken condition, a
+runner failure or a typo in a path filter therefore reads as green, and nothing anywhere turns red.
+This is a statement about how Jig is built rather than about your project, which is why it is
+written here rather than left unsaid: a project whose gate cannot distinguish *checked and passed*
+from *never checked* has not earned the trust it asks of you.
+
+## Then: what costs you time
+
+**Resolving knowledge must cost one walk of your repository.** Working out which knowledge
+documents apply to a set of files currently walks the whole tree once per path pattern instead of
+once in total — tens of seconds on a small project, minutes on a large one, paid several times in
+an ordinary task. The measurements and the fix are both known; what matters is that this is the
+feature's condition for being used at all, since anyone meeting the cost switches the feature off.
+
+**A review receipt must pin the change, not the tree.** A signed review is invalidated when
+somebody else's work merges into your base, although your own diff has not moved a line. The
+reviewer is then recalled to certify a change it has already certified. Pinning what the task
+actually changed keeps the signature valid across unrelated merges while still invalidating it for
+any edit inside the task's own work.
+
+## After that: new capabilities
+
+Two are designed and waiting. Neither starts before the list above is done, and saying so is the
+point of this page.
+
+**A shared folder in a task worktree.** Today an ignored folder can be copied into a worktree, which
+is right for derived state such as `vendor/`, `node_modules/` or `.env`. It is wrong for a folder of
+local packages that several worktrees must share: copying gives each worktree its own clone, and
+edits in one are invisible to the others. A project built that way cannot use worktrees at all until
+this exists.
+
+**Stages a task can hand to another agent.** Running a route's stages in separate agents, so that
+review genuinely arrives with fresh eyes and independent work can proceed at the same time. The
+groundwork for this shipped with autopilot; the capability itself is next in line among features,
+not among fixes.
+
+Beyond those, two ideas have written plans and no start date: knowledge that lives in a section of
+an existing file rather than a whole one, and project hooks — a way for a project to bind its own
+rules and its own checks to stages of the route.

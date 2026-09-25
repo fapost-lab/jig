@@ -26,6 +26,7 @@
         "pages": [
           "index",
           "install",
+          "upgrading",
           "greenfield",
           "brownfield"
         ]
@@ -54,6 +55,7 @@
         "pages": [
           "comparison",
           "known-issues",
+          "roadmap",
           "changelog"
         ]
       }
