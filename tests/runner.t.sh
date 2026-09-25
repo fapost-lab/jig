@@ -318,11 +318,41 @@ test_runner_in_a_non_jig_tree_takes_no_record() {
 test_runner_does_not_queue_behind_the_verify_that_started_it() {
   rn_build_suite
   rn_write_ab_fixture
-  # What `jig verify` exports once it holds the record. Were the guard in
-  # tests/run.sh to go, a suite run through `jig verify` would wait for the
-  # record its own parent is holding, for ever.
-  run env JIG_VERIFY_BUSY_HELD="$PWD/root/.ai/runtime/verify" \
+
+  # The record code is behind `[ -f "$ROOT/.ai/config.yaml" ]`, so a fixture
+  # without one never reaches it — and a test written against such a fixture is
+  # green whether the guard below exists or not. Give this one a real jig
+  # project, with the libraries the record reaches through, so the guard is
+  # actually the thing under test (conventions/detectors.md: a green detector is
+  # indistinguishable from a blind one; plant a sample).
+  mkdir -p root/.ai root/scripts/lib
+  cp "$JIG_HOME"/scripts/lib/common.sh "$JIG_HOME"/scripts/lib/config.sh \
+     "$JIG_HOME"/scripts/lib/checkout.sh "$JIG_HOME"/scripts/lib/verify.sh \
+     root/scripts/lib/
+  # Short on purpose: without the guard this run would wait, and the test must
+  # end either way — it fails on the waiting line, never by hanging.
+  printf 'profiles: [generic]\nverify.busy_ttl: 3s\n' > root/.ai/config.yaml
+
+  # A live holder, as a `jig verify` in another worktree of the clone would be.
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p root/.ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > root/.ai/runtime/verify/busy/run
+
+  # What `jig verify` exports once it holds the record. The runner must read it
+  # and not queue behind its own parent.
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=1 \
+    JIG_VERIFY_BUSY_HELD="$PWD/root/.ai/runtime/verify" \
     "$PWD/root/tests/run.sh"
-  assert_eq 0 "$RC"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+  # The assertion that carries the claim: it never waited. Remove the guard in
+  # tests/run.sh and this line is what turns red.
+  assert_not_contains "$OUT" "waiting for it"
+  # And it left the holder's record exactly as it found it.
+  assert_file_contains root/.ai/runtime/verify/busy/run "checkout: /elsewhere"
 }

@@ -189,15 +189,29 @@ three places, and all three now report it:
   field and `jig verify` exits **3** with one sentence: the run did not finish, so it neither
   passed nor failed — run it again.
 
-**A run that never happened is the same answer as a run that died**, and it shares exit 3.
-`cmd_verify` ended in `[ "$failn" -eq 0 ]`, so a set of pure skips answered 0: on a project
-with no shellcheck and no test runner, `jig verify` reported success having examined not one
-line of it, and `jig task ship` and the autopilot read that code. The domain already said a
-skip is not a pass, and that a narrowing which selects nothing is not a pass; the exit code
-was the one place still contradicting both. A run where nothing passed and nothing failed now
-says so and returns 3. The two cases share the code because they are one answer — **no verdict
-was produced** — and a caller has one thing to do about either: not treat it as green. The
-printed line says which of the two it was.
+**A run that never happened is the same answer as a run that died** — but only when there was
+something to run. `cmd_verify` ended in `[ "$failn" -eq 0 ]`, so a set of pure skips answered
+0: on a project with no shellcheck and no test runner, `jig verify` reported success having
+examined not one line of it, and `jig task ship` and the autopilot read that code. The domain
+already said a skip is not a pass, and that a narrowing which selects nothing is not a pass;
+the exit code was the one place still contradicting both.
+
+**"Nothing was checked" is two states, and the cut between them is whether there was anything
+to check.** Collapsing them either way is a defect:
+
+- **A profile covering this stack took part and every check skipped.** The stack was
+  recognised and its tools are missing — something could have been checked and was not, for a
+  reason somebody can fix. Refused: exit 3, sharing the code with the killed run because both
+  mean **no verdict was produced**, and a caller has one thing to do about either.
+- **Only fallback profiles took part**, so no profile covers this project at all. There is
+  nothing to install and nothing to wait for; refusing would stop work over a state the person
+  cannot resolve. **Not refused — and not called `ok` either.** The run says plainly that
+  nothing here checks this project, and `jig task ship` says it again at the moment of
+  shipping, where it has consequences, rather than only in a run ten minutes earlier.
+
+Which of the two it is comes from the data, never from a profile's name: `detect: always` is
+how a profile declares that it covers every project rather than a stack, and
+`profiles_is_fallback` is the one place that reads it.
 
 **The `generic` profile no longer passes, and that is the root rather than the arithmetic.**
 It answered `pass` on the strength of one test — "is this a git repository" — which cannot be
@@ -283,12 +297,16 @@ produces such artefacts; the second makes legible the part the machine can actua
   tests does.
 - The profile contract gains an exit code and a verdict word. A profile a user edited and
   `upgrade` kept will simply never produce them, which reads as it does today.
-- **A project with no stack tooling now gets a non-zero `jig verify`.** Where `generic` was
-  the only thing answering, the run went from 0 to 3 and says nothing was checked. This is the
-  intended reading of "a skip is not a pass", and it is visible the first time someone runs
-  `jig verify` on a fresh project — but it is the one consequence of this decision that
-  reaches projects with no connection to the problem it was written for. `jig task ship` and
-  the autopilot refuse on it, which is the point: there was no evidence to ship on.
+- **A project no profile covers is told so, twice, and stopped never.** `jig verify` returns 0
+  and says nothing here checks it; `jig task ship` repeats it as the change leaves the machine.
+  An earlier draft of this decision refused that case too, which would have reached projects
+  with no connection to the problem and stopped them over a state they could not resolve. What
+  it costs instead is that the sentence has to be *read*: the exit code no longer carries it,
+  so the wording is load-bearing and must never soften into `ok`.
+- **A project whose stack is covered but whose tools are missing now gets a non-zero
+  `jig verify`,** where it used to get 0. That is the blind pass this decision exists to stop,
+  and `jig task ship` and the autopilot refuse on it: there was no evidence to ship on, and
+  there is something the person can install.
 - `.ai/runtime/verify/` is one more thing in the clone root's runtime directory. Nothing
   deletes an expired record in the background; the next run takes it over.
 - **There is no queue and no order.** When a holder leaves, every waiter races on the same

@@ -46,6 +46,10 @@ reads it from every profile directory and returns the names that matched, which 
 - Detection does not look inside `.git`, `.ai`, `node_modules`, `vendor`, `.venv`,
   `venv` or `.dart_tool`. A `.sh` file vendored into someone else's dependency is not
   what the project is written in.
+- `always` also declares a **fallback**: a profile that covers every project covers no stack
+  in particular, so when its checks skip, nothing here checked the project — a different answer
+  from a stack profile whose tools are missing, and `jig verify` gives it a different one
+  (`profiles_is_fallback`; adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
 - `always` means detected in every project. `generic` carries it, and is in the result
   before any manifest is read at all; in any other profile it would mean the same thing.
 

@@ -59,6 +59,20 @@ _profiles_dedup() {
   printf '%s\n' "${result# }"
 }
 
+# profiles_is_fallback <profile-dir> — true when the profile covers every
+# project rather than a stack, which `detect: always` is the declaration of.
+#
+# Read from the data, never from the name: `generic` is the only profile that
+# ships this way today, but the question being asked is "does this profile say
+# anything about *this* project's stack", and `detect` is where a profile
+# answers it. A fallback that skips means nothing here was checked because
+# nothing covers the project; a stack profile that skips means the stack was
+# recognised and its tools are missing — a different problem with a different
+# answer (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+profiles_is_fallback() {
+  [ "$(profile_get "$1" detect)" = "always" ]
+}
+
 # profiles_supports <profile-dir> <capability> — true when the profile's
 # profile.yaml lists <capability> under `scope`. Support is declared, never
 # inferred: profiles are copied into projects (ADR-0003) and `upgrade` keeps

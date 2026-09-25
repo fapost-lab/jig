@@ -380,7 +380,7 @@ cmd_verify() {
   local list_only=0 profile_given=0 profiles_words="" p pdir raw tok
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
   local header="" base_branch base_ref mb map map_ok map_err
-  local incomplete=0
+  local incomplete=0 covered=0
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
   JIG_VERIFY_BUSY=""
@@ -535,6 +535,16 @@ cmd_verify() {
       continue
     fi
 
+    # Did anything here have something to check? A profile that covers a stack
+    # says yes by being here at all — the stack was recognised, whatever its
+    # tools, or its missing verify.sh, then did. A fallback says nothing either
+    # way. Asked before the checks below, so a profile that is installed but
+    # broken still counts as "there was something to check": that is a defect to
+    # fix, not a project nothing covers.
+    if ! profiles_is_fallback "$pdir"; then
+      covered=1
+    fi
+
     if [ ! -f "$pdir/verify.sh" ]; then
       printf 'SKIP %s: no verify.sh\n' "$p"
       skip=$((skip + 1))
@@ -646,16 +656,29 @@ cmd_verify() {
   # exit code has to say so. `[ "$failn" -eq 0 ]` alone answered 0 for a set of
   # pure skips: on a project with no shellcheck and no test runner, `jig verify`
   # reported success having examined not one line of it, and `jig task ship` and
-  # the autopilot read that code. The domain already says a skip is not a pass
-  # and that a narrowing which selects nothing is not a pass; this is the same
-  # sentence said in the one place that was still contradicting it.
+  # the autopilot read that code.
   #
-  # It shares exit 3 with the killed run, because the two are one answer — no
-  # verdict was produced — and a caller has one thing to do about either: not
-  # treat it as green. The line says which of the two it was.
+  # But "nothing was checked" is two states, and only one of them is anybody's
+  # fault. **The difference is whether there was anything to check.**
+  #
+  #   - A profile covering this stack took part and every check skipped: the
+  #     stack was recognised and its tools are missing. There was something to
+  #     check and it was not checked, for a reason somebody can fix. That is the
+  #     blind pass this rule exists to stop, and it is refused — exit 3, sharing
+  #     the code with the killed run because both mean no verdict was produced.
+  #   - Only fallback profiles took part: no profile covers this project at all.
+  #     There is nothing to install and nothing to wait for, so refusing would
+  #     stop work over a state the person cannot resolve. It does not refuse —
+  #     and it does not say `ok` either. It says plainly that nothing was
+  #     checked, and `jig task ship` says it again at the moment of shipping,
+  #     where it has consequences, rather than only here ten minutes earlier.
   if [ "$pass" -eq 0 ] && [ "$failn" -eq 0 ] && [ "$total" -gt 0 ]; then
-    printf 'verify: nothing was checked, so this is not a pass — install the project'"'"'s tools or activate a profile that checks it\n'
-    return 3
+    if [ "$covered" = 1 ]; then
+      printf 'verify: nothing was checked, so this is not a pass — install the project'"'"'s tools so its profile can run\n'
+      return 3
+    fi
+    printf 'verify: nothing here checks this project — no profile covers it, so this run verified nothing\n'
+    return 0
   fi
   [ "$failn" -eq 0 ]
 }

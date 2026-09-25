@@ -426,9 +426,12 @@ test_verify_runs_profiles_when_source_root_unknown() {
   rm -rf "$src"
 
   run jig_installed verify
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "RESULT generic: skip"
-  assert_contains "$OUT" "verify: nothing was checked"
+  assert_contains "$OUT" "verify: nothing here checks this project"
   assert_not_contains "$OUT" "FAIL framework"
 }
 
@@ -748,12 +751,10 @@ test_verify_changed_scope_ignored_for_profile_without_declaration() {
   fixture_jig_repo
 
   run jig verify --changed
-  # generic is the only active profile here and does not declare scope
-  # support, so --changed is ignored and it runs its ordinary way — which is
-  # now a skip, not a pass, and the run as a whole checked nothing (rc 3).
-  # The note text is what this test is really about: it is appended
-  # regardless of the profile's own verdict.
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "generic: repository: skip (no stack-specific checks: this profile verifies nothing about the code)"
   assert_contains "$OUT" "RESULT generic: skip (scope ignored: profile declares no scope support, ran full set)"
 }
@@ -804,8 +805,10 @@ test_verify_changed_empty_file_list_skips_supporting_profile_without_running() {
   git commit -q -m "add probe profile"
 
   run jig verify --changed --profile probe
-  # Every profile skipped, so the run checked nothing and says so (M7).
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: pass"
   assert_no_file probe.ran
@@ -871,11 +874,10 @@ test_verify_without_changed_flag_has_no_scope_text() {
   fixture_jig_repo
 
   run jig verify
-  # generic is the only active profile here and it skips (verifies nothing
-  # stack-specific), so the run checked nothing (rc 3) — orthogonal to what
-  # this test actually guards: that no "scope" text leaks in without
-  # --changed.
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_not_contains "$OUT" "scope"
 }
 
@@ -1003,9 +1005,10 @@ verify.full_run: local
 EOF
 
   run jig verify
-  # generic is the only active profile and it skips, so the run checked
-  # nothing (rc 3) — orthogonal to what this test guards: no scope text.
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_not_contains "$OUT" "scope"
   assert_not_contains "$OUT" "verify: full run"
 }
@@ -1014,10 +1017,10 @@ test_verify_full_flag_in_local_mode_runs_with_no_header() {
   fixture_jig_repo
 
   run jig verify --full
-  # generic is the only active profile and it skips, so the run checked
-  # nothing (rc 3) — orthogonal to what this test guards: no scope/header
-  # text with --full in local mode.
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "generic: repository: skip (no stack-specific checks: this profile verifies nothing about the code)"
   assert_not_contains "$OUT" "scope"
   assert_not_contains "$OUT" "verify: full run"
@@ -1217,10 +1220,10 @@ EOF
 
   unset CI
   run jig verify
-  # generic is the only active profile and it skips, so the run checked
-  # nothing (rc 3) — orthogonal to what this test guards: that a
-  # config.local.yaml value never narrows or widens the run.
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_not_contains "$OUT" "verify: scope"
   assert_not_contains "$OUT" "verify: full run"
 }
@@ -1293,8 +1296,10 @@ test_verify_map_scope_empty_changed_file_list_skips_before_reading_the_map() {
   git commit -q -m "add probe profile with a broken map, nothing left uncommitted"
 
   run jig verify --changed --profile probe
-  # Every profile skipped, so the run checked nothing and says so (M7).
-  assert_eq 3 "$RC"
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: fail"
   assert_no_file probe.ran
@@ -2116,4 +2121,53 @@ EOF
   assert_eq 1 "$RC"
   assert_contains "$OUT" "verify: 2 profiles, 0 pass, 1 fail, 1 skip, 0 incomplete"
   assert_not_contains "$OUT" "nothing was checked"
+}
+
+# --- the cut inside "nothing was checked" ------------------------------------
+#
+# Two states used to be one. They differ by **whether there was anything to
+# check**, and each of the two tests below reddens on exactly the mistake the
+# other one guards against: run them against a `cmd_verify` that treats both
+# alike and one of them fails whichever way it was collapsed.
+
+# No profile covers this project at all. There is nothing to install and
+# nothing to wait for, so the run does not refuse — and it does not say `ok`
+# either.
+test_verify_a_project_no_profile_covers_is_not_refused_but_is_named() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+
+  run jig verify --profile generic
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: nothing here checks this project"
+  # It must not be mistaken for the other state, which is a refusal.
+  assert_not_contains "$OUT" "nothing was checked, so this is not a pass"
+  # And nothing anywhere may read as a pass.
+  assert_not_contains "$OUT" "generic: ok"
+  assert_not_contains "$OUT" "RESULT generic: pass"
+}
+
+# A profile that covers a stack took part and every check skipped: the stack
+# was recognised and its tools are missing. Something could have been checked
+# and was not, for a reason somebody can fix, so this one is refused.
+test_verify_a_covered_stack_whose_checks_all_skip_is_still_refused() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/stack
+  # `detect` names a file, so this profile claims a stack — the one thing that
+  # tells it apart from the fallback above.
+  printf 'name: stack\ndescription: fixture profile that covers a stack.\ndetect: [stack.toml]\n' \
+    > .ai/profiles/stack/profile.yaml
+  cat > .ai/profiles/stack/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "stack: build: skip (its tool is not installed)"
+exit 2
+EOF
+  chmod +x .ai/profiles/stack/verify.sh
+
+  run jig verify --profile generic,stack
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
+  # It must not be mistaken for the other state, which does not refuse.
+  assert_not_contains "$OUT" "nothing here checks this project"
 }

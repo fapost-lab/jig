@@ -205,7 +205,7 @@ skip is never a pass.
 
 | Profile | Detected by | Checks, when available |
 |---|---|---|
-| `generic` | always | The folder is a Git repository. |
+| `generic` | always | Nothing: it checks no code. It fails when the folder is not a Git repository and otherwise reports a skip, so a project it is alone in hears that nothing verifies it. |
 | `shell` | `*.sh` | ShellCheck, and an executable `tests/run.sh`. |
 | `php` | `composer.json` | PHPUnit or Pest, PHPStan, Pint, `composer validate`. |
 | `laravel` | `artisan` | The PHP checks, plus `php artisan test`. |
