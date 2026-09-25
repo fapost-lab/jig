@@ -213,6 +213,32 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > Nothing about the workspace's location changes. The alternatives this decision rejected — moving the
 > workspace into the worktree, or copying it — stay rejected, for the reasons given above.
 
+> **Amendment (2026-09-24).** Two of the rules above are untouched and one of them decided
+> what follows. "The worktree is created on request, not automatically" still holds; so does
+> "where a task's branch is checked out is read from git, never from another checkout's
+> `.ai/`", which is what settled the shape of the new record in its favour. What changes is
+> what that request answers to: **the dirty-tree refusal is no longer the only fork in
+> `task start`.**
+>
+> The Context above says three tasks in a row recorded another session's branch because HEAD
+> moved between two commands. The dirty-tree refusal caught the worst of it, and only that:
+> a checkout that is clean but occupied by a live session was indistinguishable from an empty
+> one, because a live session left no trace anywhere. On 2026-09-24 that cost a coordinating
+> session its branch, silently. A checkout now writes down what is happening in it — one file
+> per piece of work under its own gitignored `.ai/runtime/working/`, rewritten by every jig
+> run — and `task start` refuses a checkout where other work is live, naming the same other
+> road this decision already names: start this task in its own worktree. The refusal ignores
+> anonymous runs, so it is narrow
+> (adr-20260924-a-checkout-records-what-is-happening-in-it).
+>
+> Two smaller consequences for this decision's own text. "No automatic lock is taken at
+> `task start --worktree`" (amendment of 2026-09-22) is unchanged, and is part of why the
+> record exists: `git worktree lock` refuses the main working tree outright, which is the one
+> checkout where the incident happened. And the `worktree=<path> uncommitted=<n>` that
+> `task list` and `jig status` print from `git worktree list` is why the new record stores no
+> `worktree` field: it would be a kept copy of a fact git computes and this decision already
+> publishes.
+
 > **Amendment (2026-09-24, carrying).** "Worktrees need no install step here" is true of this
 > repository and false of almost every project jig serves. It was generalised from the one case in
 > front of it: jig is shell with no dependencies, so its own worktrees start complete. A project

@@ -19,6 +19,7 @@ Absent keys take the default. Paths are not configurable.
 | `housekeeping.trash_ttl` | `7d` | yes | trash entries older than this are deleted |
 | `housekeeping.abandoned_ttl` | `14d` | yes | abandoned workspaces are purged after this |
 | `housekeeping.stale_after` | `60d` | yes | older active tasks are reported as `STALE_CANDIDATE` |
+| `checkout.busy_ttl` | `12h` | yes | how long a checkout's record of work in progress still counts as a live session (adr-20260924-a-checkout-records-what-is-happening-in-it) |
 | `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr`, `merge` — `merge` also merges the pull request once CI passed, never past branch protection; an epic's only in an unattended run (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level, adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |
 | `autopilot.unattended` | `false` | only | `true`: an autopilot run asks nothing — each stop becomes a safe default recorded in the pull request — and an epic's final pull request may be merged (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
@@ -50,7 +51,7 @@ Values `set` accepts, per key:
 | Key | Accepted |
 |---|---|
 | `housekeeping.cadence` | whole days (`3d` or `3`) |
-| `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after` | `<n>[dhms]` |
+| `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after`, `checkout.busy_ttl` | `<n>[dhms]` |
 | `housekeeping.fetch`, `autopilot.unattended` | `true` or `false` |
 | `agent.git` | `none`, `commit`, `push`, `pr`, `merge` |
 | `agent.ci_timeout` | whole minutes, 0 to 9999 |
