@@ -22,37 +22,6 @@ Work already under way is left out.
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## A task filed from inside a worktree disappears with the worktree
-
-{/* closed by jig task: task-new-in-a-worktree-strands-the-task — remove this entry in the PR that merges the fix */}
-
-Starting a task in a **worktree** links one folder back to the checkout the task was filed in: that
-task's own. The folder around it, `.ai/workspace/tasks/`, is a real directory belonging to the
-worktree — so a task you file *from inside* the worktree is created there, beside the link, and
-nowhere else.
-
-Your project ignores that path, and ignored is what `git worktree remove` deletes without a word. So
-when the worktree goes — removed by Jig's housekeeping once the task is closed and landed, or by you
-by hand — the second task's statement, plan and notes go with it. The checkout you filed the first
-task in never saw them, and `jig status` there never listed them.
-
-Jig's protection for ignored work does not reach this. The cleanup keeps a worktree when an ignored
-folder holds a **Git repository** with work that is nowhere else; a task folder is not a repository,
-so nothing answers for it.
-
-**What to do instead.** File tasks from the main checkout. If an agent already filed one from inside
-a worktree, move it out before the worktree goes — one command, so there is never a moment where
-the only copy is half-copied:
-
-```bash
-mv <worktree>/.ai/workspace/tasks/<id> <checkout>/.ai/workspace/tasks/<id>
-```
-
-That is enough: `jig status` in the checkout lists the task again, and every Jig command looks for
-it there. If you also want it reachable from inside the worktree, ask your agent to link it across
-rather than making the link by hand — on Windows `ln -s` quietly copies instead of linking, and a
-second copy of a task is the problem you have just undone.
-
 ## `jig task ship` pushes a branch with no commits, then fails
 
 {/* closed by jig task: ship-refuses-empty-index — remove this entry in the PR that merges the fix */}

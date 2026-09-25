@@ -188,10 +188,13 @@ to skip the carry for that run.
 An [autopilot run of a whole roadmap phase](/autopilot#running-a-whole-phase) does this for you:
 it puts every task of a wave in its own worktree and gives each one its own agent.
 
-Each worktree has its own branch and its own uncommitted changes; the task list in the original
-checkout still shows every task and where it runs. A task's notes, plan and design stay in the
-checkout where you filed it — a worktree only reaches them across, and the agent writes them
-through Jig rather than by hand, so the task's date and the status page keep up wherever it works. Review and commit in the worktree as you would
+Each worktree has its own branch and its own uncommitted changes, but they all share one task
+list: the notes, plans and designs of every task live in the checkout you filed them in, and a
+worktree reaches the whole folder across. So the original checkout shows every task and where it
+runs, an agent in a worktree can look up a task somebody filed elsewhere, and a task the agent
+files from inside a worktree lands with all the others instead of vanishing when that worktree is
+removed. The agent writes through Jig rather than by hand, so the task's date and the status page
+keep up wherever it works. Review and commit in the worktree as you would
 anywhere. When the task is closed and its change has landed on its base — an epic branch included —
 the worktree is removed, but only if it has no uncommitted changes and no lock. Worktrees you or your
 agent created by hand are never removed.

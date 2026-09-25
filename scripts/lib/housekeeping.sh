@@ -45,6 +45,13 @@ cmd_housekeeping() {
   trap 'rm -f "$_HK_ROWS"' EXIT
 
   local runtime="$JIG_PROJECT/$JIG_AI_DIR/runtime"
+  # Every walk of this path below is `find "$tasks_dir" ...` with no trailing
+  # slash, and that is load-bearing. In a worktree the path is a link to the
+  # owner's directory (_task_link_workspace), and find descends a symlink
+  # named as its starting point only when the slash is written. Without it
+  # housekeeping in a borrowing checkout finds no task at all, which is the
+  # point: a workspace is purged and its worktree retired by the checkout it
+  # was filed in, never by one that borrowed it (ADR-0008).
   local tasks_dir="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
 
   local trash_ttl abandoned_ttl stale_after
@@ -799,7 +806,17 @@ _hk_worktree_retire() {
     esac
   fi
   if [ "$ours" = 1 ]; then
-    own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l -print -quit 2>/dev/null) || own=""
+    # A worktree that borrows the owner's `tasks/` directory whole can hold no
+    # workspace of its own: everything under the link is the owner's, filed
+    # there and purged there. Asked before `find`, and not left to it: find
+    # does not descend a symlink named as its starting point, so it would
+    # answer "nothing of its own" here for the right reason by accident, and
+    # go on answering it if that link ever gained a trailing slash.
+    if [ -L "$path/$JIG_AI_DIR/workspace/tasks" ]; then
+      own=""
+    else
+      own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l -print -quit 2>/dev/null) || own=""
+    fi
     [ -z "$own" ] || reason="own-workspace"
   fi
   if [ -z "$reason" ] && [ -n "$(git -C "$path" status --porcelain 2>/dev/null || true)" ]; then

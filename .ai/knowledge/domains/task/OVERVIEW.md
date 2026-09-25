@@ -109,8 +109,14 @@ the repository, for when this checkout is busy with other uncommitted work — t
 dirty-tree refusal now names as its other road. Three things about it are easy to get
 wrong from inside this domain's code:
 
-- The workspace never moves. The worktree gets a link to it, so everything that reads a
-  workspace works there unchanged, and the filing checkout keeps listing every task.
+- The workspace never moves. The worktree gets one link to the filing checkout's whole
+  `.ai/workspace/tasks/` directory (ADR-0029 as amended), so everything that reads a
+  workspace works there unchanged, the filing checkout keeps listing every task —
+  including the ones filed from inside the worktree, which a link to one task alone left
+  stranded and doomed — and an agent in the worktree can see the queue it is adding to.
+  Where a project's gitignore would leave a directory link untracked, `task start` keeps
+  the one-task link instead, and `task new` then refuses to file a task in that worktree
+  rather than lose it when the tree goes.
   Nothing may delete or move a workspace through that link. `_task_workspace_root` is
   where that is decided, for reading and for writing alike: it refuses every link but
   this one, and `task artifacts` and `task artifact` both go through it. A third command

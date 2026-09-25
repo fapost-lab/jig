@@ -64,3 +64,13 @@ write the same `state` file.
 > its clone, found through git's own `.git` and `commondir` files (ADR-0038). It is a setting
 > of the clone, not task data, and it is only read — nothing is written, moved or owned
 > through that path. Workspaces stay exactly as above: no lookup, no shared location.
+
+> **Amendment (2026-09-25).** The first exception widens from one workspace to the whole
+> `.ai/workspace/tasks/` directory (ADR-0029 as amended). It is still *given at creation, not
+> looked up*, so the rule this ADR is about — no checkout reaches into another's `.ai/` to find
+> something — is untouched, and the rejected alternative of a shared location under the common git
+> dir stays rejected: the directory is the filing checkout's, in its own `.ai/` tree. What changes
+> is the consequence recorded above. "A worktree removed with `git worktree remove` takes its
+> workspaces with it" no longer holds for a worktree jig made, because it has none of its own; it
+> still holds for one made by hand, and there `jig task new` refuses rather than let a task be
+> filed into it.

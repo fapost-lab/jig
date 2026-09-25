@@ -1779,12 +1779,30 @@ test_housekeeping_names_the_ignored_files_a_removed_worktree_took() {
   assert_file_contains .ai/runtime/housekeeping.log "action=remove ignored=local/"
 }
 
+# hk_worktree_keeps_its_own_directory <worktree> <id> — give <worktree> the
+# task directory of ADR-0029 before its 2026-09-25 amendment: a real directory
+# of its own holding one link to the task's workspace. That is what an older
+# jig left behind, what `git worktree add` by hand leaves, and what
+# `task start` falls back to in a project whose gitignore would leave a
+# directory link untracked. A worktree that borrows the directory whole can
+# hold no workspace of its own, so it is the only shape the guard can be
+# tested against.
+hk_worktree_keeps_its_own_directory() {
+  local wt="$1" id="$2" owner
+  owner=$(cd ".ai/workspace/tasks/$id" && pwd -P) || return 1
+  [ -L "$wt/.ai/workspace/tasks" ] || return 0
+  rm -f "$wt/.ai/workspace/tasks" || return 1
+  mkdir -p "$wt/.ai/workspace/tasks" || return 1
+  plant_dir_link "$owner" "$wt/.ai/workspace/tasks/$id"
+}
+
 test_housekeeping_keeps_a_worktree_holding_a_workspace_of_its_own() {
   # `git worktree remove` deletes ignored files without a word, and a real
   # workspace inside the worktree is one this checkout knows nothing about.
   hk_worktree_setup
   local wt
   wt=$(hk_worktree_task T-1)
+  hk_worktree_keeps_its_own_directory "$wt" T-1
   mkdir -p "$wt/.ai/workspace/tasks/filed-there"
   printf 'task_id: filed-there\n' > "$wt/.ai/workspace/tasks/filed-there/state"
 
@@ -1897,8 +1915,11 @@ test_housekeeping_inside_a_worktree_leaves_the_borrowed_workspace_alone() {
   RC=$?
   set -e
   assert_eq 0 "$RC"
+  # Nothing found, and for a reason that is written down rather than lucky:
+  # housekeeping walks `find "$tasks_dir"` with no trailing slash, and find
+  # does not descend a symlink named as its starting point.
   assert_contains "$OUT" "no task workspaces"
-  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the link was moved"
+  [ -L "$wt/.ai/workspace/tasks" ] || fail "the link was moved"
   assert_file .ai/workspace/tasks/T-1/state
 }
 

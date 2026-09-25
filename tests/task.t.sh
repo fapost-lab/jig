@@ -2041,17 +2041,101 @@ test_task_start_worktree_leaves_this_checkout_alone() {
 test_task_start_worktree_borrows_the_workspace_by_link() {
   task_setup_nested
   jig task new T-1 >/dev/null
-  local wt owner
+  local wt owner tasks
   wt=$(jig task start T-1 --worktree 2>/dev/null)
   owner=$(cd .ai/workspace/tasks/T-1 && pwd -P)
+  tasks=$(cd .ai/workspace/tasks && pwd -P)
 
-  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the worktree has no link to the workspace"
+  # The whole directory, not the one task: a task filed from inside the
+  # worktree must land beside every other one instead of in a directory that
+  # dies with the tree.
+  [ -L "$wt/.ai/workspace/tasks" ] || fail "the worktree has no link to the task directory"
+  assert_eq "$tasks" "$(cd "$wt/.ai/workspace/tasks" && pwd -P)"
   assert_eq "$owner" "$(cd "$wt/.ai/workspace/tasks/T-1" && pwd -P)"
   grep -qx 'branch: task/T-1' .ai/workspace/tasks/T-1/state || fail "branch not recorded"
   grep -q '^base_commit: [0-9a-f]\{40\}$' .ai/workspace/tasks/T-1/state || fail "base_commit not recorded"
   # Inside the worktree the task is current, and the link leaves git clean.
   assert_eq "T-1" "$(cd "$wt" && jig task current)"
   assert_eq "" "$(git -C "$wt" status --porcelain)"
+}
+
+# task_setup_directory_ignored_by_directory — a project whose gitignore names
+# the task directory with a trailing slash. Such a rule matches a directory and
+# not a link, so a directory link there would read as untracked and
+# `git worktree remove` without --force would refuse the tree for the rest of
+# its life (ADR-0029 as amended). This is the shape the fallback exists for.
+task_setup_tasks_ignored_by_directory() {
+  task_setup_nested
+  printf '.ai/workspace/tasks/\n.ai/runtime\n.ai/config.local.yaml\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "ignore the task directory as a directory"
+}
+
+# The defect this whole change exists for, end to end. A unit test on the
+# linking function would not have caught it: what caught it was comparing two
+# lists of tasks by eye, three times in one shift.
+test_task_new_in_a_worktree_is_filed_where_every_other_task_is() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+
+  # An agent in the worktree files the successor its own work asked for.
+  ( cd "$wt" && jig task new T-2 >/dev/null ) || fail "task new in the worktree failed"
+
+  # The checkout that keeps the queue sees it, as a workspace of its own.
+  assert_contains "$(jig task show T-2)" "task_id: T-2"
+  [ -d .ai/workspace/tasks/T-2 ] || fail "T-2 was not filed in the owning checkout"
+  [ ! -L .ai/workspace/tasks/T-2 ] || fail "T-2 should be a workspace, not a link"
+
+  # And it outlives the tree it was written in. `git worktree remove` without
+  # --force deletes ignored files without a word, so before this the statement
+  # went with the worktree and nothing said so.
+  git worktree remove "$wt" || fail "the worktree could not be removed"
+  [ ! -d "$wt" ] || fail "the worktree is still there"
+  assert_contains "$(jig task show T-2)" "task_id: T-2"
+}
+
+# The other half of the same defect: a reviewer in a worktree refused to drop a
+# finding because it could not confirm that the task it named existed.
+test_task_start_worktree_shows_the_tasks_filed_outside_it() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+
+  assert_contains "$(cd "$wt" && jig task show T-2)" "task_id: T-2"
+  assert_contains "$(cd "$wt" && jig status)" "task T-2"
+}
+
+test_task_start_worktree_keeps_one_link_when_a_directory_link_would_not_be_ignored() {
+  task_setup_tasks_ignored_by_directory
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+
+  [ ! -L "$wt/.ai/workspace/tasks" ] || fail "the task directory must not be linked here"
+  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the one-task link is missing"
+  # The whole point of the fallback: the worktree can still be removed.
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+}
+
+# Where the directory could not be linked, the loss must be refused rather than
+# made quietly. This also covers a worktree somebody made with `git worktree
+# add`, which has a task directory of its own for the same reason.
+test_task_new_refuses_in_a_worktree_that_keeps_its_own_task_directory() {
+  task_setup_tasks_ignored_by_directory
+  jig task new T-1 >/dev/null
+  local wt owner
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  owner=$(pwd -P)
+
+  run sh -c "cd '$wt' && '$JIG_BIN' task new T-2"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "would be invisible to $owner"
+  [ ! -e "$wt/.ai/workspace/tasks/T-2" ] || fail "a stranded workspace was created anyway"
+  [ ! -e .ai/workspace/tasks/T-2 ] || fail "the refusal should file nothing"
 }
 
 test_task_start_worktree_branches_from_the_base_not_head() {
@@ -2196,7 +2280,7 @@ test_task_start_worktree_links_via_a_junction_when_symlinks_copy() {
   run_split jig task start T-1 --worktree
   assert_eq 0 "$RC" "task start should succeed: $ERR"
   wt="$OUT"
-  [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the worktree has no link to the workspace"
+  [ -L "$wt/.ai/workspace/tasks" ] || fail "the worktree has no link to the task directory"
   assert_eq "$owner" "$(cd "$wt/.ai/workspace/tasks/T-1" && pwd -P)"
 }
 

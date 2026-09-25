@@ -1744,7 +1744,19 @@ spec_remove() {
   # Collect every decision before changing anything.
   local tasks_root d tid link lrc st branch base plan="" local_ids=""
   tasks_root="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  # A checkout whose task directory is itself a link owns none of the tasks
+  # under it: the link leads into the checkout that filed them, and unlinking
+  # a spec here would rewrite another checkout's `task.md` from a branch it
+  # knows nothing about. Per task that refusal is the `[ ! -L "$d" ]` skip
+  # below; for a borrowed directory the answer is the same for every task at
+  # once, and is said rather than left to look like an empty queue.
+  local borrowed=0
+  if [ -L "$tasks_root" ]; then
+    borrowed=1
+    jig_warn "spec remove: this checkout borrows its task workspaces, so no task is unlinked here; run it in the checkout that owns them"
+  fi
   for d in "$tasks_root"/*/; do
+    [ "$borrowed" = 0 ] || break
     d=${d%/}
     [ -d "$d" ] || continue
     [ ! -L "$d" ] || continue
