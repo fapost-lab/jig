@@ -35,7 +35,7 @@ selected.
 |---|---|---|
 | `git.base_branch` | detected by `jig init` | The main branch: where tasks branch from, and where Jig looks to see whether a task's work has landed. `jig init` reads it from the remote's default branch, else `main` or `master`. |
 | `git.branch_per_task` | `true` | Starting a task creates and switches to its own branch. With `false`, a task records the branch you are on instead — for projects that work on one branch by choice. |
-| `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id. |
+| `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id — the only placeholder there is. If your project prefixes branches with the kind of work (`feat/`, `fix/`, `docs/`), that stays in the pull request title and the commit message: Jig has nothing to fill it from, since a task's class is its risk (`T0`–`T4`), not its kind. |
 | `git.worktree_root` | `../<project>.worktrees` | Where a task started in a separate worktree is placed ([several agents at once](/working-with-tasks#several-agents-at-once)). |
 | `worktree.carry` | `[]` | Extra paths copied into a new worktree, beyond what the active profiles already declare — for state your project keeps outside Git that a profile does not know about. See [carrying state into a worktree](/working-with-tasks#several-agents-at-once). |
 | `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address. Without the tool, or with `none`, Jig falls back to what Git itself can show. |
@@ -89,6 +89,39 @@ The full set still runs whenever it should:
 
 This saves the agent from running the whole suite after every small change, while CI still proves
 everything before a merge. A red CI run sends the task back to verification.
+
+## What your file does not say
+
+Every key not in `.ai/config.yaml` takes its default, and that is by design — the file is short
+because it only has to hold what you changed. But it is also the only place you ever see which
+settings exist, and Jig never edits it: it is yours, committed and reviewed like code. So after
+`jig upgrade` brings a newer Jig, your file goes on describing the version it was written for,
+and a setting added since is one nobody told you about.
+
+Two commands close that gap.
+
+```
+jig config keys
+```
+
+lists every setting this version reads, its default, and which of the two files answers for it —
+and marks the ones your `.ai/config.yaml` says nothing about. A commented-out line counts as
+saying something: the file is documentation as much as configuration.
+
+`jig doctor` prints the same thing in one line, and only when there is something to say:
+
+```
+ok    config keys: 2 not mentioned in .ai/config.yaml, each on its default: worktree.carry, checkout.busy_ttl (jig config keys)
+```
+
+Nothing is wrong when you see it — every one of those settings is working on its default. It is
+an invitation to look, and the reply is yours to write, or not. Doctor also warns the other way
+round, about a line in `.ai/config.yaml` that sets a key Jig does not read at all — a misspelling,
+or a setting a later version dropped.
+
+Personal settings are left out of both: Jig never reads `agent.git`, `agent.ci_timeout`,
+`autopilot.unattended` or `autopilot.parallel` from the project's file, so naming them there
+would only invite you to write a line that does nothing.
 
 ## Personal settings — `.ai/config.local.yaml`
 
