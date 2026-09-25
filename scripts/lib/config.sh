@@ -94,6 +94,128 @@ jig_config_local_only_key() {
   esac
 }
 
+# --- the key inventory --------------------------------------------------------
+
+# jig_config_keys — one `<key> <default>` line per configuration key jig reads,
+# in the order schemas/config.md tables them. The key is the first word; the
+# rest of the line is the default, written the way a person writes it in the
+# file (`[claude, codex]`, not the space-separated form `cfg_list` hands back).
+#
+# Whether a key is local is deliberately not repeated here: JIG_CFG_LOCAL_KEYS
+# and JIG_CFG_LOCAL_ONLY_KEYS above already answer that, and a second copy of
+# a fact is a second thing to keep true. jig_config_key_scope reads them.
+#
+# This list is written by hand, and `tests/config.t.sh` is what keeps it
+# honest. That test greps scripts/ for every `cfg`, `cfg_bool`, `cfg_list` and
+# `cfg_list_lines` call and refuses to pass unless the call sites, this list,
+# schemas/config.md, templates/config.yaml and docs/configuration.mdx agree on
+# one set of keys and one set of defaults. A list nothing computes is a list
+# that lapses — RULES.md says exactly that about its own deletion paragraph —
+# so the computing lives in the test, where a false positive is a failure
+# somebody fixes, and not in the report, where it would be a lie told to a
+# user.
+jig_config_keys() {
+  cat <<'EOF'
+profiles [generic]
+adapters [claude, codex]
+git.base_branch main
+git.branch_per_task true
+git.branch_template task/{id}
+git.worktree_root ../<project>.worktrees
+worktree.carry []
+forge auto
+housekeeping.cadence 1d
+housekeeping.fetch true
+housekeeping.trash_ttl 7d
+housekeeping.abandoned_ttl 14d
+housekeeping.stale_after 60d
+checkout.busy_ttl 12h
+agent.git none
+agent.ci_timeout 30
+autopilot.unattended false
+autopilot.parallel 2
+knowledge.require_frontmatter true
+verify.full_run local
+EOF
+}
+
+# jig_config_key_known <key> — exit 0 when <key> is a key jig reads.
+jig_config_key_known() {
+  jig_has_line "$1" "$(jig_config_keys | cut -d' ' -f1)"
+}
+
+# jig_config_key_scope <key> — which file answers for <key>: `project`,
+# `local` (the local file wins, .ai/config.yaml still answers when it is
+# silent) or `local only` (the project layer is never read). Derived from the
+# two lists above, never stored a second time.
+jig_config_key_scope() {
+  if jig_config_local_only_key "$1"; then
+    printf 'local only\n'
+  elif jig_config_local_key "$1"; then
+    printf 'local\n'
+  else
+    printf 'project\n'
+  fi
+}
+
+# _cfg_mentions <file> <key> — exit 0 when <file> has a line that mentions
+# <key>, a commented one included.
+#
+# A comment counts, unlike in _config_has_key, and the difference is the whole
+# point: that function asks what `cfg` will read, this one asks what the file
+# tells a person. `# verify.full_run: local` sets nothing and documents the
+# key, and templates/config.yaml ships three keys exactly that way — read
+# strictly, a project would be told on its first day that it is missing them.
+_cfg_mentions() {
+  [ -f "$1" ] || return 1
+  JIG_CFG_KEY="$2" awk '
+    BEGIN { k = ENVIRON["JIG_CFG_KEY"]; n = length(k) + 1 }
+    {
+      line = $0
+      sub(/^[ \t]*#*[ \t]*/, "", line)
+      if (substr(line, 1, n) == k ":") { found = 1; exit }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$1"
+}
+
+# jig_config_unmentioned — one line per key this version reads that the
+# project's .ai/config.yaml says nothing about, commented lines counted as
+# saying something. Reporting only, for `jig doctor` and `jig config keys`:
+# every one of these keys is answering on its default right now and nothing is
+# broken (schemas/config.md). What is broken is the file as documentation —
+# after an upgrade it goes on describing the version it was written for, so a
+# key added since is one nobody was told about.
+#
+# JIG_CFG_LOCAL_ONLY_KEYS are left out. `cfg` never reads the project layer
+# for them, so naming one here would send a person to write a line that does
+# nothing; the opposite mistake, one of them written into that file anyway, is
+# what jig_config_project_ignored reports.
+jig_config_unmentioned() {
+  local file key rest
+  file=$(jig_config_file)
+  [ -f "$file" ] || return 0
+  while read -r key rest; do
+    [ -n "$key" ] || continue
+    if jig_config_local_only_key "$key"; then continue; fi
+    _cfg_mentions "$file" "$key" || printf '%s\n' "$key"
+  done < <(jig_config_keys)
+}
+
+# jig_config_unknown — one line per key the project's .ai/config.yaml sets
+# that jig does not read at all: a misspelling, or a key a later version
+# removed. Only lines that actually set a key, never a comment — a key named
+# in prose is documentation, and a typo in a comment sets nothing.
+jig_config_unknown() {
+  local file key
+  file=$(jig_config_file)
+  [ -f "$file" ] || return 0
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    jig_config_key_known "$key" || printf '%s\n' "$key"
+  done < <(sed -n 's/^\([A-Za-z0-9_.-]*\):.*/\1/p' "$file" | awk '!seen[$0]++')
+}
+
 # jig_config_project_ignored — "<key><TAB><value>" for every local-only key
 # that is nonetheless set in the project's .ai/config.yaml, where `cfg` never
 # reads it. Reporting only, for `jig status` and `jig doctor`: nothing here
@@ -364,14 +486,16 @@ cmd_config() {
     set) _config_set "$@" ;;
     unset) _config_unset "$@" ;;
     show) _config_show "$@" ;;
+    keys) _config_keys "$@" ;;
     help | -h | --help)
       printf 'usage: jig config set <key> <value> [<key> <value>...] --local [--dry-run]\n'
       printf '       jig config unset <key> [<key>...] --local [--dry-run]\n'
       printf '       jig config show --local\n'
+      printf '       jig config keys\n'
       printf 'local keys: %s\n' "$JIG_CFG_LOCAL_KEYS"
       ;;
-    '') jig_die "config: missing subcommand (usage: jig config set|unset|show ... --local)" ;;
-    *) jig_die "config: unknown subcommand: $sub (usage: jig config set|unset|show ... --local)" ;;
+    '') jig_die "config: missing subcommand (usage: jig config set|unset|show|keys ...)" ;;
+    *) jig_die "config: unknown subcommand: $sub (usage: jig config set|unset|show|keys ...)" ;;
   esac
 }
 
@@ -419,6 +543,45 @@ _config_show() {
     $3 == "ignored" {
       printf "ignored: %s (not a local key; jig config unset %s --local)\n", $1, $1
     }'
+}
+
+# _config_keys — `jig config keys`. Every key jig reads, its default, which
+# file answers for it, and whether this project's .ai/config.yaml mentions it
+# at all. Read-only, and the one command that can answer "which keys exist" —
+# `config show` prints a file, and a file only names the keys somebody
+# already wrote down.
+#
+# No `--local` here, and no refusal without it: the other subcommands guard a
+# write to a file the team owns, and this one writes nothing.
+_config_keys() {
+  [ $# -eq 0 ] || jig_die "config keys: unknown argument: $1 (usage: jig config keys)"
+  # jig_require_init, not jig_require_repo: the last column is what this
+  # project's .ai/config.yaml mentions, and without that file every key would
+  # be reported as unmentioned, which is true of nothing.
+  jig_require_init
+  local file key default note
+  file=$(jig_config_file)
+  printf '%-31s%-25s%s\n' "key" "default" "answered by"
+  while read -r key default; do
+    [ -n "$key" ] || continue
+    note=""
+    if ! jig_config_local_only_key "$key" && ! _cfg_mentions "$file" "$key"; then
+      note="not mentioned in $JIG_AI_DIR/config.yaml"
+    fi
+    # Two formats rather than one padded to the widest: a row with no note
+    # would otherwise end in blanks, which every diff and every editor that
+    # strips them would then argue about.
+    if [ -n "$note" ]; then
+      printf '%-31s%-25s%-13s%s\n' "$key" "$default" "$(jig_config_key_scope "$key")" "$note"
+    else
+      printf '%-31s%-25s%s\n' "$key" "$default" "$(jig_config_key_scope "$key")"
+    fi
+  done < <(jig_config_keys)
+  printf '\n'
+  printf 'local: may be set in %s/config.local.yaml, which wins for it\n' "$JIG_AI_DIR"
+  printf 'local only: read from %s/config.local.yaml and never from config.yaml\n' "$JIG_AI_DIR"
+  printf 'a key nothing mentions is answering on its default; nothing is wrong, and\n'
+  printf 'nothing but a person edits %s/config.yaml (ADR-0024)\n' "$JIG_AI_DIR"
 }
 
 # _config_apply <in> <out> <key> <value> — <in> with <key> set to <value>: the

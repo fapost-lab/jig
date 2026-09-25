@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 ---
 # Task
 
@@ -168,6 +168,36 @@ and the run's phase — the same producer `autopilot report` summarises); and a 
 (`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
 gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
 awk pass (`_status_task_rows`), so a renamed key empties a column there too.
+
+**A card goes when what it asks for has been done and the page can see that for free.** Both
+halves decide it, and neither is about the kind of card. A task's own `status`, and whether a
+worktree is still on disk, are read here for nothing while the page is redrawn after every
+command — so `_status_flagged_ids` asks them again at that moment and drops the flag: closing a
+task answers `needs-consolidation`, abandoning one answers `abandoned?`, and removing the tree
+answers `worktree-kept`, each with no housekeeping run in between. Those three, and no others.
+`wrong-base` fails the second half: only the forge and the history know where work landed, which
+costs a network request the page never makes on the write path. The pull-request cards fail the
+first: closing a task does not merge its pull request, so a `consolidated` task with
+`remote=open` is not a contradiction and "review and merge it" still stands. Both stay borrowed,
+past tense, marked "as of" the run that saw them. Read the two halves of `needs-consolidation`
+apart to see the shape: *merged* is borrowed, *nobody closed it yet* is asked again.
+
+**A free local answer has a third use: it can correct a card's ask instead of removing the card.**
+`task abandon` never touches the forge, so a task the person gave up on keeps its pull request
+open, and the page told them to review and merge work nobody wants. Neither half above applies:
+the flag is not disproved — only the forge knows whether the pull request is still open — and
+nothing has been done that the card can stop asking for. What the local `status` settles is the
+imperative. So the card keeps the borrowed fact and its "as of" mark and asks the reader to close
+the pull request or reopen the task. Only `abandoned` does this; `consolidated` keeps the merge
+ask on purpose, because a closed task whose pull request is still open is worth looking at and
+merging it is still the right move.
+
+Two constraints hold the rule in shape. **A recheck may only contradict, never invent** — a task
+with no state file, or a kept worktree the log recorded no path for, keeps its card, because a
+page that hid what it failed to look up would be worse than one a run behind. And **the answer is
+decided in one place**: the cards and the counts in both reports call `_status_flagged_ids`, so a
+count that said two while the cards showed one cannot happen. A new flag joins the borrowed side
+by default; moving it across costs a local reader, and the reason is its price, not its subject.
 
 Every writer here — `_task_rewrite_state`, `_task_rewrite_state_remove`, `task new`'s state, the
 autopilot journal, the findings ledger, the receipt — calls `jig_status_page_dirty`, and `cmd_task`

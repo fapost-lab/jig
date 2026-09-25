@@ -27,6 +27,15 @@ export JIG_SELF JIG_LIB
 . "$JIG_LIB/version.sh"
 # shellcheck source=lib/common.sh
 . "$JIG_LIB/common.sh"
+
+# Before anything reads a repository: the process decides which checkout it is
+# in from where it was started, not from what it was told. jig_require_repo
+# clears these too, but it runs inside cmd_<command>, and the checkout recorder
+# sourced below resolves the root before any command does — the one component
+# whose whole job is to describe its own surroundings would otherwise have been
+# the last to stop taking them on hearsay.
+jig_clear_git_location_env
+
 # shellcheck source=lib/config.sh
 . "$JIG_LIB/config.sh"
 # shellcheck source=lib/checkout.sh
@@ -93,6 +102,8 @@ Usage: jig <command> [args]
                                  ones no reader answers from
   config show --local            print .ai/config.local.yaml and the keys in it
                                  that no reader answers from
+  config keys                    every key jig reads, its default, which file
+                                 answers for it, and what .ai/config.yaml omits
   measure                        knowledge quality, process weight, change size
   doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release

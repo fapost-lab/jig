@@ -371,6 +371,40 @@ _doctor_check_config_local() {
   fi
 }
 
+# Whether .ai/config.yaml still describes the set of keys this version reads.
+# Not a fault, and never a fail: an absent key takes its default and
+# everything works, which is the design (schemas/config.md). But that file is
+# also the only place a person ever sees which keys exist, and an upgrade does
+# not touch it (ADR-0024) — so after one it keeps describing the version it
+# was written for, and a key added since is a capability nobody was told
+# about. That is an environment fact, which is doctor's question, and not
+# anything a task is waiting on, which is why it is not a `status` line.
+#
+# It is also the other half of a question doctor already half-answers:
+# _doctor_check_agent_git below reports a local-only key written into
+# .ai/config.yaml, where nothing reads it. One command answers both.
+#
+# Silent when there is nothing to say, like _doctor_check_config_local above
+# and the two jig.cmd checks: a report printed on every run is a report that
+# stops being read. config.sh decides what counts (jig_config_unmentioned
+# leaves out the local-only keys, and counts a commented line as a mention).
+_doctor_check_config_keys() {
+  local unmentioned unknown n
+  unmentioned=$(jig_config_unmentioned | tr '\n' ' ' | sed 's/ $//')
+  unknown=$(jig_config_unknown | tr '\n' ' ' | sed 's/ $//')
+  if [ -n "$unmentioned" ]; then
+    n=$(printf '%s\n' "$unmentioned" | wc -w | tr -d ' ')
+    unmentioned=$(printf '%s\n' "$unmentioned" | sed 's/ /, /g')
+    _doctor_ok "config keys" \
+      "$n not mentioned in $JIG_AI_DIR/config.yaml, each on its default: $unmentioned (jig config keys)"
+  fi
+  if [ -n "$unknown" ]; then
+    _doctor_warn "config keys" \
+      "$JIG_AI_DIR/config.yaml sets keys jig does not read: $(printf '%s\n' "$unknown" | sed 's/ /, /g')" \
+      "correct the spelling, or remove the lines (jig config keys lists every key)"
+  fi
+}
+
 # Whether `agent.git` (JIG_CFG_LOCAL_ONLY_KEYS, config.sh) is in a state
 # `jig task ship` can actually use: not shadowed by a project-layer value it
 # will never read, and not an unrecognised word either way. config.sh answers
@@ -430,6 +464,7 @@ cmd_doctor() {
       _doctor_check_session_hooks
       _doctor_check_instructions
       _doctor_check_config_local
+      _doctor_check_config_keys
       _doctor_check_agent_git
     else
       _doctor_warn "project" "not initialised" "jig init"

@@ -279,13 +279,17 @@ decision of its own, with its own line in that document.
   not inherit the answer — and it is why the two are recorded together rather than as one bug
   each.
 
-  The claim is deliberately no wider than that, because one layer further down it stops being
-  true: `jig_repo_root` is a bare `git rev-parse --show-toplevel`, and `git -C <dir>` does not
-  override `GIT_DIR` or `GIT_WORK_TREE`. An environment that lies about which repository this
-  is will be believed, and the records go there — measured. That is inherited ground, shared
-  by every command that resolves a project, and it is nothing this decision introduced or can
-  settle on its own; it is left to a successor task rather than papered over by a sentence
-  that sounds like it was handled.
+  When this was written the claim stopped being true one layer further down, and it no longer
+  does. `jig_repo_root` was a bare `git rev-parse --show-toplevel`, and `git -C <dir>` does not
+  override `GIT_DIR` or `GIT_WORK_TREE`: an environment that lied about which repository this
+  is was believed, and the records went there — measured. The successor task this was left to
+  clears the git variables that choose what git acts on, in `jig_require_repo` and, because
+  this recorder runs before any command does, at the top of the dispatcher as well
+  (`jig_clear_git_location_env`, conventions/shell.md). The claim now holds at both layers,
+  and no wider than both: what jig refuses to take on hearsay is *which* repository it is in,
+  not how that repository is configured. `GIT_CONFIG_GLOBAL` and its neighbours can redirect a
+  work tree too, through `core.worktree`, and are deliberately left alone — they are how a
+  person configures git on purpose.
 - **A test runner must clear the runtime's own environment variables, or its tests measure
   the machine they run on.** The session id is read from the environment, so a suite run
   inside an agent session wrote records a CI run would not, and three tests passed or failed

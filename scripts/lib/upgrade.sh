@@ -138,6 +138,29 @@ _upgrade_kept_source_note() {
   _upgrade_out "hint: to install it from that checkout instead, run \`jig init$link_flag --from $source\`"
 }
 
+# _upgrade_config_note <dry-run> — after a real run, one line when the
+# project's .ai/config.yaml says nothing about keys this version reads.
+#
+# Nothing here writes that file, and nothing ever will (ADR-0024): an upgrade
+# brings new scripts, and the file that says what they may be told stays the
+# team's, exactly as it was. But an upgrade is the moment the two part
+# company, and saying so once, here, is the whole difference between a
+# capability somebody was offered and one they merely have. `jig doctor`
+# repeats it on demand; `jig status` does not, because an unmentioned key is
+# something to look at, not anything a task is waiting on.
+#
+# Silent on a dry run, and silent when there is nothing to say.
+_upgrade_config_note() {
+  if [ "$1" = 1 ]; then return 0; fi
+  local keys n
+  keys=$(jig_config_unmentioned | tr '\n' ' ' | sed 's/ $//')
+  [ -n "$keys" ] || return 0
+  n=$(printf '%s\n' "$keys" | wc -w | tr -d ' ')
+  _upgrade_out "$JIG_AI_DIR/config.yaml does not mention $n key(s) this version reads, each on its default: $(printf '%s\n' "$keys" | sed 's/ /, /g')"
+  # shellcheck disable=SC2016
+  _upgrade_out 'hint: `jig config keys` lists them; that file is yours to change or leave as it is'
+}
+
 # --- decision table (domains/install) ---------------------------------------------
 
 # _upgrade_place <staged-abs> <local-abs> — copy one staged file into the
@@ -624,6 +647,7 @@ cmd_upgrade() {
     [ "$_JIG_LINK_KIND" = symlink ] \
       || jig_die "upgrade: this project is installed in link mode, which needs symbolic links, and they cannot be made here"
     _upgrade_link "$source" "$active_profiles" "$active_adapters" "$dry_run"
+    _upgrade_config_note "$dry_run"
     return 0
   fi
 
@@ -685,6 +709,7 @@ cmd_upgrade() {
     _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "unchanged"
     _upgrade_kept_source_note "$source" "copy"
   fi
+  _upgrade_config_note "$dry_run"
 }
 
 # --- upgrade_pending ---------------------------------------------------------

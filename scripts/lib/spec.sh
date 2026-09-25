@@ -1232,6 +1232,10 @@ spec_ship_removed_src() {
 spec_ship_steps() {
   local level="$1" branch="$2" base="$3" message_file="$4" title="$5" body_file="$6" draft="${7:-0}"
   jig_ship_commit "spec ship" "$message_file"
+  # The same order as `task ship` (common.sh, "what a ship may send out"):
+  # a declaration and a final pull request both carry commits, and both are
+  # refused here rather than on the forge.
+  jig_ship_require_commits "spec ship" "$branch" "$base"
   if [ "$level" = commit ]; then
     printf "stopped at commit: push is the human's\n"
     return 0
@@ -1296,6 +1300,10 @@ spec_ship_epic() {
     printf "stopped at commit: pushing %s is the human's\n" "$branch"
     return 0
   fi
+  # The one ship that sends no commit and means to: an epic is pushed so that
+  # it exists on the forge for its tasks to target, and one cut an hour ago
+  # has nothing of its own yet (common.sh, "what a ship may send out").
+  jig_ship_sends_no_commit "an epic branch is pushed to exist, not to carry a change"
   jig_ship_push "spec ship" "$branch"
 }
 

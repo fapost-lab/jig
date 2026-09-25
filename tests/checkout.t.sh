@@ -490,3 +490,34 @@ test_checkout_record_ignores_an_inherited_project_root() {
 
   rm -rf "$elsewhere"
 }
+
+# The same failure one layer down, and the reason this file carries both. The
+# root above was inherited through JIG_PROJECT; here it is inherited through
+# git itself — `git rev-parse --show-toplevel` reads GIT_DIR, and `git -C`
+# does not override it. Measured: with GIT_DIR and GIT_WORK_TREE naming
+# another jig project and the working directory untouched, every record went
+# there and none here. jig clears the git location variables at the top of the
+# dispatcher, before the recorder resolves anything.
+test_checkout_record_ignores_a_git_dir_naming_another_repository() {
+  checkout_setup
+  local elsewhere
+  elsewhere=$(mktemp -d "${TMPDIR:-/tmp}/jig-elsewhere.XXXXXX")
+  (
+    cd "$elsewhere" || exit 1
+    git init -q .
+    git symbolic-ref HEAD refs/heads/main
+    mkdir -p .ai
+    printf 'profiles: [generic]\n' > .ai/config.yaml
+    printf '# elsewhere\n' > README.md
+    git add -A
+    git commit -q -m "elsewhere"
+  )
+
+  run env GIT_DIR="$elsewhere/.git" GIT_WORK_TREE="$elsewhere" "$JIG_BIN" task list
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/checkout
+  assert_file_contains .ai/runtime/checkout "command: task list"
+  assert_no_file "$elsewhere/.ai/runtime"
+
+  rm -rf "$elsewhere"
+}
