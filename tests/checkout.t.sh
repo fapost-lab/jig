@@ -430,3 +430,63 @@ branch_reported: bogus-branch
     assert_file_contains .ai/runtime/checkout "branch_reported: bogus-branch"
   done
 }
+
+# --- how far the session id reaches ------------------------------------------
+
+# The reviewer's reproduction, inverted. Adapters are not copied into `.ai/`,
+# so they are found through the manifest's `jig.source`; with that source gone,
+# a valid session id used to name nothing at all, and rule 3 was alive only for
+# whoever installed. The jig that is running may itself be a framework
+# checkout, and now that is tried second.
+test_checkout_session_id_survives_a_source_the_manifest_cannot_reach() {
+  fixture_jig_repo
+  CLAUDE_CODE_SESSION_ID=session-x
+  export CLAUDE_CODE_SESSION_ID
+  sed 's|^jig.source:.*|jig.source: /nonexistent/jig-source|' .ai/manifest > .ai/manifest.tmp
+  mv .ai/manifest.tmp .ai/manifest
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/working/session-x
+  assert_not_contains "$OUT" "sessions: not observable"
+}
+
+# Being told nothing is not the same as being told there is nobody here. Where
+# no active runtime names its sessions — Codex alone, today — `jig status` says
+# so, as it already does for the session hook's own exit 2 (ADR-0024).
+test_checkout_status_says_when_no_runtime_names_its_sessions() {
+  fixture_jig_repo
+  CLAUDE_CODE_SESSION_ID=session-x
+  export CLAUDE_CODE_SESSION_ID
+  sed 's|^adapters:.*|adapters: [codex]|' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "sessions: not observable (no active runtime names its sessions here)"
+  # And with no name, the run leaves no record of its own.
+  assert_no_file .ai/runtime/working/session-x
+}
+
+# --- "here" is never taken on hearsay -----------------------------------------
+
+# A jig command run under another jig inherits JIG_PROJECT, and the recorder
+# used to trust it. The suite run by `jig verify` therefore wrote every record
+# into the repository being verified rather than into each test's own checkout —
+# found in this repository's `.ai/runtime/told/`, holding session ids that only
+# ever existed inside tests. Every other command computes the root with
+# jig_require_repo; the recorder now does the same.
+test_checkout_record_ignores_an_inherited_project_root() {
+  checkout_setup
+  local elsewhere
+  elsewhere=$(mktemp -d "${TMPDIR:-/tmp}/jig-elsewhere.XXXXXX")
+  mkdir -p "$elsewhere/.ai"
+  printf 'profiles: [generic]\n' > "$elsewhere/.ai/config.yaml"
+
+  run env JIG_PROJECT="$elsewhere" "$JIG_BIN" task list
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/checkout
+  assert_no_file "$elsewhere/.ai/runtime"
+
+  rm -rf "$elsewhere"
+}

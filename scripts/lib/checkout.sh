@@ -29,17 +29,32 @@
 # worse than the silence it replaces. Every path gives up with `return 0`, and
 # the one message goes to stderr.
 
-# _jig_checkout_ready — set JIG_PROJECT and succeed only in a jig project.
-# Quiet where jig_require_init would die: the recorder runs before the command
-# that is entitled to complain.
+# _jig_checkout_ready — resolve the checkout this command is running in and
+# succeed only in a jig project. Quiet where jig_require_init would die: the
+# recorder runs before the command that is entitled to complain.
+#
+# **The root is always computed, never taken from the environment**, exactly as
+# jig_require_repo computes it (conventions/shell.md: `pwd -P`, because git
+# resolves symlinks and Windows spells paths differently). An inherited
+# JIG_PROJECT is somebody else's answer, and trusting it made a record land in
+# the wrong checkout: a jig command run under another jig inherits it, so the
+# test suite run by `jig verify` wrote every one of its records into the
+# repository being verified instead of each test's own tree. It was found in
+# this repository's `.ai/runtime/told/`, holding session ids that only ever
+# existed inside tests. A record about "what is happening here" may not take
+# "here" on hearsay.
+#
+# Memoised privately, so the two calls the dispatcher makes cost one `git`
+# between them. The memo is this file's own, never the environment's.
+_JIG_CHECKOUT_PROJECT=""
 _jig_checkout_ready() {
   local top
-  if [ -z "${JIG_PROJECT:-}" ]; then
+  if [ -z "$_JIG_CHECKOUT_PROJECT" ]; then
     top=$(jig_repo_root 2>/dev/null) || return 1
     [ -n "$top" ] || return 1
-    JIG_PROJECT=$(cd -P "$top" 2>/dev/null && pwd -P) || return 1
-    export JIG_PROJECT
+    _JIG_CHECKOUT_PROJECT=$(cd -P "$top" 2>/dev/null && pwd -P) || return 1
   fi
+  JIG_PROJECT="$_JIG_CHECKOUT_PROJECT"
   [ -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ] || return 1
   return 0
 }
@@ -216,19 +231,48 @@ _jig_checkout_name_from_head() {
 # recorder running on every command must not change what a command sees. The
 # id is compared only with names of files jig wrote itself: it is never
 # shown, never sent anywhere and never stored beyond its own file name.
+# _jig_checkout_adapters_dir — the adapters directory this run can reach, or
+# nothing.
+#
+# Adapters are not copied into `.ai/` (ADR-0003 installs what a project runs,
+# and the adapters are the installer's own material), so they are found where
+# init and upgrade find them: the framework source the manifest records. In a
+# project installed from a checkout that is not on this machine there is
+# nothing there — and then the jig that is running may itself be a framework
+# checkout, which is the common case for a global install, so that is tried
+# second. Whoever installed is no longer the only one the session id reaches.
+#
+# What is still not covered is a copy install driven through `.ai/scripts/jig`
+# with the source gone. Reaching adapters there means installing them into the
+# project, which is an install-surface decision of its own
+# (adr-20260924-a-checkout-records-what-is-happening-in-it); until it is taken,
+# `jig status` says the observation is unavailable rather than staying silent.
+_jig_checkout_adapters_dir() {
+  local src
+  src=$(
+    # shellcheck source=lib/manifest.sh
+    . "$JIG_LIB/manifest.sh" 2>/dev/null || exit 0
+    manifest_source 2>/dev/null || exit 0
+  ) || src=""
+  if [ -n "$src" ] && [ -d "$src/adapters" ]; then
+    printf '%s/adapters\n' "$src"
+    return 0
+  fi
+  src=$(jig_source_root 2>/dev/null) || src=""
+  if [ -n "$src" ] && [ -d "$src/adapters" ]; then
+    printf '%s/adapters\n' "$src"
+    return 0
+  fi
+  return 1
+}
+
 jig_checkout_session() {
   (
-    src=$(
-      # shellcheck source=lib/manifest.sh
-      . "$JIG_LIB/manifest.sh" 2>/dev/null || exit 0
-      manifest_source 2>/dev/null || exit 0
-    ) || exit 0
-    [ -n "$src" ] || exit 0
-    [ -d "$src/adapters" ] || exit 0
+    root=$(_jig_checkout_adapters_dir) || exit 0
     # shellcheck source=lib/profiles.sh
     . "$JIG_LIB/profiles.sh" 2>/dev/null || exit 0
     for a in $(cfg_list adapters "claude codex"); do
-      adir=$(adapters_dir "$src/adapters" "$a") || continue
+      adir=$(adapters_dir "$root" "$a") || continue
       [ -f "$adir/adapter.sh" ] || continue
       # shellcheck disable=SC1090
       . "$adir/adapter.sh" 2>/dev/null || continue
@@ -241,6 +285,27 @@ jig_checkout_session() {
     done
     exit 0
   ) 2>/dev/null
+}
+
+# jig_checkout_session_problem — why this checkout cannot tell one session from
+# another, or nothing when it can.
+#
+# A reader who is told nothing cannot tell "nobody else is here" from "there is
+# no way to see anybody". The framework already refuses that ambiguity for the
+# session hook, whose adapter capability uses the same exit 2 and which
+# `jig status` reports either way (ADR-0024), so this one says it too. The two
+# answers are kept apart because they are different problems: one is a runtime
+# that does not name its sessions, which is a named boundary; the other is an
+# install that cannot reach the adapters, which is a gap.
+jig_checkout_session_problem() {
+  local root
+  if ! root=$(_jig_checkout_adapters_dir); then
+    printf 'the framework source that holds the adapters is not on this machine\n'
+    return 0
+  fi
+  [ -z "$(jig_checkout_session)" ] || return 0
+  printf 'no active runtime names its sessions here\n'
+  return 0
 }
 
 # --- freshness ------------------------------------------------------------------

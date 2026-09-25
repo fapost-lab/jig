@@ -461,6 +461,13 @@ _status_checkout() {
     fi
     printf 'working here: %s (jig %s, %s ago)\n' "$label" "$cmd" "$(jig_checkout_ago "$age")"
   done < <(jig_checkout_busy "$here")
+
+  # A reader told nothing cannot tell "nobody else is here" from "there is no
+  # way to see anybody", so the second case says so — as the session hook's
+  # line already does for the same exit 2 (ADR-0024).
+  local problem
+  problem=$(jig_checkout_session_problem)
+  [ -z "$problem" ] || printf 'sessions: not observable (%s)\n' "$problem"
 }
 
 # _status_housekeeping_age — "<n> days ago" since the last housekeeping run,

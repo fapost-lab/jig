@@ -61,7 +61,11 @@ Every jig run says, in the checkout it runs in, that work is happening here. One
 - **`runtime/working/<name>` — one file per piece of work in progress here.** Its whole
   content is one line, `command: <the words of the jig command>`.
 - **`runtime/checkout` — what this checkout last told a reader.** `command:`, and
-  `branch_reported:`, the branch a reader was last told about.
+  `branch_reported:`, the branch a reader was last told about. `command:` here is read by no
+  command, and is kept anyway: it is what a person sees when they open the file to ask what
+  last ran in this checkout, and the file is rewritten by every run regardless, so it costs
+  nothing to be true. Wherever a session is named, `branch_reported` is not in this file at
+  all — see below.
 
 **Only the incomputable is stored.** This is the rule the record's shape comes from, and
 it is the half of `conventions/required-records.md` that points inward: "derived rather
@@ -231,15 +235,18 @@ decision of its own, with its own line in that document.
   1.77 s of CPU with one record against 8.46 s with 500. One `stat` answers the whole
   directory and the record's one line is read without a subshell, so what a grown directory
   costs is now proportional to what is reported, not to what is stored.
-- **The session id reaches only as far as the framework source does.** Adapters are not
-  copied into `.ai/`, so the lookup finds them through the manifest's `jig.source` — and in
-  a project installed from a checkout that is not on this machine, there are none to find:
-  rule 3 goes quiet and the naming falls back to the rules above it. This is not particular
-  to this decision. Every adapter capability is reached that way, and `jig status` already
-  says so in its own terms, reporting "could not check" for the session hook when the
-  checkout holding the adapters is gone (`scripts/lib/status.sh`). Making adapters reachable
-  from an installed project is an install-surface decision of its own, not a detail of this
-  one.
+- **The session id reaches as far as the adapters do, and where it does not, the report
+  says so.** Adapters are not copied into `.ai/`, so the lookup finds them where init and
+  upgrade do: the framework source the manifest records, and failing that the framework
+  checkout this jig is running from, which is what a global install is. What is left
+  uncovered is a copy install driven through `.ai/scripts/jig` whose source is not on this
+  machine. There, rule 3 goes quiet and the naming falls back to the rules above it —
+  silently, which was the worse half: a reader cannot tell "nobody else is here" from "there
+  is no way to see anybody". `jig status` now prints `sessions: not observable (<why>)`,
+  keeping the two reasons apart, because a runtime that does not name its sessions is a
+  named boundary while an install that cannot reach its adapters is a gap. Closing that gap
+  means installing adapters into the project, which is an install-surface decision of its
+  own (ADR-0003, ADR-0024), not a detail of this one.
 - **"This command changes nothing under `.ai/`" is no longer true, and the narrower claim
   replaces it: a command changes nothing *about the project*.** `spec remove --dry-run` is
   tested by comparing the whole `.ai/` tree before and after, and it now differs by the two
@@ -249,6 +256,15 @@ decision of its own, with its own line in that document.
   counts. The comparison now excludes exactly those two paths and still covers the spec, the
   workspaces and the trash a dry run must not move anything into. Anything that wants the old
   claim has to name the two records; nothing else about the invariant is intact.
+- **A record about what is happening *here* may not take "here" from the environment.** The
+  recorder resolved the checkout by reusing an inherited `JIG_PROJECT` when one was set, and
+  a jig command run under another jig inherits it: the test suite launched by `jig verify`
+  wrote every record into the repository being verified instead of each test's own tree, and
+  was caught because this repository's `.ai/runtime/told/` filled up with session ids that
+  only ever existed inside tests. The root is computed now, as `jig_require_repo` computes
+  it, at the cost of one `git` call. This is the same failure as the row below, one layer
+  down — a component written to describe its own surroundings must not inherit the answer —
+  and it is why the two are recorded together rather than as one bug each.
 - **A test runner must clear the runtime's own environment variables, or its tests measure
   the machine they run on.** The session id is read from the environment, so a suite run
   inside an agent session wrote records a CI run would not, and three tests passed or failed
@@ -258,5 +274,17 @@ decision of its own, with its own line in that document.
   inherit any (conventions/shell.md) — and it is the standing cost of reading the
   environment at all: every future adapter capability that does so owes the runner the same
   line.
+- **One part of the approved design is deliberately not built: the session hook does not
+  write a record when a session starts.** The design had it as a layer on top, so that a
+  session's very first command was already covered. Two facts took the value out of it. The
+  dispatcher covers a session from its first jig command, so the only window the hook adds
+  is one in which the session has not yet read or written anything in the checkout — there
+  is nothing there to protect, and the incident this decision answers was a session losing
+  HEAD after working for a while. And the cost lands on every session start, which is
+  precisely why the hook is opt-in (ADR-0024) and why its idle path is written to touch no
+  git at all. A hook that ran jig on every start to record a session that has done nothing
+  would spend that budget on the emptiest case. Said here rather than left as a gap between
+  the design and the code, because silently diverging from an approved design is how the
+  next reader is made to guess which one is true.
 - Rolling back is `git revert` plus an amendment: no existing file changes format, and no
   command changes its output when the recorder is removed.
