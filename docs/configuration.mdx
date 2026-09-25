@@ -49,6 +49,12 @@ selected.
 | `housekeeping.abandoned_ttl` | `14d` | How long an abandoned task's workspace is kept before it goes to the trash. |
 | `housekeeping.stale_after` | `60d` | An active task older than this is reported as possibly stale — reported, never deleted. |
 
+### Working in one checkout
+
+| Setting | Default | What it does |
+|---|---|---|
+| `checkout.busy_ttl` | `12h` | How long Jig still treats a record of work in this checkout as a live session. Every Jig run writes one, so a session that is around keeps refreshing its own; past this age the record is ignored — never deleted. |
+
 ### Knowledge
 
 | Setting | Default | What it does |
@@ -91,6 +97,7 @@ Some settings are a matter of personal taste rather than project policy. Put the
 
 - `housekeeping.cadence`, `housekeeping.fetch`, `housekeeping.trash_ttl`,
   `housekeeping.abandoned_ttl`, `housekeeping.stale_after`;
+- `checkout.busy_ttl`;
 - `git.worktree_root`;
 - `agent.git` — how far the agent takes a finished task, and a specification's epic: `none` (the default: you commit),
   `commit`, `push`, `pr` or `merge`. This one is read **only** from your local file; in `.ai/config.yaml` it

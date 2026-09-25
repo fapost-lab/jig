@@ -292,6 +292,7 @@ EOF
   [ "$_STATUS_FINISHED" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$_STATUS_FINISHED"
 
   printf 'current task: %s\n' "${_STATUS_CURRENT:-$(_status_current_task)}"
+  _status_checkout
   printf 'housekeeping: %s\n' "$(_status_housekeeping_age)"
 
   # Tasks the last housekeeping run flagged (_status_hk_count).
@@ -438,6 +439,28 @@ _status_current_task() {
       ;;
   esac
   rm -f "$cur_err_file"
+}
+
+# _status_checkout — other work going on in this checkout, one line each
+# (checkout.sh). Silent when there is none, like the housekeeping flags below:
+# a checkout with one session in it has nothing to report.
+#
+# The task whose branch is checked out here is left out — the reader is
+# sitting on it. A record named by a session id rather than a task is shown as
+# "another session": the id names a runtime's session, which means nothing to
+# a person, and the fact they need is that somebody else is here.
+_status_checkout() {
+  local here name age cmd label
+  here=$(jig_checkout_here_task)
+  while read -r name age cmd; do
+    [ -n "$name" ] || continue
+    if [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$name/state" ]; then
+      label="task $name"
+    else
+      label="another session"
+    fi
+    printf 'working here: %s (jig %s, %s ago)\n' "$label" "$cmd" "$(jig_checkout_ago "$age")"
+  done < <(jig_checkout_busy "$here")
 }
 
 # _status_housekeeping_age — "<n> days ago" since the last housekeeping run,

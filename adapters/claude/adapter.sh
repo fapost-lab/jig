@@ -192,3 +192,31 @@ adapter_claude_session_hook_hint() {
   printf '  "hooks": { "SessionStart": [ { "hooks": [\n'
   printf '    { "type": "command", "command": ".ai/scripts/jig-session-hook" } ] } ] }\n'
 }
+
+# adapter_claude_session_id
+# Prints an identifier for the agent session running this command, or exits 2
+# when the runtime gives none (the skip code the session hook hint already
+# uses for "not applicable to this runtime").
+#
+# The identifier exists only to tell one live session's records from another's
+# in a checkout they share
+# (adr-20260924-a-checkout-records-what-is-happening-in-it). It is never
+# stored, never sent anywhere and never shown to a user; jig only compares it
+# with the names of files it wrote itself.
+#
+# Measured before relying on it, in the shape jig actually runs in — a
+# `bash -c` subprocess, not an interactive shell: the variable is a 36-character
+# UUID, it holds the same value across separate commands of one session, and a
+# subagent spawned from a session inherits its parent's value. That last one is
+# what makes delegation safe here: a session and the agents it spawns are one
+# occupant of the checkout, not four, so a refusal never fires on a session's
+# own helpers.
+#
+# It is an undocumented variable of a specific runtime, which is exactly why
+# it lives behind the adapter contract: if it disappears, this function stops
+# answering, the caller falls back to an unnamed record, and nothing else
+# changes.
+adapter_claude_session_id() {
+  [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || return 2
+  printf '%s\n' "$CLAUDE_CODE_SESSION_ID"
+}

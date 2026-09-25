@@ -1072,6 +1072,15 @@ would-unlink   T-abandon"
   assert_contains "$OUT" "not-here       ghost (named in the roadmap, no workspace in this checkout)"
   assert_contains "$OUT" "would-move     .ai/specs/alpha -> .ai/runtime/trash/$(date +%Y-%m-%d)/spec-alpha"
 
+  # `.ai/runtime/` is where a command writes while changing nothing about the
+  # project: `jig status` keeps the page's cached counts there, and every jig
+  # run records that a session is working in this checkout
+  # (adr-20260924-a-checkout-records-what-is-happening-in-it). Those two paths
+  # are dropped from both sides; everything the dry run actually promises —
+  # the spec, the workspaces, and the trash it must not move anything into —
+  # is still compared.
+  rm -rf .ai/runtime/checkout .ai/runtime/working \
+    snapshot-ai/runtime/checkout snapshot-ai/runtime/working
   diff -r .ai snapshot-ai >/dev/null || fail "--dry-run changed something under .ai"
   assert_dir .ai/specs/alpha
 }

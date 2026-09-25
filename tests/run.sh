@@ -86,6 +86,13 @@ enter_test_env() {
   # runs a profile directly inherited JIG_VERIFY_FILES naming this
   # repository's changes and took the scoped path (ADR-0041).
   unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED CI
+  # The runtime's own session id names a checkout record when nothing else
+  # does (adr-20260924-a-checkout-records-what-is-happening-in-it), so a suite
+  # run from inside an agent session would write records a CI run does not —
+  # the `run_no_tools` failure again, where a test passed on the maintainer's
+  # machine for a reason that was not in the repository. A test that wants one
+  # sets the variable itself.
+  unset CLAUDE_CODE_SESSION_ID
   export GIT_AUTHOR_NAME=jig GIT_AUTHOR_EMAIL=jig@test
   export GIT_COMMITTER_NAME=jig GIT_COMMITTER_EMAIL=jig@test
   # shellcheck disable=SC1090,SC1091
