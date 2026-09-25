@@ -310,6 +310,27 @@ skip_unless_control_char_names() {
   esac
 }
 
+# skip_unless_non_ascii_names — skip the calling test unless a file name
+# holding a byte above 0x7F round-trips through git. The name is built from
+# octal escapes so this file stays pure ASCII, the way the tests that use it
+# do; a filesystem or a git that cannot carry it back unchanged cannot host a
+# test about how such a name is printed.
+skip_unless_non_ascii_names() {
+  local dir name listed
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-utf8-check.XXXXXX") || return 1
+  name=$(printf 'caf\303\251.sh')
+  listed=$(
+    cd "$dir" || exit 1
+    git init -q .
+    : > "$name" 2>/dev/null
+    git add -A 2>/dev/null
+    git -c core.quotePath=false diff --cached --name-only 2>/dev/null
+  )
+  rm -rf "$dir"
+  [ "$listed" = "$name" ] ||
+    skip "this filesystem cannot represent a non-ASCII file name"
+}
+
 # skip_unless_symlinks — skip the calling test unless `ln -s` makes a real
 # symbolic link here. Git Bash on Windows copies instead, by default. A test
 # that is about symbolic links themselves (link mode, a link the test plants)

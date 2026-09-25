@@ -10,6 +10,7 @@ paths:
   - .github/scripts/ci-windows-scope.sh
   - tests/ci-windows-scope.t.sh
 summary: "Why the full Windows suite runs on a pull request whose diff touches line endings, MSYS paths, directory links, a Windows-only file or a CI workflow, and passes over the rest: the signal, the numbers behind it, and why it matches no literal carriage return."
+reviewed_at: 2026-09-25
 ---
 # Windows runs on a pull request whose diff touches platform behaviour
 
@@ -132,3 +133,54 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
 - The signal can be fooled by a change that behaves differently on Windows without saying so
   in any of these words. That is the accepted residual risk, and `main` is where it surfaces,
   exactly as before this decision.
+
+> **Amendment (2026-09-25).** The measurement above, 22 of 99, read the diffs from the merge
+> commits of `main`, which cannot see a pull request that landed through an epic branch — #60
+> to #85 did. Remeasured over the 105 merged pull requests below #107, enumerated with
+> `gh pr list --state merged` and each diff rebuilt as merge-base(base, head) to head: the
+> signal as this ADR accepted it matches 24, and with the rules the amendments below add, 30.
+> `ci.yml` runs the shards only where `ci-scope.sh` also says `full`, and all 30 are `full`,
+> so the signal never makes a cheap pull request expensive. The cost per pull request is no
+> longer the 25 minutes above: the suite moved to six shares and ~15 minutes
+> (adr-20260925-windows-runs-in-six-shares).
+
+> **Amendment (2026-09-25).** The residual risk above — a change that depends on the platform
+> by idiom rather than by word — is narrowed, and the rule for when an idiom counts is that
+> **the idiom's own reason must be platform-dependent**. `conventions/shell.md` is the
+> discriminator, because its rationale column already says why each construct is there. Two
+> classes follow from it. First, POSIX file semantics the author names — `inode`, `hard link`,
+> and the `stat -c`/`stat -f` dialect split: this is the "names the platform" rule read from
+> the other side, since an author writing `inode` is reasoning about file identity Windows
+> does not give. It is what #88 turned on, which replaced `cp` onto a destination with a
+> rename because `cp` keeps the inode of the script bash is executing. Second, `ln -s` in code
+> that ships, outside `tests/`: the convention forbids it because in Git Bash it copies and
+> still exits 0, so an install or a worktree silently gets a second copy. A symlink a *test*
+> plants is not a signal — such a test leaves through `skip_unless_symlinks` and skips on
+> Windows, which is the argument the Alternatives above already used. What the signal is for
+> is a change whose **correctness** depends on POSIX semantics, not every use of `mv`.
+
+> **Amendment (2026-09-25).** The price of that rule, named, because it is bought and not
+> overlooked: seven pull requests stay uncaught. #10, #20, #21, #61, #62, #65 and #66 write a
+> workspace or knowledge file through `file.tmp.$$` and a rename, and the signal passes over
+> all seven. `conventions/shell.md` asks for that idiom so a crash mid-write cannot leave half
+> a file — a reason that is not a platform — so the idiom is not a signal. Measured over the
+> same 105: a rule on it would raise 9 pull requests these rules do not, and only #88 among
+> them is platform-dependent, where the *destination* makes it so, a file bash is executing,
+> which #88 states in the word `inode`. #88 and #17 are already caught for their own reason,
+> so the rule would catch nothing new at all and spend seven false runs of ~15 minutes.
+> Nothing for something is not a trade. A rule on a bare `mv` is worse: 53 of 105, the union
+> the Alternatives above rejected. `test_ci_windows_scope_atomic_write_idiom_is_skipped`
+> asserts the silence, so this stays a decision rather than drifting into a defect someone
+> repairs. **Revisit it when `main` goes red on Windows because of a rename over a destination
+> in code that named none of these words** — that is the evidence this decision lacks today.
+> The fix then is a rule about the destination, an installed or executing file, not about the
+> idiom: the idiom is what made the measurement come out at nothing for seven.
+
+> **Amendment (2026-09-25).** One `skip` the script gave was not a residual risk but a
+> fail-open: it answered about a file it had not managed to look at. With git's default
+> `core.quotePath`, `git diff --name-only` prints a path holding a byte above 0x7F wrapped in
+> double quotes with each such byte octal-escaped. No path rule matches that string and
+> `git diff -- "$string"` selects nothing, so the file passed with its content never read. The
+> file list is now read with `-c core.quotePath=false`, and a test plants a non-ASCII name.
+> A path holding a double quote or a newline is still quoted whatever that setting says;
+> closing that too means reading the list NUL-separated.
