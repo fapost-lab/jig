@@ -8,7 +8,11 @@
   git deletes it, not the script. It is removed only by `git worktree remove` without
   `--force`, only when the task is closed and its branch landed on its own base, or its
   workspace is purged; and only when git lists it with the task's branch, it lies under
-  `git.worktree_root`, it holds no workspace of its own, and it is not locked. (ADR-0029) When git removed
+  `git.worktree_root`, it holds no workspace of its own, and it is not locked. (ADR-0029) Git's own
+  refusals do not cover what the project ignores — it deletes that silently — so one more condition
+  holds: no repository inside those ignored paths may hold work that is nowhere else, meaning
+  uncommitted, or absent from every remote it knows.
+  (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees) When git removed
   it and its directory is still there — Windows leaves the links behind — housekeeping
   deletes only links (`find -type l`, never followed) and empty directories (`rmdir`) inside
   that path, and leaves anything else. (ADR-0037) The installer,
