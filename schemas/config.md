@@ -46,6 +46,7 @@ team edits by hand. The `jig-setup` skill asks for the values and runs it.
 | `jig config set <key> <value> [...] --local [--dry-run]` | sets local keys only, to values the readers accept; every pair is checked before any is written, the file is replaced atomically, and a key is replaced at its first line (the one `cfg` reads) or appended |
 | `jig config unset <key> [...] --local [--dry-run]` | removes every line setting each key — any key the file holds, ignored ones included, which is how a person clears out what no reader answers from; a key the file does not hold is reported and nothing is written |
 | `jig config show --local` | prints the file, then an `ignored:` line for each key in it that no reader answers from |
+| `jig config keys` | prints every key jig reads, its default and which file answers for it, marking each key the project's `.ai/config.yaml` does not mention; writes nothing and takes no `--local` |
 
 Values `set` accepts, per key:
 
@@ -76,3 +77,22 @@ for it in `.ai/config.yaml` is ignored, and `jig status` and `jig doctor` say so
 
 The list of local keys is `JIG_CFG_LOCAL_KEYS` in `scripts/lib/config.sh`, and the local-only
 ones are also in `JIG_CFG_LOCAL_ONLY_KEYS`; a key added there is added to this table.
+
+## The key inventory
+
+The table above is not the source. `jig_config_keys` in `scripts/lib/config.sh` holds one
+`<key> <default>` line per key jig reads, and `tests/config.t.sh` refuses to pass unless that
+list, the `cfg`/`cfg_bool`/`cfg_list`/`cfg_list_lines` call sites it greps out of `scripts/`,
+this table, `templates/config.yaml` and `docs/configuration.mdx` all agree on one set of keys
+and one set of defaults. Adding a key means adding it in all of those places; the test names
+whichever one was forgotten.
+
+One key is exempt from the default comparison and says so in the test: `git.worktree_root` is
+read as `cfg git.worktree_root ""`, and `_task_worktree_root` derives `../<project>.worktrees`
+from the project's own directory name, which no literal at the call site could hold.
+
+`jig_config_unmentioned` and `jig_config_unknown` compare the project's file against that
+inventory — the keys it says nothing about, and the keys it sets that nothing reads. Both are
+reporting only: nothing writes `.ai/config.yaml` (ADR-0024). `jig doctor` prints them, and only
+when there is something to print; `jig status` does not, because an unmentioned key is a
+capability to look at, not anything a task is waiting on.

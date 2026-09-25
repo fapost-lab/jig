@@ -421,6 +421,77 @@ test_doctor_config_local_warns_when_not_gitignored() {
   assert_contains "$OUT" "fix: jig init"
 }
 
+# --- config keys (the drift report) -------------------------------------------
+
+test_doctor_config_keys_silent_when_the_template_mentions_everything() {
+  fixture_jig_repo
+  run jig doctor
+  assert_eq 0 "$RC"
+  # A project installed from the current template knows every key it may set,
+  # so there is nothing to report and nothing is printed. The test also fails
+  # when templates/config.yaml falls behind the inventory, which is the state
+  # this report exists to notice.
+  assert_not_contains "$OUT" "config keys:"
+}
+
+test_doctor_config_keys_names_a_key_the_project_file_does_not_mention() {
+  fixture_jig_repo
+  grep -v 'verify.full_run' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    config keys: 1 not mentioned in .ai/config.yaml, each on its default: verify.full_run (jig config keys)"
+}
+
+test_doctor_config_keys_counts_a_commented_line_as_a_mention() {
+  fixture_jig_repo
+  # templates/config.yaml ships verify.full_run commented out, and that is a
+  # mention: the file is documentation as much as configuration, and a project
+  # told on day one that it is missing three keys learns to ignore the report.
+  assert_contains "$(cat .ai/config.yaml)" "# verify.full_run:"
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify.full_run"
+}
+
+test_doctor_config_keys_never_names_a_local_only_key() {
+  fixture_jig_repo
+  # The project file mentions none of the four local-only keys and never
+  # should: `cfg` does not read the project layer for them, so asking a person
+  # to add one there would be a false alarm. Two ordinary keys are removed so
+  # the report has something to print — and it prints only those two. The
+  # opposite mistake, a local-only key written into that file anyway, is what
+  # the agent.git check below reports.
+  grep -v -e 'verify.full_run' -e 'worktree.carry' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config keys: 2 not mentioned in .ai/config.yaml, each on its default: worktree.carry, verify.full_run"
+  assert_not_contains "$OUT" "agent.ci_timeout"
+  assert_not_contains "$OUT" "autopilot.unattended"
+  assert_not_contains "$OUT" "autopilot.parallel"
+}
+
+test_doctor_config_keys_warns_about_a_key_jig_does_not_read() {
+  fixture_jig_repo
+  printf 'git.branch_tempalte: task/{id}\n' >> .ai/config.yaml
+
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  config keys: .ai/config.yaml sets keys jig does not read: git.branch_tempalte"
+  assert_contains "$OUT" "fix: correct the spelling, or remove the lines (jig config keys lists every key)"
+}
+
+test_doctor_config_keys_ignores_a_misspelling_inside_a_comment() {
+  fixture_jig_repo
+  printf '# git.branch_tempalte: a note to self\n' >> .ai/config.yaml
+  run jig doctor
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "git.branch_tempalte"
+}
+
 # --- agent.git (design.md, .ai/specs/autopilot/) ------------------------------
 
 test_doctor_agent_git_ok_with_default() {
