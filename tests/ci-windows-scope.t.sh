@@ -10,7 +10,10 @@
 #
 # Every assertion here is over ASCII text. The script deliberately matches no
 # literal carriage return (its header says why), so this file needs none
-# either, and the Windows shards read it the same as Linux does.
+# either, and the Windows shards read it the same as Linux does. The one test
+# that needs a non-ASCII *file name* builds it with printf from octal escapes
+# rather than writing the character here, and leaves through
+# skip_unless_non_ascii_names where it cannot exist.
 
 # --- fixture builders --------------------------------------------------------
 
@@ -383,4 +386,168 @@ test_ci_windows_scope_two_matches_on_one_line_report_one() {
   run cw_scope "$repo" "$base"
   assert_eq 0 "$RC"
   assert_eq "windows (scripts/lib/common.sh touches 'Git Bash')" "$OUT"
+}
+
+# --- POSIX file semantics the author names ------------------------------------
+
+# The mirror of "a change that names the platform": an author writing `inode`
+# is reasoning about file identity, which is what Windows does not give. This
+# is what #88 turned on — it replaced `cp` onto a destination with a rename
+# because `cp` keeps the inode of the script bash is executing.
+test_ci_windows_scope_inode_runs_windows() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" scripts/lib/upgrade.sh '# rename, so the destination gets a new inode'
+  cw_commit "$repo" "replace installed files by renaming"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "touches 'inode'"
+}
+
+test_ci_windows_scope_hard_link_runs_windows() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" scripts/lib/knowledge.sh '# a hard link means the source is adopted'
+  cw_commit "$repo" "refuse an adopted source"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "touches 'hard link'"
+}
+
+# The construct, not the comment: the rule must still fire when nobody wrote
+# down why `stat` is called twice.
+test_ci_windows_scope_stat_dialect_runs_windows() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  # shellcheck disable=SC2016
+  cw_write "$repo" scripts/lib/knowledge.sh 'links=$(stat -c %h "$src") || links=$(stat -f %l "$src")'
+  cw_commit "$repo" "count the links"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "touches 'stat -"
+}
+
+# --- a symlink shipped code makes, and one a test plants ----------------------
+
+# In Git Bash `ln -s` copies and still exits 0, so a link an install or a
+# worktree creates is silently a second copy on the user's machine.
+test_ci_windows_scope_shipped_symlink_runs_windows() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  # shellcheck disable=SC2016
+  cw_write "$repo" scripts/lib/task.sh 'ln -s "$owner" "$path/workspace"'
+  cw_commit "$repo" "link the workspace into the worktree"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "windows (scripts/lib/task.sh touches 'ln -s')"
+}
+
+# The same token in a test buys nothing: a test that needs a real symlink
+# leaves through skip_unless_symlinks, so the Windows shards would skip it.
+test_ci_windows_scope_symlink_in_a_test_is_skipped() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" tests/knowledge.t.sh 'ln -s ../README.md link.md'
+  cw_commit "$repo" "plant a symlink fixture"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "skip (1 changed files touch nothing Windows decides differently)"
+}
+
+# The shipped-only search must take its first match the same way the rule
+# above it does. It is a second search, run after the CONTENT one, so it is
+# exactly where the truncation can fail to reach: without it a line matching
+# twice prints a reason with a newline inside it. assert_eq over the whole
+# output is what catches that; assert_contains on the token alone would pass
+# on the broken code.
+test_ci_windows_scope_two_shipped_matches_on_one_line_report_one() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  # shellcheck disable=SC2016
+  cw_write "$repo" scripts/lib/task.sh 'ln -s "$a" "$b"; ln -s "$c" "$d"'
+  cw_commit "$repo" "link two directories in one line"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_eq "windows (scripts/lib/task.sh touches 'ln -s')" "$OUT"
+}
+
+# --- the atomic-write idiom is deliberately not a signal ----------------------
+
+# conventions/shell.md asks for `file.tmp.$$` then `mv`, and its reason is a
+# crash mid-write, not a platform, so the idiom is not a signal. Measured over
+# the 105 merged pull requests below #107: a rule on it would raise 9 that the
+# other rules do not, and only #88 among them is platform-dependent, which #88
+# says in the word `inode`. #88 and #17 are already caught for their own reason
+# — hence seven, not eight — so the rule would catch nothing new and spend
+# seven false runs of ~15 minutes. The seven that stay uncaught are #10, #20,
+# #21, #61, #62, #65 and #66, named as a priced decision in the ADR.
+test_ci_windows_scope_atomic_write_idiom_is_skipped() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  # shellcheck disable=SC2016
+  cw_write "$repo" scripts/lib/task.sh 'tmp="$file.tmp.$$"; printf x > "$tmp"; mv "$tmp" "$file"'
+  cw_commit "$repo" "write the state file atomically"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "skip (1 changed files touch nothing Windows decides differently)"
+}
+
+# A shipped file can match both sets. The shipped-only search runs second and
+# only when the first found nothing, so the reason names the rule that holds
+# everywhere — the precedence the script states beside SHIPPED.
+test_ci_windows_scope_content_wins_over_shipped_on_one_file() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  # shellcheck disable=SC2016
+  cw_write "$repo" scripts/lib/task.sh 'ln -s "$a" "$b"  # junction on Windows'
+  cw_commit "$repo" "link a directory, and say what Windows does instead"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_eq "windows (scripts/lib/task.sh touches 'junction')" "$OUT"
+}
+
+# --- a path git would otherwise quote -----------------------------------------
+
+# With core.quotePath at its default, `git diff --name-only` prints a path
+# holding a byte above 0x7F as "scripts/lib/caf\303\251.sh" — quoted, escaped
+# and not a path. Every path rule then misses it and `git diff -- "$string"`
+# selects nothing, so the file passed with its content never read: the one
+# place this script answered `skip` about something it could not look at.
+test_ci_windows_scope_non_ascii_path_is_read() {
+  local repo="$PWD/repo" base name
+  skip_unless_non_ascii_names
+  cw_new_repo "$repo"
+  base=$(cw_head "$repo")
+
+  name=$(printf 'scripts/lib/caf\303\251.sh')
+  cw_write "$repo" "$name" '# handle crlf here'
+  cw_commit "$repo" "a platform-dependent change behind a non-ASCII name"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "touches 'crlf'"
 }
