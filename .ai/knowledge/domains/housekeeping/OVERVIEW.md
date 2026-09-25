@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 ---
 # Housekeeping
 
@@ -73,11 +73,18 @@ Read these before changing anything here; each is a rule someone paid for.
   (ADR-0030). It must be listed with the task's branch, lie under `git.worktree_root`,
   hold nothing under `.ai/workspace/tasks/` but links, be clean and not be locked — the
   lock is checked before git is asked, for jig's own worktrees too, so the reason reads
-  `locked`. `git worktree remove`
-  deletes *ignored* files without asking, so the no-workspace-of-its-own check carries the
-  whole weight for anything gitignored. Inside a worktree, housekeeping never sees the
-  borrowed workspace: it finds workspaces with `find`, which does not follow links. Keep
-  it that way.
+  `locked`. `git worktree remove` deletes *ignored* files without asking, and git's own
+  refusals therefore cover nothing gitignored, so one condition is jig's own: no repository
+  inside those ignored paths may hold work that is nowhere else — asked of that repository's
+  own git, since nothing outside it knows, and the reason reads `nested-repository`; when git will
+  not say what it ignores at all, the reason reads `ignored-unknown` and the worktree is kept on
+  the same principle as every other unanswered question here
+  (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). Ignored files that are
+  not a repository still go, and the removal's log line names them in its last field,
+  `ignored=`; an orphaned task directory under `.ai/workspace/` is not a repository and is
+  not covered by this, it is a defect of its own. Inside a worktree, housekeeping never
+  sees the borrowed workspace: it finds workspaces with `find`, which does not follow
+  links. Keep it that way.
 - **A worktree jig did not create is never removed, and holds the workspace only while
   work waits there** (ADR-0029 as amended): uncommitted changes or a lock keep it;
   otherwise it is left in place and the workspace goes. The checkout housekeeping runs in
@@ -114,7 +121,9 @@ templates append stdout to the same `housekeeping.log`, so no report line may ca
 **The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
 block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
 (ADR-0027); `jig spec plan` reads `remote=merged` from the newest block to tell which of a
-phase's tasks merged. Its line shape is an interface with three consumers now, and nothing rotates it.
+phase's tasks merged. Its line shape is an interface with three consumers now, and nothing rotates it. The one
+free-form field is `ignored=` on a worktree removal, which lists paths: it comes last and
+carries no space, so a `key=value` reader that stops at the first space never meets it.
 The status page reads the newest block too — `remote=open` for pull requests waiting on a person,
 the flags for its cards — and the marker's `forge=github|gitlab|none|failed` field to say whether
 that data can be trusted: `failed` means the forge did not answer this run, so no `open` was seen
