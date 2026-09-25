@@ -93,6 +93,17 @@ enter_test_env() {
   # machine for a reason that was not in the repository. A test that wants one
   # sets the variable itself.
   unset CLAUDE_CODE_SESSION_ID
+  # Every test builds its own repository under <dir> and expects git to find
+  # it there. A suite started from a shell that names another repository — a
+  # git hook, a `GIT_DIR=... bash tests/run.sh` — would run every test against
+  # that one instead. The same list jig_clear_git_location_env clears, and for
+  # the same reason: what git acts on is decided by where you are, not by what
+  # you inherited. GIT_CONFIG_NOSYSTEM above is configuration, not location,
+  # and is set on purpose.
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_INDEX_FILE GIT_NAMESPACE \
+    GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM
   export GIT_AUTHOR_NAME=jig GIT_AUTHOR_EMAIL=jig@test
   export GIT_COMMITTER_NAME=jig GIT_COMMITTER_EMAIL=jig@test
   # shellcheck disable=SC1090,SC1091

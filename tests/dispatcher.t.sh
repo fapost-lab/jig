@@ -722,3 +722,95 @@ test_jig_fetch_branches_one_bad_branch_does_not_stop_the_others() {
   base_run 'jig_require_repo; jig_base_ref real-branch'
   assert_eq "refs/remotes/origin/real-branch" "$OUT"
 }
+
+# --- the repository is where you are, not what you were told ------------------
+# `git rev-parse --show-toplevel` asks the environment first, and `git -C` does
+# not override it. With GIT_DIR and GIT_WORK_TREE naming another repository and
+# the working directory untouched, every record jig wrote landed there and none
+# here. jig_require_repo clears the git location variables before it asks
+# (jig_clear_git_location_env), so the answer comes from where the command runs.
+
+# foreign_repo <dir> — a second repository, the one the environment will lie
+# about. Built with its own `git init`, so it is a real target: a run that
+# believes the lie succeeds there instead of failing, which is what made the
+# original bug quiet.
+foreign_repo() {
+  mkdir -p "$1"
+  (
+    cd "$1" || exit 1
+    git init -q .
+    git symbolic-ref HEAD refs/heads/main
+    printf '# foreign\n' > README.md
+    git add README.md
+    git commit -q -m "foreign"
+  )
+}
+
+test_jig_require_repo_ignores_a_git_dir_naming_another_repository() {
+  fixture_repo
+  local root foreign
+  root=$(pwd -P)
+  foreign="$root/../foreign-$$"
+  foreign_repo "$foreign"
+  foreign=$(cd -P "$foreign" && pwd -P)
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  run env GIT_DIR="$foreign/.git" GIT_WORK_TREE="$foreign" \
+    bash -c 'JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; jig_require_repo; printf "%s" "$JIG_PROJECT"'
+  assert_eq 0 "$RC"
+  assert_eq "$root" "$OUT"
+
+  rm -rf "$foreign"
+}
+
+# GIT_CEILING_DIRECTORIES does not redirect the search, it stops it: with the
+# repository's own parent in the list, discovery from a subdirectory finds
+# nothing and the command dies "not inside a git repository". A variable that
+# turns a working command into an error belongs in the same list as the ones
+# that send it elsewhere.
+test_jig_require_repo_ignores_a_ceiling_that_hides_the_repository() {
+  fixture_repo
+  local root
+  root=$(pwd -P)
+  mkdir -p sub
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  run env GIT_CEILING_DIRECTORIES="$root" \
+    bash -c 'cd sub; JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; jig_require_repo; printf "%s" "$JIG_PROJECT"'
+  assert_eq 0 "$RC"
+  assert_eq "$root" "$OUT"
+}
+
+# The whole list travels together. Clearing GIT_DIR while GIT_OBJECT_DIRECTORY
+# stands would commit into this repository and write the objects into another,
+# so the test names a variable from each end: one that chooses the repository,
+# one that chooses where its objects go.
+test_jig_require_repo_clears_every_git_location_variable() {
+  fixture_repo
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  run env GIT_DIR=/nowhere/.git GIT_WORK_TREE=/nowhere GIT_COMMON_DIR=/nowhere/.git \
+    GIT_OBJECT_DIRECTORY=/nowhere/objects GIT_ALTERNATE_OBJECT_DIRECTORIES=/nowhere/alt \
+    GIT_INDEX_FILE=/nowhere/index GIT_NAMESPACE=other \
+    GIT_CEILING_DIRECTORIES=/nowhere GIT_DISCOVERY_ACROSS_FILESYSTEM=1 \
+    bash -c 'JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; jig_require_repo
+      for v in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+               GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_NAMESPACE \
+               GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM; do
+        eval "printf \"%s=%s \" \"\$v\" \"\${$v-unset}\""
+      done'
+  assert_eq 0 "$RC"
+  assert_eq "GIT_DIR=unset GIT_WORK_TREE=unset GIT_COMMON_DIR=unset GIT_OBJECT_DIRECTORY=unset GIT_ALTERNATE_OBJECT_DIRECTORIES=unset GIT_INDEX_FILE=unset GIT_NAMESPACE=unset GIT_CEILING_DIRECTORIES=unset GIT_DISCOVERY_ACROSS_FILESYSTEM=unset " "$OUT"
+}
+
+# Configuration is not location: jig decides which repository it is in, and
+# reads that repository as the person configured it. The test suite isolates
+# itself with GIT_CONFIG_NOSYSTEM, so clearing these would break the runner.
+test_jig_require_repo_leaves_git_config_variables_alone() {
+  fixture_repo
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  run env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/nowhere/gitconfig \
+    bash -c 'JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; jig_require_repo
+      printf "%s|%s" "${GIT_CONFIG_NOSYSTEM-unset}" "${GIT_CONFIG_GLOBAL-unset}"'
+  assert_eq 0 "$RC"
+  assert_eq "1|/nowhere/gitconfig" "$OUT"
+}
