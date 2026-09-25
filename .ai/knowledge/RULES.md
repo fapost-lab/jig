@@ -16,9 +16,12 @@
   it and its directory is still there — Windows leaves the links behind — housekeeping
   deletes only links (`find -type l`, never followed) and empty directories (`rmdir`) inside
   that path, and leaves anything else. (ADR-0037) The installer,
-  `install.sh`, is the other: on a failed run it removes only the install directory it
-  created with a plain `mkdir` in that same run and the `jig` link it created, never a path
-  that existed before. (ADR-0033) Its Windows bootstrapper, `install.ps1`, removes only the
+  `install.sh`, is the other: on a failed run it removes only what that run itself made — the
+  install directory, by a plain `mkdir` so that creating it and finding it absent are one act;
+  the `jig` link; and, by `rmdir`, which refuses a directory that is not empty, the bin
+  directory and the install directory's parent — never a path that existed before. Its one
+  deletion on a run that succeeds is the `mktemp -d` directory it probes `ln -s` in, removed
+  whichever way the probe answers. (ADR-0033) Its Windows bootstrapper, `install.ps1`, removes only the
   Git installer it downloaded in that run; with `-Uninstall` it removes the `jig` link only
   when it points into the install directory, and that directory only when it is a jig source
   tree whose `git status` is clean. (ADR-0033, ADR-0037) `jig spec new` is the third: when a template copy fails it
@@ -29,18 +32,38 @@
   longer ships it, and the path — relative, without `..` — lies under `.ai/` or an adapter's
   skills directory (`.claude/skills/`, `.codex/skills/`); anything else is kept and reported
   `keep-outside`. (ADR-0024) The carry into a task worktree adds a third shape rather than a
-  fifth exception: `jig task start --worktree` and `jig task bootstrap` delete only inside a
+  fifth exception: `jig task start --worktree` and `jig task bootstrap` delete nothing outside a
   worktree's `.ai/runtime/bootstrap`, the staging directory where they build a declared path
-  before renaming it into place, and only a path that resolves physically inside that directory
-  and is not the directory itself. A carried path at its destination is never deleted, because
-  a rename is what puts it there and it therefore only ever appears complete. The staging
+  before renaming it into place. Two deletions, guarded two ways. The staging directory itself
+  goes whole — cleared on the way in and swept on the way out by a trap, so an interrupted carry
+  leaves nothing to accumulate — after its path is checked to end in `.ai/runtime/bootstrap`.
+  Everything else is a path under that directory, checked to resolve physically inside it and
+  not to be it. A carried path at its destination is never deleted where it lies: a rename is
+  what puts it there, so it only ever appears complete, and a placement git turns out to see is
+  taken back by moving it into the staging directory and deleting it there. The staging
   directory sits under `.ai/runtime/` so that git ignores it: anything a carry leaves in a
   worktree that git does not ignore reads as untracked, and `git worktree remove` without
   `--force` — the only removal jig performs — then refuses that worktree for good.
   (adr-20260924-a-worktree-carries-what-git-does-not) Moving to trash is not deleting, and it has two users: housekeeping moves
-  a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish`, and a
-  partial restore of `epic --reopen` — only after checking that the id is valid and the directory
-  resolves inside `.ai/specs/`. (ADR-0006, ADR-0035)
+  a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish` —
+  while `epic --reopen` moves aside the partial restore it has just made itself. Each is reached
+  through a validated id, and that is what holds the path inside `.ai/specs/`, a valid id having
+  no separator in it to climb out with. Two of them then resolve the directory and refuse one
+  that lands outside anyway: `spec remove`, and housekeeping's own purge of a workspace.
+  (ADR-0006, ADR-0035)
+  **Nothing computes the agreement between this paragraph and the code, and the paragraph
+  lapses.** #95 corrected it four times, each time from the single phrase somebody had found,
+  and the pass after that found three more places at once: two `rmdir`s and a link probe in
+  `install.sh` that no sentence had ever named, a staging directory called undeletable while the
+  sweep removed it whole, and a check on the spec trash that one caller of four actually makes.
+  Half of this is machine-readable — a deletion is a literal, and a detector could object to one
+  this paragraph never names, which is exactly the `install.sh` case. The other half is not:
+  whether a sentence describes the guard standing in front of a deletion is held only in the
+  reading, so the paragraph has the standing `conventions/documentation.md` gives a
+  `known-issues` entry — a reviewer notices, or nobody does. The obligation is therefore on the
+  diff and not on the page: the change that adds, moves or re-guards a deletion is the change
+  that re-reads this paragraph, because it is the one moment when somebody has both in front of
+  them.
 - Housekeeping never destroys a workspace whose remote state is `unknown`, with one exception
   decided in ADR-0005: a task a human ended with `jig task abandon` (directly, or through
   `jig spec remove --abandon-unstarted`) is moved to trash once it is older than
