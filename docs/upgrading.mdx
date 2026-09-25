@@ -19,6 +19,16 @@ jig upgrade              # in a project: update its copy of Jig
 not edit, removes the ones Jig no longer ships unless you edited them, and keeps and reports
 everything else. Review the diff and commit it.
 
+**The first upgrade from 0.15.0 or older ends with a shell error.** Once the run has done its work,
+`.ai/scripts/jig` reports something like `line 133: cmd: unbound variable` — the wording and the
+line number depend on the version you came from, and from versions before 0.15.0 the closing summary
+may be missing as well. Nothing is broken: the files were already placed, and the message arrives
+after them, from the old `jig` that replaced itself while it was still being read. One file may be
+left unplaced, so run `jig upgrade` once more; the second run places it and ends cleanly. Then
+`jig version` reports the new version and `jig doctor` reports its upgrade check as `up to date`.
+This happens on that first upgrade only: since 0.15.1 the upgrade writes each file beside its place
+and renames it.
+
 Three things it will not do, and none of them are oversights.
 
 **It does not edit `.ai/config.yaml`.** That file belongs to your team, and nothing but a person
