@@ -121,3 +121,35 @@ adapter_codex_session_hook_hint() {
   printf '  (see .ai/templates/scheduler/README.md).\n'
   return 2
 }
+
+# adapter_codex_session_id
+# Exits 2: not answered for this runtime.
+#
+# Not "Codex has no session id" — it has them, and names them. Its rollout
+# files are `~/.codex/sessions/<year>/…/rollout-<timestamp>-<uuid>.jsonl`, so
+# a session is identified internally. What could not be established is whether
+# that identifier reaches the environment of a command Codex runs, and its
+# `config.toml` carries a `[shell_environment_policy.set]` section — the
+# environment handed to commands is curated, so the answer cannot be inferred
+# from the fact that the id exists.
+#
+# Until someone verifies it with Codex in front of them, this exits 2, and a
+# Codex session working in a checkout without a task of its own leaves no
+# record. The consequence is named rather than papered over: `task start` then
+# cannot tell that checkout from a free one, and such a session learns that its
+# HEAD moved from the notice, after the fact
+# (adr-20260924-a-checkout-records-what-is-happening-in-it).
+#
+# Whoever writes that line owes `tests/run.sh` the same variable in the list it
+# unsets beside CLAUDE_CODE_SESSION_ID. A test suite that inherits a runtime's
+# variable measures the machine it runs on, not the repository — it made three
+# tests here pass or fail depending on who started them
+# (adr-20260924-a-checkout-records-what-is-happening-in-it, and the
+# `run_no_tools` row of conventions/shell.md, which is the same failure).
+#
+# Deriving an id from the newest rollout file was considered and rejected: the
+# newest rollout is not necessarily the running session, several can run at
+# once, and it reads private state the runtime is free to change.
+adapter_codex_session_id() {
+  return 2
+}

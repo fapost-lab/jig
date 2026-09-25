@@ -681,7 +681,11 @@ _status_project_version() {
 # per-file loop). Used by AC-06 to prove `jig status` changed nothing.
 _status_project_hash() {
   { git status --porcelain
-    find .ai -type f 2>/dev/null | LC_ALL=C sort | git hash-object --stdin-paths
+    # Everything but the two records a checkout keeps about itself: every
+    # jig run rewrites them and they say nothing about the project
+    # (adr-20260924-a-checkout-records-what-is-happening-in-it).
+    find .ai -type f ! -path '.ai/runtime/checkout' ! -path '.ai/runtime/working/*' \
+      2>/dev/null | LC_ALL=C sort | git hash-object --stdin-paths
   }
 }
 
@@ -1230,15 +1234,19 @@ test_status_html_writes_one_file_prints_its_path_and_changes_nothing_else() {
   assert_eq 0 "$RC"
   assert_eq "$(pwd -P)/.ai/runtime/status.html" "$OUT"
   assert_file .ai/runtime/status.html
-  # The page and the counts its redraws reuse, nothing else.
-  assert_eq "status-counts
-status.html" "$(ls .ai/runtime)" "nothing but the page and its counts in .ai/runtime"
+  # The page, the counts its redraws reuse, and the record every jig run
+  # leaves saying a session is working in this checkout
+  # (adr-20260924-a-checkout-records-what-is-happening-in-it) — nothing else.
+  assert_eq "checkout
+status-counts
+status.html" "$(ls .ai/runtime)" "nothing but the page, its counts and the checkout record"
   assert_eq "$before" "$(git status --porcelain --ignored | grep -v '^!! .ai/runtime/' || true)"
 
   # A second run replaces the page rather than adding another.
   run jig status --html
   assert_eq 0 "$RC"
-  assert_eq "status-counts
+  assert_eq "checkout
+status-counts
 status.html" "$(ls .ai/runtime)"
 }
 

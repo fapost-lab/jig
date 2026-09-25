@@ -17,7 +17,7 @@
 # `autopilot.parallel` are also in JIG_CFG_LOCAL_ONLY_KEYS below: they answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -258,7 +258,8 @@ _cfg_parallel() {
 # reader understands the way the person meant it:
 # - housekeeping.cadence: whole days (`<n>d` or `<n>`), because the session
 #   hook and `jig status` read it in days and treat anything else as 1d;
-# - the other housekeeping durations: `<n>[dhms]`, `jig_duration_seconds`;
+# - the other housekeeping durations and checkout.busy_ttl: `<n>[dhms]`,
+#   `jig_duration_seconds`;
 # - housekeeping.fetch and autopilot.unattended: `true` or `false` — cfg_bool
 #   would take yes/1/on too, jig_unattended only `true`; the one spelling
 #   both read alike;
@@ -284,7 +285,8 @@ jig_config_value_problem() {
         '' | *[!0-9]* | ?????????*) printf 'not a whole number of days (e.g. 1d, 3d)\n'; return 1 ;;
       esac
       ;;
-    housekeeping.trash_ttl | housekeeping.abandoned_ttl | housekeeping.stale_after)
+    housekeeping.trash_ttl | housekeeping.abandoned_ttl | housekeeping.stale_after \
+      | checkout.busy_ttl)
       case "${value%[dhms]}" in
         '' | *[!0-9]* | ?????????*) printf 'not a duration (e.g. 7d, 12h, 30m, 90s)\n'; return 1 ;;
       esac

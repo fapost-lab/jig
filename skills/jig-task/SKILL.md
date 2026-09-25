@@ -32,6 +32,11 @@ stands, and continue from there instead of creating a second workspace. A task l
 with `worktree=<path>` continues in that worktree, not in this checkout; §3 says how to
 get there.
 
+If either command prints `checkout: HEAD here moved <a> -> <b> since you were told`,
+another session checked a branch out here while you were working. **Do not switch the
+branch back** — that pulls the tree out from under whoever started work on it. Say what
+happened, and give the task that arrived a worktree of its own instead.
+
 `task current` exiting 2 means several tasks are live on this branch. It prints them;
 ask the user which one, and never pick for them. Suggest pausing the other:
 
@@ -92,15 +97,22 @@ said and ask. Never edit the `Spec:` line or create the branch just to get past 
 costs nothing and does not need a pause to stay out of the way. Pause means "was being
 worked on, set aside" — do not use it to mean "not begun".
 
-**When `task start` refuses a dirty tree**, the changes belong to other work — never work
-around it. Ask the user which road: pause the task that owns them
-(`jig task pause <owner> --stash`), or start this one in a worktree of its own:
+**A worktree is not only what a refusal pushes you towards.** `task start` moves this
+checkout's HEAD, and a checkout that looks free may not be: `jig status` prints
+`working here: …` for work another live session is doing **in this checkout**. A task that
+lives in its own worktree is not listed there — it shows as `worktree=<path>` instead, and
+is no reason to go anywhere. When `working here:` names anything, or when the user is
+working in this checkout themselves, start in a worktree without being asked to:
 
 ```
 .ai/scripts/jig task start <id> --worktree
 ```
 
-It prints a path and leaves this checkout alone. From then on the task is worked on from
+**When `task start` refuses a dirty tree**, the changes belong to other work — never work
+around it. Ask the user which road: pause the task that owns them
+(`jig task pause <owner> --stash`), or start this one in a worktree, as above.
+
+Either way it prints a path and leaves this checkout alone. From then on the task is worked on from
 that path only. If your runtime can switch this session into an existing worktree, switch
 and run every command from there; otherwise tell the user to open a new agent session in
 that path. Either way, do not continue the task from here.
