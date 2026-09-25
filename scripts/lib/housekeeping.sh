@@ -775,6 +775,13 @@ _hk_purge() {
 #   before review, not debris; at a higher level `jig task ship` is what
 #   commits it, and the same refusal still protects whatever it has not
 #   reached yet.
+# - no git repository inside the files the project ignores holds work that is
+#   nowhere else. That refusal git does not make: it deletes ignored files
+#   without a word, so a nested repository's unpushed commits went with the
+#   worktree (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees).
+#   `status --porcelain` is deliberately still asked without `--ignored`: a
+#   worktree that only holds node_modules/ is a worktree with nothing to lose,
+#   and keeping it would make the cleanup stop cleaning.
 #
 # A worktree outside the root is left in place, and when it is clean and not
 # locked it no longer holds the workspace back: the task is closed, its work
@@ -784,6 +791,7 @@ _hk_purge() {
 # worktree of a running agent — still keeps it.
 _hk_worktree_retire() {
   local dry="$1" tid="$2" path="$3" root="" reason="" own="" ours=0
+  local ignored="" nested="" gone=""
   root=$(cd -P "$(_task_worktree_root)" 2>/dev/null && pwd -P) || root=""
   if [ -n "$root" ]; then
     case "$path" in
@@ -803,6 +811,23 @@ _hk_worktree_retire() {
   if [ -z "$reason" ] && _hk_worktree_locked "$path"; then
     reason="locked"
   fi
+  # What git will delete without a word, asked once and used twice: to find the
+  # repositories hiding in it, and to name what went when there was none. Last
+  # of the questions, because it is the only one that walks the tree.
+  if [ -z "$reason" ] && [ "$ours" = 1 ]; then
+    if ignored=$(_hk_worktree_ignored "$path"); then
+      if [ -n "$ignored" ]; then
+        nested=$(_hk_worktree_unshared "$path" "$ignored") && reason="nested-repository"
+      fi
+    else
+      # Git did not say which files it ignores, and those are the files it would
+      # delete without a word. An unanswered question keeps the worktree, as
+      # every other uncertainty here does — the opposite reading, "nothing is
+      # ignored", turns a failed question into a deletion.
+      ignored=""
+      reason="ignored-unknown"
+    fi
+  fi
   if [ -z "$reason" ] && [ "$ours" = 1 ] && [ "$dry" != 1 ]; then
     git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || reason="git-refused"
     if [ -z "$reason" ] && [ -e "$path" ]; then
@@ -818,6 +843,8 @@ _hk_worktree_retire() {
       own-workspace) _HK_WT_NOTE="worktree kept, it holds a task workspace of its own ($path)" ;;
       uncommitted-changes) _HK_WT_NOTE="worktree kept, it has uncommitted changes ($path)" ;;
       locked) _HK_WT_NOTE="worktree kept, it is locked, a session may still be using it ($path)" ;;
+      nested-repository) _HK_WT_NOTE="worktree kept, an ignored folder in it holds a git repository with work that is nowhere else ($nested)" ;;
+      ignored-unknown) _HK_WT_NOTE="worktree kept, git would not say which of its files are ignored, and those are the ones it deletes without a word ($path)" ;;
       leftover) _HK_WT_NOTE="worktree removed by git, but files remain in its directory ($path)" ;;
       *) _HK_WT_NOTE="worktree kept, git refused to remove it ($path)" ;;
     esac
@@ -836,9 +863,118 @@ _hk_worktree_retire() {
   else
     _HK_WT_LINE="remove worktree $path"
     _HK_WT_NOTE="worktree removed"
-    _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=remove"
+    # The ignored files git deleted without a word are named here, where the
+    # record outlives the run: none of them held a repository, but a .env or a
+    # local database is still gone, and a person who has to ask "what was in
+    # there" can no longer look.
+    gone=$(_hk_ignored_summary "$ignored")
+    _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid worktree=$path action=remove${gone:+ ignored=$gone}"
   fi
   return 0
+}
+
+# _hk_worktree_ignored <path> — the paths `git worktree remove` would delete
+# without a word: what the project ignores, as git reports it, one per line and
+# relative to the worktree. Whole ignored directories come back as one entry,
+# so a tree full of dependencies is a handful of lines, not thousands. `-z`
+# spares the quoting git otherwise puts around a path with a space, a quote or a
+# byte above ASCII in it — measured: without `-z` those come back as
+# `"with space/"` and no `[ -e ]` finds them again. The NUL stays inside the
+# pipe on purpose: a command substitution drops NUL bytes, which would glue
+# every entry into one line. A path with a newline in it is beyond this, and
+# beyond the loops that read it.
+#
+# Non-zero when git did not answer: `set -o pipefail` (scripts/jig) makes the
+# pipeline carry git's failure out, and the caller reads that as an uncertainty,
+# never as "nothing is ignored".
+_hk_worktree_ignored() {
+  git -C "$1" status --porcelain -z --ignored 2>/dev/null \
+    | tr '\0' '\n' \
+    | sed -n 's/^!! //p'
+}
+
+# _hk_repo_holds_work <repo> — true when this repository holds work no other
+# repository has. Asked of the repository's own git, because nothing outside it
+# knows: the project around it does not track a line of it. A git that cannot
+# answer keeps the worktree, like every other uncertainty here.
+#
+# The questions were chosen by measuring the cases, not by reasoning about them
+# (git 2.48.1):
+# - a working tree that is not clean, which needs no remote to be work;
+# - no remote configured at all: then there is nowhere anything could have been
+#   pushed to, and one commit is one commit that exists here only;
+# - otherwise `--all --not --remotes --tags`, which catches a local branch, a
+#   stash and a commit made on a detached HEAD, and stays quiet on a dependency
+#   pinned to a tag. Tags are on the excluding side because a dependency cloned
+#   with `--depth 1 --branch <tag>` or `--single-branch --branch <tag>` has no
+#   remote-tracking ref at all — only `refs/tags/<tag>` — so `--not --remotes`
+#   excludes nothing and the pin would read as unpushed work. That would keep
+#   every worktree with a pinned dependency in it for ever, which is the
+#   cleanup not cleaning. The cost is named in the ADR: in a repository that
+#   does have a remote, a local commit reachable only from a local tag is
+#   missed.
+_hk_repo_holds_work() {
+  local repo="$1" out
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  out=$(git -C "$repo" status --porcelain 2>/dev/null) || return 0
+  [ -z "$out" ] || return 0
+  if [ -z "$(git -C "$repo" remote 2>/dev/null)" ]; then
+    # "Has a commit", not "HEAD resolves": after `git checkout --orphan` HEAD is
+    # unborn while the commits are still on another branch, and reading that as
+    # an empty repository deletes the only copy of them.
+    out=$(git -C "$repo" rev-list --max-count=1 --all 2>/dev/null) || return 0
+    [ -z "$out" ] || return 0
+    return 1
+  fi
+  out=$(git -C "$repo" rev-list --max-count=1 --all --not --remotes --tags 2>/dev/null) || return 0
+  [ -z "$out" ] || return 0
+  return 1
+}
+
+# _hk_worktree_unshared <path> <ignored> — the first repository inside the
+# ignored files of <path> that holds work nowhere else, printed; non-zero when
+# there is none. Only ignored paths are walked: anything untracked git refuses
+# to delete by itself, so this is exactly its blind spot.
+#
+# `-prune` keeps the walk out of the object store of a repository it just
+# found, and find is not given -L, so neither a starting point that is a link
+# nor a link inside one is followed — the borrowed workspace under
+# .ai/workspace/tasks/ is a link, and it leads into another checkout entirely.
+_hk_worktree_unshared() {
+  local path="$1" list="$2" rel dot repo
+  while IFS= read -r rel; do
+    # git marks a directory with a trailing slash; find implementations differ
+    # on whether they double it into the paths they print.
+    rel=${rel%/}
+    [ -n "$rel" ] || continue
+    [ -e "$path/$rel" ] || continue
+    while IFS= read -r dot; do
+      repo=${dot%/.git}
+      [ "$repo" != "$dot" ] || continue
+      _hk_repo_holds_work "$repo" || continue
+      printf '%s\n' "$repo"
+      return 0
+    done < <(find "$path/$rel" -name .git -prune -print 2>/dev/null)
+  done < <(printf '%s\n' "$list")
+  return 1
+}
+
+# _hk_ignored_summary <ignored> — those paths on one line, for the log entry of
+# a removal. Jig's own ignored paths are left out: .ai/runtime is derived and
+# .ai/workspace holds nothing here but the link to the workspace, which stays
+# where it was filed. Five names, then a count: the line is a record of what
+# was lost, not an inventory.
+#
+# Comma-separated without a space, and the caller puts the field last: the log
+# line is a space-separated `key=value` record three readers parse (domains/
+# housekeeping/OVERVIEW.md), and a path with a space in it must not read as the
+# next field.
+_hk_ignored_summary() {
+  printf '%s\n' "$1" | awk -v ai="$JIG_AI_DIR/" '
+    NF == 0 { next }
+    index($0, ai) == 1 { next }
+    { n++; if (n <= 5) out = out (out == "" ? "" : ",") $0 }
+    END { if (n > 5) out = out ",+" n - 5 "-more"; print out }'
 }
 
 # _hk_worktree_leftover <path> — clear what `git worktree remove` leaves behind

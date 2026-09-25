@@ -125,7 +125,7 @@ The script answers from file metadata alone; the agent then reads the listed fil
 | `git worktree add` | starting a task in a separate worktree |
 | `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
 | delete a branch | only when starting a worktree fails, and only the branch that attempt just created, while it still points where it was created |
-| `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, and it has no uncommitted changes or lock |
+| `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, it has no uncommitted changes or lock, and no repository inside its ignored files holds work that is nowhere else |
 
 **No script commits or pushes on its own** — apart from the Windows installer's first commit in a
 repository it created, the only ones that do are `jig task ship` and `jig spec ship`, and only as far

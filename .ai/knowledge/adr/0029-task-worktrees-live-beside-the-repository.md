@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -238,3 +238,12 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > `task list` and `jig status` print from `git worktree list` is why the new record stores no
 > `worktree` field: it would be a kept copy of a fact git computes and this decision already
 > publishes.
+
+> **Amendment (2026-09-25).** The Consequences above measured that `git worktree remove` "deletes
+> *ignored* files silently", and stopped there. It still does, and that is no longer the end of the
+> reasoning: a repository nested inside an ignored folder went with the worktree, unpushed commits
+> and all, while `git status --porcelain` reported the tree as clean. The safety conditions gain one
+> — no repository inside the ignored paths holds work that is nowhere else — and the cleanup asks
+> each such repository's own git, because nothing outside it knows
+> (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). Ignored files that are not a
+> repository still go; a removal now names them in the housekeeping log.
