@@ -44,7 +44,14 @@ jig task show booking-message
 ```
 
 Fill in `.ai/workspace/tasks/booking-message/task.md`: the goal, scope, and what a correct result
-looks like. Filing the task does not switch branches. Begin work separately:
+looks like. Filing the task does not switch branches.
+
+<Warning>
+  Start from a repository with a commit and no uncommitted tracked changes. If other work is in
+  progress, pause its task or use a separate worktree; do not bundle it into this task's commit.
+</Warning>
+
+Begin work separately:
 
 ```bash
 jig task start booking-message
@@ -53,11 +60,6 @@ jig task start booking-message
 By default, this switches to a task branch from the project's configured base. For a separate
 working copy, use `jig task start booking-message --worktree` instead, then work in the directory
 it prints. Tasks linked to a spec with an open epic start from that epic.
-
-<Warning>
-  Start from a repository with a commit and no uncommitted tracked changes. If other work is in
-  progress, pause its task or use a separate worktree; do not bundle it into this task's commit.
-</Warning>
 
 ## Pause and resume
 
