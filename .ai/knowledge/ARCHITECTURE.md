@@ -26,7 +26,10 @@ sources `lib/version.sh`, `lib/common.sh`, `lib/config.sh`, then sources
 `lib/<command>.sh` and calls `cmd_<command>`. One library file per command, one test
 file per command (`tests/<command>.t.sh`). Shared parsers live in their own libraries
 (`lib/frontmatter.sh`, `lib/manifest.sh`, `lib/section.sh`) and are sourced by the commands
-that need them.
+that need them. A subject large enough to crowd out its command gets a library of its own even
+with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
+`tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
+lifecycle.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`

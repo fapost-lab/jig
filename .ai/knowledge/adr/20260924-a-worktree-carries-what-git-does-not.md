@@ -119,15 +119,24 @@ so that particular gap is closed by construction. The principle is kept anyway, 
 cheap and because the next gap will not announce itself: for as long as the accounting is also the
 proof, any gap in it is a silent stranding.
 
-**A rename that landed is told from one that nested by identity, not by name.** Placing a path is a
-rename onto a destination re-tested immediately before, and a backstop catches what slips through
-that window: `mv` moves *into* a directory that appeared meanwhile, burying the carried tree a level
-down. The backstop compares the inode the staged tree had against the destination's afterwards,
-because the name test it replaced — is there a `<dst>/<staged basename>` — cannot tell a nested
-rename from a carried tree that legitimately holds a top-level entry of its own name, which
-`carry: [data]` over a `data/data/` does on the first try. Where a filesystem reports no usable
-inodes both reads come back equal and the backstop stands down; the re-test is what closes the
-window that matters.
+**A rename that landed is told from one that nested by identity, not by name, and identity takes
+two comparisons.** Placing a path is a rename onto a destination re-tested immediately before, and
+a backstop catches what slips through that window: `mv` moves *into* a directory that appeared
+meanwhile, burying the carried tree a level down. A name test — is there a `<dst>/<staged
+basename>` — cannot tell that from a carried tree legitimately holding a top-level entry of its own
+name, which `carry: [data]` over a `data/data/` does on the first try. Neither can one inode
+comparison: each single form was tried and each truncated such a tree in the mode the other
+survived. Nesting is real only when the object now at `<dst>/<staged basename>` **is** the staged
+one *and* `<dst>` itself is **not**, so both are asked.
+
+The precondition is a property, not a platform list: **reading an inode tells one object from
+another.** Where that fails — whether every path answers alike, or the answer simply does not
+survive a rename — the conjunction cannot hold, the backstop stands down, and the re-test before
+the rename is what closes the window that matters. Failing closed is the design. Three stands in
+`tests/bootstrap.t.sh` hold this down: a stub for each way of losing discrimination, and a third
+that creates the destination in the sliver the re-test cannot cover, which is what proves the
+backstop fires at all. Before them the suite was green for every wrong form alike, and that is how
+an unmeasured one reached the tree.
 
 **`.ai/` is refused, always and by name.** A worktree borrows exactly one workspace by link
 (ADR-0029); a copy would give the task two `state` files diverging from the first write. So is
@@ -302,4 +311,8 @@ python, and is a separate decision.
   working arrangement. The carry is for derived state, which by definition can be thrown away —
   and derived state is also what the new guard deliberately does *not* hold, `.env` and a local
   database among it. Whether the carry should refuse a declared path that contains a `.git`
-  outright is a decision, not a fix, and is open.
+  outright stayed open here and was answered next door instead: the cleanup asks, at the moment
+  of removal, when the answer is worth something, rather than the carry guessing at declaration
+  time (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). A refusal in the carry is
+  still arguable — it would stop the second clone from ever existing — but it is no longer the
+  only thing standing between a person and losing work.

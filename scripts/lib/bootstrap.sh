@@ -276,9 +276,15 @@ EOF
 # `ls -di` because there is no portable `stat`: BSD and GNU disagree on every
 # flag, and Git Bash ships the GNU one on a platform that is neither. `-d`
 # answers about a symlink itself rather than its target, and about a directory
-# rather than its contents. A filesystem that reports no real inode numbers
-# answers the same value for both paths, and the caller then falls back to the
-# test that does not need identity.
+# rather than its contents.
+#
+# **What this promises is narrow: a number, when one can be read.** It does not
+# promise that the number identifies the object. That can fail in more than one
+# way — every path answering alike, or an answer that does not survive a rename
+# — and the sole caller is built for that: it asks two comparisons that cannot
+# both hold unless the read really discriminates, so it stands down rather than
+# guessing. There is no fallback test to fall back to; what holds the line then
+# is the destination re-test before the rename, not anything here.
 _bootstrap_inode() {
   # SC2012 warns about parsing `ls` for filenames; no filename is read here —
   # one quoted path goes in and the first field of the first line, a number,
