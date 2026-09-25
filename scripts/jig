@@ -27,6 +27,15 @@ export JIG_SELF JIG_LIB
 . "$JIG_LIB/version.sh"
 # shellcheck source=lib/common.sh
 . "$JIG_LIB/common.sh"
+
+# Before anything reads a repository: the process decides which checkout it is
+# in from where it was started, not from what it was told. jig_require_repo
+# clears these too, but it runs inside cmd_<command>, and the checkout recorder
+# sourced below resolves the root before any command does — the one component
+# whose whole job is to describe its own surroundings would otherwise have been
+# the last to stop taking them on hearsay.
+jig_clear_git_location_env
+
 # shellcheck source=lib/config.sh
 . "$JIG_LIB/config.sh"
 # shellcheck source=lib/checkout.sh

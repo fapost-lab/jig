@@ -20,7 +20,52 @@ jig_die()  {
 
 # --- repository ------------------------------------------------------------
 
+# Remove the environment variables that tell git which repository to work on,
+# so every git jig runs acts on the checkout jig is standing in.
+#
+# `git rev-parse --show-toplevel` asks the environment first, and `git -C
+# <dir>` does not override it: with GIT_DIR and GIT_WORK_TREE pointing at
+# another repository and the working directory untouched, every record jig
+# wrote landed in that other repository and none in this one — measured. The
+# layer above this one had the same bug with an inherited JIG_PROJECT
+# (adr-20260924-a-checkout-records-what-is-happening-in-it), and a component
+# that describes its own surroundings may not learn them from somebody else,
+# at either layer.
+#
+# The list is git(1) "The Git Repository", read rather than recalled, kept to
+# the variables that choose *what* git acts on:
+#   GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR  the repository and its tree
+#   GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES  where objects go
+#   GIT_INDEX_FILE                          the index add and commit see
+#   GIT_NAMESPACE                           which refs exist
+#   GIT_CEILING_DIRECTORIES                 how far discovery walks up
+#   GIT_DISCOVERY_ACROSS_FILESYSTEM         whether it crosses a mount point
+# All of them or none: clearing GIT_DIR while GIT_OBJECT_DIRECTORY stands
+# commits into this repository and writes the objects into another one, which
+# is worse than either end of the choice.
+#
+# The line is location, not configuration. GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+# GIT_CONFIG_NOSYSTEM and GIT_CONFIG_COUNT/KEY/VALUE can redirect a work tree
+# too, through core.worktree, but they are how a person configures git on
+# purpose — tests/run.sh isolates a run with GIT_CONFIG_NOSYSTEM — and jig
+# reads the configuration of the repository it found. It decides which
+# repository it is in; it does not decide how that repository is set up.
+#
+# Variables that only change a format or a default (GIT_INDEX_VERSION,
+# GIT_DEFAULT_HASH, GIT_DEFAULT_REF_FORMAT) and those that change behaviour
+# without changing the address are left alone.
+jig_clear_git_location_env() {
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_INDEX_FILE GIT_NAMESPACE \
+    GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM
+}
+
 # Print the git repository root of the current directory or fail.
+#
+# The clearing belongs to the callers below, not here: this runs inside
+# `$(jig_repo_root)`, a subshell, where an unset would not outlive the one
+# command it guards.
 jig_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null
 }
@@ -33,8 +78,14 @@ jig_repo_root() {
 # `init --link` produced ../../../../d/a/jig/jig/scripts, dangling, on the
 # same drive. git already resolves symlinks on macOS and Linux, so this
 # changes nothing there.
+#
+# Clears the git location variables first, for the callers that reach the
+# library without the dispatcher — the test suite sources common.sh and calls
+# this directly. The dispatcher has already cleared them by the time a command
+# runs, and `unset` twice costs nothing.
 jig_require_repo() {
   local top
+  jig_clear_git_location_env
   top=$(jig_repo_root) || jig_die "not inside a git repository"
   JIG_PROJECT=$(cd -P "$top" 2>/dev/null && pwd -P) \
     || jig_die "cannot resolve the repository root: $top"
