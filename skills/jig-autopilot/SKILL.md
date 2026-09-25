@@ -62,6 +62,11 @@ In an unattended run there are no stops: §5. Otherwise, on a stop, record it, t
 | A decision nobody made | The decision: a product choice not settled in `task.md`, the spec or knowledge. Never guess one |
 | A destructive operation | Permission, or another way |
 
+A reason says **what you need from the human**, and nothing about the state of the task.
+It is written once and never rechecked, while the task moves on: a reason that reported
+"no pull request" or "verify has not been run" was still saying it hours after both had
+happened. The state the page derives itself, fresh, in the cards around the stop.
+
 Destructive means: `push --force`, `reset --hard`, `clean`, deleting a branch or a stash,
 rewriting published history, deleting files outside the task's own change, migrating or
 deleting data, and anything the runtime asks permission for that the human has not given.

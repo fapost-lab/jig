@@ -1643,7 +1643,12 @@ test_status_page_shows_a_stopped_run_first_with_its_reason() {
   page=$(cat .ai/runtime/status.html)
   needs=$(status_page_section "$page" needs)
   assert_contains "$needs" 'Autopilot stopped and is waiting for you <span class="badge warn">autopilot stopped</span>'
-  assert_contains "$needs" "<code>run-1</code> · which &lt;db&gt; to use &amp; why (just now)"
+  # The age leads and the reason follows a colon: the reason is prose written
+  # once, at the stop, and nothing rechecks it. Read with the age appended it
+  # claims to be true now, and a card was still saying "no pull request" hours
+  # after one existed.
+  assert_contains "$needs" "<code>run-1</code> · stopped just now: which &lt;db&gt; to use &amp; why"
+  assert_not_contains "$needs" "which &lt;db&gt; to use &amp; why (just now)"
   assert_contains "$needs" "Answer the agent in this task&#39;s session; it resumes the run."
   # Shown once: a stopped run is a card, not also a row under "Running now".
   assert_not_contains "$(status_page_section "$page" tasks)" "<code>run-1</code>"
@@ -1683,8 +1688,10 @@ test_status_page_gathers_a_phases_stops_into_one_card() {
   needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
   n=$(printf '%s\n' "$needs" | grep -c "A phase run is waiting for you" || true)
   assert_eq 1 "$n" "expected one card for the whole phase, got $n"
-  assert_contains "$needs" "run-1 — question from run-1"
-  assert_contains "$needs" "run-2 — question from run-2"
+  # Each line carries its own stop's age, because a wave's tasks stop at
+  # different moments and each reason is prose from that moment.
+  assert_contains "$needs" "run-1 — stopped just now: question from run-1"
+  assert_contains "$needs" "run-2 — stopped just now: question from run-2"
   assert_contains "$needs" "Answer in the coordinator&#39;s session; it resumes the tasks."
 }
 
@@ -1845,6 +1852,48 @@ test_status_page_links_a_pull_request_jig_opened_and_one_housekeeping_saw() {
   assert_contains "$needs" "Merged: the task can be closed</h3><p><code>landed</code>"
   # Not the git step either: jig already opened the pull request.
   assert_not_contains "$needs" "Ready for your step in git</h3><p><code>shipped</code>"
+}
+
+# A stopped autopilot run is exactly the task that has just been shipped, so
+# it is the likeliest of all to have a pull request. The card was collected at
+# the end of the loop that builds this section, after the branch for a stopped
+# run ends the iteration, and the page showed no pull request at all while
+# telling the reader to go and open one.
+test_status_page_links_the_pull_request_of_a_task_whose_autopilot_stopped() {
+  fixture_jig_repo
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start >/dev/null
+  jig task autopilot run-1 stop --reason "say which base to land on" >/dev/null
+  # `task set` refuses pr_url: only `task ship` writes it, from the forge.
+  printf 'pr_url: https://example.com/o/r/pull/9\n' >> .ai/workspace/tasks/run-1/state
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "Autopilot stopped and is waiting for you"
+  assert_contains "$needs" "A pull request is waiting for review or merge</h3><p><code>run-1</code>"
+  assert_contains "$needs" '<a href="https://example.com/o/r/pull/9">https://example.com/o/r/pull/9</a>'
+}
+
+# The same for a stop held back for a phase run: that branch ends the
+# iteration too.
+test_status_page_links_the_pull_request_of_a_phase_runs_stopped_task() {
+  fixture_jig_repo
+  jig task new run-1 --class T2 >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start --phase alpha/1 >/dev/null
+  jig task autopilot run-1 stop --reason "say which base to land on" >/dev/null
+  printf 'pr_url: https://example.com/o/r/pull/10\n' >> .ai/workspace/tasks/run-1/state
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "A phase run is waiting for you"
+  assert_contains "$needs" "A pull request is waiting for review or merge</h3><p><code>run-1</code>"
+  assert_contains "$needs" '<a href="https://example.com/o/r/pull/10">https://example.com/o/r/pull/10</a>'
 }
 
 test_status_page_shows_what_housekeeping_left_for_a_person() {

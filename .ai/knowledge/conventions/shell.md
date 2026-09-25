@@ -9,7 +9,7 @@ paths:
   - "profiles/**"
   - "tests/**"
   - ".github/**"
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-25
 summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
@@ -56,6 +56,7 @@ bug during Phase 1; the rationale column says which.
 | An awk two-file join on `NR == FNR` handles the empty-first-file case explicitly. | `NR == FNR` identifies the first file only while that file has lines. With an empty first file the condition is true for every line of the **second** file too, so the join silently keeps nothing. In `measure.sh` the first file is the live task workspaces and the second is the purge records: on a machine with no live tasks — the ordinary state after housekeeping — every historical task was discarded as if it were live, and the report said "no task workspaces and no purge records" while the log held plenty. |
 | A `git` read whose result becomes a number pins the options that change it, rather than inheriting the user's config. | `git diff --numstat` obeys `diff.renames`, which is on by default and which some developers switch off globally. A renamed file is then either one file and one line, or two files and all their lines. `jig measure` would report a different change size for the same history depending on whose machine printed it — the same "do not inherit the environment" failure as `run_no_tools`, but in arithmetic rather than in `PATH`. `jig_git_change_rows` already pins `--no-renames`; new readers must too. |
 | Shell division truncates towards zero, so floor explicitly wherever the numerator can be negative. | `$(( (tip - fork) / 86400 ))` on a branch tip older than its own fork point — a rebased base, a stale `base_commit` — gives `0` for any gap under a day instead of a negative number. The anomaly a reader needed to see is printed as "finished the same day", which is the most plausible reading and the wrong one. |
+| Everything a record contributes is collected before the first branch that can end its iteration, never after it. A `continue` is a silent `goto` past every line below it. | `_status_html_needs` collected a task's pull request at the bottom of its loop, after the branches for a stopped autopilot run and for a phase run's stop. A stopped run is exactly the task that has just been shipped, so the card most likely to exist was the one that could never be built: the status page showed no pull request at all while telling the reader to go and open one. Reading the code proved it correct — every input was right and the condition was true, it was simply never reached — and only an instrumented run found it. |
 
 ## Example
 

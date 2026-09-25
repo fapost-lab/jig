@@ -1024,6 +1024,15 @@ _status_html_needs() {
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     _status_rec "$rec"
+    # A pull request jig opened, unless housekeeping already saw it settled.
+    # Collected before anything below, because the branches that follow end
+    # the iteration: a task whose autopilot stopped is exactly the one that
+    # has just been shipped, and its pull request was the card most likely to
+    # be missing.
+    if [ -n "$_ST_PR_URL" ] && ! _status_in "$_ST_ID" "$settled"; then
+      pr_ids="$pr_ids$_ST_ID
+"
+    fi
     # 1. A stopped autopilot run waits on an answer (its journal's last stop).
     if [ "$_ST_AUTOPILOT" = stopped ]; then
       stop_reason=$(printf '%s\n' "$_ST_APFACTS" | cut -f 5)
@@ -1031,12 +1040,18 @@ _status_html_needs() {
       if [ -z "$stop_reason" ] || [ "$stop_reason" = "-" ]; then
         stop_reason="no reason recorded"
       fi
+      # The reason was written once, when the run stopped, and nothing
+      # rechecks it: it is prose, and the task moves on without it. So the
+      # card quotes it as what was said then -- the age leads, and the reason
+      # follows a colon -- instead of appending the age to a sentence that
+      # then reads as true now. What is true now the page derives itself, in
+      # the cards around this one.
       ago=""
       [ -z "$stop_at" ] || [ "$stop_at" = "-" ] || ago=$(_status_ago "$stop_at")
       case "$ago" in
-        '') ;;
-        "just now") stop_reason="$stop_reason (just now)" ;;
-        *) stop_reason="$stop_reason ($ago ago)" ;;
+        '') stop_reason="stopped: $stop_reason" ;;
+        "just now") stop_reason="stopped just now: $stop_reason" ;;
+        *) stop_reason="stopped $ago ago: $stop_reason" ;;
       esac
       # A task of a phase run has no session of its own to answer in: its
       # agent was started by a coordinator, which is where the question
@@ -1077,11 +1092,6 @@ _status_html_needs() {
         push) queue="Open a pull request for the task's branch: the agent may push but not open one here." ;;
       esac
       [ -z "$queue" ] || git_steps="$git_steps$(_status_card "Ready for your step in git" "$_ST_ID" "agent.git: $level" "$queue")
-"
-    fi
-    # A pull request jig opened, unless housekeeping already saw it settled.
-    if [ -n "$_ST_PR_URL" ] && ! _status_in "$_ST_ID" "$settled"; then
-      pr_ids="$pr_ids$_ST_ID
 "
     fi
   done <<EOF
