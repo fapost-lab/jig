@@ -268,15 +268,24 @@ decision of its own, with its own line in that document.
   counts. The comparison now excludes exactly those two paths and still covers the spec, the
   workspaces and the trash a dry run must not move anything into. Anything that wants the old
   claim has to name the two records; nothing else about the invariant is intact.
-- **A record about what is happening *here* may not take "here" from the environment.** The
-  recorder resolved the checkout by reusing an inherited `JIG_PROJECT` when one was set, and
-  a jig command run under another jig inherits it: the test suite launched by `jig verify`
-  wrote every record into the repository being verified instead of each test's own tree, and
-  was caught because this repository's `.ai/runtime/told/` filled up with session ids that
-  only ever existed inside tests. The root is computed now, as `jig_require_repo` computes
-  it, at the cost of one `git` call. This is the same failure as the row below, one layer
-  down — a component written to describe its own surroundings must not inherit the answer —
-  and it is why the two are recorded together rather than as one bug each.
+- **A record about what is happening *here* may not take "here" from another command's
+  answer.** The recorder resolved the checkout by reusing an inherited `JIG_PROJECT` when one
+  was set, and a jig command run under another jig inherits it: the test suite launched by
+  `jig verify` wrote every record into the repository being verified instead of each test's
+  own tree, and was caught because this repository's `.ai/runtime/told/` filled up with
+  session ids that only ever existed inside tests. The root is computed now, as
+  `jig_require_repo` computes it, at the cost of one `git` call. This is the same failure as
+  the row below, one layer down — a component written to describe its own surroundings must
+  not inherit the answer — and it is why the two are recorded together rather than as one bug
+  each.
+
+  The claim is deliberately no wider than that, because one layer further down it stops being
+  true: `jig_repo_root` is a bare `git rev-parse --show-toplevel`, and `git -C <dir>` does not
+  override `GIT_DIR` or `GIT_WORK_TREE`. An environment that lies about which repository this
+  is will be believed, and the records go there — measured. That is inherited ground, shared
+  by every command that resolves a project, and it is nothing this decision introduced or can
+  settle on its own; it is left to a successor task rather than papered over by a sentence
+  that sounds like it was handled.
 - **A test runner must clear the runtime's own environment variables, or its tests measure
   the machine they run on.** The session id is read from the environment, so a suite run
   inside an agent session wrote records a CI run would not, and three tests passed or failed
