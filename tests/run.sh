@@ -16,6 +16,15 @@
 # failure count, because a check that quietly stopped running must stay
 # visible as something other than green (RULES.md, ADR-0013).
 #
+# A test killed by a signal is a fourth outcome, `not completed`, and the run
+# exits 3 rather than 1. bash reports a child that died on signal N as 128+N,
+# so `Killed: 9` arrives as 137, and a worker killed before it could write its
+# result leaves none at all. Neither is a failing test, and reading them as one
+# cost hours four times in one night with the cause never in the code
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). What this
+# cannot see is a test that was starved rather than killed and failed in the
+# ordinary way; that one still reads as a failure.
+#
 # JIG_TEST_SHARD=<i>/<n> runs one share of the suite: every n-th test in
 # discovery order, starting at the i-th, so the slow tests of one file spread
 # across shares. JIG_TEST_SKIP=<file::test>[,...] reports the named tests as
@@ -33,9 +42,72 @@ export JIG_BIN="$ROOT/scripts/jig"
 JIG_TEST_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-cache.XXXXXX") || exit 1
 export JIG_TEST_CACHE
 RESULTS=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-results.XXXXXX") || exit 1
-trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"' EXIT
-# An interrupted parallel run must not leave its workers running.
-trap 'kill $(jobs -p) 2>/dev/null; exit 130' INT TERM
+
+# --- the run record, and why this runner takes one ---------------------------
+#
+# **This is a local decision of this repository's runner, not part of the
+# profile contract.** Jig promises one thing to every project it is installed
+# in: `jig verify` holds a record the whole clone can see and waits for another
+# run (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). It
+# promises nothing about anybody's test runner, and it must not — those are
+# written by users and jig does not know what they do.
+#
+# Here the gap that leaves is not hypothetical, and it is one of our own rules
+# that opens it. The review skills ask for targeted runs by test name, and a
+# targeted run cannot be expressed through `jig verify`: it narrows by changed
+# file, never by name. So anyone following that rule reaches for this runner,
+# and until now that run was invisible to the record and blind to it. Measured
+# on 2026-09-25: a `status::` run — hundreds of tests — collided with a full
+# `jig verify` from another worktree, at load average 199, and neither saw the
+# other. In this repository the raw runner is not "a named filter during an
+# edit", it is the ordinary way to run a targeted set.
+#
+# The mechanism is jig's own, reached in a subshell so that nothing it sources
+# reaches the tests: an inherited JIG_PROJECT is exactly how a previous change
+# made the suite write its records into the repository being verified
+# (scripts/lib/checkout.sh). `$$` inside that subshell is still this script's
+# pid, so the record tracks this runner and a reader's `kill -0` answers for
+# it. A tree that is not a jig project — the fixture runners tests/runner.t.sh
+# copies and runs — gets no record and waits for nothing.
+JIG_RUN_BUSY=""
+if [ -f "$ROOT/.ai/config.yaml" ]; then
+  JIG_RUN_BUSY=$(
+    JIG_PROJECT="$ROOT"
+    export JIG_PROJECT
+    # shellcheck source=../scripts/lib/common.sh
+    . "$ROOT/scripts/lib/common.sh" || exit 0
+    # shellcheck source=../scripts/lib/config.sh
+    . "$ROOT/scripts/lib/config.sh" || exit 0
+    # shellcheck source=../scripts/lib/checkout.sh
+    . "$ROOT/scripts/lib/checkout.sh" || exit 0
+    # shellcheck source=../scripts/lib/verify.sh
+    . "$ROOT/scripts/lib/verify.sh" || exit 0
+    # Its own report line goes to stderr here: this script's stdout is the test
+    # log a caller reads.
+    _verify_busy_acquire 1>&2 || exit 0
+    printf '%s' "${JIG_VERIFY_BUSY:-}"
+  ) 2>/dev/null || JIG_RUN_BUSY=""
+fi
+
+# _run_release_busy — give the record back: one named file, then `rmdir`, which
+# refuses a directory that is not empty, after the path is checked to be the one
+# jig builds (RULES.md).
+_run_release_busy() {
+  [ -n "${JIG_RUN_BUSY:-}" ] || return 0
+  case "$JIG_RUN_BUSY" in
+    */.ai/runtime/verify) ;;
+    *) return 0 ;;
+  esac
+  rm -f "$JIG_RUN_BUSY/busy/run" 2>/dev/null || true
+  rmdir "$JIG_RUN_BUSY/busy" 2>/dev/null || true
+  JIG_RUN_BUSY=""
+  return 0
+}
+
+trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
+# An interrupted parallel run must not leave its workers running, and must give
+# the record back on the way out.
+trap 'kill $(jobs -p) 2>/dev/null; _run_release_busy; exit 130' INT TERM
 
 filter="${1:-}"
 
@@ -85,7 +157,9 @@ enter_test_env() {
   # and CI sets CI: neither describes the project a test builds. A test that
   # runs a profile directly inherited JIG_VERIFY_FILES naming this
   # repository's changes and took the scoped path (ADR-0041).
-  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED CI
+  # JIG_VERIFY_BUSY_HELD is the run record this suite's own `jig verify` holds
+  # for this clone; a test builds its own project and must queue on its own.
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_BUSY_HELD CI
   # The runtime's own session id names a checkout record when nothing else
   # does (adr-20260924-a-checkout-records-what-is-happening-in-it), so a suite
   # run from inside an agent session would write records a CI run does not —
@@ -147,6 +221,8 @@ run_test() {
     local reason
     reason=$(sed -n 's/^SKIP: //p' "$RESULTS/$idx.log" | tail -n 1)
     printf 'skip %s (%s)\n' "$full" "$reason"
+  elif [ "$rc" -ge 128 ]; then
+    printf 'KILLED %s (signal %s)\n' "$full" "$((rc - 128))"
   else
     printf 'FAIL %s\n' "$full"
     [ "$jobs" -gt 1 ] || sed 's/^/     | /' "$RESULTS/$idx.log"
@@ -217,20 +293,43 @@ fi
 pass=0
 fail=0
 skip=0
+dead=0
 while IFS="$t" read -r -u 4 idx file name full; do
   rc=missing
   [ -f "$RESULTS/$idx.result" ] && IFS="$t" read -r rc _ < "$RESULTS/$idx.result"
-  if [ "$rc" = 0 ]; then
-    pass=$((pass + 1))
-  elif [ "$rc" = 77 ]; then
-    skip=$((skip + 1))
-  else
-    fail=$((fail + 1))
-    if [ "$jobs" -gt 1 ]; then
-      printf '\nFAIL %s\n' "$full"
-      sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
-    fi
-  fi
+  case "$rc" in
+    0) pass=$((pass + 1)) ;;
+    77) skip=$((skip + 1)) ;;
+    # No result file at all, or an empty one: the worker was killed before it
+    # could write its code. The test neither passed nor failed, and it is the
+    # case an overloaded machine produces most often. A torn write that happens
+    # to leave a valid-looking number is not detectable here and reads as that
+    # number — the same honest limit as a starved test that failed normally.
+    missing | '')
+      dead=$((dead + 1))
+      printf '\nNOT COMPLETED %s (no result: the worker did not finish)\n' "$full"
+      ;;
+    *[!0-9]*)
+      fail=$((fail + 1))
+      if [ "$jobs" -gt 1 ]; then
+        printf '\nFAIL %s\n' "$full"
+        sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
+      fi
+      ;;
+    *)
+      if [ "$rc" -ge 128 ]; then
+        dead=$((dead + 1))
+        printf '\nNOT COMPLETED %s (killed by signal %s)\n' "$full" "$((rc - 128))"
+        sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
+      else
+        fail=$((fail + 1))
+        if [ "$jobs" -gt 1 ]; then
+          printf '\nFAIL %s\n' "$full"
+          sed 's/^/     | /' "$RESULTS/$idx.log" 2>/dev/null
+        fi
+      fi
+      ;;
+  esac
 done 4< "$list"
 
 # Where the time went: the slowest tests, to the second. Collected before it is
@@ -247,5 +346,12 @@ EOF
   printf 'wall: %ss, %s job(s)\n' "$((SECONDS - start_all))" "$jobs"
 fi
 
-printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
+printf '\n%d passed, %d failed, %d skipped, %d not completed\n' \
+  "$pass" "$fail" "$skip" "$dead"
+# Not completed outranks failed: a run something was killed in is not evidence,
+# so the failures in it cannot be trusted either. Exit 3 means "run it again".
+if [ "$dead" -gt 0 ]; then
+  printf 'tests/run.sh: the run did not finish, so it neither passed nor failed\n'
+  exit 3
+fi
 [ "$fail" -eq 0 ]

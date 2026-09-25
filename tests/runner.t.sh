@@ -225,3 +225,134 @@ test_runner_shard_and_skip_still_apply_with_two_jobs() {
   assert_contains "$OUT" "skip a::test_4_keep (JIG_TEST_SKIP)"
   assert_contains "$OUT" "2 passed, 0 failed, 1 skipped"
 }
+
+# --- not completed (a killed test is a third outcome) -----------------------
+# adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass: a test
+# killed by a signal is neither a pass nor a failure. bash reports a child
+# that died on signal N as 128+N. Each test execs a fresh `sh` to kill: a
+# test function runs inside run_test's own `( ... )` subshell, and bash's
+# `$$` there still names the *original* shell process (unlike `$BASHPID`,
+# not available in bash 3.2), so a plain `kill -9 $$` would reach for the
+# outer runner instead of the one process under test.
+
+rn_write_killed_fixture() {
+  cat > root/tests/d.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_dies() { exec sh -c 'kill -9 $$'; }
+EOF
+}
+
+rn_write_fail_and_kill_fixture() {
+  cat > root/tests/e.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_bad() { fail "boom"; }
+test_2_dies() { exec sh -c 'kill -9 $$'; }
+EOF
+}
+
+test_runner_killed_test_is_reported_as_not_completed() {
+  rn_build_suite
+  rn_write_killed_fixture
+
+  rn_run "" "" ""
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "KILLED d::test_1_dies (signal 9)"
+  assert_contains "$OUT" "NOT COMPLETED d::test_1_dies (killed by signal 9)"
+  assert_contains "$OUT" "0 passed, 0 failed, 0 skipped, 1 not completed"
+  assert_contains "$OUT" \
+    "tests/run.sh: the run did not finish, so it neither passed nor failed"
+}
+
+test_runner_not_completed_outranks_failed() {
+  rn_build_suite
+  rn_write_fail_and_kill_fixture
+
+  rn_run "" "" ""
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "FAIL e::test_1_bad"
+  assert_contains "$OUT" "NOT COMPLETED e::test_2_dies (killed by signal 9)"
+  assert_contains "$OUT" "0 passed, 1 failed, 0 skipped, 1 not completed"
+}
+
+test_runner_ordinary_summary_names_zero_not_completed() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" ""
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+}
+
+test_runner_failure_only_summary_still_exits_1() {
+  rn_build_suite
+  rn_write_c_fixture
+
+  rn_run "" "" ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "2 passed, 1 failed, 0 skipped, 0 not completed"
+}
+
+# --- the run record, and the shape that must never break ---------------------
+#
+# This runner takes the clone's run record so that a targeted run and a
+# `jig verify` do not collide (tests/run.sh explains why that is a local
+# decision of this repository's runner and not part of the profile contract).
+# Two properties hold it in place, and both are about not breaking everything
+# else: a tree that is not a jig project gets no record at all — which is every
+# fixture in this file, and every project that vendors the runner without jig —
+# and a run that inherits the record from the `jig verify` above it does not
+# queue behind itself.
+
+test_runner_in_a_non_jig_tree_takes_no_record() {
+  rn_build_suite
+  rn_write_ab_fixture
+  assert_no_file root/.ai
+
+  rn_run "" ""
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+  # Nothing was created to hold a record, and nothing was left behind.
+  assert_no_file root/.ai
+}
+
+test_runner_does_not_queue_behind_the_verify_that_started_it() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  # The record code is behind `[ -f "$ROOT/.ai/config.yaml" ]`, so a fixture
+  # without one never reaches it — and a test written against such a fixture is
+  # green whether the guard below exists or not. Give this one a real jig
+  # project, with the libraries the record reaches through, so the guard is
+  # actually the thing under test (conventions/detectors.md: a green detector is
+  # indistinguishable from a blind one; plant a sample).
+  mkdir -p root/.ai root/scripts/lib
+  cp "$JIG_HOME"/scripts/lib/common.sh "$JIG_HOME"/scripts/lib/config.sh \
+     "$JIG_HOME"/scripts/lib/checkout.sh "$JIG_HOME"/scripts/lib/verify.sh \
+     root/scripts/lib/
+  # Short on purpose: without the guard this run would wait, and the test must
+  # end either way — it fails on the waiting line, never by hanging.
+  printf 'profiles: [generic]\nverify.busy_ttl: 3s\n' > root/.ai/config.yaml
+
+  # A live holder, as a `jig verify` in another worktree of the clone would be.
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p root/.ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > root/.ai/runtime/verify/busy/run
+
+  # What `jig verify` exports once it holds the record. The runner must read it
+  # and not queue behind its own parent.
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=1 \
+    JIG_VERIFY_BUSY_HELD="$PWD/root/.ai/runtime/verify" \
+    "$PWD/root/tests/run.sh"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+  # The assertion that carries the claim: it never waited. Remove the guard in
+  # tests/run.sh and this line is what turns red.
+  assert_not_contains "$OUT" "waiting for it"
+  # And it left the holder's record exactly as it found it.
+  assert_file_contains root/.ai/runtime/verify/busy/run "checkout: /elsewhere"
+}

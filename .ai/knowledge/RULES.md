@@ -44,7 +44,15 @@
   directory sits under `.ai/runtime/` so that git ignores it: anything a carry leaves in a
   worktree that git does not ignore reads as untracked, and `git worktree remove` without
   `--force` — the only removal jig performs — then refuses that worktree for good.
-  (adr-20260924-a-worktree-carries-what-git-does-not) Moving to trash is not deleting, and it has two users: housekeeping moves
+  (adr-20260924-a-worktree-carries-what-git-does-not) `jig verify`'s run record is the
+  sixth, and it is the shape ADR-0035 already allows rather than a new one: the directory
+  `<clone root>/.ai/runtime/verify/busy/` is created by a plain `mkdir` — the atomic claim
+  itself, so making it and finding it taken are one act — and given back by removing the one
+  file the script named, `run`, and then `rmdir`, which refuses a directory that is not
+  empty. The path is checked to end in `.ai/runtime/verify` before either runs, and the same
+  two deletions take back a record whose holder is gone. Nothing else under that directory is
+  touched, and there is no `rm -rf` on it.
+  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) Moving to trash is not deleting, and it has two users: housekeeping moves
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish` —
   while `epic --reopen` moves aside the partial restore it has just made itself. Each is reached
   through a validated id, and that is what holds the path inside `.ai/specs/`, a valid id having

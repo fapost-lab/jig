@@ -89,3 +89,24 @@ with different versions and plugins. And the scope logic the shell profile carri
   Real tool flags (`cargo fmt -p`, `jest --listTests`, `dotnet format --include`) are taken
   from the tools' documentation, not from a run.
 - The library is now part of what `upgrade` must keep compatible, like the scope protocol.
+
+> **Amendment (2026-09-25).** "Never given a new meaning" now has a stated exception, and it
+> is narrow enough to check rather than argue: **a function may gain a third state in a
+> channel that already carries the answer, when every consumer that does not know the new
+> state reads it as the more cautious of the old ones.**
+>
+> The case that earned it is `jp_run`. A check killed by a signal (128+N) used to be reported
+> as `fail`, exit 1; it is now `incomplete`, exit 3
+> (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). The reason this is safe
+> is not that the shipped profiles do not branch on it — that is a fact about *our* profiles,
+> and this rule exists for the ones we have never seen. It is that the change is safe in the
+> direction it has to be: a consumer that only asks whether the code is zero sees a non-zero
+> and reads it exactly as it read a failure. **No profile becomes less cautious than it was.**
+> What would break is a consumer comparing the code with `1`, and that is not an idiom this
+> interface ever promised. A profile written without the library at all — the `if cmd; then
+> pass; else fail; exit 1` shape — is untouched, keeps its old verdict on a killed check, and
+> a test says so.
+>
+> The exception does not extend to renaming, to arguments, or to a state that an old consumer
+> would read as *more* permissive than before. Those remain what this ADR says they are: a new
+> function, never an edit.

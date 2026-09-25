@@ -130,8 +130,13 @@ never assumed" rule the profile contract below states.
 - `scope` — capabilities the profile understands: `changed` (ADR-0013) and `map` (ADR-0041).
 
 `profiles/<stack>/verify.sh` is run from the repository root and exits 0 pass, 1 fail,
-**2 skip**. It prints one line per check, because a profile runs several (shellcheck and
-tests; phpunit and phpstan), and a profile-level result hides which of them ran.
+**2 skip**, **3 incomplete** — a check that started and did not finish, which is neither a
+pass nor a fail and means run it again; a profile killed by a signal (128+N) says the same
+without knowing it. A profile answers `pass` only for a check that could have failed on this
+project: one that is true wherever the profile can run at all is a guard, not evidence, and a
+profile with nothing else skips (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). It
+prints one line per check, because a profile runs several (shellcheck and tests; phpunit and
+phpstan), and a profile-level result hides which of them ran.
 
 Capabilities are granted, never assumed. `jig verify` passes `JIG_VERIFY_SCOPE` and
 `JIG_VERIFY_FILES` only to a profile whose `scope` declares support, and explicitly

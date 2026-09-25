@@ -207,9 +207,11 @@ test_verify_shell_profile_passes_on_clean_scripts() {
 
   run jig verify
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "RESULT generic: pass"
+  # generic verifies nothing about the code on its own (profiles/generic/
+  # verify.sh); shell is what makes this run a pass.
+  assert_contains "$OUT" "RESULT generic: skip"
   assert_contains "$OUT" "RESULT shell: pass"
-  assert_contains "$OUT" "verify: 2 profiles, 2 pass, 0 fail, 0 skip"
+  assert_contains "$OUT" "verify: 2 profiles, 1 pass, 0 fail, 1 skip"
 }
 
 test_verify_shell_profile_fails_on_bad_script() {
@@ -227,7 +229,7 @@ test_verify_shell_profile_fails_on_bad_script() {
   run jig verify
   assert_eq 1 "$RC"
   assert_contains "$OUT" "RESULT shell: fail"
-  assert_contains "$OUT" "verify: 2 profiles, 1 pass, 1 fail, 0 skip"
+  assert_contains "$OUT" "verify: 2 profiles, 0 pass, 1 fail, 1 skip"
 }
 
 # _shell_all_scripts takes its file list from git inside a work tree, so
@@ -347,6 +349,10 @@ test_verify_hint_resolved_by_upgrade_link_mode() {
 profiles: [generic, shell]
 adapters: [claude, codex]
 EOF
+  # generic no longer passes on its own (profiles/generic/verify.sh), so the
+  # final run below needs shell to actually pass; a stub keeps that
+  # deterministic on a machine with no real shellcheck.
+  sc_stub 1.0.0 0
 
   run jig verify
   assert_eq 1 "$RC"
@@ -362,6 +368,7 @@ EOF
 
   run jig verify
   assert_eq 0 "$RC"
+  assert_contains "$OUT" "RESULT shell: pass"
   assert_not_contains "$OUT" "not installed"
 }
 
@@ -395,13 +402,20 @@ EOF
   run jig verify
   assert_eq 0 "$RC"
   assert_contains "$OUT" "RESULT shell: pass"
-  assert_contains "$OUT" "verify: 3 profiles, 3 pass, 0 fail, 0 skip"
+  # generic verifies nothing about the code on its own and moved from the
+  # pass column to the skip column (profiles/generic/verify.sh); probe and
+  # shell still pass, so the run as a whole still does.
+  assert_contains "$OUT" "verify: 3 profiles, 2 pass, 0 fail, 1 skip"
   assert_file probe.ran
 }
 
 # A copy-mode install whose source checkout no longer exists on this
 # machine must not turn into a verify failure (domains/install): pending state is
-# simply unknown, so verify falls back to running the profiles normally.
+# simply unknown, so verify falls back to running the profiles normally. It
+# does run the (only) active profile — generic — rather than refusing, which
+# is the thing under test here; generic itself has nothing stack-specific to
+# check, so the run legitimately ends in "nothing was checked" (rc 3), not
+# in the framework-staleness failure this test guards against.
 test_verify_runs_profiles_when_source_root_unknown() {
   fixture_repo
   local src
@@ -412,8 +426,12 @@ test_verify_runs_profiles_when_source_root_unknown() {
   rm -rf "$src"
 
   run jig_installed verify
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "RESULT generic: pass"
+  assert_contains "$OUT" "RESULT generic: skip"
+  assert_contains "$OUT" "verify: nothing here checks this project"
   assert_not_contains "$OUT" "FAIL framework"
 }
 
@@ -488,7 +506,8 @@ test_verify_profile_without_verify_script_is_skipped() {
   mkdir -p .ai/profiles/noverify
 
   run jig verify --profile noverify
-  assert_eq 0 "$RC"
+  # Every profile skipped, so the run checked nothing and says so (M7).
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "SKIP noverify: no verify.sh"
   assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 1 skip"
 }
@@ -505,7 +524,8 @@ EOF
   chmod +x .ai/profiles/fake/verify.sh
 
   run jig verify --profile fake
-  assert_eq 0 "$RC"
+  # Exit 2 is still a skip, and a run of nothing but skips is not a pass (M7).
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "RESULT fake: skip"
   assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 1 skip"
 }
@@ -547,7 +567,7 @@ test_verify_profile_filter_accepts_comma_list() {
 
   run jig verify --profile generic,shell
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "RESULT generic: pass"
+  assert_contains "$OUT" "RESULT generic: skip"
   assert_contains "$OUT" "RESULT shell: pass"
   assert_contains "$OUT" "verify: 2 profiles"
 }
@@ -559,7 +579,7 @@ test_verify_profile_filter_accepts_repeated_flag() {
 
   run jig verify --profile generic --profile shell
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "RESULT generic: pass"
+  assert_contains "$OUT" "RESULT generic: skip"
   assert_contains "$OUT" "RESULT shell: pass"
   assert_contains "$OUT" "verify: 2 profiles"
 }
@@ -613,18 +633,24 @@ test_verify_list_reports_not_installed_profile() {
 
 # --- php / go / node: skip paths (no toolchain in the fixture) -------------
 
+# A single profile filtered to `php` with nothing on the toolchain checks
+# every one of its own checks as skip; the run as a whole then checked
+# nothing at all, so cmd_verify's own "nothing was checked" rule fires (rc
+# 3, not 0) — this is not a framework-staleness or argument-error failure,
+# it is the correct verdict for a project with no PHP toolchain present.
 test_verify_php_skips_every_check_without_toolchain() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles php >/dev/null
 
   run_no_tools jig verify --profile php
-  assert_eq 0 "$RC" "$OUT"
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "php: phpunit: skip"
   assert_contains "$OUT" "php: phpstan: skip"
   assert_contains "$OUT" "php: pint: skip"
   assert_contains "$OUT" "php: composer validate: skip"
   assert_contains "$OUT" "RESULT php: skip"
   assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 1 skip"
+  assert_contains "$OUT" "verify: nothing was checked"
 }
 
 test_verify_php_passes_with_fake_phpunit_binary() {
@@ -650,11 +676,14 @@ test_verify_go_skips_without_toolchain() {
   jig init --from "$JIG_HOME" --profiles go >/dev/null
 
   run_no_tools jig verify --profile go
-  assert_eq 0 "$RC" "$OUT"
+  # See the comment on test_verify_php_skips_every_check_without_toolchain:
+  # every check skips, so the run checked nothing (rc 3), not a pass.
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "go: vet: skip"
   assert_contains "$OUT" "go: test: skip"
   assert_contains "$OUT" "RESULT go: skip"
   assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 1 skip"
+  assert_contains "$OUT" "verify: nothing was checked"
 }
 
 test_verify_node_skips_without_toolchain() {
@@ -663,11 +692,14 @@ test_verify_node_skips_without_toolchain() {
   printf '{"scripts": {"test": "echo ok", "lint": "echo ok"}}\n' > package.json
 
   run_no_tools jig verify --profile node
-  assert_eq 0 "$RC" "$OUT"
+  # See the comment on test_verify_php_skips_every_check_without_toolchain:
+  # every check skips, so the run checked nothing (rc 3), not a pass.
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "node: npm test: skip"
   assert_contains "$OUT" "node: npm run lint: skip"
   assert_contains "$OUT" "RESULT node: skip"
   assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 1 skip"
+  assert_contains "$OUT" "verify: nothing was checked"
 }
 
 test_verify_node_skips_when_no_scripts_declared() {
@@ -676,7 +708,9 @@ test_verify_node_skips_when_no_scripts_declared() {
   printf '{}\n' > package.json
 
   run jig verify --profile node
-  assert_eq 0 "$RC"
+  # See the comment on test_verify_php_skips_every_check_without_toolchain:
+  # every check skips, so the run checked nothing (rc 3), not a pass.
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "node: npm test: skip (no test script or npm not found)"
   assert_contains "$OUT" "node: npm run lint: skip (no lint script or npm not found)"
   assert_contains "$OUT" "RESULT node: skip"
@@ -689,7 +723,9 @@ test_verify_laravel_skips_without_artisan_or_php() {
   jig init --from "$JIG_HOME" --profiles laravel >/dev/null
 
   run_no_tools jig verify --profile laravel
-  assert_eq 0 "$RC" "$OUT"
+  # See the comment on test_verify_php_skips_every_check_without_toolchain:
+  # every check skips, so the run checked nothing (rc 3), not a pass.
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "laravel: artisan test: skip"
   assert_contains "$OUT" "RESULT laravel: skip"
 }
@@ -702,7 +738,10 @@ profiles: [laravel]
 EOF
 
   run jig verify --profile laravel
-  assert_eq 0 "$RC"
+  # laravel still skips every check without php active (as above), so the
+  # run checked nothing (rc 3); what is under test here is only the warning
+  # about the missing 'php' requirement, which prints regardless.
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "requires 'php', which is not active"
 }
 
@@ -712,9 +751,12 @@ test_verify_changed_scope_ignored_for_profile_without_declaration() {
   fixture_jig_repo
 
   run jig verify --changed
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "generic: ok"
-  assert_contains "$OUT" "RESULT generic: pass (scope ignored: profile declares no scope support, ran full set)"
+  assert_contains "$OUT" "generic: repository: skip (no stack-specific checks: this profile verifies nothing about the code)"
+  assert_contains "$OUT" "RESULT generic: skip (scope ignored: profile declares no scope support, ran full set)"
 }
 
 test_verify_changed_scope_passed_to_supporting_profile() {
@@ -763,7 +805,10 @@ test_verify_changed_empty_file_list_skips_supporting_profile_without_running() {
   git commit -q -m "add probe profile"
 
   run jig verify --changed --profile probe
-  assert_eq 0 "$RC"
+  # The fixture profile claims something about the code — it declares no
+  # `verifies: nothing` — so a run in which it checked nothing is refused:
+  # something could have been checked here and was not.
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: pass"
   assert_no_file probe.ran
@@ -829,6 +874,9 @@ test_verify_without_changed_flag_has_no_scope_text() {
   fixture_jig_repo
 
   run jig verify
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "scope"
 }
@@ -957,6 +1005,9 @@ verify.full_run: local
 EOF
 
   run jig verify
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "scope"
   assert_not_contains "$OUT" "verify: full run"
@@ -966,8 +1017,11 @@ test_verify_full_flag_in_local_mode_runs_with_no_header() {
   fixture_jig_repo
 
   run jig verify --full
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "generic: ok"
+  assert_contains "$OUT" "generic: repository: skip (no stack-specific checks: this profile verifies nothing about the code)"
   assert_not_contains "$OUT" "scope"
   assert_not_contains "$OUT" "verify: full run"
 }
@@ -1166,6 +1220,9 @@ EOF
 
   unset CI
   run jig verify
+  # Nothing that covers a stack took part — the fixture profile declares
+  # `detect: always`, which is what a fallback is — so the run says nothing
+  # was checked and does not refuse: there is nothing here to install.
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "verify: scope"
   assert_not_contains "$OUT" "verify: full run"
@@ -1239,7 +1296,10 @@ test_verify_map_scope_empty_changed_file_list_skips_before_reading_the_map() {
   git commit -q -m "add probe profile with a broken map, nothing left uncommitted"
 
   run jig verify --changed --profile probe
-  assert_eq 0 "$RC"
+  # The fixture profile claims something about the code — it declares no
+  # `verifies: nothing` — so a run in which it checked nothing is refused:
+  # something could have been checked here and was not.
+  assert_eq 3 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: fail"
   assert_no_file probe.ran
@@ -1585,4 +1645,634 @@ test_verify_shell_profile_widens_lint_to_whole_tree_when_shellcheckrc_changes() 
   assert_eq 0 "$RC"
   assert_contains "$OUT" "scope: .shellcheckrc changed, whole tree"
   assert_file_contains sc-linted.log tracked.sh
+}
+
+# --- a run that dies is not a pass (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) ---
+# A profile that started and did not finish is a third outcome, `incomplete`,
+# never folded into `fail`: exit 3 is the profile itself saying so, and
+# 128+N is the profile killed by a signal, which every stack profile reports
+# through jp_run/jp_incomplete (scripts/lib/profile.sh) without being taught
+# to.
+
+test_verify_profile_exit_3_is_incomplete() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/dies
+  cat > .ai/profiles/dies/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "dies: a check: incomplete (simulated)"
+exit 3
+EOF
+  chmod +x .ai/profiles/dies/verify.sh
+
+  run jig verify --profile dies
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT dies: incomplete"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 0 skip, 1 incomplete"
+  assert_contains "$OUT" \
+    "verify: the run did not finish, so it neither passed nor failed — run it again"
+}
+
+test_verify_profile_killed_by_signal_is_incomplete() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/killed
+  cat > .ai/profiles/killed/verify.sh <<'EOF'
+#!/usr/bin/env bash
+kill -9 $$
+EOF
+  chmod +x .ai/profiles/killed/verify.sh
+
+  run jig verify --profile killed
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT killed: incomplete (killed by signal 9)"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 0 skip, 1 incomplete"
+}
+
+test_verify_incomplete_outranks_fail() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/failing .ai/profiles/dies
+  cat > .ai/profiles/failing/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "failing: a check: fail"
+exit 1
+EOF
+  chmod +x .ai/profiles/failing/verify.sh
+  cat > .ai/profiles/dies/verify.sh <<'EOF'
+#!/usr/bin/env bash
+exit 3
+EOF
+  chmod +x .ai/profiles/dies/verify.sh
+
+  run jig verify --profile failing,dies
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT failing: fail"
+  assert_contains "$OUT" "RESULT dies: incomplete"
+  assert_contains "$OUT" "verify: 2 profiles, 0 pass, 1 fail, 0 skip, 1 incomplete"
+}
+
+# Guards the tally format itself: an ordinary passing run still names the
+# incomplete field, at zero, and exits 0. generic itself has nothing to
+# pass (profiles/generic/verify.sh), so a trivial always-passing profile
+# stands in for "an ordinary passing run" here.
+test_verify_ordinary_pass_tally_names_zero_incomplete() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/passes
+  cat > .ai/profiles/passes/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "passes: a check: pass"
+exit 0
+EOF
+  chmod +x .ai/profiles/passes/verify.sh
+
+  run jig verify --profile passes
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: 1 profiles, 1 pass, 0 fail, 0 skip, 0 incomplete"
+}
+
+# --- one run per clone (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) ---
+# `jig verify` takes a run record shared by every worktree of the clone
+# (`.ai/runtime/verify/busy/run`) and waits while another run holds it. CI is
+# unset and JIG_VERIFY_BUSY_HELD is unset for every test (tests/run.sh), so
+# the mechanism runs for real here unless a test sets verify.busy_ttl: 0.
+
+test_verify_writes_and_removes_the_busy_record() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/probe
+  cat > .ai/profiles/probe/verify.sh <<'EOF'
+#!/usr/bin/env bash
+if [ -f .ai/runtime/verify/busy/run ]; then
+  cp .ai/runtime/verify/busy/run seen-record.txt
+fi
+exit 0
+EOF
+  chmod +x .ai/profiles/probe/verify.sh
+
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_file_contains seen-record.txt "checkout: $(pwd -P)"
+  assert_file_contains seen-record.txt "pid: "
+  assert_no_file .ai/runtime/verify/busy
+}
+
+# A worktree and its main checkout share one record: `jig_config_clone_root`
+# resolves both to the same `.ai/runtime/verify` under the main checkout, so
+# a run started in the worktree writes and reads it there, never under the
+# worktree's own `.ai`.
+test_verify_busy_record_resolves_to_main_checkout_from_worktree() {
+  mkdir repo
+  cd repo || fail "setup"
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local main_root
+  main_root=$(pwd -P)
+
+  git worktree add -q ../wt -b wt-branch >/dev/null
+
+  mkdir -p ../wt/.ai/profiles/probe
+  cat > "../wt/.ai/profiles/probe/verify.sh" <<EOF
+#!/usr/bin/env bash
+if [ -f "$main_root/.ai/runtime/verify/busy/run" ]; then
+  cp "$main_root/.ai/runtime/verify/busy/run" seen-record.txt
+fi
+exit 0
+EOF
+  chmod +x "../wt/.ai/profiles/probe/verify.sh"
+
+  # The record names the checkout the run is in, not the one it lives in, and
+  # that is the whole claim: a worktree writes into the clone's main checkout.
+  # Compared against `pwd -P`, never a raw string (conventions/shell.md).
+  local wt_root
+  wt_root=$(cd "$main_root/../wt" && pwd -P)
+
+  run bash -c 'cd ../wt && "$JIG_BIN" verify --profile probe'
+  assert_eq 0 "$RC"
+  assert_file_contains ../wt/seen-record.txt "checkout: $wt_root"
+  assert_file_contains ../wt/seen-record.txt "pid: "
+  assert_no_file ../wt/.ai/runtime/verify
+  assert_no_file "$main_root/.ai/runtime/verify/busy"
+}
+
+# A record whose pid is alive makes a run wait; when the holder dies the
+# waiter takes over and reports having waited. verify.busy_ttl is set small
+# so the record expires on its own even if the kill below misfires — the
+# test cannot hang.
+test_verify_waits_for_a_live_record_then_proceeds_once_it_is_freed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  # Long on purpose: the expiry must not be what frees the record, or the test
+  # would pass for the wrong reason. Only the holder dying may free it.
+  jig config set verify.busy_ttl 5m --local >/dev/null
+  # generic itself has nothing to check (profiles/generic/verify.sh); what
+  # this test needs is a profile that runs and passes, to show the run
+  # proceeded normally once the record was freed.
+  _fixture_probe_profile probe ""
+
+  sleep 120 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  # The holder is killed only once the run has said, itself, that it is
+  # waiting — never after a fixed pause. A pause races the run's own startup:
+  # kill too early and the run takes the record over without waiting, which is
+  # a green test for the wrong reason and a red one whenever the machine is
+  # loaded. The deadline is wall-clock and sized for a loaded machine, and a
+  # passing test leaves at the first poll that succeeds
+  # (conventions/shell.md, testing).
+  "$JIG_BIN" verify --profile probe > verify-out.log 2>&1 &
+  local verify_pid=$!
+  local start=$SECONDS
+  until grep -q "waiting for it" verify-out.log 2>/dev/null; do
+    if ! kill -0 "$verify_pid" 2>/dev/null; then
+      kill "$holder_pid" 2>/dev/null || true
+      # The record's own state names the branch that failed: still
+      # `/elsewhere` means the run looked somewhere else, rewritten means it
+      # judged the holder dead and took it over.
+      fail "verify finished without ever saying it was waiting: $(cat verify-out.log); record now: $(cat .ai/runtime/verify/busy/run 2>&1); holder alive: $(kill -0 "$holder_pid" 2>/dev/null && echo yes || echo no); stat -f: [$(stat -f '%m' .ai/runtime/verify/busy/run 2>&1)]; stat -c: [$(stat -c '%Y' .ai/runtime/verify/busy/run 2>&1)]"
+    fi
+    if [ $((SECONDS - start)) -ge 60 ]; then
+      kill "$holder_pid" 2>/dev/null || true
+      kill "$verify_pid" 2>/dev/null || true
+      fail "verify never said it was waiting within 60s: $(cat verify-out.log)"
+    fi
+    sleep 1
+  done
+
+  kill "$holder_pid" 2>/dev/null || true
+  local rc=0
+  wait "$verify_pid" || rc=$?
+
+  assert_eq 0 "$rc"
+  assert_file_contains verify-out.log "verify: waited"
+  assert_file_contains verify-out.log "RESULT probe: pass"
+
+  wait 2>/dev/null || true
+}
+
+# A dead pid (reaped before the record is even read) is taken over on the
+# first poll: no wait is reported.
+test_verify_takes_over_a_dead_pid_record_at_once() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 20s --local >/dev/null
+  # See test_verify_waits_for_a_live_record_then_proceeds_once_it_is_freed:
+  # generic cannot pass on its own, so a trivial passing profile stands in.
+  _fixture_probe_profile probe ""
+
+  local dead_pid
+  ( exit 0 ) &
+  dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$dead_pid" > .ai/runtime/verify/busy/run
+
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT probe: pass"
+}
+
+# CI turns the whole mechanism off: a live record is neither waited for nor
+# touched.
+test_verify_ci_env_ignores_a_live_record_and_leaves_it_untouched() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 20s --local >/dev/null
+  # See test_verify_waits_for_a_live_record_then_proceeds_once_it_is_freed:
+  # generic cannot pass on its own, so a trivial passing profile stands in.
+  _fixture_probe_profile probe ""
+
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  run env CI=1 "$JIG_BIN" verify --profile probe
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT probe: pass"
+  assert_file_contains .ai/runtime/verify/busy/run "checkout: /elsewhere"
+  assert_file_contains .ai/runtime/verify/busy/run "pid: $holder_pid"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+# verify.busy_ttl: 0 is the escape hatch: a live record is ignored outright,
+# nothing waits and nothing is written.
+test_verify_busy_ttl_zero_disables_the_mechanism() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 0 --local >/dev/null
+  # See test_verify_waits_for_a_live_record_then_proceeds_once_it_is_freed:
+  # generic cannot pass on its own, so a trivial passing profile stands in.
+  _fixture_probe_profile probe ""
+
+  sleep 30 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "verify: waited"
+  assert_contains "$OUT" "RESULT probe: pass"
+  assert_file_contains .ai/runtime/verify/busy/run "checkout: /elsewhere"
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+# Registering a key in JIG_CFG_LOCAL_KEYS is not one edit but three (see
+# tests/checkout.t.sh's own checkout.busy_ttl test): the list, the value
+# check in jig_config_value_problem, and schemas/config.md.
+test_verify_busy_ttl_config_set_accepts_duration_and_rejects_garbage() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+
+  run jig config set verify.busy_ttl 5m --local
+  assert_eq 0 "$RC"
+
+  run jig config show --local
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify.busy_ttl: 5m"
+  assert_not_contains "$OUT" "ignored: verify.busy_ttl"
+
+  run jig config set verify.busy_ttl nonsense --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a duration"
+}
+
+# --- the jp_* interface exception (adr-20260918 amendment 2026-09-25) --------
+#
+# The amendment claims two things about changing jp_run's verdict for a killed
+# check. Both are claims about profiles nobody here wrote, so both are run, not
+# argued.
+
+# A profile written without scripts/lib/profile.sh — the shape every profile had
+# before jp_* existed, where any non-zero from the check is a failure — is not
+# reached by the library change at all.
+test_verify_a_library_free_profile_reads_a_killed_check_as_before() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/oldstyle
+  cat > .ai/profiles/oldstyle/verify.sh <<'EOF'
+#!/usr/bin/env bash
+set -u
+# `sh -c` so the signal reaches a child of this shell: a bare `kill -9 $$` in a
+# test names the runner, not the subshell under test.
+if sh -c 'kill -9 $$'; then
+  echo "oldstyle: check: pass"
+  exit 0
+else
+  echo "oldstyle: check: fail"
+  exit 1
+fi
+EOF
+  chmod +x .ai/profiles/oldstyle/verify.sh
+
+  run jig verify --profile oldstyle
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "oldstyle: check: fail"
+  assert_contains "$OUT" "RESULT oldstyle: fail"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 1 fail, 0 skip, 0 incomplete"
+}
+
+# A profile that does use the library gets the third state — and its exit code
+# stays non-zero, which is the whole safety argument: a consumer that only asks
+# whether the code is zero reads `incomplete` exactly as it read a failure.
+test_verify_jp_run_reports_a_killed_check_as_incomplete_and_still_nonzero() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/vialib
+  cat > .ai/profiles/vialib/verify.sh <<'EOF'
+#!/usr/bin/env bash
+set -eu
+set -o pipefail
+. "$(dirname "$0")/../../scripts/lib/profile.sh"
+jp_begin vialib
+jp_run tests "" sh -c 'kill -9 $$'
+jp_end
+EOF
+  chmod +x .ai/profiles/vialib/verify.sh
+
+  run jig verify --profile vialib
+  assert_eq 3 "$RC"
+  [ "$RC" -ne 0 ] || fail "incomplete must stay non-zero for a zero-or-not consumer"
+  assert_contains "$OUT" "vialib: tests: incomplete (killed by signal 9)"
+  assert_contains "$OUT" "RESULT vialib: incomplete"
+  assert_contains "$OUT" "verify: 1 profiles, 0 pass, 0 fail, 0 skip, 1 incomplete"
+}
+
+# --- a run that checked nothing is not a pass (M7) ---------------------------
+#
+# `cmd_verify` used to end in `[ "$failn" -eq 0 ]`, so a set of pure skips
+# answered 0 — success on a project not one line of which had been examined,
+# and `jig task ship` and the autopilot read that code. The rule is the
+# domain's own ("a skip is not a pass"); these tests hold the exit code to it,
+# and hold the new rule to its bounds so it cannot swallow a real answer.
+
+test_verify_every_profile_skipping_is_not_a_pass() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  local p
+  for p in quiet1 quiet2; do
+    mkdir -p ".ai/profiles/$p"
+    cat > ".ai/profiles/$p/verify.sh" <<EOF
+#!/usr/bin/env bash
+echo "$p: nothing applicable: skip"
+exit 2
+EOF
+    chmod +x ".ai/profiles/$p/verify.sh"
+  done
+
+  run jig verify --profile quiet1,quiet2
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "verify: 2 profiles, 0 pass, 0 fail, 2 skip, 0 incomplete"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
+}
+
+# The scenario the external review exhibited: the shell profile active, with
+# no linter on PATH and no tests/run.sh, plus generic. Every check skips, and
+# before this rule the run answered 0.
+test_verify_shell_without_tools_and_generic_together_check_nothing() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic,shell >/dev/null
+  assert_no_file tests/run.sh
+
+  run_no_tools jig verify --profile generic,shell
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT generic: skip"
+  assert_contains "$OUT" "RESULT shell: skip"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
+}
+
+# The bound on the new rule: one real pass is enough, and a skip beside it is
+# still just a skip.
+test_verify_one_pass_beside_a_skip_is_still_a_pass() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/real .ai/profiles/quiet
+  cat > .ai/profiles/real/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "real: a check: pass"
+exit 0
+EOF
+  cat > .ai/profiles/quiet/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "quiet: nothing applicable: skip"
+exit 2
+EOF
+  chmod +x .ai/profiles/real/verify.sh .ai/profiles/quiet/verify.sh
+
+  run jig verify --profile real,quiet
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: 2 profiles, 1 pass, 0 fail, 1 skip, 0 incomplete"
+  assert_not_contains "$OUT" "nothing was checked"
+}
+
+# Incomplete still outranks it: a run something died in says so, not that it
+# checked nothing, because the two need different things from the reader.
+test_verify_incomplete_outranks_nothing_was_checked() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/quiet .ai/profiles/dies
+  cat > .ai/profiles/quiet/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "quiet: nothing applicable: skip"
+exit 2
+EOF
+  cat > .ai/profiles/dies/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "dies: a check: incomplete (simulated)"
+exit 3
+EOF
+  chmod +x .ai/profiles/quiet/verify.sh .ai/profiles/dies/verify.sh
+
+  run jig verify --profile quiet,dies
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "verify: the run did not finish"
+  assert_not_contains "$OUT" "nothing was checked"
+}
+
+# And a real failure is still a failure, exit 1, whatever skipped beside it:
+# the new rule must not swallow the one answer that was never in doubt.
+test_verify_a_failure_beside_a_skip_still_exits_one() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/broken .ai/profiles/quiet
+  cat > .ai/profiles/broken/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "broken: a check: fail"
+exit 1
+EOF
+  cat > .ai/profiles/quiet/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "quiet: nothing applicable: skip"
+exit 2
+EOF
+  chmod +x .ai/profiles/broken/verify.sh .ai/profiles/quiet/verify.sh
+
+  run jig verify --profile broken,quiet
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "verify: 2 profiles, 0 pass, 1 fail, 1 skip, 0 incomplete"
+  assert_not_contains "$OUT" "nothing was checked"
+}
+
+# --- the cut inside "nothing was checked" ------------------------------------
+#
+# Two states used to be one. They differ by **whether there was anything to
+# check**, and each of the two tests below reddens on exactly the mistake the
+# other one guards against: run them against a `cmd_verify` that treats both
+# alike and one of them fails whichever way it was collapsed.
+
+# No profile covers this project at all. There is nothing to install and
+# nothing to wait for, so the run does not refuse — and it does not say `ok`
+# either.
+test_verify_a_project_no_profile_covers_is_not_refused_but_is_named() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+
+  run jig verify --profile generic
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: nothing here checks this project"
+  # It must not be mistaken for the other state, which is a refusal.
+  assert_not_contains "$OUT" "nothing was checked, so this is not a pass"
+  # And nothing anywhere may read as a pass.
+  assert_not_contains "$OUT" "generic: ok"
+  assert_not_contains "$OUT" "RESULT generic: pass"
+}
+
+# A profile that covers a stack took part and every check skipped: the stack
+# was recognised and its tools are missing. Something could have been checked
+# and was not, for a reason somebody can fix, so this one is refused.
+test_verify_a_covered_stack_whose_checks_all_skip_is_still_refused() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/stack
+  # `detect` names a file, so this profile claims a stack — the one thing that
+  # tells it apart from the fallback above.
+  printf 'name: stack\ndescription: fixture profile that covers a stack.\ndetect: [stack.toml]\n' \
+    > .ai/profiles/stack/profile.yaml
+  cat > .ai/profiles/stack/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "stack: build: skip (its tool is not installed)"
+exit 2
+EOF
+  chmod +x .ai/profiles/stack/verify.sh
+
+  run jig verify --profile generic,stack
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
+  # It must not be mistaken for the other state, which does not refuse.
+  assert_not_contains "$OUT" "nothing here checks this project"
+}
+
+# The fourth bench, and the one that says why the claim is declared rather than
+# read off `detect`. A secret scanner or a licence-header check is exactly the
+# profile that should apply everywhere *and* assert something about the code.
+# Inferring "claims nothing" from `detect: always` would put it in the wrong
+# bucket, and the day its tool went missing it would report that nothing checks
+# the project and let the change ship unverified — the inversion this whole
+# distinction exists to prevent. Revert `profiles_is_fallback` to reading
+# `detect` and this test is what turns red.
+test_verify_a_profile_that_applies_everywhere_but_checks_something_is_not_a_fallback() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/secrets
+  # Applies to every project, like generic — and unlike generic it claims
+  # something about the code, so it declares no `verifies: nothing`.
+  printf 'name: secrets\ndescription: fixture scanner that applies to every project.\ndetect: always\n' \
+    > .ai/profiles/secrets/profile.yaml
+  cat > .ai/profiles/secrets/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "secrets: scan: skip (its scanner is not installed)"
+exit 2
+EOF
+  chmod +x .ai/profiles/secrets/verify.sh
+
+  run jig verify --profile generic,secrets
+  # Something could have been checked here and was not: refuse.
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
+  assert_not_contains "$OUT" "nothing here checks this project"
+}
+
+# --- the record's freshness must survive either stat -------------------------
+#
+# `stat -f '%m' <file>` is the BSD form. Under GNU coreutils `-f` means
+# --file-system, so the format string is read as a FILE operand: that operand
+# errors, the real file then prints a **file-system block on stdout**, and the
+# command exits non-zero. Code that picks the fallback on the exit status
+# therefore keeps the block and appends the GNU answer to it, and whoever reads
+# the result holds several lines where a number was expected.
+#
+# That is not hypothetical: it shipped. `_verify_busy_mtime` chose on the exit
+# status, so on Linux and in Git Bash the holder of a record was never once seen
+# as live and `jig verify` waited for nothing at all — while macOS, whose stat
+# answers the first form, passed every local run. CI found it on three
+# platforms at once.
+#
+# The stub is hermetic: it answers `-c` from a value this test supplies, so the
+# test exercises the fallback on every platform, including the ones where the
+# real `stat` would have answered the first form.
+test_verify_sees_a_live_record_when_the_first_stat_answers_like_gnu() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  jig config set verify.busy_ttl 5m --local >/dev/null
+  _fixture_probe_profile probe ""
+
+  mkdir -p stub
+  cat > stub/stat <<'STUB'
+#!/bin/sh
+if [ "$1" = "-f" ]; then
+  shift
+  for a in "$@"; do
+    [ -e "$a" ] && printf '  File: "%s"\n    ID: 0 Namelen: 255\n' "$a"
+  done
+  exit 1
+fi
+if [ "$1" = "-c" ]; then
+  printf '%s\n' "${JIG_TEST_FAKE_MTIME:-}"
+  exit 0
+fi
+exit 1
+STUB
+  chmod +x stub/stat
+
+  sleep 120 &
+  local holder_pid=$!
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$holder_pid" > .ai/runtime/verify/busy/run
+
+  PATH="$PWD/stub:$PATH" JIG_TEST_FAKE_MTIME="$(date +%s)" \
+    "$JIG_BIN" verify --profile probe > gnu-out.log 2>&1 &
+  local verify_pid=$!
+  local start=$SECONDS
+  until grep -q "waiting for it" gnu-out.log 2>/dev/null; do
+    if ! kill -0 "$verify_pid" 2>/dev/null; then
+      kill "$holder_pid" 2>/dev/null || true
+      fail "the run never saw the record under a GNU-shaped stat: $(cat gnu-out.log); record now: $(cat .ai/runtime/verify/busy/run 2>&1)"
+    fi
+    if [ $((SECONDS - start)) -ge 60 ]; then
+      kill "$holder_pid" 2>/dev/null || true
+      kill "$verify_pid" 2>/dev/null || true
+      fail "no waiting line within 60s under a GNU-shaped stat: $(cat gnu-out.log)"
+    fi
+    sleep 1
+  done
+
+  kill "$holder_pid" 2>/dev/null || true
+  local rc=0
+  wait "$verify_pid" || rc=$?
+  assert_eq 0 "$rc"
+  assert_file_contains gnu-out.log "verify: waited"
+  wait 2>/dev/null || true
 }

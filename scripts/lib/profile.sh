@@ -16,7 +16,9 @@
 #
 # Contract recap (ARCHITECTURE.md, profile contract): a profile runs from the
 # repository root, prints one line per check — `<profile>: <check>:
-# pass|fail|skip (<note>)` — and exits 0 pass, 1 fail, 2 when no check ran.
+# pass|fail|skip|incomplete (<note>)` — and exits 0 pass, 1 fail, 2 when no
+# check ran, 3 when a check did not finish
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
 # Scope (ADR-0013): JIG_VERIFY_SCOPE=changed and JIG_VERIFY_FILES name the
 # changed paths. Map (ADR-0041): JIG_VERIFY_MAPPED carries `jig verify`'s
 # decision per path, `?` where the project's map had no line.
@@ -27,6 +29,7 @@ JP_PROFILE=""
 JP_STATUS=0
 JP_RAN=0
 JP_SCOPED=0
+JP_INCOMPLETE=0
 
 # jp_begin <profile> — start a profile run: name it and read the scope.
 jp_begin() {
@@ -34,6 +37,7 @@ jp_begin() {
   JP_STATUS=0
   JP_RAN=0
   JP_SCOPED=0
+  JP_INCOMPLETE=0
   if [ "${JIG_VERIFY_SCOPE:-}" = changed ] && [ -n "${JIG_VERIFY_FILES:-}" ] \
      && [ -f "${JIG_VERIFY_FILES:-}" ]; then
     JP_SCOPED=1
@@ -218,13 +222,25 @@ jp_version() {
 
 # jp_run <check> <note> <cmd...> — run a check and print its line. <note> is
 # what the verdict must carry (the tool version, the scope); empty for none.
+# A check killed by a signal is reported apart from one that failed. bash
+# returns 128+N for a child that died on signal N, so `Killed: 9` arrives here
+# as 137 and `Terminated: 15` as 143 — and until now both read as "the tests
+# failed". They are not the same answer: a run that died produced no verdict,
+# and reading one out of it cost hours three times in one night, none of them
+# with a cause in the code
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). Every
+# stack profile runs its checks through here, so this one place answers for
+# all of them.
 jp_run() {
-  local check="$1" note="$2" suffix=""
+  local check="$1" note="$2" suffix="" rc=0
   shift 2
   [ -z "$note" ] || suffix=" ($note)"
   JP_RAN=1
-  if "$@"; then
+  "$@" || rc=$?
+  if [ "$rc" -eq 0 ]; then
     printf '%s: %s: pass%s\n' "$JP_PROFILE" "$check" "$suffix"
+  elif [ "$rc" -ge 128 ]; then
+    jp_incomplete "$check" "killed by signal $((rc - 128))${note:+, $note}"
   else
     printf '%s: %s: fail%s\n' "$JP_PROFILE" "$check" "$suffix"
     JP_STATUS=1
@@ -243,13 +259,30 @@ jp_fail() {
   printf '%s: %s: fail%s\n' "$JP_PROFILE" "$1" "${2:+ ($2)}"
 }
 
+# jp_incomplete <check> <reason> — a check that started and did not finish.
+# Neither a pass nor a fail: it means run it again. For a profile that reads a
+# runner's own answer rather than an exit code jp_run saw.
+jp_incomplete() {
+  JP_RAN=1
+  JP_INCOMPLETE=1
+  printf '%s: %s: incomplete%s\n' "$JP_PROFILE" "$1" "${2:+ ($2)}"
+}
+
 # jp_skip <check> <reason> — a check that did not run, and why.
 jp_skip() {
   printf '%s: %s: skip (%s)\n' "$JP_PROFILE" "$1" "$2"
 }
 
-# jp_end — exit as the contract says: 2 when no check ran, else 0 or 1.
+# jp_end — exit as the contract says: 3 when a check did not finish, 2 when no
+# check ran, else 0 or 1.
+#
+# Incomplete comes first because a run something was killed in is not evidence:
+# the failures beside it cannot be trusted either, and the honest instruction is
+# to run it again.
 jp_end() {
+  if [ "$JP_INCOMPLETE" = 1 ]; then
+    exit 3
+  fi
   if [ "$JP_RAN" = 0 ]; then
     exit 2
   fi

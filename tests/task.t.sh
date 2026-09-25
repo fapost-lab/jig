@@ -4873,3 +4873,54 @@ test_task_set_refuses_autopilot_mode_and_gate_by_keys() {
     assert_contains "$OUT" "task set: key is not writable: $key"
   done
 }
+
+# --- shipping a project nothing verifies -------------------------------------
+#
+# When no profile covers the project, `jig verify` says so and does not refuse:
+# there is nothing to install and nothing to wait for. The cost of not refusing
+# is that the sentence has to be read, so `task ship` repeats it at the moment
+# the change leaves the machine — where it has consequences — rather than
+# leaving it in a run ten minutes earlier
+# (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+
+test_task_ship_says_nothing_verifies_a_project_no_profile_covers() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  # The fixture project runs `generic` alone, which declares `detect: always`
+  # and therefore covers no stack.
+  assert_file_contains .ai/config.yaml "generic"
+
+  run jig task ship T-1 --message-file msg.txt
+  # Said, never enforced: the ship goes through.
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "no profile covers this project, so nothing verifies it; this ships unverified"
+}
+
+# The other half of the same cut: once something does cover the project, the
+# notice is wrong and must not appear. A `task ship` that printed it either way
+# would be noise, and noise is how a true line stops being read.
+test_task_ship_is_silent_about_verification_when_a_profile_covers_the_project() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  # A profile that claims a stack rather than covering everything.
+  mkdir -p .ai/profiles/stack
+  printf 'name: stack\ndescription: fixture profile that covers a stack.\ndetect: [stack.toml]\n' \
+    > .ai/profiles/stack/profile.yaml
+  # Replaced, never appended: `cfg` reads the first `profiles:` line, so an
+  # appended one changes nothing and the test would pass for no reason.
+  sed 's/^profiles:.*/profiles: [generic, stack]/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  # Matched without the brackets: assert_file_contains greps a regex, and
+  # `[generic, stack]` would read as a character class rather than a literal.
+  assert_file_contains .ai/config.yaml "generic, stack"
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "committed "
+  assert_not_contains "$OUT" "ships unverified"
+}

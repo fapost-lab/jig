@@ -50,3 +50,14 @@ jig's own `.ai/scripts/*.sh`: every installed project looked like a shell projec
   does not bring it back.
 - Detection now matters more, so its globs stay root manifests; a monorepo whose stacks live in
   subdirectories is detected only where a root file matches.
+
+> **Amendment (2026-09-25).** The sentence this decision rests on — "got `generic`, whose
+> verify checks nothing and passes" — is half retired. `generic` still checks nothing, but it
+> no longer *passes*: a check that cannot come out false where jig runs at all is a tally
+> entry, not evidence, and that entry was painting whole runs green
+> (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). It now reports a skip,
+> and a project it is alone in is told plainly that nothing checks it — at `jig verify` and
+> again at `jig task ship`, without being refused, because there is nothing there to install.
+> This strengthens the decision rather than changing it: activating what is detected is still
+> how a project gets checks, and the state it rescues people from is now audible instead of
+> silently green.
