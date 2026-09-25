@@ -42,9 +42,72 @@ export JIG_BIN="$ROOT/scripts/jig"
 JIG_TEST_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-cache.XXXXXX") || exit 1
 export JIG_TEST_CACHE
 RESULTS=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-results.XXXXXX") || exit 1
-trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"' EXIT
-# An interrupted parallel run must not leave its workers running.
-trap 'kill $(jobs -p) 2>/dev/null; exit 130' INT TERM
+
+# --- the run record, and why this runner takes one ---------------------------
+#
+# **This is a local decision of this repository's runner, not part of the
+# profile contract.** Jig promises one thing to every project it is installed
+# in: `jig verify` holds a record the whole clone can see and waits for another
+# run (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). It
+# promises nothing about anybody's test runner, and it must not — those are
+# written by users and jig does not know what they do.
+#
+# Here the gap that leaves is not hypothetical, and it is one of our own rules
+# that opens it. The review skills ask for targeted runs by test name, and a
+# targeted run cannot be expressed through `jig verify`: it narrows by changed
+# file, never by name. So anyone following that rule reaches for this runner,
+# and until now that run was invisible to the record and blind to it. Measured
+# on 2026-09-25: a `status::` run — hundreds of tests — collided with a full
+# `jig verify` from another worktree, at load average 199, and neither saw the
+# other. In this repository the raw runner is not "a named filter during an
+# edit", it is the ordinary way to run a targeted set.
+#
+# The mechanism is jig's own, reached in a subshell so that nothing it sources
+# reaches the tests: an inherited JIG_PROJECT is exactly how a previous change
+# made the suite write its records into the repository being verified
+# (scripts/lib/checkout.sh). `$$` inside that subshell is still this script's
+# pid, so the record tracks this runner and a reader's `kill -0` answers for
+# it. A tree that is not a jig project — the fixture runners tests/runner.t.sh
+# copies and runs — gets no record and waits for nothing.
+JIG_RUN_BUSY=""
+if [ -f "$ROOT/.ai/config.yaml" ]; then
+  JIG_RUN_BUSY=$(
+    JIG_PROJECT="$ROOT"
+    export JIG_PROJECT
+    # shellcheck source=../scripts/lib/common.sh
+    . "$ROOT/scripts/lib/common.sh" || exit 0
+    # shellcheck source=../scripts/lib/config.sh
+    . "$ROOT/scripts/lib/config.sh" || exit 0
+    # shellcheck source=../scripts/lib/checkout.sh
+    . "$ROOT/scripts/lib/checkout.sh" || exit 0
+    # shellcheck source=../scripts/lib/verify.sh
+    . "$ROOT/scripts/lib/verify.sh" || exit 0
+    # Its own report line goes to stderr here: this script's stdout is the test
+    # log a caller reads.
+    _verify_busy_acquire 1>&2 || exit 0
+    printf '%s' "${JIG_VERIFY_BUSY:-}"
+  ) 2>/dev/null || JIG_RUN_BUSY=""
+fi
+
+# _run_release_busy — give the record back: one named file, then `rmdir`, which
+# refuses a directory that is not empty, after the path is checked to be the one
+# jig builds (RULES.md).
+_run_release_busy() {
+  [ -n "${JIG_RUN_BUSY:-}" ] || return 0
+  case "$JIG_RUN_BUSY" in
+    */.ai/runtime/verify) ;;
+    *) return 0 ;;
+  esac
+  rm -f "$JIG_RUN_BUSY/busy/run" 2>/dev/null || true
+  rmdir "$JIG_RUN_BUSY/busy" 2>/dev/null || true
+  JIG_RUN_BUSY=""
+  return 0
+}
+
+trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
+# An interrupted parallel run must not leave its workers running, and must give
+# the record back on the way out.
+trap 'kill $(jobs -p) 2>/dev/null; _run_release_busy; exit 130' INT TERM
 
 filter="${1:-}"
 

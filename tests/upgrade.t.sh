@@ -129,7 +129,13 @@ EOF
   assert_file .ai/profiles/shell/verify.sh
 
   run jig verify --profile shell
-  assert_eq 0 "$RC"
+  # The freshly linked shell profile finds no linter and no test runner here,
+  # so every check skips and the run says it checked nothing, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). What
+  # this test is about — that the symlink was made and is usable — is the
+  # RESULT line, not the exit code.
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "RESULT shell: skip"
 
   # a non-symlink file in the way is a conflict, not an overwrite
   run jig verify --list --profile shell

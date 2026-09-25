@@ -28,7 +28,9 @@ it actually did.
   `scope`) and `verify.sh` with its four exit codes — 0 pass, 1 fail, **2 skip**,
   **3 incomplete**: a check that started and did not finish, which is neither a pass nor a
   fail and means run it again. A profile killed by a signal (128+N) says the same without
-  knowing it (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  knowing it. `jig verify` itself exits 3 for a run that produced no verdict at all — one
+  where nothing passed and nothing failed
+  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
 - Which profiles are active: explicit activation in `.ai/config.yaml`, and detection from
   root manifests (`profiles_detect`), which a first `jig init` turns into activation
   (adr-20260918-init-activates-detected-profiles). Detection skips dependency directories

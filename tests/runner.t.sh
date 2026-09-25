@@ -291,3 +291,38 @@ test_runner_failure_only_summary_still_exits_1() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "2 passed, 1 failed, 0 skipped, 0 not completed"
 }
+
+# --- the run record, and the shape that must never break ---------------------
+#
+# This runner takes the clone's run record so that a targeted run and a
+# `jig verify` do not collide (tests/run.sh explains why that is a local
+# decision of this repository's runner and not part of the profile contract).
+# Two properties hold it in place, and both are about not breaking everything
+# else: a tree that is not a jig project gets no record at all — which is every
+# fixture in this file, and every project that vendors the runner without jig —
+# and a run that inherits the record from the `jig verify` above it does not
+# queue behind itself.
+
+test_runner_in_a_non_jig_tree_takes_no_record() {
+  rn_build_suite
+  rn_write_ab_fixture
+  assert_no_file root/.ai
+
+  rn_run "" ""
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+  # Nothing was created to hold a record, and nothing was left behind.
+  assert_no_file root/.ai
+}
+
+test_runner_does_not_queue_behind_the_verify_that_started_it() {
+  rn_build_suite
+  rn_write_ab_fixture
+  # What `jig verify` exports once it holds the record. Were the guard in
+  # tests/run.sh to go, a suite run through `jig verify` would wait for the
+  # record its own parent is holding, for ever.
+  run env JIG_VERIFY_BUSY_HELD="$PWD/root/.ai/runtime/verify" \
+    "$PWD/root/tests/run.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "7 passed, 0 failed, 0 skipped, 0 not completed"
+}

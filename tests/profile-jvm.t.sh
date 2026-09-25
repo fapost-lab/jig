@@ -236,12 +236,16 @@ test_profile_jvm_detected_for_pom_xml() {
 test_profile_jvm_skips_every_check_without_toolchain() {
   _jvm_install_gradle
   _jvm_no_tools jig verify --profile jvm
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "jvm: check: skip (gradlew not found and gradle not found on PATH)"
 
   _jvm_install_maven
   _jvm_no_tools jig verify --profile jvm
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "jvm: test: skip (mvnw not found and mvn not found on PATH)"
 }
 
@@ -249,7 +253,9 @@ test_profile_jvm_skips_both_checks_with_neither_build_file_at_root() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles jvm >/dev/null
   run jig verify --profile jvm
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "jvm: check: skip (no build.gradle(.kts) or settings.gradle(.kts) at the repository root)"
   assert_contains "$OUT" "jvm: test: skip (no pom.xml at the repository root)"
 }

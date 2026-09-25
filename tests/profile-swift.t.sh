@@ -265,7 +265,9 @@ STUB
   export PATH
 
   run jig verify --changed --profile swift
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "map .ai/verify/swift.map"
   assert_contains "$OUT" "swift: build: skip (scope: only documentation changed)"
   assert_contains "$OUT" "swift: test: skip (scope: only documentation changed)"

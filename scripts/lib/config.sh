@@ -136,6 +136,7 @@ autopilot.unattended false
 autopilot.parallel 2
 knowledge.require_frontmatter true
 verify.full_run local
+verify.busy_ttl 30m
 EOF
 }
 

@@ -11,9 +11,9 @@ paths:
   - "profiles/**"
   - tests/run.sh
   - scripts/lib/config.sh
-summary: Why jig verify holds a record the whole clone can see and waits for another run, and why a run killed rather than failed is a third outcome with exit code 3.
+summary: Why jig verify holds a record the whole clone can see and waits for another run, and why a run that produced no verdict — killed, or having checked nothing — is a third outcome with exit code 3 rather than a pass.
 ---
-# ADR: One test run per clone, and a run that dies is not a pass
+# ADR: One test run per clone, and a run that produced no verdict is not a pass
 
 ## Context
 
@@ -138,6 +138,23 @@ run queued belongs where the run's other evidence is.
 no `rm -rf` on a computed path, and the path is checked to be the one this code builds before
 anything is deleted. Taking over an expired record uses the same two.
 
+**This repository's own runner takes the record too, and that is a local decision, not part
+of the contract.** Jig promises the record to every project through `jig verify` and promises
+nothing about anybody's test runner — those are written by users, and the framework does not
+know what they do. But the gap that leaves here is not hypothetical, and it is one of our own
+rules that opens it: the review skills ask for targeted runs **by test name**, and a targeted
+run cannot be expressed through `jig verify`, which narrows by changed file. So everyone who
+follows that rule reaches for `tests/run.sh`, and that run was invisible to the record and
+blind to it. Measured on 2026-09-25 while this decision was being implemented: a `status::`
+run — hundreds of tests — collided with a full `jig verify` from another worktree at load
+average 199, and neither saw the other. In this repository the raw runner is not "a named
+filter during an edit"; it is the ordinary way to run a targeted set. So `tests/run.sh` takes
+and honours the same record, reaching jig's own functions through a subshell so that nothing
+it sources reaches the tests — an inherited `JIG_PROJECT` is exactly how an earlier change
+made the suite write its records into the repository being verified. A tree that is not a jig
+project gets no record, which is every fixture runner; and a run that inherits
+`JIG_VERIFY_BUSY_HELD` from the `jig verify` above it does not queue behind its own parent.
+
 **Nothing here may fail `jig verify`.** Every path that cannot answer gives up and lets the run
 go ahead: a record that cannot be taken is a missed serialisation, which is today's behaviour,
 while a refusal would be a new way to break.
@@ -172,6 +189,25 @@ three places, and all three now report it:
   field and `jig verify` exits **3** with one sentence: the run did not finish, so it neither
   passed nor failed — run it again.
 
+**A run that never happened is the same answer as a run that died**, and it shares exit 3.
+`cmd_verify` ended in `[ "$failn" -eq 0 ]`, so a set of pure skips answered 0: on a project
+with no shellcheck and no test runner, `jig verify` reported success having examined not one
+line of it, and `jig task ship` and the autopilot read that code. The domain already said a
+skip is not a pass, and that a narrowing which selects nothing is not a pass; the exit code
+was the one place still contradicting both. A run where nothing passed and nothing failed now
+says so and returns 3. The two cases share the code because they are one answer — **no verdict
+was produced** — and a caller has one thing to do about either: not treat it as green. The
+printed line says which of the two it was.
+
+**The `generic` profile no longer passes**, and that is what made the hole reachable rather
+than theoretical. It answered `pass` on the strength of one test — "is this a git repository"
+— which cannot be false anywhere jig runs, because `jig_require_repo` has already refused by
+then. One vacuous pass was enough to keep `pass > 0` and make the whole run green while every
+real check skipped. It is a guard, not evidence, so it can fail and it can no longer pass:
+the profile now reports `skip` and exits 2. This applies an existing rule rather than adding
+one — `jp_end` has always exited 2 for a profile that ran no applicable check, and `generic`
+predates the library that says so.
+
 **Incomplete outranks fail** at every level. A run something was killed in is not evidence, so
 the failures beside it cannot be trusted either — which is precisely what happened to the
 reviewer of #95. Nothing is lost by this precedence: a real failure comes back on the next
@@ -181,6 +217,16 @@ run, while an artefact of an overloaded machine does not.
 nobody outside the tests — not `jig task ship`, not the skills, and CI cares only whether it
 is zero. Jig already uses 3 for a distinct outcome in `jig task autopilot repair`, so the
 vocabulary is not new either.
+
+**A negative result measured on a loaded machine is re-checked against the clock, because
+overload disguises itself in both directions.** It made a killed run look like a failing test
+four times in one night — the reason the third outcome above exists. And while this decision
+was being proved on a live collision, it did the opposite: a six-second probe window said the
+lock had not engaged, when in truth six seconds at load 228 is shorter than `jig verify`'s own
+startup. Given a wall-clock deadline instead, the same probe reached the wait in 30 seconds
+and the lock had worked all along. An absent symptom measured under load is not evidence of an
+absent defect, any more than a red one is evidence of a present one; both need time before
+they mean anything.
 
 **The honest limit.** What is detected is death **by a signal**. A test that was starved
 rather than killed, and failed in the ordinary way, still reads as a failure and cannot be
@@ -234,6 +280,12 @@ produces such artefacts; the second makes legible the part the machine can actua
   tests does.
 - The profile contract gains an exit code and a verdict word. A profile a user edited and
   `upgrade` kept will simply never produce them, which reads as it does today.
+- **A project with no stack tooling now gets a non-zero `jig verify`.** Where `generic` was
+  the only thing answering, the run went from 0 to 3 and says nothing was checked. This is the
+  intended reading of "a skip is not a pass", and it is visible the first time someone runs
+  `jig verify` on a fresh project — but it is the one consequence of this decision that
+  reaches projects with no connection to the problem it was written for. `jig task ship` and
+  the autopilot refuse on it, which is the point: there was no evidence to ship on.
 - `.ai/runtime/verify/` is one more thing in the clone root's runtime directory. Nothing
   deletes an expired record in the background; the next run takes it over.
 - **There is no queue and no order.** When a holder leaves, every waiter races on the same

@@ -642,5 +642,20 @@ cmd_verify() {
     printf 'verify: the run did not finish, so it neither passed nor failed — run it again\n'
     return 3
   fi
+  # A run in which nothing passed and nothing failed checked nothing, and the
+  # exit code has to say so. `[ "$failn" -eq 0 ]` alone answered 0 for a set of
+  # pure skips: on a project with no shellcheck and no test runner, `jig verify`
+  # reported success having examined not one line of it, and `jig task ship` and
+  # the autopilot read that code. The domain already says a skip is not a pass
+  # and that a narrowing which selects nothing is not a pass; this is the same
+  # sentence said in the one place that was still contradicting it.
+  #
+  # It shares exit 3 with the killed run, because the two are one answer — no
+  # verdict was produced — and a caller has one thing to do about either: not
+  # treat it as green. The line says which of the two it was.
+  if [ "$pass" -eq 0 ] && [ "$failn" -eq 0 ] && [ "$total" -gt 0 ]; then
+    printf 'verify: nothing was checked, so this is not a pass — install the project'"'"'s tools or activate a profile that checks it\n'
+    return 3
+  fi
   [ "$failn" -eq 0 ]
 }

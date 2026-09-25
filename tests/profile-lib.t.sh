@@ -423,7 +423,9 @@ test_profile_lib_resolves_from_copy_mode_install() {
   jig init --from "$JIG_HOME" --profiles python >/dev/null
 
   run jig verify --profile python
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "python: ruff: skip"
   assert_contains "$OUT" "python: mypy: skip"
   assert_contains "$OUT" "python: pytest: skip"
@@ -438,7 +440,9 @@ test_profile_lib_resolves_from_link_mode_install() {
   jig init --from "$JIG_HOME" --link --profiles python >/dev/null
 
   run jig verify --profile python
-  assert_eq 0 "$RC" "$OUT"
+  # Every check skipped, so the run checked nothing and says so, exit 3
+  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
+  assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "python: ruff: skip"
   assert_contains "$OUT" "python: mypy: skip"
   assert_contains "$OUT" "python: pytest: skip"
