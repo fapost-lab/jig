@@ -2109,16 +2109,39 @@ test_task_start_worktree_shows_the_tasks_filed_outside_it() {
   assert_contains "$(cd "$wt" && jig status)" "task T-2"
 }
 
-test_task_start_worktree_keeps_one_link_when_a_directory_link_would_not_be_ignored() {
+# The fallback and the shape it falls back from, in one fixture, because
+# either half alone is blind. The per-task link is what every worktree got
+# before this change, so a test that asserts only it passes just as well
+# against code that cannot link a directory at all -- put the pre-fix
+# `task.sh` back and this test stayed green (conventions/detectors.md). What
+# only the new code can do is answer the two ignore shapes differently, so
+# both arms are asserted together and the difference between them is the
+# claim.
+test_task_start_worktree_chooses_the_link_shape_by_what_git_ignores() {
   task_setup_tasks_ignored_by_directory
   jig task new T-1 >/dev/null
   local wt
   wt=$(jig task start T-1 --worktree 2>/dev/null)
 
+  # A rule ending in `/` matches a directory and not a link, so a directory
+  # link would read as untracked here: one task it is.
   [ ! -L "$wt/.ai/workspace/tasks" ] || fail "the task directory must not be linked here"
   [ -L "$wt/.ai/workspace/tasks/T-1" ] || fail "the one-task link is missing"
   # The whole point of the fallback: the worktree can still be removed.
   assert_eq "" "$(git -C "$wt" status --porcelain)"
+
+  # The same jig and the same command, one character less in the rule:
+  # `.ai/workspace` matches the parent and covers the link either way, so the
+  # directory is borrowed whole.
+  printf '.ai/workspace\n.ai/runtime\n.ai/config.local.yaml\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "ignore the workspace as a path, link or directory"
+  jig task new T-2 >/dev/null
+  local wt2
+  wt2=$(jig task start T-2 --worktree 2>/dev/null)
+
+  [ -L "$wt2/.ai/workspace/tasks" ] || fail "the task directory was not borrowed whole"
+  assert_eq "" "$(git -C "$wt2" status --porcelain)"
 }
 
 # Where the directory could not be linked, the loss must be refused rather than

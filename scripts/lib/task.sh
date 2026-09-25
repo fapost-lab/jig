@@ -2403,10 +2403,19 @@ task_changes() {
 # reads or writes an artifact must pass (RULES.md: the check lives at a single
 # function, not once per caller).
 #
-# A linked task directory can point outside the validated checkout workspace.
-# The one link accepted is the one `task start --worktree` makes: to this same
-# task's workspace in another worktree of this repository. <command> names the
-# caller in the refusals, so the message still says which verb refused.
+# A linked task directory can point outside the validated checkout workspace,
+# and only one of the two shapes is checked here. A symlink at the task's own
+# path goes through `_task_borrowed_workspace`, which confirms the target is
+# this task's workspace in another worktree of this repository. A link at the
+# parent -- the whole `tasks/` directory, which `task start --worktree` now
+# makes the usual shape -- does not reach that check: `-L` asks about the last
+# component only, so this falls to the comparison below, where both sides
+# resolve through the same link and it cannot fail. That gap is older than the
+# borrowed directory (the body of this function is unchanged by the change
+# that introduced it) and belongs to task
+# `artifact-write-trusts-a-borrowed-directory-link`; it is not a property to
+# rely on. <command> names the caller in the refusals, so the message still
+# says which verb refused.
 _task_workspace_root() {
   local id="$1" cmd="$2" root tasks_root
   root=$(task_dir "$id") || return 1

@@ -138,8 +138,9 @@ that creates the destination in the sliver the re-test cannot cover, which is wh
 backstop fires at all. Before them the suite was green for every wrong form alike, and that is how
 an unmeasured one reached the tree.
 
-**`.ai/` is refused, always and by name.** A worktree borrows exactly one workspace by link
-(ADR-0029); a copy would give the task two `state` files diverging from the first write. So is
+**`.ai/` is refused, always and by name.** A worktree borrows the owning checkout's task
+directory by one link (ADR-0029 as amended); a copy would give the task two `state` files
+diverging from the first write. So is
 an absolute path, a path with dot segments, a path holding a space, tab or newline, a path that
 is a link in the owning checkout, and a path resolving outside that checkout — the last checked
 physically, because a symlinked parent leads out without a single `..`.

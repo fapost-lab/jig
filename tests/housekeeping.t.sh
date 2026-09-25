@@ -2305,8 +2305,10 @@ test_housekeeping_report_appended_to_the_log_changes_no_count() {
 # windows-latest, 2026-09-14). `_hk_worktree_retire` calls this function only
 # after git reported success and the path still exists. It must remove
 # nothing but links and the now-empty directories, and never touch what a
-# link points at: the borrowed task workspace lives outside the worktree, and
-# is the one thing here it would be catastrophic to delete (RULES.md).
+# link points at: what the junction borrows -- the owner's whole task
+# directory, or one workspace inside it where the fallback applies -- lives
+# outside the worktree, and is the one thing here it would be catastrophic to
+# delete (RULES.md).
 # git is not exercised: macOS/Linux git removes the directory outright, so
 # these call _hk_worktree_leftover directly on a hand-built leftover, the way
 # hk_decide calls housekeeping_decide.

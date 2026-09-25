@@ -10,7 +10,7 @@ paths:
   - schemas/state.md
   - scripts/lib/config.sh
 summary: Why a workspace belongs to its checkout and state is written atomically without locks.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-25
 ---
 # ADR-0008: Task workspaces are per checkout; state writes are atomic, last-write-wins
 

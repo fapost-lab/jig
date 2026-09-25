@@ -985,8 +985,10 @@ test_spec_remove_skips_symlinked_workspace() {
 Spec: .ai/specs/alpha/
 EOF
   mkdir -p .ai/workspace/tasks
-  # The way a task worktree borrows a workspace (ADR-0029): a symbolic link,
-  # or a junction where symbolic links cannot be made.
+  # The per-task link: what a task worktree got before 2026-09-25 and what
+  # `task start` still falls back to where a directory link would not be
+  # ignored (ADR-0029 as amended). A symbolic link, or a junction where
+  # symbolic links cannot be made.
   plant_dir_link "$(cd ../elsewhere-tasks/T-1 && pwd -P)" .ai/workspace/tasks/T-1
   cp ../elsewhere-tasks/T-1/task.md linked.before
 

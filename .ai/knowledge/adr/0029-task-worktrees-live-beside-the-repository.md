@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
-summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
+summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the owner's task directory by link, and are cleaned up by git.
 reviewed_at: 2026-09-25
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
@@ -306,10 +306,14 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > directory as `find "$tasks_dir"` with **no trailing slash**, and find does not descend a symlink
 > named as its own starting point, so a borrowing checkout finds no workspace to purge and no
 > worktree to retire; the globs the reporting commands use do follow the link, and that asymmetry
-> is exactly the split wanted. `_hk_worktree_retire` asks whether the directory is a link before it
-> asks `find`, so the "holds no workspace of its own" condition is still decided by a question and
-> not by find's silence. `spec remove` skips every task under a borrowed directory and says so,
-> where before the per-task skip did it one at a time.
+> is exactly the split wanted. The "holds no workspace of its own" condition is answered by that
+> same walk, and the slash is what answers it: a guard asking `[ -L ]` before the walk was written
+> first and then removed, because nothing could make it fail — find already answers the same, and a
+> claim no stand can refute is decoration rather than evidence
+> (`conventions/detectors.md`). Writing the slash **is** refutable, and refuted: with it,
+> `test_housekeeping_removes_the_worktree_of_a_purged_task` reports the worktree kept for
+> `own-workspace` instead of removed. `spec remove` skips every task under a borrowed directory
+> and says so, where before the per-task skip did it one at a time.
 >
 > The note above warns whoever links a directory whole that a trailing-slash ignore rule matches a
 > directory and not a link, and that an untracked path makes the worktree un-removable for the rest

@@ -156,7 +156,8 @@ Rejected by adr-20260922-the-status-page-stays-current-without-a-server, and sti
   easily forgotten.
 - **Always writing the page** — a file in every project whether or not anyone looks, and a redraw
   in every test of every command.
-- **A page per worktree** — a worktree sees one task.
+- **A page per worktree** — a worktree saw one task then, and the page belongs to the checkout
+  that owns the workspaces either way (ADR-0029 as amended).
 - **Inferring "design waiting" from class + design.md + no receipt** — false during the whole
   implementation after approval; a "needs you" that lies is worse than none.
 - **Asking the forge for review or CI state during a redraw** — network on the write path.
