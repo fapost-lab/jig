@@ -581,17 +581,106 @@ $bad"
 }
 
 # jig_ship_commit <who> <message-file> — commit the index as it is: only what
-# is staged, never `-a`; hooks run, never --no-verify. An empty index is not an
-# error: the change may have been committed by an earlier run.
+# is staged, never `-a`; hooks run, never --no-verify.
+#
+# An empty index used to be an outcome rather than a question: the step
+# printed `nothing staged; no commit` and the ship carried on. That is right
+# only when there is nothing left to commit — the change was committed by an
+# earlier run, and this run pushes it or opens its pull request. When the
+# working tree still holds changes to tracked files, the same empty index
+# means the opposite: the work is being left behind, and what would be
+# shipped is whatever the branch happens to carry already. Nothing about that
+# reads as a failure afterwards — at `agent.git: merge` a pull request without
+# the change has nothing to make CI red, so it goes green and merges itself.
+# So it is a refusal here, before the commit step returns, and not a line in
+# the log. Untracked files are warned about, not refused: a scratch file, the
+# commit message itself or a build artefact is nobody's shipped change, and a
+# refusal on those is one every caller would learn to work around.
 jig_ship_commit() {
-  local who="$1" message_file="$2"
+  local who="$1" message_file="$2" unstaged untracked
   if [ -n "$(jig_ship_staged)" ]; then
     git -C "$JIG_PROJECT" commit -F "$message_file" >/dev/null \
       || jig_die "$who: git commit failed"
     printf 'committed %s\n' "$(git -C "$JIG_PROJECT" rev-parse --short HEAD)"
-  else
-    printf 'nothing staged; no commit\n'
+    return 0
   fi
+  unstaged=$(git -C "$JIG_PROJECT" diff --name-only 2>/dev/null | sed '/^$/d')
+  if [ -n "$unstaged" ]; then
+    jig_die "$who: nothing is staged, and these tracked files have changes that are not:
+$unstaged
+Shipping now would carry whatever the branch already holds and leave the change behind. Stage it and run again."
+  fi
+  untracked=$(git -C "$JIG_PROJECT" ls-files --others --exclude-standard 2>/dev/null | sed '/^$/d')
+  [ -z "$untracked" ] || jig_warn "$who: nothing is staged, and these files are not tracked by git:
+$untracked"
+  printf 'nothing staged; no commit\n'
+}
+
+# --- what a ship may send out ------------------------------------------------
+#
+# Push, the pull request and the merge are the steps that leave this machine,
+# and none of them is taken back by noticing afterwards: an empty pull request
+# stays in the forge, people and bots see it, somebody closes it by hand, and
+# on a public repository it has already happened while the agent is still
+# working out what went wrong. An unhelpful message costs a reader a minute;
+# an outward step taken too early costs everyone who sees the result.
+#
+# So the order is an invariant here, not a habit: a ship says what it is
+# sending before its first outward step, and every outward step refuses to run
+# until it has. Two calls say it, and one of them must:
+#
+#   jig_ship_require_commits <who> <head> <base> — <head> carries at least one
+#       commit <base> does not; otherwise the ship refuses right there, with
+#       nothing sent. This is the ordinary case: it is what `task ship` and a
+#       spec's declaration and final pull request all send.
+#   jig_ship_sends_no_commit <why> — this ship carries no commit on purpose.
+#       `spec ship` in `epic` mode pushes an epic branch so that it exists on
+#       the forge for its tasks to target, and an epic just cut from the
+#       default branch has no commit of its own.
+#
+# A new outward step inherits the rule by opening with _jig_ship_outward; a
+# new call site inherits it by having to say which of the two above it is.
+# Observed on 2026-09-24 and again on 2026-09-25: `task ship` printed
+# `nothing staged; no commit`, pushed the empty branch anyway and only then
+# asked GitHub for a pull request, which is where the run finally stopped —
+# by then the forge had already been asked.
+
+# What this ship sends, as a sentence; empty until the ship has said.
+_JIG_SHIP_SENDS=""
+
+# _jig_ship_outward <who> — the guard every step that leaves this machine
+# opens with. Reaching one without an answer is a mistake in the caller, not
+# something a user can cause, so it dies rather than guessing.
+_jig_ship_outward() {
+  [ -n "$_JIG_SHIP_SENDS" ] \
+    || jig_die "$1: internal: a step that leaves this machine was reached before the ship checked what it has to send"
+}
+
+# jig_ship_require_commits <who> <head> <base> — refuse, with nothing sent,
+# unless <head> has a commit the base does not. The base is read through
+# jig_base_ref, so the comparison is the one the forge will make: origin's
+# base when it is known here, the local branch otherwise.
+jig_ship_require_commits() {
+  local who="$1" head="$2" base="$3" base_ref count
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$head^{commit}" >/dev/null 2>&1 \
+    || jig_die "$who: $head names no commit in this checkout"
+  base_ref=$(jig_base_ref "$base")
+  [ -n "$base_ref" ] \
+    || jig_die "$who: no branch $base here or on origin, so what $head would add cannot be told; fetch it and run again"
+  count=$(git -C "$JIG_PROJECT" rev-list --count "$base_ref..$head" 2>/dev/null) || count=""
+  [ -n "$count" ] || jig_die "$who: cannot tell what $head adds to $base_ref"
+  if [ "$count" -eq 0 ]; then
+    jig_die "$who: nothing to ship: $head has no commit $base_ref does not have.
+The index was empty and no earlier run committed, so the branch carries no work.
+Nothing has been pushed and no pull request opened: stage the change and run again."
+  fi
+  _JIG_SHIP_SENDS="$count commit(s) on $head"
+}
+
+# jig_ship_sends_no_commit <why> — this ship sends no commit and means to;
+# <why> is for the reader of this code, not for the user.
+jig_ship_sends_no_commit() {
+  _JIG_SHIP_SENDS="no commit: $1"
 }
 
 # jig_ship_push <who> <branch> — push <branch> to origin and track it. Never
@@ -599,6 +688,7 @@ jig_ship_commit() {
 # is the answer.
 jig_ship_push() {
   local who="$1" branch="$2" out
+  _jig_ship_outward "$who"
   if ! out=$(git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
     jig_die "$who: git push failed:
 $out"
@@ -616,6 +706,7 @@ $out"
 # shellcheck disable=SC2034 # JIG_SHIP_URL is read by the caller
 jig_ship_pr() {
   local who="$1" head="$2" base="$3" message_file="$4" title="${5:-}" body_file="${6:-}" draft="${7:-0}" kind
+  _jig_ship_outward "$who"
   JIG_SHIP_URL=""
   kind=$(jig_forge_kind) || exit 1
   if [ "$kind" = none ]; then
@@ -721,6 +812,7 @@ _JIG_CI_GRACE=120
 # JIG_SHIP_MERGED, so it is called directly, never in `$()`.
 jig_ship_merge() {
   local who="$1" url="$2" sha="$3" policy="$4" kind timeout
+  _jig_ship_outward "$who"
   JIG_SHIP_MERGED=0
   timeout=$(jig_ci_timeout) || jig_die "$who: invalid agent.ci_timeout: $timeout (expected whole minutes)"
   kind=$(jig_forge_kind) || exit 1

@@ -2391,6 +2391,26 @@ ship_setup() {
   printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
 }
 
+# ship_setup_forge — ship_setup with GitHub as the forge and `gh` stubbed,
+# and with that setting committed on the base branch before the task's own
+# branch is cut. `forge` is a project setting, so writing it leaves the
+# tracked .ai/config.yaml modified; committed here, it is fixture rather than
+# an unstaged change of the task's — which is what `task ship` now refuses to
+# ship past (jig_ship_commit).
+ship_setup_forge() {
+  task_setup_clean
+  ship_cfg forge github
+  git add .ai/config.yaml
+  git commit -q -m "fixture: github is the forge"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+  ship_stub_gh ""
+}
+
 # ship_stage_change — one file, staged, belonging to the task.
 ship_stage_change() {
   printf 'ship change\n' > ship.txt
@@ -2402,12 +2422,16 @@ ship_stage_change() {
 # verbatim when given (standing in for the real `--jq` filter's answer) or
 # `null` for none (jq's own answer for an empty array); `gh pr create ...`
 # records its own arguments, one per line, to gh-create.argv and prints a
-# made-up URL.
+# made-up URL. Every call, whichever one it is, appends its arguments to
+# gh-calls.log: a test that has to prove the forge was never asked at all
+# cannot do it by the absence of gh-create.argv, because `pr list` and `auth
+# status` reach the forge before any pull request is created.
 ship_stub_gh() {
   local existing="${1:-}"
   mkdir -p stub-bin
   cat > stub-bin/gh <<STUB
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> gh-calls.log
 case "\$1" in
   auth) exit 0 ;;
   pr)
@@ -2588,7 +2612,74 @@ test_task_ship_commit_level_commits_only_staged_and_does_not_push() {
   assert_eq "" "$(git ls-remote origin task/T-1)"
 }
 
-test_task_ship_empty_index_prints_nothing_staged_no_commit() {
+# The one case an empty index is right: the working tree is clean, so
+# nothing is being left behind, and the branch carries the change an earlier
+# run committed. A ship that had to be run twice — a push that failed, a
+# forge that was down — gets through here rather than needing an empty commit
+# to appease it.
+test_task_ship_empty_index_with_a_clean_tree_ships_the_earlier_commit() {
+  ship_setup
+  ship_cfg_local agent.git push
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  git commit -q -m "committed by an earlier run"
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "nothing staged; no commit"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+# Nothing to commit is an outcome, not a line in the log (common.sh,
+# jig_ship_commit). The branch here carries a commit of its own, so the order
+# check below would pass and the pull request would not even look wrong: it
+# would carry the earlier commit and not the change, and at `agent.git: merge`
+# nothing afterwards would notice — a pull request without the change has
+# nothing to make CI red, so it goes green and merges itself.
+test_task_ship_unstaged_change_refuses_and_ships_nothing() {
+  ship_setup_forge
+  ship_cfg_local agent.git merge
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  git commit -q -m "committed by an earlier run"
+  printf 'the line the agent forgot to stage\n' >> ship.txt
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "nothing is staged"
+  assert_contains "$OUT" "ship.txt"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh-calls.log "the forge must not be asked anything"
+}
+
+# The order, not the wording (common.sh, "what a ship may send out"). Proved
+# without a network: `origin` is a real bare repository here, so a push that
+# happened is visible in its refs, and `gh` is a stub that appends every call
+# to gh-calls.log, so a forge that was asked anything is visible too. The
+# level is `merge`, the one with every outward step in it.
+test_task_ship_empty_branch_refuses_before_anything_leaves_the_machine() {
+  ship_setup_forge
+  ship_cfg_local agent.git merge
+  jig task set T-1 knowledge_consolidated true >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "nothing to ship"
+  assert_contains "$OUT" "The index was empty"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh-calls.log "the forge must not be asked anything"
+  assert_no_file gh-create.argv
+}
+
+# The same refusal at `commit`, where nothing would have left this machine
+# anyway: "this branch carries no work" is the same answer at every level,
+# and at `commit` the human pushes next.
+test_task_ship_empty_branch_refuses_at_commit_level_too() {
   ship_setup
   ship_cfg_local agent.git commit
   jig task set T-1 knowledge_consolidated true >/dev/null
@@ -2596,9 +2687,33 @@ test_task_ship_empty_index_prints_nothing_staged_no_commit() {
   head_before=$(git rev-parse HEAD)
 
   run jig task ship T-1 --message-file msg.txt
-  assert_eq 0 "$RC"
-  assert_contains "$OUT" "nothing staged; no commit"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "nothing to ship"
   assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+# The rule itself, for each outward step rather than for one path through
+# `task ship`: called with the gate unset, every one of them refuses on its
+# own. A step added later inherits the rule only by opening with the guard,
+# and this is what says so.
+ship_outward_call() {
+  run bash -c '. "$JIG_HOME/scripts/lib/common.sh"; '"$1"
+}
+
+test_ship_every_outward_step_refuses_before_the_ship_said_what_it_sends() {
+  local expected="a step that leaves this machine was reached before the ship checked what it has to send"
+
+  ship_outward_call 'jig_ship_push "task ship" task/T-1'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$expected"
+
+  ship_outward_call 'jig_ship_pr "task ship" task/T-1 main msg.txt'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$expected"
+
+  ship_outward_call 'jig_ship_merge "task ship" https://example.invalid/pull/1 deadbeef any'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "$expected"
 }
 
 test_task_ship_push_level_pushes_and_stops() {
