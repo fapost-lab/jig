@@ -750,3 +750,110 @@ test_bootstrap_carries_a_tree_holding_an_entry_of_its_own_name() {
   assert_eq "" "$(git -C "$wt" status --porcelain)"
 }
 
+
+# --- the nesting backstop: what it must catch, and what it must not ----------
+# F14 and F17 were the same defect twice: the backstop told a nested rename from
+# a legitimate one by a single inode comparison, and each single form truncated a
+# carried tree in the mode the other form survived. The suite could not tell any
+# of the forms apart -- every one of them was green -- which is why an unmeasured
+# one-liner reached the tree. These three stands discriminate.
+#
+# _bootstrap_inode is stubbed, because the property under test is not "what does
+# this filesystem do" but "what does the backstop conclude when inode reads stop
+# discriminating objects". Two stubs are needed: a constant inode reddens the
+# positive half alone, a path-derived inode reddens the negative half alone, and
+# no single mode reddens both.
+
+# bootstrap_nesting_stand <inode-stub-body> <outfile> — carry `data` (a tree that
+# legitimately holds a top-level `data/` of its own name) into a worktree with
+# _bootstrap_inode replaced. Mirrors the F12 stand's shape.
+bootstrap_nesting_stand() {
+  local body="$1" out="$2" root
+  root=$(pwd -P)/tree
+  rm -rf "$root"
+  mkdir -p "$root/wt/.ai" "$root/owner/data/data/inner" "$root/owner/data/other"
+  printf 'inner\n' > "$root/owner/data/data/inner/f"
+  printf 'other\n' > "$root/owner/data/other/f"
+  (
+    # shellcheck disable=SC2034
+    JIG_AI_DIR=.ai
+    # shellcheck disable=SC2329
+    jig_info() { printf 'INFO %s\n' "$*"; }
+    # shellcheck disable=SC2329
+    jig_warn() { printf 'WARN %s\n' "$*"; }
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+    # shellcheck disable=SC2329
+    profiles_carry() { :; }
+    # shellcheck disable=SC2329
+    profiles_lock() { :; }
+    # shellcheck disable=SC2329
+    profiles_install() { :; }
+    # shellcheck disable=SC2329
+    cfg_list_lines() { [ "$1" = worktree.carry ] && printf 'data\n'; return 0; }
+    # shellcheck disable=SC2329
+    jig_copy_dir() { cp -a "$1" "$2"; }
+    eval "$body"
+    jig_bootstrap_worktree "$root/owner" "$root/wt" "task bootstrap"
+  ) > "$out" 2>&1
+  printf '%s\n' "$root"
+}
+
+# bootstrap_assert_whole <root> <out> — the carried tree arrived entire and was
+# not reported as untouched.
+bootstrap_assert_whole() {
+  local root="$1" out="$2"
+  if grep -q 'without nesting it' "$out"; then
+    fail "the backstop fired on a tree that only holds an entry of its own name: $(cat "$out")"
+  fi
+  assert_eq "inner" "$(cat "$root/wt/data/data/inner/f" 2>/dev/null)" \
+    "the carried tree lost the subtree that shares its name"
+  assert_eq "other" "$(cat "$root/wt/data/other/f" 2>/dev/null)"
+}
+
+# Mode: every path answers the same inode. Reddens the positive half on its own
+# (staged and <dst>/data both read alike, so "the object there is the staged one"
+# is satisfied by a rename that landed cleanly).
+test_bootstrap_backstop_stands_down_when_inodes_do_not_discriminate() {
+  bootstrap_setup_nested
+  local root out
+  out=$(pwd -P)/out
+  root=$(bootstrap_nesting_stand '_bootstrap_inode() { printf "%s\n" 4242; }' "$out")
+  bootstrap_assert_whole "$root" "$out"
+}
+
+# Mode: the inode is a function of the path. Reddens the negative half on its own
+# (<dst> and staged sit at different paths, so "<dst> is not the staged object"
+# is satisfied by a rename that landed cleanly).
+test_bootstrap_backstop_stands_down_when_inodes_follow_the_path() {
+  bootstrap_setup_nested
+  local root out
+  out=$(pwd -P)/out
+  # shellcheck disable=SC2016  # the stub body is eval'd inside the stand
+  root=$(bootstrap_nesting_stand \
+    '_bootstrap_inode() { printf "%s" "$1" | cksum | awk "{print \$1}"; }' "$out")
+  bootstrap_assert_whole "$root" "$out"
+}
+
+# And the catch itself. The destination is planted in the one window the re-test
+# before `mv` cannot close, through the only call that happens inside it, so the
+# rename really does nest. With the backstop removed this run reports a carry and
+# leaves data/data holding the whole tree; with it, the carry declines and says so.
+test_bootstrap_backstop_catches_a_rename_that_really_nested() {
+  bootstrap_setup_nested
+  local root out
+  out=$(pwd -P)/out
+  # shellcheck disable=SC2016  # the stub body is eval'd inside the stand
+  root=$(bootstrap_nesting_stand '
+    _bootstrap_inode() {
+      if [ ! -e "$root/planted" ]; then
+        : > "$root/planted"
+        mkdir -p "$root/wt/data"
+      fi
+      ls -di "$1" 2>/dev/null | awk "NR==1 {print \$1; exit}"
+    }' "$out")
+  grep -q 'without nesting it' "$out" \
+    || fail "a rename that nested for real was not caught: $(cat "$out")"
+  [ ! -e "$root/wt/data/data" ] \
+    || fail "the carried tree was left nested inside the destination"
+}

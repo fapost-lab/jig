@@ -454,22 +454,33 @@ jig_bootstrap_worktree() {
     fi
     staged_inode=$(_bootstrap_inode "$staged")
     if [ "$ok" = 0 ] && mv "$staged" "$dst" 2>/dev/null; then
-      # And if the rename still landed *inside* something that appeared in the
-      # window the re-test above cannot close, take it straight back.
+      # **Second echelon, and only that.** What closes the race is the re-test
+      # immediately before the `mv` above — measured against a real copy with a
+      # directory planted partway through it. This catches only the sliver
+      # between that test and the rename. Read it as a belt, not the trousers.
       #
-      # Told apart by identity, never by name. A rename that landed makes <dst>
-      # the very object that was staged, so its inode is the one <staged> had;
-      # a rename that nested leaves <dst> the directory that was already there,
-      # with another inode. Asking by name instead — is there a <dst>/<staged
-      # basename> — cannot tell that from a carried tree legitimately holding a
-      # top-level entry of its own name, which `carry: [data]` over a `data/data/`
-      # does on the first try: the backstop then moved the real `data/data` into
-      # staging, deleted it there, and reported that nothing had been touched.
-      # Where a filesystem reports no usable inodes both reads come back equal
-      # and the backstop simply stands down; the re-test above is what closes
-      # the window that matters, and this only catches what slips through it.
+      # That sliver is reachable by a test because `_bootstrap_inode` is the one
+      # call that happens inside it: a stub that creates <dst> on its way past
+      # makes the rename nest for real, which is what proves this block fires at
+      # all (tests/bootstrap.t.sh).
+      #
+      # **Two bits of evidence, because one is not enough.** A rename nested
+      # only if the object now at <dst>/<staged basename> *is* the staged one
+      # **and** <dst> itself is *not*. Each half alone was tried and each was
+      # wrong in its own direction, both times by truncating a carried tree that
+      # legitimately holds a top-level entry of its own name (`carry: [data]`
+      # over a `data/data/`) while reporting that nothing had been touched — the
+      # exact harm this block exists to prevent.
+      #
+      # The precondition both halves rest on is not a list of platforms but a
+      # property: **reading an inode tells one object from another.** Where that
+      # holds, the conjunction is exact. Where it does not — whatever the reason,
+      # and the reasons outran every list we wrote twice — the two halves cannot
+      # both be satisfied, so the block stands down and the re-test holds the
+      # line. Failing closed is the whole design of it.
       nested=0
       if [ -n "$staged_inode" ] && [ -e "$dst/${staged##*/}" ] \
+         && [ "$(_bootstrap_inode "$dst/${staged##*/}")" = "$staged_inode" ] \
          && [ "$(_bootstrap_inode "$dst")" != "$staged_inode" ]; then
         nested=1
       fi

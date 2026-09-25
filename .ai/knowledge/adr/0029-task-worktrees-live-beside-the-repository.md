@@ -227,9 +227,23 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > path inside `.ai/` by name — the worktree still lives under `git.worktree_root`, and git still
 > removes it, without `--force`, under the same conditions.
 >
-> One of those conditions turned out to constrain *how* state may be shared. Housekeeping can
-> only remove a worktree git reports as clean, and git does not match a trailing-slash ignore
-> pattern such as `packages/` against a symlink. A shared directory linked whole therefore reads
-> as untracked and makes the worktree un-removable for the rest of its life. It is mirrored
-> instead — a real directory whose entries are links — so the project's existing ignore pattern
-> keeps applying and this decision's cleanup keeps working.
+> One of those conditions turned out to constrain *how* state may be carried, and the carry is
+> built around it. Housekeeping can only remove a worktree git reports as clean, so the carry
+> places a path, asks git what it now reports, and takes straight back out anything it made
+> appear, naming `.gitignore` as the remedy. A declared path the project neither tracks nor
+> ignores is refused rather than carried.
+>
+> A second consequence belongs here rather than there, because it is *this* decision that owns
+> the removal: `git worktree remove` without `--force` deletes ignored files **silently**, as
+> measured above. So a carried path that holds a separate git repository is a trap. The worktree
+> gets a second clone; work done in it is invisible to the parent because the path is ignored;
+> and removing the worktree takes that work with it — committed and uncommitted alike, the commit
+> having existed in no other clone — without a single message. Measured end to end on 2026-09-25.
+> Carrying such a directory is therefore not supported.
+>
+> Sharing one by link is a separate decision, held by the `worktree-share` task. Note for whoever
+> takes it: linking a directory whole reads as untracked, because git does not match a
+> trailing-slash ignore pattern such as `packages/` against a symlink, and that alone would make
+> the worktree un-removable for the rest of its life. A mirror — a real directory whose entries
+> are links — was built for this and then removed again; it is **a mechanism no longer here**, and
+> its measurements and findings live with that task.
