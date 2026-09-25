@@ -8,6 +8,82 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.16.0 — 2026-09-25
+
+Green now means green.
+
+<Warning>
+  **Do this after upgrading: install the tools your project's checks need.** `jig verify` used to
+  answer `ok` when a profile for your stack was active and every one of its checks had been
+  skipped for a missing tool. It now refuses — **exit 3**, *nothing was checked, so this is not a
+  pass* — and `jig task ship` will not ship on it. `jig verify --list` shows which profiles are
+  installed; install what they need (`npm install`, `composer install`, a virtual environment,
+  `shellcheck` …). If you wrote a profile of your own that deliberately checks nothing, add
+  `verifies: nothing` to its `profile.yaml`: absence means the profile asserts something, so it
+  refuses rather than quietly becoming unverifiable
+  ([Troubleshooting](/troubleshooting#verification-and-upgrades)).
+
+  **And if `jig upgrade` reports `keep-unmarked AGENTS.md`: run the `jig-init` skill.** This
+  release keeps the Jig section of your `AGENTS.md` current through an upgrade — but only for a
+  project whose manifest carries Jig's claim to that region, and `jig init` is the only thing that
+  writes that claim, on markers you agreed to. Adding the markers by hand does not do it: without
+  the claim every outcome stays a `keep-`. If your section has also drifted from Jig's own text,
+  markers alone are still not enough — no claim is recorded and `upgrade` goes on reporting
+  `keep-modified`. Reconcile the text with `.ai/templates/AGENTS.md` first, then mark it. That
+  nothing does this for you is deliberate: the first time Jig claims a region of a file your
+  project already had is a moment that belongs to you.
+
+  All three of this release's manual steps — these two and `verifies: nothing` — are set out with
+  the commands that prove they took on [Upgrading](/upgrading).
+</Warning>
+
+- **A pass now means something was checked.** Two states used to be one. A project whose stack a
+  profile covers, but whose tools are missing, is refused (above). A project **no** profile covers
+  is not blocked — there is nothing to install and nothing to wait for — but it is not called `ok`
+  either: `jig verify` says *nothing here checks this project* and exits 0, and `jig task ship`
+  says it again as the change leaves your machine.
+- **`jig task ship` refuses instead of shipping nothing.** An empty index with unstaged changes
+  used to print a note and carry on — pushing the branch and opening a pull request with the
+  change left behind, where nothing makes CI red. It is now an outcome, not information. An empty
+  index with a clean working tree still proceeds: that change was committed by an earlier run.
+- **Two verifications no longer fight for the machine.** `jig verify` waits for one already
+  running in the same clone and says how long it waited (`verify.busy_ttl: 0` turns the wait off).
+  A run that was *killed* — out of memory, an overloaded machine — reports **incomplete** and
+  exits 3 instead of counting as a pass.
+- **`jig verify --explain` says what a run will expand to, before it runs.** One line per check —
+  `full`, `filtered`, `skip` or `conditional` — so you can see that a change to a widely-used file
+  means the whole suite before you start it. It takes no busy record, runs no project tool and
+  produces no verdict ([Manual control](/manual-control)).
+- **A task worktree is a place you can actually work in.** `worktree.carry` copies the state Git
+  does not track — `vendor/`, `node_modules/`, `.env` — into a new worktree, beyond what the
+  active profiles already declare ([Configuration](/configuration#git-and-branches)). And removing
+  a worktree now asks every Git repository inside it first: a clone holding work that exists
+  nowhere else keeps the worktree rather than going with it.
+- **A task filed from inside a worktree no longer disappears with it.** A worktree borrows its
+  checkout's whole task directory rather than the single task it was made for, so a task an agent
+  files while working in one is visible from the main checkout and survives the worktree being
+  removed. Measured on Windows too, where the borrowed directory is a junction.
+- **The status page stopped saying what it cannot know.** It keeps your place across its own
+  auto-refresh, reports what it actually knows about a pull request instead of inferring it, drops
+  a card the disk has already disproved, and shows the pull request of a task whose autopilot
+  stopped.
+- **Several sessions in one checkout see each other.** Every run records in the checkout's
+  gitignored `.ai/runtime/` that work is happening here; `jig status` gains a `working here:` line
+  for each live record, and the commands a session orients itself with warn it, on stderr, when
+  HEAD moved underneath it.
+- **`jig upgrade` keeps your instructions current.** For a project that has made the claim above,
+  it refreshes the Jig section of your `AGENTS.md` instead of leaving it on the version it was
+  written for, and no longer replaces a Windows project's CRLF line endings with LF when it does.
+  `jig status` also reports the config keys your `.ai/config.yaml` no longer mentions —
+  capabilities a new version brought that nobody offered you.
+- **Jig acts on the repository you ran it in.** `GIT_DIR`, `GIT_WORK_TREE` and the other variables
+  that choose what git acts on are cleared, so jig started from a git hook or an editor that
+  exports them no longer writes its records into another repository.
+- New pages: [Upgrading](/upgrading), what an upgrade does for you and what it leaves to you;
+  [Known issues](/known-issues), faults in Jig itself and what to do instead; and
+  [What's next](/roadmap), the order the open ones are being fixed in. `schemas/profile.md`
+  documents the keys of `profile.yaml` for anyone writing their own.
+
 ## 0.15.1 — 2026-09-23
 
 - Fix: `jig upgrade` in copy mode replaced `.ai/scripts/jig` by rewriting it in place — the file the

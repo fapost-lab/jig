@@ -18,9 +18,178 @@ an answer today. An entry below stays here until the fault is actually fixed, an
 the same change that fixes it.
 
 The page is not a list of everything Jig could do better, and it is not a copy of Jig's to-do list.
-Work already under way is left out.
+Work already under way is left out. For the order these are being fixed in, and what comes after
+them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
+
+## The Windows installer can turn your home folder into a Git repository
+
+{/* closed by jig task: installer-refuses-to-make-a-repo-of-your-home — remove this entry in the PR that merges the fix */}
+
+This one happens by taking the defaults, in the first minute. `irm … | iex` in a fresh PowerShell
+starts in your user profile, so that is the folder the installer offers you; the next question —
+whether to make it a Git repository — defaults to **Yes**. Answer both by pressing Enter and the
+installer runs `git add -A` there and commits. Nothing refuses a home folder or a drive root, and
+`-Yes` skips both questions rather than the check.
+
+What it costs is an index holding everything in your profile — documents, keys, whatever else is
+there — created by a tool you are running for the first time, in a version-control system you may
+have installed five minutes ago to run it.
+
+**What to do instead.** Make the folder yourself before you install, `cd` into it, and run the
+installer from there:
+
+```powershell
+mkdir $HOME\projects\my-project
+cd $HOME\projects\my-project
+irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1 | iex
+```
+
+Read the folder the installer offers you before pressing Enter, and answer **No** to the
+repository question whenever the path shown is your profile or a drive root. If it already
+happened, the repository is the `.git` folder in your profile; deleting that folder undoes it and
+touches none of your files — but look at the path twice before deleting anything.
+
+## An interrupted `jig upgrade` cannot be repeated
+
+{/* closed by jig task: upgrade-finishes-or-can-be-repeated — remove this entry in the PR that merges the fix */}
+
+`jig upgrade` places files one at a time and writes the manifest at the end. Interrupt it — `Ctrl-C`,
+a closed laptop, a killed process — and the files it already placed are newer than the manifest
+still describes. On the next run Jig compares each file against the manifest, finds a difference,
+and concludes that **you** edited it.
+
+That verdict is `keep-modified`, and it does not wear off. Jig now leaves those files alone
+permanently: running `jig upgrade` again does not repair them, because nothing asks whether the
+file on disk is simply the new version that the interrupted run had already written.
+
+The same state is reached without any interruption in a repository using SHA-256 object names, or
+one with clean filters configured, because the two sides of the comparison are not hashed the same
+way.
+
+**What to do instead.** Let an upgrade finish. If one was interrupted, look at what `jig upgrade`
+reports as kept and reconcile those files against the new version by hand:
+
+```bash
+jig upgrade --dry-run
+```
+
+Files reported `keep-modified` that you know you never edited are the interrupted run's own work;
+replacing them with the framework's current version and upgrading again clears the state. If you
+cannot tell which is which, reinstalling over the project with `jig init --from <path to jig>`
+rebuilds the manifest from what is actually there.
+
+## Removing a task worktree by hand has no protection
+
+{/* closed by jig task: worktree-share — remove this entry in the PR that merges the fix */}
+
+`worktree.carry` copies ignored state into a task worktree, and a path you name can itself contain
+a Git repository — a `packages/` folder of local clones, say. Jig's own cleanup handles this: it
+asks every Git repository inside a worktree whether it holds work that exists nowhere else, and
+keeps the worktree instead of removing it when one does.
+
+Nothing extends that to `git worktree remove` typed by a person. That command is Git's, it deletes
+ignored files without asking, and Jig does not change its behaviour. So a commit you made inside a
+carried clone — one that lives only there, never pushed, never in the main checkout — goes with
+the folder, and Git's own reflog cannot help you because the repository that held it is gone.
+
+Separately: `carry` accepts a path with a `.git` inside it without a word of warning, so nothing
+tells you at the moment you configure it that this is the case you are setting up.
+
+**What to do instead.** Remove task worktrees through Jig rather than by hand, and let its cleanup
+answer the question. Before removing one any other way, push what is inside the carried
+repositories, or check them:
+
+```bash
+git -C <worktree>/<carried path> status --short
+git -C <worktree>/<carried path> log --branches --not --remotes --oneline
+```
+
+The second command lists commits that exist in that clone and nowhere else. If it prints anything,
+that work is what the removal would take. There is no Jig setting that makes a carried path
+shared rather than copied; a project that needs one checkout of a package shared across worktrees
+has no option today but to leave it out of `carry` and accept that the worktree cannot build.
+
+## Autopilot can close a task whose work was never merged
+
+{/* closed by jig task: autopilot-end-closes-unmerged-task — remove this entry in the PR that merges the fix */}
+
+`jig task autopilot <id> end` marks the task consolidated without asking whether its pull request
+was merged. At `agent.git: pr` the run ends exactly there — an open pull request, waiting for you —
+and the task is closed in the same breath.
+
+A closed task leaves `jig status`. So the pull request nobody merged becomes invisible at the one
+moment it needs watching: the agent that opened it does not list it any more, and neither does
+anyone else opening the project afterwards. Nothing is lost, but it is easy to forget for as long
+as you do not happen to look at the forge.
+
+Closing by hand is no safer here. `jig task set <id> status consolidated` refuses only while the
+knowledge decision is unrecorded, and by the end of a route that decision has been made — so the
+manual path allows the same close. Neither writer asks whether the change landed.
+
+**What to do instead.** After an autopilot run ends, look at the pull request it hands back and
+merge it yourself. To find tasks in this state later, list the closed ones and check their
+branches:
+
+```bash
+jig task list --all
+```
+
+A task marked `consolidated` whose branch still exists unmerged on the forge is one of these; it
+can be reopened with `jig task set <id> status ready`.
+
+## Housekeeping can leave `git fetch` hung, and the count grows
+
+{/* closed by jig task: fetch-never-waits-for-a-prompt — remove this entry in the PR that merges the fix */}
+
+Housekeeping fetches from your remote without telling Git that no one is at the keyboard. Against a
+remote that asks for credentials — an HTTPS remote with no credential helper, an SSH key with a
+passphrase, a host whose fingerprint is not known yet — the fetch stops and waits for an answer
+that will never be typed.
+
+It then gets worse on its own. Housekeeping records that it ran only at the *end*, so the run that
+is stuck waiting never records anything. Every new session therefore decides that housekeeping has
+not run, and starts another one. The hung processes accumulate, one per session, for as long as the
+remote keeps asking.
+
+**What to do instead.** Make the remote answer without a prompt, which fixes the cause rather than
+the symptom: store credentials in a helper, load your key into an agent, or accept the host key
+once by fetching manually. To see whether you have any of these, and clear them:
+
+```bash
+ps ax | grep '[g]it fetch'
+```
+
+They are safe to kill — a fetch writes nothing until it completes. If you cannot make the remote
+non-interactive, turn the fetch off with `housekeeping.fetch: false` in
+`.ai/config.local.yaml`, and fetch by hand.
+
+## `jig context` takes tens of seconds
+
+{/* closed by jig task: knowledge-costs-one-walk — remove this entry in the PR that merges the fix */}
+
+Resolving which knowledge documents apply to a set of files walks the whole working tree once for
+every path pattern in your knowledge, rather than once in total. Measured on a project with 83
+documents: 291 tree walks, about 8,500 processes, and 30 to 39 seconds for a single
+`jig knowledge check`. `jig context` takes around ten seconds and the guard recomputes it from
+scratch, so one ordinary task route pays roughly twenty seconds four times over.
+
+It grows with the repository. On a project of twenty thousand files this is minutes, not seconds —
+and the larger the project, the more the progressive loading of knowledge is worth, which is
+exactly where it becomes too slow to keep.
+
+**What to do instead.** Nothing you configure changes the cost. What you can do is not pay it
+needlessly: ask for context once per stage and keep the answer, rather than resolving it again for
+each file you touch, and pass the files you actually changed:
+
+```bash
+jig context --files <the files this change touches>
+```
+
+Keeping `.ai/knowledge/` to documents that earn their place helps proportionally, since the cost
+is per path pattern. If your agent has started skipping `jig context` because it is slow, that is
+this fault, not a preference — the fix is coming rather than the feature being optional.
 
 ## A task that has already started cannot be moved into a worktree
 
