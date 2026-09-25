@@ -2,4 +2,4 @@
 name: swift
 description: Swift projects (swift build, swift test from PATH).
 detect: [Package.swift]
-scope: [changed, map]
+scope: [changed, map, explain]

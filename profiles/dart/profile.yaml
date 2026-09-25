@@ -2,4 +2,4 @@
 name: dart
 description: Dart and Flutter projects (analyze, format, test, from PATH).
 detect: [pubspec.yaml]
-scope: [changed, map]
+scope: [changed, map, explain]

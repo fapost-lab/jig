@@ -2,7 +2,7 @@
 name: php
 description: PHP projects using Composer.
 detect: [composer.json]
-scope: [changed, map]
+scope: [changed, map, explain]
 carry: [vendor]
 lock: [composer.lock]
 install: composer install

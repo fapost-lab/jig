@@ -38,8 +38,11 @@ _py_poetry_env() {
 # nothing. Both layouts are probed on every machine: the question is what
 # the environment contains, not which OS this is (ADR-0037).
 _py_tool() {
-  local name="$1" d b
-  for d in "${VIRTUAL_ENV:-}" .venv venv "$(_py_poetry_env)"; do
+  local name="$1" d b poetry_dir=""
+  if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ]; then
+    poetry_dir=$(_py_poetry_env)
+  fi
+  for d in "${VIRTUAL_ENV:-}" .venv venv "$poetry_dir"; do
     [ -n "$d" ] || continue
     for b in bin Scripts; do
       if [ -f "$d/$b/$name" ]; then
@@ -108,6 +111,60 @@ _py_builtin() {
   return 0
 }
 
+# Used by both the run and the plan; a read-only configuration check.
+_py_mypy_configured() {
+  if [ -f mypy.ini ] || [ -f .mypy.ini ]; then return 0; fi
+  if [ -f pyproject.toml ] && grep -q '^\[tool\.mypy\]' pyproject.toml; then return 0; fi
+  if [ -f setup.cfg ] && grep -q '^\[mypy\]' setup.cfg; then return 0; fi
+  return 1
+}
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  for check in ruff mypy pytest; do
+    tool=$(_py_tool "$check")
+    if [ -z "$tool" ]; then
+      if [ -f poetry.lock ] && command -v poetry >/dev/null 2>&1; then
+        jp_plan "$check" conditional "poetry environment needs a tool query; full set possible"
+      else
+        jp_plan "$check" skip "$PY_WHERE"
+      fi
+      continue
+    fi
+    if [ "$check" = mypy ]; then
+      if _py_mypy_configured; then
+        jp_plan mypy full "mypy is not narrowed by file"
+      else
+        jp_plan mypy skip "mypy not configured"
+      fi
+    elif [ "$check" = ruff ]; then
+      if jp_scoped && jp_changed_any pyproject.toml ruff.toml .ruff.toml; then
+        jp_plan ruff full "ruff configuration changed"
+      elif jp_scoped; then
+        files=$(jp_changed py)
+        if [ -z "$files" ]; then
+          jp_plan ruff skip "no changed .py files"
+        else
+          jp_plan ruff filtered "changed .py files: $(printf '%s\n' "$files" | paste -sd, -)"
+        fi
+      else
+        jp_plan ruff full "full scope"
+      fi
+    else
+      filters=$(jp_decide _py_builtin)
+      if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          if [ ! -e "$f" ]; then filters=ALL; break; fi
+        done <<EOF
+$filters
+EOF
+      fi
+      jp_plan_selection pytest "$filters" "test files"
+    fi
+  done
+  exit 0
+fi
+
 # --- ruff --------------------------------------------------------------------
 
 ruff=$(_py_tool ruff)
@@ -142,13 +199,6 @@ fi
 
 # mypy runs only where the project configured it: without a configuration it
 # reports on code nobody asked it to type-check.
-_py_mypy_configured() {
-  if [ -f mypy.ini ] || [ -f .mypy.ini ]; then return 0; fi
-  if [ -f pyproject.toml ] && grep -q '^\[tool\.mypy\]' pyproject.toml; then return 0; fi
-  if [ -f setup.cfg ] && grep -q '^\[mypy\]' setup.cfg; then return 0; fi
-  return 1
-}
-
 mypy=$(_py_tool mypy)
 if [ -z "$mypy" ]; then
   jp_skip "mypy" "$PY_WHERE"

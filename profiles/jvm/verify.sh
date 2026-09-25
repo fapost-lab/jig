@@ -43,6 +43,11 @@ HAS_MAVEN=0
 [ -f pom.xml ] && HAS_MAVEN=1
 
 if [ "$HAS_GRADLE" = 0 ] && [ "$HAS_MAVEN" = 0 ]; then
+  if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+    jp_plan check skip "no root Gradle build"
+    jp_plan test skip "no root pom.xml"
+    exit 0
+  fi
   jp_skip "check" "no build.gradle(.kts) or settings.gradle(.kts) at the repository root"
   jp_skip "test" "no pom.xml at the repository root"
   jp_end
@@ -95,6 +100,81 @@ _jvm_join() {
   printf '%s\n' "$out"
 }
 
+_jvm_gradle_always_all() {
+  case "$1" in
+    build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts| \
+    gradle.properties|gradlew*|gradle/*) return 0 ;;
+  esac
+  return 1
+}
+
+_jvm_gradle_builtin() {
+  local f="$1" dir
+  if jp_is_doc "$f"; then return 0; fi
+  if _jvm_gradle_always_all "$f"; then printf 'ALL\n'; return 0; fi
+  if dir=$(_jvm_nearest_module 'build.gradle|build.gradle.kts' "$f"); then
+    printf '%s\n' "$dir"
+  else
+    printf 'ALL\n'
+  fi
+  return 0
+}
+
+_jvm_maven_always_all() {
+  case "$1" in
+    pom.xml|mvnw*|.mvn/*) return 0 ;;
+  esac
+  return 1
+}
+
+_jvm_maven_builtin() {
+  local f="$1" dir
+  if jp_is_doc "$f"; then return 0; fi
+  if _jvm_maven_always_all "$f"; then printf 'ALL\n'; return 0; fi
+  if dir=$(_jvm_nearest_module pom.xml "$f"); then
+    printf '%s\n' "$dir"
+  else
+    printf 'ALL\n'
+  fi
+  return 0
+}
+
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if [ "$HAS_GRADLE" = 0 ]; then
+    jp_plan check skip "no root Gradle build"
+  elif [ ! -f ./gradlew ] && ! command -v gradle >/dev/null 2>&1; then
+    jp_plan check skip "gradlew not found and gradle not found on PATH"
+  else
+    filters=$(jp_decide _jvm_gradle_builtin)
+    if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ ! -e "$f" ]; then filters=ALL; break; fi
+      done <<EOF
+$filters
+EOF
+    fi
+    jp_plan_selection check "$filters" "Gradle subprojects"
+  fi
+  if [ "$HAS_MAVEN" = 0 ]; then
+    jp_plan test skip "no root pom.xml"
+  elif [ ! -f ./mvnw ] && ! command -v mvn >/dev/null 2>&1; then
+    jp_plan test skip "mvnw not found and mvn not found on PATH"
+  else
+    filters=$(jp_decide _jvm_maven_builtin)
+    if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ ! -e "$f" ]; then filters=ALL; break; fi
+      done <<EOF
+$filters
+EOF
+    fi
+    jp_plan_selection test "$filters" "Maven modules"
+  fi
+  exit 0
+fi
+
 # --- Gradle ------------------------------------------------------------------
 
 if [ "$HAS_GRADLE" = 1 ]; then
@@ -133,33 +213,9 @@ if [ "$HAS_GRADLE" = 1 ]; then
     # _jvm_gradle_always_all <path> — a root build/settings file, the
     # wrapper's own files, or gradle.properties: none of these belong to one
     # subproject.
-    _jvm_gradle_always_all() {
-      case "$1" in
-        build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts| \
-        gradle.properties|gradlew*|gradle/*)
-          return 0 ;;
-      esac
-      return 1
-    }
-
     # _jvm_gradle_builtin <path> — the subproject directory a changed path
     # belongs to (D4), or ALL for an always-ALL file or a path outside every
     # subproject.
-    _jvm_gradle_builtin() {
-      local f="$1" dir
-      if jp_is_doc "$f"; then return 0; fi
-      if _jvm_gradle_always_all "$f"; then
-        printf 'ALL\n'
-        return 0
-      fi
-      if dir=$(_jvm_nearest_module 'build.gradle|build.gradle.kts' "$f"); then
-        printf '%s\n' "$dir"
-      else
-        printf 'ALL\n'
-      fi
-      return 0
-    }
-
     # _jvm_gradle_run <note> [<task>...] — `check`, or the given tasks.
     _jvm_gradle_run() {
       local note="$1"
@@ -240,32 +296,9 @@ if [ "$HAS_MAVEN" = 1 ]; then
 
     # _jvm_maven_always_all <path> — the root pom.xml, `.mvn/**` or the
     # wrapper's own files: none of these belong to one module.
-    _jvm_maven_always_all() {
-      case "$1" in
-        pom.xml|mvnw*|.mvn/*)
-          return 0 ;;
-      esac
-      return 1
-    }
-
     # _jvm_maven_builtin <path> — the module directory a changed path
     # belongs to (D4), or ALL for an always-ALL file or a path outside every
     # module.
-    _jvm_maven_builtin() {
-      local f="$1" dir
-      if jp_is_doc "$f"; then return 0; fi
-      if _jvm_maven_always_all "$f"; then
-        printf 'ALL\n'
-        return 0
-      fi
-      if dir=$(_jvm_nearest_module pom.xml "$f"); then
-        printf '%s\n' "$dir"
-      else
-        printf 'ALL\n'
-      fi
-      return 0
-    }
-
     # _jvm_maven_run <note> [-pl <modules> -am] — `test`, narrowed or not.
     _jvm_maven_run() {
       local note="$1"

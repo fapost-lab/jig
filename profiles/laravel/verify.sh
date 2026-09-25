@@ -83,6 +83,25 @@ _laravel_builtin() {
   return 0
 }
 
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  if [ ! -f artisan ] || ! command -v php >/dev/null 2>&1; then
+    jp_plan "artisan test" skip "artisan or php not found"
+  else
+    filters=$(jp_decide _laravel_builtin)
+    if [ -n "$filters" ] && [ "$filters" != ALL ]; then
+      if missing=$(printf '%s\n' "$filters" | while IFS= read -r f; do
+        if [ ! -e "$f" ]; then printf '%s\n' "$f"; break; fi
+      done); then
+        if [ -n "$missing" ]; then
+          filters=ALL
+        fi
+      fi
+    fi
+    jp_plan_selection "artisan test" "$filters" "test files"
+  fi
+  exit 0
+fi
+
 if [ ! -f artisan ] || ! command -v php >/dev/null 2>&1; then
   jp_skip "artisan test" "artisan or php not found"
   jp_end

@@ -2,4 +2,4 @@
 name: rust
 description: Rust projects (cargo fmt, cargo clippy, cargo test from PATH).
 detect: [Cargo.toml]
-scope: [changed, map]
+scope: [changed, map, explain]

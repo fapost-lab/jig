@@ -23,6 +23,11 @@ set -o pipefail
 
 jp_begin generic
 
+if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
+  jp_plan repository skip "this fallback profile verifies nothing about the code"
+  exit 0
+fi
+
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   jp_fail repository "not a git repository"
   jp_end

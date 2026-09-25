@@ -2,4 +2,4 @@
 name: dotnet
 description: .NET projects (dotnet format, dotnet test from PATH).
 detect: [*.sln, *.csproj, *.fsproj]
-scope: [changed, map]
+scope: [changed, map, explain]

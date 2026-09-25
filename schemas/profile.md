@@ -12,7 +12,7 @@ absent key means is decided by its reader, not by this file.
 | `description` | scalar | one line on what the profile checks and which tools it reaches for. Read by no script either |
 | `detect` | `always`, or an inline list of globs | how `profiles_detect` recognises a project of this stack — see **Detection** |
 | `requires` | inline list of profile names | profiles this one builds on. Detection closes over it, and `profiles_check_requires` warns when an active profile's requirement is not active — see **Requires** |
-| `scope` | inline list of capabilities | which parts of the verify scope protocol this profile's `verify.sh` understands: `changed` (ADR-0013), `map` (ADR-0041) — see **Scope** |
+| `scope` | inline list of capabilities | which parts of the verify scope protocol this profile's `verify.sh` understands: `changed` (ADR-0013), `map` (ADR-0041), `explain` — see **Scope** |
 
 ## Grammar
 
@@ -71,11 +71,18 @@ environment variables. A profile receives them only if `scope` declares the capa
 |---|---|
 | `changed` | `JIG_VERIFY_SCOPE=changed` and `JIG_VERIFY_FILES`, a file of changed paths (ADR-0013) |
 | `map` | additionally `JIG_VERIFY_MAPPED`, the project's verify map applied to those paths (`schemas/verify-map.md`, ADR-0041). It means nothing without `changed`, which is checked first |
+| `explain` | `JIG_VERIFY_EXPLAIN=1` asks for a plan instead of checks. The profile prints one `PLAN <profile>: <check>: full\|filtered\|skip\|conditional (<reason>)` line per check, runs no project tool and exits 0. `conditional` names what remains unknown and whether the full set is possible |
 
 Support is declared, never inferred. A profile that does not declare a capability is run
 with those variables explicitly unset — not merely left as the caller's environment had
 them — and the result line says the scope was ignored, so `pass` never quietly means
 something different per profile.
+
+For `--explain`, a profile without the `explain` capability is not run at all. Jig prints
+`unknown` and exits 2 if any selected profile is unknown. A declared profile that exits
+nonzero or prints no valid plan line makes the preview fail with exit 1. A real `jig verify`
+always unsets `JIG_VERIFY_EXPLAIN`, even if its caller exported it. The preview never takes
+the clone's verification run record and never treats a plan as a verification result.
 
 ## The reader is tolerant, and that is the design
 

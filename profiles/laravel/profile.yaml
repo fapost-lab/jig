@@ -3,5 +3,5 @@ name: laravel
 description: Laravel applications (extends the php profile).
 detect: [artisan]
 requires: [php]
-scope: [changed, map]
+scope: [changed, map, explain]
 carry: [.env]

@@ -775,6 +775,291 @@ test_verify_changed_scope_passed_to_supporting_profile() {
   assert_contains "$OUT" "RESULT probe: pass (scope: changed, 1 files)"
 }
 
+test_verify_explain_reports_plan_without_running_old_profiles() {
+  fixture_jig_repo
+  _fixture_probe_profile old "scope: [changed]"
+
+  run jig verify --explain --profile old
+  assert_eq 2 "$RC"
+  assert_contains "$OUT" "PLAN old: unknown (profile does not support explain)"
+  assert_no_file old.ran
+
+  run jig verify --explain --profile generic
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN generic: repository: skip"
+  assert_contains "$OUT" "no checks ran"
+  assert_not_contains "$OUT" "RESULT generic: pass"
+
+  run jig verify --explain --list
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--list cannot be combined with --explain"
+}
+
+test_verify_explain_rejects_profile_that_does_not_report_plan() {
+  fixture_jig_repo
+  _fixture_probe_profile broken "scope: [explain]"
+  run jig verify --explain --profile broken
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "profile explain contract failed"
+}
+
+test_verify_explain_rejects_large_invalid_profile_output() {
+  fixture_jig_repo
+  _fixture_probe_profile noisy "scope: [explain]"
+  cat > .ai/profiles/noisy/verify.sh <<'EOF'
+#!/usr/bin/env bash
+i=0
+while [ "$i" -lt 2000 ]; do
+  printf 'invalid plan line %s\n' "$i"
+  i=$((i + 1))
+done
+EOF
+  run jig verify --explain --profile noisy
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "profile explain contract failed"
+  assert_not_contains "$OUT" "invalid plan line"
+}
+
+test_verify_explain_all_shipped_profiles_never_call_project_tools() {
+  fixture_repo
+  mkdir -p fake-bin vendor/bin .venv/bin node_modules/.bin tests
+  for tool in go cargo swift dart flutter dotnet gradle mvn php composer bundle npm pnpm yarn bun shellcheck poetry; do
+    cat > "fake-bin/$tool" <<EOF
+#!/bin/sh
+printf '%s\\n' '$tool' >> '$PWD/tool-called'
+exit 98
+EOF
+    chmod +x "fake-bin/$tool"
+  done
+  for tool in phpunit phpstan pint; do cp fake-bin/go "vendor/bin/$tool"; done
+  for tool in ruff mypy pytest; do cp fake-bin/go ".venv/bin/$tool"; done
+  for tool in jest eslint; do cp fake-bin/go "node_modules/.bin/$tool"; done
+  printf '{"scripts":{"test":"jest","lint":"eslint .","typecheck":"tsc"},"devDependencies":{"jest":"*"}}\n' > package.json
+  printf '    rubocop (1.0)\n    rspec-core (1.0)\n' > Gemfile.lock
+  printf '<project/>\n' > pom.xml
+  printf 'plugins {}\n' > build.gradle
+  printf '[package]\nname = "sample"\n' > Cargo.toml
+  printf 'module example.com/sample\n' > go.mod
+  printf 'name: sample\n' > pubspec.yaml
+  printf '<?php\n' > artisan
+  printf '#!/bin/sh\nexit 98\n' > tests/run.sh
+  chmod +x tests/run.sh
+  printf 'sample.go\n' > changed
+  printf 'package sample\n' > sample.go
+
+  for profile in dart dotnet generic go jvm laravel node php python ruby rust shell swift; do
+    run env PATH="$PWD/fake-bin:$PATH" JIG_VERIFY_EXPLAIN=1 \
+      JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$PWD/changed" \
+      bash "$JIG_HOME/profiles/$profile/verify.sh"
+    assert_eq 0 "$RC"
+    assert_contains "$OUT" "PLAN $profile:"
+    assert_no_file tool-called
+  done
+}
+
+test_verify_explain_shell_common_code_widens_to_full_tests() {
+  fixture_repo
+  mkdir -p scripts/lib tests
+  printf '#!/bin/sh\nexit 98\n' > tests/run.sh
+  chmod +x tests/run.sh
+  printf 'test_one() { :; }\n' > tests/one.t.sh
+  printf ':\n' > scripts/lib/common.sh
+  printf 'scripts/lib/common.sh\n' > changed
+
+  run env JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+    JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/shell/verify.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+  assert_not_contains "$OUT" "shell: tests/run.sh: pass"
+}
+
+# The shell profile has its own selection logic for each check. Exercise the
+# plan and the real path against the same tree and changed-file list: a new
+# check or a new skip condition must not leave a green but blind preview.
+test_verify_explain_shell_plan_agrees_with_actual_checks() {
+  fixture_repo
+  mkdir -p scripts/lib tests
+  printf '#!/bin/sh\nexit 0\n' > scripts/example.sh
+  printf ':\n' > scripts/lib/common.sh
+  printf '# shellcheck settings\n' > .shellcheckrc
+  printf 'test_example() { :; }\n' > tests/example.t.sh
+  printf '#!/bin/sh\nprintf called >> tests-called\nexit 0\n' > tests/run.sh
+  chmod +x tests/run.sh
+  sc_stub 1.0.0 0
+
+  local scenario plan run_output plan_checks run_checks check state actual
+  for scenario in docs config common test_file no_runner; do
+    rm -f tests-called
+    chmod +x tests/run.sh
+    case "$scenario" in
+      docs) printf 'README.md\n' > changed ;;
+      config) printf '.shellcheckrc\n' > changed ;;
+      common) printf 'scripts/lib/common.sh\n' > changed ;;
+      test_file) printf 'tests/example.t.sh\n' > changed ;;
+      no_runner)
+        printf 'scripts/example.sh\n' > changed
+        chmod -x tests/run.sh
+        ;;
+    esac
+
+    run env JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+      JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/shell/verify.sh"
+    assert_eq 0 "$RC"
+    plan="$OUT"
+    assert_no_file tests-called
+
+    run env JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$PWD/changed" \
+      bash "$JIG_HOME/profiles/shell/verify.sh"
+    case "$RC" in 0|2) ;; *) fail "$scenario: real shell profile exited $RC: $OUT" ;; esac
+    run_output="$OUT"
+
+    plan_checks=$(printf '%s\n' "$plan" | awk -F ': ' '$1 == "PLAN shell" { print $2 }')
+    run_checks=$(printf '%s\n' "$run_output" | awk -F ': ' '$1 == "shell" { print $2 }')
+    assert_eq "$(printf 'shellcheck\ntests/run.sh')" "$plan_checks"
+    assert_eq "$plan_checks" "$run_checks"
+
+    while IFS= read -r check; do
+      [ -n "$check" ] || continue
+      state=$(printf '%s\n' "$plan" | awk -F ': ' -v name="$check" \
+        '$1 == "PLAN shell" && $2 == name { split($3, words, " "); print words[1] }')
+      actual=$(printf '%s\n' "$run_output" | awk -F ': ' -v name="$check" \
+        '$1 == "shell" && $2 == name { split($3, words, " "); print words[1] }')
+      case "$state:$actual" in
+        skip:skip|full:pass|filtered:pass) ;;
+        *) fail "$scenario: plan says $check $state, run says $actual" ;;
+      esac
+    done <<EOF
+$plan_checks
+EOF
+  done
+}
+
+test_verify_explain_command_uses_installed_shell_rules_for_changed_code() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  mkdir -p scripts/lib tests
+  printf ':\n' > scripts/lib/common.sh
+  printf '#!/bin/sh\nprintf called > ran\n' > tests/run.sh
+  chmod +x tests/run.sh
+  git add -A
+  git commit -q -m "install shell project"
+  printf ':\n' >> scripts/lib/common.sh
+
+  run jig verify --explain --changed --profile shell
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+  assert_contains "$OUT" "no checks ran"
+  assert_no_file ran
+}
+
+test_verify_explain_uses_the_same_ci_scope_choice_as_verify() {
+  fixture_jig_repo
+  _fixture_probe_profile planprobe "scope: [changed, explain]"
+  cat > .ai/profiles/planprobe/verify.sh <<'EOF'
+#!/usr/bin/env bash
+if [ "${JIG_VERIFY_SCOPE:-}" = changed ]; then
+  printf 'PLAN planprobe: check: filtered (changed files from %s)\n' "$JIG_VERIFY_FILES"
+else
+  printf 'PLAN planprobe: check: full (full scope)\n'
+fi
+EOF
+  git add -A
+  git commit -q -m "add plan profile"
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  printf 'changed\n' >> README.md
+
+  run jig verify --explain --profile planprobe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN planprobe: check: filtered"
+
+  run env CI=1 "$JIG_BIN" verify --explain --profile planprobe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN planprobe: check: full"
+
+  run env CI=1 "$JIG_BIN" verify --explain --changed --profile planprobe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN planprobe: check: filtered"
+}
+
+test_verify_explain_rejects_invalid_map_before_running_profile() {
+  fixture_jig_repo
+  _fixture_probe_profile mapped "scope: [changed, map, explain]"
+  mkdir -p .ai/verify
+  printf 'README.md\n' > .ai/verify/mapped.map
+  git add -A
+  git commit -q -m "add invalid map"
+  printf 'changed\n' >> README.md
+
+  run jig verify --explain --changed --profile mapped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "PLAN mapped: error (map"
+  assert_no_file mapped.ran
+}
+
+test_verify_normal_run_clears_exported_explain_variable() {
+  fixture_jig_repo
+  _fixture_probe_profile ordinary ""
+  cat > .ai/profiles/ordinary/verify.sh <<'EOF'
+#!/usr/bin/env bash
+printf 'ordinary: explain=%s\n' "${JIG_VERIFY_EXPLAIN:-<unset>}"
+exit 0
+EOF
+  run env JIG_VERIFY_EXPLAIN=1 "$JIG_BIN" verify --profile ordinary
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ordinary: explain=<unset>"
+}
+
+test_verify_explain_go_and_jest_name_possible_full_run() {
+  fixture_repo
+  mkdir -p fake-bin pkg node_modules/.bin
+  for tool in go npm; do
+    printf '#!/bin/sh\nprintf called >> "%s"\nexit 98\n' "$PWD/tool-called" > "fake-bin/$tool"
+    chmod +x "fake-bin/$tool"
+  done
+  cp fake-bin/go node_modules/.bin/jest
+  printf 'module example.com/sample\n' > go.mod
+  printf 'package pkg\n' > pkg/sample.go
+  printf 'pkg/sample.go\n' > changed
+  run env PATH="$PWD/fake-bin:$PATH" JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+    JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/go/verify.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN go: vet: filtered"
+  assert_contains "$OUT" "PLAN go: test: conditional"
+  assert_contains "$OUT" "full set possible"
+  assert_no_file tool-called
+
+  printf '{"scripts":{"test":"jest"},"devDependencies":{"jest":"*"}}\n' > package.json
+  printf 'export const answer = 42;\n' > source.js
+  printf 'source.js\n' > changed
+  run env PATH="$PWD/fake-bin:$PATH" JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+    JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/node/verify.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN node: npm test: conditional"
+  assert_contains "$OUT" "full set possible"
+  assert_no_file tool-called
+}
+
+test_verify_explain_empty_changed_scope_names_each_skipped_check() {
+  fixture_repo
+  : > changed
+  run env JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+    JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/shell/verify.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN shell: shellcheck: skip (scope: changed, no changed files)"
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: skip (scope: changed, no changed files)"
+}
+
+test_verify_explain_does_not_wait_for_or_replace_busy_record() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: /elsewhere\npid: %s\n' "$$" > .ai/runtime/verify/busy/run
+  run jig verify --explain --profile generic
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN generic: repository: skip"
+  assert_not_contains "$OUT" "waiting for it"
+  assert_file_contains .ai/runtime/verify/busy/run "checkout: /elsewhere"
+}
+
 # The important one: `upgrade` keeps a user-modified verify.sh as-is, so a
 # profile that never declared `scope` must never observe one — not even
 # when the caller's own environment happens to export the same variable
