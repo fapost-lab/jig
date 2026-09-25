@@ -20,7 +20,7 @@ replaces. No map, no change: the profile narrows by its built-in rules alone.
 - One rule per line: a glob, whitespace, a decision. `#` starts a comment, to end of line
   or the whole line; blank lines are skipped; a trailing CR (a file saved on Windows) is
   ignored.
-- The glob follows `detect` (see the profile schema): `**` and `*` both match across `/`.
+- The glob follows `detect` (`schemas/profile.md`): `**` and `*` both match across `/`.
   It is matched against the path string, never the filesystem — a path need not exist.
 - **First match wins.** Rules are tried top to bottom per path; later rules for an
   already-matched path are never reached.

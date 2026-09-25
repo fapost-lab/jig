@@ -89,7 +89,7 @@ adapter_claude_instructions_hint() {
     printf 'instructions: CLAUDE.md is missing, so Claude Code will not follow the Jig workflow.\n'
   fi
   printf '  Run /jig-init to merge the Jig section, or add the line @AGENTS.md to CLAUDE.md\n'
-  printf '  once AGENTS.md carries .claude/skills/jig-init/references/agents-section.md.\n'
+  printf '  once AGENTS.md carries the marked section of .ai/templates/AGENTS.md.\n'
 }
 
 # adapter_claude_session_hook_hint <project-root>

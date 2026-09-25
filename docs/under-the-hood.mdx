@@ -59,7 +59,7 @@ The script answers from file metadata alone; the agent then reads the listed fil
 | `.ai/config.yaml`, `.ai/verify/*.map` | yes | you, or the agent at your request |
 | `.ai/scripts/`, `.ai/profiles/`, `.ai/templates/`, `.ai/manifest` | yes | `jig init` and `jig upgrade` only |
 | `.claude/skills/`, `.codex/skills/` | yes | `jig init` and `jig upgrade` only |
-| `AGENTS.md`, `CLAUDE.md` | yes | `jig init` creates them only when absent; never edited by a script afterwards |
+| `AGENTS.md`, `CLAUDE.md` | yes | `jig init` creates them only when absent. Afterwards a script writes only the marked Jig section of `AGENTS.md`, and only once you have agreed to it being there |
 | `.ai/workspace/tasks/` | **no** — ignored | task scripts and the agent; local notes and task state |
 | `.ai/runtime/` | **no** — ignored | housekeeping: reports, timestamps, trash |
 | `.ai/config.local.yaml` | **no** — ignored | you |
@@ -102,8 +102,11 @@ The script answers from file metadata alone; the agent then reads the listed fil
 - **`jig upgrade`** fetches nothing: it copies from the Jig on your machine. It replaces framework
   files you have not edited, keeps and reports the ones you have, and deletes a file the new version
   no longer ships only when you have not edited it — this can be outside `.ai/`, for example an old
-  skill under `.claude/skills/`. It never touches knowledge, specifications, configuration or
-  `AGENTS.md`. Each run ends with a summary line, and a run that placed nothing leaves
+  skill under `.claude/skills/`. It never touches knowledge, specifications or configuration. Of
+  `AGENTS.md` it writes one thing: the section between `<!-- jig:begin -->` and `<!-- jig:end -->`,
+  and only while that section is still exactly what Jig last put there. Change a word inside it and
+  Jig keeps your version from then on, saying `keep-modified AGENTS.md (Jig section)`; delete the
+  markers and nothing comes back. Each run ends with a summary line, and a run that placed nothing leaves
   `.ai/manifest` alone — a project only starts using another checkout of Jig once an upgrade has
   really installed from it.
 - **`jig verify`** runs your project's own tools — test scripts, linters, `php artisan test`, Gradle

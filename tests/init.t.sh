@@ -989,3 +989,75 @@ test_init_fresh_project_prints_no_instructions_warning() {
   run jig init --from "$JIG_HOME"
   assert_not_contains "$OUT" "warning: instructions"
 }
+
+# --- the marked instructions section (adr-20260924-...) -----------------------
+
+test_init_writes_a_marked_agents_md_and_records_it() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  # shellcheck source=../scripts/lib/section.sh
+  . "$JIG_HOME/scripts/lib/section.sh"
+  assert_eq ok "$(jig_section_state AGENTS.md)"
+  assert_file_contains .ai/manifest "instructions.section: $(jig_section_hash AGENTS.md) AGENTS.md"
+}
+
+# The instructions template is framework-owned (ADR-0011), so the jig-init
+# skill can read the section in a project with no framework checkout.
+test_init_installs_the_instructions_template() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  assert_file .ai/templates/AGENTS.md
+  assert_file_contains .ai/manifest " .ai/templates/AGENTS.md"
+}
+
+# A project that had its own AGENTS.md keeps it byte for byte (ADR-0003), and
+# jig claims no section in it: without a record every upgrade is a `keep-`.
+test_init_records_no_section_for_a_projects_own_agents_md() {
+  fixture_repo
+  printf '# Our own rules\n\nUse tabs.\n' > AGENTS.md
+  jig init --from "$JIG_HOME" >/dev/null
+  assert_eq "# Our own rules
+
+Use tabs." "$(cat AGENTS.md)"
+  assert_not_contains "$(cat .ai/manifest)" "instructions.section"
+}
+
+# The adoption path: a human agreed to the jig-init skill merging the section,
+# markers included, and `jig init` then starts tracking it. init writes nothing
+# into AGENTS.md here — it records markers that are already there.
+test_init_adopts_markers_a_human_added() {
+  fixture_repo
+  printf '# Our own rules\n' > AGENTS.md
+  jig init --from "$JIG_HOME" >/dev/null
+  assert_not_contains "$(cat .ai/manifest)" "instructions.section"
+
+  # shellcheck source=../scripts/lib/section.sh
+  . "$JIG_HOME/scripts/lib/section.sh"
+  {
+    printf '<!-- jig:begin -->\n'
+    jig_section_read "$JIG_HOME/templates/AGENTS.md"
+    printf '<!-- jig:end -->\n'
+  } >> AGENTS.md
+
+  jig init --from "$JIG_HOME" >/dev/null
+  assert_file_contains .ai/manifest "instructions.section: $(jig_section_hash AGENTS.md) AGENTS.md"
+  assert_file_contains AGENTS.md "# Our own rules"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_not_contains "$OUT" "keep-unmarked"
+  assert_not_contains "$OUT" "keep-conflict AGENTS.md"
+}
+
+# A re-run must not silently drop a record it is not re-deriving, or the next
+# upgrade would read the project's own section as somebody else's text.
+test_init_rerun_keeps_the_section_record_when_markers_were_removed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local recorded
+  recorded=$(sed -n 's/^instructions\.section: //p' .ai/manifest)
+  grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+
+  jig init --from "$JIG_HOME" >/dev/null
+  assert_eq "$recorded" "$(sed -n 's/^instructions\.section: //p' .ai/manifest)"
+}

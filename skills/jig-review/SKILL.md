@@ -41,7 +41,17 @@ subagent that has not seen the implementation being defended.
 - **Evidence gaps.** Behaviour claimed but not covered by a check.
 - **Scope creep.** Changes unrelated to the task.
 
-## 3. Report
+## 3. What you run
+
+A check belongs to a review when it tests a finding. Run `jig verify` once without flags —
+the project's setting decides how wide it goes, so it needs none — and targeted filters on
+the files a finding names. The run that earns its time is reverting the fix and watching the
+new test go red: a test that passes either way proves nothing. Never `jig verify --full` and
+never the raw runner over everything; the full set is CI's job, and a rerun of a suite that
+already passed cannot see the two things that actually get through it
+([what a reviewer runs](references/what-to-run.md)).
+
+## 4. Report
 
 Findings ordered by severity, each with file and line, one line of description, and a
 concrete fix. Say plainly when there are none. Record each one in the task's ledger with a

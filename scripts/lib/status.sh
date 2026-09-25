@@ -2,7 +2,7 @@
 # proposals, active tasks, housekeeping age (ARCHITECTURE.md, Scripts layout). Sourced by
 # scripts/jig; defines cmd_status.
 # Read-only, with two exceptions, both in .ai/runtime/ and both about the
-# status page (adr-20260922-the-status-page-stays-current-without-a-server):
+# status page (adr-20260924-the-status-page-keeps-the-readers-place):
 # the page itself, .ai/runtime/status.html (`--html`, `--open`, `--refresh`),
 # and the counts it reuses between full runs, .ai/runtime/status-counts
 # (_status_counts_save).
@@ -472,15 +472,20 @@ _status_hk_count() {
 # --- the status page (`jig status --html | --open`) ------------------------------
 #
 # One self-contained HTML file for a person who does not live in a terminal
-# (.ai/specs/autopilot/, Phase 5; adr-20260922-the-status-page-stays-current-without-a-server):
-# inline CSS, no script, no external asset, so it opens from disk with the
-# network off, and it follows the reader's light or dark preference. It
+# (.ai/specs/autopilot/, Phase 5; adr-20260924-the-status-page-keeps-the-readers-place):
+# inline CSS and one static inline script, no external asset, so it opens
+# from disk with the network off, and it follows the reader's light or dark
+# preference. It
 # answers, in this order, what needs the reader, what is running, how far the
 # specifications are, and then everything `jig status` prints.
 #
-# It stays current without a server: a `<meta http-equiv="refresh">` reloads it
-# every 10 seconds, and the commands that change a task, a spec or a
-# housekeeping result redraw it (jig_status_page_touch, common.sh). One page
+# It stays current without a server: the commands that change a task, a spec
+# or a housekeeping result redraw it (jig_status_page_touch, common.sh), and
+# the open page reloads itself every 10 seconds. The script does the reloading
+# (adr-20260924-the-status-page-keeps-the-readers-place): it waits while the
+# reader is busy, keeps their scroll position and open <details> across the
+# reload in sessionStorage, and offers a pause. Without JavaScript the
+# `<meta http-equiv="refresh">` in <noscript> reloads it as before. One page
 # per clone, in the main checkout: a task worktree sees one task, and a reader
 # watching one tab should see them all.
 #
@@ -757,7 +762,7 @@ _status_html_page() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 HTML
-  printf '<meta http-equiv="refresh" content="%s">\n' "$_STATUS_REFRESH"
+  printf '<noscript><meta http-equiv="refresh" content="%s"></noscript>\n' "$_STATUS_REFRESH"
   printf '<title>Jig status: %s</title>\n' "$(_status_h "$project")"
   cat <<'HTML'
 <style>
@@ -776,7 +781,7 @@ HTML
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 80px; }
 h1 { font-size: 1.6rem; margin: 0 0 4px; }
 h2 { font-size: 1.15rem; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 h3 { font-size: 1rem; margin: 20px 0 8px; }
@@ -817,6 +822,14 @@ ul.findings li { color: var(--bad-fg); }
 details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
 summary { cursor: pointer; }
 pre { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.autorefresh { position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 6px 4px 14px;
+  font-size: 0.85rem; color: var(--muted); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15); }
+.autorefresh[hidden] { display: none; }
+.autorefresh.paused { background: var(--warn-bg); border-color: var(--warn-fg); color: var(--warn-fg); }
+.autorefresh button { font: inherit; font-weight: 600; color: var(--accent); background: transparent;
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; cursor: pointer; }
+.autorefresh.paused button { color: var(--warn-fg); border-color: var(--warn-fg); }
 </style>
 </head>
 <body>
@@ -836,9 +849,93 @@ HTML
   _status_html_summary
 
   printf '<section id="report">\n<h2>Full report</h2>\n'
-  printf '<details><summary>What <code>jig status</code> prints</summary>\n<pre>%s</pre>\n</details>\n</section>\n' \
+  printf '<details id="full-report"><summary>What <code>jig status</code> prints</summary>\n<pre>%s</pre>\n</details>\n</section>\n' \
     "$(_status_h "$report")"
-  printf '</main>\n</body>\n</html>\n'
+  printf '</main>\n'
+  _status_html_autorefresh
+  printf '</body>\n</html>\n'
+}
+
+# _status_html_autorefresh — the pause control and the one inline script
+# (adr-20260924-the-status-page-keeps-the-readers-place). The control stays
+# hidden unless the script runs. The script is static: the reload interval is
+# the only value in it, and it writes to the page through textContent only.
+# It reloads once _STATUS_REFRESH seconds have passed, but not while the tab
+# is hidden, text is selected, the reader acted in the last 3 seconds or the
+# reader paused it; the open <details> (by id), the scroll position (as an
+# offset into the nearest <section>) and the pause survive the reload in
+# sessionStorage. Every storage access may throw, and then the page only
+# forgets them.
+_status_html_autorefresh() {
+  printf '<div id="autorefresh" class="autorefresh" hidden><span id="autorefresh-text"></span>'
+  printf '<button type="button" id="autorefresh-toggle"></button></div>\n'
+  printf '<script>\n(function () {\n'
+  printf "try { history.scrollRestoration = 'manual'; } catch (e) {}\\n"
+  printf 'var every = %s * 1000, quiet = 3000;\n' "$_STATUS_REFRESH"
+  cat <<'HTML'
+var key = 'jig-status:' + location.pathname, loaded = Date.now(), acted = 0, state = {};
+var bar = document.getElementById('autorefresh');
+var text = document.getElementById('autorefresh-text');
+var toggle = document.getElementById('autorefresh-toggle');
+try { state = JSON.parse(sessionStorage.getItem(key)) || {}; } catch (e) { state = {}; }
+function save() {
+  var open = [], at = null, off = 0, i, all, top;
+  all = document.querySelectorAll('details[id]');
+  for (i = 0; i < all.length; i++) { if (all[i].open) open.push(all[i].id); }
+  all = document.querySelectorAll('section[id]');
+  for (i = 0; i < all.length; i++) {
+    top = all[i].getBoundingClientRect().top;
+    if (top <= 1) { at = all[i].id; off = -top; }
+  }
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ paused: !!state.paused, open: open,
+      at: at, off: off, y: window.scrollY }));
+  } catch (e) {}
+}
+function restore() {
+  var i, el, y;
+  if (state.open) {
+    for (i = 0; i < state.open.length; i++) {
+      el = document.getElementById(state.open[i]);
+      if (el && el.tagName === 'DETAILS') el.open = true;
+    }
+  }
+  el = state.at ? document.getElementById(state.at) : null;
+  y = el ? el.getBoundingClientRect().top + window.scrollY + (state.off || 0) : state.y;
+  if (y > 0) window.scrollTo(0, y);
+}
+function show() {
+  bar.className = state.paused ? 'autorefresh paused' : 'autorefresh';
+  text.textContent = state.paused ? 'Auto-refresh paused'
+    : 'Auto-refresh every ' + every / 1000 + ' s · keeps your place';
+  toggle.textContent = state.paused ? 'Resume' : 'Pause';
+  bar.hidden = false;
+}
+function busy() {
+  var sel = window.getSelection ? window.getSelection() : null;
+  return document.hidden || Date.now() - acted < quiet || (sel && !sel.isCollapsed && String(sel) !== '');
+}
+function tick() {
+  if (state.paused || Date.now() - loaded < every || busy()) return;
+  save();
+  location.reload();
+}
+toggle.addEventListener('click', function () {
+  state.paused = !state.paused;
+  save();
+  if (state.paused) show(); else location.reload();
+});
+['scroll', 'wheel', 'keydown', 'pointerdown', 'touchstart'].forEach(function (name) {
+  window.addEventListener(name, function () { acted = Date.now(); }, { passive: true });
+});
+document.addEventListener('visibilitychange', tick);
+window.addEventListener('pagehide', save);
+restore();
+show();
+setInterval(tick, 1000);
+})();
+</script>
+HTML
 }
 
 # _status_html_freshness — how old the two borrowed kinds of data are: pull
@@ -1229,7 +1326,7 @@ EOF
     printf '<p class="empty">Nothing is running.</p>\n'
   fi
   if [ -n "$paused_rows" ]; then
-    printf '<details><summary>Paused</summary>\n'
+    printf '<details id="paused"><summary>Paused</summary>\n'
     _status_html_task_table "$paused_rows"
     printf '</details>\n'
   fi
@@ -1564,13 +1661,23 @@ _status_session_hook() {
 # is how that stops being silent. The adapter answers (an empty hint means
 # connected), for the same reason as the session hook line above, and the line
 # is omitted when the source checkout holding the adapters is gone.
+#
+# Connected is not the whole answer, because a section nothing updates goes
+# stale where nobody looks: the marked-section state is reported too, and it
+# is the same for every runtime — the section lives in AGENTS.md whatever
+# reads it (adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 _status_instructions() {
-  local source a adir hint file
+  local source a adir hint file recorded section
   source=$(manifest_source 2>/dev/null) || return 0
   [ -n "$source" ] || return 0
   [ -d "$source/adapters" ] || return 0
   # shellcheck source=lib/profiles.sh
   . "$JIG_LIB/profiles.sh"
+  # shellcheck source=lib/section.sh
+  . "$JIG_LIB/section.sh"
+
+  recorded=$(manifest_instructions_section 2>/dev/null) || recorded=""
+  section=$(jig_section_report_state "$JIG_PROJECT/AGENTS.md" "$recorded")
 
   for a in $(cfg_list adapters "claude codex"); do
     adir=$(adapters_dir "$source/adapters" "$a") || continue
@@ -1582,6 +1689,10 @@ _status_instructions() {
     if [ -n "$hint" ]; then
       file=$("adapter_${a}_instructions_file")
       printf 'instructions (%s): no Jig section in %s (run the jig-init skill)\n' "$a" "$file"
+    elif [ "$section" = unmarked ]; then
+      printf 'instructions (%s): Jig section in AGENTS.md is not marked — upgrades cannot reach it (run the jig-init skill)\n' "$a"
+    elif [ "$section" = modified ]; then
+      printf 'instructions (%s): Jig section in AGENTS.md was changed here; upgrades keep your text\n' "$a"
     else
       printf 'instructions (%s): ok\n' "$a"
     fi

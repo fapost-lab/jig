@@ -15,10 +15,23 @@ Run `.ai/scripts/jig status`. If it reports the project is not initialised, run
 installed) and show the user what it created. Never overwrite existing knowledge.
 
 When `jig status` prints `instructions (<runtime>): no Jig section in <file>`, the project
-kept its own `AGENTS.md` or `CLAUDE.md` and the agent there was never told about Jig. Show
-the user the file and [the Jig section](references/agents-section.md) verbatim, and with
-their consent append the section to `AGENTS.md`; for `CLAUDE.md`, add the line `@AGENTS.md`
-unless it should carry the section itself. Never rewrite what the file already says.
+kept its own `AGENTS.md` or `CLAUDE.md` and the agent there was never told about Jig. The
+section to add lives in `.ai/templates/AGENTS.md`, between `<!-- jig:begin -->` and
+`<!-- jig:end -->`. Show the user their file and that section verbatim, and with their
+consent append it to `AGENTS.md` **unchanged and with both marker lines** — `jig init`
+records the section only when it matches the template byte for byte, so a reworded copy
+stays unmanaged; for `CLAUDE.md`, add the line
+`@AGENTS.md` unless it should carry the section itself. Never rewrite what the file
+already says: the markers go around the section you add, never around text the project
+wrote.
+
+Then run `.ai/scripts/jig init`. It writes nothing into `AGENTS.md` — it records the
+markers it finds, and from then on `jig upgrade` keeps that section current by itself, so
+improvements to what Jig tells an agent arrive without anyone running this skill again.
+
+`instructions (<runtime>): Jig section in <file> is not marked` is the same conversation
+with the text already there: show the user how the template's section differs from theirs,
+and with their consent replace theirs with the marked one.
 
 ## 2. Choose the path
 

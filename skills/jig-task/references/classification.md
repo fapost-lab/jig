@@ -23,8 +23,7 @@ at any class.
 *Risk test:* one commit takes it back, the radius is this repository, a mistake is visible
 at once. One obvious change, no design choice, no new behaviour.
 
-Looks like: typo, wording, comment, formatting, a rename confined to one file, a version
-bump, a doc fix.
+Looks like: typo, wording, comment, formatting, a rename confined to one file, a doc fix.
 
 Route: **implement → verify → consolidate**. No workspace, no artifacts; consolidation is
 the `NO_DURABLE_KNOWLEDGE` or knowledge decision stated in the report.
@@ -112,7 +111,8 @@ with `spec.md` and `design.md`; review runs in a fresh context.
   re-classify when it grows. Cheap process first.
 - Unsure about **risk** (what a mistake costs): choose the higher class. A wasted review
   is cheaper than an unreviewed migration.
-- A task that is trivial to write but hard to undo is not T0. Risk sets the floor.
+- A task that is trivial to write but hard to undo is not T0. Risk sets the floor: a version
+  bump is one line, and a release that has been published and installed cannot be recalled.
 
 ## Re-classification
 

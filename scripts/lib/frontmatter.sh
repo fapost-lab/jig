@@ -50,9 +50,10 @@ fm_list() {
   block=$(fm_block "$file")
   [ -n "$block" ] || return 0
 
-  # No reader in this file quits before the end of its input: under pipefail
-  # the SIGPIPE it leaves the writer with fails the call (conventions/shell.md).
-  # A `case` stands in for jig_has_line, which this file is sourced without.
+  # `grep -c` rather than `grep -q`: counting every match means reading to the
+  # end of the input, so the printf behind it never writes into a closed pipe
+  # (conventions/shell.md). The `head -n 1` below is the other shape the rule
+  # allows: what writes into it is sed, with one short line left to write.
   if printf '%s\n' "$block" | grep -c -E "^${key}:[[:space:]]*\[" >/dev/null; then
     inline_content=$(printf '%s\n' "$block" \
       | sed -n "s/^${key}:[[:space:]]*\[\(.*\)\].*/\1/p" | head -n 1)

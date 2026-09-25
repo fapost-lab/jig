@@ -37,6 +37,11 @@ or rejected decisions matter; diagnostic history is not binding accepted knowled
 - **New decisions.** Did the change make a choice that deserves recording? If so, it is
   an ADR candidate for consolidation.
 
+An architecture violation shows in the documents and the diff, not in a test run. Where a
+claim still needs executing, the review's runs are the ordinary ones — `jig verify` once,
+or a targeted filter — and never the raw runner over everything
+([what a reviewer runs](../jig-review/references/what-to-run.md)).
+
 ## 3. Report
 
 For each of the five, one line: holds, or violated with the evidence. Violations are

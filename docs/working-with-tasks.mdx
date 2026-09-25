@@ -217,7 +217,10 @@ tells you where it is. `jig status --html` writes the page without opening it.
 **The page keeps itself current.** Once it exists, every time the agent changes a task — starts it,
 records a review finding, reaches a new stage, stops to ask you something — Jig redraws the file, and
 the open page reloads itself every 10 seconds. You do not need to run anything again; the time at the
-top says when it was last drawn. It is drawn from the checkout the tasks were filed in, which shows
+top says when it was last drawn. A reload keeps your place — the scroll position and the sections
+you opened — and waits while you scroll, click or select text. To read without interruption, press
+**Pause** in the bottom-right corner; **Resume** brings the page up to date at once. The pause lasts
+until you close the tab. It is drawn from the checkout the tasks were filed in, which shows
 every task started there, including those the agent went on to work on in a separate worktree:
 starting a task in a worktree keeps its workspace where it was filed and links it across. Those
 redraws only refresh a page that is already there: until you run `jig status --html` or `--open`,
@@ -266,8 +269,9 @@ name starts with a dot until you press Cmd+Shift+. (period). From a terminal:
 | macOS | `open .ai/runtime/status.html` |
 | Linux | `xdg-open .ai/runtime/status.html` |
 
-The page is a single file with nothing to download and no script: it opens in any browser, offline,
-and follows your system's light or dark theme. Nothing but the page and the counts it reuses is
+The page is a single file with nothing to download; its one small built-in script only reloads it
+and keeps your place. It opens in any browser, offline, and follows your system's light or dark
+theme; with JavaScript turned off it still reloads every 10 seconds, without keeping your place. Nothing but the page and the counts it reuses is
 written, both in `.ai/runtime/`, and neither is ever committed.
 </Accordion>
 

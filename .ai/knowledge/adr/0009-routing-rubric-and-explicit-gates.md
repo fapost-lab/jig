@@ -88,4 +88,20 @@ help, and picks by effort rather than by risk.
 > sets the floor" in the same document. The decision here is unchanged — a written rubric
 > decides the class, and both tie-breaks stand. What is new is a constraint on editing it: an
 > example list under a class is an illustration, and turning it back into something an agent
-> can match against re-breaks the rubric.
+> can match against re-breaks the rubric. The same test has a human-facing half in
+> `docs/concepts.mdx`, shorter and without the reference's example lists; the two move
+> together, because a rubric edit that leaves the site describing the old rule gives the
+> person at the gate and the agent different meanings for the same class
+> (convention-documentation).
+
+> **Amendment (2026-09-24, after the rubric rewrite above).** `a version bump` stood in T0's
+> examples and survived that rewrite, which changed the headings and missed the item under them.
+> It is removed: ADR-0034 calls the merge that raises the version "the irreversible moment", and
+> across 73 merged tasks it is the single most frequent real irreversibility, larger than every
+> other cause combined (convention-required-records). It was deliberately **not** moved into T4's
+> examples. The class is the highest whose test is answered yes, and the version is raised in the
+> pull request that becomes the release (ADR-0034), so naming it there would route every release
+> through specify, alternatives and a human gate — a change to lifecycle semantics, which needs its
+> own decision rather than an edit to an illustration. It is named once in the tie-break instead,
+> beside "trivial to write but hard to undo is not T0": that is a rule the agent reasons from, not
+> a list it matches, and it fixes no class.

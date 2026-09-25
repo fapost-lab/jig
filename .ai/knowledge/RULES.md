@@ -46,6 +46,16 @@
   (`domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.
 - `init` and `upgrade` never overwrite existing knowledge or user-modified files. (ADR-0003)
+  The one region of a project-owned file either of them writes is `AGENTS.md`'s marked
+  section, between `<!-- jig:begin -->` and `<!-- jig:end -->`, and only when all four hold:
+  a human consented to the markers being there (through the `jig-init` skill — `upgrade`
+  never adopts a section, and `init` records one only when the region is byte for byte
+  what jig itself would write, never re-deriving a record it already holds), the manifest header
+  records the hash jig last wrote there, the region still hashes to it, and the marker pair
+  reads unambiguously. Fail any one of the four and the project's text stays, reported and
+  untouched. Removing the markers keeps the section removed, as deleting the session-hook
+  line keeps the hook gone (ADR-0024).
+  (adr-20260924-jig-owns-a-marked-section-of-the-instructions)
 - Remote merge state is never written into a task `state` file. (ADR-0005)
 - A capability is passed to a profile only when its `profile.yaml` declares it, and is
   explicitly unset for every profile that does not — never left to the ambient

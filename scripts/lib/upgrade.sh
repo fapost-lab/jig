@@ -29,6 +29,12 @@ _upgrade_build_staged() {
   jig_copy_tree "$source/templates/knowledge" "$stage/.ai/templates/knowledge"
   jig_copy_tree "$source/templates/scheduler" "$stage/.ai/templates/scheduler"
   jig_copy_tree "$source/templates/spec" "$stage/.ai/templates/spec"
+  # The instructions template is framework-owned (ADR-0011): the `jig-init`
+  # skill reads the marked Jig section from it in a project that has no
+  # framework checkout to read it from. The project's own AGENTS.md is not
+  # staged and never will be — it stays project-owned, and only the region
+  # between its markers is jig's to replace (see _upgrade_section).
+  cp -p "$source/templates/AGENTS.md" "$stage/.ai/templates/AGENTS.md"
 
   for p in $profiles; do
     src_pdir=$(profiles_dir "$source/profiles" "$p")
@@ -261,6 +267,119 @@ $manifest_hash $rel"
   esac
 }
 
+# --- the marked instructions section ----------------------------------------
+
+# Outputs of _upgrade_section for its caller, because the two modes keep
+# different tallies (copy counts `placed`, link counts `created`) and bash 3.2
+# has no namerefs. The caller reads the action to bump its own counters and
+# the record to hand to the manifest writer.
+_UPGRADE_SECTION_ACTION=""
+_UPGRADE_SECTION_RECORD=""
+_UPGRADE_SECTION_TMP=""
+
+# _upgrade_section <source> <dry-run>
+# The same decision table as _upgrade_process_path, applied to the region
+# between the markers in the project's own AGENTS.md instead of to a whole
+# file (adr-20260924-jig-owns-a-marked-section-of-the-instructions). Prints
+# one report line per non-trivial outcome and sets the two variables above.
+#
+# The record in the manifest header is what separates "jig wrote this and may
+# keep it current" from "somebody else's text that happens to sit between
+# markers". Without it, every outcome here is a `keep-`: upgrade never adopts
+# a section, because the first time jig claims a region of a file the project
+# already had is a moment that belongs to a human. `jig init` is where that
+# claim is made, on markers a human consented to (the `jig-init` skill).
+#
+# | record | markers   | text                | outcome        |
+# |--------|-----------|---------------------|----------------|
+# | no     | none      |                     | keep-unmarked  |
+# | no     | ok        |                     | keep-conflict  |
+# | no     | malformed |                     | keep-malformed |
+# | yes    | ok        | = record, = source  | (silent)       |
+# | yes    | ok        | = record, ≠ source  | replace        |
+# | yes    | ok        | ≠ record            | keep-modified  |
+# | yes    | none      | the section removed | keep-modified  |
+# | yes    | malformed |                     | keep-malformed |
+_upgrade_section() {
+  local source="$1" dry_run="$2"
+  local file="$JIG_PROJECT/AGENTS.md" template="$source/templates/AGENTS.md"
+  local recorded rec_hash state cur_hash new_hash
+
+  _UPGRADE_SECTION_ACTION=""
+  recorded=$(manifest_instructions_section)
+  _UPGRADE_SECTION_RECORD="$recorded"
+  rec_hash="${recorded%% *}"
+
+  # A project-owned file jig never restores once it is gone (ADR-0003), and a
+  # source with no template to read a new section from: nothing to say.
+  if [ ! -f "$file" ] || [ ! -f "$template" ]; then
+    return 0
+  fi
+
+  state=$(jig_section_state "$file")
+
+  if [ -z "$recorded" ]; then
+    case "$state" in
+      absent)
+        _UPGRADE_SECTION_ACTION=keep-unmarked
+        _upgrade_out "keep-unmarked AGENTS.md"
+        _upgrade_out "  its Jig section is not marked, so upgrades cannot reach it; the jig-init skill adds the markers"
+        ;;
+      malformed)
+        _UPGRADE_SECTION_ACTION=keep-malformed
+        _upgrade_out "keep-malformed AGENTS.md (Jig section)"
+        _upgrade_out "  expected one $JIG_SECTION_BEGIN and one $JIG_SECTION_END, in that order"
+        ;;
+      *)
+        _UPGRADE_SECTION_ACTION=keep-conflict
+        _upgrade_out "keep-conflict AGENTS.md (Jig section)"
+        _upgrade_out "  jig did not write this section, so it does not update it; run \`jig init\` to adopt it"
+        ;;
+    esac
+    return 0
+  fi
+
+  if [ "$state" = malformed ]; then
+    _UPGRADE_SECTION_ACTION=keep-malformed
+    _upgrade_out "keep-malformed AGENTS.md (Jig section)"
+    _upgrade_out "  expected one $JIG_SECTION_BEGIN and one $JIG_SECTION_END, in that order"
+    return 0
+  fi
+
+  # The markers are gone: somebody removed the section on purpose, and an
+  # upgrade never restores what a human removed (the same conclusion ADR-0024
+  # reached about a deleted session-hook line).
+  if [ "$state" = absent ]; then
+    _UPGRADE_SECTION_ACTION=keep-modified
+    _upgrade_out "keep-modified AGENTS.md (Jig section)"
+    return 0
+  fi
+
+  cur_hash=$(jig_section_hash "$file")
+  if [ "$cur_hash" != "$rec_hash" ]; then
+    _UPGRADE_SECTION_ACTION=keep-modified
+    _upgrade_out "keep-modified AGENTS.md (Jig section)"
+    return 0
+  fi
+
+  new_hash=$(jig_section_hash "$template")
+  if [ "$new_hash" = "$cur_hash" ]; then
+    return 0 # already current, and silent like every other unchanged path
+  fi
+
+  if [ "$dry_run" != 1 ]; then
+    _UPGRADE_SECTION_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-upgrade-section.XXXXXX")
+    jig_section_read "$template" > "$_UPGRADE_SECTION_TMP"
+    jig_section_write "$file" "$_UPGRADE_SECTION_TMP" \
+      || jig_die "upgrade: could not replace the Jig section of AGENTS.md"
+    rm -f "$_UPGRADE_SECTION_TMP"
+    _UPGRADE_SECTION_TMP=""
+  fi
+  _UPGRADE_SECTION_ACTION=replace
+  _UPGRADE_SECTION_RECORD="$new_hash AGENTS.md"
+  _upgrade_out "replace AGENTS.md (Jig section)"
+}
+
 # _upgrade_deletable <rel> — true when <rel> is a relative path with no `..`
 # component under one of _UPGRADE_DELETE_ROOTS.
 _upgrade_deletable() {
@@ -370,6 +489,10 @@ _upgrade_link() {
     "$JIG_PROJECT/.ai/templates/scheduler" "$dry_run"
   _upgrade_link_one "$(cd "$source/templates/spec" && pwd)" \
     "$JIG_PROJECT/.ai/templates/spec" "$dry_run"
+  # A file link, not a directory one: the instructions template is a single
+  # framework-owned file (ADR-0011, and see _upgrade_build_staged).
+  _upgrade_link_one "$source/templates/AGENTS.md" \
+    "$JIG_PROJECT/.ai/templates/AGENTS.md" "$dry_run"
 
   for p in $active_profiles; do
     pdir=$(profiles_dir "$source/profiles" "$p")
@@ -390,6 +513,16 @@ _upgrade_link() {
     done
   done
 
+  # The marked instructions section is decided the same way in both modes:
+  # the record it rests on lives in the manifest header, and link mode writes
+  # a header too (it is only the body it has no use for).
+  _upgrade_section "$source" "$dry_run"
+  case "$_UPGRADE_SECTION_ACTION" in
+    replace) created_count=$((created_count + 1)) ;;
+    keep-modified | keep-malformed | keep-unmarked) kept_count=$((kept_count + 1)) ;;
+    keep-conflict) conflict_count=$((conflict_count + 1)) ;;
+  esac
+
   if [ "$dry_run" = 1 ]; then
     _upgrade_summary "$created_count" "$kept_count" 0 "$conflict_count" "unchanged (dry run)"
     return 0
@@ -403,7 +536,8 @@ _upgrade_link() {
     local version adapters_manifest
     version=$(_upgrade_source_version "$source")
     adapters_manifest=$(_upgrade_csv "$active_adapters")
-    manifest_write "$version" "$source" "$adapters_manifest" "link"
+    manifest_write_entries "$version" "$source" "$adapters_manifest" "link" \
+      "$_UPGRADE_SECTION_RECORD" < /dev/null
     _upgrade_summary "$created_count" "$kept_count" 0 "$conflict_count" "updated"
   else
     _upgrade_summary "$created_count" "$kept_count" 0 "$conflict_count" "unchanged"
@@ -439,9 +573,12 @@ cmd_upgrade() {
   . "$JIG_LIB/manifest.sh"
   # shellcheck source=lib/profiles.sh
   . "$JIG_LIB/profiles.sh"
+  # shellcheck source=lib/section.sh
+  . "$JIG_LIB/section.sh"
 
   trap '[ -n "$_UPGRADE_STAGE" ] && rm -rf "$_UPGRADE_STAGE"
         [ -n "$_UPGRADE_UNION_FILE" ] && rm -f "$_UPGRADE_UNION_FILE"
+        [ -n "$_UPGRADE_SECTION_TMP" ] && rm -f "$_UPGRADE_SECTION_TMP"
         [ -n "$_UPGRADE_WORK" ] && rm -rf "$_UPGRADE_WORK"' EXIT INT TERM
 
   local source
@@ -517,6 +654,13 @@ cmd_upgrade() {
   rm -rf "$_UPGRADE_STAGE"
   _UPGRADE_STAGE=""
 
+  _upgrade_section "$source" "$dry_run"
+  case "$_UPGRADE_SECTION_ACTION" in
+    replace) placed_count=$((placed_count + 1)) ;;
+    keep-modified | keep-malformed | keep-unmarked) kept_count=$((kept_count + 1)) ;;
+    keep-conflict) conflict_count=$((conflict_count + 1)) ;;
+  esac
+
   if [ "$dry_run" = 1 ]; then
     _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" \
       "unchanged (dry run)"
@@ -534,7 +678,8 @@ cmd_upgrade() {
     version=$(_upgrade_source_version "$source")
     adapters_manifest=$(_upgrade_csv "$active_adapters")
     printf '%s\n' "$new_entries" | sed '/^$/d' \
-      | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy"
+      | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy" \
+          "$_UPGRADE_SECTION_RECORD"
     _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "updated"
   else
     _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "unchanged"

@@ -21,11 +21,16 @@ Start with `jig doctor`. It checks the machine, the project and your agent's ins
 each, and prints a fix for every warning. On Windows, run it in Git Bash, or as
 `.ai\scripts\jig.cmd doctor` in PowerShell.
 
+If the trouble turns out to be Jig itself rather than your project, see [Known issues](/known-issues)
+— the faults we know about, and what to do instead of each.
+
 ## The agent does not follow Jig
 
 | Symptom | What to do |
 |---|---|
 | The agent works without classifying the task or creating one | Your `AGENTS.md` or `CLAUDE.md` probably lacks the Jig section — `jig status` shows `instructions (...): no Jig section`. Ask the agent to *"connect Jig to my AGENTS.md"*, or add the section by hand ([Install](/install#2-set-up-a-project)). For a single request, name the skill: `/jig-task` in Claude Code, `$jig-task` in Codex. |
+| Jig's own instructions never seem to improve | Your `AGENTS.md` probably carries the Jig section without its markers — `jig status` shows `instructions (...): Jig section in AGENTS.md is not marked`. `jig upgrade` reports it as `keep-unmarked AGENTS.md` and changes nothing. Ask the agent to *"connect Jig to my AGENTS.md"* and keep the `<!-- jig:begin -->` / `<!-- jig:end -->` lines it adds. |
+| `jig upgrade` says `keep-modified AGENTS.md (Jig section)` | Someone edited inside the markers, so Jig keeps your text and stops updating that section — by design. To go back to the maintained version, replace the region between the markers with the one in `.ai/templates/AGENTS.md`. |
 | The skills are missing in the runtime | Check that the runtime is listed under `adapters` in `.ai/config.yaml`, run `jig upgrade`, and reopen the agent session. |
 | The agent does not know a rule your team wrote down | The document may still be proposed — `jig status` shows the count on its `proposals:` line. Ask the agent to *"review the proposals"*. |
 

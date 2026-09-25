@@ -1194,7 +1194,7 @@ jig_trash_dest() {
   printf '%s\n' "$dest"
 }
 
-# --- the live status page (adr-20260922-the-status-page-stays-current-without-a-server)
+# --- the live status page (adr-20260924-the-status-page-keeps-the-readers-place)
 #
 # The page, .ai/runtime/status.html, is redrawn by the commands that change
 # what it shows, synchronously and from the counts the last full `jig status`

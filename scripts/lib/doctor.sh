@@ -321,12 +321,20 @@ _doctor_check_session_hooks() {
 # adapter answers, as for the session hook. A warn, not a fail: jig itself
 # works, but the agent will not follow its routes until the section is merged.
 _doctor_check_instructions() {
-  local source a adir hint file
+  local source a adir hint file recorded section
   source=$(manifest_source 2>/dev/null) || return 0
   [ -n "$source" ] || return 0
   [ -d "$source/adapters" ] || return 0
   # shellcheck source=lib/profiles.sh
   . "$JIG_LIB/profiles.sh"
+  # shellcheck source=lib/section.sh
+  . "$JIG_LIB/section.sh"
+
+  # The same answer `jig status` prints, from the same function: a section
+  # jig cannot reach is as much a problem as no section at all, and the two
+  # reports may not disagree about which it is.
+  recorded=$(manifest_instructions_section 2>/dev/null) || recorded=""
+  section=$(jig_section_report_state "$JIG_PROJECT/AGENTS.md" "$recorded")
 
   for a in $(_doctor_bracket_list "$(manifest_header_get adapters)"); do
     adir=$(adapters_dir "$source/adapters" "$a") || continue
@@ -339,8 +347,13 @@ _doctor_check_instructions() {
       file=$("adapter_${a}_instructions_file")
       _doctor_warn "instructions ($a)" "no Jig section in $file" \
         "run the jig-init skill, which merges the section with your consent"
+    elif [ "$section" = unmarked ]; then
+      _doctor_warn "instructions ($a)" "Jig section in AGENTS.md is not marked, so upgrades cannot reach it" \
+        "run the jig-init skill, which adds the markers with your consent"
+    elif [ "$section" = modified ]; then
+      _doctor_ok "instructions ($a)" "Jig section changed here; upgrades keep your text"
     else
-      _doctor_ok "instructions ($a)" "Jig section present"
+      _doctor_ok "instructions ($a)" "Jig section present and kept current"
     fi
   done
 }

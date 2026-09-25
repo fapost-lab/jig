@@ -65,13 +65,138 @@ test_jig_has_line_matches_whole_lines_as_strings() {
   assert_eq "alpha=1 b*ta=1 gamma=1 alph=0 lpha=0 b?ta=0 beta=0 =0 empty=0" "$OUT"
 }
 
-# No script pipes a shell value into a reader that can quit before the end of
-# its input: bash writes the pipe line by line, the writer dies of SIGPIPE and
-# pipefail turns a match into a failure about once in a hundred runs on Linux.
-test_no_script_pipes_printf_into_an_early_quitting_reader() {
+# No script pipes into a reader that can quit before the end of its input: the
+# writer dies of SIGPIPE and pipefail turns a match into a failure — about
+# once in a hundred runs when bash is writing line by line, and every single
+# time once the output outgrows a pipe buffer. conventions/shell.md carries
+# the rule and the cures.
+#
+# What decides is the stage that writes *into* the reader, not the one that
+# starts the pipeline. That is where the EPIPE lands: the reader leaves, and
+# the next write by the stage feeding it fails. Everything further upstream
+# dies only if that stage does. So `printf … | sed … | head -n 1` is not the
+# defect — eleven places in scripts/lib/ read a frontmatter key that way, and
+# the sed has a couple of short lines left to write, not a buffer's worth, so
+# it finishes and the printf behind it finishes with it.
+#
+# `sed` is therefore deliberately absent from the writer list: shell.md
+# blesses `sed -n 's/^key: //p' file | head -n 1` by name. `grep` is on it
+# because a grep over a diff is the case the rule cannot bound — nothing at
+# the call site says how many lines will match. A `grep -m` reading a *file*
+# is not a pipeline and is the cure, not the defect, so only a reader
+# preceded by `|` is reported.
+#
+# The scan joins line continuations before matching, because a pipeline
+# written across lines has no single line holding both halves. That is not a
+# refinement. `.github/scripts/ci-windows-scope.sh` was written as
+# `git diff … \` / `| grep … \` / `| head -n 1`, which dropped the match on
+# any diff over a few thousand lines — and when this guard was widened in
+# #101 for that very defect, the line-by-line scan walked past it and the
+# widening was believed to have caught it. What the widening did pay for is
+# `profiles/node/verify.sh`, where two greps over `package.json` piped into
+# `head -n 1` on one line: one short line each, never seen to fail, and the
+# cure — `grep -m 1` on the file — costs nothing and removes a question a
+# reader would otherwise answer from the size of someone else's file.
+#
+# _pipe_guard_hits <dir>… — one line per pipeline found, `<file>:<line>:
+# <joined text>`, the line being where the pipeline starts. No pipe of its
+# own: `find … -exec … +` keeps this guard out of its own scan.
+_pipe_guard_hits() {
+  find "$@" -type f -exec awk '
+    function flag(text) {
+      if (text ~ /(printf|echo|grep|find|sort|git|awk)[^|#]*\|[[:space:]]*(grep -[a-zA-Z]*[qm]|head([[:space:]]|$))/)
+        printf "%s:%d: %s\n", origin, start, text
+    }
+    # One awk reads every file `find` hands over, so a pipeline still being
+    # joined when a file ends is flushed here rather than dropped — and it is
+    # reported against the file it started in, which by now is not FILENAME.
+    FNR == 1 { flag(buf); buf = "" }
+    {
+      line = $0
+      # A comment runs to the end of its physical line, so a backslash there
+      # continues nothing — and a pipeline in a header is an example.
+      if (buf == "" && line ~ /^[[:space:]]*#/) next
+      if (buf == "") { origin = FILENAME; start = FNR }
+      # Only the line terminator is stripped, never trailing blanks: bash
+      # continues a line on a backslash that ends it, and a backslash before
+      # a space just escapes the space. A Windows checkout leaves the CR on
+      # the record where MSYS awk has not already dropped it.
+      sub(/\r$/, "", line)
+      if (line ~ /\\$/) { sub(/\\$/, " ", line); buf = buf line; next }
+      flag(buf line)
+      buf = ""
+    }
+    END { flag(buf) }
+  ' {} +
+
+}
+test_no_script_pipes_into_an_early_quitting_reader() {
   local hits
-  hits=$(grep -rnE "(printf|echo)[^|#]*\|[[:space:]]*(grep -[a-zA-Z]*q|head([[:space:]]|$))" \
-    "$JIG_HOME/scripts" "$JIG_HOME/profiles" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
+  hits=$(_pipe_guard_hits "$JIG_HOME/scripts" "$JIG_HOME/profiles" \
+    "$JIG_HOME/adapters" "$JIG_HOME/.github/scripts")
+  assert_eq "" "$hits"
+}
+
+# The guard above reads files that must stay clean, so it is green whether it
+# sees anything or not — which is how a widening shipped in #101 without
+# catching what it was written for. This one plants both shapes: the pipeline
+# spread over lines it has to report, and the blessed one it must not.
+test_pipe_guard_reads_a_pipeline_written_across_lines() {
+  mkdir -p sample
+  cat > sample/across.sh <<'EOF'
+hit=$(git diff -U0 "$base" HEAD -- "$path" 2>/dev/null \
+  | grep -E '^[+-]' \
+  | grep -oEi "$CONTENT" \
+  | head -n 1) || hit=""
+EOF
+  cat > sample/blessed.sh <<'EOF'
+# An example in a comment is not code: printf '%s\n' "$x" | grep -q y
+raw=$(printf '%s\n' "$block" \
+  | sed -n "s/^${key}:[[:space:]]*//p" \
+  | head -n 1)
+EOF
+  local hits
+  hits=$(_pipe_guard_hits sample)
+  assert_contains "$hits" "sample/across.sh:1:"
+  assert_contains "$hits" "| head -n 1"
+  assert_not_contains "$hits" "blessed"
+  assert_eq 1 "$(printf '%s' "$hits" | grep -c .)"
+}
+
+# One awk call reads every file find hands over, and the directories scanned
+# hold more than shell: profile.yaml, jig.cmd, jig-session-hook. A pipeline
+# left half-joined at the end of one file must not vanish when the next file
+# opens — which is what the guard did until the file after it decided the
+# answer, in whatever order the filesystem returned them.
+test_pipe_guard_keeps_a_file_whose_last_line_continues() {
+  mkdir -p sample
+  # The last line ends on a backslash, so the pipeline is still being joined
+  # when the file runs out.
+  cat > sample/dangling.sh <<'EOF'
+hit=$(git diff -U0 "$b" HEAD \
+  | grep -oEi "$C" \
+  | head -n 1) || hit="" \
+EOF
+  cat > sample/zz-after.yaml <<'EOF'
+name: after
+EOF
+  local alone both
+  alone=$(_pipe_guard_hits sample/dangling.sh)
+  both=$(_pipe_guard_hits sample/dangling.sh sample/zz-after.yaml)
+  assert_contains "$alone" "sample/dangling.sh:1:"
+  assert_eq "$alone" "$both" "a following file swallowed the pipeline"
+}
+
+# bash continues a line on a backslash that ends it. A backslash before a
+# trailing space escapes the space and ends the command, so the reader below
+# belongs to no pipeline and this file is clean. printf writes the fixture
+# because the trailing space is the whole point and a heredoc would carry it
+# into this file, where it would not survive an editor.
+test_pipe_guard_does_not_continue_on_a_backslash_before_a_space() {
+  mkdir -p sample
+  printf 'echo one \\ \n  | head -n 1\n' > sample/escaped.sh
+  local hits
+  hits=$(_pipe_guard_hits sample/escaped.sh)
   assert_eq "" "$hits"
 }
 

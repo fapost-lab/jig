@@ -14,7 +14,9 @@ what setup adds before starting a task.
 
 <Warning>
   Existing `AGENTS.md` and `CLAUDE.md` files are preserved. If the agent does not recognize Jig,
-  ask it to “connect Jig to my AGENTS.md” and review the section it proposes to add.
+  ask it to “connect Jig to my AGENTS.md” and review the section it proposes to add. Keep the
+  `<!-- jig:begin -->` and `<!-- jig:end -->` lines it puts around that section: with them,
+  `jig upgrade` keeps the section current; without them, it stays at today's version forever.
 </Warning>
 
 ## 2. Check the agent's understanding

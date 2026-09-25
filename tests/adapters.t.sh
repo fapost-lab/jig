@@ -223,7 +223,7 @@ test_adapter_codex_instructions_hint_names_a_foreign_agents() {
   adapters_source codex
   run adapter_codex_instructions_hint "$PWD"
   assert_contains "$OUT" "AGENTS.md does not mention Jig"
-  assert_contains "$OUT" ".codex/skills/jig-init/references/agents-section.md"
+  assert_contains "$OUT" ".ai/templates/AGENTS.md"
   assert_file_contains AGENTS.md "Use tabs."
 }
 
@@ -270,22 +270,30 @@ test_adapter_claude_instructions_hint_names_a_foreign_claude_md() {
   assert_contains "$OUT" "/jig-init"
 }
 
-# The section jig-init merges into a project's own AGENTS.md is a copy of the
-# template's "Read first" and "Workflow" sections; the two must not drift.
-test_jig_init_agents_section_matches_the_template() {
-  local expected
-  expected=$(awk '/^## Working rules/{exit} f{print} /^## Read first/{f=1; print}' \
-    "$JIG_HOME/templates/AGENTS.md")
-  assert_eq "$expected" "$(cat "$JIG_HOME/skills/jig-init/references/agents-section.md")"
-}
-
-# The user documentation prints the same section for pasting by hand, between
-# MDX comment markers and inside a four-backtick fence; it must not drift
-# from what jig-init merges either.
-test_docs_agents_section_matches_the_jig_init_reference() {
-  local doc="$JIG_HOME/docs/install.mdx" shown
+# `templates/AGENTS.md` is the only source of the Jig section: the `jig-init`
+# skill reads it from the installed copy, and `jig upgrade` replaces a
+# project's marked region from it. The documentation site is the one place
+# that cannot read a file, so it carries a copy for pasting by hand — markers
+# included, because without them nothing updates what was pasted — and this
+# test is what keeps that copy from drifting.
+test_docs_agents_section_matches_the_template() {
+  local doc="$JIG_HOME/docs/install.mdx" shown expected
   assert_file "$doc"
+  # shellcheck source=../scripts/lib/section.sh
+  . "$JIG_HOME/scripts/lib/section.sh"
+  expected=$(printf '%s\n%s\n%s\n' "$JIG_SECTION_BEGIN" \
+    "$(jig_section_read "$JIG_HOME/templates/AGENTS.md")" "$JIG_SECTION_END")
   shown=$(awk '/^\{\/\* \/jig:agents-section \*\/\}$/{f=0} f{print} /^\{\/\* jig:agents-section \*\/\}$/{f=1}' "$doc" \
     | sed '1d;$d')
-  assert_eq "$(cat "$JIG_HOME/skills/jig-init/references/agents-section.md")" "$shown"
+  assert_eq "$expected" "$shown"
+}
+
+# The section the template ships must itself be readable by the parser that
+# every other decision rests on: a template with a broken or missing pair
+# would make `jig init` record nothing and every upgrade a no-op, silently.
+test_template_agents_md_carries_a_well_formed_section() {
+  # shellcheck source=../scripts/lib/section.sh
+  . "$JIG_HOME/scripts/lib/section.sh"
+  assert_eq ok "$(jig_section_state "$JIG_HOME/templates/AGENTS.md")"
+  assert_contains "$(jig_section_read "$JIG_HOME/templates/AGENTS.md")" "jig-task"
 }
