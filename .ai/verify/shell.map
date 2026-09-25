@@ -30,8 +30,10 @@ tests/routing/**                routing::
 # first one that did: release-lib.sh decides "already released" for the
 # release tag, the epic gate and the changelog gate alike.
 .github/scripts/release-lib.sh  release-tag:: epic-pr-check:: changelog-check::
-# CI configuration is exercised by CI itself, not by tests/run.sh.
-.github/workflows/**            -
+# CI configuration is exercised by CI itself, not by tests/run.sh — except the
+# one thing a run cannot see about its own file: a Windows suite whose shares
+# do not cover it runs what it was told and reports green on the part it ran.
+.github/workflows/**            ci-workflow::
 
 install.ps1                     install::
 tests/*.t.ps1                   install::

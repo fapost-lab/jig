@@ -14,7 +14,7 @@ paths:
   - "profiles/**"
   - tests/run.sh
   - scripts/lib/profile.sh
-reviewed_at: 2026-09-18
+reviewed_at: 2026-09-25
 ---
 # Verify rules
 
@@ -59,6 +59,19 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED` and `CI` for every test:
   a test that runs a profile directly otherwise takes the scope of the run that started the
   suite.
+- **The raw test runner is not the evidence path.** `tests/run.sh` reads no configuration:
+  it does not know `verify.full_run`, never consults `.ai/verify/<profile>.map`, and prints
+  no mode header — so its output cannot be the narrowed-mode evidence a task is closed on.
+  It is the tool for running a named filter during an edit; the run that counts goes through
+  `cmd_verify`.
+- **A repeated full run is not additional evidence.** A suite that passed proves, run again,
+  that it still passes. What has actually got through this suite was invisible to that: nine
+  `worktree-bootstrap` tests passed against the wrong fixtures, and `section.sh` had no test
+  at all on Windows, which turned `main` red. The first was caught by reading the fixtures,
+  the second by writing the test that was missing — neither by a second run. This is why the
+  full set is run where it is cheap and parallel, in CI, and why a local repeat of it is a
+  cost with no yield: it competes for the machine with the CI pass holding the merge and
+  returns a confidence it did not produce.
 - `detect` globs live in `profile.yaml` and nowhere else. No command re-derives the
   mapping from root manifest to stack.
 - A profile's `verify.sh` prints one line per check it ran, because a profile runs

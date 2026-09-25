@@ -143,8 +143,10 @@ Do not require a matrix job by name. `test` is named `${{ matrix.os }}`; when `s
 expression is never expanded, and GitHub reports one skipped check called `matrix.os` instead of
 `ubuntu-latest` and `macos-latest`. A rule naming those waits for a status nobody will send, and
 the pull request cannot be merged although its CI is green. `test-windows`
-(`${{ matrix.shard }}/3`) behaves the same way. A new job therefore joins `ci-ok`'s `needs` rather
-than the rule.
+(`${{ matrix.shard }}/${{ strategy.job-total }}`) behaves the same way. A new job therefore joins
+`ci-ok`'s `needs` rather than the rule. It is also why the number of Windows shares can be changed
+without touching the branch rules: the share count is in the job names, and `ci-ok`'s name never
+moves.
 
 ### Routing evals
 

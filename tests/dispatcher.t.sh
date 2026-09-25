@@ -65,13 +65,40 @@ test_jig_has_line_matches_whole_lines_as_strings() {
   assert_eq "alpha=1 b*ta=1 gamma=1 alph=0 lpha=0 b?ta=0 beta=0 =0 empty=0" "$OUT"
 }
 
-# No script pipes a shell value into a reader that can quit before the end of
-# its input: bash writes the pipe line by line, the writer dies of SIGPIPE and
-# pipefail turns a match into a failure about once in a hundred runs on Linux.
-test_no_script_pipes_printf_into_an_early_quitting_reader() {
+# No script pipes into a reader that can quit before the end of its input: the
+# writer dies of SIGPIPE and pipefail turns a match into a failure — about
+# once in a hundred runs when bash is writing line by line, and every single
+# time once the output outgrows a pipe buffer. conventions/shell.md carries
+# the rule and the cures.
+#
+# The scan covers every directory this repository keeps shell in, .github/
+# included, and counts the filters as writers too. Both widenings are paid
+# for: `.github/scripts/ci-windows-scope.sh` was written with
+# `grep … | head -n 1`, which dropped the match on any diff over a few
+# thousand lines, and neither the rule nor this guard caught it — the guard
+# looked at scripts/ and profiles/ only, and took a writer to be `printf` or
+# `echo`. A `grep -m` reading a *file* is not a pipeline and is the cure, not
+# the defect, so only a reader preceded by `|` is reported.
+#
+# `sed` is deliberately not on the writer list. conventions/shell.md blesses
+# `sed -n 's/^key: //p' file | head -n 1` by name — an external writer fills
+# one pipe buffer per write, and a `key:` read from a state file is one short
+# line — and eleven places here rely on that. `grep` is on the list because a
+# grep over a diff is the case the rule cannot bound: nothing at the call site
+# says how many lines will match.
+#
+# So this guard reads the shape, not the size. That is why it reported
+# `profiles/node/verify.sh`, where two greps over `package.json` piped into
+# `head -n 1`: one short line each, never seen to fail, and the cure —
+# `grep -m 1` on the file — costs nothing and removes a question a reader
+# would otherwise have to answer from the size of someone else's file.
+test_no_script_pipes_into_an_early_quitting_reader() {
   local hits
-  hits=$(grep -rnE "(printf|echo)[^|#]*\|[[:space:]]*(grep -[a-zA-Z]*q|head([[:space:]]|$))" \
-    "$JIG_HOME/scripts" "$JIG_HOME/profiles" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
+  hits=$(grep -rnE \
+    "(printf|echo|grep|find|sort|git|awk)[^|#]*\|[[:space:]]*(grep -[a-zA-Z]*[qm]|head([[:space:]]|$))" \
+    "$JIG_HOME/scripts" "$JIG_HOME/profiles" "$JIG_HOME/adapters" \
+    "$JIG_HOME/.github/scripts" \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
   assert_eq "" "$hits"
 }
 

@@ -74,7 +74,13 @@ _node_dep_present() {
 _node_pm() {
   local field
   if [ -f package.json ]; then
-    field=$(grep -oE '"packageManager"[[:space:]]*:[[:space:]]*"[a-zA-Z0-9._-]+@[^"]+"' package.json | head -n1)
+    # grep reads the file itself and stops at the first hit. Piping it into
+    # `head` instead puts a writer in front of a reader that quits early, and
+    # under pipefail a writer still writing when that happens turns a found
+    # value into an empty one (conventions/shell.md). One `packageManager`
+    # line never grew far enough for that, but how big someone else's
+    # package.json gets is not a thing this function should have to know.
+    field=$(grep -m 1 -oE '"packageManager"[[:space:]]*:[[:space:]]*"[a-zA-Z0-9._-]+@[^"]+"' package.json)
     case "$field" in
       *pnpm@*) printf 'pnpm\n'; return 0 ;;
       *yarn@*) printf 'yarn\n'; return 0 ;;
@@ -116,7 +122,7 @@ _node_local_bin() {
 _node_lint_uses_eslint() {
   local script
   [ -f package.json ] || return 1
-  script=$(grep -oE '"lint"[[:space:]]*:[[:space:]]*"[^"]*"' package.json | head -n1)
+  script=$(grep -m 1 -oE '"lint"[[:space:]]*:[[:space:]]*"[^"]*"' package.json)
   case "$script" in
     *eslint*) return 0 ;;
   esac

@@ -132,7 +132,9 @@ rules verbatim:
   and architecture review go to a subagent in a fresh context; after its report, check the
   ledger with `jig task findings <id>` — only the ledger closes a finding.
 - Run only the tests that cover the changed files, and `shellcheck` at the version CI uses.
-  Never the full suite and never a full `jig verify`: CI runs those.
+  `jig verify` without flags is right — it narrows itself to the project's setting. `--full`
+  and the raw runner over everything are not: CI runs the full set
+  ([what a reviewer runs](../../jig-review/references/what-to-run.md)).
 - End at consolidation: the knowledge decision recorded
   (`jig task set <id> knowledge_consolidated true`), the change staged, the commit message in
   `.ai/workspace/tasks/<id>/commit-message` and the pull request body — with

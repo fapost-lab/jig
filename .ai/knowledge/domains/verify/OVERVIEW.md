@@ -14,6 +14,7 @@ paths:
   - schemas/verify-map.md
   - ".ai/verify/**"
   - scripts/lib/profile.sh
+  - schemas/profile.md
 reviewed_at: 2026-09-18
 ---
 # Verify
@@ -73,4 +74,4 @@ contract. A change to how profiles are *copied* still belongs to `install`.
 - `scripts/lib/profiles.sh` — `profiles_active`, `profiles_detect`, `profiles_supports`,
   `profiles_check_requires`.
 - `profiles/<stack>/profile.yaml` — the one place the mapping "root manifest → stack" is
-  written down.
+  written down; its keys are described in `schemas/profile.md`.

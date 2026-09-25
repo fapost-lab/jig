@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-22
+reviewed_at: 2026-09-24
 ---
 # Housekeeping
 
@@ -118,7 +118,7 @@ phase's tasks merged. Its line shape is an interface with three consumers now, a
 The status page reads the newest block too — `remote=open` for pull requests waiting on a person,
 the flags for its cards — and the marker's `forge=github|gitlab|none|failed` field to say whether
 that data can be trusted: `failed` means the forge did not answer this run, so no `open` was seen
-(adr-20260922-the-status-page-stays-current-without-a-server). A non-dry run ends by redrawing the
+(adr-20260924-the-status-page-keeps-the-readers-place). A non-dry run ends by redrawing the
 page in full when it exists (`jig_status_page_touch --full`), which also refreshes the counts the
 page's cheaper redraws reuse; that never changes the run's output or exit code.
 

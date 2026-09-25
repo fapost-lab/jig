@@ -61,3 +61,31 @@ The one property most often available is the third: a fact already in the reposi
 contradict the claim. `.github/scripts/changelog-check.sh` is the shape — it asks a stateless
 question about the declared version, turns itself on when a branch raises it and off once the
 version is released, and nobody fills anything in.
+
+The rule has since refused a second proposal, and what the refusal measured is worth more than
+the proposal was. A machine was to object at the completion gates wherever a class contradicts
+the diff: a change that raises the shipped version is a release, and a release is neither T0 nor
+T1. It passes the test above twice over — nobody fills anything in, and the objection is a fact
+the machine reads for itself — and it was still not built. Two findings outlive it.
+
+**A signal read from a diff is worth exactly what the file it reads is worth.** Anchored to one
+path and one line, this one is exact: of 96 merged pull requests, 18 change `^JIG_VERSION=` in
+`scripts/lib/version.sh`, and those same 18 are every pull request that touches that file at all
+— not one false positive. Loosened to a substring search over the whole diff it takes on 8 false
+positives at once, because `JIG_VERSION=` also lives in 15 other files, 9 of them tests that
+write fake version files. Generalised to other ecosystems by a shell without `jq` it stops
+working altogether: `^version = ` in `Cargo.toml` matches a dependency's version under
+`[dependencies.*]` as readily as the package's own; `"version"` in `package.json` picks up a
+nested one (`9.9.9` for a package whose version is `0.4.1`); a `pyproject.toml` with
+`dynamic = ["version"]` holds no version at all; and in Go, Swift and most PHP libraries the
+release is a git tag, so there is no version in any file to read. The exactness collapses at the
+ecosystem boundary, not at the parser — which is where a better parser would have been spent.
+
+**Before a proposal is judged by the test above, ask whether its mechanism reaches its
+evidence.** The version check was to be generalised by the profiles, so that nobody configures
+anything: `node` knows `package.json`, `rust` knows `Cargo.toml`. But this repository activates
+`generic` and `shell`, and its own version lives in `scripts/lib/version.sh` — a file invented
+here, belonging to no ecosystem's convention, which no profile can name. Not one of the 15 tasks
+that justified the proposal would have been reached by the mechanism proposed to catch them. A
+proposal can pass the ritual test and fail this one, and it fails it quietly, because the
+evidence and the instrument are almost always argued in separate paragraphs.
