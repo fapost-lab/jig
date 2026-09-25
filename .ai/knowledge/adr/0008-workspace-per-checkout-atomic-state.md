@@ -10,7 +10,7 @@ paths:
   - schemas/state.md
   - scripts/lib/config.sh
 summary: Why a workspace belongs to its checkout and state is written atomically without locks.
-reviewed_at: 2026-09-16
+reviewed_at: 2026-09-25
 ---
 # ADR-0008: Task workspaces are per checkout; state writes are atomic, last-write-wins
 
@@ -85,3 +85,13 @@ write the same `state` file.
 > happening in **this checkout**", so a shared home would have made it answer the wrong
 > question. The rejection is about the record's subject, not about the location, and it
 > stands.
+
+> **Amendment (2026-09-25).** The first exception widens from one workspace to the whole
+> `.ai/workspace/tasks/` directory (ADR-0029 as amended). It is still *given at creation, not
+> looked up*, so the rule this ADR is about — no checkout reaches into another's `.ai/` to find
+> something — is untouched, and the rejected alternative of a shared location under the common git
+> dir stays rejected: the directory is the filing checkout's, in its own `.ai/` tree. What changes
+> is the consequence recorded above. "A worktree removed with `git worktree remove` takes its
+> workspaces with it" no longer holds for a worktree jig made, because it has none of its own; it
+> still holds for one made by hand, and there `jig task new` refuses rather than let a task be
+> filed into it.

@@ -45,6 +45,13 @@ cmd_housekeeping() {
   trap 'rm -f "$_HK_ROWS"' EXIT
 
   local runtime="$JIG_PROJECT/$JIG_AI_DIR/runtime"
+  # Every walk of this path below is `find "$tasks_dir" ...` with no trailing
+  # slash, and that is load-bearing. In a worktree the path is a link to the
+  # owner's directory (_task_link_workspace), and find descends a symlink
+  # named as its starting point only when the slash is written. Without it
+  # housekeeping in a borrowing checkout finds no task at all, which is the
+  # point: a workspace is purged and its worktree retired by the checkout it
+  # was filed in, never by one that borrowed it (ADR-0008).
   local tasks_dir="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
 
   local trash_ttl abandoned_ttl stale_after
@@ -799,6 +806,13 @@ _hk_worktree_retire() {
     esac
   fi
   if [ "$ours" = 1 ]; then
+    # A worktree that borrows the owner's `tasks/` directory whole holds no
+    # workspace of its own, and this walk says so by itself: the path is
+    # written without a trailing slash, and find does not descend a symlink
+    # named as its own starting point. Add the slash and this answers with the
+    # owner's tasks, every borrowing worktree reads as holding a workspace, and
+    # no such worktree is ever retired again -- which is what
+    # test_housekeeping_removes_the_worktree_of_a_purged_task fails on.
     own=$(find "$path/$JIG_AI_DIR/workspace/tasks" -mindepth 1 -maxdepth 1 ! -type l -print -quit 2>/dev/null) || own=""
     [ -z "$own" ] || reason="own-workspace"
   fi
@@ -938,8 +952,9 @@ _hk_repo_holds_work() {
 #
 # `-prune` keeps the walk out of the object store of a repository it just
 # found, and find is not given -L, so neither a starting point that is a link
-# nor a link inside one is followed — the borrowed workspace under
-# .ai/workspace/tasks/ is a link, and it leads into another checkout entirely.
+# nor a link inside one is followed — .ai/workspace/tasks is itself the link
+# that borrows another checkout's workspaces (the fallback shape holds one link
+# per task under it instead), and it leads into another checkout entirely.
 _hk_worktree_unshared() {
   local path="$1" list="$2" rel dot repo
   while IFS= read -r rel; do
@@ -961,8 +976,8 @@ _hk_worktree_unshared() {
 
 # _hk_ignored_summary <ignored> — those paths on one line, for the log entry of
 # a removal. Jig's own ignored paths are left out: .ai/runtime is derived and
-# .ai/workspace holds nothing here but the link to the workspace, which stays
-# where it was filed. Five names, then a count: the line is a record of what
+# .ai/workspace holds nothing here but the link to the tasks directory, which
+# stays where it was filed. Five names, then a count: the line is a record of what
 # was lost, not an inventory.
 #
 # Comma-separated without a space, and the caller puts the field last: the log
@@ -979,8 +994,8 @@ _hk_ignored_summary() {
 
 # _hk_worktree_leftover <path> — clear what `git worktree remove` leaves behind
 # on Windows. There git removed the tracked files but left the directory, with
-# `.ai/…` and the junction that borrowed the workspace still in it (measured on
-# windows-latest, 2026-09-14). Removes links only, never what they point at —
+# `.ai/…` and the junction that borrowed the tasks directory still in it
+# (measured on windows-latest, 2026-09-14). Removes links only, never what they point at —
 # `find` does not follow them — and then empty directories, deepest first;
 # `rmdir` cannot remove a directory that still holds anything. Non-zero when
 # anything else remains, which stays where it is. Called only after git

@@ -985,8 +985,10 @@ test_spec_remove_skips_symlinked_workspace() {
 Spec: .ai/specs/alpha/
 EOF
   mkdir -p .ai/workspace/tasks
-  # The way a task worktree borrows a workspace (ADR-0029): a symbolic link,
-  # or a junction where symbolic links cannot be made.
+  # The per-task link: what a task worktree got before 2026-09-25 and what
+  # `task start` still falls back to where a directory link would not be
+  # ignored (ADR-0029 as amended). A symbolic link, or a junction where
+  # symbolic links cannot be made.
   plant_dir_link "$(cd ../elsewhere-tasks/T-1 && pwd -P)" .ai/workspace/tasks/T-1
   cp ../elsewhere-tasks/T-1/task.md linked.before
 
@@ -997,6 +999,34 @@ EOF
   assert_not_contains "$OUT" "kept           T-1"
   cmp -s ../elsewhere-tasks/T-1/task.md linked.before \
     || fail "a symlinked workspace's task.md was modified"
+}
+
+test_spec_remove_skips_every_task_when_the_whole_directory_is_borrowed() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf '%s\n' '- [ ] `T-1` — item' > .ai/specs/alpha/roadmap.md
+
+  # What a task worktree gets now: the owner's whole task directory, one link
+  # (ADR-0029 as amended). Every task under it is then a real directory, so the
+  # per-task skip below would no longer fire, and `spec remove` would rewrite
+  # another checkout's task.md from a branch that knows nothing about it.
+  mkdir -p ../elsewhere-tasks/T-1
+  cat > ../elsewhere-tasks/T-1/task.md <<'EOF'
+# T-1
+
+Spec: .ai/specs/alpha/
+EOF
+  rm -rf .ai/workspace/tasks
+  plant_dir_link "$(cd ../elsewhere-tasks && pwd -P)" .ai/workspace/tasks
+  cp ../elsewhere-tasks/T-1/task.md linked.before
+
+  run jig spec remove alpha
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this checkout borrows its task workspaces"
+  assert_not_contains "$OUT" "unlinked       T-1"
+  cmp -s ../elsewhere-tasks/T-1/task.md linked.before \
+    || fail "a borrowed workspace's task.md was modified"
 }
 
 # --- spec remove: moving the spec directory to trash ----------------------------

@@ -1,7 +1,8 @@
 # jig: transient workspace and runtime state are local-only. No trailing slash:
 # a checkout that shares another one's workspace through a directory link has
-# `.ai/workspace` as a link rather than a directory, and a rule ending in `/`
-# matches only a directory, so such a checkout reported its workspace untracked.
+# `.ai/workspace/tasks` as a link rather than a directory, and a rule ending in
+# `/` matches only a directory, so such a checkout reported its workspace
+# untracked.
 .ai/workspace
 .ai/runtime
 # jig: settings for one clone only (ADR-0038)

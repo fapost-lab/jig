@@ -150,7 +150,7 @@ separating a folder that `npm install` recreates from work that exists nowhere e
   descends each of them, so an installed `node_modules` is read through. What bounds the cost is
   that it runs once, at removal time, for a task already closed and landed; `-prune` keeps it out
   of the object store of a repository it just found; and it is not given `-L`, so the link that
-  borrows the workspace leads nowhere. It runs last, after the cheap questions, and only for a worktree under
+  borrows the owner's task directory leads nowhere. It runs last, after the cheap questions, and only for a worktree under
   `git.worktree_root`: a worktree jig did not create is not removed anyway.
 - A repository nested inside an ignored folder that nobody will ever push now keeps a worktree,
   and its task, under "needs you" until a person deals with it. That is the intended trade: the
@@ -170,3 +170,20 @@ separating a folder that `npm install` recreates from work that exists nowhere e
   this check. Its worktree is seconds old and was created empty by this very call, so there is no
   ignored work in it to lose; if `worktree-bootstrap` ever moves rather than copies files into a
   worktree before that undo can run, the check belongs there as well.
+
+> **Amendment (2026-09-25, later the same day).** The consequence above — "a task filed from
+> inside a worktree is still stranded and still goes silently" — no longer holds, and what closed
+> it is not the widening this decision rejected. `jig task start --worktree` now gives the worktree
+> one link to the owner's whole `.ai/workspace/tasks/` directory instead of one link to a single
+> task inside a directory of its own (ADR-0029, amendment of 2026-09-25), so a task filed in a
+> worktree is filed where every other task is and outlives the tree that wrote it. Nothing in this
+> decision changed: the sign is still a repository, ignored files that answer no git are still
+> named in the log rather than protected, and the check was not widened to reach them.
+>
+> The orphan survives in the two shapes that decision names, and in both it is refused instead of
+> lost: where `task start` keeps the per-task link because a directory link would read as untracked,
+> and in a worktree somebody made by hand, `jig task new` refuses and names the checkout the task
+> belongs in. The `docs/known-issues.mdx` entry the alternative above left on the page, owned by
+> `task-new-in-a-worktree-strands-the-task`, left it with that task's own pull request — which is
+> what the alternative said would happen, and is `conventions/documentation.md`'s owner rule
+> working rather than being made a preference.

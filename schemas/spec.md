@@ -108,9 +108,13 @@ Report lines, one per decision:
 | `not-here <id> (…)` | the roadmap names the id; no workspace in this checkout |
 | `moved .ai/specs/<id> -> .ai/runtime/trash/<date>/spec-<id>` | `-2`, `-3` when taken |
 
-Linked tasks are found through their own `Spec:` lines among this checkout's workspaces; workspace
-links are skipped. `--dry-run` prints the same lines as `would-abandon`, `would-unlink` and
-`would-move` and changes nothing. Git is not touched.
+Linked tasks are found through their own `Spec:` lines among this checkout's workspaces; a workspace
+that is itself a link — one task borrowed on its own, the older shape — is skipped without a word.
+When `.ai/workspace/tasks` itself is a link to another checkout's whole tasks directory, this
+checkout owns none of the tasks under it, and says so once, to stderr, before any per-task line, in
+place of them: `jig: warning: spec remove: this checkout borrows its task workspaces, so no task is
+unlinked here; run it in the checkout that owns them`. `--dry-run` prints the same lines as
+`would-abandon`, `would-unlink` and `would-move` and changes nothing. Git is not touched.
 
 A copy of a spec directory in another project is a separate spec; nothing links the two.
 

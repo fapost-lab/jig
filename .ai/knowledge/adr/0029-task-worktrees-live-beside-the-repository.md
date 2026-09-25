@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
-summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the workspace by link, and are cleaned up by git.
+summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the owner's task directory by link, and are cleaned up by git.
 reviewed_at: 2026-09-25
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
@@ -291,3 +291,37 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > each such repository's own git, because nothing outside it knows
 > (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). Ignored files that are not a
 > repository still go; a removal now names them in the housekeeping log.
+
+> **Amendment (2026-09-25).** "The worktree gets one link, `.ai/workspace/tasks/<id>`" becomes
+> **one link to `.ai/workspace/tasks/` itself**. The goal stated above — "that checkout keeps
+> seeing every task" — was the one thing a per-task link did not deliver, because it says nothing
+> about a task filed from *inside* the worktree. Such a task got a real directory beside the link:
+> gitignored, absent from the checkout that keeps the queue, and deleted without a word when the
+> tree went. In one shift that happened three times, each time to a statement an agent had written
+> at the end of its own work. The same blindness ran the other way, and cost more often: a reviewer
+> in a worktree could not confirm that a task it had been told about existed, and no agent there
+> could check the queue before filing a duplicate.
+>
+> Ownership does not move with the link, and that is not left to luck. Housekeeping walks the
+> directory as `find "$tasks_dir"` with **no trailing slash**, and find does not descend a symlink
+> named as its own starting point, so a borrowing checkout finds no workspace to purge and no
+> worktree to retire; the globs the reporting commands use do follow the link, and that asymmetry
+> is exactly the split wanted. The "holds no workspace of its own" condition is answered by that
+> same walk, and the slash is what answers it: a guard asking `[ -L ]` before the walk was written
+> first and then removed, because nothing could make it fail — find already answers the same, and a
+> claim no stand can refute is decoration rather than evidence
+> (`conventions/detectors.md`). Writing the slash **is** refutable, and refuted: with it,
+> `test_housekeeping_removes_the_worktree_of_a_purged_task` reports the worktree kept for
+> `own-workspace` instead of removed. `spec remove` skips every task under a borrowed directory
+> and says so, where before the per-task skip did it one at a time.
+>
+> The note above warns whoever links a directory whole that a trailing-slash ignore rule matches a
+> directory and not a link, and that an untracked path makes the worktree un-removable for the rest
+> of its life. That warning stands, and is answered rather than waved away: `task start` asks
+> `git check-ignore` about the link's own path first, and keeps the single-task link when the answer
+> is no. The probe is exact — `.ai/workspace` and `.ai/workspace/` both ignore the path, while
+> `.ai/workspace/tasks/` does not, and that third case is the dangerous one. Where the fallback
+> fires the old blindness returns, so `jig task new` refuses to file a task in a worktree that keeps
+> a task directory of its own, naming the checkout the task belongs in. It refuses in a worktree
+> somebody made by hand for the same reason. Losing a statement silently is not a shape this
+> command is allowed to have.

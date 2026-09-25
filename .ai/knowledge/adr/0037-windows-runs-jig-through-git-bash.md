@@ -22,7 +22,7 @@ reviewed_at: 2026-09-17
 
 Jig is meant for people who build with coding agents without being developers, and most of
 them use Windows. Until now jig said "macOS and Linux": the installer is a `curl | bash` line,
-the global `jig` is a symlink, a task worktree borrows its workspace through a symlink, and
+the global `jig` is a symlink, a task worktree borrows its task directory through a symlink, and
 every script is bash.
 
 A `windows-latest` CI probe on 2026-09-14 ran the suite in Git Bash: 83 failures. Grouped, a

@@ -264,12 +264,88 @@ _task_worktree_note() {
   printf 'worktree=%s uncommitted=%s\n' "$1" "$n"
 }
 
+# _task_borrowed_tasks_root — the physical path of `.ai/workspace/tasks` when
+# this checkout borrows the whole directory from another worktree of this
+# repository. Non-zero for a directory of its own, and for any other link,
+# which could point anywhere.
+_task_borrowed_tasks_root() {
+  local link real list p
+  link="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  [ -L "$link" ] || return 1
+  real=$(cd -P "$link" 2>/dev/null && pwd -P) || return 1
+  list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 1
+  while IFS= read -r p; do
+    case "$p" in
+      "worktree "*) p=${p#worktree } ;;
+      *) continue ;;
+    esac
+    p=$(cd -P "$p" 2>/dev/null && pwd -P) || continue
+    if [ "$real" = "$p/$JIG_AI_DIR/workspace/tasks" ]; then
+      printf '%s\n' "$real"
+      return 0
+    fi
+  done < <(printf '%s\n' "$list")
+  return 1
+}
+
+# _task_link_workspace <owner-task-dir> <tree> <id> — give <tree> the task
+# workspaces of the checkout that owns <id>. Non-zero when no link could be
+# made; the caller undoes the start.
+#
+# The whole `tasks/` directory, not the one task (ADR-0029 as amended). A task
+# filed from inside the worktree then lands where every other one is, instead
+# of in a directory that is gitignored, invisible to the checkout that keeps
+# the queue, and deleted without a word when the tree goes; and a task filed
+# outside is visible here, so an agent can confirm one exists before filing a
+# duplicate. The link is still given at creation, never looked up, so
+# ADR-0008's rule stands.
+#
+# What keeps ownership of the lifecycle where it was is `find`: housekeeping
+# walks `find "$tasks_dir" -mindepth 2`, and find does not descend a symlink
+# named as its own starting point, so a borrowing checkout finds no task to
+# purge or retire. The globs the reporting commands use do follow it, and that
+# asymmetry is exactly the split this change wants. It turns on the absence of
+# a trailing slash in those two find calls, which is why they carry a comment
+# saying so.
+#
+# The fallback to ADR-0029's single-task link is not a nicety. A path git does
+# not ignore reads as untracked, and `git worktree remove` without --force --
+# the only removal jig performs -- then refuses that worktree for the rest of
+# its life. A rule ending in `/` matches only a directory, so a project that
+# ignores `.ai/workspace/tasks/` would earn exactly that. Being blind is the
+# lesser harm, so git is asked first and the old shape taken when it says no.
+_task_link_workspace() {
+  local owner="$1" tree="$2" id="$3" tasks rel
+  rel="$JIG_AI_DIR/workspace/tasks"
+  tasks="$tree/$rel"
+  mkdir -p "$tree/$JIG_AI_DIR/workspace" 2>/dev/null || return 1
+  if git -C "$tree" check-ignore -q "$rel" 2>/dev/null; then
+    rmdir "$tasks" 2>/dev/null || true
+    if [ ! -e "$tasks" ] && [ ! -L "$tasks" ]; then
+      jig_link_dir "$(dirname "$owner")" "$tasks" && return 0
+    fi
+  fi
+  mkdir -p "$tasks" 2>/dev/null || return 1
+  jig_link_dir "$owner" "$tasks/$id"
+}
+
 # _task_borrowed_workspace <id> — the physical path of this task's workspace
-# when it is the link `task start --worktree` made: a symlink to the same
-# task's workspace in another worktree of this repository. Non-zero for any
-# other link, which could point anywhere.
+# when it is reached through the link `task start --worktree` made. Two shapes
+# are accepted, because both exist on disk: the whole `tasks/` directory
+# borrowed from another worktree of this repository (what a start makes now),
+# and a symlink to this same task's workspace inside a directory of this
+# checkout's own (what a start made before, and what a project whose gitignore
+# cannot carry a directory link still gets). Non-zero for any other link, which
+# could point anywhere.
 _task_borrowed_workspace() {
-  local id="$1" link real list p
+  local id="$1" link real list p root
+  # The whole directory borrowed: every task under it is the owner's, and this
+  # task's workspace is simply the one named after it.
+  if root=$(_task_borrowed_tasks_root); then
+    [ -d "$root/$id" ] || return 1
+    printf '%s\n' "$root/$id"
+    return 0
+  fi
   link=$(task_dir "$id")
   [ -L "$link" ] || return 1
   real=$(cd -P "$link" 2>/dev/null && pwd -P) || return 1
@@ -571,6 +647,21 @@ task_new() {
 
   _task_valid_id "$id" || jig_die "task new: invalid task id: $id"
 
+  # A task filed in a worktree that keeps a task directory of its own dies with
+  # that worktree: the directory is gitignored, the checkout holding the queue
+  # never sees it, and `git worktree remove` deletes ignored files without a
+  # word. Three statements written by agents at the end of their own work were
+  # nearly lost that way in one shift. A worktree from `jig task start
+  # --worktree` borrows the owner's directory whole and files the task with
+  # every other one, so it never reaches this check; any other worktree is told
+  # where the task belongs instead of losing it quietly.
+  local clone_root
+  if ! _task_borrowed_tasks_root >/dev/null 2>&1; then
+    clone_root=$(jig_config_clone_root)
+    [ "$clone_root" = "$JIG_PROJECT" ] \
+      || jig_die "task new: this worktree keeps a $JIG_AI_DIR/workspace/tasks/ of its own, so a task filed here would be invisible to $clone_root and would go when the worktree goes; file it in $clone_root"
+  fi
+
   local dir
   dir=$(task_dir "$id")
   [ -e "$dir" ] && jig_die "task new: task already exists: $id"
@@ -708,11 +799,13 @@ task_start() {
 # _task_start_in_worktree <id> <dir> — start the task on its own branch in a
 # new worktree, leaving this checkout exactly as it was (ADR-0029).
 #
-# The workspace does not move. The worktree gets one link to it, so the
-# checkout the task was filed in keeps seeing every task, and the workspace's
-# lifecycle — housekeeping, trash — stays in one place. The link is absolute
-# because git keeps worktree paths absolute too; moving the repository breaks
-# both alike, and `git worktree repair` is the answer to that.
+# The workspace does not move. The worktree gets one link to the owner's whole
+# `tasks/` directory (_task_link_workspace), so the checkout the task was filed
+# in keeps seeing every task — including the ones filed from inside the
+# worktree, which a link to this one task alone left stranded — and the
+# workspace's lifecycle — housekeeping, trash — stays in one place. The link is
+# absolute because git keeps worktree paths absolute too; moving the repository
+# breaks both alike, and `git worktree repair` is the answer to that.
 #
 # No dirty-tree check: nothing uncommitted here can reach a tree cut fresh
 # from the base. The command prints the path and stops there: a script cannot
@@ -745,8 +838,7 @@ _task_start_in_worktree() {
     _task_undo_worktree_start "$branch" "$path" "$base_commit"
     jig_die "task start: could not create worktree $path"
   fi
-  if ! mkdir -p "$path/$JIG_AI_DIR/workspace/tasks" 2>/dev/null \
-     || ! jig_link_dir "$owner" "$path/$JIG_AI_DIR/workspace/tasks/$id"; then
+  if ! _task_link_workspace "$owner" "$path" "$id"; then
     _task_undo_worktree_start "$branch" "$path" "$base_commit"
     jig_die "task start: could not link the workspace of $id into $path"
   fi
@@ -2311,10 +2403,19 @@ task_changes() {
 # reads or writes an artifact must pass (RULES.md: the check lives at a single
 # function, not once per caller).
 #
-# A linked task directory can point outside the validated checkout workspace.
-# The one link accepted is the one `task start --worktree` makes: to this same
-# task's workspace in another worktree of this repository. <command> names the
-# caller in the refusals, so the message still says which verb refused.
+# A linked task directory can point outside the validated checkout workspace,
+# and only one of the two shapes is checked here. A symlink at the task's own
+# path goes through `_task_borrowed_workspace`, which confirms the target is
+# this task's workspace in another worktree of this repository. A link at the
+# parent -- the whole `tasks/` directory, which `task start --worktree` now
+# makes the usual shape -- does not reach that check: `-L` asks about the last
+# component only, so this falls to the comparison below, where both sides
+# resolve through the same link and it cannot fail. That gap is older than the
+# borrowed directory (the body of this function is unchanged by the change
+# that introduced it) and belongs to task
+# `artifact-write-trusts-a-borrowed-directory-link`; it is not a property to
+# rely on. <command> names the caller in the refusals, so the message still
+# says which verb refused.
 _task_workspace_root() {
   local id="$1" cmd="$2" root tasks_root
   root=$(task_dir "$id") || return 1

@@ -511,8 +511,9 @@ _status_hk_count() {
 # reader is busy, keeps their scroll position and open <details> across the
 # reload in sessionStorage, and offers a pause. Without JavaScript the
 # `<meta http-equiv="refresh">` in <noscript> reloads it as before. One page
-# per clone, in the main checkout: a task worktree sees one task, and a reader
-# watching one tab should see them all.
+# per clone, in the main checkout: the page belongs to the checkout that owns
+# the workspaces, and a worktree hands every mode to the main checkout's own
+# jig (`_status_page`, below).
 #
 # Everything on it is an answer this report already consumes — the same
 # helpers the text report and the completion gates call — and every value is

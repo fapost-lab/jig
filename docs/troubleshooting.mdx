@@ -52,6 +52,7 @@ If the trouble turns out to be Jig itself rather than your project, see [Known i
 | `the repository has no commits yet` when starting a task | Commit what `jig init` added, then start again. |
 | Starting a task refuses because of uncommitted changes | They belong to other work. Pause the task that owns them (*"pause it and stash the changes"*), or start the new one in a separate worktree. |
 | `--worktree needs a directory link` | The disk supports neither symbolic links nor NTFS junctions (a network or FAT drive). Keep the project on a local disk, or start the task in the current checkout. |
+| Filing a task refuses: this worktree keeps a `tasks/` folder of its own | A worktree started by Jig shares the project's task list, so a task filed inside it lands with all the others. A worktree you made yourself with `git worktree add` does not, and neither does one in a project whose ignore rule ends in `.ai/workspace/tasks/` — a task filed there would be invisible to the project and would go when the worktree went. The message names the checkout to file it in. |
 | Several tasks match the branch | Tell the agent which one to continue. |
 | `wrong-base` in the housekeeping report | A task's pull request was merged into a branch other than its base. It is kept; check where the work went. |
 | Tasks that are merged but not closed | Say *"close what's merged"*; the agent asks you about each one. |

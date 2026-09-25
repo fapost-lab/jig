@@ -82,9 +82,13 @@ Read these before changing anything here; each is a rule someone paid for.
   (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). Ignored files that are
   not a repository still go, and the removal's log line names them in its last field,
   `ignored=`; an orphaned task directory under `.ai/workspace/` is not a repository and is
-  not covered by this, it is a defect of its own. Inside a worktree, housekeeping never
-  sees the borrowed workspace: it finds workspaces with `find`, which does not follow
-  links. Keep it that way.
+  not covered by this. It is also no longer how a worktree normally looks: a worktree jig
+  makes borrows the owner's whole task directory, and `task new` refuses in one that does
+  not (ADR-0029 as amended). Inside a worktree, housekeeping still never sees the borrowed
+  workspaces: it finds them with `find "$tasks_dir"` and **no trailing slash**, and find
+  does not descend a symlink named as its starting point. Keep it that way — the slash is
+  the whole difference between reporting nothing and purging another checkout's tasks into
+  a trash directory that dies with this tree.
 - **A worktree jig did not create is never removed, and holds the workspace only while
   work waits there** (ADR-0029 as amended): uncommitted changes or a lock keep it;
   otherwise it is left in place and the workspace goes. The checkout housekeeping runs in
