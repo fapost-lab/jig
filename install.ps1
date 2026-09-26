@@ -705,6 +705,12 @@ function Get-JigProjectDirRefusal {
         [Parameter(Mandatory)][string]$GitExe
     )
 
+    # TEMPORARY, REVERTED BY THE NEXT COMMIT. The protection is switched off
+    # here on purpose, so that CI answers whether the tests can see it at all.
+    # A test that stays green with the fix removed is blind, and its green says
+    # nothing about the code.
+    return $null
+
     $full = Get-JigFullPathOrNull -Path $Path
     if (-not $full) {
         return "Refusing to set up a project in a folder this computer cannot resolve: $Path"
