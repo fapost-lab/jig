@@ -51,35 +51,6 @@ repository question whenever the path shown is your profile or a drive root. If 
 happened, the repository is the `.git` folder in your profile; deleting that folder undoes it and
 touches none of your files — but look at the path twice before deleting anything.
 
-## An interrupted `jig upgrade` cannot be repeated
-
-{/* closed by jig task: upgrade-finishes-or-can-be-repeated — remove this entry in the PR that merges the fix */}
-
-`jig upgrade` places files one at a time and writes the manifest at the end. Interrupt it — `Ctrl-C`,
-a closed laptop, a killed process — and the files it already placed are newer than the manifest
-still describes. On the next run Jig compares each file against the manifest, finds a difference,
-and concludes that **you** edited it.
-
-That verdict is `keep-modified`, and it does not wear off. Jig now leaves those files alone
-permanently: running `jig upgrade` again does not repair them, because nothing asks whether the
-file on disk is simply the new version that the interrupted run had already written.
-
-The same state is reached without any interruption in a repository using SHA-256 object names, or
-one with clean filters configured, because the two sides of the comparison are not hashed the same
-way.
-
-**What to do instead.** Let an upgrade finish. If one was interrupted, look at what `jig upgrade`
-reports as kept and reconcile those files against the new version by hand:
-
-```bash
-jig upgrade --dry-run
-```
-
-Files reported `keep-modified` that you know you never edited are the interrupted run's own work;
-replacing them with the framework's current version and upgrading again clears the state. If you
-cannot tell which is which, reinstalling over the project with `jig init --from <path to jig>`
-rebuilds the manifest from what is actually there.
-
 ## Removing a task worktree by hand has no protection
 
 {/* closed by jig task: worktree-share — remove this entry in the PR that merges the fix */}

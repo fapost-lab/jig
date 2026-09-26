@@ -16,7 +16,7 @@ paths:
   - scripts/lib/self-update.sh
   - .github/scripts/release-tag.sh
   - scripts/lib/section.sh
-reviewed_at: 2026-09-24
+reviewed_at: 2026-09-26
 ---
 # Install glossary
 
@@ -71,7 +71,34 @@ Distinct from drift: pending is "not installed yet", drift is "installed and cha
 
 The upgrade outcome for a file the user edited: the new version is not written, the
 project's copy stays. It is the reason `upgrade` is safe to run and the reason an
-installed `verify.sh` may be older than the framework that calls it.
+installed `verify.sh` may be older than the framework that calls it. A file the user did
+not edit but an earlier run already placed is not this — it is **already-placed**, and
+telling the two apart is what makes an interrupted upgrade repeatable
+(adr-20260926-an-interrupted-upgrade-is-repeated-not-rolled-back).
+
+## Already-placed
+
+The upgrade outcome for a file that already holds exactly the bytes the run would install,
+whoever placed it: the manifest records the staged hash and nothing is written. Counted in
+`kept`, like every other outcome that writes no file, and reported only when the manifest
+did not already agree — which is exactly when the run reconciled something. It is not
+pending: the file is current.
+
+The content is the predicate, not a record of progress, because a record can be lost, go
+stale or arrive from somebody else's clone. That is what makes repeating `jig upgrade` the
+way to finish an interrupted one, and why nothing is rolled back
+(adr-20260926-an-interrupted-upgrade-is-repeated-not-rolled-back).
+
+## Hash space
+
+The pair of decisions `git hash-object` takes from wherever it runs — the repository's
+object format (SHA-1 or SHA-256 names) and its clean filters — which together decide
+whether identical bytes hash equal. `upgrade` compares a project against a staging tree in
+`$TMPDIR`, so both sides are computed the same way or the comparison is meaningless:
+`jig_hash` and `jig_hash_list` pass `--no-filters` and the project's own git directory
+(`jig_hash_git_dir`), whatever directory the files live in. `--no-filters` answers the
+filters and not the object format, so both halves are needed
+(adr-20260926-an-interrupted-upgrade-is-repeated-not-rolled-back).
 
 ## Global framework
 

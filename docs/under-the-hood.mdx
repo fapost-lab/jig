@@ -106,8 +106,8 @@ The script answers from file metadata alone; the agent then reads the listed fil
   `AGENTS.md` it writes one thing: the section between `<!-- jig:begin -->` and `<!-- jig:end -->`,
   and only while that section is still exactly what Jig last put there. Change a word inside it and
   Jig keeps your version from then on, saying `keep-modified AGENTS.md (Jig section)`; delete the
-  markers and nothing comes back. Each run ends with a summary line, and a run that placed nothing leaves
-  `.ai/manifest` alone — a project only starts using another checkout of Jig once an upgrade has
+  markers and nothing comes back. Each run ends with a summary line, and a run with nothing to place and
+  nothing to record leaves `.ai/manifest` alone — a project only starts using another checkout of Jig once an upgrade has
   really installed from it.
 - **`jig verify`** runs your project's own tools — test scripts, linters, `php artisan test`, Gradle
   or Maven wrappers. **That is running your project's code**, with whatever that code does; some

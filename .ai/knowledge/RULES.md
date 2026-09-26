@@ -89,7 +89,12 @@
   records the hash jig last wrote there, the region still hashes to it, and the marker pair
   reads unambiguously. Fail any one of the four and the project's text stays, reported and
   untouched. Removing the markers keeps the section removed, as deleting the session-hook
-  line keeps the hook gone (ADR-0024).
+  line keeps the hook gone (ADR-0024). One path moves the record without replacing any
+  text: a region that already reads byte for byte what the source would write is recorded
+  as `already-placed`, which is how a run interrupted between writing the section and
+  writing the manifest is finished by repeating it. It is a stronger test than the third
+  condition, not a way around it — a region a human changed cannot satisfy it
+  (adr-20260926-an-interrupted-upgrade-is-repeated-not-rolled-back).
   (adr-20260924-jig-owns-a-marked-section-of-the-instructions)
 - Remote merge state is never written into a task `state` file. (ADR-0005)
 - A capability is passed to a profile only when its `profile.yaml` declares it, and is
