@@ -90,6 +90,13 @@ if you want to inspect the script or see what it changes first.
        it tells you what setup adds, including a Claude Code session hook that tidies up finished
        task workspaces in the background. A folder it turned into a repository gets one first
        commit of everything in it; an existing repository gets no commit.
+
+       Some folders it refuses outright, and `-Yes` does not change that: your user folder
+       (`C:\Users\<name>`), any folder above it, the root of a drive, and a folder that sits
+       inside another Git repository — Jig would set itself up in that repository's top folder,
+       not in the one you named. Make a folder for the project and use that; the refusal prints
+       the two commands. Pasting the line from a fresh PowerShell window starts you in your user
+       folder, so this is the usual case: type a folder name when it asks.
     4. **`jig doctor`**, which checks everything above.
 
     Everything it prints also goes to `%LOCALAPPDATA%\jig\install.log`. Open a new terminal

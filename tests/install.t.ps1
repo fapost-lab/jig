@@ -353,6 +353,165 @@ function Test-ExistingRepositoryGetsNoCommit {
     Assert-JigEqual $commitsBefore $commitsAfter 'installing into an existing repository must not add a commit'
 }
 
+# The installer refuses a project folder it must not own (task
+# installer-refuses-to-make-a-repo-of-your-home).
+#
+# This scenario is the default path through the installer, not an exotic one:
+# `irm ... | iex` from a fresh PowerShell leaves the current directory in the
+# user's profile, and both questions that followed defaulted to yes. -Yes is
+# passed here on purpose -- it means "take every default answer", and it must
+# not be able to turn the refusal off.
+function Test-RefusesProfileAsProject {
+    $result = Invoke-JigInstaller -InstallerArgs @(
+        '-Yes', '-Project', $env:USERPROFILE,
+        '-InstallSh', $script:InstallShPath,
+        '-Repository', $script:RemoteDir
+    )
+    Assert-JigEqual 1 $result.ExitCode `
+        "installing into the profile must be refused, not warned about:`n$($result.Output)"
+    Assert-JigContains $result.Output 'Refusing to set up a project in your home folder' `
+        'the refusal must say which folder it is about'
+    Assert-JigContains $result.Output 'jig itself is installed and ready' `
+        'the refusal must say that only the project step stopped'
+    Assert-JigTrue (-not (Test-Path (Join-Path $env:USERPROFILE '.git'))) `
+        'a refused run must not make the profile a git repository'
+    Assert-JigTrue (-not (Test-Path (Join-Path $env:USERPROFILE '.ai'))) `
+        'a refused run must not write .ai into the profile'
+    Assert-JigTrue (-not (Test-Path (Join-Path $env:USERPROFILE 'AGENTS.md'))) `
+        'a refused run must not write AGENTS.md into the profile'
+}
+
+# Both halves of the decision, side by side (conventions/detectors.md): the
+# folders Get-JigProjectDirRefusal must refuse, and the folders it must stay
+# silent about. A rule that refuses everything would pass the first half and
+# fail the second, and an over-wide rule is as useless as a blind one --
+# every other scenario in this file installs into a folder deep inside the
+# profile, so they are the second half too.
+function Test-ProjectDirRefusalTable {
+    $gitExe = Find-JigGitCommand
+    if (-not $gitExe) { Skip-JigTest 'git is not on PATH' }
+
+    # --- refused ---------------------------------------------------------
+    $homeRefusal = Get-JigProjectDirRefusal -Path $env:USERPROFILE -GitExe $gitExe
+    Assert-JigTrue ($null -ne $homeRefusal) 'the home folder itself must be refused'
+    Assert-JigContains $homeRefusal 'in your home folder' `
+        'the home refusal must be branch 1 and not the ancestor branch, whose text also says "your home folder"'
+
+    $aboveHome = Split-Path -Parent $env:USERPROFILE
+    $aboveRefusal = Get-JigProjectDirRefusal -Path $aboveHome -GitExe $gitExe
+    Assert-JigTrue ($null -ne $aboveRefusal) "a folder that contains the home folder must be refused: $aboveHome"
+    Assert-JigContains $aboveRefusal 'contains your home folder' 'the ancestor refusal must say why'
+
+    # A folder inside a repository whose root is somewhere else, and one that
+    # does not exist yet inside the same repository: `jig init` writes at the
+    # repository root (scripts/lib/common.sh, jig_require_repo), so this would
+    # write .ai\ and AGENTS.md into a project the person did not name.
+    $repo = New-JigTempDir -Prefix 'refusal-repo'
+    & $gitExe -C $repo init -q -b main
+    if ($LASTEXITCODE -ne 0) { throw "git init failed in $repo" }
+    $sub = Join-Path $repo 'sub'
+    New-Item -ItemType Directory -Path $sub -Force | Out-Null
+    $subRefusal = Get-JigProjectDirRefusal -Path $sub -GitExe $gitExe
+    Assert-JigTrue ($null -ne $subRefusal) 'a folder inside another repository must be refused'
+    Assert-JigContains $subRefusal 'inside another git repository' 'the nested refusal must say why'
+    $notYet = Join-Path $repo 'not-created-yet'
+    Assert-JigTrue ($null -ne (Get-JigProjectDirRefusal -Path $notYet -GitExe $gitExe)) `
+        'a folder that does not exist yet inside another repository must be refused too'
+
+    # The root of a drive. The home folder is on the system drive, so C:\ is
+    # already refused as an ancestor of it; pointing home at another drive for
+    # the length of this one check is what leaves the drive-root branch as the
+    # only one that can answer.
+    $savedProfile = $env:USERPROFILE
+    $savedHome = $env:HOME
+    try {
+        $env:USERPROFILE = 'Z:\somewhere\else'
+        $env:HOME = 'Z:\somewhere\else'
+        $systemRoot = [System.IO.Path]::GetPathRoot($savedProfile)
+        $rootRefusal = Get-JigProjectDirRefusal -Path $systemRoot -GitExe $gitExe
+        Assert-JigTrue ($null -ne $rootRefusal) "the root of a drive must be refused: $systemRoot"
+        Assert-JigContains $rootRefusal 'the root of a drive' 'the drive-root refusal must say why'
+        # ... and with home elsewhere, an ordinary folder on this drive is
+        # still not refused: the ancestor rule must not widen to everything.
+        $ordinary = New-JigTempDir -Prefix 'refusal-other-drive'
+        Assert-JigTrue ($null -eq (Get-JigProjectDirRefusal -Path $ordinary -GitExe $gitExe)) `
+            'an ordinary folder must not be refused because some other drive holds the home folder'
+    }
+    finally {
+        $env:USERPROFILE = $savedProfile
+        $env:HOME = $savedHome
+    }
+
+    # --- must stay silent ------------------------------------------------
+    # A repository root is the everyday "add jig to the project I already
+    # have" case; refusing it would break Test-ExistingRepositoryGetsNoCommit
+    # and every real user in that position.
+    Assert-JigTrue ($null -eq (Get-JigProjectDirRefusal -Path $repo -GitExe $gitExe)) `
+        'a folder that is itself a repository root must be allowed'
+
+    # A fresh folder, which here is also a folder deep inside the profile --
+    # the way out of the refusal this whole table is about.
+    $fresh = New-JigTempDir -Prefix 'refusal-fresh'
+    Assert-JigTrue ($null -eq (Get-JigProjectDirRefusal -Path $fresh -GitExe $gitExe)) `
+        'an ordinary folder inside the profile must be allowed'
+    Assert-JigTrue ($null -eq (Get-JigProjectDirRefusal -Path (Join-Path $fresh 'deeper\still') -GitExe $gitExe)) `
+        'a folder that does not exist yet outside any repository must be allowed'
+}
+
+# The interactive path, which is the one a real user walks: `irm ... | iex`
+# from a fresh PowerShell, current directory in the profile. Driven in-process
+# with Read-JigValue overridden, the way Test-MissingGitFails overrides
+# Find-JigGitCommand -- a child process cannot be used here, because
+# Invoke-JigInstaller starts it -NonInteractive, where Read-Host throws.
+#
+# Nothing below the refusal is reached, so the mandatory -BashExe and
+# -JigScriptPath are never used and are passed as placeholders: three refused
+# answers must end the project step inside the loop.
+function Test-InteractiveRefusalAsksAgainAndNeverAccepts {
+    $gitExe = Find-JigGitCommand
+    if (-not $gitExe) { Skip-JigTest 'git is not on PATH' }
+
+    $script:AskedDefaults = New-Object System.Collections.ArrayList
+    $savedRead = ${function:script:Read-JigValue}
+    try {
+        ${function:script:Read-JigValue} = {
+            param([Parameter(Mandatory)][string]$Prompt, [string]$Default)
+            [void]$script:AskedDefaults.Add($Default)
+            # The one folder that can never be accepted.
+            return $env:USERPROFILE
+        }
+
+        $caught = $null
+        Push-Location -LiteralPath $env:USERPROFILE
+        try {
+            try {
+                Initialize-JigProject -Yes $false -GitExe $gitExe `
+                    -BashExe 'not-reached' -JigScriptPath 'not-reached' | Out-Null
+            }
+            catch {
+                $caught = $_.Exception.Message
+            }
+        }
+        finally {
+            Pop-Location
+        }
+
+        Assert-JigTrue ($null -ne $caught) `
+            'three refused answers must end the project step, not let it continue'
+        Assert-JigContains $caught 'three folders in a row' `
+            'the end of the retries must say why it stopped'
+        Assert-JigEqual 3 $script:AskedDefaults.Count `
+            'the question must be asked again after a refusal, three times in all'
+        foreach ($offered in $script:AskedDefaults) {
+            Assert-JigTrue ([string]::IsNullOrEmpty($offered)) `
+                'a current directory that is itself refused must not be offered as the default'
+        }
+    }
+    finally {
+        ${function:script:Read-JigValue} = $savedRead
+    }
+}
+
 function Test-NoSessionHookLeavesSettingsOut {
     $projectDir = New-JigTempDir -Prefix 'nohook'
     $result = Invoke-JigInstaller -InstallerArgs @(
@@ -508,6 +667,9 @@ try {
     Invoke-JigTest 'GitPresentFreshInstall' { Test-GitPresentFreshInstall }
     Invoke-JigTest 'RepeatRunIsIdempotent' { Test-RepeatRunIsIdempotent }
     Invoke-JigTest 'ExistingRepositoryGetsNoCommit' { Test-ExistingRepositoryGetsNoCommit }
+    Invoke-JigTest 'RefusesProfileAsProject' { Test-RefusesProfileAsProject }
+    Invoke-JigTest 'ProjectDirRefusalTable' { Test-ProjectDirRefusalTable }
+    Invoke-JigTest 'InteractiveRefusalAsksAgainAndNeverAccepts' { Test-InteractiveRefusalAsksAgainAndNeverAccepts }
     Invoke-JigTest 'NoInitSkipsProject' { Test-NoInitSkipsProject }
     Invoke-JigTest 'NoSessionHookLeavesSettingsOut' { Test-NoSessionHookLeavesSettingsOut }
     Invoke-JigTest 'UninstallRemovesPathAndCheckout' { Test-UninstallRemovesPathAndCheckout }

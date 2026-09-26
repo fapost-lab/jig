@@ -72,6 +72,15 @@
   diff and not on the page: the change that adds, moves or re-guards a deletion is the change
   that re-reads this paragraph, because it is the one moment when somebody has both in front of
   them.
+- The installer never prepares a project in a folder it must not own. `install.ps1` refuses
+  the user's home folder, any folder that contains it, the root of a drive or of a UNC share,
+  and a folder inside a repository whose root is some other folder — whichever way that folder
+  arrived, and a folder that is itself a repository root stays allowed. `-Yes` means "take every
+  default answer" and cannot turn this off: a flag that agrees with questions is not consent to
+  a folder, and there is no flag that is. It refuses rather than warns, because the run this
+  protects is `irm … | iex`, where a warning scrolls past unread. Beside the deletion paragraph
+  above, this is the other half of the same idea: what the installer may remove, and where it
+  may write at all. (adr-20260926-the-installer-refuses-a-folder-it-must-not-own)
 - Housekeeping never destroys a workspace whose remote state is `unknown`, with one exception
   decided in ADR-0005: a task a human ended with `jig task abandon` (directly, or through
   `jig spec remove --abandon-unstarted`) is moved to trash once it is older than
