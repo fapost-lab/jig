@@ -9,7 +9,7 @@ paths:
   - "profiles/**"
   - "tests/**"
   - ".github/**"
-reviewed_at: 2026-09-25
+reviewed_at: 2026-09-26
 summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
@@ -133,6 +133,16 @@ cmd_example() {
   agent that followed it left a file in the working tree: one of them reached the index and
   was a `git commit` away from being shipped. A convention that manufactures untracked
   junk teaches the next reader to make the same mess.
+- **Nothing in the tree is edited while a set is running against it**, a comment included.
+  Every fixture installs the framework from this checkout and then compares its
+  `.ai/scripts/**` with what the checkout holds *now*, so the moment the source moves under
+  a running set, `jig verify` inside a fixture refuses with `FAIL framework: 1 framework file
+  not installed` and returns 1. One comment added to `scripts/lib/common.sh` mid-run turned 34
+  `verify::` tests red — each an exit 1 where the test expected 0 or 3 — and all 114 of them
+  passed on the same tree once it was left alone. The red says nothing about its cause: no
+  failure names a hash, the manifest, or the file that was touched, and every one of them
+  points at the command under test. So the run that counts starts after the last edit, and an
+  edit during a run costs the run rather than the edit.
 - **A test whose verdict depends on when a ref moved sets git's clock itself.** Ancestry
   compares reflog times, a tie goes to the base (ADR-0032), and a test commits and merges
   within one second, so without a clock its own work reads as the base's: six existing

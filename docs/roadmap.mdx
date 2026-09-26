@@ -24,13 +24,6 @@ home folder, a drive root, or a folder already inside another repository will be
 and the flag that skips the questions will not skip the refusal — agreeing to a question is not the
 same as turning off a guard.
 
-**An interrupted upgrade must be repeatable.** Today, interrupting `jig upgrade` leaves files it
-already placed looking hand-edited, and Jig then declines to touch them again — permanently, with
-no way back that Jig itself offers. The work here includes deciding honestly between the two real
-answers: an upgrade that can resume where it stopped, or one that either happens completely or not
-at all. The second is more truthful and more expensive, and whichever is chosen will be written
-down with its cost.
-
 **A task must not be closed while its work is unmerged.** Ending an autopilot run marks the task
 finished without anyone asking whether its pull request landed. The task then disappears from
 `jig status` at exactly the moment it needed watching. Neither the automatic path nor the manual

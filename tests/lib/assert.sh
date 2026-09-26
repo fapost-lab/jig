@@ -260,6 +260,20 @@ skip_unless_readonly_dirs() {
   [ "$blocked" -eq 1 ] || skip "chmod 555 does not make a directory read-only here"
 }
 
+# skip_unless_sha256_repos — skip the calling test unless this git can create a
+# repository whose object names are SHA-256. The format is optional and was
+# experimental for several releases, so a test that needs one asks git whether
+# it can make one rather than reading a version number.
+skip_unless_sha256_repos() {
+  local dir made=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-sha256-check.XXXXXX") || return 1
+  if ( cd "$dir" && git init -q --object-format=sha256 . ) >/dev/null 2>&1; then
+    made=1
+  fi
+  rm -rf "$dir"
+  [ "$made" -eq 1 ] || skip "this git cannot create a SHA-256 repository"
+}
+
 # skip_unless_unreadable_files — skip the calling test unless `chmod 000` on a
 # file actually blocks reading it. The same two gaps as a read-only directory:
 # root reads anyway, and Git Bash on NTFS keeps the file readable.

@@ -906,3 +906,331 @@ test_upgrade_dry_run_says_nothing_about_config_keys() {
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "does not mention"
 }
+
+# --- an interrupted run, and the two sides of the hash comparison ------------
+
+# Reproduces the reported case (external review M8, reproduced twice): files
+# are placed one at a time and the manifest is written once at the end, so an
+# interruption leaves the new bytes on disk against the recorded old hash.
+# Until the decision table compared the disk with the stage, the repeat read
+# every file the interrupted run had placed as one the user had edited and
+# said so for ever — `keep-modified` on every later run, permanent drift in
+# `jig status`, and an install that never finished.
+#
+# The interruption is a real one: the destination directory of a file the new
+# source changes cannot be written, so the run dies inside the placement loop
+# with earlier paths already placed.
+test_upgrade_finishes_a_run_interrupted_midway() {
+  skip_unless_readonly_dirs
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2 "$src"
+  # Sorts after .ai/** and .claude/**, so those are placed before the run dies.
+  printf '\n# v2 marker\n' >> "$src/skills/jig-verify/SKILL.md"
+
+  chmod 500 .codex/skills/jig-verify
+  run jig upgrade --from "$src"
+  chmod 700 .codex/skills/jig-verify
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "could not write"
+  # The state an interruption leaves: placed on disk, old hash in the manifest.
+  assert_file_contains .ai/profiles/generic/verify.sh "v2 marker"
+  local placed_hash
+  placed_hash=$(git hash-object --no-filters .ai/profiles/generic/verify.sh)
+  assert_not_contains "$(cat .ai/manifest)" "$placed_hash"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "already-placed .ai/profiles/generic/verify.sh"
+  assert_not_contains "$OUT" "keep-modified .ai/profiles/generic/verify.sh"
+  assert_contains "$OUT" "replace .codex/skills/jig-verify/SKILL.md"
+  assert_contains "$OUT" "manifest updated"
+
+  # Once reconciled it stays reconciled, and says nothing more about it.
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "already-placed"
+  assert_not_contains "$OUT" "keep-modified .ai/profiles/generic/verify.sh"
+
+  # The drift the bug produced: files jig itself had placed, reported for ever
+  # as ones somebody edited. (`pending` is not asserted here: this fixture's
+  # status measures the install against $JIG_HOME, not against $src.)
+  run jig status
+  assert_contains "$OUT" "drift: 0 modified, 0 missing"
+
+  run jig upgrade --from "$src" --dry-run
+  assert_not_contains "$OUT" "keep-modified"
+  assert_not_contains "$OUT" "replace .ai/profiles/generic/verify.sh"
+
+  rm -rf "$src"
+}
+
+# The other half of the same interruption, and the one the reported case hit:
+# a path the new version installs for the first time. Placed but not yet in the
+# manifest, it used to read as `keep-conflict` — somebody else's file at a
+# framework path — which no later run ever revisits, so the path never became
+# framework-owned and was never updated again.
+test_upgrade_adopts_a_path_an_interrupted_run_installed() {
+  skip_unless_readonly_dirs
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2 "$src"
+  printf '\n# v2 marker\n' >> "$src/skills/jig-verify/SKILL.md"
+
+  chmod 500 .codex/skills/jig-verify
+  run jig upgrade --from "$src"
+  chmod 700 .codex/skills/jig-verify
+  assert_eq 1 "$RC"
+  # jig-newthing is new in source-v2 and sorts before jig-verify, so the
+  # interrupted run installed it and never recorded it.
+  assert_file .claude/skills/jig-newthing/SKILL.md
+  assert_not_contains "$(cat .ai/manifest)" ".claude/skills/jig-newthing/SKILL.md"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "already-placed .claude/skills/jig-newthing/SKILL.md"
+  assert_not_contains "$OUT" "keep-conflict .claude/skills/jig-newthing/SKILL.md"
+  assert_file_contains .ai/manifest ".claude/skills/jig-newthing/SKILL.md"
+
+  rm -rf "$src"
+}
+
+# The second way the same `keep-modified` state is reached, with no
+# interruption at all: `git hash-object` applies the repository's clean filters
+# to a path inside it, while the staging tree in $TMPDIR is outside any
+# repository and is hashed as it stands. The two sides of the comparison were
+# computed differently, so a filtered framework path was replaced on every run
+# and then read as modified for ever.
+test_upgrade_hashes_both_sides_alike_under_clean_filters() {
+  fixture_repo
+  printf '.ai/profiles/** filter=jigtest\n' > .gitattributes
+  git config filter.jigtest.clean 'sed "s/^/# /"'
+  git add .gitattributes
+  git commit -q -m "clean filter over the framework's profiles"
+  jig init --from "$JIG_HOME" >/dev/null
+
+  # The filter has to bite, or this test proves nothing.
+  local filtered raw
+  filtered=$(git hash-object .ai/profiles/generic/verify.sh)
+  raw=$(git hash-object --no-filters .ai/profiles/generic/verify.sh)
+  [ "$filtered" != "$raw" ] || skip "clean filters do not change hashes here"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "replace .ai/profiles/"
+  assert_not_contains "$OUT" "keep-modified .ai/profiles/"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "keep-modified .ai/profiles/"
+
+  run jig status
+  assert_contains "$OUT" "drift: 0 modified, 0 missing, 0 pending"
+}
+
+# The same divergence by its other mechanism, and the one --no-filters does not
+# answer: the object format. In a SHA-256 repository the project's files hash to
+# 64 hex digits and a staging tree outside it to 40, so every framework path
+# compared unequal — the first run replaced all of them and wrote SHA-1 hashes
+# into a SHA-256 manifest, and from the second run on the whole install read as
+# modified and never updated again.
+test_upgrade_hashes_both_sides_alike_in_a_sha256_repository() {
+  skip_unless_sha256_repos
+  git init -q --object-format=sha256 .
+  git symbolic-ref HEAD refs/heads/main
+  printf '# fixture\n' > README.md
+  git add README.md
+  git commit -q -m init
+  jig init --from "$JIG_HOME" >/dev/null
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 placed"
+  assert_not_contains "$OUT" "replace .ai/scripts/"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "keep-modified .ai/scripts/"
+
+  run jig status
+  assert_contains "$OUT" "drift: 0 modified, 0 missing, 0 pending"
+}
+
+# The run asks the install it just made whether anything is still missing, and
+# names it (finding F1, from a live case: a run printed "55 placed, 49 kept,
+# 2 removed; manifest updated" and left .ai/templates/AGENTS.md unplaced, found
+# a day later in `jig doctor` as "1 pending item(s) although the version is the
+# same").
+#
+# The check has to be the newly installed dispatcher, as a subprocess, and this
+# test is the reason: an upgrade is carried out by the code of the version being
+# replaced, and that code stages only what it knows about. Here the source
+# stages one path this running code does not, exactly as 0.16.0 staged
+# .ai/templates/AGENTS.md and 0.15.1 did not. Asking upgrade_pending in this
+# process would ask the old decision table, which is satisfied by construction
+# and would stay silent.
+test_upgrade_names_what_is_still_not_installed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+
+  # A complete run says nothing about leftovers.
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "still not installed"
+
+  local src anchor
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-next.XXXXXX")
+  _mk_source_v2 "$src"
+  # The literal source line, $source and all: it is grepped for, not evaluated.
+  # shellcheck disable=SC2016
+  anchor='cp -p "$source/templates/AGENTS.md" "$stage/.ai/templates/AGENTS.md"'
+  grep -qF "$anchor" "$src/scripts/lib/upgrade.sh" \
+    || fail "the staging line this test patches is gone; rewrite the test"
+  # The next version stages one more path than the running code does.
+  awk -v anchor="$anchor" '
+    { print }
+    index($0, anchor) { print "  cp -p \"$source/templates/AGENTS.md\" \"$stage/.ai/templates/NEWTHING.md\"" }
+  ' "$src/scripts/lib/upgrade.sh" > "$src/scripts/lib/upgrade.sh.tmp"
+  mv "$src/scripts/lib/upgrade.sh.tmp" "$src/scripts/lib/upgrade.sh"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_no_file .ai/templates/NEWTHING.md
+  assert_contains "$OUT" "1 item(s) still not installed"
+  # Indented: quoted from another run, and not to be mistaken for this run's
+  # own report lines by a reader or by anything reading line starts.
+  assert_contains "$OUT" "  install .ai/templates/NEWTHING.md"
+
+  # And the run the message asks for finishes the job — done by the project's
+  # own dispatcher, which is now the newer code, the way the check itself asked
+  # that code whether anything was left.
+  run jig_installed upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_file .ai/templates/NEWTHING.md
+  assert_not_contains "$OUT" "still not installed"
+
+  rm -rf "$src"
+}
+
+# The marked section's record lives in the manifest header, which is written at
+# the end of the run, so an interruption leaves it with the same hole a file has:
+# the region already holds the source's text while the header still records the
+# older hash. Read as an edit, it would never be replaced again.
+#
+# The interruption is constructed rather than provoked, because the section is
+# written at one fixed point near the end of the run: the manifest is put back
+# to what it was before, which is exactly the state a run interrupted after
+# writing the section and before writing the manifest leaves behind.
+test_upgrade_reconciles_a_section_an_interrupted_run_had_written() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2_section "$src"
+  cp .ai/manifest manifest.before.tmp
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "replace AGENTS.md (Jig section)"
+  assert_file_contains AGENTS.md "A brand new sentence from source-v2."
+
+  # The manifest write is undone: the section is the source's, the record is old.
+  cp manifest.before.tmp .ai/manifest
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "already-placed AGENTS.md (Jig section)"
+  assert_not_contains "$OUT" "keep-modified AGENTS.md (Jig section)"
+  assert_contains "$OUT" "manifest updated"
+  # And it stuck: a third run has nothing left to say about the section.
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "already-placed AGENTS.md (Jig section)"
+  assert_not_contains "$OUT" "keep-modified AGENTS.md (Jig section)"
+
+  rm -rf "$src"
+}
+
+# A reconciliation is the one outcome that changes the manifest while writing no
+# file, so it has to count as applied: `_upgrade_records_source` otherwise
+# refuses the write, and a repeat of a run interrupted after its *last*
+# placement would find every path already placed, write nothing, report
+# `manifest unchanged` and stay stuck — the defect, reached by the fix.
+#
+# Every other already-placed test also has a genuine `replace` in the same run,
+# which satisfies that count on its own; this one isolates the term. The source
+# passed is deliberately not the recorded one, which is when the count decides.
+test_upgrade_writes_the_manifest_for_a_reconciliation_alone() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
+  _mk_source_v2 "$src"
+  cp .ai/manifest manifest.before.tmp
+
+  # A complete run: after it, nothing is left to place from $src.
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "replace .ai/profiles/generic/verify.sh"
+
+  # Undo only the manifest write, leaving the files of the run in place.
+  cp manifest.before.tmp .ai/manifest
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 placed"
+  assert_contains "$OUT" "already-placed .ai/profiles/generic/verify.sh"
+  assert_contains "$OUT" "manifest updated"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9"
+
+  # Nothing is left over: the next run is quiet and the install is not adrift.
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "already-placed"
+  assert_not_contains "$OUT" "keep-modified"
+  run jig status
+  assert_contains "$OUT" "drift: 0 modified, 0 missing"
+
+  rm -rf "$src"
+}
+
+# Link mode keeps the same record in the same header, so it needs the same
+# reconciliation — and it must not pay for it with the recorded source. A
+# link-mode run that created no link leaves the project running the scripts it
+# ran before, so naming the checkout it was offered would send the next plain
+# `jig upgrade` to read from a checkout no link points at (adr-20260922). The
+# record is kept; the source is not moved.
+test_upgrade_link_mode_reconciles_a_section_without_moving_the_source() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-link.XXXXXX")
+  src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
+  _mk_source_v2_section "$src"
+  cp .ai/manifest manifest.before.tmp
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "replace AGENTS.md (Jig section)"
+
+  # The state an interruption leaves: section written, header not.
+  cp manifest.before.tmp .ai/manifest
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "already-placed AGENTS.md (Jig section)"
+  assert_contains "$OUT" "manifest updated"
+  # The record was kept...
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "already-placed AGENTS.md (Jig section)"
+  # ...and the source was not moved onto a checkout nothing links to.
+  assert_file_contains .ai/manifest "jig.source: $JIG_HOME"
+
+  rm -rf "$src"
+}

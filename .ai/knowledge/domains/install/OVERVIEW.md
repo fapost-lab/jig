@@ -20,7 +20,7 @@ paths:
   - scripts/jig.cmd
   - templates/gitattributes
   - scripts/lib/section.sh
-reviewed_at: 2026-09-25
+reviewed_at: 2026-09-26
 ---
 # Install
 
@@ -72,8 +72,16 @@ project owns.
   adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 - Two install modes: `copy` (files copied and hashed in `.ai/manifest`) and `link`
   (relative symlinks into a source checkout, used when developing the framework itself).
-- The upgrade decision table: install, replace, keep-modified, delete — decided per path
-  from the manifest hash, the on-disk file and the staged source. A file is placed by
+- The upgrade decision table: already-placed, install, replace, keep-modified, delete —
+  decided per path from the manifest hash, the on-disk file and the staged source. All
+  three are compared, and the first question asked is whether the file already holds the
+  staged bytes: an upgrade places files one at a time and writes the manifest once at the
+  end, so an interruption leaves new bytes against an old recorded hash, and reading that
+  as an edit made the state permanent. Repeating the command is what finishes an
+  interrupted run; nothing is journalled and nothing is rolled back
+  (adr-20260926-an-interrupted-upgrade-is-repeated-not-rolled-back). Both sides of every
+  comparison are hashed in one hash space, filter-free — see the glossary, and note that
+  `--no-filters` alone does not answer it. A file is placed by
   copying it beside its destination and renaming over it, never by writing onto the
   destination: one of the files an upgrade replaces is `.ai/scripts/jig`, the script the
   shell is running at that moment, and a shell reads its script from an open descriptor as
@@ -81,9 +89,17 @@ project owns.
   reached. Every run ends in one summary line (`N placed, M kept, K conflict(s); manifest
   updated|unchanged`), and an upgrade that applied nothing leaves `.ai/manifest` untouched
   instead of repointing `jig.source`/`jig.version` at the checkout it was offered
-  (adr-20260922-upgrade-records-the-source-it-installed-from). The source already recorded
+  (adr-20260922-upgrade-records-the-source-it-installed-from). A reconciliation counts as
+  applied: it is the one outcome that changes the manifest body while writing no file, and
+  left out of that count a repeat of an interrupted run would write nothing and report
+  `manifest unchanged`. The source already recorded
   is the exception, written back whether or not anything was placed: in link mode the
-  project runs that checkout's scripts, so its version moves with it.
+  project runs that checkout's scripts, so its version moves with it. A real run ends by
+  asking the install it has just made whether anything is still not installed, and naming
+  it — `upgrade_pending`, the same predicate `jig doctor` uses, run as a subprocess of the
+  project's own dispatcher because an upgrade is carried out by the code of the version
+  being replaced, whose own stage is satisfied by construction. Never on a dry run:
+  `status`, `verify` and `doctor` each run one on every invocation (ADR-0017).
 - The adapter contract: where each runtime's skills live and how a skill is transformed
   on the way in.
 - The global framework: `install.sh` bootstraps a per-user checkout at the newest release
