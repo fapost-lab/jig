@@ -131,6 +131,58 @@ third test starting with the second, so a slow platform can split the suite acro
 `JIG_TEST_SKIP=file::test,...` reports the named tests as skipped. `tests/install.t.ps1` runs only on
 Windows CI.
 
+### PowerShell without a Windows machine
+
+`install.ps1` and `tests/install.t.ps1` can be parsed, and the installer's functions loaded, in a
+PowerShell container on any machine, so a syntax error is caught here rather than by a Windows CI
+round. What a green run there proves is narrow, and all three limits are permanent, not a gap
+waiting to be closed:
+
+- **pwsh 7, not Windows PowerShell 5.1.** The image reports `7.5.0`. On Windows the installer is
+  invoked by 5.1 — `Invoke-JigInstaller` in `tests/install.t.ps1` runs
+  `$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe`, and `smoke-windows` runs the test
+  file itself with `shell: powershell`.
+- **Linux, not Windows.** `$PSVersionTable.Platform` is `Unix`: no `$env:USERPROFILE`, no `C:\`
+  drive roots, no 8.3 short names, no hidden attribute on `.git`. The installer's refusals are
+  almost entirely Windows path semantics, so the container does not exercise them at all.
+- **No git in the image.** `Get-Command git` finds nothing, so every branch that asks git goes
+  unexecuted rather than passing.
+
+So the container closes syntax and pure functions that touch neither git nor a Windows path;
+end-to-end scenarios stay with the `smoke-windows` job. Pull the image first if it is not on the
+machine — `docker pull mcr.microsoft.com/powershell:7.5-azurelinux-3.0-arm64`, 344 MB, and the tag
+ends in the host architecture.
+
+```bash
+docker run --rm -v "$PWD:/w" -w /w mcr.microsoft.com/powershell:7.5-azurelinux-3.0-arm64 \
+  pwsh -NoProfile -Command '
+    foreach ($f in "install.ps1", "tests/install.t.ps1") {
+      $errs = $null
+      [void][System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$errs)
+      if ($errs) {
+        "$f : $($errs.Count) parse error(s)"; $errs | ForEach-Object { $_.ToString() }; exit 1
+      }
+      "$f : parses clean"
+    }
+    $env:JIG_INSTALL_NO_MAIN = "1"
+    . ./install.ps1
+    "functions loaded: " + (Get-Command -CommandType Function -Name *-Jig* | Measure-Object).Count
+  '
+```
+
+Run from the repository root, it prints:
+
+```
+install.ps1 : parses clean
+tests/install.t.ps1 : parses clean
+functions loaded: 25
+```
+
+The count moves as the installer gains functions; what it answers is whether dot-sourcing reached
+the end, so read it as non-zero with no error above it rather than as a number to match. A file that
+does not parse is named with its line and column, and the run stops there with exit status 1, so the
+command can also be chained ahead of a commit.
+
 Run `shellcheck` on every changed shell file, tests included; CI runs an older ShellCheck that can
 flag what a newer local one lets through.
 
