@@ -20,7 +20,7 @@ paths:
   - scripts/jig.cmd
   - templates/gitattributes
   - scripts/lib/section.sh
-reviewed_at: 2026-09-25
+reviewed_at: 2026-09-26
 ---
 # Install
 
@@ -101,7 +101,22 @@ project owns.
   its source and package agreements, that the Git identity it sets is global, and, before the
   "set up jig" question, that `init --session-hook` creates `.claude/settings.json` whose hook
   runs housekeeping (which moves and later deletes workspaces) at each session start;
-  `-NoSessionHook` leaves the hook out. The Git installer the no-winget path downloads is not
+  `-NoSessionHook` leaves the hook out.
+  **And some folders it refuses to prepare at all**: the home folder, anything containing it,
+  the root of a drive or share, and a folder inside a repository whose root is elsewhere —
+  `Get-JigProjectDirRefusal`, on every candidate, before the folder is created and before
+  `git init`, `jig init`, `git add -A` and the first commit can reach it. `-Yes` does not
+  turn it off and no flag does. The default path was the dangerous one: a fresh PowerShell's
+  current directory is the profile, Q1 offered it and Q2 defaulted to yes
+  (adr-20260926-the-installer-refuses-a-folder-it-must-not-own). Two facts worth keeping in
+  mind when that code is touched: `jig init` writes at the **repository root**
+  (`jig_require_repo`), which is what makes a folder inside somebody else's repository the
+  wrong place rather than merely an odd one; and the guard's own tests carry both halves —
+  every shape refused and every shape it must stay silent about — because the rest of
+  `tests/install.t.ps1` installs into folders deep inside the profile and an over-wide rule
+  turns them red. `conventions/detectors.md` is the reasoning, applied by analogy: its `paths`
+  deliberately do not claim `install.ps1`, which is a feature and not a check on this
+  repository's own artifacts. The Git installer the no-winget path downloads is not
   checked against a hash or signature — a known gap, not a guarantee.
 - `jig doctor`: whether jig works on this machine and in this project, one line and a `fix:`
   per check. A reporting command — it calls `status`, `upgrade` and `common.sh` functions and
