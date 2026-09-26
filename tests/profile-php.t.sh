@@ -309,7 +309,7 @@ test_profile_php_tests_run_full_when_phpunit_xml_changed() {
 
   _php_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: phpunit.xml.dist can affect any test, ran full set)"
 }
 
 test_profile_php_composer_json_change_runs_composer_validate_and_full_tests() {
@@ -327,7 +327,7 @@ test_profile_php_composer_json_change_runs_composer_validate_and_full_tests() {
   _php_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "php: composer validate: pass"
-  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: composer.json can affect any test, ran full set)"
   assert_contains "$OUT" "php: phpstan: skip (scope: no changed .php files)"
   assert_contains "$OUT" "php: pint: skip (scope: no changed .php files)"
 }
@@ -383,7 +383,7 @@ test_profile_php_unmapped_source_runs_full_tests() {
 
   _php_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: no test is named after src/Orphan.php, ran full set)"
 }
 
 test_profile_php_doc_only_change_skips_tests() {
@@ -428,7 +428,7 @@ test_profile_php_phpunit_xml_glob_not_masked_by_sibling_on_disk() {
 
   _php_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: phpunit.xml.dist can affect any test, ran full set)"
 }
 
 # --- IFS regression: a map decision naming two filters on one line must ----
@@ -500,4 +500,163 @@ test_profile_php_map_question_mark_falls_back_to_builtin() {
   _php_scoped "$files" "$mapped"
   assert_eq 0 "$RC" "$OUT"
   assert_file_contains phpunit.log "tests/FooTest.php"
+}
+
+# --- front end: what can and cannot change the result of the test run --------
+# The same cut as the laravel profile, for the same reason: phpunit runs PHP
+# and neither bundles a front-end source nor serves it, while the build that
+# produces the assets a browser test loads is a different matter. Both halves
+# are asserted, because a rule that cannot tell them apart is too wide.
+
+# _php_explain <files-file> — run verify.sh's plan branch narrowed to
+# <files-file>. No project tool may run in this mode, so tests using it also
+# assert the stub's log was never written.
+_php_explain() {
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$1"
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+  unset JIG_VERIFY_MAPPED
+  run bash "$_PHP_VERIFY"
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+}
+
+test_profile_php_front_end_script_change_runs_no_test() {
+  _php_install
+  mkdir -p resources/js
+  : > resources/js/app.js
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list resources/js/app.js)
+
+  _php_scoped "$files"
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: skip (scope: no changed file maps to a test)"
+  assert_no_file phpunit.log
+}
+
+# The cut must not have widened the other checks either: they narrow on their
+# own terms and a change with no .php in it reaches none of them.
+test_profile_php_front_end_change_skips_every_check() {
+  _php_install
+  mkdir -p resources/css
+  : > resources/css/app.css
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  _php_stub_tool phpstan 1.1.1 0 phpstan.log
+  _php_stub_tool pint 1.2.3 0 pint.log
+  files=$(_files_list resources/css/app.css)
+
+  _php_scoped "$files"
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: skip (scope: no changed file maps to a test)"
+  assert_contains "$OUT" "php: phpstan: skip (scope: no changed .php files)"
+  assert_contains "$OUT" "php: pint: skip (scope: no changed .php files)"
+  assert_no_file phpunit.log
+  assert_no_file phpstan.log
+  assert_no_file pint.log
+}
+
+test_profile_php_package_json_change_runs_full_tests() {
+  _php_install
+  printf '{}\n' > package.json
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list package.json)
+
+  _php_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "php: phpunit: pass (9.9.9, scope: package.json changes the asset build, which browser tests load, ran full set)"
+}
+
+# vite.config.ts also matches the front-end extension list; the build list is
+# checked first, and that order is what this pins.
+test_profile_php_bundler_config_change_runs_full_tests() {
+  _php_install
+  : > vite.config.ts
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list vite.config.ts)
+
+  _php_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "scope: vite.config.ts changes the asset build, which browser tests load, ran full set"
+}
+
+test_profile_php_built_asset_under_public_runs_full_tests() {
+  _php_install
+  mkdir -p public/build
+  : > public/build/app.js
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list public/build/app.js)
+
+  _php_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map public/build/app.js to tests, ran full set"
+}
+
+test_profile_php_front_end_fixture_under_tests_runs_full_tests() {
+  _php_install
+  mkdir -p tests/fixtures
+  : > tests/fixtures/sample.js
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list tests/fixtures/sample.js)
+
+  _php_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map tests/fixtures/sample.js to tests, ran full set"
+}
+
+test_profile_php_front_end_beside_php_runs_only_the_named_test() {
+  _php_install
+  mkdir -p src resources/js tests
+  : > src/Foo.php
+  : > tests/FooTest.php
+  : > resources/js/app.js
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list resources/js/app.js src/Foo.php)
+
+  _php_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: 1 test files)"
+  assert_file_contains phpunit.log "tests/FooTest.php"
+}
+
+# --- explain: the plan says why, not just what -------------------------------
+
+test_profile_php_explain_front_end_change_maps_to_no_test() {
+  _php_install
+  mkdir -p resources/js
+  : > resources/js/app.js
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list resources/js/app.js)
+
+  _php_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN php: phpunit: skip (no changed file maps to this check)"
+  assert_no_file phpunit.log
+}
+
+test_profile_php_explain_names_the_path_that_forces_the_full_set() {
+  _php_install
+  printf '{}\n' > package.json
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list package.json)
+
+  _php_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "PLAN php: phpunit: full (package.json changes the asset build, which browser tests load)"
+  assert_no_file phpunit.log
+}
+
+test_profile_php_explain_says_no_test_is_named_after_the_file() {
+  _php_install
+  mkdir -p src
+  : > src/Orphan.php
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list src/Orphan.php)
+
+  _php_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN php: phpunit: full (no test is named after src/Orphan.php)"
 }

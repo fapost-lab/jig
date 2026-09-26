@@ -12,6 +12,15 @@
 # suite. Kept as its own copy rather than shared with the php profile: each
 # shipped verify.sh is an independent file (D2/D3), and `requires: [php]`
 # is only a runtime activation dependency, not a code-sharing one.
+#
+# Full-stack is the ordinary shape of a Laravel application, and the rule is
+# not "anything that is not .php needs no test". What decides is whether a
+# path can change the result of `artisan test`, which runs PHP: a front-end
+# source is neither bundled nor served by it, while the build that produces
+# the assets a browser test (Dusk) loads is a different matter and keeps the
+# full set. The two lists below draw that line; what neither describes still
+# runs everything, so an unrecognised path costs time rather than coverage
+# (ADR-0013).
 set -eu
 set -o pipefail
 
@@ -51,6 +60,23 @@ _laravel_tests_named() {
 # framework's own always-loaded directories.
 LARAVEL_TEST_ALL_GLOBS="composer.json composer.lock phpunit.xml* routes/* config/* database/* bootstrap/*"
 
+# Files that define how the front end is built: the package manifest, its
+# lock file, and the bundler's configuration. A change to one can alter every
+# built asset, and `artisan test` runs a project's browser tests (Dusk) like
+# any other — those load the built assets. So the full set runs.
+LARAVEL_BUILD_ALL_GLOBS="package.json package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb vite.config.* webpack.mix.js webpack.config.* rollup.config.* tailwind.config.* postcss.config.*"
+
+# Front-end sources. `artisan test` neither bundles nor serves them, so
+# changing one cannot change what a test observes. Two kinds of path are
+# excluded and fall through to the rules below, because for them it can:
+# public/ holds what a browser test actually loads (the built asset, not this
+# source), and a file under tests/ may be a fixture or a snapshot a test
+# asserts on. resources/views/ is deliberately absent — a Blade template is
+# .php and keeps the name analysis below, because it can change a feature
+# test's result and no naming convention narrows it.
+LARAVEL_FRONTEND_GLOBS="*.vue *.svelte *.js *.mjs *.cjs *.jsx *.ts *.mts *.cts *.tsx *.css *.scss *.sass *.less *.styl resources/images/* resources/fonts/*"
+LARAVEL_FRONTEND_NOT_GLOBS="public/* tests/*"
+
 # _laravel_builtin <path> — the tests a changed path needs: itself for a
 # test file, the tests/*Test.php files named after a module, ALL for a
 # project-wide file or anything that maps to nothing, nothing for
@@ -64,6 +90,16 @@ _laravel_builtin() {
   case "$f" in
     *.md|*.rst|docs/*|.ai/*) return 0 ;;
   esac
+  # Before the front-end list, not after it: vite.config.ts matches *.ts
+  # there, and the build has to win over the extension.
+  if jp_path_matches "$f" "$LARAVEL_BUILD_ALL_GLOBS"; then
+    printf 'ALL\n'
+    return 0
+  fi
+  if ! jp_path_matches "$f" "$LARAVEL_FRONTEND_NOT_GLOBS" \
+    && jp_path_matches "$f" "$LARAVEL_FRONTEND_GLOBS"; then
+    return 0
+  fi
   case "$f" in
     *.php) ;;
     *) printf 'ALL\n'; return 0 ;;
@@ -83,6 +119,29 @@ _laravel_builtin() {
   return 0
 }
 
+# _laravel_all_reason <path> — why the full set runs, for the path
+# jp_decide_cause named. "not narrowable" was one shrug for four different
+# situations, and the person reading it could not tell their package.json
+# from a class no test is named after. An empty <path> means the project's
+# own map asked for the full set; that line's author knows why, so the old
+# wording stands rather than a guess at their reason.
+_laravel_all_reason() {
+  local f="$1"
+  if [ -z "$f" ]; then
+    printf 'not narrowable\n'
+  elif jp_path_matches "$f" "$LARAVEL_BUILD_ALL_GLOBS"; then
+    printf '%s changes the asset build, which browser tests load\n' "$f"
+  elif jp_path_matches "$f" "$LARAVEL_TEST_ALL_GLOBS"; then
+    printf '%s can affect any test\n' "$f"
+  else
+    case "$f" in
+      *.php) printf 'no test is named after %s\n' "$f" ;;
+      *) printf 'the profile cannot map %s to tests\n' "$f" ;;
+    esac
+  fi
+  return 0
+}
+
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if [ ! -f artisan ] || ! command -v php >/dev/null 2>&1; then
     jp_plan "artisan test" skip "artisan or php not found"
@@ -97,7 +156,12 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
         fi
       fi
     fi
-    jp_plan_selection "artisan test" "$filters" "test files"
+    if [ "$filters" = ALL ]; then
+      why=$(_laravel_all_reason "$(jp_decide_cause _laravel_builtin)")
+    else
+      why=
+    fi
+    jp_plan_selection "artisan test" "$filters" "test files" "$why"
   fi
   exit 0
 fi
@@ -116,7 +180,8 @@ else
   if [ -z "$filters" ]; then
     jp_skip "artisan test" "scope: no changed file maps to a test"
   elif [ "$filters" = ALL ]; then
-    jp_run "artisan test" "$v, scope: not narrowable, ran full set" php artisan test
+    why=$(_laravel_all_reason "$(jp_decide_cause _laravel_builtin)")
+    jp_run "artisan test" "$v, scope: $why, ran full set" php artisan test
   else
     IFS='
 '

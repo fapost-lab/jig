@@ -450,3 +450,161 @@ test_profile_lib_resolves_from_link_mode_install() {
   assert_not_contains "$OUT" "No such file"
   assert_not_contains "$OUT" "syntax error"
 }
+
+# --- jp_decide_cause -----------------------------------------------------------
+# The path a profile names when it has to run everything. "changed paths
+# require the full set" named nothing, so a person could not tell their
+# package.json from a class no test happens to be named after.
+
+test_profile_lib_jp_decide_cause_names_the_first_path_answered_all() {
+  local files
+  files=$(_lib_file "a.py" "b.py" "c.py" "d.py")
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  # Under the same options a profile sets, and with more than one ALL, so a
+  # reader that stopped early would leave the writer with SIGPIPE and
+  # pipefail would read that as a failure (conventions/shell.md).
+  _lib_run '
+    set -eu
+    set -o pipefail
+    _t_fn() { case "$1" in b.py|c.py|d.py) printf "ALL\n" ;; *) printf "t-%s\n" "$1" ;; esac; }
+    jp_begin test
+    jp_decide_cause _t_fn
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "b.py" "$OUT"
+}
+
+test_profile_lib_jp_decide_cause_is_empty_when_nothing_forces_the_full_set() {
+  local files
+  files=$(_lib_file "a.py" "b.py")
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  _lib_run '
+    set -eu
+    set -o pipefail
+    _t_fn() { printf "t-%s\n" "$1"; }
+    jp_begin test
+    jp_decide_cause _t_fn
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$OUT"
+}
+
+# A project's own map saying ALL is a line its author wrote; attributing it to
+# a rule of the profile's would be a wrong explanation, so nothing is named.
+test_profile_lib_jp_decide_cause_does_not_name_a_path_the_map_widened() {
+  local files map
+  files=$(_lib_file "a.py")
+  map=$(_lib_map $'a.py\tALL')
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  JIG_VERIFY_MAPPED="$map"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED
+  _lib_run '
+    _t_fn() { printf "t-%s\n" "$1"; }
+    jp_begin test
+    jp_decide_cause _t_fn
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED
+  assert_eq "" "$OUT"
+}
+
+# `?` hands the path back to the builtin, so a builtin ALL there is named.
+test_profile_lib_jp_decide_cause_names_a_question_mark_path_the_builtin_widened() {
+  local files map
+  files=$(_lib_file "a.py" "b.py")
+  map=$(_lib_map $'a.py\t-' $'b.py\t?')
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  JIG_VERIFY_MAPPED="$map"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED
+  _lib_run '
+    _t_fn() { case "$1" in b.py) printf "ALL\n" ;; *) printf "t-%s\n" "$1" ;; esac; }
+    jp_begin test
+    jp_decide_cause _t_fn
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED
+  assert_eq "b.py" "$OUT"
+}
+
+test_profile_lib_jp_decide_cause_unscoped_prints_nothing() {
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  _lib_run '
+    _t_fn() { printf "ALL\n"; }
+    jp_begin test
+    jp_decide_cause _t_fn
+  '
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+# --- jp_plan_selection's reason ------------------------------------------------
+
+test_profile_lib_jp_plan_selection_uses_the_reason_it_is_given_for_all() {
+  local files
+  files=$(_lib_file "a.py")
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  _lib_run '
+    jp_begin test
+    jp_plan_selection mycheck ALL "test files" "a.py can affect any test"
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  assert_eq "PLAN test: mycheck: full (a.py can affect any test)" "$OUT"
+}
+
+# The argument is optional so that the ten profiles calling this with three
+# arguments keep the wording they had.
+test_profile_lib_jp_plan_selection_without_a_reason_keeps_the_old_wording() {
+  local files
+  files=$(_lib_file "a.py")
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  _lib_run '
+    jp_begin test
+    jp_plan_selection mycheck ALL "test files"
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  assert_eq "PLAN test: mycheck: full (changed paths require the full set)" "$OUT"
+}
+
+# A change that touches thousands of files — a formatting sweep, a vendored
+# directory — makes the answer longer than a pipe buffer. `| head -1` would
+# then leave the writer with SIGPIPE, which pipefail reads as a failure, and
+# the profile would die between printing one check and the next
+# (conventions/shell.md). The list has to be this long for the hazard to
+# appear at all: with a handful of paths the whole answer fits in the buffer
+# and the bug hides.
+test_profile_lib_jp_decide_cause_survives_an_answer_longer_than_a_pipe_buffer() {
+  local files i
+  files="${JIG_TEST_TMP}.libfiles-long"
+  : > "$files"
+  i=0
+  while [ "$i" -lt 1200 ]; do
+    printf 'src/a/deliberately/long/directory/path/that/pads/each/line/well/past/a/few/bytes/module_%04d.py\n' \
+      "$i" >> "$files"
+    i=$((i + 1))
+  done
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$files"
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  _lib_run '
+    set -eu
+    set -o pipefail
+    _t_fn() { printf "ALL\n"; }
+    jp_begin test
+    jp_decide_cause _t_fn
+    printf "reached-the-next-line\n"
+  '
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "src/a/deliberately/long/directory/path/that/pads/each/line/well/past/a/few/bytes/module_0000.py"
+  assert_contains "$OUT" "reached-the-next-line"
+}
