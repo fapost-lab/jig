@@ -177,7 +177,7 @@ test_profile_laravel_unmapped_source_runs_full() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: no test is named after app/Orphan.php, ran full set)"
   assert_file_contains artisan.log '^$'
 }
 
@@ -216,7 +216,7 @@ test_profile_laravel_runs_full_when_phpunit_xml_changed() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: phpunit.xml.dist can affect any test, ran full set)"
 }
 
 test_profile_laravel_runs_full_when_composer_json_changed() {
@@ -226,7 +226,7 @@ test_profile_laravel_runs_full_when_composer_json_changed() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: composer.json can affect any test, ran full set)"
 }
 
 test_profile_laravel_runs_full_when_routes_changed() {
@@ -236,7 +236,7 @@ test_profile_laravel_runs_full_when_routes_changed() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: routes/web.php can affect any test, ran full set)"
 }
 
 test_profile_laravel_runs_full_when_config_changed() {
@@ -246,7 +246,7 @@ test_profile_laravel_runs_full_when_config_changed() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: config/app.php can affect any test, ran full set)"
 }
 
 test_profile_laravel_runs_full_when_database_changed() {
@@ -256,7 +256,7 @@ test_profile_laravel_runs_full_when_database_changed() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: database/migrations/2024_01_01_create_foo_table.php can affect any test, ran full set)"
 }
 
 test_profile_laravel_runs_full_when_bootstrap_changed() {
@@ -266,7 +266,7 @@ test_profile_laravel_runs_full_when_bootstrap_changed() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: bootstrap/providers.php can affect any test, ran full set)"
 }
 
 # --- map filters (D5: a test file path) --------------------------------------
@@ -318,7 +318,7 @@ test_profile_laravel_deleted_config_file_runs_full_despite_sibling_on_disk() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: config/app.php can affect any test, ran full set)"
   # Old bug: config/* expanded to config/database.php (the only sibling on
   # disk), missed config/app.php, and fell through to stem "app" ->
   # tests/appTest.php, running only that one test instead of the full suite.
@@ -336,7 +336,7 @@ test_profile_laravel_nested_config_file_runs_full_despite_sibling_on_disk() {
 
   _laravel_scoped "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: config/nested/extra.php can affect any test, ran full set)"
   # Old bug: config/* expanded via real pathname globbing (never crosses
   # `/`), matching only the direct child config/app.php on disk, so a
   # nested config/nested/extra.php never matched and fell through to stem
@@ -357,4 +357,190 @@ test_profile_laravel_map_question_mark_falls_back_to_builtin() {
   _laravel_scoped "$files" "$mapped"
   assert_eq 0 "$RC" "$OUT"
   assert_file_contains artisan.log "tests/FooTest.php"
+}
+
+# --- front end: what can and cannot change the result of `artisan test` -------
+# The cut is not "everything that is not .php needs no test": a front-end
+# source is not read by the PHP test run, but the build that turns it into
+# assets is, because a browser test (Dusk) loads the built assets and
+# `artisan test` runs it. Both halves are asserted; a test that cannot tell
+# resources/js/app.js from package.json would not cover this at all.
+
+# _laravel_explain <files-file> — run verify.sh's plan branch narrowed to
+# <files-file>. No project tool may run in this mode, so the tests that use
+# it also assert the stub's log was never written.
+_laravel_explain() {
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$1"
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+  unset JIG_VERIFY_MAPPED
+  run bash "$_LARAVEL_VERIFY"
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+}
+
+test_profile_laravel_front_end_script_change_runs_no_test() {
+  _laravel_install
+  mkdir -p resources/js
+  : > resources/js/app.js
+  _artisan_stub 0 artisan.log
+  files=$(_files_list resources/js/app.js)
+
+  _laravel_scoped "$files"
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "laravel: artisan test: skip (scope: no changed file maps to a test)"
+  assert_no_file artisan.log
+}
+
+test_profile_laravel_front_end_component_and_style_change_runs_no_test() {
+  _laravel_install
+  mkdir -p resources/js/Pages resources/css
+  : > resources/js/Pages/Dashboard.vue
+  : > resources/css/app.css
+  _artisan_stub 0 artisan.log
+  files=$(_files_list resources/js/Pages/Dashboard.vue resources/css/app.css)
+
+  _laravel_scoped "$files"
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "laravel: artisan test: skip (scope: no changed file maps to a test)"
+  assert_no_file artisan.log
+}
+
+test_profile_laravel_package_json_change_runs_full_set() {
+  _laravel_install
+  printf '{}\n' > package.json
+  _artisan_stub 0 artisan.log
+  files=$(_files_list package.json)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "laravel: artisan test: pass (PHP 8.3.0, scope: package.json changes the asset build, which browser tests load, ran full set)"
+  assert_file_contains artisan.log '^$'
+}
+
+test_profile_laravel_lock_file_change_runs_full_set() {
+  _laravel_install
+  printf '{}\n' > package-lock.json
+  _artisan_stub 0 artisan.log
+  files=$(_files_list package-lock.json)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "scope: package-lock.json changes the asset build, which browser tests load, ran full set"
+}
+
+# vite.config.ts also matches the front-end extension list; the build list is
+# checked first, so the order of the two rules is what this pins.
+test_profile_laravel_bundler_config_change_runs_full_set() {
+  _laravel_install
+  : > vite.config.ts
+  _artisan_stub 0 artisan.log
+  files=$(_files_list vite.config.ts)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "scope: vite.config.ts changes the asset build, which browser tests load, ran full set"
+}
+
+# A built asset is what a browser test actually loads, so public/ is excluded
+# from the front-end rule even though the extension matches.
+test_profile_laravel_built_asset_under_public_runs_full_set() {
+  _laravel_install
+  mkdir -p public/build/assets
+  : > public/build/assets/app.js
+  _artisan_stub 0 artisan.log
+  files=$(_files_list public/build/assets/app.js)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map public/build/assets/app.js to tests, ran full set"
+  assert_file_contains artisan.log '^$'
+}
+
+# A file under tests/ can be a fixture or a snapshot a test asserts on.
+test_profile_laravel_front_end_fixture_under_tests_runs_full_set() {
+  _laravel_install
+  mkdir -p tests/fixtures
+  : > tests/fixtures/sample.js
+  _artisan_stub 0 artisan.log
+  files=$(_files_list tests/fixtures/sample.js)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map tests/fixtures/sample.js to tests, ran full set"
+}
+
+# A Blade template is .php and keeps the full set: it can change a feature
+# test's result and no naming convention narrows it.
+test_profile_laravel_blade_template_change_runs_full_set() {
+  _laravel_install
+  mkdir -p resources/views
+  : > resources/views/dashboard.blade.php
+  _artisan_stub 0 artisan.log
+  files=$(_files_list resources/views/dashboard.blade.php)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: no test is named after resources/views/dashboard.blade.php, ran full set"
+}
+
+# A front-end file alongside a php one must not widen that php file's
+# selection back to the full set, and must not swallow it either.
+test_profile_laravel_front_end_beside_php_runs_only_the_named_test() {
+  _laravel_install
+  mkdir -p app resources/js tests
+  : > app/Foo.php
+  : > tests/FooTest.php
+  : > resources/js/app.js
+  _artisan_stub 0 artisan.log
+  files=$(_files_list resources/js/app.js app/Foo.php)
+
+  _laravel_scoped "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0, scope: 1 test files)"
+  assert_file_contains artisan.log "tests/FooTest.php"
+}
+
+# --- explain: the plan says why, not just what -------------------------------
+
+test_profile_laravel_explain_front_end_change_maps_to_no_test() {
+  _laravel_install
+  mkdir -p resources/js
+  : > resources/js/app.js
+  _artisan_stub 0 artisan.log
+  files=$(_files_list resources/js/app.js)
+
+  _laravel_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN laravel: artisan test: skip (no changed file maps to this check)"
+  assert_no_file artisan.log
+}
+
+test_profile_laravel_explain_names_the_path_that_forces_the_full_set() {
+  _laravel_install
+  printf '{}\n' > package.json
+  _artisan_stub 0 artisan.log
+  files=$(_files_list package.json)
+
+  _laravel_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "PLAN laravel: artisan test: full (package.json changes the asset build, which browser tests load)"
+  assert_no_file artisan.log
+}
+
+test_profile_laravel_explain_says_no_test_is_named_after_the_file() {
+  _laravel_install
+  mkdir -p app
+  : > app/Orphan.php
+  _artisan_stub 0 artisan.log
+  files=$(_files_list app/Orphan.php)
+
+  _laravel_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN laravel: artisan test: full (no test is named after app/Orphan.php)"
 }

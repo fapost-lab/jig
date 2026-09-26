@@ -14,7 +14,7 @@ paths:
   - "profiles/**"
   - tests/run.sh
   - scripts/lib/profile.sh
-reviewed_at: 2026-09-25
+reviewed_at: 2026-09-26
 ---
 # Verify rules
 
@@ -111,6 +111,24 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 - **A profile narrows each check on its own terms.** Linters by file; tests only where the
   stack ties a source file to its tests; whole-program analysis (mypy, `typecheck`) never.
   Documentation and `.ai/` reach no check (`jp_is_doc`).
+- **What decides is whether a path could change a check's result, not what extension it has.**
+  A stack with its own asset build has three kinds of front-end path, not one. The source is
+  read by neither the test runner nor a browser, so it reaches no test. What *defines* the
+  build — the package manifest, its lock file, the bundler's configuration — can alter every
+  built asset, and a browser test loads the built assets under the same test command, so it
+  runs the full set. And two kinds of path look like the first and behave like the second:
+  the served directory, which holds what the browser actually loads, and the test suite's own
+  files, where a front-end file may be a fixture or a snapshot a test asserts on. Until this
+  was written, a Vue component ran a Laravel project's entire back-end suite; "anything that
+  is not the stack's own extension needs no test" would have been the wrong cut the other
+  way, and both halves have to be asserted for the rule to be covered at all.
+- **A profile that falls back to the full set names the path that made it.** `not narrowable`
+  was one wording for four situations — a file that defines the build, a file that can affect
+  any test, a source no test is named after, and a path the profile cannot map at all — and
+  the person reading it could act on none of them. The reason belongs to the profile, because
+  only it knows its stack; the shared library only names the path (`jp_decide_cause`), and it
+  names none for a path the project's own map widened, since attributing that line to a rule
+  of the profile's would be a wrong explanation rather than a missing one.
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.
