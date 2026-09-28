@@ -21,8 +21,13 @@ item that did not pass.
 2. Git for Windows gets installed. As the standard user, note whether Windows asked for
    an administrator password, and whether the installer then continued without rights.
 3. The installer asks at most four questions: project folder, make it a git repository,
-   name and e-mail for git, set up jig. Note the time from paste to the last answer,
-   download time excluded.
+   name and e-mail for git, set up jig. The first one is the check CI cannot make: you
+   pasted the line without changing directory, so the current directory is your profile,
+   and the installer must **refuse** it instead of offering it as the folder. Note whether
+   the refusal reads as an instruction -- it should name the folder, say that jig itself is
+   installed, and print the two commands to run -- and that typing a folder name at the
+   same question then works. Note the time from paste to the last answer, download time
+   excluded.
 4. `jig doctor` output ends with `0 fail`. Note every `warn`.
 5. The closing line tells you what to say to the agent.
 

@@ -553,6 +553,285 @@ function Read-JigValue {
     return $val
 }
 
+# Get-JigComparablePath <path> -- one spelling for comparing two paths: full,
+# backslashed, lowercased, without a trailing separator. git prints
+# C:/Users/..., every path PowerShell builds is C:\Users\..., and a guard
+# built on a comparison of the two refuses the wrong folders unless both
+# sides are spelled the same way first. The trailing separator goes
+# unconditionally, so a drive root is "c:" on both sides of a comparison
+# rather than "c:\" on one and "c:" on the other.
+function Get-JigComparablePath {
+    param([Parameter(Mandatory)][string]$Path)
+    $full = Get-JigFullPathOrNull -Path $Path
+    if (-not $full) { return $null }
+    return $full.TrimEnd('\').ToLowerInvariant()
+}
+
+# Get-JigFullPathOrNull <path> -- GetFullPath, or $null when this path cannot
+# be made a full Windows path. Every caller here compares paths or prints
+# them, and a half-translated path is worse than none: $env:HOME under Git
+# Bash can read /c/Users/me, which GetFullPath turns into <cwd drive>\c\Users\me
+# -- a folder nobody meant, silently compared against.
+function Get-JigFullPathOrNull {
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        return [System.IO.Path]::GetFullPath($Path.Replace('/', '\'))
+    }
+    catch {
+        return $null
+    }
+}
+
+# Test-JigPathBelow -Parent <p> -Child <c> -- whether <c> lies strictly below
+# <p>. Both are already in Get-JigComparablePath's spelling, so this is a
+# prefix test and not a filesystem walk; "c:" + "\" is what makes a drive
+# root the parent of everything on it.
+function Test-JigPathBelow {
+    param(
+        [Parameter(Mandatory)][string]$Parent,
+        [Parameter(Mandatory)][string]$Child
+    )
+    return $Child.StartsWith($Parent + '\', [System.StringComparison]::Ordinal)
+}
+
+# Invoke-JigGitLocationProbe -GitExe <git> -In <dir> -GitArgs <args> -- a git
+# call whose answer must be about <dir> and nothing else, with the variables
+# that can answer in git's place taken out of the environment for the length of
+# it. This is `jig_clear_git_location_env` (scripts/lib/common.sh) in
+# PowerShell, and it exists for the same reason: with GIT_DIR set and no
+# GIT_WORK_TREE, git calls the current directory the top of a work tree, so
+# `rev-parse --show-toplevel` succeeds for every folder on the disk -- which
+# here would refuse every folder a person could name, with no way out.
+# GIT_CEILING_DIRECTORIES is the mirror of it, hiding a repository that is
+# really there.
+function Invoke-JigGitLocationProbe {
+    param(
+        [Parameter(Mandatory)][string]$GitExe,
+        [Parameter(Mandatory)][string]$In,
+        [Parameter(Mandatory)][string[]]$GitArgs
+    )
+    $names = @(
+        'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR',
+        'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+        'GIT_INDEX_FILE', 'GIT_NAMESPACE',
+        'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM'
+    )
+    $saved = @{}
+    foreach ($name in $names) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        foreach ($name in $names) {
+            if ($null -ne $saved[$name]) {
+                [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+            }
+        }
+        return Invoke-JigNative -FilePath $GitExe -NativeArgs (@('-C', $In) + $GitArgs)
+    }
+    finally {
+        foreach ($name in $names) {
+            if ($null -ne $saved[$name]) {
+                [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+            }
+        }
+    }
+}
+
+# Get-JigNearestExistingAncestor <path> -- the closest ancestor of <path>
+# that exists, or $null. A candidate project folder does not have to exist
+# yet, and `git -C` cannot answer about a directory it cannot enter, so the
+# question about repositories below is put where it can be answered.
+function Get-JigNearestExistingAncestor {
+    param([Parameter(Mandatory)][string]$Path)
+    $current = Split-Path -Parent $Path
+    while ($current) {
+        if (Test-Path -LiteralPath $current -PathType Container) {
+            return $current
+        }
+        $next = Split-Path -Parent $current
+        if ($next -eq $current) {
+            return $null
+        }
+        $current = $next
+    }
+    return $null
+}
+
+# Get-JigProjectDirRefusal -Path <dir> -GitExe <git> -- the one decision
+# about a candidate project directory: the text of a refusal, or $null when
+# the directory may be used. It prints nothing and creates nothing.
+#
+# Why a refusal and not a warning: `irm ... | iex` from a fresh PowerShell
+# leaves the current directory in the user's profile, Q1 offered exactly that
+# as its default, and Q2 ("make this folder a git repository?") defaulted to
+# yes -- so the *default* path through this installer turned a whole profile
+# into a repository and staged everything in it, documents and keys included,
+# for the one user who by definition cannot undo it, in their first minute
+# with jig. A warning printed into a piped one-liner is not read.
+#
+# Refused:
+#   1. the home folder itself;
+#   2. any folder that contains it (C:\Users, and the root of the system
+#      drive);
+#   3. the root of a drive or of a UNC share -- D:\ contains no home folder,
+#      so case 2 does not cover it;
+#   4. a folder inside a repository whose root is some other folder.
+#
+# Allowed, and each of these is a case this must stay silent about: an
+# ordinary new or empty folder, including one deep inside the profile
+# (C:\Users\me\projects\app -- that is the way out of a refusal); and a
+# folder that *is* a repository root, which is the everyday "add jig to the
+# project I already have" case this installer has always handled by never
+# committing into a repository it did not create.
+#
+# Case 1 deliberately does not ask whether this run would be the one to
+# `git init`. When $HOME is itself a repository -- dotfiles, which is
+# common -- nothing here runs `git init` or `git add`, and `jig init` still
+# writes .ai\, AGENTS.md and CLAUDE.md into the profile, because it writes at
+# the repository root (scripts/lib/common.sh, jig_require_repo).
+#
+# Nothing below reads -Yes, and nothing below is reached only when -Yes is
+# absent. -Yes means "take every default answer"; it is not consent to this,
+# and a flag that agrees with questions must not be able to turn a refusal
+# off.
+#
+# The comparison of a folder with the home folder is textual, after
+# normalisation, so a different spelling of the same folder -- an 8.3 short
+# name, a subst'ed drive -- is not caught. This guards the person who did not
+# mean to, not one who is trying to get past it.
+function Get-JigProjectDirRefusal {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$GitExe
+    )
+
+    $full = Get-JigFullPathOrNull -Path $Path
+    if (-not $full) {
+        return "Refusing to set up a project in a folder this computer cannot resolve: $Path"
+    }
+    $candidate = Get-JigComparablePath $full
+    if (-not $candidate) {
+        return "Refusing to set up a project in a folder this computer cannot resolve: $Path"
+    }
+    # The root of a drive keeps its separator: "C:" names the current
+    # directory on C: to a reader and to Windows both, and this string is only
+    # ever shown.
+    $shown = $full
+    if ($full -ne [System.IO.Path]::GetPathRoot($full)) {
+        $shown = $full.TrimEnd('\')
+    }
+
+    # Where to go instead. A folder under the home directory is the answer to
+    # every one of cases 1 to 3, and it is also what the person was almost
+    # certainly after.
+    $exampleBase = $full.TrimEnd('\')
+    foreach ($homePath in @($env:USERPROFILE, $env:HOME)) {
+        if ([string]::IsNullOrWhiteSpace($homePath)) { continue }
+        $homeFull = Get-JigFullPathOrNull -Path $homePath
+        if ($homeFull) {
+            $exampleBase = $homeFull.TrimEnd('\')
+            break
+        }
+    }
+    $howToProceed = @(
+        'Make a folder for the project and set it up there, for example:',
+        "    mkdir $exampleBase\my-project",
+        "    cd $exampleBase\my-project",
+        '    jig init'
+    )
+    $installed = 'jig itself is installed and ready; only this last step stopped.'
+
+    foreach ($homePath in @($env:USERPROFILE, $env:HOME)) {
+        if ([string]::IsNullOrWhiteSpace($homePath)) { continue }
+        $homeDir = Get-JigComparablePath $homePath
+        if (-not $homeDir) { continue }
+        if ($candidate -eq $homeDir) {
+            return (@(
+                "Refusing to set up a project in your home folder: $shown",
+                'That would make your whole profile a git repository and stage everything in it.',
+                $installed
+            ) + $howToProceed) -join "`n"
+        }
+        if (Test-JigPathBelow -Parent $candidate -Child $homeDir) {
+            return (@(
+                "Refusing to set up a project in a folder that contains your home folder: $shown",
+                'That would make every profile under it part of one git repository.',
+                $installed
+            ) + $howToProceed) -join "`n"
+        }
+    }
+
+    # "Drive" is what a person calls C:\; a UNC share root reaches the same
+    # comparison and is not one.
+    $rootPath = [System.IO.Path]::GetPathRoot($full)
+    $root = Get-JigComparablePath $rootPath
+    if ($root -and ($candidate -eq $root)) {
+        $rootKind = 'the root of a drive'
+        if ($rootPath.StartsWith('\\')) { $rootKind = 'the root of a network share' }
+        return (@(
+            "Refusing to set up a project in ${rootKind}: $shown",
+            'That would make everything on it part of one git repository.',
+            $installed
+        ) + $howToProceed) -join "`n"
+    }
+
+    # Case 4, and both halves of it are decided without reading a word of
+    # git's output. Invoke-JigNative deliberately merges stderr into Output,
+    # so a single warning line -- `warning: unable to access
+    # '<HOME>/.gitconfig'`, `detected dubious ownership` -- would be read as
+    # an answer. Joined output that no longer says `true` would let a folder
+    # inside somebody else's repository through, which is the harm this
+    # function exists to stop, and joined output that is no longer empty would
+    # refuse a repository root, which is the everyday case it must allow. So:
+    #
+    #   inside a work tree -- `rev-parse --show-toplevel`'s exit code, which
+    #   is non-zero outside one and says nothing about spelling;
+    #   the root of that work tree -- whether this folder holds .git itself,
+    #   a directory for an ordinary repository and a file for a worktree.
+    #
+    # Comparing the folder with `--show-toplevel`'s text would be a guess at
+    # one spelling of a path that git writes C:/Users/... and PowerShell
+    # writes C:\Users\..., and that a Windows profile also has an 8.3 form
+    # of; it would refuse a repository root reached either other way.
+    $askIn = $null
+    $mustBeBelow = $false
+    if (Test-Path -LiteralPath $full -PathType Container) {
+        $askIn = $full
+    }
+    else {
+        # A folder that does not exist yet cannot already be a repository
+        # root, so being inside a work tree at all is enough to refuse it.
+        $askIn = Get-JigNearestExistingAncestor -Path $full
+        $mustBeBelow = $true
+    }
+    if ($askIn) {
+        $probe = Invoke-JigGitLocationProbe -GitExe $GitExe -In $askIn -GitArgs @('rev-parse', '--show-toplevel')
+        $insideWorkTree = ($probe.ExitCode -eq 0)
+        $isItsOwnRoot = (-not $mustBeBelow) -and (Test-Path -LiteralPath (Join-Path $full '.git'))
+        if ($insideWorkTree -and (-not $isItsOwnRoot)) {
+            # Only the message reads git's text, and a reply that does not
+            # look like a path costs a worse sentence, not a wrong decision.
+            $top = ''
+            foreach ($line in @($probe.Output)) {
+                $text = "$line".Trim()
+                if ($text -and (($text -match '^[A-Za-z]:[\\/]') -or $text.StartsWith('/') -or $text.StartsWith('\\'))) {
+                    $top = $text.Replace('/', '\')
+                }
+            }
+            if (-not $top) { $top = 'that repository' }
+            return @(
+                "Refusing to set up a project inside another git repository: $shown",
+                "Its repository root is $top, and that is where jig would write .ai\, AGENTS.md",
+                'and CLAUDE.md -- not into the folder you named.',
+                $installed,
+                "Set jig up in $top itself, or in a folder outside that repository."
+            ) -join "`n"
+        }
+    }
+
+    return $null
+}
+
 # Initialize-JigProject -- REQ-8..11 / design.md D2, at most four questions.
 # Returns the project directory jig was set up in, or $null when it was
 # skipped (declined git-init, or the "set up jig?" question was declined).
@@ -568,17 +847,74 @@ function Initialize-JigProject {
         [Parameter(Mandatory)][string]$JigScriptPath
     )
 
-    # Q1: project folder.
-    $projectDir = $Project
-    if (-not $projectDir) {
-        if ($Yes) {
-            $projectDir = (Get-Location).Path
+    # Q1: project folder, and the one answer this installer will not take.
+    #
+    # Every candidate goes through Get-JigProjectDirRefusal, whichever way it
+    # arrived -- -Project, the current directory under -Yes, or an answer
+    # typed here -- and a refused folder is never assigned to $projectDir, so
+    # nothing below it (New-Item, `git init`, `jig init`, `git add -A`, the
+    # first commit) can reach it.
+    #
+    # Interactively the refusal is printed and the question asked again, up to
+    # three times. That is still a refusal and not a warning: no answer makes
+    # a refused folder acceptable, and the run that meets this is the default
+    # `irm ... | iex` one, where ending the run over the first Enter would
+    # send a first-time user back to pasting the line again. A current
+    # directory that is itself refused is not offered as the default either --
+    # offering what we are about to reject is how a person learns to stop
+    # reading what the installer prints.
+    #
+    # With -Project or -Yes there is nothing to ask again, so the refusal
+    # throws: Install-Jig catches it, prints it red and exits 1.
+    $cwdPath = (Get-Location).Path
+    # Only asked when the current directory can actually become the answer:
+    # with -Project it never is, and the probe runs git for nothing.
+    $cwdRefusal = $null
+    if (-not $Project) {
+        $cwdRefusal = Get-JigProjectDirRefusal -Path $cwdPath -GitExe $GitExe
+    }
+    if ((-not $Project) -and (-not $Yes) -and $cwdRefusal) {
+        Write-Host ''
+        Write-Host $cwdRefusal -ForegroundColor Red
+        Write-Host ''
+        Write-Host 'Type a folder to use instead; it does not have to exist yet.'
+    }
+    $projectDir = $null
+    $refusedAnswers = 0
+    while (-not $projectDir) {
+        $refusal = $null
+        if ($Project) { $candidate = $Project }
+        elseif ($Yes) { $candidate = $cwdPath }
+        elseif ($cwdRefusal) { $candidate = Read-JigValue -Prompt 'Project folder' }
+        else { $candidate = Read-JigValue -Prompt 'Project folder' -Default $cwdPath }
+
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            $refusal = 'A folder is needed, and there is no default here: type one.'
         }
         else {
-            $projectDir = Read-JigValue -Prompt 'Project folder' -Default (Get-Location).Path
+            $candidate = Get-JigFullPathOrNull -Path $candidate
+            if (-not $candidate) {
+                $refusal = 'That is not a folder name this computer can use: type another.'
+            }
+            else {
+                $refusal = Get-JigProjectDirRefusal -Path $candidate -GitExe $GitExe
+            }
         }
+
+        if (-not $refusal) {
+            $projectDir = $candidate
+            break
+        }
+        if ($Project -or $Yes) {
+            throw $refusal
+        }
+        $refusedAnswers++
+        if ($refusedAnswers -ge 3) {
+            throw ($refusal + "`n" + 'No project was set up: three folders in a row could not be used.')
+        }
+        Write-Host ''
+        Write-Host $refusal -ForegroundColor Red
     }
-    $projectDir = [System.IO.Path]::GetFullPath($projectDir)
     if (-not (Test-Path -LiteralPath $projectDir)) {
         New-Item -ItemType Directory -Path $projectDir -Force | Out-Null
     }
