@@ -23,33 +23,62 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## The Windows installer can turn your home folder into a Git repository
+## The Windows installer refuses a drive root that is already your repository
 
-{/* closed by jig task: installer-refuses-to-make-a-repo-of-your-home — remove this entry in the PR that merges the fix */}
+{/* closed by jig task: installer-allows-a-drive-root-that-is-a-repository — remove this entry in the PR that merges the fix */}
 
-This one happens by taking the defaults, in the first minute. `irm … | iex` in a fresh PowerShell
-starts in your user profile, so that is the folder the installer offers you; the next question —
-whether to make it a Git repository — defaults to **Yes**. Answer both by pressing Enter and the
-installer runs `git add -A` there and commits. Nothing refuses a home folder or a drive root, and
-`-Yes` skips both questions rather than the check.
+The installer refuses to set up a project in the root of a drive or a network share, because a
+repository there would take in everything on it. It refuses that folder even when it already *is*
+the top of an existing repository — a `subst` drive pointed at a project, a volume kept for one
+project, a `\\server\share` holding one — where nothing of the kind would happen. 0.16.0 accepted
+it. With `-Yes` or `-Project` the installer exits with an error; asked interactively, it wants
+another folder.
 
-What it costs is an index holding everything in your profile — documents, keys, whatever else is
-there — created by a tool you are running for the first time, in a version-control system you may
-have installed five minutes ago to run it.
+It costs you the last step, not the install: Jig itself is installed and working, and only the
+setup of the project stopped.
 
-**What to do instead.** Make the folder yourself before you install, `cd` into it, and run the
-installer from there:
+**What to do instead.** Set the project up yourself, from that folder:
 
 ```powershell
-mkdir $HOME\projects\my-project
-cd $HOME\projects\my-project
-irm https://raw.githubusercontent.com/fapost-lab/jig/main/install.ps1 | iex
+cd P:\
+jig init --session-hook
 ```
 
-Read the folder the installer offers you before pressing Enter, and answer **No** to the
-repository question whenever the path shown is your profile or a drive root. If it already
-happened, the repository is the `.git` folder in your profile; deleting that folder undoes it and
-touches none of your files — but look at the path twice before deleting anything.
+`--session-hook` adds the Claude Code session hook the installer would have added; leave it out if
+you ran the installer with `-NoSessionHook`.
+
+## A Jig project cloned on Windows stops taking upgrades
+
+{/* closed by jig task: manifest-survives-a-windows-clone — remove this entry in the PR that merges the fix */}
+
+Git for Windows, with its default settings, writes text files with Windows line endings whenever
+it checks a project out. Jig pins its own line endings for its scripts only, so a fresh checkout
+of a Jig project — a clone, and on the same machine a task worktree
+(`jig task start --worktree`) — gets the rest of Jig's files that way, `.ai/manifest` among them.
+Jig then cannot read its own manifest. `jig upgrade --dry-run` reports almost every framework file
+as a conflict, and `jig upgrade` places none of them; measured on a project of 97 framework files:
+
+```text
+jig upgrade: 0 placed, 26 kept, 71 conflict(s); manifest unchanged (dry run)
+```
+
+The checkout where Jig was installed is not affected, so this reaches whoever joins the project
+on Windows. It costs you updates: that copy stops receiving Jig's changes, and `jig status` there
+reports `drift: 0 modified`, so nothing points at the cause.
+
+**What to do instead.** In the project, pin the line endings of the rest of Jig's files. Add these
+lines to `.gitattributes` and commit them:
+
+```text
+.ai/** text eol=lf
+.claude/skills/** text eol=lf
+.codex/skills/** text eol=lf
+```
+
+A clone or a worktree made after that commit upgrades normally. One made before it keeps the
+files it was given: clone again, or make the worktree again. If you already ran `jig upgrade` in
+such a copy, it rewrote `.ai/manifest` without fixing anything; do not commit that change —
+`git checkout .ai/manifest` puts the file back.
 
 ## Removing a task worktree by hand has no protection
 
@@ -188,6 +217,58 @@ Start the next task in its own worktree.
 If it really has to be this task that moves, that is Git's job rather than Jig's, and it is worth
 doing with your agent while you watch: the branch has to be checked out in the new folder and let
 go of by the old one.
+
+## After a spec session, `jig task start` refuses and does not say how to go on
+
+{/* closed by jig task: idea-leaves-a-tree-task-start-refuses — remove this entry in the PR that merges the fix */}
+
+Working on a spec with the `jig-idea` skill changes files under `.ai/specs/` that are already
+committed — in a second session on the same spec, or when the skill files a phase's tasks and
+writes their names into the roadmap. The next natural step, starting one of those tasks, then
+refuses:
+
+```text
+jig: error: task start: uncommitted changes in the working tree; commit them, or pause the task that owns them with --stash, or start it in its own worktree: `jig task start my-task --worktree`
+```
+
+The changes it refuses on are the spec your session just wrote, and the refusal does not name the
+command that ships a spec. The `jig-task` skill tells your agent never to work around this
+refusal, so the agent stops and comes back to you. A spec that was never committed does not
+trigger it.
+
+**What to do instead.** Ship the spec first, then start the task:
+
+```bash
+git add .ai/specs/<spec>
+jig spec ship <spec> --message-file <file>
+jig task start <task>
+```
+
+`jig spec ship` goes as far as your [Git permissions](/agent-ships#specs-and-epics) allow; where
+committing is yours, it says so and you commit the spec yourself. Or take the refusal's own last
+option and start the task with `--worktree`: the spec's changes stay in your checkout, untouched.
+
+## `jig verify` refuses a change that no check covers, and blames your tools
+
+{/* closed by jig task: verify-knows-a-change-maps-to-no-check — remove this entry in the PR that merges the fix */}
+
+With `verify.full_run: ci`, a local `jig verify` runs only the checks your change can affect. When
+it affects none of them — a change only to documentation, say — every check is skipped, and the
+run exits 3 with:
+
+```text
+verify: nothing was checked, so this is not a pass — install the project's tools so its profile can run
+```
+
+Your tools are installed; `jig verify --list` shows it. Nothing was checked because nothing needed
+checking, and the rule that refuses a run with nothing checked cannot tell that apart from missing
+tools. So a change that touches only documentation cannot come out green locally, and the advice
+sends you to install what you already have.
+
+**What to do instead.** Read the skip reasons above that line. When the checks your tools run say
+`scope:` — for instance `shellcheck: skip (scope: no changed shell scripts)` — the run was narrowed to nothing, not
+starved of tools, and there is nothing to install. The full set runs in CI, which is what
+`verify.full_run: ci` means.
 
 ## An interrupted command leaves temporary files behind
 

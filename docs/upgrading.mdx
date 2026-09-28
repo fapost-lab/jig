@@ -24,8 +24,15 @@ everything else. Review the diff and commit it.
 line number depend on the version you came from, and from versions before 0.15.0 the closing summary
 may be missing as well. Nothing is broken: the files were already placed, and the message arrives
 after them, from the old `jig` that replaced itself while it was still being read. One file may be
-left unplaced, so run `jig upgrade` once more; the second run places it and ends cleanly. Then
+left unplaced — more in a project with clean filters — so run `jig upgrade` once more; the second
+run places what is left and ends cleanly. Then
 `jig version` reports the new version and `jig doctor` reports its upgrade check as `up to date`.
+
+The exception is a project whose clean filters cover Jig's own scripts and that has upgraded
+before. There the old copy replaces its entry point but not its libraries, and from then on every
+`.ai/scripts/jig` command stops at once with `line 37: jig_clear_git_location_env: command not
+found`. Upgrade that project with the `jig` on your machine instead, as
+[From 0.16.0 to 0.16.1](#from-0160-to-0161) describes: it places the rest.
 This happens on that first upgrade only: since 0.15.1 the upgrade writes each file beside its place
 and renames it.
 
@@ -55,6 +62,52 @@ verification profile for your stack is active and its tools are missing, that is
 whose manifest records that Jig may. That record is written by `jig init`, on markers you agreed
 to, and the first time Jig takes over part of a file you wrote is a moment that belongs to you
 rather than to a command that ran while you were making coffee.
+
+## From 0.16.0 to 0.16.1
+
+Nothing to do by hand if you upgrade the way the top of this page shows: `jig self-update`, then
+`jig upgrade` in the project. The `jig` on your machine is then 0.16.1, and it does the work itself.
+
+Two kinds of project need a step more when the upgrade is run by the project's own copy instead —
+`.ai/scripts/jig upgrade`, which is how an agent usually runs it. That copy is the version you are
+leaving, and in these two it hashes Jig's files differently from 0.16.1.
+
+**A repository with SHA-256 object names** (created with `git init --object-format=sha256`).
+Straight after the upgrade, `jig status` reports every framework file as modified — measured on a
+project of 97 framework files:
+
+```text
+drift: 97 modified, 0 missing, 0 pending
+```
+
+Nothing is wrong with the files. Run the upgrade once more: this time 0.16.1 does the work, records
+the files as they are, and the drift goes.
+
+```bash
+.ai/scripts/jig upgrade
+jig status     # drift: 0 modified
+```
+
+**A repository whose clean filters cover Jig's own scripts** — a `filter=` line in
+`.gitattributes` matching `*.sh`, say — when an earlier upgrade already left those scripts
+reported as modified. The project's copy cannot replace them, itself included, so however often it
+runs it ends like this, and `jig version` stays at 0.16.0:
+
+```text
+jig upgrade: 0 placed, 97 kept, 0 conflict(s); manifest unchanged
+```
+
+Run the upgrade with the `jig` on your machine instead; it places them, and `jig status` reports no
+drift afterwards:
+
+```bash
+jig self-update
+jig upgrade
+```
+
+An ordinary repository sees neither. Coming from 0.15.0 or older, you run the upgrade a second time
+anyway, for the reason given [above](#what-the-upgrade-does-and-what-it-leaves-alone), and in a
+SHA-256 repository that second run clears the drift too.
 
 ## From 0.15 to 0.16
 
