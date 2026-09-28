@@ -8,6 +8,38 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.16.1 — 2026-09-28
+
+Fixes to what 0.16.0 shipped: the Windows installer, `jig upgrade`, and how much a PHP project's
+checks run.
+
+- **The Windows installer no longer turns your home folder into a Git repository.** Taking its
+  defaults from a fresh PowerShell used to make your whole profile a repository and commit
+  everything in it. It now refuses your home folder, any folder above it, the root of a drive and
+  a folder inside another Git repository, and `-Yes` does not change that. Asked interactively,
+  it says why and asks for another folder; Jig itself is installed either way
+  ([Install](/install)).
+- **It also refuses a folder it should not, which 0.16.0 accepted:** the root of a drive or a
+  network share that is itself the top of an existing repository — a `subst` drive, a volume kept
+  for one project, `\\server\share`. Jig is installed, only the project step stops; run
+  `jig init` in that folder yourself ([Known issues](/known-issues)).
+- **An interrupted `jig upgrade` is finished by running it again.** A file that already holds the
+  new version is recognised as placed, reported `already-placed`, and no longer mistaken for your
+  edit. A project an earlier interruption left in that state heals on the first run of this
+  version, with nothing to reconcile by hand.
+- **`jig upgrade` says what it left undone.** At the end of a run it asks the install it has just
+  made whether anything is still missing, names it, and tells you to run `jig upgrade` again —
+  instead of leaving it for `jig doctor` to find a day later.
+- **Repositories with SHA-256 object names, or with clean filters, upgrade properly.** Every
+  framework file used to read as modified in the first kind, and the filtered paths in the
+  second, so those files stopped being updated. Upgrade with `jig self-update` and `jig upgrade`;
+  if your agent runs the project's own `.ai/scripts/jig upgrade`, these two kinds of project need
+  one more step ([Upgrading](/upgrading#from-0160-to-0161)).
+- **A front-end change in a PHP or Laravel project no longer runs the PHP test suite.** When a
+  scoped `jig verify` does run the whole suite, it now names the file that caused it —
+  `scope: package.json changes the asset build, which browser tests load, ran full set` instead of
+  `scope: not narrowable, ran full set`.
+
 ## 0.16.0 — 2026-09-25
 
 Green now means green.

@@ -18,12 +18,6 @@ what to do instead until each one is fixed.
 
 ## First: what takes work away from you
 
-**The installer must refuse a home folder, not warn about it.** Taking the defaults on Windows can
-end with your user profile turned into a Git repository holding an index of everything in it. A
-home folder, a drive root, or a folder already inside another repository will be refused outright,
-and the flag that skips the questions will not skip the refusal — agreeing to a question is not the
-same as turning off a guard.
-
 **A task must not be closed while its work is unmerged.** Ending an autopilot run marks the task
 finished without anyone asking whether its pull request landed. The task then disappears from
 `jig status` at exactly the moment it needed watching. Neither the automatic path nor the manual
@@ -58,6 +52,17 @@ This is a statement about how Jig is built rather than about your project, which
 written here rather than left unsaid: a project whose gate cannot distinguish *checked and passed*
 from *never checked* has not earned the trust it asks of you.
 
+**A Jig project cloned on Windows must upgrade like the original.** With Git's default settings on
+Windows, a clone or a task worktree gets Jig's files with Windows line endings, its manifest among
+them. Jig then reads the manifest as empty, stops placing updates there, and `jig status` reports
+nothing wrong. The line endings of all of Jig's files get pinned, and projects that already have
+the problem have to receive the fix through the very upgrade it breaks — which is the hard part.
+
+**`jig verify` must tell a change no check covers from missing tools.** A change only to
+documentation leaves every check skipped, and the run refuses with advice to install tools that
+are already installed. The refusal is right that nothing was checked and wrong about why, and a
+command whose advice is wrong teaches you to stop reading it.
+
 ## Then: what costs you time
 
 **Resolving knowledge must cost one walk of your repository.** Working out which knowledge
@@ -71,6 +76,15 @@ somebody else's work merges into your base, although your own diff has not moved
 reviewer is then recalled to certify a change it has already certified. Pinning what the task
 actually changed keeps the signature valid across unrelated merges while still invalidating it for
 any edit inside the task's own work.
+
+**The installer must accept a drive root that is already your repository.** Refusing the root of a
+drive was meant for a drive a repository would swallow whole. One that already is the top of a
+repository — a `subst` drive, a volume kept for one project — is refused too, although nothing of
+the kind can happen there, and you finish the setup by hand.
+
+**Starting a task after a spec session must name the way on.** Discussing a spec changes files
+that are already committed, and starting the task that comes next refuses on exactly those changes
+without naming `jig spec ship`, the command that takes a spec where it belongs.
 
 ## After that: new capabilities
 
