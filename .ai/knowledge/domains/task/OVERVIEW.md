@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-25
+reviewed_at: 2026-09-30
 ---
 # Task
 
@@ -106,8 +106,12 @@ housekeeping, `task resume`, touched files for `context` and `knowledge paths` �
 **Where a started task runs is a second, independent choice** (ADR-0029). `task start`
 checks the branch out here. `task start --worktree` checks it out in a Task Worktree beside
 the repository, for when this checkout is busy with other uncommitted work — the case the
-dirty-tree refusal now names as its other road. Three things about it are easy to get
-wrong from inside this domain's code:
+dirty-tree refusal now names as its other road. When every tracked change instead lies
+under one spec's own directory (`_task_dirty_only_spec`), the refusal names `jig spec ship
+<id>` in its place, because that dirt is a spec `jig-idea` left mid-session, not another
+task's work (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute — the spec
+domain's own ADR, since `task.sh` reads the tree but never sources `spec.sh`). Three things
+about the worktree road are easy to get wrong from inside this domain's code:
 
 - The workspace never moves. The worktree gets one link to the filing checkout's whole
   `.ai/workspace/tasks/` directory (ADR-0029 as amended), so everything that reads a

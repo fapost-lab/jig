@@ -1156,6 +1156,16 @@ jig_spec_epic() {
   ' "$1"
 }
 
+# jig_tracked_changes — the tracked-and-uncommitted lines of
+# `git status --porcelain`, never the untracked ones (`??`): untracked files
+# are not work in progress (build output, a spec nobody started yet), only a
+# line git already tracks is. Shared by `task start` and `spec new`/`spec
+# resume`, which refuse a dirty tree by the same rule and must not drift
+# apart on what "dirty" means (design §6, ARCHITECTURE.md Scripts layout).
+jig_tracked_changes() {
+  git -C "$JIG_PROJECT" status --porcelain 2>/dev/null | grep -v '^??' || true
+}
+
 # Files this checkout has touched: the union of the diff against the merge-base
 # with the configured base branch, the staged and unstaged diffs, and untracked
 # files — all repo-relative (ARCHITECTURE.md, Scripts layout). `-C "$JIG_PROJECT"` matters: `git diff`

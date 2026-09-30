@@ -156,7 +156,8 @@ test_spec_new_creates_files_from_templates_and_lists() {
   run jig spec new idea-x
   assert_eq 0 "$RC"
   assert_eq ".ai/specs/idea-x/spec.md
-.ai/specs/idea-x/roadmap.md" "$OUT"
+.ai/specs/idea-x/roadmap.md
+switched to spec/idea-x" "$OUT"
 
   assert_file .ai/specs/idea-x/spec.md
   assert_file .ai/specs/idea-x/roadmap.md
@@ -164,10 +165,48 @@ test_spec_new_creates_files_from_templates_and_lists() {
     || fail "spec.md is not a byte copy of the template"
   cmp -s .ai/specs/idea-x/roadmap.md .ai/templates/spec/roadmap.md \
     || fail "roadmap.md is not a byte copy of the template"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
 
   run jig spec list
   assert_eq 0 "$RC"
   assert_contains "$OUT" "idea-x"
+}
+
+# --- spec new: a spec lives on its own branch from the first minute -----------
+# (idea-leaves-a-tree-task-start-refuses): the same reason `task start` cuts a
+# task's branch — uncommitted, tracked work must never ride onto it.
+
+test_spec_new_refuses_a_dirty_tree() {
+  fixture_jig_repo
+  printf 'dirty\n' >> README.md
+
+  run jig spec new idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes in the working tree; commit or stash them yourself, then run \`spec new\` again"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_no_file .ai/specs/idea-x
+}
+
+test_spec_new_untracked_files_do_not_block() {
+  # Untracked files are not work in progress (design §6, the same rule task
+  # start uses); only a tracked change does.
+  fixture_jig_repo
+  printf 'scratch\n' > untracked.txt
+
+  run jig spec new idea-x
+  assert_eq 0 "$RC"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_new_requires_the_default_branch() {
+  fixture_jig_repo
+  git switch --quiet -c other
+
+  run jig spec new idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec new: switch to main first"
+  assert_eq "other" "$(git symbolic-ref --short HEAD)"
+  assert_no_file .ai/specs/idea-x
 }
 
 # --- spec new: invalid ids ----------------------------------------------------
@@ -204,6 +243,10 @@ test_spec_new_refuses_existing_spec_and_leaves_it_untouched() {
   fixture_jig_repo
   run jig spec new idea-x
   assert_eq 0 "$RC"
+  # Back on main, where a second `spec new` for the same id is tried from
+  # (spec new itself requires it); the directory rode along untracked, as
+  # any file `git switch` does not know to touch.
+  git switch --quiet main
   printf 'custom content\n' > .ai/specs/idea-x/spec.md
   printf 'custom roadmap\n' > .ai/specs/idea-x/roadmap.md
 
@@ -297,6 +340,116 @@ test_spec_new_rolls_back_and_dies_when_a_template_copy_fails() {
   assert_file .ai/specs/partial/roadmap.md
 }
 
+# --- spec resume: a second session on an existing spec (idea-leaves-a-tree-task-start-refuses) ---
+# `jig-idea` runs this before touching an existing spec's files, so the same
+# uncommitted-tracked-change trap `spec new` closes for a brand new spec
+# cannot reopen for one a first session already shipped and merged.
+
+# sresume_merged <id> — a spec declared, shipped and merged into main by an
+# earlier session, branch gone, exactly what a second session on an existing
+# spec finds.
+sresume_merged() {
+  local id="$1"
+  fixture_jig_repo
+  jig spec new "$id" >/dev/null
+  git add -A
+  git commit -q -m "add spec $id"
+  git checkout -q main
+  git merge -q --ff-only "spec/$id"
+  git branch -D "spec/$id"
+}
+
+test_spec_resume_cuts_a_fresh_branch_when_the_old_one_is_gone() {
+  sresume_merged idea-x
+
+  run jig spec resume idea-x
+  assert_eq 0 "$RC"
+  assert_eq "switched to spec/idea-x" "$OUT"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_resume_reuses_a_branch_still_here() {
+  sresume_merged idea-x
+  git branch spec/idea-x
+
+  run jig spec resume idea-x
+  assert_eq 0 "$RC"
+  assert_eq "switched to spec/idea-x" "$OUT"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_resume_fetches_a_branch_only_on_origin() {
+  sresume_merged idea-x
+  git branch spec/idea-x
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git branch -D spec/idea-x
+
+  run jig spec resume idea-x
+  assert_eq 0 "$RC"
+  assert_eq "switched to spec/idea-x" "$OUT"
+  assert_eq "spec/idea-x" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_resume_already_on_the_branch_is_a_no_op() {
+  sresume_merged idea-x
+  git switch --quiet -c spec/idea-x
+
+  run jig spec resume idea-x
+  assert_eq 0 "$RC"
+  assert_eq "already on spec/idea-x" "$OUT"
+}
+
+test_spec_resume_refuses_a_dirty_tree() {
+  sresume_merged idea-x
+  printf 'dirty\n' >> README.md
+
+  run jig spec resume idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes in the working tree; commit or stash them yourself, then run \`spec resume\` again"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_resume_requires_the_default_branch() {
+  sresume_merged idea-x
+  git switch --quiet -c other
+
+  run jig spec resume idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec resume: switch to main first"
+}
+
+test_spec_resume_unknown_spec_dies() {
+  fixture_jig_repo
+  run jig spec resume nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec resume: no such spec: .ai/specs/nope"
+}
+
+test_spec_resume_invalid_id_fails() {
+  fixture_jig_repo
+  run jig spec resume "-x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec resume: invalid spec id: -x"
+}
+
+test_spec_resume_missing_id_fails() {
+  fixture_jig_repo
+  run jig spec resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec resume: missing spec id"
+}
+
+test_spec_resume_open_epic_refuses_and_names_it() {
+  epic_ready_to_finish idea-x
+  git checkout -q main
+
+  run jig spec resume idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec resume: .ai/specs/idea-x/roadmap.md declares an open epic (epic/idea-x); edit it there instead — switch to epic/idea-x first"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
 # --- subcommand handling ------------------------------------------------------
 
 test_spec_list_rejects_extra_argument() {
@@ -309,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -323,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -331,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -1472,6 +1625,7 @@ epic_ready_to_finish() {
   local id="$1"
   epic_setup
   jig spec new "$id" >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec $id"
   jig spec epic "$id" >/dev/null
@@ -1522,6 +1676,7 @@ test_spec_epic_unknown_spec_fails() {
 test_spec_epic_rejects_unexpected_argument() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
 
@@ -1533,6 +1688,7 @@ test_spec_epic_rejects_unexpected_argument() {
 test_spec_epic_finish_and_reopen_exclude_each_other() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
 
@@ -1548,6 +1704,7 @@ test_spec_epic_finish_and_reopen_exclude_each_other() {
 test_spec_epic_two_conflicting_epic_lines_fails() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   printf 'Epic: epic/a\nEpic: epic/b\n' >> .ai/specs/idea-x/roadmap.md
   git add -A
   git commit -q -m "add spec idea-x"
@@ -1562,6 +1719,7 @@ test_spec_epic_two_conflicting_epic_lines_fails() {
 test_spec_epic_declares_the_line_and_stops() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
 
@@ -1586,6 +1744,7 @@ test_spec_epic_declare_puts_the_line_after_a_wrapped_destination() {
   # land inside it (found declaring knowledge-adoption's epic, 2026-09-16).
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   printf '# Roadmap\n\nDestination: one sentence\nthat wraps\nover three lines.\n\n## Phase 1\n' \
     > .ai/specs/idea-x/roadmap.md
   git add -A
@@ -1600,6 +1759,7 @@ test_spec_epic_declare_puts_the_line_after_a_wrapped_destination() {
 test_spec_epic_declare_after_a_destination_that_ends_the_file() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   printf '# Roadmap\n\nDestination: the last\nparagraph.\n' > .ai/specs/idea-x/roadmap.md
   git add -A
   git commit -q -m "add spec idea-x"
@@ -1627,6 +1787,7 @@ test_spec_epic_roadmap_without_destination_dies() {
 test_spec_epic_refuses_before_the_line_reaches_main() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   # Declares the line in the working copy only — deliberately left uncommitted.
@@ -1640,6 +1801,7 @@ test_spec_epic_refuses_before_the_line_reaches_main() {
 test_spec_epic_creates_branch_on_freshest_main_without_checkout() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1660,6 +1822,7 @@ test_spec_epic_creates_branch_on_freshest_main_without_checkout() {
 test_spec_epic_repeat_after_creation_says_exists() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1675,6 +1838,7 @@ test_spec_epic_repeat_after_creation_says_exists() {
 test_spec_epic_exists_only_on_origin_is_found_via_fetch() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1716,6 +1880,7 @@ test_spec_epic_declare_on_finished_epic_suggests_reopen() {
 test_spec_epic_finish_no_epic_declared_dies() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
 
@@ -1727,6 +1892,7 @@ test_spec_epic_finish_no_epic_declared_dies() {
 test_spec_epic_finish_requires_being_on_the_epic_branch() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1797,6 +1963,7 @@ test_spec_epic_finish_legacy_finished_line_dies() {
 test_spec_epic_finish_leftovers_handled_without_finish_dies() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
 
@@ -1892,6 +2059,7 @@ test_spec_list_on_the_epic_shows_progress_with_suffix() {
 test_spec_list_off_the_epic_says_progress_is_on_the_epic() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1908,6 +2076,7 @@ test_spec_list_off_the_epic_says_progress_is_on_the_epic() {
 test_spec_list_epic_branch_missing() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -2359,6 +2528,7 @@ problem${tab}2${tab}repeated${tab}\`T-r\`" "$OUT"
 test_spec_plan_reads_an_open_epic_roadmap_from_its_branch() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -2467,20 +2637,28 @@ STUB
 }
 
 # sship_declared <id> — a spec with its Epic: line written, not committed, and
-# staged, on main: what `jig-idea` has at hand when it ships a declaration.
+# staged, on main: what `spec ship` finds when a spec was put there directly
+# (an older jig, or a hand-made one) and never branched — deliberately
+# bypassing `spec new`'s own branch cut, so this still exercises
+# `spec_ship_declare`'s "cut spec/<id> when here is main" path
+# (idea-leaves-a-tree-task-start-refuses).
 sship_declared() {
   epic_setup
-  jig spec new "$1" >/dev/null
+  mkdir -p ".ai/specs/$1"
+  cp .ai/templates/spec/spec.md ".ai/specs/$1/spec.md"
+  cp .ai/templates/spec/roadmap.md ".ai/specs/$1/roadmap.md"
   jig spec epic "$1" >/dev/null
   git add ".ai/specs/$1"
   printf 'Declare %s\n\nThe spec and its epic.\n' "$1" > msg.txt
 }
 
 # sship_cut <id> — the Epic: line on main and on origin, the epic cut here and
-# not pushed yet; checkout on main.
+# not pushed yet; checkout on main. Bypasses `spec new` as sship_declared does.
 sship_cut() {
   epic_setup
-  jig spec new "$1" >/dev/null
+  mkdir -p ".ai/specs/$1"
+  cp .ai/templates/spec/spec.md ".ai/specs/$1/spec.md"
+  cp .ai/templates/spec/roadmap.md ".ai/specs/$1/roadmap.md"
   jig spec epic "$1" >/dev/null
   git add -A
   git commit -q -m "declare epic"
@@ -2789,6 +2967,7 @@ mfin_finished() {
   local id="$1" release="${2:-}" extra="${3:-}"
   epic_setup
   jig spec new "$id" >/dev/null
+  git checkout -q main
   {
     printf '# Roadmap — %s\n\nDestination: done.\n\n## Phase 1 — One\n\n' "$id"
     printf -- '- [x] `t-1` — the one item\n'
@@ -2971,6 +3150,7 @@ test_spec_ship_declare_at_merge_opens_the_pr_and_never_merges_it() {
 test_spec_epic_declare_names_spec_ship_when_the_agent_commits() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   sship_cfg_local agent.git pr
 
   run jig spec epic idea-x
@@ -2982,6 +3162,7 @@ test_spec_epic_declare_names_spec_ship_when_the_agent_commits() {
 test_spec_epic_cut_names_spec_ship_when_the_agent_pushes() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   jig spec epic idea-x >/dev/null
   git add -A
   git commit -q -m "declare epic"
@@ -2995,6 +3176,7 @@ test_spec_epic_cut_names_spec_ship_when_the_agent_pushes() {
 test_spec_epic_cut_at_commit_leaves_the_push_to_the_human() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   jig spec epic idea-x >/dev/null
   git add -A
   git commit -q -m "declare epic"
@@ -3028,6 +3210,7 @@ test_spec_epic_finish_names_spec_ship_and_what_stays_the_humans() {
 test_spec_epic_release_is_written_under_the_epic_line() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
 
   run jig spec epic idea-x --release minor
   assert_eq 0 "$RC"
@@ -3039,6 +3222,7 @@ test_spec_epic_release_is_written_under_the_epic_line() {
 test_spec_epic_release_rejects_an_unknown_level() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
 
   run jig spec epic idea-x --release huge
   assert_eq 1 "$RC"
@@ -3049,6 +3233,7 @@ test_spec_epic_release_rejects_an_unknown_level() {
 test_spec_epic_release_only_when_declaring() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   jig spec epic idea-x >/dev/null
 
   run jig spec epic idea-x --release major
@@ -3063,6 +3248,7 @@ test_spec_epic_release_only_when_declaring() {
 test_spec_epic_refuses_an_invalid_release_line() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   jig spec epic idea-x >/dev/null
   printf 'Release: minor, probably\n' >> .ai/specs/idea-x/roadmap.md
 
@@ -3074,6 +3260,7 @@ test_spec_epic_refuses_an_invalid_release_line() {
 test_spec_epic_refuses_two_release_levels() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   jig spec epic idea-x --release minor >/dev/null
   printf 'Release: major\n' >> .ai/specs/idea-x/roadmap.md
 
@@ -3085,6 +3272,7 @@ test_spec_epic_refuses_two_release_levels() {
 test_spec_epic_finish_reports_the_recorded_release() {
   epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   jig spec epic idea-x --release minor >/dev/null
   git add -A
   git commit -q -m "declare epic"

@@ -978,6 +978,7 @@ status_epic_setup() {
 test_status_shows_open_epic_with_commits_behind() {
   status_epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1000,6 +1001,7 @@ test_status_shows_open_epic_with_commits_behind() {
 test_status_shows_epic_branch_missing() {
   status_epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1015,6 +1017,7 @@ test_status_shows_epic_branch_missing() {
 test_status_finished_epic_has_no_epic_line() {
   status_epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1032,6 +1035,7 @@ test_status_finished_epic_has_no_epic_line() {
 test_status_no_epic_has_no_epic_line() {
   status_epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
 
@@ -1482,6 +1486,7 @@ test_status_html_leaves_plain_status_output_unchanged() {
 test_status_html_names_open_epics_as_status_does() {
   status_epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -2231,6 +2236,7 @@ test_status_page_shows_spec_progress_by_phase() {
 test_status_page_reads_the_phases_of_an_open_epic_from_its_branch() {
   status_epic_setup
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
