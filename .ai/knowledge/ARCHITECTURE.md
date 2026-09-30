@@ -43,9 +43,12 @@ task or spec directory" — a roadmap names task ids, so the two grammars may no
 `jig_status_page_flush` ("redraw the status page" — task, spec and housekeeping all trigger it, and
 none of them may source `status.sh`, so the redraw is a `jig status --refresh` process),
 `jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push`, `jig_ship_pr` and `jig_ship_merge` ("carry a
-change as far as `agent.git` allows" — `task ship` and `spec ship` take the same git steps and keep their
-own gates; adr-20260922-spec-work-ships-by-the-agent-git-level, and for the merge
-adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci). One command
+change as far as `agent.git` allows" — `task ship`, `spec ship` and a copy-mode `jig upgrade` take the
+same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-agent-git-level,
+adr-20260930-an-upgrade-is-a-unit-of-work, and for the merge
+adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), `jig_verify_busy_dir`,
+`jig_verify_busy_ttl` and `jig_verify_busy_holder` ("is `jig verify` running in this clone, and where" —
+`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 

@@ -17,7 +17,8 @@ jig upgrade              # in a project: update its copy of Jig
 
 `jig upgrade` copies from the Jig on your machine. It replaces the files Jig installed and you did
 not edit, removes the ones Jig no longer ships unless you edited them, and keeps and reports
-everything else. Review the diff and commit it.
+everything else — as one change of its own, on a branch of its own
+([below](#an-upgrade-is-a-change-of-its-own)).
 
 **The first upgrade from 0.15.0 or older ends with a shell error.** Once the run has done its work,
 `.ai/scripts/jig` reports something like `line 133: cmd: unbound variable` — the wording and the
@@ -62,6 +63,53 @@ verification profile for your stack is active and its tools are missing, that is
 whose manifest records that Jig may. That record is written by `jig init`, on markers you agreed
 to, and the first time Jig takes over part of a file you wrote is a moment that belongs to you
 rather than to a command that ran while you were making coffee.
+
+## An upgrade is a change of its own
+
+From the next release on, `jig upgrade` does its work as one separate change, the way a task does:
+
+1. **The newest Jig does the work.** When the copy running the command is older than the Jig it
+   upgrades from, it hands the whole run to that newer one and says so:
+   `upgrade: this jig is 0.16.1; handing the upgrade to 0.17.0 from …`. This starts with the
+   release that brings it; an older copy still does the work itself.
+2. **It checks that it may start, before it touches anything.** It stops, and says what to do, when:
+   - you have uncommitted changes to tracked files — commit them, `git stash` them, or finish the
+     task they belong to (new files git does not track yet do not count);
+   - Git converts line endings here (`core.autocrlf=true`) and nothing keeps Jig's files at LF — it
+     names the two lines to add to `.gitattributes`;
+   - another agent session is working in this checkout, or `jig verify` is running in it — run the
+     upgrade when it has finished. If that session has already ended, the message names the file
+     to delete.
+3. **It works on a branch of its own**, `jig/upgrade-<version>`, cut from your base branch
+   (`git.base_branch`) — not from the branch you were on, so the upgrade never ends up inside a
+   task's pull request.
+4. **It checks the result before committing.** An install that is still missing something is not
+   committed; run `jig upgrade` again on the same branch and it carries on.
+5. **One commit**, titled `Upgrade Jig <from> -> <to>`, with the steps this release asks for by
+   hand and a link to this page. Then it goes as far as your agent's git rights allow
+   (`agent.git`): at `none` the change is staged and the run prints the one command that commits
+   it; at `commit`, `push`, `pr` and `merge` it commits, pushes, opens the pull request and merges
+   it once CI is green, exactly as `jig task ship` does.
+
+It ends by saying where you are and how to get back:
+
+```text
+next: this upgrade is on branch jig/upgrade-0.17.0; once it is merged into main, merge that into the branches still in progress
+next: to go back to what you were doing: `git checkout task/my-feature`
+```
+
+Branches that were already in progress get the upgrade when you merge the base branch into them.
+If nothing needed changing, the run goes back to the branch you were on and removes the one it
+made.
+
+`jig upgrade --dry-run` never stops and never makes a branch — `jig status`, `jig verify` and
+`jig doctor` rely on it. It prints what would stop a real run as `note: a real upgrade would stop:
+…` lines instead.
+
+Two kinds of project work differently. One that uses a single branch
+(`git.branch_per_task: false`) gets the commit on the branch it is on, and nothing is pushed. One
+installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
+and no commit.
 
 ## From 0.16.0 to 0.16.1
 

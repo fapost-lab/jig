@@ -2499,7 +2499,7 @@ EOF
 # therefore keeps the block and appends the GNU answer to it, and whoever reads
 # the result holds several lines where a number was expected.
 #
-# That is not hypothetical: it shipped. `_verify_busy_mtime` chose on the exit
+# That is not hypothetical: it shipped. `_jig_verify_busy_mtime` chose on the exit
 # status, so on Linux and in Git Bash the holder of a record was never once seen
 # as live and `jig verify` waited for nothing at all — while macOS, whose stat
 # answers the first form, passed every local run. CI found it on three
