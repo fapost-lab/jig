@@ -8,6 +8,69 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.17.0 — 2026-09-30
+
+`jig upgrade` becomes a change of its own, and the installer and Windows checkout gain the fixes
+0.16.1 was too small to carry.
+
+- **`jig upgrade` now runs as its own change, on its own branch.** It checks first that it may
+  start — no uncommitted changes, no `core.autocrlf` without Jig's files pinned to LF, no other
+  session or `jig verify` busy in this checkout — then works on `jig/upgrade-<version>`, cut from
+  your base branch, and commits once the result checks out. It ships as far as your agent's git
+  rights allow, the same as `jig task ship` ([Upgrading](/upgrading#an-upgrade-is-a-change-of-its-own)).
+  The commit and its pull request now also carry a checklist of the manual steps left between your
+  version and the new one, instead of a fixed pointer at this page.
+- **`jig doctor` tells you when a newer Jig has shipped.** Its `latest release` line asks the
+  tool's own origin for the newest published tag, instead of only comparing your project against
+  the copy on your machine — so the two can agree and still both be behind. It tells apart a real
+  "you're behind" from "could not check" (no network, no origin, no answer in time), and never
+  reports either as "up to date" by mistake ([Upgrading](/upgrading)).
+- **`jig status` shows a newer Jig release too, without running `jig doctor` for it.**
+  Housekeeping now checks the same thing once a day in the background and keeps the answer; `jig
+  status` (plain text and the `--html`/`--open` page) reads it offline and, the moment a newer
+  release is out, prints `jig v<X> is out — jig self-update, then jig upgrade`. No network call of
+  its own, and nothing shown when there is nothing new or the check failed.
+- **The Windows installer no longer refuses a drive or share root that is already your
+  repository.** A `subst` drive, a volume kept for one project, or a `\\server\share` that is
+  itself the top of an existing repository now installs the project too, not only Jig
+  ([Known issues](/known-issues)).
+- **A Jig project cloned on Windows keeps taking upgrades.** Line endings are now pinned for all
+  of `.ai/manifest`, `.ai/scripts/**`, `.ai/profiles/**`, `.ai/templates/**` and both adapters'
+  skill directories, not only the scripts — a clone or task worktree made with Git's default
+  `core.autocrlf=true` no longer reads its own manifest as empty
+  ([Upgrading](/upgrading#from-0161-to-0170)).
+- **`jig housekeeping` no longer hangs waiting for a credential prompt nobody can answer.** Every
+  network `git` call it and `jig self-update` make now refuses to prompt, so a remote that would
+  otherwise ask for credentials fails fast instead of piling up one stuck process per session.
+- **A task can no longer be closed while its pull request is still open.** `jig task set <id>
+  status consolidated` now checks with the forge first and refuses unless the pull request has
+  actually merged, so a task does not disappear from `jig status` while it still needs a merge.
+- **`jig verify` tells a change no check covers from missing tools.** A documentation-only change
+  used to refuse with "install the project's tools", even though the tools were already there. It
+  now recognises a skip explained by scope and passes instead of blaming your setup
+  ([Known issues](/known-issues)).
+- **The front-end cut now reaches Python, Ruby, Dart and Node projects.** A stylesheet, image or
+  front-end source file that a project's own test suite cannot observe no longer forces the full
+  set to run, the way it already worked for PHP and Laravel — each stack keeps its own build and
+  fixture exceptions, and the reason now names the file that forced a full run.
+- **`jig context` and `jig knowledge check` are markedly cheaper on a real repository.** One shared
+  tree walk replaces a filesystem `find` per path pattern of every document (291 finds down to one
+  walk, on an 83-document project measured at 30-39s before the fix); a task's repeated
+  `resolve`/`guard` calls with the same selectors now reuse their answer instead of recomputing it,
+  measured at roughly 6x faster (about 8s down to about 1.3s on an 89-document project)
+  ([Known issues](/known-issues)).
+- **A second session on a spec no longer leaves it sitting dirty on your default branch.**
+  `jig spec new` and the new `jig spec resume <id>` switch to the spec's own branch first, the same
+  branch `jig spec ship` already used; `jig task start`'s dirty-tree refusal now names
+  `jig spec ship` when every uncommitted change belongs to one spec.
+- **The status page's own redraw no longer swallows a neighbouring session's "HEAD moved" notice.**
+  Refreshing `jig status` runs `jig status` again as a subprocess; that subprocess is now marked
+  internal so it cannot consume a checkout notice meant for another session.
+- **A reason or note you type is stored exactly as typed.** `jig task pause --reason` and similar
+  free-text values could have a backslash sequence reinterpreted on the way into the task's state
+  file — a Windows path like `C:\temp` no longer risks being mangled or splitting into a second,
+  bogus state line.
+
 ## 0.16.1 — 2026-09-28
 
 Fixes to what 0.16.0 shipped: the Windows installer, `jig upgrade`, and how much a PHP project's

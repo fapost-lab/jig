@@ -122,6 +122,32 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.16.1 to 0.17.0
+
+Nothing on the checklist the upgrade itself prints — that only names steps from 0.15.0 and older,
+and you are already past them. Two things about running the upgrade change anyway.
+
+**`jig upgrade` now refuses a dirty working tree, where it used to run regardless.** If you are in
+the habit of running it with edits still uncommitted, commit or `git stash` them first, or finish
+the task that owns them; the upgrade tells you which when it refuses. It also stops if another
+session or a `jig verify` run is busy in the same checkout — wait for it to finish, or the message
+names the record to remove if that session has already ended.
+
+**It now works on its own branch, `jig/upgrade-0.17.0`, and makes one commit.** You no longer
+apply the upgrade's changes to whatever branch you happened to be on: it cuts its branch from your
+base branch, commits there, and — depending on your agent's git rights — pushes, opens a pull
+request and merges it, the same as `jig task ship`. See
+[An upgrade is a change of its own](#an-upgrade-is-a-change-of-its-own). Once that branch is
+merged, merge the base into any branch still in progress, the way the upgrade's own closing lines
+say.
+
+**If you worked around the Windows line-endings fault by hand, the workaround is now redundant.**
+A project that added `.ai/** text eol=lf` (and the two skills lines) to `.gitattributes` to fix
+[the known issue](/known-issues) keeps working; the upgrade now ships the same pinning, scoped
+more precisely to what Jig places (`.ai/manifest`, `.ai/scripts/**`, `.ai/profiles/**`,
+`.ai/templates/**`, both adapters' skill directories), for projects that never added it themselves.
+Nothing to reconcile either way.
+
 ## From 0.16.0 to 0.16.1
 
 Nothing to do by hand if you upgrade the way the top of this page shows: `jig self-update`, then
