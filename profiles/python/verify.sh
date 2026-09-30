@@ -15,6 +15,12 @@
 # changed paths map to — a changed test file itself, or test_<stem>.py /
 # <stem>_test.py for a changed <stem>.py — and everything when a path maps
 # to nothing or a project-wide file changed.
+#
+# pytest runs Python, and neither bundles nor serves a front-end source; the
+# build that produces the assets a Selenium/LiveServerTestCase browser test
+# loads is a different matter and keeps the full set. The two lists below
+# draw that line; what neither describes still runs everything, so an
+# unrecognised path costs time rather than coverage (ADR-0013).
 set -eu
 set -o pipefail
 
@@ -25,6 +31,25 @@ jp_begin python
 
 # Files whose change can alter the result of any test.
 PY_ALL_GLOBS="pyproject.toml requirements*.txt setup.py setup.cfg Pipfile Pipfile.lock poetry.lock uv.lock tox.ini pytest.ini conftest.py */conftest.py"
+
+# Files that define how a project's front end is built: the package
+# manifest, its lock file, and the bundler's configuration. A change to one
+# can alter every built asset, and a browser test loads the built assets. So
+# the full set runs.
+PY_BUILD_ALL_GLOBS="package.json package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb vite.config.* webpack.config.* rollup.config.* tailwind.config.* postcss.config.*"
+
+# Front-end sources. pytest neither bundles nor serves them, so changing one
+# cannot change what a test observes. Two kinds of path are excluded and
+# fall through to the rules below, because for them it can: a static/ (any
+# depth — Django's staticfiles finder serves an app's own app/static/app/...
+# straight to a running LiveServerTestCase/Selenium test in DEBUG mode, not
+# only the top-level directory) or staticfiles/ holds what a browser test
+# actually loads (the served or collected asset, not this source —
+# Django's collectstatic target is configurable, but staticfiles/ is its
+# common name), and a file under tests/ may be a fixture or a snapshot a
+# test asserts on.
+PY_FRONTEND_GLOBS="*.vue *.svelte *.js *.mjs *.cjs *.jsx *.ts *.mts *.cts *.tsx *.css *.scss *.sass *.less *.styl"
+PY_FRONTEND_NOT_GLOBS="static/* */static/* staticfiles/* */staticfiles/* tests/*"
 
 # _py_poetry_env — the poetry environment's directory, when the project uses
 # poetry and poetry is installed; nothing otherwise.
@@ -92,6 +117,16 @@ _py_builtin() {
   case "$f" in
     *.md|*.rst|docs/*|.ai/*) return 0 ;;
   esac
+  # Before the front-end list, not after it: vite.config.ts matches *.ts
+  # there, and the build has to win over the extension.
+  if jp_path_matches "$f" "$PY_BUILD_ALL_GLOBS"; then
+    printf 'ALL\n'
+    return 0
+  fi
+  if ! jp_path_matches "$f" "$PY_FRONTEND_NOT_GLOBS" \
+    && jp_path_matches "$f" "$PY_FRONTEND_GLOBS"; then
+    return 0
+  fi
   case "$f" in
     *.py) ;;
     *) printf 'ALL\n'; return 0 ;;
@@ -107,6 +142,29 @@ _py_builtin() {
     printf '%s\n' "$hits"
   else
     printf 'ALL\n'
+  fi
+  return 0
+}
+
+# _py_all_reason <path> — why the full set runs, for the path
+# jp_decide_cause named. "not narrowable" was one shrug for four different
+# situations, and the person reading it could not tell their package.json
+# from a class no test is named after. An empty <path> means the project's
+# own map asked for the full set; that line's author knows why, so the old
+# wording stands rather than a guess at their reason.
+_py_all_reason() {
+  local f="$1"
+  if [ -z "$f" ]; then
+    printf 'not narrowable\n'
+  elif jp_path_matches "$f" "$PY_BUILD_ALL_GLOBS"; then
+    printf '%s changes the asset build, which browser tests load\n' "$f"
+  elif jp_path_matches "$f" "$PY_ALL_GLOBS"; then
+    printf '%s can affect any test\n' "$f"
+  else
+    case "$f" in
+      *.py) printf 'no test is named after %s\n' "$f" ;;
+      *) printf 'the profile cannot map %s to tests\n' "$f" ;;
+    esac
   fi
   return 0
 }
@@ -159,7 +217,12 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $filters
 EOF
       fi
-      jp_plan_selection pytest "$filters" "test files"
+      if [ "$filters" = ALL ]; then
+        why=$(_py_all_reason "$(jp_decide_cause _py_builtin)")
+      else
+        why=
+      fi
+      jp_plan_selection pytest "$filters" "test files" "$why"
     fi
   done
   exit 0
@@ -239,7 +302,8 @@ else
     if [ -z "$filters" ]; then
       jp_skip "pytest" "scope: no changed file maps to a test"
     elif [ "$filters" = ALL ]; then
-      _py_pytest "$v, scope: not narrowable, ran full set"
+      why=$(_py_all_reason "$(jp_decide_cause _py_builtin)")
+      _py_pytest "$v, scope: $why, ran full set"
     else
       IFS='
 '

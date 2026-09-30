@@ -15,6 +15,13 @@
 # paths map to — a changed *_test.dart itself, or test/a/b_test.dart for a
 # changed lib/a/b.dart — and everything when a path maps to nothing or a
 # project-wide file changed.
+#
+# `flutter test`/`dart test` runs Dart, and web/ is Flutter's own front end
+# for the web build target — its HTML, CSS and JS entry point, read by
+# neither a widget nor a unit test. A changed pubspec.yaml already sends the
+# test check to the full set: it declares the asset bundle a golden test can
+# read, so an asset under it is left to that existing rule rather than
+# narrowed away (ADR-0013).
 set -eu
 set -o pipefail
 
@@ -25,6 +32,12 @@ jp_begin dart
 
 # Files whose change can alter the result of any check.
 DART_ALL_GLOBS="pubspec.yaml pubspec.lock analysis_options.yaml"
+
+# Flutter's own front end for the web build target. Neither `flutter test`
+# nor `dart test` bundles or serves it, so changing one cannot change what a
+# test observes; it holds only the HTML/CSS/JS entry point (index.html,
+# manifest.json, icons), never a .dart source.
+DART_FRONTEND_GLOBS="web/*"
 
 # _dart_is_flutter — whether pubspec.yaml declares a dependency on the
 # Flutter SDK, the one signal that decides which binary runs the checks.
@@ -48,6 +61,9 @@ _dart_builtin_test() {
   case "$f" in
     *.md|*.rst|docs/*|.ai/*) return 0 ;;
   esac
+  if jp_path_matches "$f" "$DART_FRONTEND_GLOBS"; then
+    return 0
+  fi
   case "$f" in
     *.dart) ;;
     *) printf 'ALL\n'; return 0 ;;
@@ -63,6 +79,27 @@ _dart_builtin_test() {
       ;;
     *) printf 'ALL\n' ;;
   esac
+  return 0
+}
+
+# _dart_all_reason <path> — why the full set runs, for the path
+# jp_decide_cause named. "not narrowable" was one shrug for three different
+# situations, and the person reading it could not tell their pubspec.yaml
+# from a class no test is named after. An empty <path> means the project's
+# own map asked for the full set; that line's author knows why, so the old
+# wording stands rather than a guess at their reason.
+_dart_all_reason() {
+  local f="$1"
+  if [ -z "$f" ]; then
+    printf 'not narrowable\n'
+  elif jp_path_matches "$f" "$DART_ALL_GLOBS"; then
+    printf '%s can affect any test\n' "$f"
+  else
+    case "$f" in
+      *.dart) printf 'no test is named after %s\n' "$f" ;;
+      *) printf 'the profile cannot map %s to tests\n' "$f" ;;
+    esac
+  fi
   return 0
 }
 
@@ -97,7 +134,12 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $filters
 EOF
     fi
-    jp_plan_selection test "$filters" "test files"
+    if [ "$filters" = ALL ]; then
+      why=$(_dart_all_reason "$(jp_decide_cause _dart_builtin_test)")
+    else
+      why=
+    fi
+    jp_plan_selection test "$filters" "test files" "$why"
   fi
   exit 0
 fi
@@ -176,7 +218,8 @@ else
     if [ -z "$filters" ]; then
       jp_skip test "scope: no changed file maps to a test"
     elif [ "$filters" = ALL ]; then
-      jp_run test "$v, scope: not narrowable, ran full set" "$DART_RUNNER" test
+      why=$(_dart_all_reason "$(jp_decide_cause _dart_builtin_test)")
+      jp_run test "$v, scope: $why, ran full set" "$DART_RUNNER" test
     else
       IFS='
 '

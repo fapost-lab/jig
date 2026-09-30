@@ -236,7 +236,7 @@ test_profile_dart_full_run_when_pubspec_changes() {
   assert_eq "" "$(cat dart-analyze.args)"
   assert_contains "$OUT" "dart: format: pass (dart stub-version, scope: pubspec or analysis options changed, whole project)"
   assert_eq "--output=none --set-exit-if-changed ." "$(cat dart-format.args)"
-  assert_contains "$OUT" "dart: test: pass (dart stub-version, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "dart: test: pass (dart stub-version, scope: pubspec.yaml can affect any test, ran full set)"
   assert_eq "" "$(cat dart-test.args)"
 }
 
@@ -304,7 +304,7 @@ test_profile_dart_test_full_after_analyze_and_format_file_list_path() {
   dart_scope "$(printf 'lib/a.dart\npubspec.yaml\n')"
   dart_verify
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "dart: test: pass (dart stub-version, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "dart: test: pass (dart stub-version, scope: pubspec.yaml can affect any test, ran full set)"
 }
 
 # A map decision naming two filters on one line, after analyze took the
@@ -338,4 +338,98 @@ test_profile_dart_map_dash_selects_nothing_skips() {
   dart_verify
   assert_eq 0 "$RC"
   assert_contains "$OUT" "dart: test: skip (scope: no changed file maps to a test)"
+}
+
+# --- front end: what can and cannot change the result of the test run --------
+# `web/` is Flutter's own front end for the web build target — its
+# HTML/CSS/JS entry point. Neither `flutter test` nor `dart test` bundles or
+# serves it, so a change under web/ cannot change what a test observes.
+# pubspec.yaml already keeps the full set for anything else that could
+# (design.md D4): it declares the asset bundle a golden test can read.
+
+# dart_explain <files> — run verify.sh's plan branch narrowed to <files> (a
+# newline-separated string, same shape dart_scope takes). No project tool
+# may run in this mode, so tests using it also assert the stub logged
+# nothing.
+dart_explain() {
+  printf '%s\n' "$1" > "${JIG_TEST_TMP}.dart-files"
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="${JIG_TEST_TMP}.dart-files"
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+  unset JIG_VERIFY_MAPPED
+  run bash "$JIG_HOME/profiles/dart/verify.sh"
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+}
+
+test_profile_dart_web_change_runs_no_test() {
+  dart_fixture flutter
+  dart_stub_tool flutter 0 0 0
+  dart_stub_tool dart 0 0 0
+  mkdir -p web
+  : > web/index.html
+  dart_scope "web/index.html"
+  dart_verify
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "dart: test: skip (scope: no changed file maps to a test)"
+  assert_no_file dart-test.args
+  assert_no_file flutter-test.args
+}
+
+# The cut must not have widened analyze/format either: a web/ file has no
+# .dart extension in the first place, so both already skip it, but this
+# pins that the front-end check runs first and does not mask that.
+test_profile_dart_web_change_skips_every_check() {
+  dart_fixture flutter
+  dart_stub_tool flutter 0 0 0
+  dart_stub_tool dart 0 0 0
+  mkdir -p web
+  : > web/style.css
+  dart_scope "web/style.css"
+  dart_verify
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "dart: analyze: skip (scope: no changed .dart files)"
+  assert_contains "$OUT" "dart: format: skip (scope: no changed .dart files)"
+  assert_contains "$OUT" "dart: test: skip (scope: no changed file maps to a test)"
+}
+
+test_profile_dart_web_beside_dart_runs_only_the_named_test() {
+  dart_fixture flutter
+  dart_stub_tool flutter 0 0 0
+  dart_stub_tool dart 0 0 0
+  mkdir -p test web
+  printf 'int add(int a, int b) => a + b;\n' > lib/math.dart
+  printf 'void main() {}\n' > test/math_test.dart
+  : > web/index.html
+  dart_scope "$(printf 'web/index.html\nlib/math.dart\n')"
+  dart_verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "dart: test: pass (flutter stub-version, scope: 1 test files)"
+  assert_eq "test/math_test.dart" "$(cat flutter-test.args)"
+}
+
+# --- explain: the plan says why, not just what -------------------------------
+
+test_profile_dart_explain_web_change_maps_to_no_test() {
+  dart_fixture flutter
+  dart_stub_tool flutter 0 0 0
+  dart_stub_tool dart 0 0 0
+  mkdir -p web
+  : > web/index.html
+  dart_explain "web/index.html"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN dart: test: skip (no changed file maps to this check)"
+  assert_no_file dart-test.args
+  assert_no_file flutter-test.args
+}
+
+test_profile_dart_explain_names_the_path_that_forces_the_full_set() {
+  dart_fixture flutter
+  dart_stub_tool flutter 0 0 0
+  dart_stub_tool dart 0 0 0
+  dart_explain "pubspec.yaml"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN dart: test: full (pubspec.yaml can affect any test)"
+  assert_no_file dart-test.args
+  assert_no_file flutter-test.args
 }
