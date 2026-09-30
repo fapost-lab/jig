@@ -701,7 +701,7 @@ test_doctor_newest_release_could_not_check_when_origin_is_unreachable() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "warn  latest release: could not check: git ls-remote origin failed"
   assert_not_contains "$OUT" "up to date"
-  assert_not_contains "$OUT" "available"
+  assert_not_contains "$OUT" "latest release: v"
   if [ "$elapsed" -ge 3 ]; then
     fail "doctor took ${elapsed}s against an unreachable origin; expected a fast failure, not a stall"
   fi

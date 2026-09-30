@@ -8,6 +8,13 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.17.1 — 2026-09-30
+
+No change to how Jig behaves. One test of 0.17.0's `jig doctor` `latest release` line was wrong on
+Windows: it rejected any output containing "available", and Windows prints
+`directory links: junction (symlinks unavailable)`. The test now checks only the `latest release`
+line, and the release's test suite passes on Windows again.
+
 ## 0.17.0 — 2026-09-30
 
 `jig upgrade` becomes a change of its own, and the installer and Windows checkout gain the fixes
