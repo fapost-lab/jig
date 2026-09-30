@@ -804,6 +804,33 @@ test_task_pause_reason() {
   assert_file_contains .ai/workspace/tasks/T-1/state "paused_reason: waiting on design review"
 }
 
+# state-write-does-not-interpret-escapes: `awk -v` expands `\n`, `\t` and
+# other escape sequences in the value it is given, so a reason spelling a
+# literal backslash-n (any Windows path, e.g. `C:\temp`) used to be written
+# as a real newline and split into a second, bogus state key. The state file
+# must hold exactly what the user typed, and exactly one state key from it.
+test_task_pause_reason_does_not_interpret_escapes() {
+  task_setup
+  jig task new T-1 >/dev/null
+  local before_base_commit
+  before_base_commit=$(sed -n 's/^base_commit:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+
+  run jig task pause T-1 --reason 'C:\temp\nbase_commit: x'
+  assert_eq 0 "$RC"
+
+  local reason
+  reason=$(sed -n 's/^paused_reason:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  assert_eq 'C:\temp\nbase_commit: x' "$reason" "reason was not written literally"
+
+  local reason_lines
+  reason_lines=$(grep -c '^paused_reason:' .ai/workspace/tasks/T-1/state)
+  assert_eq "1" "$reason_lines" "reason split the state file into a second key"
+
+  local after_base_commit
+  after_base_commit=$(sed -n 's/^base_commit:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  assert_eq "$before_base_commit" "$after_base_commit" "an interpreted escape overwrote base_commit"
+}
+
 test_task_pause_stash_records_commit_sha_and_leaves_tree_clean() {
   task_setup_clean
   jig task new T-1 >/dev/null
