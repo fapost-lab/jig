@@ -147,6 +147,7 @@ _status_report() {
   else
     printf '%s\n' "manifest: missing"
   fi
+  _status_new_release_hint
 
   # Drift: one pass over the manifest, then one git process for every file
   # still on disk (jig_hash_list). A manifest_hash_of and a jig_hash per path
@@ -1018,6 +1019,21 @@ _status_html_needs() {
   level=$(jig_agent_git 2>/dev/null) || level=none
   settled=$(_status_hk_ids ' remote=(merged|closed) ')
 
+  # 0. A new jig release is out (task status-says-a-newer-jig-exists): the
+  # one card here that is about the framework itself rather than any task,
+  # so it leads, first of all — a person who never runs `jig doctor` learns
+  # of it only from this page and the plain-text hint (_status_new_release_hint).
+  # Kept in its own variable, not folded into $cards yet: the reassignment
+  # below ("cards="$(_status_phase_stop_cards ...)$stopped$gates$git_steps"")
+  # replaces $cards wholesale rather than appending to it, and a card built
+  # before that line would be silently dropped.
+  local release_card=""
+  local latest_release
+  if latest_release=$(_status_latest_release_available); then
+    release_card=$(_status_card "jig v$latest_release is out" "" "" \
+      "jig self-update, then jig upgrade")
+  fi
+
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     _status_rec "$rec"
@@ -1095,8 +1111,9 @@ _status_html_needs() {
 $_STATUS_LIVE
 EOF
   # Most urgent first, whatever order the workspaces came in; a phase run's
-  # stops come first of all, as one card per phase.
-  cards="$(_status_phase_stop_cards "$phase_stops")$stopped$gates$git_steps"
+  # stops come first of all, as one card per phase — but a new release leads
+  # even that, since it is not about any task.
+  cards="$release_card$(_status_phase_stop_cards "$phase_stops")$stopped$gates$git_steps"
 
   # 4. A pull request waits for review or merge: one jig opened (pr_url), or
   # one the last housekeeping run saw open (a closed task's too).
@@ -1631,6 +1648,47 @@ _status_framework_versions() {
   # Not both orderable as release versions (e.g. a "dev" branch checkout), or
   # some other non-directional disagreement: no basis to name a direction.
   printf '%s\n' "hint: run \`jig self-update\`, then \`jig upgrade --dry-run\`"
+}
+
+# _status_latest_release_available — the version housekeeping's daily
+# release check (.ai/runtime/latest-release, _hk_check_latest_release in
+# housekeeping.sh) found strictly newer than the global framework this
+# checkout uses, printed on success. Fails, printing nothing, on every other
+# outcome — no file yet, the recorded check "failed", or the recorded
+# version is not newer — since none of those is "you are current": task
+# status-says-a-newer-jig-exists is explicit that this reads "нет файла / не
+# удалось / не новее — ничего, никогда «у вас последняя»".
+#
+# Offline and read-only, unlike _status_framework_versions above: the
+# network call already happened in housekeeping, at most once a cadence: this
+# only reads its answer and jig_declared_version's (no execution, same
+# reason jig_global_executable/jig_declared_version are used everywhere else
+# in this file rather than running the global `jig`).
+_status_latest_release_available() {
+  local file="$JIG_PROJECT/$JIG_AI_DIR/runtime/latest-release" latest="" global_exe global tok
+  [ -f "$file" ] || return 1
+  while IFS= read -r tok; do
+    case "$tok" in
+      latest=*) latest=${tok#latest=} ;;
+    esac
+  done < <(tr ' ' '\n' < "$file")
+  [ -n "$latest" ] || return 1
+  global_exe=$(jig_global_executable) || return 1
+  global=$(jig_declared_version "${global_exe%/scripts/jig}") || return 1
+  jig_release_version "v$latest" >/dev/null 2>&1 || return 1
+  jig_release_version "v$global" >/dev/null 2>&1 || return 1
+  jig_version_newer "$latest" "$global" || return 1
+  printf '%s\n' "$latest"
+}
+
+# _status_new_release_hint — the one line the plain-text report shows when
+# _status_latest_release_available found something; nothing otherwise
+# (task status-says-a-newer-jig-exists). The HTML page's own card
+# (_status_html_needs) reads the same answer, so the two never disagree.
+_status_new_release_hint() {
+  local latest
+  latest=$(_status_latest_release_available) || return 0
+  printf '%s\n' "hint: jig v$latest is out; run \`jig self-update\`, then \`jig upgrade\`"
 }
 
 # _status_flagged_ids <flag> — the tasks <flag> still stands for: the ones the

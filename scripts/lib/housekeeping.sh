@@ -80,6 +80,7 @@ cmd_housekeeping() {
 
   _HK_DEFAULT_BASE=$(cfg git.base_branch main)
   _hk_fetch "$dry"
+  _hk_check_latest_release "$dry" "$runtime"
   _hk_forge_init
   _hk_base_reflog_init "$tasks_dir"
 
@@ -508,6 +509,48 @@ _hk_fetch() {
   if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
        git -C "$JIG_PROJECT" fetch --quiet origin >/dev/null 2>&1; then
     _HK_STALE_REMOTE=1
+  fi
+  return 0
+}
+
+# _hk_check_latest_release <dry> <runtime> — the newest jig release, written
+# to .ai/runtime/latest-release so `jig status` can name it without a
+# network call of its own (task status-says-a-newer-jig-exists: "человек
+# узнаёт о вышедшей версии jig, не запуская jig doctor"). Doctor already asks
+# this same question of the global framework checkout on demand; this is the
+# unattended, once-a-cadence twin of that check, for the audience that never
+# runs doctor.
+#
+# Gated on housekeeping.fetch exactly like _hk_fetch above (no new config
+# key, per the task's own boundary), and skipped on a dry run for the same
+# reason _hk_fetch is: a dry run reads and prints only. Nothing here can fail
+# the run — a network hiccup is recorded as "failed", honestly, rather than
+# raised (jig_check_newest_release's own contract, common.sh): the file never
+# claims "up to date" without having actually heard so, and `jig status`
+# (_status_latest_release_available) treats "failed" exactly like "no file".
+_hk_check_latest_release() {
+  local dry="$1" runtime="$2" exe root rc best file tmp
+  if ! cfg_bool housekeeping.fetch true; then
+    return 0
+  fi
+  if [ "$dry" = 1 ]; then
+    return 0
+  fi
+  file="$runtime/latest-release"
+  tmp="$file.tmp.$$"
+  mkdir -p "$runtime" 2>/dev/null || return 0
+  if ! exe=$(jig_global_executable); then
+    return 0
+  fi
+  root="${exe%/scripts/jig}"
+  rc=0
+  best=$(jig_check_newest_release "$root" "$_JIG_RELEASE_CHECK_TIMEOUT") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf 'latest=%s\nchecked_at=%s\n' "${best#v}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" \
+      && mv "$tmp" "$file"
+  else
+    printf 'failed\nchecked_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" \
+      && mv "$tmp" "$file"
   fi
   return 0
 }

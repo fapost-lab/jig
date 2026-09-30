@@ -2620,3 +2620,115 @@ test_housekeeping_run_without_a_page_creates_none() {
   jig housekeeping >/dev/null
   assert_no_file .ai/runtime/status.html
 }
+
+# --- the daily latest-release check (task status-says-a-newer-jig-exists) ----
+#
+# housekeeping asks the same question doctor does — what is the newest
+# release tag at the global framework checkout's origin — but unattended and
+# once a run, writing the answer to .ai/runtime/latest-release for `jig
+# status` to read without a network call of its own. The mechanics
+# (jig_check_newest_release, common.sh) are proven against doctor already
+# (tests/doctor.t.sh); these tests are about housekeeping's own wiring:
+# gated on housekeeping.fetch exactly like its own fetch, and it must not
+# fail the run when the network does not answer.
+
+# _hk_release_source <dir> <version> — a minimal framework source root at
+# <dir>, git-initialised and tagged v<version> (mirrors
+# tests/doctor.t.sh's _doctor_release_source: this file's own tests need the
+# same fixture, and the two are deliberately kept separate rather than
+# shared, since nothing here may depend on another test file's helpers).
+_hk_release_source() {
+  local dir="$1" version="$2"
+  mkdir -p "$dir"
+  cp -R "$JIG_HOME/scripts" "$dir/"
+  cp -R "$JIG_HOME/skills" "$dir/"
+  cp -R "$JIG_HOME/templates" "$dir/"
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="'"$version"'"/' "$JIG_HOME/scripts/lib/version.sh" \
+    > "$dir/scripts/lib/version.sh"
+  (cd "$dir" && git init -q . && git symbolic-ref HEAD refs/heads/main \
+     && git add -A && git commit -q -m "v$version" && git tag -a "v$version" -m "v$version")
+}
+
+# _hk_release_upstream <work> <upstream> — a bare remote outside any fixture,
+# with <work>'s main branch and tags pushed to it, <work>'s origin pointed at
+# it (network-free by construction, like tests/doctor.t.sh's own version).
+_hk_release_upstream() {
+  local work="$1" upstream="$2"
+  rm -rf "$upstream"
+  git init -q --bare "$upstream"
+  git -C "$upstream" symbolic-ref HEAD refs/heads/main
+  (cd "$work" && git remote add origin "$upstream" && git push -q origin main --tags)
+}
+
+# _hk_global_bin <source-root> — a directory to put first on PATH so that
+# `jig` resolves to <source-root>/scripts/jig (mirrors
+# tests/doctor.t.sh's _doctor_global_bin).
+_hk_global_bin() {
+  local src="$1" bin
+  bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-hk-globalbin.XXXXXX") || return 1
+  if ln -s "$src/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
+    printf '%s\n' "$bin"
+  else
+    rm -f "$bin/jig"
+    printf '%s\n' "$src/scripts"
+  fi
+}
+
+test_housekeeping_latest_release_records_newer_when_available() {
+  hk_setup
+  hk_cfg housekeeping.fetch true
+  local src upstream newer bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-hk-rel-src.XXXXXX")
+  upstream="$src.upstream"
+  _hk_release_source "$src" 0.1.0
+  _hk_release_upstream "$src" "$upstream"
+
+  newer=$(mktemp -d "${TMPDIR:-/tmp}/jig-hk-rel-newer.XXXXXX")
+  git clone -q "$upstream" "$newer"
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="0.2.0"/' "$src/scripts/lib/version.sh" \
+    > "$newer/scripts/lib/version.sh"
+  (cd "$newer" && git add -A && git commit -q -m "v0.2.0" \
+     && git tag -a v0.2.0 -m v0.2.0 && git push -q origin main --tags)
+
+  bin=$(_hk_global_bin "$src")
+  run env PATH="$bin:$PATH" "$JIG_BIN" housekeeping
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/latest-release "latest=0.2.0"
+  assert_file_contains .ai/runtime/latest-release "checked_at="
+
+  rm -rf "$src" "$upstream" "$newer" "$bin"
+}
+
+test_housekeeping_latest_release_records_failed_when_origin_is_unreachable() {
+  hk_setup
+  hk_cfg housekeeping.fetch true
+  local src bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-hk-rel-bad.XXXXXX")
+  _hk_release_source "$src" 0.1.0
+  (cd "$src" && git remote add origin "$src/does-not-exist.git")
+
+  bin=$(_hk_global_bin "$src")
+  run env PATH="$bin:$PATH" "$JIG_BIN" housekeeping
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/latest-release "failed"
+  assert_file_contains .ai/runtime/latest-release "checked_at="
+  assert_not_contains "$(cat .ai/runtime/latest-release)" "latest="
+
+  rm -rf "$src" "$bin"
+}
+
+test_housekeeping_latest_release_makes_no_request_when_fetch_is_false() {
+  hk_setup
+  # hk_setup already sets housekeeping.fetch false.
+  local src bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-hk-rel-off.XXXXXX")
+  _hk_release_source "$src" 0.1.0
+  (cd "$src" && git remote add origin "$src/does-not-exist.git")
+
+  bin=$(_hk_global_bin "$src")
+  run env PATH="$bin:$PATH" "$JIG_BIN" housekeeping
+  assert_eq 0 "$RC"
+  assert_no_file .ai/runtime/latest-release
+
+  rm -rf "$src" "$bin"
+}
