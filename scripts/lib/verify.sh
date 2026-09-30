@@ -598,11 +598,16 @@ cmd_verify() {
       rc=$?
       [ -z "$run_output" ] || printf '%s\n' "$run_output"
     else
-      run_output=$( cd "$JIG_PROJECT" \
+      # Never scope-aware (no --changed, or the profile declares no scope
+      # support): a skip here cannot be scope narrowing, so there is nothing
+      # to classify and the run streams live like every branch did before
+      # this change — run_output stays empty, which _verify_skip_lines_all_scoped
+      # reads as "not narrowed", the same answer this branch always gave.
+      run_output=""
+      ( cd "$JIG_PROJECT" \
         && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
-        && bash "$pdir/verify.sh" 2>&1 )
+        && bash "$pdir/verify.sh" )
       rc=$?
-      [ -z "$run_output" ] || printf '%s\n' "$run_output"
     fi
     set -e
     if [ "$map_ok" = 1 ]; then
