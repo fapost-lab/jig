@@ -14,7 +14,7 @@ paths:
   - "profiles/**"
   - tests/run.sh
   - scripts/lib/profile.sh
-reviewed_at: 2026-09-26
+reviewed_at: 2026-09-30
 ---
 # Verify rules
 
@@ -24,31 +24,48 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 ## Invariants
 
 - A profile is run from the repository root, in a subshell, and its exit code is the only
-  thing that decides its result. `cmd_verify` never inspects a profile's output to
-  decide pass or fail — profiles are user-modifiable and their prose is not an API.
+  thing that decides its result — pass, fail, skip or incomplete. `cmd_verify` never inspects
+  a profile's output to turn one of those into another; profiles are user-modifiable and their
+  prose is not an API. One narrow exception, added for the third state below: when a covered
+  profile's own result is already skip, `cmd_verify` reads its printed `<check>: skip (…)`
+  lines for the `scope: ...` wording ADR-0013 already asks every scope-aware profile to use, to
+  tell "this diff never reached the check" from "the check could not run". This never changes
+  which of the four results the profile got — only which of two skip-caused endings the *run*
+  reports, and only toward the safer one: a profile that phrases its skip differently is read
+  as the cautious default (skip, not narrowing), never the other way
+  (verify-knows-a-change-maps-to-no-check).
 - Exit code 2 means skip and must stay distinguishable from 0. Collapsing skip into pass
   would let an unrunnable check report success.
 - Exit code 3 means **no verdict was produced**: the check started and did not finish, or
   nothing was checked at all. It must stay distinguishable from both 0 and 1. A profile
   killed by a signal (128+N) means the first and needs no profile change to say so.
   `jig verify` exits 3 for either, and the line it prints says which.
-- **A run where nothing passed and nothing failed is not a pass, and the two ways that happens
-  are told apart.** `cmd_verify` ended in `[ "$failn" -eq 0 ]`, so a set of pure skips answered
-  0 — success on a project not one line of which had been examined, read as success by
-  `jig task ship` and the autopilot. What decides is **whether there was anything to check**: a
-  profile covering the stack took part and its checks all skipped (the tools are missing —
-  refuse, exit 3), or only fallback profiles took part, so nothing covers the project at all
-  (nothing to install, nothing to wait for — do not refuse, and do not say `ok`: say that
-  nothing here checks this project, and have `jig task ship` say it again where it has
-  consequences). Collapsing the two either way is a defect, and a test that cannot tell them
-  apart does not cover this rule. **The profile declares which it is** — `verifies: nothing`,
-  read only by `profiles_is_fallback` — and it is never inferred, least of all from
-  `detect: always`: `detect` says when a profile applies, not what it asserts, and a profile
-  that applies everywhere and does check something (a secret scanner, a licence-header check)
-  would otherwise ship unverified the day its tool went missing. Absence means the profile
-  verifies something, which is the cautious default. It cannot be computed from a run — a
-  profile with no checks and one whose checks could not run give identical skips and exit 2,
-  and `jig task ship` must answer without running anything at all.
+- **A run where nothing passed and nothing failed is not a pass, and the three ways that
+  happens are told apart.** `cmd_verify` ended in `[ "$failn" -eq 0 ]`, so a set of pure skips
+  answered 0 — success on a project not one line of which had been examined, read as success by
+  `jig task ship` and the autopilot. What decides is **whether there was anything to check, and
+  whether the change at hand was why it went unchecked**: a profile covering the stack took
+  part and its checks all skipped for a reason of its own — a missing tool, a broken
+  `verify.sh` — and there was something to check that was not (refuse, exit 3); only fallback
+  profiles took part, so nothing covers the project at all (nothing to install, nothing to
+  wait for — do not refuse, and do not say `ok`: say that nothing here checks this project,
+  and have `jig task ship` say it again where it has consequences); or a covered profile ran
+  and every one of its checks skipped because the diff never reached its scope — the tools are
+  fine, this change simply is not theirs (a documentation-only edit beside a `shell` profile,
+  say) — which does not refuse either, and says so in its own words rather than borrowing
+  either of the other two (verify-knows-a-change-maps-to-no-check). Collapsing any two of the
+  three is a defect, and a test that cannot tell them apart does not cover this rule. **The
+  profile declares which of the first two it is** — `verifies: nothing`, read only by
+  `profiles_is_fallback` — and it is never inferred, least of all from `detect: always`:
+  `detect` says when a profile applies, not what it asserts, and a profile that applies
+  everywhere and does check something (a secret scanner, a licence-header check) would
+  otherwise ship unverified the day its tool went missing. Absence means the profile verifies
+  something, which is the cautious default. It cannot be computed from a run — a profile with
+  no checks and one whose checks could not run give identical skips and exit 2, and
+  `jig task ship` must answer without running anything at all. **The third state is told apart
+  from the first by the profile's own printed skip reasons**, not by a declaration: every
+  `<check>: skip (…)` line naming a `scope: ...` reason means the run over-narrowed rather than
+  found a gap; any skip line that does not is read as the first state, the cautious default.
 - **Incomplete outranks fail**, in `cmd_verify`, in `jp_end`, in `profiles/shell/verify.sh`
   and in `tests/run.sh` alike. A run something was killed in is not evidence, so the failures
   beside it are not evidence either.

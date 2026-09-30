@@ -163,28 +163,6 @@ jig task start <task>
 committing is yours, it says so and you commit the spec yourself. Or take the refusal's own last
 option and start the task with `--worktree`: the spec's changes stay in your checkout, untouched.
 
-## `jig verify` refuses a change that no check covers, and blames your tools
-
-{/* closed by jig task: verify-knows-a-change-maps-to-no-check — remove this entry in the PR that merges the fix */}
-
-With `verify.full_run: ci`, a local `jig verify` runs only the checks your change can affect. When
-it affects none of them — a change only to documentation, say — every check is skipped, and the
-run exits 3 with:
-
-```text
-verify: nothing was checked, so this is not a pass — install the project's tools so its profile can run
-```
-
-Your tools are installed; `jig verify --list` shows it. Nothing was checked because nothing needed
-checking, and the rule that refuses a run with nothing checked cannot tell that apart from missing
-tools. So a change that touches only documentation cannot come out green locally, and the advice
-sends you to install what you already have.
-
-**What to do instead.** Read the skip reasons above that line. When the checks your tools run say
-`scope:` — for instance `shellcheck: skip (scope: no changed shell scripts)` — the run was narrowed to nothing, not
-starved of tools, and there is nothing to install. The full set runs in CI, which is what
-`verify.full_run: ci` means.
-
 ## An interrupted command leaves temporary files behind
 
 {/* closed by jig task: temp-files-die-with-the-command — remove this entry in the PR that merges the fix */}

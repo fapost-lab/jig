@@ -58,11 +58,6 @@ them. Jig then reads the manifest as empty, stops placing updates there, and `ji
 nothing wrong. The line endings of all of Jig's files get pinned, and projects that already have
 the problem have to receive the fix through the very upgrade it breaks — which is the hard part.
 
-**`jig verify` must tell a change no check covers from missing tools.** A change only to
-documentation leaves every check skipped, and the run refuses with advice to install tools that
-are already installed. The refusal is right that nothing was checked and wrong about why, and a
-command whose advice is wrong teaches you to stop reading it.
-
 ## Then: what costs you time
 
 **Resolving knowledge must cost one walk of your repository.** Working out which knowledge

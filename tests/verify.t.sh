@@ -1090,11 +1090,14 @@ test_verify_changed_empty_file_list_skips_supporting_profile_without_running() {
   git commit -q -m "add probe profile"
 
   run jig verify --changed --profile probe
-  # The fixture profile claims something about the code — it declares no
-  # `verifies: nothing` — so a run in which it checked nothing is refused:
-  # something could have been checked here and was not.
-  assert_eq 3 "$RC"
+  # The fixture profile covers a stack and its tools are fine — the skip came
+  # from scope narrowing alone (no changed files), not from anything the
+  # profile could not do. There is nothing to install, so this does not
+  # refuse — but it must not be mistaken for a pass either.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
+  assert_contains "$OUT" "verify: every check in scope skipped"
+  assert_not_contains "$OUT" "install the project's tools"
   assert_not_contains "$OUT" "RESULT probe: pass"
   assert_no_file probe.ran
 }
@@ -1581,10 +1584,10 @@ test_verify_map_scope_empty_changed_file_list_skips_before_reading_the_map() {
   git commit -q -m "add probe profile with a broken map, nothing left uncommitted"
 
   run jig verify --changed --profile probe
-  # The fixture profile claims something about the code — it declares no
-  # `verifies: nothing` — so a run in which it checked nothing is refused:
-  # something could have been checked here and was not.
-  assert_eq 3 "$RC"
+  # The skip came from scope narrowing alone (no changed files), before the
+  # broken map is ever read — there is nothing to install, so this does not
+  # refuse.
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
   assert_not_contains "$OUT" "RESULT probe: fail"
   assert_no_file probe.ran
@@ -2488,6 +2491,70 @@ EOF
   assert_eq 3 "$RC" "$OUT"
   assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
   assert_not_contains "$OUT" "nothing here checks this project"
+}
+
+# The fifth bench: a stack the project actually has, its tools all present,
+# and a change that simply does not touch it — a docs-only edit beside a
+# `shell` profile. `covered` alone used to answer this with the same refusal
+# as a missing tool, telling a person to install what `jig verify --list`
+# already shows installed. Scope narrowing is the reason every check skipped
+# here, and it is not anybody's fault, so this must come out green.
+test_verify_a_covered_stack_a_change_narrows_out_of_is_not_refused() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  sc_stub 1.0.0 0
+  # A real tests/run.sh, so the second check also narrows by scope rather
+  # than skipping for want of a test runner — the real-world repro (jig's own
+  # repository) has one, and the fix must hold there, not only where a check
+  # was already going to skip for an unrelated reason.
+  mkdir -p tests
+  printf '#!/usr/bin/env bash\nexit 0\n' > tests/run.sh
+  chmod +x tests/run.sh
+  git add -A
+  git commit -q -m "install shell profile"
+  mkdir -p docs
+  echo "a docs-only change" > docs/note.md
+  git add docs/note.md
+  git commit -q -m "docs only"
+
+  run jig verify --changed --base HEAD~1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "shell: shellcheck: skip (scope: no changed shell scripts)"
+  assert_contains "$OUT" "shell: tests/run.sh: skip (scope: no changed file maps to a test)"
+  assert_contains "$OUT" "RESULT shell: skip (scope: changed, 1 files)"
+  assert_contains "$OUT" "verify: every check in scope skipped"
+  assert_not_contains "$OUT" "install the project's tools"
+  assert_not_contains "$OUT" "nothing was checked, so this is not a pass"
+  # Must not be mistaken for "no profile covers this project at all" either:
+  # the shell profile does cover this project, just not this diff.
+  assert_not_contains "$OUT" "nothing here checks this project"
+}
+
+# The bound on the fifth bench: one profile narrowed out by scope beside
+# another whose tools are genuinely missing is still a real problem, and the
+# aggregate must still refuse — a covered skip from any cause other than
+# scope narrowing keeps the original text and exit code.
+test_verify_a_narrowed_skip_beside_a_real_tool_gap_still_refuses() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  mkdir -p .ai/profiles/stack
+  printf 'name: stack\ndescription: fixture profile that covers a stack.\ndetect: [stack.toml]\n' \
+    > .ai/profiles/stack/profile.yaml
+  cat > .ai/profiles/stack/verify.sh <<'EOF'
+#!/usr/bin/env bash
+echo "stack: build: skip (its tool is not installed)"
+exit 2
+EOF
+  chmod +x .ai/profiles/stack/verify.sh
+  _fixture_probe_profile probe "scope: [changed]"
+  git add -A
+  git commit -q -m "add stack and probe profiles"
+
+  run jig verify --changed --profile stack,probe
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "RESULT probe: skip (scope: changed, no changed files)"
+  assert_contains "$OUT" "RESULT stack: skip"
+  assert_contains "$OUT" "verify: nothing was checked, so this is not a pass"
 }
 
 # --- the record's freshness must survive either stat -------------------------

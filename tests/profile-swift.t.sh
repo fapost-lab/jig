@@ -265,13 +265,18 @@ STUB
   export PATH
 
   run jig verify --changed --profile swift
-  # Every check skipped, so the run checked nothing and says so, exit 3
-  # (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
-  assert_eq 3 "$RC" "$OUT"
+  # Every check skipped, and every one of them for a scope reason (the map
+  # itself says so: "only documentation changed") — the swift profile covers
+  # this project and its toolchain is fine, this diff simply never reaches
+  # it. That is the third state, not the "install the project's tools"
+  # refusal: exit 0, not 3 (verify-knows-a-change-maps-to-no-check).
+  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "map .ai/verify/swift.map"
   assert_contains "$OUT" "swift: build: skip (scope: only documentation changed)"
   assert_contains "$OUT" "swift: test: skip (scope: only documentation changed)"
   assert_contains "$OUT" "RESULT swift: skip"
+  assert_contains "$OUT" "verify: every check in scope skipped"
+  assert_not_contains "$OUT" "install the project's tools"
   assert_not_contains "$(cat swift.log)" "build"
   assert_not_contains "$(cat swift.log)" "test"
 }
