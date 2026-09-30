@@ -13,6 +13,11 @@ jig upgrade --dry-run    # in a project: what would change
 jig upgrade              # in a project: update its copy of Jig
 ```
 
+`jig doctor` tells you when it is worth running the first of these: its `latest release` line asks
+the tool's own origin for the newest published tag and reports one of three things — a newer release
+is out (with the two commands above as the fix), this is already the newest, or it could not check
+(no network, or nothing to ask) rather than guessing "up to date" from silence.
+
 ## What the upgrade does, and what it leaves alone
 
 `jig upgrade` copies from the Jig on your machine. It replaces the files Jig installed and you did

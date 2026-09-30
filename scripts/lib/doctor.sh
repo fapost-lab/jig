@@ -154,6 +154,101 @@ _doctor_check_jigcmd_global() {
   fi
 }
 
+# Newest published release, asked of the global checkout's own origin — the
+# same channel `jig self-update` moves along (self-update.sh), but read-only:
+# `git ls-remote --tags origin` never touches the checkout, matching the rest
+# of doctor (file header: "a reporting command ... it never writes
+# anything"). Distinct from _doctor_check_framework_version above, which only
+# compares the project's manifest against whatever `jig` PATH selects and can
+# read "current" when both are simply stale together — it never asks
+# upstream. The owner's request was exactly this gap: "add a request to git
+# and check the latest version" (task doctor-says-a-newer-jig-exists).
+#
+# Three outcomes, kept distinct on purpose: newer available, this is the
+# newest, or the answer could not be obtained — the third is never folded
+# into the second (an absent answer is not a good answer, ADR-0017's "unknown
+# is not zero"). GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh,
+# common.sh) keep a credential prompt from hanging the call;
+# _doctor_ls_remote_tags below bounds a stalled connection the same way,
+# since neither env var helps once TCP itself never answers and no portable
+# `timeout`/`gtimeout` is guaranteed to exist (ADR-0002).
+_DOCTOR_RELEASE_TIMEOUT=5
+
+# _doctor_ls_remote_tags <root> <seconds> — `git ls-remote --tags origin` at
+# the checkout <root>, printed on success. Killed and reported failed (exit
+# 2) if it is still running after <seconds> wall-clock seconds; a plain git
+# failure (bad or unreachable origin, answered quickly) is exit 1, so the
+# caller can tell "no answer in time" from "an answer arrived, and it was no"
+# apart, rather than reporting both as the same shrug.
+#
+# Rolled by hand rather than `timeout`/`gtimeout` (not guaranteed to exist,
+# see above): the call runs in the background, this polls `kill -0` five
+# times a second, and sends SIGTERM once the budget is spent. A killed call
+# never hands back partial tag data — the temp file is discarded either way.
+_doctor_ls_remote_tags() {
+  local root="$1" seconds="$2" out pid ticks=0 max_ticks
+  max_ticks=$((seconds * 5))
+  out=$(mktemp "${TMPDIR:-/tmp}/jig-doctor-lsremote.XXXXXX") || return 1
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+    git -C "$root" ls-remote --tags origin >"$out" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge "$max_ticks" ]; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      rm -f "$out"
+      return 2
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+  if wait "$pid"; then
+    cat "$out"
+    rm -f "$out"
+    return 0
+  fi
+  rm -f "$out"
+  return 1
+}
+
+# _doctor_check_newest_release <global_exe> — nothing to check without a
+# global jig (_doctor_check_global_jig above already warned about that) or
+# without a readable declared version (it already warned "version
+# unreadable" too; a second, contradictory-sounding line here would not help
+# the reader).
+_doctor_check_newest_release() {
+  local exe="$1" root current out rc best best_v
+  [ -n "$exe" ] || return 0
+  root="${exe%/scripts/jig}"
+  current=$(jig_declared_version "$root") || return 0
+  if ! git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    _doctor_warn "latest release" "could not check: no origin remote at $root"
+    return 0
+  fi
+  rc=0
+  out=$(_doctor_ls_remote_tags "$root" "$_DOCTOR_RELEASE_TIMEOUT") || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    _doctor_warn "latest release" \
+      "could not check: origin did not answer within ${_DOCTOR_RELEASE_TIMEOUT}s"
+    return 0
+  elif [ "$rc" -ne 0 ]; then
+    _doctor_warn "latest release" "could not check: git ls-remote origin failed" \
+      "check network access and the origin remote at $root"
+    return 0
+  fi
+  if ! best=$(printf '%s\n' "$out" | jig_newest_release); then
+    _doctor_warn "latest release" "could not check: origin has no release tag"
+    return 0
+  fi
+  best_v=$(jig_release_version "$best")
+  if jig_version_lt "$current" "$best_v"; then
+    _doctor_warn "latest release" "$best available (this checkout: v$current)" \
+      "jig self-update, then jig upgrade"
+  else
+    _doctor_ok "latest release" "up to date (v$current)"
+  fi
+}
+
 # --- project checks (initialised project only) -------------------------------
 
 # Reuses status.sh's own comparison rather than a second one: _status_
@@ -443,6 +538,7 @@ cmd_doctor() {
   _doctor_check_global_jig "$global_exe"
   _doctor_check_link_kind
   _doctor_check_jigcmd_global "$global_exe"
+  _doctor_check_newest_release "$global_exe"
 
   local repo=""
   repo=$(jig_repo_root) || repo=""
