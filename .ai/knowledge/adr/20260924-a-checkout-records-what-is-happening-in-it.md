@@ -13,6 +13,7 @@ paths:
   - scripts/lib/config.sh
   - "skills/jig-task/**"
 summary: Why every jig run records in the checkout that work is happening there, and why the record holds only what nothing can compute.
+reviewed_at: 2026-09-30
 ---
 # ADR: A checkout records what is happening in it, so a session is no longer invisible
 
@@ -313,3 +314,34 @@ decision of its own, with its own line in that document.
   next reader is made to guess which one is true.
 - Rolling back is `git revert` plus an amendment: no existing file changes format, and no
   command changes its output when the recorder is removed.
+
+  *Amended 2026-09-30.* This decision did not say what should happen when the checkout's
+  *own* redraw of the status page re-enters the dispatcher — and on 2026-09-25 the status
+  page (adr-20260924-the-status-page-keeps-the-readers-place) started doing exactly that:
+  `jig_status_page_touch` (`scripts/lib/common.sh`) runs `bash "$jig" status --refresh` as a
+  subprocess, because none of task.sh, spec.sh or housekeeping.sh may source status.sh
+  (ARCHITECTURE.md, Scripts layout). That subprocess passed through the full dispatcher
+  unmarked, so it was indistinguishable from a session actually running `jig status`. Two
+  things followed, neither caught by review because the two changes landed the same day and
+  no review saw them together: the shared `runtime/checkout`'s `command:` line was
+  overwritten with `status --refresh` while a different command (`task start`, say) was
+  still the one actually running, so the "what last ran here" record lied; and, because
+  `status` is one of the commands `_jig_checkout_orienting` answers for, the redraw silently
+  consumed the moved-HEAD notice — `jig_status_page_touch` discards this subprocess's whole
+  output, so the notice was not merely early, it never reached anyone, while
+  `branch_reported` was already advanced past it. A neighbour's next real orienting command
+  then found nothing to say. Measured directly: `task start`, which this decision already
+  excludes from `_jig_checkout_orienting` for the same reason, still ate the notice through
+  the redraw its own `jig_status_page_flush` triggers at the end of `cmd_task`.
+
+  The fix is a guard, not a new mechanism: `jig_status_page_touch` sets
+  `JIG_INTERNAL_REDRAW=1` on the one subprocess it starts, scoped to it by the subshell, and
+  `jig_checkout_record`/`jig_checkout_notice` (`scripts/lib/checkout.sh`) both return before
+  doing anything while it is set. The dispatcher (`scripts/jig`) is unchanged — deciding
+  which command words count as a session's own orienting call already lived in checkout.sh
+  (`_jig_checkout_orienting`), and deciding whether a call is a session at all belongs next
+  to it, not in the dispatcher that neither of these decisions is about. Sourcing status.sh
+  directly to avoid the subprocess altogether was rejected again here, for the reason this
+  decision and adr-20260924-the-status-page-keeps-the-readers-place both already give: the
+  redraw is a process precisely so that no command library needs to source another domain's
+  command file.

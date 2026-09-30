@@ -1439,6 +1439,17 @@ _JIG_PAGE_DIRTY=""
 # SC2120 on a function that reads $1 when every call it can see passes none.
 # Always returns 0 and prints nothing: a failed redraw never changes the
 # output or the exit code of the command that triggered it.
+#
+# **This re-entry is not a session, and says so.** `bash "$jig" status
+# "$mode"` runs the whole dispatcher again, which would otherwise write this
+# checkout's own two records (adr-20260924-a-checkout-records-what-is-happening-in-it)
+# for `status --refresh` — overwriting `runtime/checkout`'s `command:` with
+# a line nobody ran, and, because `status` is one of the commands a reader
+# orients with, consuming the moved-HEAD notice a neighbour is owed. That
+# neighbour's next real orienting command must still get it, so the redraw's
+# subprocess carries JIG_INTERNAL_REDRAW, scoped to this one call by the
+# subshell it runs in, and checkout.sh's recorder and notice both stay silent
+# while it is set (jig_checkout_record, jig_checkout_notice).
 jig_status_page_touch() {
   local mode="--refresh" root jig
   [ "${1:-}" != --full ] || mode="--html"
@@ -1446,7 +1457,7 @@ jig_status_page_touch() {
   [ -f "$root/$JIG_AI_DIR/runtime/status.html" ] || return 0
   jig="$root/$JIG_AI_DIR/scripts/jig"
   [ -f "$jig" ] || return 0
-  (cd "$root" && bash "$jig" status "$mode") </dev/null >/dev/null 2>&1 || true
+  (cd "$root" && JIG_INTERNAL_REDRAW=1 bash "$jig" status "$mode") </dev/null >/dev/null 2>&1 || true
   return 0
 }
 

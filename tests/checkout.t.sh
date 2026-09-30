@@ -142,6 +142,50 @@ test_checkout_notice_skips_non_orienting_commands() {
   assert_file_contains .ai/runtime/checkout "branch_reported: bogus-branch"
 }
 
+# The status page's own redraw re-enters the dispatcher as `status --refresh`
+# (jig_status_page_touch, common.sh), because none of task.sh, spec.sh or
+# housekeeping.sh may source status.sh (ARCHITECTURE.md, Scripts layout).
+# Before JIG_INTERNAL_REDRAW, that re-entry went through jig_checkout_record
+# and jig_checkout_notice exactly like a real `jig status`: it silently marked
+# this checkout's shared `branch_reported` as caught up with HEAD, discarding
+# the notice through jig_status_page_touch's own redirection to /dev/null —
+# so the neighbour who actually owned that notice never saw it on its next
+# real orienting command. This is the regression named in
+# status-redraw-is-not-a-session/task.md: the swallowed message, not a missing
+# record.
+test_status_redraw_does_not_eat_the_moved_head_notice_owed_to_a_neighbour() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  local before_branch
+  before_branch=$(git symbolic-ref --short HEAD)
+
+  # A page must exist for any redraw to run at all (jig_status_page_touch
+  # returns before touching anything otherwise). Writing it also tells this
+  # shared checkout file about the branch we are on now — the neighbour's
+  # last known truth, exactly as `checkout_setup`'s shared-file world has it.
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/status.html
+  assert_file_contains .ai/runtime/checkout "branch_reported: $before_branch"
+
+  # `task start` moves HEAD and is deliberately excluded from
+  # _jig_checkout_orienting, so it must not consume the notice itself — but it
+  # does end in one page redraw (jig_status_page_flush), which is exactly the
+  # re-entrant `status --refresh` under test.
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  local after_branch
+  after_branch=$(git symbolic-ref --short HEAD)
+  [ "$before_branch" != "$after_branch" ] || fail "task start did not move HEAD"
+
+  # The neighbour's own next orienting command must still get told — the
+  # redraw inside `task start` must not have quietly answered for it.
+  run_split jig task current
+  assert_eq 0 "$RC"
+  assert_eq "T-1" "$OUT"
+  assert_contains "$ERR" "checkout: HEAD here moved $before_branch -> $after_branch since you were told"
+}
+
 # --- `jig status`'s "working here:" line (_status_checkout, status.sh) --------
 
 test_status_shows_working_here_for_foreign_records_but_not_the_current_task() {

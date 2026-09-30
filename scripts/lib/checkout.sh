@@ -388,7 +388,16 @@ _jig_checkout_write() {
 
 # jig_checkout_record <command-words...> — called by the dispatcher before the
 # command runs. Writes at most two records and prints nothing.
+#
+# JIG_INTERNAL_REDRAW marks the one re-entry that is not a session: the status
+# page's own redraw (jig_status_page_touch, common.sh) re-runs `jig status
+# --refresh|--html` as a subprocess, because none of the writers that trigger
+# it may source status.sh (ARCHITECTURE.md, Scripts layout). Recording that
+# run as work would overwrite `runtime/checkout`'s `command:` with a line
+# nobody ran — a redraw, not a session
+# (adr-20260924-a-checkout-records-what-is-happening-in-it).
 jig_checkout_record() {
+  [ -z "${JIG_INTERNAL_REDRAW:-}" ] || return 0
   _jig_checkout_record_inner "$@" || true
   return 0
 }
@@ -480,7 +489,16 @@ _jig_checkout_told_file() {
 #
 # stderr, not stdout: `jig task current` prints an id that callers read as one
 # (ADR-0012), and an advisory must not become part of it.
+#
+# JIG_INTERNAL_REDRAW excludes the status page's own re-entry, the same guard
+# jig_checkout_record uses and for the same reason: `status --refresh` run
+# from jig_status_page_touch is not a reader orienting itself, and letting it
+# through consumed the moved-HEAD notice a neighbour was owed — silently,
+# since jig_status_page_touch discards this subprocess's stderr — before that
+# neighbour's own next orienting command ever ran
+# (adr-20260924-a-checkout-records-what-is-happening-in-it).
 jig_checkout_notice() {
+  [ -z "${JIG_INTERNAL_REDRAW:-}" ] || return 0
   _jig_checkout_orienting "$@" || return 0
   _jig_checkout_notice_inner || true
   return 0
