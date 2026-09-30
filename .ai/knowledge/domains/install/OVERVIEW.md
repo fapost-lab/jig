@@ -20,7 +20,7 @@ paths:
   - scripts/jig.cmd
   - templates/gitattributes
   - scripts/lib/section.sh
-reviewed_at: 2026-09-26
+reviewed_at: 2026-09-30
 ---
 # Install
 
@@ -119,7 +119,9 @@ project owns.
   runs housekeeping (which moves and later deletes workspaces) at each session start;
   `-NoSessionHook` leaves the hook out.
   **And some folders it refuses to prepare at all**: the home folder, anything containing it,
-  the root of a drive or share, and a folder inside a repository whose root is elsewhere —
+  the root of a drive or share (unless that root is itself a repository, the exception a
+  `subst` drive or a dedicated volume needs), and a folder inside a repository whose root is
+  elsewhere —
   `Get-JigProjectDirRefusal`, on every candidate, before the folder is created and before
   `git init`, `jig init`, `git add -A` and the first commit can reach it. `-Yes` does not
   turn it off and no flag does. The default path was the dangerous one: a fresh PowerShell's
