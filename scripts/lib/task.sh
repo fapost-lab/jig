@@ -1108,6 +1108,33 @@ task_set() {
     jig_die "task set: knowledge_consolidated cannot be false on a consolidated task: $id"
   fi
 
+  # A merge alone never closes a task (AGENTS.md), and neither does the
+  # reverse: closing a task never stands in for a merge that has not happened.
+  # Silent when no pull request was ever opened (pr_url unset — agent.git
+  # below pr, or the work never left this branch); once one was, `merged` is
+  # the only answer that lets `consolidated` through, asked of the forge now,
+  # never assumed from what wrote the request (autopilot-end-closes-unmerged-task).
+  #
+  # Forge-only, deliberately: housekeeping's own remote-state tier falls back
+  # from the forge to git ancestry/patch-id when the forge cannot answer
+  # (ADR-0005), because a background sweep can afford to keep looking. This
+  # gate cannot — it must answer now, synchronously, in the same call the
+  # human or the route is waiting on — so a forge that cannot be reached
+  # reads as `unknown` and refuses here, even on a run where housekeeping's
+  # ancestry check would have called the same pull request merged. That is
+  # the safe side to be wrong on: closing early cannot be taken back for
+  # free, and the refusal is retried by re-running this same command, not by
+  # `jig housekeeping`, which never feeds this gate.
+  if [ "$key" = status ] && [ "$value" = consolidated ]; then
+    local pr pr_state
+    pr=$(task_state_get "$id" pr_url)
+    if [ -n "$pr" ]; then
+      pr_state=$(jig_pr_state "$pr")
+      [ "$pr_state" = merged ] \
+        || jig_die "task set: status consolidated requires its pull request to be merged: $pr is $pr_state; merge it, then run this again"
+    fi
+  fi
+
   # Completion stops here (design §4): `status ready` is verify's own
   # sign-off, and `knowledge_consolidated true` is consolidation's. A P0/P1
   # finding still open, or fixed but not re-reviewed, refuses both.

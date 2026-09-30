@@ -369,6 +369,93 @@ test_task_set_status_consolidated_succeeds_after_knowledge_consolidated() {
   assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
 }
 
+# autopilot-end-closes-unmerged-task: a merge alone never closes a task
+# (AGENTS.md), and the reverse holds too — closing one never stands in for a
+# merge that has not happened. Once `task ship` opened a pull request
+# (pr_url), `status consolidated` asks the forge, live, whether it merged;
+# silent when no pull request was ever opened (covered above: T-1 there never
+# ran `task ship`, and consolidating it succeeds with no forge in play at all).
+
+# pr_check_stub_gh <existing-pr-url> <view-state> — ship_stub_gh's `pr
+# list`/`pr create`, plus `gh pr view <url> --json state --jq .state`
+# answering <view-state> verbatim (e.g. OPEN, MERGED), or failing outright
+# when <view-state> is FAIL — how a network hiccup or a revoked token reads.
+pr_check_stub_gh() {
+  local existing="${1:-}" state="${2:-OPEN}"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  pr)
+    shift
+    case "\$1" in
+      list)
+        if [ -n "$existing" ]; then
+          printf '%s\n' "$existing"
+        else
+          printf 'null\n'
+        fi
+        ;;
+      create)
+        shift
+        printf '%s\n' "\$@" > gh-create.argv
+        printf 'https://github.com/example/example/pull/99\n'
+        ;;
+      view)
+        if [ "$state" = FAIL ]; then
+          exit 1
+        fi
+        printf '%s\n' "$state"
+        ;;
+    esac
+    ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# pr_check_ship_T1 — ship_setup with GitHub stubbed, at agent.git: pr, that
+# opens T-1's pull request. <view-state> answers the later `gh pr view`.
+pr_check_ship_T1() {
+  ship_setup
+  ship_cfg forge github
+  pr_check_stub_gh "" "$1"
+  ship_cfg_local agent.git pr
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  jig task ship T-1 --message-file msg.txt >/dev/null
+}
+
+test_task_set_status_consolidated_refuses_an_open_pull_request() {
+  pr_check_ship_T1 OPEN
+
+  run jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires its pull request to be merged"
+  assert_contains "$OUT" "is open"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+test_task_set_status_consolidated_succeeds_once_the_pull_request_is_merged() {
+  pr_check_ship_T1 MERGED
+
+  run jig task set T-1 status consolidated
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
+}
+
+test_task_set_status_consolidated_refuses_when_the_forge_cannot_confirm() {
+  pr_check_ship_T1 FAIL
+
+  run jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is unknown"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
 test_task_set_knowledge_consolidated_false_on_consolidated_task_dies() {
   task_setup
   jig task new T-1 >/dev/null
