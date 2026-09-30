@@ -599,3 +599,149 @@ test_doctor_instructions_reports_a_changed_section() {
   run jig doctor
   assert_contains "$OUT" "ok    instructions (codex): Jig section changed here"
 }
+
+# --- newest release (git ls-remote against a local "origin", never the network) --
+#
+# The global checkout must be a real git repository with an origin remote
+# for this check to run at all; every other doctor fixture in this file
+# strips .git from its "global" copy (it never needed one). These build a
+# minimal one of their own, deliberately separate from tests/self-update.t.sh's
+# su_build_source/su_build_upstream: that file's helpers assume the
+# self-update fixture layout ($HOME/.local/share, $HOME/.local/bin), which
+# this file's _doctor_global_bin does not use.
+
+# _doctor_release_source <dir> <version> — a fresh git checkout at <dir>,
+# JIG_VERSION set to <version>, committed and tagged v<version>: a minimal
+# framework source root (jig_is_source_root: skills/, templates/,
+# scripts/jig) able to answer `jig_declared_version` and act as the "global"
+# checkout doctor reads.
+_doctor_release_source() {
+  local dir="$1" version="$2"
+  mkdir -p "$dir"
+  cp -R "$JIG_HOME/scripts" "$dir/"
+  cp -R "$JIG_HOME/skills" "$dir/"
+  cp -R "$JIG_HOME/templates" "$dir/"
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="'"$version"'"/' "$JIG_HOME/scripts/lib/version.sh" \
+    > "$dir/scripts/lib/version.sh"
+  (cd "$dir" && git init -q . && git symbolic-ref HEAD refs/heads/main \
+     && git add -A && git commit -q -m "v$version" && git tag -a "v$version" -m "v$version")
+}
+
+# _doctor_release_upstream <work> <upstream> — a bare remote outside any
+# fixture, with <work>'s main branch and tags pushed to it, <work>'s origin
+# pointed at it. Local, so every test below is network-free by construction
+# (self-update.t.sh's own fixtures use the same approach for the same reason).
+_doctor_release_upstream() {
+  local work="$1" upstream="$2"
+  rm -rf "$upstream"
+  git init -q --bare "$upstream"
+  git -C "$upstream" symbolic-ref HEAD refs/heads/main
+  (cd "$work" && git remote add origin "$upstream" && git push -q origin main --tags)
+}
+
+test_doctor_newest_release_reports_available() {
+  local src upstream newer bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-rel-src.XXXXXX")
+  upstream="$src.upstream"
+  _doctor_release_source "$src" 0.1.0
+  _doctor_release_upstream "$src" "$upstream"
+
+  # The newer release is pushed straight to the upstream from a second clone,
+  # so the checkout doctor reads is never itself touched (doctor writes
+  # nothing, scripts/lib/doctor.sh's own header).
+  newer=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-rel-newer.XXXXXX")
+  git clone -q "$upstream" "$newer"
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="0.2.0"/' "$src/scripts/lib/version.sh" \
+    > "$newer/scripts/lib/version.sh"
+  (cd "$newer" && git add -A && git commit -q -m "v0.2.0" \
+     && git tag -a v0.2.0 -m v0.2.0 && git push -q origin main --tags)
+
+  bin=$(_doctor_global_bin "$src")
+  run env PATH="$bin:$PATH" "$JIG_BIN" doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  latest release: v0.2.0 available (this checkout: v0.1.0)"
+  assert_contains "$OUT" "fix: jig self-update, then jig upgrade"
+
+  rm -rf "$src" "$upstream" "$newer" "$bin"
+}
+
+test_doctor_newest_release_ok_when_current() {
+  local src upstream bin
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-rel-cur.XXXXXX")
+  upstream="$src.upstream"
+  _doctor_release_source "$src" 0.1.0
+  _doctor_release_upstream "$src" "$upstream"
+
+  bin=$(_doctor_global_bin "$src")
+  run env PATH="$bin:$PATH" "$JIG_BIN" doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    latest release: up to date (v0.1.0)"
+
+  rm -rf "$src" "$upstream" "$bin"
+}
+
+# The second and third stands must read differently, or a test that only
+# checks "no crash" could not tell "this is the newest" from "the answer
+# never arrived" (task doctor-says-a-newer-jig-exists: "a test that does not
+# distinguish the second and third stand is blind"). A nonexistent local
+# path fails git's own connection attempt immediately — no network, no
+# stall — which is also what proves requirement 1 does not depend on the
+# manual timeout alone: an ordinary failure must stay fast on its own.
+test_doctor_newest_release_could_not_check_when_origin_is_unreachable() {
+  local src bin start elapsed
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-rel-bad.XXXXXX")
+  _doctor_release_source "$src" 0.1.0
+  (cd "$src" && git remote add origin "$src/does-not-exist.git")
+
+  bin=$(_doctor_global_bin "$src")
+  start=$SECONDS
+  run env PATH="$bin:$PATH" "$JIG_BIN" doctor
+  elapsed=$((SECONDS - start))
+
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  latest release: could not check: git ls-remote origin failed"
+  assert_not_contains "$OUT" "up to date"
+  assert_not_contains "$OUT" "available"
+  if [ "$elapsed" -ge 3 ]; then
+    fail "doctor took ${elapsed}s against an unreachable origin; expected a fast failure, not a stall"
+  fi
+
+  rm -rf "$src" "$bin"
+}
+
+# Requirement 1 itself: a `git ls-remote` that never returns must not hang
+# `jig doctor`. A stub `git` stands in for a stalled connection (nothing
+# short of one actually stalls deterministically in a test), and the
+# assertion is the same shape shell.md asks for elsewhere — a wall-clock
+# bound checked with $SECONDS, not a fixed iteration count — so the test
+# fails if the budget in scripts/lib/doctor.sh ever regresses to "no bound".
+test_doctor_newest_release_never_hangs_when_ls_remote_stalls() {
+  local src bin stub real_git start elapsed
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-rel-hang.XXXXXX")
+  _doctor_release_source "$src" 0.1.0
+  (cd "$src" && git remote add origin "$src/unreachable.git")
+
+  real_git=$(command -v git) || fail "no real git on PATH to wrap"
+  stub=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-rel-stub.XXXXXX")
+  cat > "$stub/git" <<EOF
+#!/bin/sh
+case " \$* " in
+  *" ls-remote "*) exec sleep 1000 ;;
+esac
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$stub/git"
+
+  bin=$(_doctor_global_bin "$src")
+  start=$SECONDS
+  run env PATH="$stub:$bin:$PATH" "$JIG_BIN" doctor
+  elapsed=$((SECONDS - start))
+
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  latest release: could not check: origin did not answer within"
+  if [ "$elapsed" -ge 10 ]; then
+    fail "doctor took ${elapsed}s against a stalled ls-remote; expected it to be killed at the budget"
+  fi
+
+  rm -rf "$src" "$bin" "$stub"
+}
