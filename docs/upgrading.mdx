@@ -18,6 +18,12 @@ the tool's own origin for the newest published tag and reports one of three thin
 is out (with the two commands above as the fix), this is already the newest, or it could not check
 (no network, or nothing to ask) rather than guessing "up to date" from silence.
 
+You do not have to remember to run `jig doctor` for this. Housekeeping asks the same question once
+a day (`housekeeping.cadence`) as part of its own fetch, and `jig status` — plain text or
+`--html`/`--open` — shows a newer release the moment one is out, with the same two commands as the
+fix. It says nothing when there is nothing to say: no check yet, the last one could not reach the
+origin, or this is already the newest.
+
 ## What the upgrade does, and what it leaves alone
 
 `jig upgrade` copies from the Jig on your machine. It replaces the files Jig installed and you did

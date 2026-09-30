@@ -500,6 +500,88 @@ jig_git_batch_ssh() {
   printf '%s -o BatchMode=yes\n' "${GIT_SSH_COMMAND:-ssh}"
 }
 
+# --- the newest published release -------------------------------------------
+#
+# Doctor (`jig doctor`) and housekeeping's daily release check both ask the
+# same question of a framework checkout's origin — "what is the newest
+# release tag?" — and both must never hang or prompt for a credential doing
+# it. One implementation, shared here, rather than two that could drift
+# (task status-says-a-newer-jig-exists, following on #146
+# doctor-says-a-newer-jig-exists, which first wrote this against doctor
+# alone).
+
+# _JIG_RELEASE_CHECK_TIMEOUT — seconds a caller budgets `jig_check_newest_release`
+# for `git ls-remote` to answer before it is killed. One shared number, so
+# doctor and housekeeping never quietly drift apart on how long "too slow"
+# is.
+_JIG_RELEASE_CHECK_TIMEOUT=5
+
+# jig_ls_remote_tags <root> <seconds> — `git ls-remote --tags origin` at the
+# checkout <root>, printed on success. Killed and reported failed (exit 2) if
+# it is still running after <seconds> wall-clock seconds; a plain git failure
+# (bad or unreachable origin, answered quickly) is exit 1, so the caller can
+# tell "no answer in time" from "an answer arrived, and it was no" apart,
+# rather than reporting both as the same shrug.
+#
+# GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh above) keep a
+# credential prompt from hanging the call.
+#
+# Rolled by hand rather than `timeout`/`gtimeout` (not guaranteed to exist,
+# ADR-0002): the call runs in the background, this polls `kill -0` five times
+# a second, and sends SIGTERM once the budget is spent. A killed call never
+# hands back partial tag data — the temp file is discarded either way.
+jig_ls_remote_tags() {
+  local root="$1" seconds="$2" out pid ticks=0 max_ticks
+  max_ticks=$((seconds * 5))
+  out=$(mktemp "${TMPDIR:-/tmp}/jig-lsremote.XXXXXX") || return 1
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+    git -C "$root" ls-remote --tags origin >"$out" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge "$max_ticks" ]; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      rm -f "$out"
+      return 2
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+  if wait "$pid"; then
+    cat "$out"
+    rm -f "$out"
+    return 0
+  fi
+  rm -f "$out"
+  return 1
+}
+
+# jig_check_newest_release <root> [seconds] — the newest release tag
+# (`vX.Y.Z`) published at <root>'s origin remote, printed on success
+# (<seconds> defaults to _JIG_RELEASE_CHECK_TIMEOUT). Read-only and
+# network-bound like jig_ls_remote_tags above, which it calls.
+#
+# Failure is never folded into one shrug: the exit code says which of four
+# distinct things happened, so a caller can report (or not) accordingly
+# (ADR-0017, "unknown is not zero"):
+#   1 — no origin remote at <root>
+#   2 — origin answered, but `git ls-remote` failed (e.g. it does not exist)
+#   3 — origin did not answer within <seconds>
+#   4 — origin has no release tag
+jig_check_newest_release() {
+  local root="$1" seconds="${2:-$_JIG_RELEASE_CHECK_TIMEOUT}" out rc best
+  git -C "$root" remote get-url origin >/dev/null 2>&1 || return 1
+  rc=0
+  out=$(jig_ls_remote_tags "$root" "$seconds") || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    return 3
+  elif [ "$rc" -ne 0 ]; then
+    return 2
+  fi
+  best=$(printf '%s\n' "$out" | jig_newest_release) || return 4
+  printf '%s\n' "$best"
+}
+
 # jig_fetch_branches <who> <name>... — refresh origin/<name> for each branch
 # from origin, one at a time, so that a branch origin does not have fails
 # alone. Does nothing without an origin. A failure is a warning, never fatal:

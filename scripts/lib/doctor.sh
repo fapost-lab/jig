@@ -164,52 +164,17 @@ _doctor_check_jigcmd_global() {
 # upstream. The owner's request was exactly this gap: "add a request to git
 # and check the latest version" (task doctor-says-a-newer-jig-exists).
 #
+# The check itself — `git ls-remote --tags` bounded by a manual poll-and-kill
+# timeout — is `jig_check_newest_release` (common.sh): housekeeping's own
+# daily release check (housekeeping.sh, task status-says-a-newer-jig-exists)
+# asks the same question of the same kind of checkout, and a second
+# implementation here would be the one this file's own header warns against
+# elsewhere in the codebase. This function is doctor's wording on top of it.
+#
 # Three outcomes, kept distinct on purpose: newer available, this is the
 # newest, or the answer could not be obtained — the third is never folded
 # into the second (an absent answer is not a good answer, ADR-0017's "unknown
-# is not zero"). GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh,
-# common.sh) keep a credential prompt from hanging the call;
-# _doctor_ls_remote_tags below bounds a stalled connection the same way,
-# since neither env var helps once TCP itself never answers and no portable
-# `timeout`/`gtimeout` is guaranteed to exist (ADR-0002).
-_DOCTOR_RELEASE_TIMEOUT=5
-
-# _doctor_ls_remote_tags <root> <seconds> — `git ls-remote --tags origin` at
-# the checkout <root>, printed on success. Killed and reported failed (exit
-# 2) if it is still running after <seconds> wall-clock seconds; a plain git
-# failure (bad or unreachable origin, answered quickly) is exit 1, so the
-# caller can tell "no answer in time" from "an answer arrived, and it was no"
-# apart, rather than reporting both as the same shrug.
-#
-# Rolled by hand rather than `timeout`/`gtimeout` (not guaranteed to exist,
-# see above): the call runs in the background, this polls `kill -0` five
-# times a second, and sends SIGTERM once the budget is spent. A killed call
-# never hands back partial tag data — the temp file is discarded either way.
-_doctor_ls_remote_tags() {
-  local root="$1" seconds="$2" out pid ticks=0 max_ticks
-  max_ticks=$((seconds * 5))
-  out=$(mktemp "${TMPDIR:-/tmp}/jig-doctor-lsremote.XXXXXX") || return 1
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-    git -C "$root" ls-remote --tags origin >"$out" 2>/dev/null &
-  pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$ticks" -ge "$max_ticks" ]; then
-      kill "$pid" 2>/dev/null
-      wait "$pid" 2>/dev/null
-      rm -f "$out"
-      return 2
-    fi
-    sleep 0.2
-    ticks=$((ticks + 1))
-  done
-  if wait "$pid"; then
-    cat "$out"
-    rm -f "$out"
-    return 0
-  fi
-  rm -f "$out"
-  return 1
-}
+# is not zero").
 
 # _doctor_check_newest_release <global_exe> — nothing to check without a
 # global jig (_doctor_check_global_jig above already warned about that) or
@@ -217,29 +182,33 @@ _doctor_ls_remote_tags() {
 # unreadable" too; a second, contradictory-sounding line here would not help
 # the reader).
 _doctor_check_newest_release() {
-  local exe="$1" root current out rc best best_v
+  local exe="$1" root current rc best best_v
   [ -n "$exe" ] || return 0
   root="${exe%/scripts/jig}"
   current=$(jig_declared_version "$root") || return 0
-  if ! git -C "$root" remote get-url origin >/dev/null 2>&1; then
-    _doctor_warn "latest release" "could not check: no origin remote at $root"
-    return 0
-  fi
   rc=0
-  out=$(_doctor_ls_remote_tags "$root" "$_DOCTOR_RELEASE_TIMEOUT") || rc=$?
-  if [ "$rc" -eq 2 ]; then
-    _doctor_warn "latest release" \
-      "could not check: origin did not answer within ${_DOCTOR_RELEASE_TIMEOUT}s"
-    return 0
-  elif [ "$rc" -ne 0 ]; then
-    _doctor_warn "latest release" "could not check: git ls-remote origin failed" \
-      "check network access and the origin remote at $root"
-    return 0
-  fi
-  if ! best=$(printf '%s\n' "$out" | jig_newest_release); then
-    _doctor_warn "latest release" "could not check: origin has no release tag"
-    return 0
-  fi
+  best=$(jig_check_newest_release "$root" "$_JIG_RELEASE_CHECK_TIMEOUT") || rc=$?
+  case "$rc" in
+    0) ;;
+    1)
+      _doctor_warn "latest release" "could not check: no origin remote at $root"
+      return 0
+      ;;
+    3)
+      _doctor_warn "latest release" \
+        "could not check: origin did not answer within ${_JIG_RELEASE_CHECK_TIMEOUT}s"
+      return 0
+      ;;
+    4)
+      _doctor_warn "latest release" "could not check: origin has no release tag"
+      return 0
+      ;;
+    *)
+      _doctor_warn "latest release" "could not check: git ls-remote origin failed" \
+        "check network access and the origin remote at $root"
+      return 0
+      ;;
+  esac
   best_v=$(jig_release_version "$best")
   if jig_version_lt "$current" "$best_v"; then
     _doctor_warn "latest release" "$best available (this checkout: v$current)" \
