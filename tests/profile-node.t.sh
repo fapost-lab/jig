@@ -440,7 +440,7 @@ test_profile_node_test_vitest_non_test_source_change_forces_full() {
 
   _node_scope "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "node: npm test: pass (10.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "node: npm test: pass (10.0.0, scope: no related tests found for a.ts, ran full set)"
   assert_no_file vitest-invoked.log
   assert_file_contains npm-invoked.log "npm test"
 }
@@ -456,7 +456,7 @@ test_profile_node_test_all_trigger_on_lock_file_change() {
 
   _node_scope "$files"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "node: npm test: pass (10.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "node: npm test: pass (10.0.0, scope: package-lock.json can affect any test, ran full set)"
   assert_no_file jest-invoked.log
 }
 
@@ -527,4 +527,134 @@ test_profile_node_map_filter_overrides_builtin() {
   assert_contains "$OUT" "node: npm test: pass (29.0.0, scope: jest related, 1 files)"
   assert_file_contains jest-invoked.log "custom.test.ts"
   assert_not_contains "$(cat jest-invoked.log)" "a.ts "
+}
+
+# --- front end: what can and cannot change the result of the test run --------
+# node is the degenerate case among the stacks that narrow a front end away:
+# its own js/ts source *is* the code under test. What still needs the same
+# care is a stylesheet or an image/font asset — neither jest nor vitest
+# imports or executes one as code, so a change to one cannot change what a
+# test run observes. Two kinds of path are excluded and fall through to the
+# rules below, because for them it can: public/dist/build hold what gets
+# served or is already built, and a file under a fixtures directory may be
+# read by a test as data.
+
+# _node_explain <files-file> — run verify.sh's plan branch narrowed to
+# <files-file>. No project tool may run in this mode, so tests using it
+# also assert the stub's log was never written.
+_node_explain() {
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$1"
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+  unset JIG_VERIFY_MAPPED
+  run bash "$JIG_HOME/profiles/node/verify.sh"
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+}
+
+test_profile_node_asset_change_runs_no_test_via_jest() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 1 0
+  mkdir -p src
+  printf 'body{}\n' > src/app.css
+  files=$(_node_files src/app.css)
+
+  _node_scope "$files"
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: skip (scope: no changed file maps to a test)"
+  assert_no_file jest-invoked.log
+}
+
+test_profile_node_asset_change_runs_no_test_via_vitest() {
+  fixture_repo
+  _node_pkg '{"test": "vitest run"}' '{"vitest": "^1.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_local_tool_stub vitest 1.4.0 0
+  mkdir -p src
+  printf 'body{}\n' > src/app.scss
+  files=$(_node_files src/app.scss)
+
+  _node_scope "$files"
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: skip (scope: no changed file maps to a test)"
+  assert_no_file vitest-invoked.log
+}
+
+test_profile_node_asset_under_public_runs_full_test() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 1 0
+  mkdir -p public
+  printf 'body{}\n' > public/app.css
+  files=$(_node_files public/app.css)
+
+  _node_scope "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "node: npm test: pass (10.0.0, scope: the profile cannot map public/app.css to tests, ran full set)"
+}
+
+test_profile_node_asset_fixture_under_test_fixtures_runs_full_test() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 1 0
+  mkdir -p test/fixtures
+  printf '\211PNG\n' > test/fixtures/sample.png
+  files=$(_node_files test/fixtures/sample.png)
+
+  _node_scope "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "node: npm test: pass (10.0.0, scope: the profile cannot map test/fixtures/sample.png to tests, ran full set)"
+}
+
+test_profile_node_asset_beside_source_runs_only_the_related_test() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 1 0
+  mkdir -p src
+  printf 'x\n' > src/a.ts
+  printf 'body{}\n' > src/a.css
+  files=$(_node_files src/a.css src/a.ts)
+
+  _node_scope "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: pass (29.0.0, scope: jest related, 1 files)"
+  assert_file_contains jest-invoked.log "--findRelatedTests src/a.ts"
+  assert_not_contains "$(cat jest-invoked.log)" "src/a.css"
+}
+
+# --- explain: the plan says why, not just what -------------------------------
+
+test_profile_node_explain_asset_change_maps_to_no_test() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 1 0
+  mkdir -p src
+  printf 'body{}\n' > src/app.css
+  files=$(_node_files src/app.css)
+
+  _node_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN node: npm test: skip (no changed file maps to this check)"
+  assert_no_file jest-invoked.log
+}
+
+test_profile_node_explain_names_the_path_that_forces_the_full_set() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 1 0
+  files=$(_node_files package-lock.json)
+
+  _node_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN node: npm test: full (package-lock.json can affect any test)"
+  assert_no_file jest-invoked.log
 }

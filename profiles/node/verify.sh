@@ -39,6 +39,14 @@
 #   set.
 # Where a check bypasses the project's own script to call a runner
 # directly, the note names that runner (`scope: vitest related, 3 files`).
+#
+# node is the degenerate case among the stacks that narrow a front end away:
+# its own js/ts source *is* the code under test, so nothing there is cut.
+# What still needs the same care is a stylesheet or an image/font asset —
+# neither jest nor vitest imports or executes one as code — narrowed to
+# nothing unless it sits under a served or built directory (public/, dist/,
+# build/) or beside the test suite's own fixtures, where it can still be
+# read as data (ADR-0013).
 set -eu
 set -o pipefail
 
@@ -51,6 +59,22 @@ jp_begin node
 NODE_ALL_GLOBS="package.json package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb tsconfig.json tsconfig.*.json .eslintrc .eslintrc.* eslint.config.* vite.config.* vitest.config.* jest.config.*"
 
 NODE_TEST_EXTS="js jsx ts tsx mjs cjs mts cts"
+
+# The two kinds of path excluded from _node_is_asset_ext below and left to
+# map to ALL, because for them an asset change can change a test's result:
+# public/, dist/ and build/ hold what gets served or is already built, and a
+# file under a fixtures/mocks directory may be read by a test as data.
+NODE_ASSET_NOT_GLOBS="public/* dist/* build/* */__fixtures__/* */__mocks__/* test/fixtures/* tests/fixtures/*"
+
+# _node_is_asset_ext <path> — a stylesheet or image/font extension: never
+# imported as executable code by jest or vitest, so a change to one cannot
+# change what a test run observes.
+_node_is_asset_ext() {
+  case "$1" in
+    *.css | *.scss | *.sass | *.less | *.styl | *.svg | *.png | *.jpg | *.jpeg | *.gif | *.webp | *.ico | *.woff | *.woff2 | *.ttf | *.eot) return 0 ;;
+  esac
+  return 1
+}
 
 # _node_has_script <name> — true when package.json declares a "<name>"
 # script. Grep-based on purpose: SPEC requires no mandatory dependency
@@ -226,6 +250,9 @@ _node_builtin_jest() {
   case "$f" in
     *.md | *.mdx | docs/* | .ai/*) return 0 ;;
   esac
+  if _node_is_asset_ext "$f" && ! jp_path_matches "$f" "$NODE_ASSET_NOT_GLOBS"; then
+    return 0
+  fi
   if ! _node_is_source_ext "$f"; then
     printf 'ALL\n'
     return 0
@@ -249,6 +276,9 @@ _node_builtin_vitest() {
   case "$f" in
     *.md | *.mdx | docs/* | .ai/*) return 0 ;;
   esac
+  if _node_is_asset_ext "$f" && ! jp_path_matches "$f" "$NODE_ASSET_NOT_GLOBS"; then
+    return 0
+  fi
   if ! _node_is_source_ext "$f"; then
     printf 'ALL\n'
     return 0
@@ -277,6 +307,26 @@ _node_builtin_all_glob() {
   return 1
 }
 
+# _node_all_reason <path> — why the full set runs, for the path
+# jp_decide_cause named. "not narrowable" was one shrug for several
+# different situations, and the person reading it could not tell their
+# package.json from a source no test is named after. An empty <path> means
+# the project's own map asked for the full set; that line's author knows
+# why, so the old wording stands rather than a guess at their reason.
+_node_all_reason() {
+  local f="$1"
+  if [ -z "$f" ]; then
+    printf 'not narrowable\n'
+  elif _node_builtin_all_glob "$f"; then
+    printf '%s can affect any test\n' "$f"
+  elif _node_is_source_ext "$f"; then
+    printf 'no related tests found for %s\n' "$f"
+  else
+    printf 'the profile cannot map %s to tests\n' "$f"
+  fi
+  return 0
+}
+
 # _node_test_via_jest <jest-bin> <manager-version-note>
 _node_test_via_jest() {
   local jest="$1" mv="$2" v filters n listing missing
@@ -287,7 +337,7 @@ _node_test_via_jest() {
     return 0
   fi
   if [ "$filters" = ALL ]; then
-    _node_full_test "$mv, scope: not narrowable, ran full set"
+    _node_full_test "$mv, scope: $(_node_all_reason "$(jp_decide_cause _node_builtin_jest)"), ran full set"
     return 0
   fi
   IFS='
@@ -322,7 +372,7 @@ _node_test_via_vitest() {
     return 0
   fi
   if [ "$filters" = ALL ]; then
-    _node_full_test "$mv, scope: not narrowable, ran full set"
+    _node_full_test "$mv, scope: $(_node_all_reason "$(jp_decide_cause _node_builtin_vitest)"), ran full set"
     return 0
   fi
   IFS='
@@ -362,6 +412,9 @@ EOF
       fi
       if [ -n "$filters" ] && [ "$filters" != ALL ]; then
         jp_plan "$TEST_LABEL" conditional "related tests for $(printf '%s\n' "$filters" | paste -sd, -) require jest --listTests; full set possible"
+      elif [ "$filters" = ALL ]; then
+        jp_plan_selection "$TEST_LABEL" "$filters" "test files" \
+          "$(_node_all_reason "$(jp_decide_cause _node_builtin_jest)")"
       else
         jp_plan_selection "$TEST_LABEL" "$filters" "test files"
       fi
@@ -375,7 +428,12 @@ EOF
 $filters
 EOF
       fi
-      jp_plan_selection "$TEST_LABEL" "$filters" "test files"
+      if [ "$filters" = ALL ]; then
+        why=$(_node_all_reason "$(jp_decide_cause _node_builtin_vitest)")
+      else
+        why=
+      fi
+      jp_plan_selection "$TEST_LABEL" "$filters" "test files" "$why"
     fi
   fi
 

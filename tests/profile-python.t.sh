@@ -448,7 +448,7 @@ test_profile_python_pytest_unmapped_module_runs_full_with_reason() {
   _py_verify
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: no test is named after lonely.py, ran full set)"
   assert_eq "$(printf '%s' '---')" "$(cat .venv/bin/pytest.log)"
 }
 
@@ -477,7 +477,7 @@ test_profile_python_pytest_all_trigger_pyproject_toml() {
   _py_verify
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: pyproject.toml can affect any test, ran full set)"
 }
 
 test_profile_python_pytest_all_trigger_requirements_dev() {
@@ -488,7 +488,7 @@ test_profile_python_pytest_all_trigger_requirements_dev() {
   _py_verify
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: requirements-dev.txt can affect any test, ran full set)"
 }
 
 test_profile_python_pytest_all_trigger_requirements_dev_not_masked_by_sibling_on_disk() {
@@ -506,7 +506,7 @@ test_profile_python_pytest_all_trigger_requirements_dev_not_masked_by_sibling_on
   _py_verify
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: requirements-dev.txt can affect any test, ran full set)"
 }
 
 test_profile_python_pytest_all_trigger_conftest_in_subdir() {
@@ -517,7 +517,7 @@ test_profile_python_pytest_all_trigger_conftest_in_subdir() {
   _py_verify
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: tests/sub/conftest.py can affect any test, ran full set)"
 }
 
 test_profile_python_pytest_all_trigger_poetry_lock() {
@@ -528,7 +528,7 @@ test_profile_python_pytest_all_trigger_poetry_lock() {
   _py_verify
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: poetry.lock can affect any test, ran full set)"
 }
 
 test_profile_python_pytest_exit_5_is_skip_no_tests_collected() {
@@ -674,7 +674,7 @@ test_profile_python_pytest_runs_full_after_ruff_file_list_path_with_conftest() {
   _py_unscope
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "python: ruff: pass (ruff 1.0.0, scope: 2 files)"
-  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: no test is named after pkg/foo.py, ran full set)"
 }
 
 # --- version in every verdict -------------------------------------------------
@@ -718,4 +718,176 @@ test_profile_python_exits_2_when_every_check_is_skipped() {
   assert_contains "$OUT" "python: ruff: skip"
   assert_contains "$OUT" "python: mypy: skip"
   assert_contains "$OUT" "python: pytest: skip"
+}
+
+# --- front end: what can and cannot change the result of the test run --------
+# The same cut as php/laravel, for the same reason: pytest runs Python and
+# neither bundles a front-end source nor serves it, while the build that
+# produces the assets a Selenium/LiveServerTestCase browser test loads is a
+# different matter. Both halves are asserted, because a rule that cannot
+# tell them apart is too wide.
+
+# _py_explain <files-file> — run verify.sh's plan branch narrowed to
+# <files-file>. No project tool may run in this mode, so tests using it also
+# assert the stub's log was never written.
+_py_explain() {
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="$1"
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+  unset JIG_VERIFY_MAPPED
+  run bash "$JIG_HOME/profiles/python/verify.sh"
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+}
+
+test_profile_python_front_end_script_change_runs_no_test() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p assets/js
+  : > assets/js/app.js
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "assets/js/app.js"
+  _py_verify
+  _py_unscope
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "python: pytest: skip (scope: no changed file maps to a test)"
+  assert_no_file .venv/bin/pytest.log
+}
+
+# The cut must not have widened ruff either: it narrows on its own terms and
+# a change with no .py in it reaches none of the checks.
+test_profile_python_front_end_change_skips_every_check() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p assets/css
+  : > assets/css/app.css
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_stub "$PWD/.venv/bin/ruff" "ruff 1.0.0"
+  _py_scope "assets/css/app.css"
+  _py_verify
+  _py_unscope
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "python: pytest: skip (scope: no changed file maps to a test)"
+  assert_contains "$OUT" "python: ruff: skip (scope: no changed .py files)"
+  assert_no_file .venv/bin/pytest.log
+  assert_no_file .venv/bin/ruff.log
+}
+
+test_profile_python_package_json_change_runs_full_tests() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  printf '{}\n' > package.json
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "package.json"
+  _py_verify
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "python: pytest: pass (pytest 7.0.0, scope: package.json changes the asset build, which browser tests load, ran full set)"
+}
+
+# vite.config.ts also matches the front-end extension list; the build list is
+# checked first, and that order is what this pins.
+test_profile_python_bundler_config_change_runs_full_tests() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  : > vite.config.ts
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "vite.config.ts"
+  _py_verify
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "scope: vite.config.ts changes the asset build, which browser tests load, ran full set"
+}
+
+test_profile_python_built_asset_under_staticfiles_runs_full_tests() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p staticfiles/js
+  : > staticfiles/js/app.js
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "staticfiles/js/app.js"
+  _py_verify
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map staticfiles/js/app.js to tests, ran full set"
+}
+
+test_profile_python_front_end_fixture_under_tests_runs_full_tests() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p tests/fixtures
+  : > tests/fixtures/sample.js
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "tests/fixtures/sample.js"
+  _py_verify
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map tests/fixtures/sample.js to tests, ran full set"
+}
+
+test_profile_python_front_end_beside_python_runs_only_the_named_test() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p assets/js tests
+  printf 'a=1\n' > foo.py
+  printf 'def test_a(): pass\n' > tests/test_foo.py
+  : > assets/js/app.js
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "assets/js/app.js" "foo.py"
+  _py_verify
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "python: pytest: pass (pytest 7.0.0, scope: 1 test files)"
+  assert_file_contains .venv/bin/pytest.log tests/test_foo.py
+}
+
+# --- explain: the plan says why, not just what -------------------------------
+
+test_profile_python_explain_front_end_change_maps_to_no_test() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p assets/js
+  : > assets/js/app.js
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  files=$(mktemp "${JIG_TEST_TMP}.XXXXXX")
+  printf 'assets/js/app.js\n' > "$files"
+  _py_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN python: pytest: skip (no changed file maps to this check)"
+  assert_no_file .venv/bin/pytest.log
+}
+
+test_profile_python_explain_names_the_path_that_forces_the_full_set() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  printf '{}\n' > package.json
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  files=$(mktemp "${JIG_TEST_TMP}.XXXXXX")
+  printf 'package.json\n' > "$files"
+  _py_explain "$files"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "PLAN python: pytest: full (package.json changes the asset build, which browser tests load)"
+  assert_no_file .venv/bin/pytest.log
+}
+
+# Regression: Django's staticfiles finder serves an app's own nested
+# app/static/app/... straight to a running LiveServerTestCase/Selenium test
+# in DEBUG mode, not only a top-level static/ or the collected
+# staticfiles/. PY_FRONTEND_NOT_GLOBS must exclude that depth too.
+test_profile_python_nested_app_static_asset_runs_full_tests() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p myapp/static/myapp
+  : > myapp/static/myapp/app.js
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "myapp/static/myapp/app.js"
+  _py_verify
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map myapp/static/myapp/app.js to tests, ran full set"
 }

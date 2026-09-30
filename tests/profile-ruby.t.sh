@@ -268,7 +268,7 @@ test_profile_ruby_rspec_full_run_when_gemfile_lock_changes() {
   rb_scope "Gemfile.lock"
   rb_verify
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: Gemfile.lock can affect any test, ran full set)"
   assert_eq "" "$(cat rspec.args)"
 }
 
@@ -368,7 +368,7 @@ test_profile_ruby_rspec_config_glob_not_masked_by_sibling_on_disk() {
   rb_scope "config/routes.rb"
   rb_verify
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: config/routes.rb can affect any test, ran full set)"
 }
 
 # --- IFS regression: rubocop's own file-list narrowing must not corrupt ----
@@ -405,7 +405,7 @@ test_profile_ruby_rspec_runs_full_after_rubocop_file_list_path() {
   rb_verify
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ruby: rubocop: pass (rubocop stub-version, scope: 1 files)"
-  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: Gemfile can affect any test, ran full set)"
 }
 
 test_profile_ruby_map_dash_selects_nothing_skips() {
@@ -417,4 +417,138 @@ test_profile_ruby_map_dash_selects_nothing_skips() {
   rb_verify
   assert_eq 0 "$RC"
   assert_contains "$OUT" "ruby: rspec: skip (scope: no changed file maps to a test)"
+}
+
+# --- front end: what can and cannot change the result of the test run --------
+# The same cut as php/laravel, for the same reason: rspec/minitest run Ruby
+# and neither bundles a front-end source nor serves it, while the build that
+# produces the assets a system/feature test loads (Sprockets, or a JS
+# bundler under app/javascript) is a different matter. Both halves are
+# asserted, because a rule that cannot tell them apart is too wide.
+
+# rb_explain <files> — run verify.sh's plan branch narrowed to <files> (a
+# newline-separated string, same shape rb_scope takes). No project tool may
+# run in this mode, so tests using it also assert the stub logged nothing.
+rb_explain() {
+  printf '%s\n' "$1" > "${JIG_TEST_TMP}.rb-files"
+  JIG_VERIFY_SCOPE=changed
+  JIG_VERIFY_FILES="${JIG_TEST_TMP}.rb-files"
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+  unset JIG_VERIFY_MAPPED
+  run bash "$JIG_HOME/profiles/ruby/verify.sh"
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_EXPLAIN
+}
+
+test_profile_ruby_front_end_script_change_runs_no_test() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  mkdir -p app/javascript
+  : > app/javascript/app.js
+  rb_scope "app/javascript/app.js"
+  rb_verify
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "ruby: rspec: skip (scope: no changed file maps to a test)"
+  assert_no_file rspec.args
+}
+
+# The cut must not have widened rubocop either: it narrows on its own terms
+# and a change with no .rb/.rake in it reaches none of the checks.
+test_profile_ruby_front_end_change_skips_every_check() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  mkdir -p app/assets/stylesheets
+  : > app/assets/stylesheets/app.css
+  rb_scope "app/assets/stylesheets/app.css"
+  rb_verify
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "ruby: rspec: skip (scope: no changed file maps to a test)"
+  assert_contains "$OUT" "ruby: rubocop: skip (scope: no changed .rb or .rake files)"
+  assert_no_file rspec.args
+  assert_no_file rubocop.args
+}
+
+test_profile_ruby_package_json_change_runs_full_tests() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  printf '{}\n' > package.json
+  rb_scope "package.json"
+  rb_verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "ruby: rspec: pass (rspec stub-version, scope: package.json changes the asset build, which browser tests load, ran full set)"
+}
+
+# vite.config.ts also matches the front-end extension list; the build list is
+# checked first, and that order is what this pins.
+test_profile_ruby_bundler_config_change_runs_full_tests() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  : > vite.config.ts
+  rb_scope "vite.config.ts"
+  rb_verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "scope: vite.config.ts changes the asset build, which browser tests load, ran full set"
+}
+
+test_profile_ruby_built_asset_under_public_packs_runs_full_tests() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  mkdir -p public/packs/js
+  : > public/packs/js/app.js
+  rb_scope "public/packs/js/app.js"
+  rb_verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map public/packs/js/app.js to tests, ran full set"
+}
+
+test_profile_ruby_front_end_fixture_under_spec_runs_full_tests() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  mkdir -p spec/fixtures
+  : > spec/fixtures/sample.js
+  rb_scope "spec/fixtures/sample.js"
+  rb_verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "scope: the profile cannot map spec/fixtures/sample.js to tests, ran full set"
+}
+
+test_profile_ruby_front_end_beside_ruby_runs_only_the_named_test() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  printf 'class Foo\nend\n' > app/models/foo.rb
+  printf 'RSpec.describe Foo do\nend\n' > spec/models/foo_spec.rb
+  mkdir -p app/javascript
+  : > app/javascript/app.js
+  rb_scope "$(printf 'app/javascript/app.js\napp/models/foo.rb\n')"
+  rb_verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: 1 test files)"
+  assert_eq "spec/models/foo_spec.rb" "$(cat rspec.args)"
+}
+
+# --- explain: the plan says why, not just what -------------------------------
+
+test_profile_ruby_explain_front_end_change_maps_to_no_test() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  mkdir -p app/javascript
+  : > app/javascript/app.js
+  rb_explain "app/javascript/app.js"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN ruby: rspec: skip (no changed file maps to this check)"
+  assert_no_file rspec.args
+}
+
+test_profile_ruby_explain_names_the_path_that_forces_the_full_set() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  printf '{}\n' > package.json
+  rb_explain "package.json"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "PLAN ruby: rspec: full (package.json changes the asset build, which browser tests load)"
+  assert_no_file rspec.args
 }

@@ -18,6 +18,13 @@
 # app/x/y.rb maps to spec/x/y_spec.rb or test/x/y_test.rb; a changed lib/y.rb
 # maps to spec/lib/y_spec.rb or spec/y_spec.rb (first existing), or the
 # test/ equivalents — everything else maps to ALL.
+#
+# The test check runs Ruby, and neither bundles nor serves a front-end
+# source; the build that produces the assets a system/feature test loads
+# (Sprockets, or a JS bundler under app/javascript) is a different matter
+# and keeps the full set. The two lists below draw that line; what neither
+# describes still runs everything, so an unrecognised path costs time
+# rather than coverage (ADR-0013).
 set -eu
 set -o pipefail
 
@@ -29,6 +36,22 @@ jp_begin ruby
 # Files whose change can alter the result of the test check, whichever
 # framework runs it.
 RB_TEST_ALL_GLOBS="Gemfile Gemfile.lock spec/spec_helper.rb spec/rails_helper.rb test/test_helper.rb config/* .rspec"
+
+# Files that define how the front end is built: the package manifest, its
+# lock file, the bundler's configuration, and Sprockets' own manifest. A
+# change to one can alter every built asset, and a system/feature test
+# loads the built assets. So the full set runs.
+RB_BUILD_ALL_GLOBS="package.json package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb vite.config.* webpack.config.* webpacker.yml rollup.config.* tailwind.config.* postcss.config.* app/assets/config/*"
+
+# Front-end sources. Neither rspec nor minitest bundles or serves them, so
+# changing one cannot change what a test observes. Two kinds of path are
+# excluded and fall through to the rules below, because for them it can:
+# public/assets/ and public/packs/ hold what a browser test actually loads
+# (the built asset, not this source — Sprockets and Webpacker's own compiled
+# output directories), and a file under spec/ or test/ may be a fixture or a
+# snapshot a test asserts on.
+RB_FRONTEND_GLOBS="*.vue *.svelte *.js *.mjs *.cjs *.jsx *.ts *.mts *.cts *.tsx *.css *.scss *.sass *.less *.styl app/assets/images/* app/assets/fonts/*"
+RB_FRONTEND_NOT_GLOBS="public/assets/* public/packs/* spec/* test/*"
 
 # _rb_gem_locked <name> — whether Gemfile.lock resolved a gem named <name>.
 # Bundler lists every resolved gem, direct or transitive, as its own
@@ -144,6 +167,16 @@ _rb_builtin_test() {
   case "$f" in
     *.md|*.rst|docs/*|.ai/*) return 0 ;;
   esac
+  # Before the front-end list, not after it: vite.config.ts matches *.ts
+  # there, and the build has to win over the extension.
+  if jp_path_matches "$f" "$RB_BUILD_ALL_GLOBS"; then
+    printf 'ALL\n'
+    return 0
+  fi
+  if ! jp_path_matches "$f" "$RB_FRONTEND_NOT_GLOBS" \
+    && jp_path_matches "$f" "$RB_FRONTEND_GLOBS"; then
+    return 0
+  fi
   case "$f" in
     *.rb) ;;
     *) printf 'ALL\n'; return 0 ;;
@@ -185,13 +218,36 @@ _rb_builtin_test() {
   return 0
 }
 
+# _rb_all_reason <path> — why the full set runs, for the path
+# jp_decide_cause named. "not narrowable" was one shrug for four different
+# situations, and the person reading it could not tell their package.json
+# from a class no test is named after. An empty <path> means the project's
+# own map asked for the full set; that line's author knows why, so the old
+# wording stands rather than a guess at their reason.
+_rb_all_reason() {
+  local f="$1"
+  if [ -z "$f" ]; then
+    printf 'not narrowable\n'
+  elif jp_path_matches "$f" "$RB_BUILD_ALL_GLOBS"; then
+    printf '%s changes the asset build, which browser tests load\n' "$f"
+  elif jp_path_matches "$f" "$RB_TEST_ALL_GLOBS"; then
+    printf '%s can affect any test\n' "$f"
+  else
+    case "$f" in
+      *.rb) printf 'no test is named after %s\n' "$f" ;;
+      *) printf 'the profile cannot map %s to tests\n' "$f" ;;
+    esac
+  fi
+  return 0
+}
+
 # _rb_run_narrowed <check> <note> <cmd...> — run a narrowed test check: the
 # full set for ALL or an unnarrowable runner, a reasoned full run when the
 # selection is empty or names a file that does not exist (ADR-0041: a
 # narrowing that selects nothing is not a pass), else the selected files
 # appended to <cmd...>.
 _rb_run_narrowed() {
-  local check="$1" note="$2" filters missing n
+  local check="$1" note="$2" filters missing n why
   shift 2
   if ! jp_scoped; then
     jp_run "$check" "$note" "$@"
@@ -201,7 +257,8 @@ _rb_run_narrowed() {
   if [ -z "$filters" ]; then
     jp_skip "$check" "scope: no changed file maps to a test"
   elif [ "$filters" = ALL ]; then
-    jp_run "$check" "$note, scope: not narrowable, ran full set" "$@"
+    why=$(_rb_all_reason "$(jp_decide_cause _rb_builtin_test)")
+    jp_run "$check" "$note, scope: $why, ran full set" "$@"
   else
     IFS='
 '
@@ -248,7 +305,12 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $filters
 EOF
   fi
-  jp_plan_selection "$RB_TEST" "$filters" "test files"
+  if [ "$filters" = ALL ]; then
+    why=$(_rb_all_reason "$(jp_decide_cause _rb_builtin_test)")
+  else
+    why=
+  fi
+  jp_plan_selection "$RB_TEST" "$filters" "test files" "$why"
   exit 0
 fi
 
