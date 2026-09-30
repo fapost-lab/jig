@@ -67,6 +67,32 @@ hk_decide() {
   ' _ "$@"
 }
 
+# hk_lock_acquire <dir> — call _hk_lock_acquire directly, the same way
+# hk_decide calls housekeeping_decide: source the libraries in a subshell,
+# set JIG_PROJECT (the "checkout:" field _hk_lock_acquire records) to the
+# current directory, and invoke the function under test.
+hk_lock_acquire() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/housekeeping.sh"
+    JIG_PROJECT="$PWD"
+    _hk_lock_acquire "$1"
+  ' _ "$@"
+}
+
+# hk_lock_release <dir> — call _hk_lock_release directly.
+hk_lock_release() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/housekeeping.sh"
+    _hk_lock_release "$1"
+  ' _ "$@"
+}
+
 # hk_leftover <path> — call _hk_worktree_leftover directly, the same way
 # hk_decide calls housekeeping_decide: source the libraries in a subshell and
 # invoke the function under test, so its exit code is the caller's.
@@ -365,6 +391,115 @@ test_housekeeping_dry_run_does_not_fetch() {
   # Control: the same setup without --dry-run does attempt the fetch.
   run jig housekeeping
   assert_contains "$OUT" "stale-remote"
+}
+
+# fetch-never-waits-for-a-prompt: on a remote that would otherwise ask for
+# credentials, GIT_TERMINAL_PROMPT=0 makes git's own credential helper fail
+# instead of reading a terminal, and GIT_SSH_COMMAND (BatchMode=yes) does the
+# same for an ssh:// remote's password/passphrase prompt. Asserted on the
+# actual git invocation (stub_git_env_log_dir), not on its outcome: a local
+# bare origin never prompts for anything either way, so this is the only way
+# to tell the fix from its absence without a real remote that does.
+test_housekeeping_fetch_never_waits_for_a_prompt() {
+  hk_setup
+  hk_cfg housekeeping.fetch true
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+
+  local log="$PWD/git-calls.log"
+  PATH="$(stub_git_env_log_dir "$log"):$PATH" run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_file "$log"
+  local fetch_line
+  fetch_line=$(grep 'ARGS=.*fetch --quiet origin' "$log") \
+    || fail "no logged git fetch --quiet origin call: $(cat "$log")"
+  assert_contains "$fetch_line" "TERMINAL_PROMPT=0" \
+    "housekeeping's fetch must set GIT_TERMINAL_PROMPT=0"
+  assert_contains "$fetch_line" "SSH_COMMAND=" \
+    "housekeeping's fetch must set GIT_SSH_COMMAND"
+  case "$fetch_line" in
+    *"SSH_COMMAND=<unset>"*) fail "GIT_SSH_COMMAND must be set: $fetch_line" ;;
+    *"BatchMode=yes"*) ;;
+    *) fail "GIT_SSH_COMMAND must carry -o BatchMode=yes: $fetch_line" ;;
+  esac
+}
+
+# --- housekeeping's own lock (review, minor point) ---------------------------
+
+test_housekeeping_lock_acquire_claims_a_fresh_directory() {
+  local dir="$PWD/lock"
+  run hk_lock_acquire "$dir"
+  assert_eq 0 "$RC"
+  assert_file_contains "$dir/busy/run" "pid: "
+}
+
+test_housekeeping_lock_acquire_refuses_while_a_live_holder_has_it() {
+  local dir="$PWD/lock"
+  mkdir -p "$dir/busy"
+  # A background process of this test's own is "another run": alive, and not
+  # this call's own $$.
+  sleep 30 &
+  local holder_pid=$!
+  printf 'checkout: elsewhere\npid: %s\n' "$holder_pid" > "$dir/busy/run"
+
+  run hk_lock_acquire "$dir"
+  assert_eq 1 "$RC" "a live holder must refuse the claim"
+  kill "$holder_pid" 2>/dev/null || true
+}
+
+test_housekeeping_lock_acquire_reclaims_a_dead_holder() {
+  local dir="$PWD/lock"
+  mkdir -p "$dir/busy"
+  printf 'checkout: elsewhere\npid: 999999999\n' > "$dir/busy/run"
+
+  run hk_lock_acquire "$dir"
+  assert_eq 0 "$RC" "a record whose pid is not alive must be reclaimed: $OUT"
+  assert_file_contains "$dir/busy/run" "pid: "
+}
+
+test_housekeeping_lock_release_gives_the_record_back() {
+  hk_setup
+  # _hk_lock_release only ever removes the exact shape cmd_housekeeping
+  # builds (RULES.md: no `rm -rf` on a path computed elsewhere), so the test
+  # has to use that shape too, not an arbitrary directory.
+  local dir="$PWD/.ai/runtime/housekeeping-lock"
+  run hk_lock_acquire "$dir"
+  assert_eq 0 "$RC"
+  assert_dir "$dir/busy"
+
+  hk_lock_release "$dir"
+  assert_no_file "$dir/busy"
+}
+
+# The end-to-end case the review named: two runs at once help nobody. A
+# second run, finding the lock held by a live process, skips instead of also
+# fetching and walking the same task directory.
+test_housekeeping_skips_while_another_run_holds_the_lock() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+
+  mkdir -p .ai/runtime/housekeeping-lock/busy
+  sleep 30 &
+  local holder_pid=$!
+  printf 'checkout: %s\npid: %s\n' "$PWD" "$holder_pid" \
+    > .ai/runtime/housekeeping-lock/busy/run
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "another housekeeping run holds this clone; skipping"
+  assert_dir .ai/workspace/tasks/ff "a skipped run must not purge anything"
+  assert_no_file .ai/runtime/housekeeping.log
+  kill "$holder_pid" 2>/dev/null || true
+}
+
+# A dry run only reads and prints; it must never contend with a real run, or
+# leave a lock behind for one to trip over.
+test_housekeeping_dry_run_never_takes_the_lock() {
+  hk_setup
+  run jig housekeeping --dry-run
+  assert_eq 0 "$RC"
+  assert_no_file .ai/runtime/housekeeping-lock
 }
 
 test_housekeeping_dry_run_does_not_expire_trash() {

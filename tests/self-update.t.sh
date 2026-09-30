@@ -96,6 +96,17 @@ su_path() {
 # PATH fallback) as `jig self-update` would find it via PATH.
 su_jig() { env PATH="$(su_path)" "$(su_global_jig)" "$@"; }
 
+# su_jig_git_logged <log> <args...> — su_jig, but with a `git` ahead of
+# everything else on PATH that logs every invocation's GIT_TERMINAL_PROMPT
+# and GIT_SSH_COMMAND to <log> before delegating to the real one
+# (stub_git_env_log_dir, tests/lib/assert.sh). This task's own test, not part
+# of the fixture: a plain su_jig call never needs it.
+su_jig_git_logged() {
+  local log="$1"
+  shift
+  env PATH="$(stub_git_env_log_dir "$log"):$(su_path)" "$(su_global_jig)" "$@"
+}
+
 # Run a project's installed copy, the same way its own users would.
 su_installed_jig() {
   local proj="$1"
@@ -337,6 +348,31 @@ test_self_update_detached_tag_version_mismatch_fails() {
   assert_not_contains "$OUT" "already current"
 }
 
+# fetch-never-waits-for-a-prompt: self-update runs unattended too (a CI job,
+# a scheduled task), so `git fetch --tags origin` must never sit waiting for
+# a credential prompt. Asserted on the actual invocation
+# (stub_git_env_log_dir), the same way housekeeping's own fetch is: a local
+# bare upstream never prompts for anything either way.
+test_self_update_detached_fetch_never_waits_for_a_prompt() {
+  su_build_source "$HOME/work"
+  su_build_upstream "$HOME/work" "$HOME/upstream.git"
+  su_clone_global_detached "$HOME/upstream.git" v0.1.0
+
+  local log="$HOME/git-calls.log"
+  run su_jig_git_logged "$log" self-update
+  assert_eq 0 "$RC" "self-update should succeed: $OUT"
+
+  assert_file "$log"
+  local fetch_line
+  fetch_line=$(grep 'ARGS=.*fetch --tags origin' "$log") \
+    || fail "no logged git fetch --tags origin call: $(cat "$log")"
+  assert_contains "$fetch_line" "TERMINAL_PROMPT=0"
+  case "$fetch_line" in
+    *"BatchMode=yes"*) ;;
+    *) fail "GIT_SSH_COMMAND must carry -o BatchMode=yes: $fetch_line" ;;
+  esac
+}
+
 # --- AC-01a: branch channel, and detached-but-not-a-release refusal --------
 
 test_self_update_branch_with_upstream_fast_forwards() {
@@ -356,6 +392,29 @@ test_self_update_branch_with_upstream_fast_forwards() {
   assert_eq "$(git -C "$HOME/work" rev-parse HEAD)" "$(git -C "$share" rev-parse HEAD)" \
     "a branch checkout must fast-forward to the pushed commit"
   assert_eq "refs/heads/main" "$(git -C "$share" symbolic-ref HEAD)" "must stay on the branch"
+}
+
+test_self_update_branch_pull_never_waits_for_a_prompt() {
+  su_build_source "$HOME/work"
+  su_build_upstream "$HOME/work" "$HOME/upstream.git"
+  su_clone_global_branch "$HOME/upstream.git"
+
+  su_commit_release "$HOME/work" 0.2.0
+  su_push "$HOME/work"
+
+  local log="$HOME/git-calls.log"
+  run su_jig_git_logged "$log" self-update
+  assert_eq 0 "$RC" "self-update should succeed: $OUT"
+
+  assert_file "$log"
+  local pull_line
+  pull_line=$(grep 'ARGS=.*pull --ff-only' "$log") \
+    || fail "no logged git pull --ff-only call: $(cat "$log")"
+  assert_contains "$pull_line" "TERMINAL_PROMPT=0"
+  case "$pull_line" in
+    *"BatchMode=yes"*) ;;
+    *) fail "GIT_SSH_COMMAND must carry -o BatchMode=yes: $pull_line" ;;
+  esac
 }
 
 test_self_update_branch_fast_forward_reports_version_unchanged() {

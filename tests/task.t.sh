@@ -2922,6 +2922,32 @@ test_task_ship_push_level_pushes_and_stops() {
   assert_contains "$(git ls-remote origin task/T-1)" "refs/heads/task/T-1"
 }
 
+# fetch-never-waits-for-a-prompt: `jig_ship_push` is one of the network git
+# calls that task enumerated, alongside housekeeping's and self-update's
+# fetches. Asserted on the actual invocation (stub_git_env_log_dir), the same
+# way those are: a local bare origin never prompts for anything either way.
+test_task_ship_push_never_waits_for_a_prompt() {
+  ship_setup
+  ship_cfg_local agent.git push
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  local log="$PWD/git-calls.log"
+  PATH="$(stub_git_env_log_dir "$log"):$PATH" run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+
+  assert_file "$log"
+  local push_line
+  push_line=$(grep 'ARGS=.*push -u origin task/T-1' "$log") \
+    || fail "no logged git push -u origin call: $(cat "$log")"
+  assert_contains "$push_line" "TERMINAL_PROMPT=0"
+  case "$push_line" in
+    *"BatchMode=yes"*) ;;
+    *) fail "GIT_SSH_COMMAND must carry -o BatchMode=yes: $push_line" ;;
+  esac
+}
+
 test_task_ship_pr_level_creates_pr_into_base_branch() {
   ship_setup
   ship_cfg forge github

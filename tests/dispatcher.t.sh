@@ -704,6 +704,31 @@ test_jig_fetch_branches_failure_warns_and_is_not_fatal() {
   assert_contains "$OUT" "rc=0"
 }
 
+# fetch-never-waits-for-a-prompt: GIT_TERMINAL_PROMPT=0 was already here;
+# GIT_SSH_COMMAND (BatchMode=yes) is the part this task added. Asserted on
+# the actual invocation (stub_git_env_log_dir), the same way housekeeping's
+# and self-update's own fetches are.
+test_jig_fetch_branches_never_waits_for_a_prompt() {
+  fixture_repo
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+
+  local log="$PWD/git-calls.log"
+  PATH="$(stub_git_env_log_dir "$log"):$PATH" \
+    base_run 'jig_require_repo; jig_fetch_branches "who" main'
+  assert_eq 0 "$RC"
+
+  assert_file "$log"
+  local fetch_line
+  fetch_line=$(grep 'ARGS=.*fetch --quiet origin' "$log") \
+    || fail "no logged git fetch --quiet origin call: $(cat "$log")"
+  assert_contains "$fetch_line" "TERMINAL_PROMPT=0"
+  case "$fetch_line" in
+    *"BatchMode=yes"*) ;;
+    *) fail "GIT_SSH_COMMAND must carry -o BatchMode=yes: $fetch_line" ;;
+  esac
+}
+
 test_jig_fetch_branches_one_bad_branch_does_not_stop_the_others() {
   # Each branch is fetched on its own so that one origin does not have does
   # not take the rest down with it.
