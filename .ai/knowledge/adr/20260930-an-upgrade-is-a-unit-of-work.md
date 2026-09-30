@@ -42,7 +42,7 @@ In copy mode a real `jig upgrade` runs in this order, and nothing is touched bef
    refuses and names `jig self-update`. This protects only from the first version that has it.
 2. **It may start.** Refused, all reasons at once, when: tracked files have uncommitted changes
    (untracked do not count — the rule of `task start`); `core.autocrlf` is true and
-   `.ai/scripts/jig` has no `eol=lf`; a live session is recorded in this checkout
+   `.ai/manifest` has no `eol=lf`; a live session is recorded in this checkout
    (`jig_checkout_busy`, the task checked out here excepted); `jig verify` holds the clone's run
    record for this same checkout. A run in another worktree executes its own files and does not
    stop it. The exception is a known limit: the dispatcher records every command run on a task's

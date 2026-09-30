@@ -767,8 +767,14 @@ _upgrade_stop_reasons() {
   # 2. Line endings: with core.autocrlf=true and nothing pinning Jig's files to
   #    LF, a clone checks them out with CRLF, and every hash in the manifest
   #    stops meaning anything — invisibly, `jig status` still says drift 0.
+  #    The manifest itself is the path that matters: a CRLF `.ai/manifest`
+  #    parses as empty (manifest.sh's `---` separator never matches with a
+  #    trailing \r), which is the failure this stop exists to prevent. Older
+  #    templates pinned `.ai/scripts/**` alone, so checking a script's eol
+  #    here would already read `lf` on every one of those installs and never
+  #    fire for the bug it is meant to catch.
   if [ "$(git -C "$JIG_PROJECT" config --bool --get core.autocrlf 2>/dev/null || true)" = true ]; then
-    eol=$(git -C "$JIG_PROJECT" check-attr eol -- "$JIG_AI_DIR/scripts/jig" 2>/dev/null | sed 's/.*: eol: //')
+    eol=$(git -C "$JIG_PROJECT" check-attr eol -- "$JIG_AI_DIR/manifest" 2>/dev/null | sed 's/.*: eol: //')
     if [ "$eol" != lf ]; then
       lines=$(sed '/^#/d; /^$/d' "$source/templates/gitattributes" 2>/dev/null | tr '\n' ';' | sed 's/;$//; s/;/; /g')
       printf '%s\n' "core.autocrlf is true here and Jig's files are not pinned to LF, so they would be checked out with CRLF; add these lines to .gitattributes, commit, and run again: $lines"

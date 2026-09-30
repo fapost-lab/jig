@@ -560,22 +560,23 @@ test_init_gitignore_appends_config_local_entry_once_across_reruns() {
 
 test_init_gitattributes_merges_without_duplicating() {
   # Line endings of the framework's own files are pinned per project: a clone
-  # made by Git for Windows (core.autocrlf=true) must still check .ai/scripts
-  # out LF, which Linux bash in WSL needs. Rules the project had stay.
+  # made by Git for Windows (core.autocrlf=true) must still check every one
+  # of them out LF, `.ai/manifest` included — that one read as CRLF is what
+  # made a Windows clone stop taking upgrades. Rules the project had stay.
   fixture_repo
   printf '*.png binary\n.ai/scripts/** text eol=lf\n' > .gitattributes
 
   run jig init --from "$JIG_HOME"
   assert_eq 0 "$RC"
   grep -qxF '*.png binary' .gitattributes || fail "an existing rule was lost"
-  grep -qxF '.ai/profiles/**/*.sh text eol=lf' .gitattributes || fail "the profile rule was not added"
-  assert_eq 1 "$(grep -cxF '.ai/scripts/** text eol=lf' .gitattributes)"
+  grep -qxF '.claude/skills/** text eol=lf' .gitattributes || fail "the skills rule was not added"
+  assert_eq 1 "$(grep -cxF '.ai/manifest text eol=lf' .gitattributes)"
 
   run jig init --from "$JIG_HOME"
   assert_eq 0 "$RC"
-  assert_eq 1 "$(grep -cxF '.ai/scripts/** text eol=lf' .gitattributes)" \
+  assert_eq 1 "$(grep -cxF '.ai/manifest text eol=lf' .gitattributes)" \
     "a repeat init must not duplicate a rule"
-  assert_eq "lf" "$(git check-attr eol -- .ai/scripts/jig | sed 's/.*: //')"
+  assert_eq "lf" "$(git check-attr eol -- .ai/manifest | sed 's/.*: //')"
 }
 
 test_init_respects_adapters_flag() {

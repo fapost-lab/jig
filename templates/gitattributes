@@ -1,3 +1,10 @@
-# jig: line endings of the framework's own files, whatever core.autocrlf says
+# jig: line endings of the framework's own files, whatever core.autocrlf says.
+# Scoped to what jig itself places and hashes byte for byte — never
+# .ai/knowledge/, .ai/specs/ or .ai/workspace/, which hold a project's own
+# prose and are free to keep whatever line endings that project uses.
+.ai/manifest text eol=lf
 .ai/scripts/** text eol=lf
-.ai/profiles/**/*.sh text eol=lf
+.ai/profiles/** text eol=lf
+.ai/templates/** text eol=lf
+.claude/skills/** text eol=lf
+.codex/skills/** text eol=lf
