@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-25
+reviewed_at: 2026-09-30
 ---
 # Housekeeping
 
@@ -33,6 +33,15 @@ evidence it inferred itself.
   facts exist anywhere (ADR-0027).
 - The **Session Hook** and the scheduler examples — triggers, both optional, neither
   installed automatically (ADR-0024).
+- The daily **latest-release check**: right after its own fetch, when `housekeeping.fetch`
+  is not false, one `git ls-remote --tags` against the *global framework's* origin (not the
+  project's), asking the same question `jig doctor` asks on demand
+  (`jig_check_newest_release`, common.sh — shared so the two never drift). The answer goes to
+  `.ai/runtime/latest-release` (`latest=<version> checked_at=<date>`, or `failed
+  checked_at=<date>` when the network did not answer), so `jig status` can show a newer
+  release without a network call of its own, for the audience — the non-developer who never
+  runs `jig doctor` — this was built for (task status-says-a-newer-jig-exists). Never fails
+  the run.
 - Removing a **Task Worktree** once the task is closed and its branch landed on its own
   base, or when its workspace is purged, whichever comes first (ADR-0029 as amended
   2026-09-22). This is the one deletion outside `.ai/`, and git performs it: `git worktree

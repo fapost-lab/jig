@@ -869,6 +869,121 @@ test_status_framework_versions_mismatch_causes_no_project_mutation() {
   rm -rf "$stub_root" "$stub_bin"
 }
 
+# --- a new jig release (task status-says-a-newer-jig-exists) ----------------
+#
+# housekeeping's own daily check (_hk_check_latest_release, housekeeping.sh)
+# writes .ai/runtime/latest-release; `jig status` only reads it and compares
+# it to the global framework version, exactly like the framework-versions
+# tests above — so these reuse the same stub-global fixtures, and write the
+# file by hand rather than running housekeeping (its own wiring is proven in
+# tests/housekeeping.t.sh).
+
+test_status_new_release_hint_when_recorded_version_is_newer() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.1.0"')
+  mkdir -p .ai/runtime
+  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'hint: jig v0.2.0 is out; run `jig self-update`, then `jig upgrade`'
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_no_new_release_hint_when_recorded_version_is_not_newer() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.2.0"')
+  mkdir -p .ai/runtime
+  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "is out"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_no_new_release_hint_without_a_file() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.1.0"')
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "is out"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_no_new_release_hint_when_the_check_failed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.1.0"')
+  mkdir -p .ai/runtime
+  printf 'failed\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "is out"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_html_shows_a_card_for_a_new_release() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.1.0"')
+  mkdir -p .ai/runtime
+  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "jig v0.2.0 is out"
+  assert_contains "$needs" "jig self-update, then jig upgrade"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_html_shows_no_card_when_no_new_release_is_recorded() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.2.0"')
+  mkdir -p .ai/runtime
+  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_not_contains "$needs" "is out"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
 # --- session hook and housekeeping flags (domains/housekeeping; ARCHITECTURE.md, Scripts layout) ---------------------
 
 test_status_session_hook_not_installed() {
