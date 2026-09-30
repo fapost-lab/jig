@@ -257,6 +257,33 @@ _verify_busy_acquire() {
   done
 }
 
+# _verify_skip_lines_all_scoped <output> — true when <output> (a covered
+# profile's captured run, one printed line per check) names at least one
+# "<check>: skip (…)" line and every such line's reason starts with "scope:".
+# That wording is the profile contract's own for a narrowed-out check
+# (ADR-0013's example, and every stack profile shipped with jig follows it:
+# profiles/{shell,php,node,go}/verify.sh). Output with no skip line at all is
+# read as the cautious default and answered false, same as an undeclared
+# scope capability elsewhere in this file: a profile that skipped everything
+# without saying why is a defect, not proof of narrowing.
+_verify_skip_lines_all_scoped() {
+  local line any=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *": skip ("*)
+        any=1
+        case "$line" in
+          *": skip (scope:"*) ;;
+          *) return 1 ;;
+        esac
+        ;;
+    esac
+  done <<EOF
+$1
+EOF
+  [ "$any" = 1 ]
+}
+
 # _verify_cleanup — the one EXIT trap: temporary files and the run record. Its
 # variables are script-global, never `local`, because the trap runs after the
 # function that set them has returned (conventions/shell.md).
@@ -286,6 +313,7 @@ cmd_verify() {
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
   local header="" base_branch base_ref mb map map_ok map_err
   local incomplete=0 covered=0 explained=0 unknown=0 plan_output plan_bad
+  local covered_needs_install=0 is_fallback=0 run_output
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
   JIG_VERIFY_BUSY=""
@@ -460,7 +488,10 @@ cmd_verify() {
     # way. Asked before the checks below, so a profile that is installed but
     # broken still counts as "there was something to check": that is a defect to
     # fix, not a project nothing covers.
-    if ! profiles_is_fallback "$pdir"; then
+    is_fallback=0
+    if profiles_is_fallback "$pdir"; then
+      is_fallback=1
+    else
       covered=1
     fi
 
@@ -471,6 +502,9 @@ cmd_verify() {
       else
         printf 'SKIP %s: no verify.sh\n' "$p"
         skip=$((skip + 1))
+        # A missing verify.sh is a broken install, never scope narrowing: a
+        # covered profile in this state always needs a person's action.
+        [ "$is_fallback" = 1 ] || covered_needs_install=$((covered_needs_install + 1))
       fi
       continue
     fi
@@ -547,23 +581,29 @@ cmd_verify() {
           && unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
           && JIG_VERIFY_EXPLAIN=1 bash "$pdir/verify.sh" )
       fi
+      rc=$?
     elif [ "$map_ok" = 1 ]; then
-      ( cd "$JIG_PROJECT" \
+      run_output=$( cd "$JIG_PROJECT" \
         && unset JIG_VERIFY_EXPLAIN \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
            JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" \
-           bash "$pdir/verify.sh" )
+           bash "$pdir/verify.sh" 2>&1 )
+      rc=$?
+      [ -z "$run_output" ] || printf '%s\n' "$run_output"
     elif [ "$scope_ok" = 1 ]; then
-      ( cd "$JIG_PROJECT" \
+      run_output=$( cd "$JIG_PROJECT" \
         && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_MAPPED \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
-           bash "$pdir/verify.sh" )
+           bash "$pdir/verify.sh" 2>&1 )
+      rc=$?
+      [ -z "$run_output" ] || printf '%s\n' "$run_output"
     else
-      ( cd "$JIG_PROJECT" \
+      run_output=$( cd "$JIG_PROJECT" \
         && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
-        && bash "$pdir/verify.sh" )
+        && bash "$pdir/verify.sh" 2>&1 )
+      rc=$?
+      [ -z "$run_output" ] || printf '%s\n' "$run_output"
     fi
-    rc=$?
     set -e
     if [ "$map_ok" = 1 ]; then
       rm -f "$JIG_VERIFY_MAP_TMP"
@@ -589,7 +629,18 @@ cmd_verify() {
     # stack the same way.
     case "$rc" in
       0) pass=$((pass + 1)); printf 'RESULT %s: pass%s\n' "$p" "$note" ;;
-      2) skip=$((skip + 1)); printf 'RESULT %s: skip%s\n' "$p" "$note" ;;
+      2)
+        skip=$((skip + 1))
+        # A profile that skipped every check of its own either had nothing in
+        # scope (every "<check>: skip (…)" line names a scope reason, ADR-0013's
+        # own wording) or hit a real gap (a missing tool, a broken check) — and
+        # only the second is a person's to fix. Absence of any skip line at all
+        # is read as the cautious default, same as an undeclared capability.
+        if [ "$is_fallback" != 1 ] && ! _verify_skip_lines_all_scoped "$run_output"; then
+          covered_needs_install=$((covered_needs_install + 1))
+        fi
+        printf 'RESULT %s: skip%s\n' "$p" "$note"
+        ;;
       3)
         incomplete=$((incomplete + 1))
         printf 'RESULT %s: incomplete%s\n' "$p" "$note"
@@ -630,24 +681,42 @@ cmd_verify() {
   # reported success having examined not one line of it, and `jig task ship` and
   # the autopilot read that code.
   #
-  # But "nothing was checked" is two states, and only one of them is anybody's
-  # fault. **The difference is whether there was anything to check.**
+  # But "nothing was checked" is three states, and only one of them is
+  # anybody's fault. **The difference is whether there was anything to check,
+  # and whether the change at hand was the reason it went unchecked.**
   #
-  #   - A profile covering this stack took part and every check skipped: the
-  #     stack was recognised and its tools are missing. There was something to
-  #     check and it was not checked, for a reason somebody can fix. That is the
-  #     blind pass this rule exists to stop, and it is refused — exit 3, sharing
-  #     the code with the killed run because both mean no verdict was produced.
-  #   - Only fallback profiles took part: no profile covers this project at all.
-  #     There is nothing to install and nothing to wait for, so refusing would
-  #     stop work over a state the person cannot resolve. It does not refuse —
-  #     and it does not say `ok` either. It says plainly that nothing was
-  #     checked, and `jig task ship` says it again at the moment of shipping,
-  #     where it has consequences, rather than only here ten minutes earlier.
+  #   - A profile covering this stack took part and every check skipped for a
+  #     reason of its own (a missing tool, a broken verify.sh): the stack was
+  #     recognised and there was something to check that was not, for a reason
+  #     somebody can fix. That is the blind pass this rule exists to stop, and
+  #     it is refused — exit 3, sharing the code with the killed run because
+  #     both mean no verdict was produced.
+  #   - Only fallback profiles took part: no profile covers this project at
+  #     all. There is nothing to install and nothing to wait for, so refusing
+  #     would stop work over a state the person cannot resolve.
+  #   - Every skip came from scope narrowing: a profile covers this stack and
+  #     its tools are fine, but this diff does not touch anything within its
+  #     scope — either `jig verify` narrowed it to no changed files at all
+  #     before the profile ever ran, or the profile ran and every check of its
+  #     own said so (ADR-0013's own wording: every "<check>: skip (…)" line
+  #     names a scope reason). A docs-only change beside a `shell` profile is
+  #     exactly this. Nothing here is broken and nothing needs installing; the
+  #     narrowing did exactly what it was asked to. Refusing would repeat the
+  #     wrong advice this rule exists to stop, just from a different cause.
+  #
+  # The last two states share their answer — there is no action for the
+  # person to take, so this does not refuse — but not their text, since only
+  # the first names a stack this project actually has. `covered_needs_install`
+  # counts covered profiles whose skip does NOT reduce to scope narrowing:
+  # zero of those, and the state is the third one above, not the first.
   if [ "$pass" -eq 0 ] && [ "$failn" -eq 0 ] && [ "$total" -gt 0 ]; then
-    if [ "$covered" = 1 ]; then
+    if [ "$covered" = 1 ] && [ "$covered_needs_install" -gt 0 ]; then
       printf 'verify: nothing was checked, so this is not a pass — install the project'"'"'s tools so its profile can run\n'
       return 3
+    fi
+    if [ "$covered" = 1 ]; then
+      printf 'verify: every check in scope skipped — this change touches nothing any profile covers, so this run verified nothing\n'
+      return 0
     fi
     printf 'verify: nothing here checks this project — no profile covers it, so this run verified nothing\n'
     return 0
