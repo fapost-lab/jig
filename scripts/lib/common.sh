@@ -1103,6 +1103,54 @@ _jig_ship_merge_gitlab() {
   printf 'merged %s\n' "$url"
 }
 
+# jig_pr_state <url> — merged|open|closed|unknown for the pull/merge request at
+# <url>, read live from whichever forge this checkout uses. `unknown` is the
+# safe answer whenever the state cannot be confirmed: no forge configured, the
+# read fails, or the forge reports something this checkout does not recognise
+# — a caller deciding whether work has landed must never read `unknown` as
+# `merged` (autopilot-end-closes-unmerged-task; ADR-0005 keeps merge state out
+# of `state` for the same reason: it is asked for, never trusted from disk).
+#
+# Shared rather than kept in task.sh: `task set status consolidated` and
+# housekeeping's remote-state tier both have to ask the same question of the
+# same forge, and one command library never sources another (ARCHITECTURE.md,
+# Scripts layout).
+jig_pr_state() {
+  local url="$1" kind
+  [ -n "$url" ] || { printf 'unknown\n'; return 0; }
+  kind=$(jig_forge_kind) || exit 1
+  case "$kind" in
+    github) _jig_pr_state_github "$url" ;;
+    gitlab) _jig_pr_state_gitlab "$url" ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+_jig_pr_state_github() {
+  local state
+  state=$(gh pr view "$1" --json state --jq .state 2>/dev/null) || { printf 'unknown\n'; return 0; }
+  case "$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')" in
+    merged) printf 'merged\n' ;;
+    open) printf 'open\n' ;;
+    closed) printf 'closed\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+_jig_pr_state_gitlab() {
+  local iid json state
+  iid=$(_jig_ship_glab_mr "$1")
+  [ -n "$iid" ] || { printf 'unknown\n'; return 0; }
+  json=$(glab mr view "$iid" --output json 2>/dev/null) || { printf 'unknown\n'; return 0; }
+  state=$(printf '%s' "$json" | tr -d ' \n' | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
+  case "$state" in
+    merged) printf 'merged\n' ;;
+    opened) printf 'open\n' ;;
+    closed) printf 'closed\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
 # --- specification links ------------------------------------------------------
 
 # jig_spec_link <task.md> — the spec id a task links to, or nothing.

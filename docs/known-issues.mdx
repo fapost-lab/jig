@@ -54,34 +54,6 @@ that work is what the removal would take. There is no Jig setting that makes a c
 shared rather than copied; a project that needs one checkout of a package shared across worktrees
 has no option today but to leave it out of `carry` and accept that the worktree cannot build.
 
-## Autopilot can close a task whose work was never merged
-
-{/* closed by jig task: autopilot-end-closes-unmerged-task — remove this entry in the PR that merges the fix */}
-
-`jig task autopilot <id> end` marks the task consolidated without asking whether its pull request
-was merged. At `agent.git: pr` the run ends exactly there — an open pull request, waiting for you —
-and the task is closed in the same breath.
-
-A closed task leaves `jig status`. So the pull request nobody merged becomes invisible at the one
-moment it needs watching: the agent that opened it does not list it any more, and neither does
-anyone else opening the project afterwards. Nothing is lost, but it is easy to forget for as long
-as you do not happen to look at the forge.
-
-Closing by hand is no safer here. `jig task set <id> status consolidated` refuses only while the
-knowledge decision is unrecorded, and by the end of a route that decision has been made — so the
-manual path allows the same close. Neither writer asks whether the change landed.
-
-**What to do instead.** After an autopilot run ends, look at the pull request it hands back and
-merge it yourself. To find tasks in this state later, list the closed ones and check their
-branches:
-
-```bash
-jig task list --all
-```
-
-A task marked `consolidated` whose branch still exists unmerged on the forge is one of these; it
-can be reopened with `jig task set <id> status ready`.
-
 ## Housekeeping can leave `git fetch` hung, and the count grows
 
 {/* closed by jig task: fetch-never-waits-for-a-prompt — remove this entry in the PR that merges the fix */}
