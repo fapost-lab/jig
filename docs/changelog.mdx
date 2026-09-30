@@ -20,6 +20,11 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   rights allow, the same as `jig task ship` ([Upgrading](/upgrading#an-upgrade-is-a-change-of-its-own)).
   The commit and its pull request now also carry a checklist of the manual steps left between your
   version and the new one, instead of a fixed pointer at this page.
+- **`jig doctor` tells you when a newer Jig has shipped.** Its `latest release` line asks the
+  tool's own origin for the newest published tag, instead of only comparing your project against
+  the copy on your machine — so the two can agree and still both be behind. It tells apart a real
+  "you're behind" from "could not check" (no network, no origin, no answer in time), and never
+  reports either as "up to date" by mistake ([Upgrading](/upgrading)).
 - **The Windows installer no longer refuses a drive or share root that is already your
   repository.** A `subst` drive, a volume kept for one project, or a `\\server\share` that is
   itself the top of an existing repository now installs the project too, not only Jig
