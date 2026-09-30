@@ -23,39 +23,6 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## A Jig project cloned on Windows stops taking upgrades
-
-{/* closed by jig task: manifest-survives-a-windows-clone — remove this entry in the PR that merges the fix */}
-
-Git for Windows, with its default settings, writes text files with Windows line endings whenever
-it checks a project out. Jig pins its own line endings for its scripts only, so a fresh checkout
-of a Jig project — a clone, and on the same machine a task worktree
-(`jig task start --worktree`) — gets the rest of Jig's files that way, `.ai/manifest` among them.
-Jig then cannot read its own manifest. `jig upgrade --dry-run` reports almost every framework file
-as a conflict, and `jig upgrade` places none of them; measured on a project of 97 framework files:
-
-```text
-jig upgrade: 0 placed, 26 kept, 71 conflict(s); manifest unchanged (dry run)
-```
-
-The checkout where Jig was installed is not affected, so this reaches whoever joins the project
-on Windows. It costs you updates: that copy stops receiving Jig's changes, and `jig status` there
-reports `drift: 0 modified`, so nothing points at the cause.
-
-**What to do instead.** In the project, pin the line endings of the rest of Jig's files. Add these
-lines to `.gitattributes` and commit them:
-
-```text
-.ai/** text eol=lf
-.claude/skills/** text eol=lf
-.codex/skills/** text eol=lf
-```
-
-A clone or a worktree made after that commit upgrades normally. One made before it keeps the
-files it was given: clone again, or make the worktree again. If you already ran `jig upgrade` in
-such a copy, it rewrote `.ai/manifest` without fixing anything; do not commit that change —
-`git checkout .ai/manifest` puts the file back.
-
 ## Removing a task worktree by hand has no protection
 
 {/* closed by jig task: worktree-share — remove this entry in the PR that merges the fix */}

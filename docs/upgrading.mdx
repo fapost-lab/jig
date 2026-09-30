@@ -76,7 +76,7 @@ From the next release on, `jig upgrade` does its work as one separate change, th
    - you have uncommitted changes to tracked files — commit them, `git stash` them, or finish the
      task they belong to (new files git does not track yet do not count);
    - Git converts line endings here (`core.autocrlf=true`) and nothing keeps Jig's files at LF — it
-     names the two lines to add to `.gitattributes`;
+     names the lines to add to `.gitattributes`;
    - another agent session is working in this checkout, or `jig verify` is running in it — run the
      upgrade when it has finished. If that session has already ended, the message names the file
      to delete.

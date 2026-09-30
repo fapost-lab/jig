@@ -1430,7 +1430,26 @@ test_upgrade_stops_under_autocrlf_without_lf_pinned() {
   run jig upgrade --from "$JIG_HOME"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "core.autocrlf is true"
-  assert_contains "$OUT" ".ai/scripts/** text eol=lf"
+  assert_contains "$OUT" ".ai/manifest text eol=lf"
+}
+
+# A project whose .gitattributes still holds only the two lines an older
+# `jig init` wrote — `.ai/scripts/**` and `.ai/profiles/**/*.sh`, never
+# `.ai/manifest` — is exactly the clone the bug reached: `.ai/scripts/jig`
+# reads `lf` there already, so a check that asked about it (as this one did
+# before the fix) would never stop the run.
+test_upgrade_stops_under_autocrlf_with_only_the_old_lines_pinned() {
+  _unit_project
+  git config core.autocrlf true
+  printf '%s\n' "# jig: line endings of the framework's own files, whatever core.autocrlf says" \
+    '.ai/scripts/** text eol=lf' '.ai/profiles/**/*.sh text eol=lf' > .gitattributes
+  git add .gitattributes
+  git commit -q -m "old-style attributes"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "core.autocrlf is true"
+  assert_contains "$OUT" ".ai/manifest text eol=lf"
 }
 
 test_upgrade_runs_under_autocrlf_with_lf_pinned() {
@@ -1440,6 +1459,34 @@ test_upgrade_runs_under_autocrlf_with_lf_pinned() {
   run jig upgrade --from "$JIG_HOME"
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "core.autocrlf"
+}
+
+# The reproduction that opened this task: a project inits and commits here
+# (LF, as every checkout on this machine is), then a second checkout is made
+# the way Git for Windows makes one by default — core.autocrlf=true set
+# *before* the clone, so Git itself converts every text file, `.ai/manifest`
+# included. With the fix, that clone's own `jig` upgrades exactly as this
+# one does: nothing looks kept-conflicting, and `jig status` reports the
+# truth instead of a silent `drift: 0` that hides a manifest nobody can read.
+test_upgrade_dry_run_is_clean_after_a_windows_style_clone() {
+  _unit_project
+  local project clone
+  project="$PWD"
+  clone="$JIG_TEST_TMP.win-clone"
+  git -c core.autocrlf=true clone -q . "$clone"
+  cd "$clone" || fail "could not enter the clone"
+  git config core.autocrlf true
+
+  run jig upgrade --from "$JIG_HOME" --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "0 conflict(s)"
+  assert_not_contains "$OUT" "a real upgrade would stop"
+
+  run jig status
+  assert_contains "$OUT" "drift: 0 modified"
+
+  cd "$project" || fail "could not return from the clone"
+  rm -rf "$clone"
 }
 
 test_upgrade_stops_while_a_session_works_in_this_checkout() {
