@@ -532,6 +532,79 @@ EOF
   assert_not_contains "$OUT" "paths glob matches no file"
 }
 
+test_paths_glob_matching_only_an_ignored_file_still_warns() {
+  km_setup
+  mkdir -p ignored
+  printf 'ignored/\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "ignore ignored/"
+  printf 'x\n' > ignored/only.txt
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+paths:
+  - "ignored/**"
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "WARN .ai/knowledge/features/a.md: paths glob matches no file: ignored/**"
+}
+
+test_paths_bare_directory_glob_with_no_files_warns() {
+  km_setup
+  mkdir -p src/empty
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+paths:
+  - "src/empty/"
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "WARN .ai/knowledge/features/a.md: paths glob matches no file: src/empty/"
+}
+
+test_paths_bare_directory_glob_matches_a_file_directly_under_it() {
+  km_setup
+  mkdir -p src/widget
+  printf 'x\n' > src/widget/a.txt
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+paths:
+  - "src/widget/"
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "paths glob matches no file"
+}
+
+test_paths_glob_with_question_mark_is_literal_not_a_wildcard() {
+  km_setup
+  printf 'x\n' > "README.md"
+  cat > .ai/knowledge/features/a.md <<'EOF'
+---
+id: feature-a
+type: feature
+status: active
+paths:
+  - "READM?.md"
+---
+EOF
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "WARN .ai/knowledge/features/a.md: paths glob matches no file: READM?.md"
+}
+
 test_missing_domains_and_paths_warns() {
   km_setup
   cat > .ai/knowledge/features/a.md <<'EOF'

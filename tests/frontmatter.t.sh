@@ -57,6 +57,51 @@ EOF
 type: feature" "$OUT"
 }
 
+test_fm_get_block_and_fm_list_block_read_a_block_fetched_once() {
+  cat > doc.md <<'EOF'
+---
+id: feature-x
+type: feature
+status: active
+domains:
+  - core
+  - ui
+---
+EOF
+  # shellcheck disable=SC2016 # the $ vars are for the bash -c fm_harness runs, not this shell
+  fm_harness 'block=$(fm_block doc.md); fm_get_block "$block" id; fm_get_block "$block" status; fm_list_block "$block" domains'
+  assert_eq 0 "$RC"
+  assert_eq "feature-x
+active
+core
+ui" "$OUT"
+}
+
+test_fm_get_and_fm_list_agree_with_their_block_forms() {
+  cat > doc.md <<'EOF'
+---
+id: feature-x
+type: feature
+status: active
+paths:
+  - "src/**"
+  - "README.md"
+---
+EOF
+  fm_harness 'fm_get doc.md id'
+  first_id="$OUT"
+  fm_harness 'fm_list doc.md paths'
+  first_paths="$OUT"
+  # shellcheck disable=SC2016 # the $ vars are for the bash -c fm_harness runs, not this shell
+  fm_harness 'block=$(fm_block doc.md); fm_get_block "$block" id'
+  assert_eq 0 "$RC"
+  assert_eq "$first_id" "$OUT"
+  # shellcheck disable=SC2016 # the $ vars are for the bash -c fm_harness runs, not this shell
+  fm_harness 'block=$(fm_block doc.md); fm_list_block "$block" paths'
+  assert_eq 0 "$RC"
+  assert_eq "$first_paths" "$OUT"
+}
+
 test_fm_get_strips_trailing_comment_and_whitespace() {
   cat > doc.md <<'EOF'
 ---

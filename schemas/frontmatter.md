@@ -52,7 +52,7 @@ key:
 | `load` | no | `always`, `domain` or `matched` (default `matched`) — see below |
 | `stages` | no | list of route-stage names; additive promotion for matched catalog documents inside entered domains (ADR-0021) |
 | `requires` | no | list of document ids that must be loaded whenever this document is; transitive and acyclic |
-| `paths` | no | list of globs relative to the repository root, matched by `jig context --files`; `**` matches any depth |
+| `paths` | no | list of globs relative to the repository root, matched by `jig context --files`; `**` matches any depth. `*` is the only wildcard — `?`, `[...]` and brace groups (`{a,b}`) are literal characters, not glob syntax. A glob ending in `/` names a directory and matches any file under it, including directly under it, the same as if `*` (or `**`) had been appended — never the directory itself: a glob is checked against files that exist, and an otherwise-empty directory is not a match (ADR-20260930-a-paths-glob-has-one-wildcard) |
 | `supersedes` | no | id of the document this one replaces |
 | `reviewed_at` | no | `YYYY-MM-DD`, when the document was last reconciled with the code it describes; read by `jig knowledge stale` (ADR-0010) |
 | `source` | no | repository-relative path of an existing tracked file this document links; makes it a stub (see below, ADR-0036) |
