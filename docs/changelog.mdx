@@ -25,6 +25,11 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   the copy on your machine — so the two can agree and still both be behind. It tells apart a real
   "you're behind" from "could not check" (no network, no origin, no answer in time), and never
   reports either as "up to date" by mistake ([Upgrading](/upgrading)).
+- **`jig status` shows a newer Jig release too, without running `jig doctor` for it.**
+  Housekeeping now checks the same thing once a day in the background and keeps the answer; `jig
+  status` (plain text and the `--html`/`--open` page) reads it offline and, the moment a newer
+  release is out, prints `jig v<X> is out — jig self-update, then jig upgrade`. No network call of
+  its own, and nothing shown when there is nothing new or the check failed.
 - **The Windows installer no longer refuses a drive or share root that is already your
   repository.** A `subst` drive, a volume kept for one project, or a `\\server\share` that is
   itself the top of an existing repository now installs the project too, not only Jig
