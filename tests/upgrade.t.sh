@@ -23,6 +23,16 @@ EOF
   mv "$tmp_version" "$dest/scripts/lib/version.sh"
 }
 
+# _unbump_source <dest> — give a source made by _mk_source_v2 the running
+# version back, so the running code carries out the upgrade itself instead of
+# handing it to the source's newer dispatcher. The tests that are about the old
+# code doing the work need exactly that.
+_unbump_source() {
+  local tmp_version="$1/scripts/lib/version.sh.tmp"
+  cp "$JIG_HOME/scripts/lib/version.sh" "$tmp_version"
+  mv "$tmp_version" "$1/scripts/lib/version.sh"
+}
+
 test_upgrade_requires_initialised_project() {
   fixture_repo
   run jig upgrade --from "$JIG_HOME"
@@ -345,6 +355,7 @@ test_upgrade_copy_mode_replaces_the_running_dispatcher_without_running_its_tail(
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   src=$(cd "$src" && pwd)
   _mk_source_v2 "$src"
+  _unbump_source "$src"
   cat >> "$src/scripts/jig" <<'EOF'
 
 printf 'TAIL-EXECUTED\n'
@@ -1012,6 +1023,9 @@ test_upgrade_hashes_both_sides_alike_under_clean_filters() {
   git add .gitattributes
   git commit -q -m "clean filter over the framework's profiles"
   jig init --from "$JIG_HOME" >/dev/null
+  # init appends to the tracked .gitattributes; an upgrade starts from a
+  # committed tree.
+  git add -A && git commit -q -m "jig init"
 
   # The filter has to bite, or this test proves nothing.
   local filtered raw
@@ -1085,6 +1099,7 @@ test_upgrade_names_what_is_still_not_installed() {
   local src anchor
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-next.XXXXXX")
   _mk_source_v2 "$src"
+  _unbump_source "$src"
   # The literal source line, $source and all: it is grepped for, not evaluated.
   # shellcheck disable=SC2016
   anchor='cp -p "$source/templates/AGENTS.md" "$stage/.ai/templates/AGENTS.md"'
@@ -1104,6 +1119,7 @@ test_upgrade_names_what_is_still_not_installed() {
   # Indented: quoted from another run, and not to be mistaken for this run's
   # own report lines by a reader or by anything reading line starts.
   assert_contains "$OUT" "  install .ai/templates/NEWTHING.md"
+  assert_contains "$OUT" "not committed, because the install is not complete"
 
   # And the run the message asks for finishes the job — done by the project's
   # own dispatcher, which is now the newer code, the way the check itself asked
@@ -1233,4 +1249,349 @@ test_upgrade_link_mode_reconciles_a_section_without_moving_the_source() {
   assert_file_contains .ai/manifest "jig.source: $JIG_HOME"
 
   rm -rf "$src"
+}
+
+# --- the upgrade as a unit of work (adr-20260930-an-upgrade-is-a-unit-of-work) ---
+
+# _unit_project — an installed project with its install committed on main, the
+# way a real one stands before an upgrade.
+_unit_project() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  git add -A
+  git commit -q -m "jig init"
+}
+
+# _unit_source — a newer source (9.9.9) in a fresh directory; prints its path.
+_unit_source() {
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unit.XXXXXX")
+  src=$(cd "$src" && pwd)
+  _mk_source_v2 "$src"
+  printf '%s\n' "$src"
+}
+
+test_upgrade_refuses_a_dirty_tree_and_changes_nothing() {
+  _unit_project
+  local src head
+  src=$(_unit_source)
+  printf '\n# local edit\n' >> README.md
+  head=$(git rev-parse HEAD)
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes"
+  assert_contains "$OUT" "git stash"
+  assert_contains "$OUT" "nothing was changed"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  assert_no_file .ai/skills/jig-newthing
+  [ -z "$(git diff --cached --name-only)" ] || fail "the refusal staged something"
+  assert_file_contains .ai/manifest "jig.source: $JIG_HOME"
+
+  rm -rf "$src"
+}
+
+# A clean tree, and the person standing on a task's branch: the upgrade gets a
+# branch of its own cut from main, and one commit on it.
+test_upgrade_commits_once_on_its_own_branch_cut_from_the_base() {
+  _unit_project
+  jig config set --local agent.git commit >/dev/null
+  local src main_head
+  src=$(_unit_source)
+  main_head=$(git rev-parse main)
+  git checkout -q -b task/elsewhere
+  printf 'task work\n' > task.txt
+  git add task.txt
+  git commit -q -m "task work"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "working on branch jig/upgrade-9.9.9, cut from main"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "git checkout task/elsewhere"
+  assert_eq "jig/upgrade-9.9.9" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$main_head" "$(git rev-parse HEAD~1)"
+  assert_no_file task.txt "the upgrade branch carries the task's work"
+  assert_eq "1" "$(git rev-list --count main..HEAD)"
+  assert_contains "$(git log -1 --format=%s)" "Upgrade Jig "
+  assert_contains "$(git log -1 --format=%s)" " -> 9.9.9"
+  assert_contains "$(git log -1 --format=%B)" "Manual steps:"
+  assert_contains "$(git log -1 --format=%B)" "https://jig.fapost.in/upgrading"
+  assert_eq "" "$(git status --porcelain | grep -v '^??' || true)"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9"
+
+  rm -rf "$src"
+}
+
+# agent.git none: the change is staged, and one command commits it. A repeat on
+# the upgrade's own branch, with that change still uncommitted, is allowed:
+# that is how an interrupted upgrade is finished.
+test_upgrade_at_agent_git_none_stages_and_a_repeat_on_its_branch_runs() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "git commit -F .ai/runtime/upgrade/message"
+  assert_file .ai/runtime/upgrade/message
+  assert_eq "jig/upgrade-9.9.9" "$(git symbolic-ref --short HEAD)"
+  assert_eq "0" "$(git rev-list --count main..HEAD)"
+  [ -n "$(git diff --cached --name-only)" ] || fail "nothing was staged"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "uncommitted changes"
+  assert_eq "jig/upgrade-9.9.9" "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src"
+}
+
+test_upgrade_with_nothing_to_change_goes_back_and_drops_its_branch() {
+  _unit_project
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "nothing changed; back on main"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  [ -z "$(git branch --list 'jig/upgrade-*')" ] \
+    || fail "the empty upgrade branch was left behind"
+}
+
+test_upgrade_without_branch_per_task_commits_on_the_current_branch() {
+  _unit_project
+  sed 's/^git\.branch_per_task: true/git.branch_per_task: false/' .ai/config.yaml > config.tmp
+  mv config.tmp .ai/config.yaml
+  git commit -q -am "one branch"
+  jig config set --local agent.git pr >/dev/null
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "working on branch"
+  assert_not_contains "$OUT" "pushed"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_contains "$(git log -1 --format=%s)" " -> 9.9.9"
+
+  rm -rf "$src"
+}
+
+# Older code hands the upgrade to the source's newer dispatcher; code as new as
+# the source does the work itself.
+test_upgrade_hands_itself_to_newer_code() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+  printf '\nprintf "NEW-DISPATCHER\\n" >&2\n' >> "$src/scripts/lib/version.sh"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "; handing the upgrade to 9.9.9 from $src"
+  assert_contains "$OUT" "NEW-DISPATCHER"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9"
+
+  rm -rf "$src"
+}
+
+test_upgrade_does_not_hand_off_to_code_no_newer_than_itself() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+  _unbump_source "$src"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "handing the upgrade"
+
+  rm -rf "$src"
+}
+
+test_upgrade_handed_off_and_still_older_says_self_update() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+
+  JIG_UPGRADE_HANDED_OFF=0.0.1 run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig self-update"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src"
+}
+
+test_upgrade_stops_under_autocrlf_without_lf_pinned() {
+  _unit_project
+  git config core.autocrlf true
+  git rm -q --cached .gitattributes
+  rm .gitattributes
+  git commit -q -m "no attributes"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "core.autocrlf is true"
+  assert_contains "$OUT" ".ai/scripts/** text eol=lf"
+}
+
+test_upgrade_runs_under_autocrlf_with_lf_pinned() {
+  _unit_project
+  git config core.autocrlf true
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "core.autocrlf"
+}
+
+test_upgrade_stops_while_a_session_works_in_this_checkout() {
+  _unit_project
+  mkdir -p .ai/runtime/working
+  printf 'command: task show other\n' > .ai/runtime/working/other-session
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a session is working in this checkout (other-session"
+  assert_contains "$OUT" ".ai/runtime/working/other-session"
+
+  rm .ai/runtime/working/other-session
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "a session is working"
+}
+
+test_upgrade_stops_while_verify_runs_in_this_checkout() {
+  _unit_project
+  mkdir -p .ai/runtime/verify/busy
+  printf 'checkout: %s\npid: %s\n' "$PWD" "$$" > .ai/runtime/verify/busy/run
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "\`jig verify\` is running in this checkout"
+
+  rm -rf .ai/runtime/verify/busy
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+}
+
+# A dry run is read-only and is what status, verify and doctor run: it never
+# refuses, it only says what a real run would do.
+test_upgrade_dry_run_on_a_dirty_tree_only_notes_it() {
+  _unit_project
+  printf '\n# local edit\n' >> README.md
+
+  run jig upgrade --dry-run --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "note: a real upgrade would stop: the working tree has uncommitted changes"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+
+  run jig status
+  assert_not_contains "$OUT" "note: a real upgrade"
+}
+
+# At agent.git pr the branch is pushed by the steps `task ship` takes; with no
+# forge CLI usable here, the pull request is left to the person, and said so.
+test_upgrade_at_agent_git_pr_pushes_its_branch() {
+  _unit_project
+  local src remote
+  remote=$(mktemp -d "${TMPDIR:-/tmp}/jig-remote.XXXXXX")
+  git init -q --bare "$remote"
+  git remote add origin "$remote"
+  git push -q origin main
+  jig config set --local agent.git pr >/dev/null
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pushed jig/upgrade-9.9.9"
+  git -C "$remote" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 \
+    || fail "the upgrade branch did not reach origin"
+
+  rm -rf "$src" "$remote"
+}
+
+# An upgrade to this version already waiting on its own branch is not started
+# a second time on another one: that could only become a second pull request.
+test_upgrade_refuses_a_second_branch_for_an_unmerged_upgrade() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+  git checkout -q -b jig/upgrade-9.9.9
+  git commit -q --allow-empty -m "earlier upgrade, not merged"
+  git checkout -q main
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already on branch jig/upgrade-9.9.9, which has not been merged into main"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  [ -z "$(git branch --list 'jig/upgrade-9.9.9-*')" ] || fail "a second upgrade branch was cut"
+
+  rm -rf "$src"
+}
+
+# The base already current and the person on a task branch that is not: the
+# way forward is the base, and the run says so instead of leaving them to loop.
+test_upgrade_with_nothing_to_change_names_the_base_to_merge() {
+  _unit_project
+  git checkout -q -b task/behind
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "nothing changed; back on task/behind"
+  assert_contains "$OUT" "git merge main"
+}
+
+test_upgrade_refuses_when_the_base_branch_exists_nowhere() {
+  _unit_project
+  sed 's/^git\.base_branch: main/git.base_branch: trunk/' .ai/config.yaml > config.tmp
+  mv config.tmp .ai/config.yaml
+  git commit -q -am "trunk"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no branch trunk here or on origin"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_upgrade_refuses_an_invalid_agent_git_before_touching_anything() {
+  _unit_project
+  printf 'agent.git: sometimes\n' > .ai/config.local.yaml
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid agent.git: sometimes"
+  assert_contains "$OUT" "nothing was changed"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+# A pull request squashed by the forge leaves the local upgrade branch behind as
+# no ancestor of the base; the base's manifest says the upgrade landed anyway.
+test_upgrade_reads_a_squashed_upgrade_branch_as_landed() {
+  _unit_project
+  git checkout -q -b jig/upgrade-7.7.7
+  git commit -q --allow-empty -m "the upgrade, as its branch had it"
+  git checkout -q main
+  sed 's/^jig\.version: .*/jig.version: 7.7.7/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "the upgrade, squashed"
+  local src
+  src=$(_unit_source)
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="7.7.7"/' "$src/scripts/lib/version.sh" > "$src/v.tmp"
+  mv "$src/v.tmp" "$src/scripts/lib/version.sh"
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "has not been merged"
+  assert_contains "$OUT" "working on branch jig/upgrade-7.7.7-2"
+
+  rm -rf "$src"
+}
+
+test_upgrade_says_nothing_changed_when_its_branch_cannot_be_made() {
+  _unit_project
+  git branch jig/upgrade-"$(sed -n 's/^JIG_VERSION="\(.*\)"/\1/p' "$JIG_HOME/scripts/lib/version.sh")"/blocker
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "could not create branch"
+  assert_contains "$OUT" "nothing was changed"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
 }

@@ -137,126 +137,9 @@ _verify_map_apply() {
 # stalled at 40 and 50 minutes were not running a suite, they were queued
 # behind eight of them. A refusal would break CI and honest parallel work; a
 # warning is the same prose that already failed.
-
-# _verify_busy_dir — where the record lives, or nothing.
 #
-# The clone's main checkout, which `jig_config_clone_root` already computes by
-# reading git's own files — one answer from every worktree, no `git` process.
-# ADR-0038 made reading there a named exception to ADR-0008; this extends it to
-# writing, because what is being protected belongs to no checkout: the CPU is
-# one per clone, and the eight runs were in eight different worktrees.
-_verify_busy_dir() {
-  local root
-  root=$(jig_config_clone_root) || return 1
-  [ -n "$root" ] || return 1
-  printf '%s/%s/runtime/verify\n' "$root" "$JIG_AI_DIR"
-}
-
-# _verify_busy_ttl — how long a record still counts, in seconds. `0` is a
-# duration the grammar already spells, and it switches the whole mechanism off:
-# the escape for someone who genuinely wants parallel local runs, without a new
-# flag to learn.
-#
-# One key with a working default, never one a person must fill. The duration
-# grammar is the framework's one (`jig_duration_seconds`), and a mistyped value
-# leaves the default standing rather than taking `jig verify` down.
-_verify_busy_ttl() {
-  local raw seconds
-  raw=$(cfg verify.busy_ttl "30m")
-  seconds=$(jig_duration_seconds "$raw" 2>/dev/null) || seconds=""
-  case "$seconds" in
-    '' | *[!0-9]*) seconds=1800 ;;
-  esac
-  printf '%s\n' "$seconds"
-}
-
-# _verify_busy_mtime <file> — the file's mtime in seconds, or nothing.
-#
-# The BSD-then-GNU pair the session hook and the checkout record use, but
-# **chosen on the value, never on the exit status** — and that distinction is
-# the whole of this comment, because getting it wrong silently disabled the
-# lock on every GNU system.
-#
-# `stat -f '%m' <file>` under GNU coreutils does not simply fail: `-f` means
-# --file-system, so `%m` is read as a FILE operand, which errors, and then the
-# real file prints a **file-system block on stdout**. The command exits
-# non-zero, so `cmd && return 0` falls through to the GNU form and appends the
-# real mtime to that block. The caller then holds several lines where it
-# expected a number, rejects them, and reads the record's holder as gone: on
-# Linux and in Git Bash the record was never once seen as live, and
-# `jig verify` never waited for anything. It passed on macOS, where BSD stat
-# answers the first form, which is exactly how it reached CI.
-#
-# `_jig_checkout_mtimes` survives the same idiom only because it reads its
-# output line by line and skips what is not numeric. This reads one file, so it
-# checks the value it got instead.
-_verify_busy_mtime() {
-  local out
-  out=$(stat -f '%m' "$1" 2>/dev/null) || out=""
-  case "$out" in
-    '' | *[!0-9]*) out=$(stat -c '%Y' "$1" 2>/dev/null) || out="" ;;
-  esac
-  case "$out" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  printf '%s\n' "$out"
-}
-
-# _verify_busy_value <file> <key> — the first `<key>: <value>` line, read by the
-# shell alone. The CR is stripped explicitly because `read` keeps one where sed
-# would not, and this record may be written under Windows.
-_verify_busy_value() {
-  local file="$1" key="$2" line
-  [ -f "$file" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
-    case "$line" in
-      "$key: "*)
-        printf '%s\n' "${line#"$key": }"
-        return 0
-        ;;
-    esac
-  done < "$file"
-  return 1
-}
-
-# _verify_busy_holder <dir> <ttl> — "<age in seconds> <checkout>" when a live
-# run holds the record, nothing when none does.
-#
-# Two independent tests, and the record is live only when both pass:
-#
-#   1. `kill -0 <pid>` — a shell builtin, not `ps`, which ADR-0002 rules out
-#      and which behaves differently under Git Bash anyway. This is the normal
-#      path: a run killed by the sandbox gives the clone back at the next poll,
-#      and that is exactly the death this task was written about.
-#   2. the record's mtime is within the ttl — the backstop for when (1) is
-#      wrong: another user's process reads as dead (EPERM), a recycled pid
-#      reads as alive. Both errors are bounded. "Wrongly dead" is today's
-#      behaviour; "wrongly alive" waits no longer than the ttl.
-#
-# A record with no readable pid falls back to the ttl alone, so a torn read can
-# only cost a wait, never a wrong start.
-_verify_busy_holder() {
-  local dir="$1" ttl="$2" file mtime now age pid checkout
-  file="$dir/busy/run"
-  [ -f "$file" ] || return 1
-  mtime=$(_verify_busy_mtime "$file") || return 1
-  case "$mtime" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  now=$(date +%s)
-  if [ "$now" -lt "$mtime" ]; then age=0; else age=$((now - mtime)); fi
-  [ "$age" -le "$ttl" ] || return 1
-  pid=$(_verify_busy_value "$file" pid) || pid=""
-  case "$pid" in
-    '' | *[!0-9]*) ;;
-    "$$") return 1 ;;
-    *) kill -0 "$pid" 2>/dev/null || return 1 ;;
-  esac
-  checkout=$(_verify_busy_value "$file" checkout) || checkout=""
-  [ -n "$checkout" ] || checkout="another checkout"
-  printf '%s %s\n' "$age" "$checkout"
-}
+# The record is read by jig_verify_busy_holder and its helpers in common.sh:
+# `jig upgrade` asks the same question before it replaces scripts.
 
 # _verify_busy_claim <dir> — take the record, or fail.
 #
@@ -315,9 +198,9 @@ _verify_busy_acquire() {
   # the mechanism is off there rather than queueing jobs meant to run at once.
   [ -z "${CI:-}" ] || return 0
 
-  ttl=$(_verify_busy_ttl)
+  ttl=$(jig_verify_busy_ttl)
   [ "$ttl" -gt 0 ] || return 0
-  dir=$(_verify_busy_dir) || return 0
+  dir=$(jig_verify_busy_dir) || return 0
   [ -n "$dir" ] || return 0
 
   # A `jig verify` started by a run that already holds this clone — a suite that
@@ -338,7 +221,7 @@ _verify_busy_acquire() {
       fi
       return 0
     fi
-    holder=$(_verify_busy_holder "$dir" "$ttl") || holder=""
+    holder=$(jig_verify_busy_holder "$dir" "$ttl") || holder=""
     if [ -z "$holder" ]; then
       # Nobody live is behind the record: take it back, by the two bounded
       # deletions above, and let the loop claim it. `mkdir` still decides

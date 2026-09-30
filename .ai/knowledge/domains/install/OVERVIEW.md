@@ -20,7 +20,7 @@ paths:
   - scripts/jig.cmd
   - templates/gitattributes
   - scripts/lib/section.sh
-reviewed_at: 2026-09-26
+reviewed_at: 2026-09-30
 ---
 # Install
 
@@ -100,6 +100,12 @@ project owns.
   project's own dispatcher because an upgrade is carried out by the code of the version
   being replaced, whose own stage is satisfied by construction. Never on a dry run:
   `status`, `verify` and `doctor` each run one on every invocation (ADR-0017).
+  In copy mode a real run is a unit of work (adr-20260930-an-upgrade-is-a-unit-of-work):
+  older running code hands the run to the source's dispatcher; a dirty tree, an unpinned
+  CRLF clone, a live session or a `jig verify` in this checkout refuse it before anything
+  is touched; it works on `jig/upgrade-<to>` cut from the base branch, commits once only
+  after that self-check confirms the install, and ships as far as `agent.git` allows. Link
+  mode stays an in-place upgrade.
 - The adapter contract: where each runtime's skills live and how a skill is transformed
   on the way in.
 - The global framework: `install.sh` bootstraps a per-user checkout at the newest release
