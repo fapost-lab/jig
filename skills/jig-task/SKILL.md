@@ -110,7 +110,10 @@ working in this checkout themselves, start in a worktree without being asked to:
 
 **When `task start` refuses a dirty tree**, the changes belong to other work — never work
 around it. Ask the user which road: pause the task that owns them
-(`jig task pause <owner> --stash`), or start this one in a worktree, as above.
+(`jig task pause <owner> --stash`), or start this one in a worktree, as above. When the
+refusal names `jig spec ship <id>` instead, the dirty tree is a spec `jig-idea` left
+mid-session, not another task's work — run it and try again; there is no question here for
+the user, Jig already answered it.
 
 Either way it prints a path and leaves this checkout alone. From then on the task is worked on from
 that path only. If your runtime can switch this session into an existing worktree, switch

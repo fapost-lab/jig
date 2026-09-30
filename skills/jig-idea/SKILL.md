@@ -24,21 +24,40 @@ status; progress is read from its roadmap.
 .ai/scripts/jig spec list
 ```
 
-- **Existing spec.** Read every file in its directory before saying anything. Start from its
-  open questions and its fog items — that is where the last session stopped.
+- **Existing spec.** Before reading or touching anything, put it back on a branch of its own:
+
+  ```
+  .ai/scripts/jig spec resume <id>
+  ```
+
+  It refuses a dirty tree by the same rule `task start` uses, then switches to `spec/<id>`
+  — reusing the branch an earlier session shipped if it is still here, fetching it from
+  origin if only that has it, or cutting a fresh one otherwise. A spec with an open epic is
+  edited on the epic instead; `spec resume` says so and refuses, rather than cutting a
+  `spec/<id>` nothing would ever ship — switch to the epic branch it names first. Only then
+  read every file in the directory, starting from its open questions and fog items — that is
+  where the last session stopped.
 - **New spec.** Choose a short kebab-case id with the user, then create it:
 
   ```
   .ai/scripts/jig spec new <id>
   ```
 
-  It refuses an invalid or taken id and writes `spec.md` and `roadmap.md` from the
-  templates; fill them in, starting with the heading of `spec.md`, which names the spec in
-  `jig spec list`. Write the idea in the human's own
-  words, not a retelling. Other files (`architecture.md`, `stack.md`, `research.md`) are
-  added when the conversation needs them.
+  It refuses an invalid or taken id and a dirty tree (the same rule as `task start`), writes
+  `spec.md` and `roadmap.md` from the templates, and switches to a branch of its own,
+  `spec/<id>` — a spec lives there from its first minute, exactly as a task does once
+  started. Fill the files in, starting with the heading of `spec.md`, which names the spec
+  in `jig spec list`. Write the idea in the human's own words, not a retelling. Other files
+  (`architecture.md`, `stack.md`, `research.md`) are added when the conversation needs them.
 
-A spec is written in the project's durable language (AGENTS.md): it is committed.
+**When either refuses a dirty tree**, the uncommitted changes are somebody else's — never
+work around it: name what `git status` shows and ask the human to commit or stash it, the
+same as `jig-task` does for `task start`. **When `spec new` refuses "switch to `<default>`
+first"**, or `spec resume` does, move there yourself (nothing is staged or committed by
+either command, so switching costs nothing) and run it again.
+
+A spec is written in the project's durable language (AGENTS.md): it is committed, on its own
+branch, and shipped like one — §9 says when.
 
 ## 2. Learn what the project already knows
 
@@ -147,6 +166,19 @@ The session ends when nothing is left open for the chosen depth, or when the hum
 Close with three lines: the idea after testing in one sentence, its weakest point, the next
 step. Leftovers stay in "Open questions"; the next session starts there.
 
+The spec has been on `spec/<id>` since step 1 (`spec new` or `spec resume`); ship what
+changed before stopping, so it does not sit uncommitted on a branch only this checkout knows
+about — the trap this skill exists to close:
+
+```
+.ai/scripts/jig spec ship <id> --message-file <file>
+```
+
+It commits, and goes as far as `agent.git` allows from there; a stop or exit 3 means the
+rest — push, the pull request — is the human's, and the next step says so. Once it is
+merged, the next session opens with `jig spec resume <id>` (§1), never straight back onto
+the branch left behind.
+
 In a project with no code yet whose `ARCHITECTURE.md` and `RULES.md` are still the templates,
 the next step is `jig-init`: it carries the spec's decisions into knowledge and turns on the
 stack's profiles ([from a spec](../jig-init/references/from-a-spec.md)). Offer it once the
@@ -182,6 +214,10 @@ Check the result:
 
 A spec with an open epic is edited only on the epic — filing included: switch to the epic
 first. Anywhere else `jig spec list` says `progress is on the epic`.
+
+Rewriting `roadmap.md` here is editing the spec: it happens on `spec/<id>` (or the epic),
+never straight on the default branch — the reason §1 resumes the spec before this step is
+ever reached, not after.
 
 The tasks are filed, not started. When the human wants to begin one, hand it to `jig-task`. The
 item is checked later by `jig spec done`, called from consolidation — never by hand.

@@ -581,7 +581,16 @@ test_upgrade_installs_spec_templates_for_a_pre_spec_install_copy_mode() {
   assert_file_contains .ai/manifest ".ai/templates/spec/spec.md"
   assert_file_contains .ai/manifest ".ai/templates/spec/roadmap.md"
 
-  # spec new now finds the reinstalled template on its own, no --from needed.
+  # An upgrade is a unit of work (adr-20260930-an-upgrade-is-a-unit-of-work):
+  # it left this checkout on its own branch, with the change staged, not on
+  # main. Commit and merge it back, the way its own "next" line says to, so
+  # main is clean again — spec new now finds the reinstalled template on its
+  # own, no --from needed.
+  local branch
+  branch=$(git symbolic-ref --short HEAD)
+  git commit -q -F .ai/runtime/upgrade/message
+  git checkout -q main
+  git merge -q --ff-only "$branch"
   run jig spec new idea-x
   assert_eq 0 "$RC"
 }

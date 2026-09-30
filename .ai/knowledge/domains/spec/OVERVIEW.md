@@ -11,7 +11,7 @@ paths:
   - scripts/lib/spec.sh
   - "templates/spec/**"
   - "skills/jig-idea/**"
-reviewed_at: 2026-09-22
+reviewed_at: 2026-09-30
 ---
 # Spec
 
@@ -22,7 +22,12 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
 ## Responsibility
 
 - Creating a spec (`jig spec new`) from the framework-owned templates, with the id
-  validated before any path is built.
+  validated before any path is built. Both `spec new` and `spec resume` (a second session on
+  an existing spec) refuse a dirty tree by the rule `task start` uses (`jig_tracked_changes`,
+  `common.sh`) and then cut, or reuse, the spec's own branch, `spec/<id>`, through
+  `_spec_cut_own_branch` — the same mechanic `spec_ship_declare` falls back to for a spec
+  still authored directly on the default branch
+  (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute).
 - Reporting specs and their progress (`jig spec list`) and counting them for `jig status`,
   derived from files alone — a spec has no status.
 - The `jig-idea` conversation: understand the idea, put weight on it, offer other shapes,
@@ -107,12 +112,14 @@ spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut fr
 
 ## Entry points
 
-- `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_template`, `spec_list`, `spec_list_rows`,
+- `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_resume`, `_spec_cut_own_branch`,
+  `_spec_switch_to_existing_branch`, `_spec_refuse_dirty_tree`, `_spec_require_default_branch`,
+  `spec_template`, `spec_list`, `spec_list_rows`,
   `spec_progress`, `spec_phase_counts`, `spec_phase_rows`, `spec_roadmap_ref`, `spec_plan`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
   `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_ship_final_ready`, `spec_release_check`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`; `jig_ship_*`,
-  shared with `task ship`.
+  shared with `task ship`; `jig_tracked_changes`, shared with `task start`'s own dirty-tree refusal.
 - `.github/scripts/epic-pr-check.sh` — this repository's CI check of an epic's final pull request.
 - `skills/jig-consolidate/SKILL.md` §5 and `skills/jig-task/SKILL.md` — where a linked task meets
   its spec.

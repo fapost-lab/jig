@@ -15,7 +15,7 @@
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -24,6 +24,7 @@ cmd_spec() {
     # A command that changes a spec redraws the status page, whose progress
     # by phase it feeds (jig_status_page_touch, common.sh).
     new) spec_new "$@"; jig_status_page_touch ;;
+    resume) spec_resume "$@"; jig_status_page_touch ;;
     list) spec_list "$@" ;;
     plan) spec_plan "$@" ;;
     done) spec_done "$@"; jig_status_page_touch ;;
@@ -62,17 +63,90 @@ spec_template() {
   return 1
 }
 
+# _spec_cut_own_branch <id> <cmd> — switch to a fresh `spec/<id>`, branched
+# from HEAD, refusing a name git rejects or one that already exists (reusing
+# it would attach this spec to whatever that branch already holds — the same
+# reasoning `_task_branch_name` uses for a task's branch). <cmd> names the
+# caller in every message; prints the branch name once switched. The one
+# mechanic `spec new`, `spec resume` and `spec ship`'s declaration share,
+# so cutting a spec's branch cannot read three different ways
+# (idea-leaves-a-tree-task-start-refuses).
+_spec_cut_own_branch() {
+  local id="$1" cmd="$2" branch
+  branch="spec/$id"
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+    || jig_die "$cmd: git rejects the branch name: $branch"
+  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
+    jig_die "$cmd: $branch exists already; switch to it and run again"
+  fi
+  git -C "$JIG_PROJECT" switch --quiet -c "$branch" >/dev/null 2>&1 \
+    || jig_die "$cmd: could not switch to a new branch $branch"
+  printf '%s\n' "$branch"
+}
+
+# _spec_switch_to_existing_branch <id> <cmd> — switch to `spec/<id>` when it
+# already exists, locally or on origin (fetched fresh first); nothing, and
+# exit 1, when it exists nowhere. Used by `spec resume`, where a spec's
+# branch from an earlier session may already be there, unlike `spec new`
+# and `spec ship`'s declaration, which only ever create one.
+_spec_switch_to_existing_branch() {
+  local id="$1" cmd="$2" branch
+  branch="spec/$id"
+  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
+    git -C "$JIG_PROJECT" switch --quiet "$branch" >/dev/null 2>&1 \
+      || jig_die "$cmd: could not switch to $branch"
+    printf '%s\n' "$branch"
+    return 0
+  fi
+  jig_fetch_branches "$cmd" "$branch" 2>/dev/null
+  if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+    git -C "$JIG_PROJECT" switch --quiet -c "$branch" --track "origin/$branch" >/dev/null 2>&1 \
+      || jig_die "$cmd: could not switch to origin/$branch"
+    printf '%s\n' "$branch"
+    return 0
+  fi
+  return 1
+}
+
+# _spec_refuse_dirty_tree <cmd> — refuse a dirty tree by the same rule
+# `task start` uses (jig_tracked_changes, common.sh): a tracked change would
+# ride onto the spec's own branch as part of its first commit. No worktree
+# escape here, unlike a task's: a spec has none.
+_spec_refuse_dirty_tree() {
+  local cmd="$1" tracked
+  tracked=$(jig_tracked_changes)
+  [ -n "$tracked" ] \
+    || return 0
+  jig_die "$cmd: uncommitted changes in the working tree; commit or stash them yourself, then run \`$cmd\` again"
+}
+
+# _spec_require_default_branch <cmd> <default> — HEAD must be <default> and
+# resolved (not detached); a spec starts, or resumes, from there so that its
+# own branch is cut at a point every clone agrees on.
+_spec_require_default_branch() {
+  local cmd="$1" default="$2" here
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ -n "$here" ] || jig_die "$cmd: HEAD is detached; switch to $default first"
+  [ "$here" = "$default" ] || jig_die "$cmd: switch to $default first; a spec starts, or resumes, from there"
+}
+
 # spec_new <id> — create .ai/specs/<id>/ with spec.md and roadmap.md from the
-# templates. The id is validated here, at the one place the path is built:
-# a directory with an invalid name would be skipped by every listing, so a
-# spec created under one would silently not exist.
+# templates, then switch to a branch of its own (`spec/<id>`): the same
+# reasoning that puts a task on its own branch, from the first minute
+# (idea-leaves-a-tree-task-start-refuses). The id is validated here, at the
+# one place the path is built: a directory with an invalid name would be
+# skipped by every listing, so a spec created under one would silently not
+# exist.
 spec_new() {
   [ $# -ge 1 ] || jig_die "spec new: missing spec id (usage: jig spec new <id>)"
   [ $# -eq 1 ] || jig_die "spec new: unexpected argument: $2"
-  local id="$1" root dir spec_tpl roadmap_tpl f
+  local id="$1" root dir spec_tpl roadmap_tpl f default branch
   spec_valid_id "$id" \
     || jig_die "spec new: invalid spec id: $id (letters, digits, '.', '_', '-'; no leading dot or dash)"
   jig_require_init
+  default=$(cfg git.base_branch main)
+  _spec_require_default_branch "spec new" "$default"
+  _spec_refuse_dirty_tree "spec new"
   # Both templates are resolved before anything is created, so a missing one
   # leaves no empty directory behind.
   spec_tpl=$(spec_template spec.md) \
@@ -99,6 +173,50 @@ spec_new() {
     mv "$dir/$f.tmp.$$" "$dir/$f" || jig_die "spec new: could not write $JIG_AI_DIR/specs/$id/$f"
     printf '%s/specs/%s/%s\n' "$JIG_AI_DIR" "$id" "$f"
   done
+  branch=$(_spec_cut_own_branch "$id" "spec new") || exit 1
+  printf 'switched to %s\n' "$branch"
+}
+
+# spec_resume <id> — before a second session edits an existing spec, put it
+# back on its own branch: the same dirty-tree refusal `spec new` uses, then a
+# switch to `spec/<id>` (created if this is its first resume, reused if an
+# earlier one already cut it, fetched from origin if only that has it).
+# `jig-idea` calls this before touching an existing spec's files, so the
+# roadmap `jig spec new` files tasks into (step 10, jig-idea) is edited on
+# the branch too, never straight on the default one
+# (idea-leaves-a-tree-task-start-refuses).
+#
+# A spec with an open epic is edited on the epic instead (jig-idea says so);
+# resuming it here would cut a `spec/<id>` nothing ever ships, so it refuses.
+spec_resume() {
+  [ $# -ge 1 ] || jig_die "spec resume: missing spec id (usage: jig spec resume <id>)"
+  [ $# -eq 1 ] || jig_die "spec resume: unexpected argument: $2"
+  local id="$1" dir roadmap default here branch line rc=0
+  spec_valid_id "$id" || jig_die "spec resume: invalid spec id: $id"
+  jig_require_init
+  dir="$(spec_dir)/$id"
+  [ -d "$dir" ] || jig_die "spec resume: no such spec: $JIG_AI_DIR/specs/$id"
+  roadmap="$dir/roadmap.md"
+  if [ -f "$roadmap" ]; then
+    line=$(jig_spec_epic "$roadmap") || rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$line" ] && [ "${line##* }" = open ]; then
+      jig_die "spec resume: $JIG_AI_DIR/specs/$id/roadmap.md declares an open epic (${line% *}); edit it there instead — switch to ${line% *} first"
+    fi
+  fi
+  default=$(cfg git.base_branch main)
+  branch="spec/$id"
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ "$here" = "$branch" ]; then
+    printf 'already on %s\n' "$branch"
+    return 0
+  fi
+  _spec_require_default_branch "spec resume" "$default"
+  _spec_refuse_dirty_tree "spec resume"
+  branch=$(_spec_switch_to_existing_branch "$id" "spec resume") || branch=""
+  if [ -z "$branch" ]; then
+    branch=$(_spec_cut_own_branch "$id" "spec resume") || exit 1
+  fi
+  printf 'switched to %s\n' "$branch"
 }
 
 spec_dir() {
@@ -1276,14 +1394,7 @@ $bad"
   if [ "$here" = "$default" ]; then
     # Nothing is committed to the default branch: the declaration gets a
     # branch of its own, and the working tree and index come along unchanged.
-    branch="spec/$id"
-    git check-ref-format --branch "$branch" >/dev/null 2>&1 \
-      || jig_die "spec ship: git rejects the branch name: $branch"
-    if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
-      jig_die "spec ship: $branch exists already; switch to it and run again"
-    fi
-    git -C "$JIG_PROJECT" switch --quiet -c "$branch" >/dev/null 2>&1 \
-      || jig_die "spec ship: could not switch to a new branch $branch"
+    branch=$(_spec_cut_own_branch "$id" "spec ship") || exit 1
     printf 'switched to %s\n' "$branch"
   fi
   spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file"

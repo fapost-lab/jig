@@ -1786,6 +1786,7 @@ test_task_start_unreachable_origin_warns_and_succeeds() {
 task_open_epic() {
   local id="$1"
   jig spec new "$id" >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec $id"
   jig spec epic "$id" >/dev/null
@@ -1918,6 +1919,7 @@ test_task_start_picks_up_a_remote_only_epic_without_manual_fetch() {
   git remote add origin "$PWD/origin.git"
   git push -q origin main
   jig spec new idea-x >/dev/null
+  git checkout -q main
   git add -A
   git commit -q -m "add spec idea-x"
   jig spec epic idea-x >/dev/null
@@ -1961,6 +1963,74 @@ test_task_start_refuses_a_dirty_tree() {
   run jig task start T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "uncommitted changes"
+}
+
+# --- start: a dirty tree that is only a spec names `jig spec ship` -----------
+# (idea-leaves-a-tree-task-start-refuses): a spec `jig-idea` left mid-session
+# is not another task's work, and the door out is already named.
+
+test_task_start_dirty_tree_under_one_spec_names_spec_ship() {
+  task_setup_clean
+  jig spec new idea-x >/dev/null
+  git checkout -q main
+  git add -A
+  git commit -q -m "add spec idea-x"
+  printf 'more work\n' >> .ai/specs/idea-x/spec.md
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes under .ai/specs/idea-x/; ship it first: \`jig spec ship idea-x\`"
+}
+
+test_task_start_dirty_tree_under_one_spec_still_offers_a_worktree() {
+  task_setup_clean
+  jig spec new idea-x >/dev/null
+  git checkout -q main
+  git add -A
+  git commit -q -m "add spec idea-x"
+  printf 'more work\n' >> .ai/specs/idea-x/roadmap.md
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "or start it in its own worktree: \`jig task start T-1 --worktree\`"
+}
+
+test_task_start_dirty_tree_mixed_with_a_spec_does_not_name_spec_ship() {
+  task_setup_clean
+  jig spec new idea-x >/dev/null
+  git checkout -q main
+  git add -A
+  git commit -q -m "add spec idea-x"
+  printf 'more work\n' >> .ai/specs/idea-x/spec.md
+  printf 'dirty\n' >> README.md
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_not_contains "$OUT" "spec ship"
+  assert_contains "$OUT" "uncommitted changes in the working tree; commit them"
+}
+
+test_task_start_dirty_tree_across_two_specs_does_not_name_either() {
+  task_setup_clean
+  jig spec new idea-x >/dev/null
+  git checkout -q main
+  git add -A
+  git commit -q -m "add spec idea-x"
+  jig spec new idea-y >/dev/null
+  git checkout -q main
+  git add -A
+  git commit -q -m "add spec idea-y"
+  printf 'more\n' >> .ai/specs/idea-x/spec.md
+  printf 'more\n' >> .ai/specs/idea-y/spec.md
+  jig task new T-1 >/dev/null
+
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_not_contains "$OUT" "spec ship"
+  assert_contains "$OUT" "uncommitted changes in the working tree; commit them"
 }
 
 test_task_start_unknown_task_dies() {

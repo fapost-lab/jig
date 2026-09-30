@@ -603,22 +603,85 @@ _task_branch_name() {
   printf '%s\n' "$name"
 }
 
+# _task_dirty_only_spec_raw <tracked-status-lines> — one candidate spec id
+# per input line (empty for a line outside every spec), unsorted. A function
+# of its own because bash 3.2 misparses a `case` written inside `$( )` (as
+# `_jp_decide_raw`, profile.sh) — the loop has to live outside the
+# substitution _task_dirty_only_spec reads it through.
+#
+# A rename line ("R  old -> new") is read from its new path; a quoted path
+# (git quotes one holding a space or a non-ASCII byte) has its surrounding
+# quotes stripped.
+_task_dirty_only_spec_raw() {
+  local lines="$1" prefix path rest line
+  prefix="$JIG_AI_DIR/specs/"
+  printf '%s\n' "$lines" | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    # Columns 1-2 are the status codes, column 3 a space; the path starts
+    # at column 4 (git status --porcelain's fixed format).
+    path=${line#???}
+    case "$path" in
+      *' -> '*) path=${path#*' -> '} ;;
+    esac
+    case "$path" in
+      \"*\") path=${path#\"}; path=${path%\"} ;;
+    esac
+    case "$path" in
+      "$prefix"*)
+        rest=${path#"$prefix"}
+        printf '%s\n' "${rest%%/*}"
+        ;;
+      *)
+        printf '\n'
+        ;;
+    esac
+  done
+}
+
+# _task_dirty_only_spec <tracked-status-lines> — the one spec id every line
+# names under `.ai/specs/<id>/`, or nothing when the lines are empty, name
+# more than one id, or touch a path outside every spec. Told apart from "some
+# other task's tracked work" so the refusal below can name the door that is
+# actually open: `jig spec ship`, not `commit them`.
+_task_dirty_only_spec() {
+  local lines="$1" ids
+  ids=$(_task_dirty_only_spec_raw "$lines" | sort -u)
+  # More than one distinct value (several specs, or a spec mixed with
+  # anything else), or the lone value being empty (nothing under a spec at
+  # all): neither names one spec to point at.
+  case "$ids" in
+    *$'\n'*) return 1 ;;
+    '') return 1 ;;
+  esac
+  jig_valid_id "$ids" || return 1
+  [ -d "$JIG_PROJECT/$JIG_AI_DIR/specs/$ids" ] || return 1
+  printf '%s\n' "$ids"
+}
+
 # Refuse to start a task on a dirty working tree (design §6): untracked files
 # never block (build output is not work in progress), only tracked changes do —
-# a `git status --porcelain` line that is not `??`. There is no override: the
-# changes would ride into the new branch and become this task's first commit,
-# which is how four tasks recorded someone else's work on 2026-09-11.
+# a `git status --porcelain` line that is not `??` (jig_tracked_changes,
+# common.sh). There is no override: the changes would ride into the new
+# branch and become this task's first commit, which is how four tasks
+# recorded someone else's work on 2026-09-11.
 #
 # The refusal is a fork, not a dead end, when branches are per task: the other
 # road is a worktree of its own, which leaves this checkout — and the work in
-# it — untouched (ADR-0029).
+# it — untouched (ADR-0029). When every tracked change lies under one spec's
+# own directory, the door is `jig spec ship`, not a commit or a pause: the
+# dirt is a spec `jig-idea` left mid-session, not another task's work
+# (idea-leaves-a-tree-task-start-refuses).
 _task_refuse_dirty_tree() {
-  local branch="$1" id="${2:-}" tracked owner fork=""
-  tracked=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null | grep -v '^??' || true)
+  local branch="$1" id="${2:-}" tracked owner fork="" spec_id
+  tracked=$(jig_tracked_changes)
   [ -n "$tracked" ] || return 0
 
   if [ -n "$id" ] && cfg_bool git.branch_per_task true; then
     fork=", or start it in its own worktree: \`jig task start $id --worktree\`"
+  fi
+  spec_id=$(_task_dirty_only_spec "$tracked") || spec_id=""
+  if [ -n "$spec_id" ]; then
+    jig_die "task start: uncommitted changes under $JIG_AI_DIR/specs/$spec_id/; ship it first: \`jig spec ship $spec_id\`$fork"
   fi
   owner=$(_task_likely_owner "$branch")
   if [ -n "$owner" ]; then
