@@ -674,7 +674,9 @@ function Get-JigNearestExistingAncestor {
 #   2. any folder that contains it (C:\Users, and the root of the system
 #      drive);
 #   3. the root of a drive or of a UNC share -- D:\ contains no home folder,
-#      so case 2 does not cover it;
+#      so case 2 does not cover it -- unless it is itself the root of an
+#      existing repository (case 4's exception below reaches this one too:
+#      a `subst` drive, a volume, or a share kept for one project);
 #   4. a folder inside a repository whose root is some other folder.
 #
 # Allowed, and each of these is a case this must stay silent about: an
@@ -682,7 +684,10 @@ function Get-JigNearestExistingAncestor {
 # (C:\Users\me\projects\app -- that is the way out of a refusal); and a
 # folder that *is* a repository root, which is the everyday "add jig to the
 # project I already have" case this installer has always handled by never
-# committing into a repository it did not create.
+# committing into a repository it did not create -- including when that
+# folder is also the root of a drive or a UNC share (case 3). It is not an
+# exception for the home folder (case 1): $HOME being a repository -- see
+# below -- still gets no help from `git init` never running.
 #
 # Case 1 deliberately does not ask whether this run would be the one to
 # `git init`. When $HOME is itself a repository -- dotfiles, which is
@@ -761,20 +766,6 @@ function Get-JigProjectDirRefusal {
         }
     }
 
-    # "Drive" is what a person calls C:\; a UNC share root reaches the same
-    # comparison and is not one.
-    $rootPath = [System.IO.Path]::GetPathRoot($full)
-    $root = Get-JigComparablePath $rootPath
-    if ($root -and ($candidate -eq $root)) {
-        $rootKind = 'the root of a drive'
-        if ($rootPath.StartsWith('\\')) { $rootKind = 'the root of a network share' }
-        return (@(
-            "Refusing to set up a project in ${rootKind}: $shown",
-            'That would make everything on it part of one git repository.',
-            $installed
-        ) + $howToProceed) -join "`n"
-    }
-
     # Case 4, and both halves of it are decided without reading a word of
     # git's output. Invoke-JigNative deliberately merges stderr into Output,
     # so a single warning line -- `warning: unable to access
@@ -793,6 +784,15 @@ function Get-JigProjectDirRefusal {
     # one spelling of a path that git writes C:/Users/... and PowerShell
     # writes C:\Users\..., and that a Windows profile also has an 8.3 form
     # of; it would refuse a repository root reached either other way.
+    #
+    # This runs before the drive/share-root check below on purpose: whether
+    # the candidate is its own repository root decides that check too. A
+    # `subst` drive or a volume kept for one project, or a `\\server\share`
+    # holding one, is the root of a drive or share *and* an existing
+    # repository's root in the same breath, and the danger the drive/share
+    # check exists for -- `git init` and a first commit sweeping in
+    # everything on it -- does not arise there, exactly as it does not arise
+    # for an ordinary folder that is already a repository root.
     $askIn = $null
     $mustBeBelow = $false
     if (Test-Path -LiteralPath $full -PathType Container) {
@@ -804,6 +804,7 @@ function Get-JigProjectDirRefusal {
         $askIn = Get-JigNearestExistingAncestor -Path $full
         $mustBeBelow = $true
     }
+    $isItsOwnRoot = $false
     if ($askIn) {
         $probe = Invoke-JigGitLocationProbe -GitExe $GitExe -In $askIn -GitArgs @('rev-parse', '--show-toplevel')
         $insideWorkTree = ($probe.ExitCode -eq 0)
@@ -827,6 +828,22 @@ function Get-JigProjectDirRefusal {
                 "Set jig up in $top itself, or in a folder outside that repository."
             ) -join "`n"
         }
+    }
+
+    # "Drive" is what a person calls C:\; a UNC share root reaches the same
+    # comparison and is not one. Not refused when the drive or share root is
+    # itself an existing repository's root ($isItsOwnRoot, just above): see
+    # the comment on case 4 for why.
+    $rootPath = [System.IO.Path]::GetPathRoot($full)
+    $root = Get-JigComparablePath $rootPath
+    if ($root -and ($candidate -eq $root) -and (-not $isItsOwnRoot)) {
+        $rootKind = 'the root of a drive'
+        if ($rootPath.StartsWith('\\')) { $rootKind = 'the root of a network share' }
+        return (@(
+            "Refusing to set up a project in ${rootKind}: $shown",
+            'That would make everything on it part of one git repository.',
+            $installed
+        ) + $howToProceed) -join "`n"
     }
 
     return $null

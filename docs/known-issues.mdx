@@ -23,30 +23,6 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## The Windows installer refuses a drive root that is already your repository
-
-{/* closed by jig task: installer-allows-a-drive-root-that-is-a-repository — remove this entry in the PR that merges the fix */}
-
-The installer refuses to set up a project in the root of a drive or a network share, because a
-repository there would take in everything on it. It refuses that folder even when it already *is*
-the top of an existing repository — a `subst` drive pointed at a project, a volume kept for one
-project, a `\\server\share` holding one — where nothing of the kind would happen. 0.16.0 accepted
-it. With `-Yes` or `-Project` the installer exits with an error; asked interactively, it wants
-another folder.
-
-It costs you the last step, not the install: Jig itself is installed and working, and only the
-setup of the project stopped.
-
-**What to do instead.** Set the project up yourself, from that folder:
-
-```powershell
-cd P:\
-jig init --session-hook
-```
-
-`--session-hook` adds the Claude Code session hook the installer would have added; leave it out if
-you ran the installer with `-NoSessionHook`.
-
 ## A Jig project cloned on Windows stops taking upgrades
 
 {/* closed by jig task: manifest-survives-a-windows-clone — remove this entry in the PR that merges the fix */}

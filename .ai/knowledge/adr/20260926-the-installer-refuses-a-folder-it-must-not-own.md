@@ -8,7 +8,7 @@ domains:
 paths:
   - install.ps1
 summary: Why install.ps1 refuses the home folder, a drive root and a folder inside someone else's repository as a project folder, why -Yes cannot turn that off, and why install.sh needs no such guard.
-reviewed_at: 2026-09-26
+reviewed_at: 2026-09-30
 ---
 # The installer refuses a project folder it must not own
 
@@ -59,7 +59,14 @@ Allowed, because a guard is also what it stays silent about: an ordinary new
 or empty folder, including one deep inside the profile -- that is the way out
 of a refusal -- and a folder that *is* a repository root, which is the
 everyday "add jig to the project I already have" case the installer has always
-handled by never committing into a repository it did not create.
+handled by never committing into a repository it did not create. That
+exception reaches the root of a drive or UNC share too -- a `subst` drive, a
+volume, or a share kept for one project is, in the everyday case, already a
+repository, and the danger the drive/share refusal exists for does not arise
+there either. It is not read back into the home folder: `$HOME` being a
+repository (dotfiles) is still refused, because the danger case 1 exists for
+does not need `git init` to happen at all -- see below -- and being a
+repository already does not change that.
 
 The two questions case 4 asks are answered without reading a word of git's
 output, because the installer's own `Invoke-JigNative` merges stderr into it
@@ -144,6 +151,15 @@ checkout under `$HOME/.local/share/jig`. On macOS and Linux a person runs
   A bare repository is not a hole in the safe direction: `--show-toplevel` fails
   outside a work tree, so the folder is allowed and `jig init` then refuses
   through `jig_require_repo` with nothing written.
+- The drive/share-root refusal must be checked against the same "is this
+  folder itself a repository root" answer case 4 computes, and checked after
+  it -- not as an unconditional refusal of its own. Getting that ordering
+  backwards is exactly the regression `installer-allows-a-drive-root-that-is-a-repository`
+  fixed: 0.16.1 shipped with the drive/share check running first and refusing
+  every drive or share root outright, including one that was already a
+  repository (`subst P: C:\work\app`, a dedicated volume, a `\\server\share`
+  kept for one project) -- the everyday case this ADR's exception exists to
+  allow.
 - `.github/WINDOWS_RELEASE_CHECKLIST.md`'s first-questions step now carries the
   one check CI cannot make: the line was pasted without changing directory, so
   the first question must refuse the profile rather than offer it. It stays one

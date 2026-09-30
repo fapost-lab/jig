@@ -397,6 +397,24 @@ function Test-ProjectDirRefusalTable {
     Assert-JigContains $homeRefusal 'in your home folder' `
         'the home refusal must be branch 1 and not the ancestor branch, whose text also says "your home folder"'
 
+    # A home folder that is itself a repository root (dotfiles, which is
+    # ordinary) must stay refused: ADR 20260926 decided this explicitly, and
+    # it is the one case a test that does not tell "home" apart from "drive
+    # root that is a repository root" (below) cannot catch -- a test that
+    # does not distinguish them is blind.
+    & $gitExe -C $env:USERPROFILE init -q -b main
+    if ($LASTEXITCODE -ne 0) { throw "git init failed in $($env:USERPROFILE)" }
+    try {
+        $homeRepoRefusal = Get-JigProjectDirRefusal -Path $env:USERPROFILE -GitExe $gitExe
+        Assert-JigTrue ($null -ne $homeRepoRefusal) `
+            'a home folder that is itself a repository root must still be refused'
+        Assert-JigContains $homeRepoRefusal 'in your home folder' `
+            "a home folder that is also a repository root must be refused as branch 1, not let through by branch 4's exception"
+    }
+    finally {
+        Remove-Item -Recurse -Force -LiteralPath (Join-Path $env:USERPROFILE '.git') -ErrorAction SilentlyContinue
+    }
+
     $aboveHome = Split-Path -Parent $env:USERPROFILE
     $aboveRefusal = Get-JigProjectDirRefusal -Path $aboveHome -GitExe $gitExe
     Assert-JigTrue ($null -ne $aboveRefusal) "a folder that contains the home folder must be refused: $aboveHome"
@@ -456,6 +474,36 @@ function Test-ProjectDirRefusalTable {
         'an ordinary folder inside the profile must be allowed'
     Assert-JigTrue ($null -eq (Get-JigProjectDirRefusal -Path (Join-Path $fresh 'deeper\still') -GitExe $gitExe)) `
         'a folder that does not exist yet outside any repository must be allowed'
+
+    # The root of a drive that is *also* a repository root -- `subst P:
+    # C:\work\app`, a dedicated volume kept for one project, a
+    # `\\server\share` holding one -- must be allowed the same way, and this
+    # is the regression #130 introduced: the drive/share-root refusal used to
+    # fire before this exception was checked. `subst` is the cheapest way to
+    # build one of these for a test and needs no elevation. Kept last in this
+    # table: if no drive letter is free, only this one check is skipped, and
+    # every assertion above it has already run.
+    $substLetter = $null
+    foreach ($candidateLetter in 'Y', 'X', 'W', 'V', 'U') {
+        if (-not (Test-Path "${candidateLetter}:\")) { $substLetter = $candidateLetter; break }
+    }
+    if (-not $substLetter) {
+        Skip-JigTest 'no free drive letter for a subst test'
+    }
+    $driveRepo = New-JigTempDir -Prefix 'refusal-drive-repo'
+    & $gitExe -C $driveRepo init -q -b main
+    if ($LASTEXITCODE -ne 0) { throw "git init failed in $driveRepo" }
+    & subst "${substLetter}:" $driveRepo
+    if ($LASTEXITCODE -ne 0) { throw "subst ${substLetter}: $driveRepo failed" }
+    try {
+        $driveRoot = "${substLetter}:\"
+        $driveRepoRefusal = Get-JigProjectDirRefusal -Path $driveRoot -GitExe $gitExe
+        Assert-JigTrue ($null -eq $driveRepoRefusal) `
+            'a drive root that is itself a repository root must be allowed, as it was in 0.16.0'
+    }
+    finally {
+        & subst "${substLetter}:" /d | Out-Null
+    }
 }
 
 # The interactive path, which is the one a real user walks: `irm ... | iex`
