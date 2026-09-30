@@ -1121,12 +1121,24 @@ test_spec_remove_reports_roadmap_id_with_no_local_workspace() {
   assert_contains "$OUT" "not-here       ghost-task (named in the roadmap, no workspace in this checkout)"
 }
 
+# spec_setup_nested_jig_repo — the borrowed task directory below has to live
+# beside the project, not inside it, so the project goes one level down: the
+# same reason hk_worktree_setup and task_setup_nested nest under `repo`. Every
+# test's own temporary directory is unique, but `..` from its top level is
+# `$TMPDIR` itself, shared by every test and every concurrent run on the
+# machine — `../elsewhere-tasks` would then be one path for all of them.
+spec_setup_nested_jig_repo() {
+  mkdir repo || return 1
+  cd repo || return 1
+  fixture_jig_repo
+}
+
 # A symlinked workspace belongs to a different checkout (ADR-0029) and must
 # be skipped entirely: not reported as kept/unlinked, its task.md never
 # touched. Because it is skipped, its roadmap item is reported the same way
 # as a task with no local workspace at all.
 test_spec_remove_skips_symlinked_workspace() {
-  fixture_jig_repo
+  spec_setup_nested_jig_repo
   mkdir -p .ai/specs/alpha
   printf '# Alpha\n' > .ai/specs/alpha/spec.md
   printf '%s\n' '- [ ] `T-1` — item' > .ai/specs/alpha/roadmap.md
@@ -1155,7 +1167,7 @@ EOF
 }
 
 test_spec_remove_skips_every_task_when_the_whole_directory_is_borrowed() {
-  fixture_jig_repo
+  spec_setup_nested_jig_repo
   mkdir -p .ai/specs/alpha
   printf '# Alpha\n' > .ai/specs/alpha/spec.md
   printf '%s\n' '- [ ] `T-1` — item' > .ai/specs/alpha/roadmap.md
