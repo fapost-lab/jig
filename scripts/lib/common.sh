@@ -481,19 +481,39 @@ jig_fresh_base_ref() {
   fi
 }
 
+# jig_git_batch_ssh — the value for GIT_SSH_COMMAND that adds `-o
+# BatchMode=yes` on top of whatever SSH command the environment already
+# names (plain `ssh` when nothing does), so an `ssh://` or `git@` remote
+# fails a password/passphrase prompt instead of waiting for it. Paired with
+# `GIT_TERMINAL_PROMPT=0`, which does the same for git's own credential
+# helper (HTTPS remotes): together they cover every interactive-credential
+# path git has, on every network call that must never sit waiting for input
+# nobody will type (this task).
+#
+# Not a timeout. Neither this nor GIT_TERMINAL_PROMPT=0 bounds a call that
+# hangs for a different reason — a stalled TCP connection, a slow forge.
+# That would need a process-level timeout, and `timeout`/`gtimeout` is not
+# guaranteed to exist (ADR-0002: git is the only required dependency), so
+# none is added here; a caller cannot be made to wait no longer than N
+# seconds without one.
+jig_git_batch_ssh() {
+  printf '%s -o BatchMode=yes\n' "${GIT_SSH_COMMAND:-ssh}"
+}
+
 # jig_fetch_branches <who> <name>... — refresh origin/<name> for each branch
 # from origin, one at a time, so that a branch origin does not have fails
 # alone. Does nothing without an origin. A failure is a warning, never fatal:
 # the caller goes on with the refs it has, and says what it decided from them.
-# GIT_TERMINAL_PROMPT=0: a command that only wanted fresh refs must not stop
-# and wait for a password.
+# GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh): a command
+# that only wanted fresh refs must not stop and wait for a password.
 jig_fetch_branches() {
   local who="$1" name
   shift
   git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 || return 0
   for name in "$@"; do
     [ -n "$name" ] || continue
-    if ! GIT_TERMINAL_PROMPT=0 git -C "$JIG_PROJECT" fetch --quiet origin \
+    if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+         git -C "$JIG_PROJECT" fetch --quiet origin \
          "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1; then
       jig_warn "$who: could not fetch $name from origin; using the refs this checkout has"
     fi
@@ -736,11 +756,13 @@ jig_ship_sends_no_commit() {
 
 # jig_ship_push <who> <branch> — push <branch> to origin and track it. Never
 # --force: a branch origin has moved past is refused by git, and the refusal
-# is the answer.
+# is the answer. GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh):
+# shipping is not a place to sit waiting for a credential prompt either.
 jig_ship_push() {
   local who="$1" branch="$2" out
   _jig_ship_outward "$who"
-  if ! out=$(git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
+  if ! out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+             git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
     jig_die "$who: git push failed:
 $out"
   fi

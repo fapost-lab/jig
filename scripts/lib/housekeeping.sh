@@ -24,6 +24,7 @@ _HK_WT_NOTE=""      # ... and as a note in the grouped report
 _HK_BASE_LOG=""     # "<base>\t<ref>\t<epoch>\t<sha>" reflog of every task base's refs, newest first, read once per run
 _HK_WRONG_NOTE=""   # why the last task was flagged wrong-base, as a note in the grouped report
 _HK_DEFAULT_BASE="" # git.base_branch, read once per run
+_HK_LOCK_DIR=""      # the run's own lock directory, once claimed (_hk_lock_acquire); empty otherwise
 
 cmd_housekeeping() {
   jig_require_init
@@ -42,7 +43,7 @@ cmd_housekeeping() {
   # The report is printed once every task is decided, grouped by outcome:
   # forty identical lines in id order said nothing a person could act on.
   _HK_ROWS=$(mktemp "${TMPDIR:-/tmp}/jig-housekeeping.XXXXXX")
-  trap 'rm -f "$_HK_ROWS"' EXIT
+  trap '_hk_lock_release "$_HK_LOCK_DIR"; rm -f "$_HK_ROWS"' EXIT
 
   local runtime="$JIG_PROJECT/$JIG_AI_DIR/runtime"
   # Every walk of this path below is `find "$tasks_dir" ...` with no trailing
@@ -64,6 +65,18 @@ cmd_housekeeping() {
   trash_ttl_days=$(( $(jig_duration_seconds "$trash_ttl") / 86400 ))
   abandoned_ttl_days=$(( $(jig_duration_seconds "$abandoned_ttl") / 86400 ))
   stale_after_days=$(( $(jig_duration_seconds "$stale_after") / 86400 ))
+
+  # Two runs at once help nobody: both would fetch, both would walk
+  # $tasks_dir and both would purge or log the same tasks. A dry run reads
+  # and prints only, so it never contends with anything and takes no lock
+  # (this task, minor point from the review).
+  if [ "$dry" != 1 ]; then
+    mkdir -p "$runtime" 2>/dev/null || true
+    if ! _hk_lock_acquire "$runtime/housekeeping-lock"; then
+      printf 'another housekeeping run holds this clone; skipping\n'
+      return 0
+    fi
+  fi
 
   _HK_DEFAULT_BASE=$(cfg git.base_branch main)
   _hk_fetch "$dry"
@@ -402,8 +415,82 @@ _hk_released() {
   printf 'false\n'
 }
 
+# _hk_lock_ttl — how long a claimed lock still counts as live without a
+# reachable pid behind it (the backstop `jig_verify_busy_holder` also uses
+# for `jig verify`, common.sh). A run here does one fetch, one forge call and
+# one walk of the task directory — minutes, not the long test suites verify
+# waits out — so an hour is generous headroom, and there is no
+# `housekeeping.busy_ttl` to configure: this lock is the review's minor
+# point, not a new surface to tune.
+_hk_lock_ttl() { printf '3600\n'; }
+
+# _hk_lock_acquire <dir> — claim the run for this process alone, or say no.
+#
+# Non-blocking, unlike `jig verify`'s busy record: nobody is waiting on
+# housekeeping to finish (it runs detached off the session hook,
+# jig-session-hook), so a run that finds the lock held just skips instead of
+# queuing — whichever run got there first will do the same work either way.
+#
+# `mkdir` is the claim, the one atomic primitive available on POSIX and in
+# Git Bash alike (ADR-0002), the same idiom `_verify_busy_claim` uses in
+# verify.sh — not shared with it, because one command library never sources
+# another (ARCHITECTURE.md); `jig_verify_busy_holder` (common.sh) is shared,
+# and reads the same "checkout: / pid: " shape this writes, so liveness is
+# checked once, in one place. A record whose pid is no longer alive, or that
+# has outlived the ttl, is reclaimed. A directory that plain will not
+# `mkdir` (a read-only clone root, a permission this agent lacks) is not a
+# reason to refuse to run: fail open, exactly as `_verify_busy_acquire` does.
+_hk_lock_acquire() {
+  local dir="$1"
+  # `busy` is the atomic claim; `$dir` itself is only its parent and may be
+  # made ahead of time by anyone, same as `mkdir -p` everywhere else here.
+  mkdir -p "$dir" 2>/dev/null || true
+  if mkdir "$dir/busy" 2>/dev/null; then
+    printf 'checkout: %s\npid: %s\n' "$JIG_PROJECT" "$$" > "$dir/busy/run" 2>/dev/null || true
+    _HK_LOCK_DIR="$dir"
+    return 0
+  fi
+  if [ -d "$dir/busy" ]; then
+    if jig_verify_busy_holder "$dir" "$(_hk_lock_ttl)" >/dev/null 2>&1; then
+      return 1
+    fi
+    rm -f "$dir/busy/run" 2>/dev/null || true
+    rmdir "$dir/busy" 2>/dev/null || true
+  fi
+  if mkdir "$dir/busy" 2>/dev/null; then
+    printf 'checkout: %s\npid: %s\n' "$JIG_PROJECT" "$$" > "$dir/busy/run" 2>/dev/null || true
+    _HK_LOCK_DIR="$dir"
+    return 0
+  fi
+  # Lost the reclaim race to a neighbour, or the filesystem itself refuses:
+  # run anyway rather than refuse (see above).
+  return 0
+}
+
+# _hk_lock_release <dir> — give the record back. Only ever removes the exact
+# path this run built (RULES.md): no `rm -rf` on anything computed elsewhere,
+# and nothing happens for a run that never held the lock (dry runs, or a run
+# that found it already held).
+_hk_lock_release() {
+  local dir="$1"
+  [ -n "$dir" ] || return 0
+  case "$dir" in
+    */"$JIG_AI_DIR"/runtime/housekeeping-lock) ;;
+    *) return 0 ;;
+  esac
+  rm -f "$dir/busy/run" 2>/dev/null || true
+  rmdir "$dir/busy" 2>/dev/null || true
+  return 0
+}
+
 # _hk_fetch <dry> — refresh remote refs once per run when allowed. A failure
 # is not fatal: the run continues on local state and says so (domains/housekeeping).
+#
+# GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh, common.sh):
+# this runs from the session hook, detached and unattended (jig-session-hook)
+# — nobody is at the terminal to answer a credential prompt, so a remote that
+# would ask for one must fail this fetch instead of hanging it forever
+# (fetch-never-waits-for-a-prompt).
 _hk_fetch() {
   local dry="$1"
   if ! cfg_bool housekeeping.fetch true; then
@@ -418,7 +505,8 @@ _hk_fetch() {
   if ! git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
     return 0
   fi
-  if ! git -C "$JIG_PROJECT" fetch --quiet origin >/dev/null 2>&1; then
+  if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+       git -C "$JIG_PROJECT" fetch --quiet origin >/dev/null 2>&1; then
     _HK_STALE_REMOTE=1
   fi
   return 0

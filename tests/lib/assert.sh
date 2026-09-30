@@ -230,6 +230,29 @@ STUB
   printf '%s\n' "$dir"
 }
 
+# stub_git_env_log_dir <log-file> — a directory holding a `git` that appends
+# one line per invocation to <log-file> — the env vars a network call must
+# carry so it never sits waiting for a credential prompt
+# (fetch-never-waits-for-a-prompt: GIT_TERMINAL_PROMPT, GIT_SSH_COMMAND) plus
+# the arguments it was called with — then execs the real git (resolved once
+# here, before this directory is ever put on PATH), so whatever is under test
+# still gets a working git and a real local fixture remote. `<unset>` for a
+# var this wrapper's own shell never saw, so a test can tell "not passed"
+# from "passed empty".
+stub_git_env_log_dir() {
+  local dir="${JIG_TEST_TMP}.gitstub" real_git log="$1"
+  real_git=$(command -v git) || fail "stub_git_env_log_dir: no real git on PATH to wrap"
+  mkdir -p "$dir"
+  cat > "$dir/git" <<STUB
+#!/bin/sh
+printf 'TERMINAL_PROMPT=%s SSH_COMMAND=%s ARGS=%s\n' \
+  "\${GIT_TERMINAL_PROMPT-<unset>}" "\${GIT_SSH_COMMAND-<unset>}" "\$*" >> "$log"
+exec "$real_git" "\$@"
+STUB
+  chmod +x "$dir/git"
+  printf '%s\n' "$dir"
+}
+
 # --- assertions --------------------------------------------------------------
 
 fail() { printf 'ASSERT FAIL: %s\n' "$*"; exit 1; }
