@@ -893,12 +893,70 @@ $untracked
 EOF
 }
 
-# _upgrade_manual_steps <from> <to> — the steps between these two versions
-# that only a person can take, as the commit and the pull request carry them.
-# Today it points at the page that lists them; the upgrade learns to carry the
-# steps themselves in upgrade-carries-its-own-checklist.
+# _upgrade_custom_profiles — active profile names (profiles_active) that are
+# not part of the project's recorded source (manifest_source): a profile
+# somebody wrote themselves rather than one the framework ships. `generic` is
+# never included: it is the framework's own fallback and already declares
+# `verifies: nothing`. Silent (prints nothing) when the source cannot be
+# read, rather than guessing.
+_upgrade_custom_profiles() {
+  local source p
+  source=$(manifest_source 2>/dev/null) || source=""
+  [ -n "$source" ] || return 0
+  for p in $(profiles_active); do
+    [ "$p" != generic ] || continue
+    [ -f "$source/profiles/$p/profile.yaml" ] && continue
+    printf '%s\n' "$p"
+  done
+}
+
+# _upgrade_manual_steps <from> <to> — the steps a person still has to take by
+# hand, as the commit and the pull request carry them (the one place both
+# read from). All three below arrived in 0.16.0 (docs/changelog.mdx,
+# docs/upgrading.mdx#from-015-to-016); nothing is printed once <from> is
+# 0.16.0 or newer.
+#
+# The first has a real predicate — jig_section_report_state, the same one
+# `jig doctor`'s instructions check reads, so the two can never disagree
+# about it (doctor.sh's own comment says so) — and is skipped once satisfied.
+# `jig doctor` is where it can be checked again later; nothing new needed
+# there.
+#
+# The other two are advisory text, not a tracked done/not-done step:
+#
+#   - Whether the project's verification tools are installed cannot be
+#     answered here without running them, which is exactly what `jig verify`
+#     exists to do, on its own busy-record and narrowing
+#     (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass). Its
+#     own exit code (0 or 3) is the predicate; running it as a side effect of
+#     every upgrade would mean paying for a full run here or contending with
+#     one already in flight. Always shown, unconditionally, once <from>
+#     predates 0.16.0.
+#   - Whether a self-written profile needs `verifies: nothing` has no correct
+#     yes/no answer from the filesystem alone: a custom profile with real
+#     checks correctly has no `verifies` key, and nothing distinguishes that
+#     from one with none short of running its checks and reading why they
+#     skipped. Per this task's own rule, a step with no predicate is not
+#     filed as one; this stays a named pointer at whichever custom profiles
+#     the project actually has, so a project with none sees nothing.
 _upgrade_manual_steps() {
-  printf '%s\n' "See the section for $2 on the Upgrading page."
+  local from="$1" state custom
+  jig_version_lt "$from" 0.16.0 || return 0
+
+  state=$(jig_section_report_state "$JIG_PROJECT/AGENTS.md" "$(manifest_instructions_section 2>/dev/null)")
+  if [ "$state" = unmarked ]; then
+    # shellcheck disable=SC2016
+    printf -- '- Run the jig-init skill, so upgrades can reach your AGENTS.md. It adds the markers and records Jig'\''s claim to that section, with your consent; without that claim `jig upgrade` reports `keep-unmarked AGENTS.md` and never touches it, however well-formed the markers are.\n'
+  fi
+
+  # shellcheck disable=SC2016
+  printf -- '- Install the tools your project'\''s checks need. `jig verify` now refuses (exit 3, nothing was checked) when a profile for your stack is active and its tools are missing; `jig verify --list` shows which profiles are installed.\n'
+
+  custom=$(_upgrade_custom_profiles | tr '\n' ' ' | sed 's/ $//')
+  if [ -n "$custom" ]; then
+    # shellcheck disable=SC2016
+    printf -- '- If %s checks nothing by design, add `verifies: nothing` to its profile.yaml. Absence means the profile claims it verifies something, and it will refuse once its checks all skip.\n' "$custom"
+  fi
 }
 
 # _upgrade_message <file> <from> <to> <summary> — the one commit's message.

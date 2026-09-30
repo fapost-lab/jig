@@ -1651,3 +1651,84 @@ test_upgrade_says_nothing_changed_when_its_branch_cannot_be_made() {
   assert_contains "$OUT" "nothing was changed"
   assert_eq "main" "$(git symbolic-ref --short HEAD)"
 }
+
+# --- the manual checklist (_upgrade_manual_steps, upgrade-carries-its-own-checklist) ---
+
+# _unit_project_from <version> — _unit_project with the manifest's recorded
+# jig.version rewritten, so the upgrade that follows sees it as coming from
+# <version> rather than from the running JIG_VERSION.
+_unit_project_from() {
+  _unit_project
+  sed "s/^jig\\.version: .*/jig.version: $1/" .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "back-date to $1"
+}
+
+test_upgrade_manual_steps_name_the_outstanding_ones() {
+  _unit_project_from 0.15.1
+  jig config set --local agent.git commit >/dev/null
+  grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  git commit -q -am "unmark AGENTS.md"
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$(git log -1 --format=%B)" "Run the jig-init skill"
+  assert_contains "$(git log -1 --format=%B)" "Install the tools your project's checks need"
+  assert_contains "$(git log -1 --format=%B)" "jig verify"
+
+  rm -rf "$src"
+}
+
+test_upgrade_manual_steps_skip_the_marker_one_once_current() {
+  _unit_project_from 0.15.1
+  jig config set --local agent.git commit >/dev/null
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$(git log -1 --format=%B)" "Run the jig-init skill"
+  assert_contains "$(git log -1 --format=%B)" "Install the tools your project's checks need"
+
+  rm -rf "$src"
+}
+
+test_upgrade_manual_steps_name_a_custom_profile() {
+  _unit_project_from 0.15.1
+  jig config set --local agent.git commit >/dev/null
+  mkdir -p .ai/profiles/homegrown
+  printf 'name: homegrown\ndetect: always\n' > .ai/profiles/homegrown/profile.yaml
+  sed 's/^profiles:.*/profiles: [generic, homegrown]/' .ai/config.yaml > config.tmp
+  mv config.tmp .ai/config.yaml
+  git add .ai/profiles/homegrown/profile.yaml
+  git commit -q -am "a profile of our own"
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  # shellcheck disable=SC2016
+  assert_contains "$(git log -1 --format=%B)" 'If homegrown checks nothing by design, add `verifies: nothing`'
+
+  rm -rf "$src"
+}
+
+test_upgrade_manual_steps_silent_when_project_is_no_older_than_0_16_0() {
+  _unit_project
+  jig config set --local agent.git commit >/dev/null
+  grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  git commit -q -am "unmark AGENTS.md"
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$(git log -1 --format=%B)" "Run the jig-init skill"
+  assert_not_contains "$(git log -1 --format=%B)" "Install the tools your project's checks need"
+
+  rm -rf "$src"
+}
