@@ -475,12 +475,20 @@ EOF
 # `updated_at` refreshed to today. Atomic write (ADR-0008): state.tmp.$$
 # then mv. awk, not sed, does the substitution: <value> is printed literally
 # rather than used as a sed replacement, so it needs no escaping.
+#
+# Values reach awk through the environment, not `-v`: awk expands escape
+# sequences (`\n`, `\t`, ...) in a `-v` value, so a reason spelling a literal
+# backslash-n (a Windows path such as `C:\temp`, or `--reason` text with one)
+# would be written as an actual newline and split the state file into a
+# second, bogus key (task_finding_set below uses the same ENVIRON pattern).
 _task_rewrite_state() {
   local dir="$1" key="$2" value="$3" file tmp today
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
   today=$(jig_today)
-  awk -v key="$key" -v value="$value" -v today="$today" '
+  JIG_S_KEY="$key" JIG_S_VALUE="$value" JIG_S_TODAY="$today" \
+    awk '
+    BEGIN { key = ENVIRON["JIG_S_KEY"]; value = ENVIRON["JIG_S_VALUE"]; today = ENVIRON["JIG_S_TODAY"] }
     {
       line = $0
       if (line ~ ("^" key ":")) {
