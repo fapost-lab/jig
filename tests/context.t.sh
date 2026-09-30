@@ -1198,6 +1198,91 @@ test_context_stateless_dies_when_a_matched_stub_source_is_missing() {
     "jig: error: context: .ai/knowledge/sources/style.md is selected but its source docs/style.md is missing; fix the link or reject the stub"
 }
 
+# --- required-rows cache: resolve / guard / pending agree without recomputing ----------
+#
+# resolve, guard and pending each call _ctx_required_rows; the cache lets a
+# call reuse what an earlier one in the same task workspace already computed
+# instead of walking every document again. These tests are about the cache
+# itself, not the ledger above: a stale cache would show the *wrong set of
+# required documents*, not merely an unacknowledged one.
+
+test_context_guard_reuses_resolves_required_set_unchanged() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+load: always
+---
+EOF
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/checkout.md  (load: always)"
+
+  # A cache file now exists for this task and the same selectors; guard must
+  # report the same four documents resolve just did, not a different set.
+  assert_file .ai/workspace/tasks/T-1/context-cache
+
+  run jig context guard --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context guard: 4 of 4 document(s) not acknowledged:"
+  assert_contains "$OUT" "  .ai/knowledge/features/checkout.md"
+}
+
+test_context_cache_is_invalidated_when_a_documents_selection_changes() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  cat > .ai/knowledge/features/extra.md <<'EOF'
+---
+id: feature-extra
+type: feature
+status: active
+paths:
+  - "does/not/exist/**"
+---
+EOF
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "extra.md"
+
+  # The cache written by the call above must not survive this edit: the
+  # document now matches by `load: always`, and the very next resolve has to
+  # show it, not repeat what the first call cached.
+  cat > .ai/knowledge/features/extra.md <<'EOF'
+---
+id: feature-extra
+type: feature
+status: active
+load: always
+---
+EOF
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/extra.md  (load: always)"
+}
+
+test_context_cache_is_invalidated_when_a_document_is_added() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "added.md"
+
+  cat > .ai/knowledge/features/added.md <<'EOF'
+---
+id: feature-added
+type: feature
+status: active
+load: always
+---
+EOF
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/features/added.md  (load: always)"
+}
+
 # --- context ledger: guard / pending / acknowledge --------------------------------------
 
 test_context_guard_ledger_round_trip() {

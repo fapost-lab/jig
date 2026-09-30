@@ -58,13 +58,11 @@ cmd_knowledge() {
 # --- helpers -----------------------------------------------------------------
 
 # km_glob_matches <glob> — exit 0 when the glob matches at least one path in
-# the repository (excluding .git/).
+# the repository. jig_glob_matches_repo (common.sh) is the one matcher this
+# and context.sh both call, over one shared tree walk (jig_repo_files) instead
+# of a `find` per glob.
 km_glob_matches() {
-  local glob="$1" pattern hit
-  pattern=$(jig_glob_pattern "$glob")
-  hit=$(find "$JIG_PROJECT" -path "$JIG_PROJECT/.git" -prune -o \
-    -path "$JIG_PROJECT/$pattern" -print -quit 2>/dev/null)
-  [ -n "$hit" ]
+  jig_glob_matches_repo "$1"
 }
 
 # km_id_known <id> <ids_file> — exit 0 when <id> is a line in <ids_file>.
@@ -1822,14 +1820,10 @@ km_all_globs() {
 
 # km_file_covered <file> <globs> — exit 0 when any glob matches the path.
 km_file_covered() {
-  local file="$1" globs="$2" glob pattern
+  local file="$1" globs="$2" glob
   while IFS= read -r glob; do
     [ -n "$glob" ] || continue
-    pattern=$(jig_glob_pattern "$glob")
-    # shellcheck disable=SC2254
-    case "$file" in
-      $pattern) return 0 ;;
-    esac
+    jig_path_matches_any "$glob" "$file" && return 0
   done < <(printf '%s\n' "$globs")
   return 1
 }

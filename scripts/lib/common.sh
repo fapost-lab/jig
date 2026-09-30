@@ -1385,14 +1385,157 @@ jig_knowledge_read_path() {
   esac
 }
 
-# Translate a frontmatter `paths` glob into a pattern usable both with
-# `find -path` and with a bash `case`: `**` (any depth, including zero
-# directories) collapses to a single `*`. BSD and GNU `find -path` match `*`
-# across `/` (no FNM_PATHNAME) and a `case` pattern does the same, so this one
-# substitution covers any-depth and single-segment globs in both consumers
-# (convention-shell). Used by context.sh, knowledge.sh.
+# Translate a frontmatter `paths` glob into a pattern with exactly one
+# wildcard token, `*` — schemas/frontmatter.md documents only `*` and `**`
+# ("any depth"); `?` and `[...]` were never part of this grammar. Escaping
+# them to literals first, rather than leaving them as bash `case` wildcards,
+# is what makes `jig_path_matches_any` (a `case` test) and
+# `jig_glob_matches_repo` (an ERE built from this same pattern) agree on a
+# glob containing one: a `case` pattern lets `?`/`[...]` through as glob
+# syntax unless escaped, and an early version of the ERE builder escaped them
+# to literal characters instead — two matchers disagreeing again on exactly
+# the class of glob item 5 existed to stop disagreeing on (review,
+# knowledge-costs-one-walk). No document uses either today, so this changes
+# nothing observable yet; it fixes the divergence before one does.
+#
+# `**` (any depth, including zero directories) collapses to a single `*`,
+# which matches across `/` the same way (no FNM_PATHNAME) (convention-shell).
+# A glob ending in `/` names a directory, and no path a matcher ever tests
+# against ends in `/` (a real file never does, and jig_repo_files below lists
+# files, not directory entries) — so it gains a trailing `*`, read as "anything
+# under here", the same reading `**` already gets for "any depth". The `**`
+# collapse runs before that check: testing for a trailing `/` first would turn
+# `docs/**/` into `docs/**/*`, a glob that — unlike plain `docs/**` or `docs/`
+# — no longer matches a file directly under `docs/` (review,
+# knowledge-costs-one-walk) instead of the `docs/*` both of those already
+# collapse to.
+#
+# Used by jig_path_matches_any and jig_glob_matches_repo below, the one
+# matcher context.sh and knowledge.sh both call.
 jig_glob_pattern() {
-  printf '%s' "$1" | sed 's#[*][*]/#*#g; s#[*][*]#*#g'
+  local pattern
+  pattern=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/?/\\?/g; s/\[/\\[/g; s/\]/\\]/g')
+  pattern=$(printf '%s' "$pattern" | sed 's#[*][*]/#*#g; s#[*][*]#*#g')
+  case "$pattern" in
+    */) printf '%s*' "$pattern" ;;
+    *) printf '%s' "$pattern" ;;
+  esac
+}
+
+# --- glob matching (one matcher, shared by context.sh and knowledge.sh) -------
+#
+# There used to be two: a bash `case` loop over a file list, and a `find -path`
+# call per glob. They disagreed in three ways a review caught — `find` also
+# matches a directory *entry* (a glob over an otherwise-empty directory
+# "matched" through find and never through case), `find` does not consult
+# `.gitignore`, and the shared `**` substitution above never gave either of
+# them brace-glob support. Settling on one implementation, over one list built
+# by a tool that already understands ignore rules, ends all three: a document's
+# `paths` describes code, and code a glob only reaches through an empty
+# directory or an ignored file was never really described.
+
+# jig_path_matches_any <glob> <newline-files> — exit 0 when <glob> matches at
+# least one line of <files>. In-process (bash `case`, no subprocess per file):
+# a here-string, not `< <(printf ...)` — the latter forks a subshell *and* a
+# `printf` on every call, which is affordable once per task's touched files
+# but is exactly the per-glob subprocess cost this replaces `find` to avoid,
+# paid again, when the list is jig_repo_files instead (jig_glob_matches_repo,
+# every glob of every document).
+jig_path_matches_any() {
+  local glob="$1" files="$2" pattern file
+  pattern=$(jig_glob_pattern "$glob")
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    # shellcheck disable=SC2254
+    case "$file" in
+      $pattern) return 0 ;;
+    esac
+  done <<EOF
+$files
+EOF
+  return 1
+}
+
+# jig_repo_files — every path in the working tree a `paths` glob can describe:
+# tracked files, plus untracked ones `.gitignore` does not hide (the same rule
+# `jig_git_touched_files`'s untracked layer uses). One `git ls-files` per
+# process, NUL-separated and memoised — every glob check in the same command
+# shares this one walk instead of spawning `find` again.
+_JIG_REPO_FILES_LOADED=0
+_JIG_REPO_FILES=""
+jig_repo_files() {
+  if [ "$_JIG_REPO_FILES_LOADED" -eq 0 ]; then
+    _JIG_REPO_FILES=$( (
+      git -C "$JIG_PROJECT" ls-files -z
+      git -C "$JIG_PROJECT" ls-files -z --others --exclude-standard
+    ) | tr '\0' '\n' | sed '/^$/d' | LC_ALL=C sort -u)
+    _JIG_REPO_FILES_LOADED=1
+  fi
+  printf '%s\n' "$_JIG_REPO_FILES"
+}
+
+# jig_glob_matches_repo <glob> — exit 0 when <glob> matches at least one file
+# presently in the repository (jig_repo_files). Replaces a `find -path` call
+# per glob — one process that re-walks the whole tree — with one process
+# (`awk`) that tests every cached path from the one shared walk: the same
+# one-process-per-glob count `find` had, spent against memory instead of
+# disk. Goes through jig_glob_pattern first, the same conversion `case`
+# matching uses, rather than a second, awk-only translation of the glob: an
+# early version built the ERE straight from the raw glob and silently
+# stopped agreeing with jig_glob_pattern's `**/` handling — `**/*.sh` and
+# `*.sh` are the same case pattern (a bare `*` already matches across `/`),
+# but treating `**` and the `/` after it as two separate ERE tokens made the
+# slash mandatory, so a root-level `top.sh` stopped matching. One shared
+# conversion is worth the second process.
+#
+# Quits at the first match (`exit` inside the pattern rule) rather than
+# reading every path once one is already found. conventions/shell.md warns
+# against exactly this shape, `awk '{ ...; exit }'` — but for a *pipeline*,
+# where the awk quitting early can SIGPIPE a bash writer still mid-`printf`
+# and turn a match into a false failure under `pipefail`. This is a
+# here-document, not a pipe: there is no `cmd | awk` for `pipefail` to judge,
+# bash has already handed the whole list over before awk runs a line, and an
+# early `exit` here answers "found" the moment it is true instead of scanning
+# a repository's worth of paths that can no longer change the answer.
+#
+# Calls jig_repo_files as a plain command first, discarding its output, then
+# reads the global it fills directly — never `$(jig_repo_files)`: a command
+# substitution runs the function in a subshell, and the memoisation it sets
+# would vanish with that subshell instead of surviving to the next glob, which
+# is the one thing this function exists to avoid paying for twice.
+jig_glob_matches_repo() {
+  local pattern
+  jig_repo_files >/dev/null
+  pattern=$(jig_glob_pattern "$1")
+  awk -v g="$pattern" '
+    BEGIN {
+      pat = "^"
+      n = length(g)
+      for (i = 1; i <= n; i++) {
+        c = substr(g, i, 1)
+        # jig_glob_pattern backslash-escapes every `?`, `[`, `]` and literal
+        # `\` in the glob before this runs, so the char after one is always
+        # meant literally here too — never re-derived as "happens to be an
+        # ERE metachar", which is what let `?`/`[...]` slip through as
+        # wildcards in the `case` matcher while this builder quietly turned
+        # them into literals, the divergence item 5 asked to end (review,
+        # knowledge-costs-one-walk).
+        if (c == "\\" && i < n) {
+          i++
+          pat = pat "\\" substr(g, i, 1)
+          continue
+        }
+        if (c == "*") { pat = pat ".*"; continue }
+        if (index(".^$+?(){}|[]\\", c) > 0) { pat = pat "\\" c; continue }
+        pat = pat c
+      }
+      pat = pat "$"
+    }
+    $0 ~ pat { found = 1; exit }
+    END { exit !found }
+  ' <<EOF
+$_JIG_REPO_FILES
+EOF
 }
 
 # --- misc ------------------------------------------------------------------
