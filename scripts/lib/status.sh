@@ -99,6 +99,7 @@ _status_counts_save() {
   local dir="$JIG_PROJECT/$JIG_AI_DIR/runtime" file tmp
   file="$dir/status-counts"
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   mkdir -p "$dir" || return 1
   {
     printf 'at: %s\n' "$_SC_AT"
@@ -155,6 +156,7 @@ _status_report() {
   # a git startup for every hash. Both lists stay in manifest order.
   local modified="" missing="" mcount=0 xcount=0 line rel mhash lhash drift_tmp
   drift_tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-drift.XXXXXX")
+  jig_cleanup_add -d "$drift_tmp"
   : > "$drift_tmp/present"
   : > "$drift_tmp/rel"
   while IFS= read -r line; do
@@ -427,6 +429,7 @@ EOF
 _status_current_task() {
   local current cur_rc=0 cur_err_file ids
   cur_err_file=$(mktemp "${TMPDIR:-/tmp}/jig-status-current.XXXXXX")
+  jig_cleanup_add "$cur_err_file"
   current=$(task_current 2>"$cur_err_file") || cur_rc=$?
   case "$cur_rc" in
     0)
@@ -575,7 +578,7 @@ _status_html() {
   out="$dir/status.html"
   mkdir -p "$dir" || jig_die "status --html: cannot create $dir"
   _STATUS_HTML_TMP="$out.tmp.$$"
-  trap 'if [ -n "${_STATUS_HTML_TMP:-}" ]; then rm -f "$_STATUS_HTML_TMP"; fi' EXIT INT TERM
+  jig_cleanup_add "$_STATUS_HTML_TMP"
   _status_html_page > "$_STATUS_HTML_TMP"
   mv "$_STATUS_HTML_TMP" "$out" || jig_die "status --html: cannot write $out"
   _STATUS_HTML_TMP=""

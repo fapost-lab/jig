@@ -43,7 +43,9 @@ cmd_housekeeping() {
   # The report is printed once every task is decided, grouped by outcome:
   # forty identical lines in id order said nothing a person could act on.
   _HK_ROWS=$(mktemp "${TMPDIR:-/tmp}/jig-housekeeping.XXXXXX")
-  trap '_hk_lock_release "$_HK_LOCK_DIR"; rm -f "$_HK_ROWS"' EXIT
+  # shellcheck disable=SC2016 # evaluated at exit, by design
+  jig_on_exit '_hk_lock_release "$_HK_LOCK_DIR"'
+  jig_cleanup_add "$_HK_ROWS"
 
   local runtime="$JIG_PROJECT/$JIG_AI_DIR/runtime"
   # Every walk of this path below is `find "$tasks_dir" ...` with no trailing
@@ -538,6 +540,7 @@ _hk_check_latest_release() {
   fi
   file="$runtime/latest-release"
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   mkdir -p "$runtime" 2>/dev/null || return 0
   if ! exe=$(jig_global_executable); then
     return 0

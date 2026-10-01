@@ -43,6 +43,14 @@ JIG_TEST_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-cache.XXXXXX") || exit 1
 export JIG_TEST_CACHE
 RESULTS=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-results.XXXXXX") || exit 1
 
+# Sweep what an earlier run could not remove itself (SIGKILL cannot be trapped,
+# and earlier versions of this runner left `jig-test.*` directories): this
+# runner's own directories in $TMPDIR, untouched for more than a day. A run lasts
+# minutes, so nothing alive is that old.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -type d \
+  \( -name 'jig-test.*' -o -name 'jig-test-cache.*' -o -name 'jig-test-cache-build.*' -o -name 'jig-test-results.*' \) \
+  -mtime +0 -exec rm -rf {} + 2>/dev/null || true
+
 # --- the run record, and why this runner takes one ---------------------------
 #
 # **This is a local decision of this repository's runner, not part of the
@@ -199,7 +207,10 @@ run_test() {
       return 0
       ;;
   esac
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/jig-test.XXXXXX") || return 1
+  # Inside the run's own results directory, not beside it: the run's EXIT/INT/TERM
+  # trap removes that directory, so a test killed with its worker leaves nothing
+  # behind (6832 `jig-test.*` directories once piled up in $TMPDIR this way).
+  tmp=$(mktemp -d "$RESULTS/test.XXXXXX") || return 1
   start=$SECONDS
   (
     # The runner's descriptors are the runner's: 3 is the semaphore, 4 is the
