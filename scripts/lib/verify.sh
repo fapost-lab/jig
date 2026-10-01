@@ -288,7 +288,10 @@ EOF
 # variables are script-global, never `local`, because the trap runs after the
 # function that set them has returned (conventions/shell.md).
 _verify_cleanup() {
-  rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}" "${JIG_VERIFY_MAP_ALL_TMP:-}" "${JIG_VERIFY_MAP_ALL_TMP:-}.list" 2>/dev/null || true
+  if [ -n "${JIG_VERIFY_MAP_ALL_TMP:-}" ]; then
+    rm -f "$JIG_VERIFY_MAP_ALL_TMP.list" 2>/dev/null || true
+  fi
+  rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}" "${JIG_VERIFY_MAP_ALL_TMP:-}" 2>/dev/null || true
   if [ -n "${JIG_VERIFY_BUSY:-}" ]; then
     _verify_busy_release "$JIG_VERIFY_BUSY"
     JIG_VERIFY_BUSY=""

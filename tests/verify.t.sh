@@ -1988,14 +1988,26 @@ test_verify_shell_library_function_edit_runs_only_the_selected_tests() {
   assert_file_contains run-log "two::"
 }
 
-test_verify_shell_library_one_line_function_is_a_function() {
+test_verify_shell_library_function_without_callers_stays_full() {
   _fixture_shell_lib_project
   sed 's/^fc() { printf/fc() { : edited; printf/' scripts/lib/shared.sh > shared.new
   mv shared.new scripts/lib/shared.sh
   git diff --quiet scripts/lib/shared.sh && fail "the edit did not land"
   _shell_lib_plan
-  # fc has no caller: the library's own file asks for no test, so nothing runs.
-  assert_contains "$OUT" "no changed file maps to this check"
+  # fc has no caller anywhere: nobody can say what reaches it, so the full set.
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+}
+
+# A one-line function must not lend its name to the function after it when the
+# callers are scanned: use_a follows nop in one.sh, and three.sh calls use_a.
+test_verify_shell_library_one_line_function_does_not_hide_the_next_one() {
+  _fixture_shell_lib_project
+  printf '#!/usr/bin/env bash\nnop() { :; }\nuse_a() {\n  fa\n}\n' > scripts/lib/one.sh
+  git add -A
+  git commit -q -m "one-line function before the caller"
+  _edit_fn fa
+  _shell_lib_plan
+  assert_contains "$OUT" "test filters: one::,three::"
 }
 
 test_verify_shell_library_comment_only_change_reaches_no_test() {

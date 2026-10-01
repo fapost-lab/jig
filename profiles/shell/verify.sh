@@ -163,11 +163,12 @@ _shell_changed_functions() {
           no = load(ENVIRON["OLDSPANS"], onm, olo, ohi)
         }
         /^@@/ {
+          inhunk = 1
           o = $2; sub(/^-/, "", o); split(o, q, ","); oldl = q[1] + 0
           h = $3; sub(/^\+/, "", h); split(h, q, ","); newl = q[1] + 0
           next
         }
-        /^---/ || /^\+\+\+/ { next }
+        !inhunk { next }
         /^[-+]/ {
           body = substr($0, 2)
           blank = (body ~ /^[[:space:]]*(#.*)?$/)
@@ -219,9 +220,11 @@ _shell_function_filters() {
       FNR == 1 { fn = "" }
       /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/ && !fn {
         fn = $0; sub(/[[:space:]]*\(\).*/, "", fn)
+        # A one-line function ends where it starts.
+        one = ($0 ~ /\{.*\}[[:space:]]*$/)
       }
       $0 ~ pat { hit[FILENAME] = 1; if (fn) print "FN " fn }
-      /^}/ { fn = "" }
+      /^}/ || one { fn = ""; one = 0 }
       END { for (h in hit) print "FILE " h }
     ' $scripts)
     set +f
@@ -233,6 +236,13 @@ _shell_function_filters() {
     if [ "$depth" -ge 20 ]; then printf 'ALL\n'; return 0; fi
     seen="$new"
   done
+  # No script but its own mentions the edited functions: a call by a computed
+  # name, or only by a test. Nobody can say what reaches it, so no test is
+  # named — ALL, never a pass that ran nothing.
+  if [ -z "$(printf '%s\n' "$found" | sed -e '/^$/d' -e "\\#^$f\$#d")" ]; then
+    printf 'ALL\n'
+    return 0
+  fi
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     [ "$s" != "$f" ] || continue
