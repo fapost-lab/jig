@@ -181,11 +181,19 @@ numbers below are its, re-measured, not the conversation's.
     the most expensive item of the port (the oracle) and adds a different one: users of
     today's Jig get a migration, not an upgrade. A separate spec with its own stress test if
     the gate says go.
-  - *An MCP server instead of a CLI* — the agent calls tools, no shell at all. A change of
-    interface, not of language: it still needs a runtime to host it, and ADR-0001's split
-    (agent judges, scripts do mechanics) is unchanged. Not pursued now; noted so the next
-    session does not rediscover it.
-
+  - *An MCP server beside the CLI* — a local process the runtime starts from its own config
+    at session start, speaking JSON over stdio; the agent then sees `jig_task_new`,
+    `jig_context`, `jig_verify` in the same list as its own tools and calls them without a
+    shell. It is a change of interface, not of language — the server is written in whatever
+    the core is — and it is a **second** surface, never the only one: housekeeping, the
+    session hook and a person in a terminal run when no agent and no server is alive, so the
+    CLI stays. What it buys: typed tools instead of a command string, no shell on any
+    platform (the whole Windows class, not a third of it), a process that lives for the
+    session and keeps the knowledge index warm, and shorter skills. What it costs: a line in
+    the runtime's config (`.mcp.json` for Claude Code), which ADR-0024 says Jig does not
+    write — narrowed once already for the AGENTS.md section, and to be narrowed again or left
+    to the project; and thicker adapters, since hooks, permissions and connection differ per
+    runtime. Decided to follow the language, not precede it: see the decision below.
   **Recommendation after the second session:** if the gate says go, the implementation is
   **TypeScript on Node with zero dependencies**, not Go. It takes the whole text-processing
   class off the table exactly as Go would, and it keeps the property Jig is built around —
@@ -264,6 +272,25 @@ numbers below are its, re-measured, not the conversation's.
   recognise `keep-modified` placed files. A binary of one version with skills of another is
   impossible by construction. — rejected: a separate pin beside today's manifest with a
   precedence rule, because that divergence is the failure the hunt ranked first.
+
+- **Form: a core library with two thin adapters, CLI and MCP; tests on the core.** The core
+  is a library with no terminal I/O; the CLI parses arguments, calls it and prints; the MCP
+  server exposes the same functions as tools. Tests are written against the core once, in
+  its language; a surface gets contract tests only — exit codes, output lines skills and
+  people read, flag parsing for the CLI; tool schemas and error mapping for the server. The
+  sh suite's process-driving subset remains the CLI's oracle during a port and nothing else.
+  This adds a layer under "Scripts" in ARCHITECTURE.md and continues ADR-0001, not reverses
+  it. The MCP surface is built after the CLI, from the same core; it is never the only entry.
+  — rejected: logic inside the server with the CLI calling it, because housekeeping and the
+  hook would have to start a server to `stat` one file.
+- **The server behaves like a fresh process.** Idempotency and determinism are properties of
+  the core's operations (refusals, repeat-to-finish upgrades, atomic writes) and carry over
+  to any surface unchanged; the one risk a long-lived process adds is memory that outlives
+  the disk — a `git checkout` in another tab, a second session closing a task, an upgrade
+  replacing templates. Rule: **a cache is valid only by the mtimes of the files it read, or
+  does not exist**; task state, the manifest and config are read from disk on every call. The
+  server never uses MCP sampling (asking the client's model to decide something): ADR-0001's
+  "scripts never call an LLM" applies to the server as it does to a script.
 
 ## Open questions
 
