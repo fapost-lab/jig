@@ -200,6 +200,7 @@ _fm_quote_scalar() {
 # an empty document, so a failing awk upstream cannot truncate knowledge.
 _fm_replace() {
   local file="$1" tmp="$1.tmp.$$"
+  jig_cleanup_add "$tmp"
   cat > "$tmp"
   if [ ! -s "$tmp" ]; then
     rm -f "$tmp"

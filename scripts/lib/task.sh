@@ -435,6 +435,7 @@ _task_likely_owner() {
 _task_write_task_md() {
   local id="$1" dest="$2" from="${3:-}" source tmpl tmp
   tmp="$dest.tmp.$$"
+  jig_cleanup_add "$tmp"
   if [ -n "$from" ]; then
     if [ "$from" = "-" ]; then
       sed "s/{{TASK_ID}}/$id/g" > "$tmp"
@@ -485,6 +486,7 @@ _task_rewrite_state() {
   local dir="$1" key="$2" value="$3" file tmp today
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   JIG_S_KEY="$key" JIG_S_VALUE="$value" JIG_S_TODAY="$today" \
     awk '
@@ -519,6 +521,7 @@ _task_rewrite_state_remove() {
   local dir="$1" key="$2" file tmp today
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   awk -v key="$key" -v today="$today" '
     {
@@ -548,6 +551,7 @@ _task_touch_state() {
   file="$dir/state"
   [ -f "$file" ] || return 0
   tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   awk -v today="$today" '
     /^updated_at:/ { print "updated_at: " today; next }
@@ -666,6 +670,53 @@ _task_dirty_only_spec() {
   printf '%s\n' "$ids"
 }
 
+# _task_refuse_busy_checkout <id> — refuse to move this checkout's HEAD under
+# another session (adr-20260924-a-checkout-records-what-is-happening-in-it).
+#
+# Reads the record the dispatcher already writes (`jig_checkout_busy`), which
+# already leaves out the task being started, this session's own id, expired
+# records and work whose branch lives in another worktree. A report may say
+# "someone is here" on weak evidence; a refusal blocks a person, so the records
+# of tasks that are consolidated or abandoned, or whose branch is no longer the
+# one checked out here, are set aside as well: their work has left this
+# checkout whatever the record's age says. Nothing is deleted. Only the
+# start that takes over this checkout asks: `--worktree` leaves it as it was,
+# and a project on one branch moves no HEAD.
+#
+# The way out is named, as the dirty-tree refusal names its own. There is no
+# override: ADR-0029 records that the dirty-tree one was overridden every time.
+_task_refuse_busy_checkout() {
+  local id="$1" name age cmd st tb fname="" fage="" fcmd="" rest=0 who more="" here_branch
+  cfg_bool git.branch_per_task true || return 0
+  here_branch=$(_task_current_branch)
+  while read -r name age cmd; do
+    [ -n "$name" ] || continue
+    if [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$name/state" ]; then
+      st=$(task_state_get "$name" status)
+      case "$st" in consolidated | abandoned) continue ;; esac
+      # A started task whose branch is no longer the one checked out here left
+      # this checkout with its HEAD: a session that finished it and went back
+      # to the base is not occupying the tree, whatever its record's age says.
+      tb=$(task_state_get "$name" branch)
+      if [ -n "$tb" ] && [ "$tb" != "$here_branch" ]; then continue; fi
+    fi
+    if [ -z "$fname" ]; then
+      fname="$name"
+      fage="$age"
+      fcmd="$cmd"
+    else
+      rest=$((rest + 1))
+    fi
+  done < <(jig_checkout_busy "$id")
+  [ -n "$fname" ] || return 0
+  who="another session"
+  if [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$fname/state" ]; then
+    who="task $fname"
+  fi
+  [ "$rest" -eq 0 ] || more=" (and $rest more)"
+  jig_die "task start: this checkout is in use: $who ran \`jig $fcmd\` $(jig_checkout_ago "$fage") ago$more; start $id in its own worktree: \`jig task start $id --worktree\`, wait until that work has finished, or, if it already has, delete $JIG_AI_DIR/runtime/working/$fname"
+}
+
 # Refuse to start a task on a dirty working tree (design §6): untracked files
 # never block (build output is not work in progress), only tracked changes do —
 # a `git status --porcelain` line that is not `??` (jig_tracked_changes,
@@ -763,6 +814,7 @@ task_new() {
   # happened to be on, and four of them claimed a branch they had nothing to
   # do with in a single day (ADR-0026, as amended).
   local tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   {
     printf 'task_id: %s\n' "$id"
     [ -z "$class" ] || printf 'class: %s\n' "$class"
@@ -844,6 +896,7 @@ task_start() {
   # branch the leak is the same — base_commit would name a point the
   # uncommitted work is already on top of.
   _task_refuse_dirty_tree "$(_task_current_branch)" "$id"
+  _task_refuse_busy_checkout "$id"
 
   local branch base_commit
   if cfg_bool git.branch_per_task true; then
@@ -1237,6 +1290,7 @@ _task_autopilot_log() {
   dir=$(task_dir "$id")
   file="$dir/autopilot"
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   if [ -f "$file" ]; then
     cp "$file" "$tmp"
   else
@@ -1727,6 +1781,7 @@ task_finding_add() {
   file="$dir/findings"
   fid=$(_task_finding_next_id "$file")
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   if [ -f "$file" ]; then
     cp "$file" "$tmp"
   else
@@ -1788,6 +1843,7 @@ task_finding_set() {
 
   local tmp today
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   # Values reach awk through the environment, not `-v`: awk expands escape
   # sequences in a `-v` value, so a reason spelling a literal backslash-t
@@ -1900,6 +1956,7 @@ _task_review_dir() {
 _task_review_tree() {
   local dir="$1" tmp tree
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-task-review-tree.XXXXXX") || return 1
+  jig_cleanup_add "$tmp"
   rm -f "$tmp"
 
   if git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
@@ -2077,6 +2134,7 @@ task_receipt_write() {
 
   file="$dir/receipt"
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   {
     printf 'stage: %s\n' "$stage"
     printf 'reviewed_at: %s\n' "$(jig_today)"
@@ -2689,6 +2747,7 @@ task_artifact() {
   root=$(_task_workspace_root "$id" "task artifact") || return 1
   dest="$root/$kind.md"
   tmp="$dest.tmp.$$"
+  jig_cleanup_add "$tmp"
   # A link is refused rather than resolved. `mv` would replace it and `append`
   # would read through it, out of the workspace and back in — and
   # `task artifacts` already treats an artifact that leaves the workspace as

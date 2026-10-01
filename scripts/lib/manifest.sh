@@ -135,6 +135,7 @@ manifest_write_entries() {
   [ "$source_real" = "$project_real" ] && source="."
   file=$(manifest_file)
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   mkdir -p "$(dirname "$file")"
   {
     # shellcheck disable=SC2016

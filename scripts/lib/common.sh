@@ -18,6 +18,104 @@ jig_die()  {
   exit 1
 }
 
+# --- cleanup that outlives the function that asked for it ---------------------
+#
+# One accumulating EXIT/INT/TERM mechanism for the whole process. A `trap` is one
+# slot: libraries sourced into one process that each set their own replace one
+# another, and a library that sets none leaves its temporary files behind when
+# the command is interrupted. Everything that must go when the command ends goes
+# through here instead:
+#
+#   jig_cleanup_add [-d] <path>   remove <path> (a directory with -d) at exit
+#   jig_on_exit '<command>'       run <command> (single-quoted, evaluated at exit)
+#
+# Both may be called any number of times, from any library, in any order; actions
+# run first, in the order given, then the paths. Registering a path that is gone
+# by then (the `mv` already published it) is harmless, and registering the same
+# path twice is a no-op, so a loop that rewrites one file does not grow the list.
+# SIGINT and SIGTERM exit with 130 and 143, which runs the EXIT handler: the
+# command ends there instead of carrying on after its cleanup.
+#
+# Call it from the main shell, not from `$(...)`: a subshell that registers starts
+# a list of its own (BASH_SUBSHELL differs from the one that built the parent's)
+# and never removes what its parent registered. It does not promise more: bash 3.2
+# skips the EXIT trap of a `$(...)` that simply runs off its end, so a temporary
+# made there is cleaned only by an `exit` or a signal. SIGKILL cannot be trapped;
+# what it leaves is the price of a signal nothing can catch.
+_JIG_EXIT_ACTIONS=""
+_JIG_EXIT_FILES=""
+_JIG_EXIT_DIRS=""
+_JIG_EXIT_LEVEL=""
+
+# _jig_exit_arm — own the traps for the current shell level, once.
+_jig_exit_arm() {
+  local level="${BASH_SUBSHELL:-0}"
+  [ "$_JIG_EXIT_LEVEL" != "$level" ] || return 0
+  _JIG_EXIT_ACTIONS=""
+  _JIG_EXIT_FILES=""
+  _JIG_EXIT_DIRS=""
+  _JIG_EXIT_LEVEL="$level"
+  trap '_jig_exit_run' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+jig_on_exit() {
+  _jig_exit_arm
+  case "$_JIG_EXIT_ACTIONS" in
+    *"
+$1
+"*) return 0 ;;
+  esac
+  _JIG_EXIT_ACTIONS="$_JIG_EXIT_ACTIONS
+$1
+"
+}
+
+jig_cleanup_add() {
+  local dir=0 p
+  if [ "${1:-}" = "-d" ]; then dir=1; shift; fi
+  p="${1:-}"
+  [ -n "$p" ] || return 0
+  _jig_exit_arm
+  if [ "$dir" = 1 ]; then
+    case "$_JIG_EXIT_DIRS" in *"
+$p
+"*) return 0 ;; esac
+    _JIG_EXIT_DIRS="$_JIG_EXIT_DIRS
+$p
+"
+  else
+    case "$_JIG_EXIT_FILES" in *"
+$p
+"*) return 0 ;; esac
+    _JIG_EXIT_FILES="$_JIG_EXIT_FILES
+$p
+"
+  fi
+}
+
+_jig_exit_run() {
+  [ "$_JIG_EXIT_LEVEL" = "${BASH_SUBSHELL:-0}" ] || return 0
+  local line
+  while IFS= read -r line; do
+    [ -z "$line" ] || eval "$line" || true
+  done <<EOF_ACTIONS
+$_JIG_EXIT_ACTIONS
+EOF_ACTIONS
+  while IFS= read -r line; do
+    [ -z "$line" ] || rm -f -- "$line" 2>/dev/null || true
+  done <<EOF_FILES
+$_JIG_EXIT_FILES
+EOF_FILES
+  while IFS= read -r line; do
+    [ -z "$line" ] || rm -rf -- "$line" 2>/dev/null || true
+  done <<EOF_DIRS
+$_JIG_EXIT_DIRS
+EOF_DIRS
+  return 0
+}
+
 # --- repository ------------------------------------------------------------
 
 # Remove the environment variables that tell git which repository to work on,
@@ -294,6 +392,7 @@ jig_link_detect() {
   local dir
   _JIG_LINK_KIND=none
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-link-probe.XXXXXX") || return 0
+  jig_cleanup_add -d "$dir"
   mkdir "$dir/target" || { rm -rf "$dir"; return 0; }
   if ln -s "$dir/target" "$dir/symlink" 2>/dev/null && [ -L "$dir/symlink" ]; then
     _JIG_LINK_KIND=symlink
@@ -357,6 +456,7 @@ jig_copy_detect() {
   _JIG_COPY_FLAGS="-a"
   _JIG_COPY_KIND="copy"
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-copy-probe.XXXXXX") || return 0
+  jig_cleanup_add -d "$dir"
   if printf 'x\n' > "$dir/probe" 2>/dev/null; then
     if cp -c "$dir/probe" "$dir/clone" >/dev/null 2>&1; then
       _JIG_COPY_FLAGS="-a -c"
@@ -534,6 +634,7 @@ jig_ls_remote_tags() {
   local root="$1" seconds="$2" out pid ticks=0 max_ticks
   max_ticks=$((seconds * 5))
   out=$(mktemp "${TMPDIR:-/tmp}/jig-lsremote.XXXXXX") || return 1
+  jig_cleanup_add "$out"
   GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
     git -C "$root" ls-remote --tags origin >"$out" 2>/dev/null &
   pid=$!
@@ -871,7 +972,7 @@ jig_ship_pr() {
   [ -n "$title" ] || title=$(head -n 1 "$message_file")
   if [ -z "$body_file" ]; then
     _JIG_SHIP_BODY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-ship-body.XXXXXX")
-    trap '[ -z "${_JIG_SHIP_BODY_TMP:-}" ] || rm -f "$_JIG_SHIP_BODY_TMP"' EXIT
+    jig_cleanup_add "$_JIG_SHIP_BODY_TMP"
     tail -n +2 "$message_file" > "$_JIG_SHIP_BODY_TMP"
     body_file="$_JIG_SHIP_BODY_TMP"
   fi

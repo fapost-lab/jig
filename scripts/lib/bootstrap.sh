@@ -377,7 +377,7 @@ jig_bootstrap_worktree() {
   # interrupted carry's remains accumulating: the directory is jig's own, so
   # nothing in it is anyone else's to keep.
   _JIG_BOOTSTRAP_STAGING=$(_bootstrap_staging_root "$tree_root")
-  trap '_bootstrap_sweep' EXIT INT TERM
+  jig_on_exit '_bootstrap_sweep'
   _bootstrap_sweep
   mkdir -p "$_JIG_BOOTSTRAP_STAGING" 2>/dev/null || true
 

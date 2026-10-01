@@ -164,6 +164,8 @@ spec_new() {
   # leaves nothing half-created and a retry works. The cleanup removes only
   # the files this run named and then `rmdir`s the directory, which refuses
   # anything that is not empty — it cannot delete what someone else put there.
+  jig_cleanup_add "$dir/spec.md.tmp.$$"
+  jig_cleanup_add "$dir/roadmap.md.tmp.$$"
   if ! cp "$spec_tpl" "$dir/spec.md.tmp.$$" || ! cp "$roadmap_tpl" "$dir/roadmap.md.tmp.$$"; then
     rm -f "$dir/spec.md.tmp.$$" "$dir/roadmap.md.tmp.$$"
     rmdir "$dir" 2>/dev/null || true
@@ -1419,9 +1421,8 @@ spec_ship_epic() {
 }
 
 # The body file spec_ship_final writes for a draft; script-global because the
-# EXIT trap that removes it runs after the function returned
-# (conventions/shell.md). jig_ship_pr leaves the trap alone when it is given a
-# body file, so this is the one EXIT trap of the process.
+# exit cleanup that removes it runs after the function returned
+# (conventions/shell.md).
 _SPEC_SHIP_BODY_TMP=""
 
 # spec_ship_final — the epic's final pull request. At `merge`, in an unattended
@@ -1462,7 +1463,7 @@ spec_ship_final() {
     if [ "$release" = major ]; then
       draft=1
       _SPEC_SHIP_BODY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-spec-body.XXXXXX")
-      trap '[ -z "${_SPEC_SHIP_BODY_TMP:-}" ] || rm -f "$_SPEC_SHIP_BODY_TMP"' EXIT
+      jig_cleanup_add "$_SPEC_SHIP_BODY_TMP"
       {
         printf 'Needs a human: major release?\n\n'
         if [ -n "$body_file" ]; then cat "$body_file"; else tail -n +2 "$message_file"; fi
@@ -1642,6 +1643,7 @@ spec_close() {
 spec_epic_write() {
   local roadmap="$1" branch="$3" release="${4:-}" tmp
   tmp="$roadmap.tmp.$$"
+  jig_cleanup_add "$tmp"
   # The destination is a paragraph and may wrap: the line goes after the
   # paragraph ends, never inside the sentence.
   awk -v b="$branch" -v r="$release" '
@@ -1734,6 +1736,7 @@ spec_done() {
   [ -f "$roadmap" ] || jig_die "spec done: no roadmap.md in $JIG_AI_DIR/specs/$sid/"
 
   tmp="$roadmap.tmp.$$"
+  jig_cleanup_add "$tmp"
   rc=0
   # Exit 3: no item names the task. Exit 4: every item that does is checked.
   # The id is compared as a string, not a pattern: `.` is legal in an id.
@@ -1990,6 +1993,7 @@ spec_links_to() {
 spec_unlink_task() {
   local file="$1" sid="$2" tmp
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   if ! awk -v sid="$sid" '
     /^Spec: \.ai\/specs\// {
       id = $0
