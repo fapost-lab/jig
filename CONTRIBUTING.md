@@ -192,9 +192,9 @@ maintainer tool here, not a dependency of Jig).
 ### The one required check
 
 The branch rules on `main` and `epic/**` require **`ci-ok`** and nothing else. It is a job that
-needs every other one, runs with `always()`, and fails unless each ended as `success` or `skipped`
-— so the merge button stays off while the suite runs, and a skipped job counts as the answer
-`scope` gave.
+needs every other one, runs with `always()`, and fails when a job failed, was cancelled, or was
+skipped although `scope` and the event required it to run (`.github/scripts/ci-ok.sh`) — so the
+merge button stays off while the suite runs, and a skipped job counts only when `scope` decided it.
 
 Do not require a matrix job by name. `test` is named `${{ matrix.os }}`; when `scope` skips it the
 expression is never expanded, and GitHub reports one skipped check called `matrix.os` instead of
