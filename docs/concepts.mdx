@@ -85,7 +85,7 @@ The catalog helps the agent discover additional knowledge without reading every 
   | Metadata | Effect |
   |---|---|
   | `load: always` | Requires the document for every resolution. |
-  | `load: domain` | Requires it when one of its declared domains is selected. |
+  | `load: domain` | Requires it when one of its declared domains is selected, or when a file under work matches one of its `paths`. |
   | `load: matched` (default) | Requires it for matching file paths or topics, an explicit ID, or a matching stage within an entered domain. Domain membership alone makes it discoverable in the catalog. |
   | `requires` | Adds the selected document's dependencies transitively. |
   | `summary` | Supplies the short description in a catalog entry. |
