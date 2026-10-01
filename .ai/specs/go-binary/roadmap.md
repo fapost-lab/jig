@@ -1,7 +1,7 @@
-# Roadmap — Jig as a single Go binary
+# Roadmap — Jig without bash: one implementation for every platform
 
-Destination: `jig` is one static binary per platform that a project pins by version; bash is
-needed nowhere — not for a command, not for a verify profile, not for the session hook — and
+Destination: `jig` is one implementation for macOS, Linux and Windows — TypeScript on Node
+with zero dependencies unless the Phase 0 gate says otherwise — and bash is needed nowhere — not for a command, not for a verify profile, not for the session hook — and
 every behaviour the sh suite proved is proved again against the binary.
 
 ## Phase 0 — Measure before committing
@@ -18,7 +18,8 @@ no-go on the spec.
 - [ ] Test triage — every one of the 2,391 tests classified as contract (drives `jig` as a
   process) or implementation (sources `lib/*.sh`, runs a profile script directly), recorded
   in a file the parity run reads
-- [ ] Spike — a standalone Go prototype of `knowledge` + `context` and of the junction and
+- [ ] Spike — a standalone prototype, in the recommended form (TS on Node, zero
+  dependencies; repeated in Go only if a runtime reason fails it), of `knowledge` + `context` and of the junction and
   deletion primitives, run against the contract subset of their tests and timed beside the
   baseline on both platforms (after: Baseline — a prototype without a baseline measures
   nothing; after: Test triage — the parity run needs to know which tests may be red for
@@ -33,8 +34,8 @@ no-go on the spec.
 ## Phase 1 and after — fog
 
 - [ ] fog: the port itself — a skeleton (dispatcher, config, common, manifest), then
-  commands in waves, then distribution (version switching, installers, release artefacts,
-  signing), then the deletion audit, then the knowledge and docs migration, then retiring
+  commands in waves, then distribution (installers on every platform; version switching,
+  release artefacts and signing only for a binary form), then the deletion audit, then the knowledge and docs migration, then retiring
   bash. Not cut until Phase 0 says go; the epic branch and its `major` release are declared
   then, not now.
 

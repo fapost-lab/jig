@@ -1,6 +1,7 @@
-# Jig as a single Go binary
+# Jig without bash: one implementation for every platform
 
-Status of this session: **parked** on 2026-10-01 after the stress test — see the closing
+(The spec id `go-binary` is the name the idea arrived under; the second session widened
+it to the language question, so the heading no longer names Go.) Status of this session: **parked** on 2026-10-01 after the stress test — see the closing
 note under Open questions. Depth: deep — the idea reverses an accepted decision (ADR-0002, reaffirmed by ADR-0037),
 changes how Jig reaches a project and its CI, and rewrites ~21k lines of scripts and ~41k of
 tests (2,391 tests in 47 files); almost nothing in it is cheap to take back.
@@ -150,6 +151,49 @@ numbers below are its, re-measured, not the conversation's.
     on**, and measure against the bash baseline; decide go/no-go on numbers. This is the
     shape recommended for Phase 0: it is the only one that answers findings 2, 3 and 8 with
     evidence instead of argument, and it costs weeks, not the quarter.
+  - *TypeScript on Node, zero dependencies* — raised in the second session, from the
+    reference `lee-to/ai-factory` that ADR-0002 rejected ("Node ≥18 requirement, slower
+    start, no gain for a file-and-git tool"). That verdict was given for an audience of
+    developers on macOS, where bash is free; for non-developers on Windows it inverts. What
+    it keeps that Go loses: **the scripts stay text and stay in the project.** `.ai/scripts/*.js`
+    are committed as the bash files are today, so a clone is a working environment
+    (ADR-0003), teammates and CI install nothing, `.ai/manifest` and `upgrade` work
+    unchanged, the invocation path `.ai/scripts/jig` survives in its 110 places, there is no
+    binary to sign and no SmartScreen, and an agent can read the code again. What it shares
+    with Go: one implementation, a real YAML/JSON reader, one test language, one process
+    instead of thousands (the Defender cost), and the same junction and CRLF audit (`fs.lstat`
+    reports a junction as a symlink, which is friendlier than Go 1.23 but still needs the
+    deletion audit). What it costs: **Node must be on the machine** — the same class of step
+    as installing Git, which `install.ps1` already takes through winget, but a step; Claude
+    Code and Codex ship as native binaries now and bring no Node. Host Node versions differ
+    (write to the current LTS, test on two); start is ~50–100 ms per call; and the rule
+    "no npm dependencies, standard library and `node:test` only" must hold from the first
+    file, or `node_modules` and a supply chain arrive in `.ai/scripts/`. GitHub-hosted CI
+    runners carry Node already, so a user project's `jig verify` in CI needs no setup step.
+  - *TypeScript on Deno* — the same code with a different runtime: one signed binary from
+    Deno Land, TypeScript without a build step, built-in test runner, formatter and linter,
+    no `node_modules` by construction, no host-version matrix (`deno upgrade`). It is "TS with
+    Go's install story". Against it: not preinstalled on CI runners (one setup action in the
+    user's CI) and less likely than Node to already be on a machine. The fallback if Node
+    version drift across hosts turns out to bite.
+  - *Jig 2 from scratch instead of a port* — in whichever language: keep the commands that
+    proved themselves, drop parity byte for byte, drop the 2,663 verbatim assertions. Removes
+    the most expensive item of the port (the oracle) and adds a different one: users of
+    today's Jig get a migration, not an upgrade. A separate spec with its own stress test if
+    the gate says go.
+  - *An MCP server instead of a CLI* — the agent calls tools, no shell at all. A change of
+    interface, not of language: it still needs a runtime to host it, and ADR-0001's split
+    (agent judges, scripts do mechanics) is unchanged. Not pursued now; noted so the next
+    session does not rediscover it.
+
+  **Recommendation after the second session:** if the gate says go, the implementation is
+  **TypeScript on Node with zero dependencies**, not Go. It takes the whole text-processing
+  class off the table exactly as Go would, and it keeps the property Jig is built around —
+  the framework lives in the project's repository and travels with the clone — which every
+  distribution option for a binary had to rebuild. The one real objection, Node on a
+  non-developer's Windows, is the same objection as Git and is answered by the same installer
+  line. Deno is the alternative if host Node versions prove troublesome; Go stays the answer
+  only if a runtime on the machine turns out unacceptable for a reason not yet seen.
 
 ## Scope and non-goals
 
@@ -183,7 +227,9 @@ numbers below are its, re-measured, not the conversation's.
   reaches a project both change, even though the command-line contract does not. — rejected:
   a hybrid where the bash dispatcher delegates ported commands to the binary, because users
   would run two runtimes at once and Windows would still need Git Bash until the end.
-- **Distribution: one global `jig` that switches to the version a project pins.** The
+- **Distribution, if the implementation is a compiled binary: one global `jig` that switches
+  to the version a project pins.** (Moot for an interpreted form — see Other shapes: text
+  scripts keep today's committed-into-the-project distribution unchanged.) The
   binary is installed once per machine; versions live in a per-user cache
   (`~/.local/share/jig/versions/<v>/`, `%LOCALAPPDATA%\jig\versions\<v>\`). Run inside a
   project, `jig` reads the pinned version from `.ai/manifest` and re-executes that version —
@@ -210,7 +256,9 @@ numbers below are its, re-measured, not the conversation's.
   the human wanted. **Cost accepted:** the profile format is a small language to design, and
   the two expressive profiles (`go`'s `go list .Deps` closure, `php`'s vendor paths) are the
   test of whether it is expressive enough — an open question below.
-- **One record: the binary carries its skills and templates.** Skills, templates and the
+- **One record, if the implementation is a compiled binary: the binary carries its skills
+  and templates.** (Moot for an interpreted form, where `.ai/manifest` keeps working as it
+  does today.) Skills, templates and the
   AGENTS.md marked section are embedded in the binary of the same version; `jig upgrade`
   raises the pin in `.ai/manifest` and re-places the files. The manifest keeps hashes only to
   recognise `keep-modified` placed files. A binary of one version with skills of another is
@@ -227,6 +275,11 @@ numbers below are its, re-measured, not the conversation's.
   named in docs/known-issues.mdx) and measure `jig context` / `jig knowledge check` on Linux
   and on Windows with Defender on. Those numbers are the baseline the Phase 0 spike must
   beat; without them the next session cannot answer the go/no-go question.
+- **The language, at the gate.** Go binary, TypeScript on Node, TypeScript on Deno — the
+  Phase 0 spike is written in the recommended form (TS on Node, zero dependencies) so the
+  measurement is of the form that would ship; if it fails for a runtime reason, the spike is
+  repeated in Go before no-go is concluded. The distribution and one-record decisions above
+  apply only to a binary.
 - **The profile language.** What a declarative profile must express so that the 13 existing
   profiles port without loss — in particular `go`'s transitive-importer closure through
   `go list` and the per-check tool lookup of `php`/`laravel` — and where a profile is allowed
