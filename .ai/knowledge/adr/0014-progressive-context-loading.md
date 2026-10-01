@@ -133,3 +133,9 @@ it from validation and hidden it from every consumer, silently.
 > reached no agent at all, although `jig-map` promised it "stays in the catalog". It is still never
 > required by that alone: listing costs one line, and the agent pulls the body in with `--ids`.
 > `knowledge check` keeps warning about such a document, now saying what the warning means.
+
+> **Amendment (2026-10-01).** `load: domain` also requires a document when a file under work
+> matches one of its `paths`, not only when one of its domains was entered. The domain-pack
+> templates carry both fields, so an agent editing a file a pack names reached nothing unless it
+> also passed `--domains`, and never saw that something was missing. The resolver's cache
+> fingerprint names the selection rule, so a cache written under the old rule is not served.

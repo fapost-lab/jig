@@ -398,15 +398,28 @@ _ctx_select_reason() {
     return 0
   fi
 
+  # `load: domain` is the domain OR the files: a document that names files in
+  # `paths` must reach whoever edits them, whether or not they entered the
+  # domain.
   if [ "$load" = domain ]; then
-    [ -n "$CTX_DOMAINS" ] || return 1
-    while IFS= read -r dom; do
-      [ -n "$dom" ] || continue
-      if _ctx_domain_matches_any "$dom" "$CTX_DOMAINS"; then
-        printf 'domains: %s\n' "$dom"
-        return 0
-      fi
-    done < <(fm_list_block "$block" domains)
+    if [ -n "$CTX_DOMAINS" ]; then
+      while IFS= read -r dom; do
+        [ -n "$dom" ] || continue
+        if _ctx_domain_matches_any "$dom" "$CTX_DOMAINS"; then
+          printf 'domains: %s\n' "$dom"
+          return 0
+        fi
+      done < <(fm_list_block "$block" domains)
+    fi
+    if [ -n "$CTX_FILES" ]; then
+      while IFS= read -r glob; do
+        [ -n "$glob" ] || continue
+        if _ctx_path_matches_any "$glob" "$CTX_FILES"; then
+          printf 'paths: %s\n' "$glob"
+          return 0
+        fi
+      done < <(fm_list_block "$block" paths)
+    fi
     return 1
   fi
 
@@ -487,7 +500,9 @@ _ctx_cache_fingerprint() {
       jig_relpath "$doc" "$JIG_PROJECT"
     done < <(jig_knowledge_docs)
   } | LC_ALL=C sort > "$doclist"
-  printf 'stage=%s\nfiles=%s\ndomains=%s\ntopics=%s\nids=%s\nall=%s\n' \
+  # rule= names the selection rule itself, so a cache written under an older
+  # rule (load: domain was domain-only) is never served after the rule changed.
+  printf 'rule=domain-or-paths\nstage=%s\nfiles=%s\ndomains=%s\ntopics=%s\nids=%s\nall=%s\n' \
     "$CTX_STAGE" "$CTX_FILES" "$CTX_DOMAINS" "$CTX_TOPICS" "$CTX_IDS" "$CTX_ALL"
   jig_hash_list "$JIG_PROJECT" "$doclist"
   rm -f "$doclist"

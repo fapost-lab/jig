@@ -740,6 +740,57 @@ EOF
   assert_not_contains "$OUT" "domains/payments/RULES.md"
 }
 
+test_context_resolve_load_domain_reaches_the_files_it_names_without_a_domain() {
+  ctx_setup
+  mkdir -p .ai/knowledge/domains/knowledge
+  cat > .ai/knowledge/domains/knowledge/RULES.md <<'EOF'
+---
+id: rule-knowledge
+type: rule
+status: active
+domains: [knowledge]
+paths:
+  - "scripts/lib/knowledge.sh"
+load: domain
+---
+EOF
+  run jig context resolve --files scripts/lib/knowledge.sh
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "required:  .ai/knowledge/domains/knowledge/RULES.md  (paths: scripts/lib/knowledge.sh)"
+
+  # Neither the domain nor a named file: not required.
+  run jig context resolve --files scripts/lib/other.sh
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "required:  .ai/knowledge/domains/knowledge/RULES.md"
+}
+
+test_context_resolve_load_domain_without_paths_still_needs_the_domain() {
+  ctx_setup
+  mkdir -p .ai/knowledge/domains/payments
+  cat > .ai/knowledge/domains/payments/RULES.md <<'EOF'
+---
+id: rule-payments
+type: rule
+status: active
+domains: [payments]
+load: domain
+---
+EOF
+  run jig context resolve --files src/Payments/Charge.php
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "required:  .ai/knowledge/domains/payments/RULES.md"
+}
+
+test_context_cache_fingerprint_names_the_selection_rule() {
+  ctx_setup
+  jig task new rule-fp >/dev/null
+  run jig context resolve --task rule-fp --files src/a.php
+  assert_eq 0 "$RC"
+  local cache
+  cache=$(ls .ai/workspace/tasks/rule-fp/context-cache)
+  assert_contains "$(head -1 "$cache")" "rule="
+}
+
 test_context_resolve_matched_by_paths_glob() {
   ctx_setup
   cat > .ai/knowledge/features/checkout.md <<'EOF'
