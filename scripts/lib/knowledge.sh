@@ -37,14 +37,18 @@ cmd_knowledge() {
   jig_require_init
   km_init
 
+  # A command that changes what the status page counts (proposed documents,
+  # changed sources, stale documents) recounts and redraws it, as the task
+  # and spec commands do (jig_status_page_touch, common.sh); --full because
+  # the counts are cached between full runs.
   case "$sub" in
     check) km_check "$@" ;;
-    new) km_new "$@" ;;
+    new) km_new "$@"; jig_status_page_touch --full ;;
     paths) km_paths "$@" ;;
     stale) km_stale "$@" ;;
-    reviewed) km_reviewed "$@" ;;
-    accept) km_accept "$@" ;;
-    reject) km_reject "$@" ;;
+    reviewed) km_reviewed "$@"; jig_status_page_touch --full ;;
+    accept) km_accept "$@"; jig_status_page_touch --full ;;
+    reject) km_reject "$@"; jig_status_page_touch --full ;;
     proposed) km_proposed "$@" ;;
     summary) km_summary "$@" ;;
     stages) km_stages "$@" ;;
@@ -1767,7 +1771,7 @@ km_copy_build() {
 
 km_paths() {
   case "${1:-}" in
-    add | remove) km_paths_edit "$@" ;;
+    add | remove) km_paths_edit "$@"; jig_status_page_touch --full ;;
     *) km_paths_report "$@" ;;
   esac
 }

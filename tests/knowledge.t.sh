@@ -3082,6 +3082,31 @@ test_reviewed_rewrites_source_hash_of_a_stub_to_the_current_source() {
   assert_file_contains .ai/knowledge/sources/stub.md "reviewed_at: 2026-01-01"
 }
 
+# The status page counts changed sources, and a command that changes the
+# count redraws the page (jig_status_page_touch, common.sh).
+test_reviewed_redraws_the_status_page_with_the_new_count() {
+  fixture_jig_repo
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+  jig status --html >/dev/null
+  assert_file_contains .ai/runtime/status.html "<dt>Linked sources changed</dt><dd>1</dd>"
+
+  jig knowledge reviewed convention-stub >/dev/null
+  assert_file_contains .ai/runtime/status.html "<dt>Linked sources changed</dt><dd>none</dd>"
+}
+
+test_accept_redraws_the_status_page_with_the_new_count() {
+  fixture_jig_repo
+  jig knowledge new feature normal --proposed --domains a >/dev/null
+  jig status --html >/dev/null
+  assert_file_contains .ai/runtime/status.html "<dt>Knowledge awaiting decision</dt><dd>1</dd>"
+
+  jig knowledge accept feature-normal >/dev/null
+  assert_file_contains .ai/runtime/status.html "<dt>Knowledge awaiting decision</dt><dd>none</dd>"
+}
+
 test_reviewed_dies_when_a_stubs_source_is_missing() {
   km_setup
   km_track_file docs/x.md
