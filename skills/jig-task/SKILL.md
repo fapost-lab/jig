@@ -108,6 +108,10 @@ working in this checkout themselves, start in a worktree without being asked to:
 .ai/scripts/jig task start <id> --worktree
 ```
 
+**When `task start` refuses an occupied checkout** (`this checkout is in use: …`), it names
+the record it went by. Take the worktree road it offers. Delete that record only when you
+know the session behind it is over; there is no override.
+
 **When `task start` refuses a dirty tree**, the changes belong to other work — never work
 around it. Ask the user which road: pause the task that owns them
 (`jig task pause <owner> --stash`), or start this one in a worktree, as above. When the

@@ -576,7 +576,11 @@ test_task_list_empty() {
 test_task_list_ordering_and_fields() {
   task_setup
   task_started T-2
-  task_started T-1 --class T1
+  # One session starting task after task in one checkout is not what this test
+  # is about; T-2's work record would refuse the next start (checkout.sh).
+  jig task new T-1 --class T1 >/dev/null
+  rm -rf .ai/runtime/working
+  jig task start T-1 >/dev/null
   git checkout -q -b other
   # T-3 is started on a branch this test chose, to show that the listing
   # includes a task belonging to a *different* branch.

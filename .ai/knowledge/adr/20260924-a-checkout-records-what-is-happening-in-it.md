@@ -13,7 +13,7 @@ paths:
   - scripts/lib/config.sh
   - "skills/jig-task/**"
 summary: Why every jig run records in the checkout that work is happening there, and why the record holds only what nothing can compute.
-reviewed_at: 2026-09-30
+reviewed_at: 2026-10-01
 ---
 # ADR: A checkout records what is happening in it, so a session is no longer invisible
 
@@ -133,17 +133,25 @@ dirty-tree refusal: start this task in its own worktree. There is no `--force` a
 `--here`: ADR-0029 records that the dirty-tree refusal "was overridden with `--force`
 every time".
 
-> **That refusal is decided here and built in a successor task.** Said plainly, because the
-> alternative is a reader looking for it in `task_start` and concluding the decision was
-> never implemented. `scripts/lib/task.sh` is held by another branch that changes
-> `task_start` itself, with six tasks queued behind it, and the two halves of this decision
-> are separable: the observing half answers "is this checkout busy", which is worth having
-> before and regardless of whether anything refuses on the answer. What remains is one
-> condition in `task_start`, reading `jig_checkout_busy <id-being-started>` — which already
-> excludes the task being started, this session's own id, expired records, work that lives
-> in another worktree and leftover temporaries — and refusing with the worktree named. No
-> other part of this decision waits on it, and the reading side ships without it: until then
-> the record is reported by `jig status` and nothing refuses.
+> **The two halves shipped separately, on purpose.** The observing half (this record, and
+> `jig status` reporting it) answers "is this checkout busy" and is worth having whether or
+> not anything refuses on the answer; it shipped first, while `scripts/lib/task.sh` was held
+> by another branch. The refusal followed as `_task_refuse_busy_checkout` in `task_start`,
+> reading `jig_checkout_busy <id-being-started>` and nothing else: no second mechanism for
+> deciding who is here. A reader looking for the refusal finds it there.
+>
+> A report may say "someone is here" on weak evidence; a refusal blocks a person, so it is
+> narrower than the report. It asks only where the start takes over this checkout: not for
+> `--worktree`, which leaves it as it was, and not when `git.branch_per_task` is off, where
+> no HEAD moves. Beyond what the reader already leaves out (this session's own id, expired
+> records, work in another worktree, leftover temporaries) it sets aside records of tasks
+> that are `consolidated` or `abandoned`, and of started tasks whose branch is no longer the
+> one checked out here — a session that finished a task, went back to the base and starts the
+> next is not occupying the tree. The message names the record's owner and age and three
+> exits: a worktree of its own, waiting, or deleting the record by hand. One known false
+> refusal remains, chosen on purpose: a single session that runs `task new B` while its own
+> task A is still on HEAD leaves A's record, and a record named by a task cannot say which
+> session wrote it, so `task start B` is refused and the session takes `--worktree`.
 
 **A record's freshness window is `checkout.busy_ttl`, 12 hours by default**, read through
 the one duration grammar the framework already has (`jig_duration_seconds`); an

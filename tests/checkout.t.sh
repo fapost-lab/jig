@@ -359,6 +359,9 @@ test_checkout_notice_is_personal_to_each_session() {
   # Session B orients, then starts the task, which moves this checkout's HEAD.
   CLAUDE_CODE_SESSION_ID=session-b
   jig task list >/dev/null 2>&1
+  # A's work record would now refuse B's start, which is the point of that
+  # refusal and not of this test: it is about who is told, so A's record goes.
+  rm -f .ai/runtime/working/session-a
   jig task start T-1 >/dev/null
 
   # B gets one true line about a move it made itself — that noise is accepted.
@@ -564,4 +567,163 @@ test_checkout_record_ignores_a_git_dir_naming_another_repository() {
   assert_no_file "$elsewhere/.ai/runtime"
 
   rm -rf "$elsewhere"
+}
+
+# --- `task start` refuses an occupied checkout --------------------------------
+
+# Two sessions, end to end: the first only looks at the checkout (so its record
+# is named by its session id), the second starts a task and is refused, with
+# the other road named. Nothing was created, and nothing was deleted.
+test_checkout_start_is_refused_while_another_session_is_here() {
+  checkout_setup
+  jig task new T-2 >/dev/null
+
+  run env CLAUDE_CODE_SESSION_ID=session-a "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_file .ai/runtime/working/session-a
+
+  run env CLAUDE_CODE_SESSION_ID=session-b "$JIG_BIN" task start T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "this checkout is in use: another session ran \`jig status\`"
+  assert_contains "$OUT" "jig task start T-2 --worktree"
+  assert_contains "$OUT" "delete .ai/runtime/working/session-a"
+  assert_not_contains "$OUT" "--force"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_file .ai/runtime/working/session-a
+  if grep -q '^branch:' .ai/workspace/tasks/T-2/state; then
+    fail "a refused start recorded a branch"
+  fi
+
+  # The second session's own record never refuses it: it is refused only for
+  # the first session's.
+  rm .ai/runtime/working/session-a
+  run env CLAUDE_CODE_SESSION_ID=session-b "$JIG_BIN" task start T-2
+  assert_eq 0 "$RC"
+  assert_eq "task/T-2" "$(git symbolic-ref --short HEAD)"
+}
+
+# A started task's record names the task, and the message says so.
+test_checkout_start_refusal_names_a_task_working_here() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task new T-2 >/dev/null
+
+  run jig task start T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "this checkout is in use: task T-1 ran"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+}
+
+# A record older than checkout.busy_ttl is a ghost: it is reported as nothing
+# and refuses nothing, and it is still not deleted.
+test_checkout_start_is_not_refused_by_an_expired_record() {
+  checkout_setup
+  jig task new T-2 >/dev/null
+  mkdir -p .ai/runtime/working
+  printf 'command: verify\n' > .ai/runtime/working/session-a
+  touch -t 202001010000 .ai/runtime/working/session-a
+
+  run jig task start T-2
+  assert_eq 0 "$RC"
+  assert_eq "task/T-2" "$(git symbolic-ref --short HEAD)"
+  assert_file .ai/runtime/working/session-a
+}
+
+# The session's own record is not a neighbour, in the refusal as in the report.
+test_checkout_start_is_not_refused_by_this_sessions_own_record() {
+  checkout_setup
+  jig task new T-2 >/dev/null
+  run env CLAUDE_CODE_SESSION_ID=session-a "$JIG_BIN" status
+  assert_file .ai/runtime/working/session-a
+
+  run env CLAUDE_CODE_SESSION_ID=session-a "$JIG_BIN" task start T-2
+  assert_eq 0 "$RC"
+}
+
+# A finished task's record says nothing about who is here now.
+test_checkout_start_is_not_refused_by_a_consolidated_task() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  mkdir -p .ai/runtime/working
+  printf 'command: verify\n' > .ai/runtime/working/T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  jig task set T-1 status consolidated >/dev/null
+
+  run jig task start T-2
+  assert_eq 0 "$RC"
+}
+
+# `--worktree` leaves this checkout as it was, so an occupied one does not
+# stand in its way: it is the road the refusal names.
+test_checkout_start_in_a_worktree_is_not_refused_by_an_occupied_checkout() {
+  skip_unless_symlinks
+  checkout_setup_nested
+  jig task new T-2 >/dev/null
+  mkdir -p .ai/runtime/working
+  printf 'command: verify\n' > .ai/runtime/working/session-a
+
+  run jig task start T-2 --worktree
+  assert_eq 0 "$RC"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+# An abandoned task is over, and so is its record.
+test_checkout_start_is_not_refused_by_an_abandoned_task() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  mkdir -p .ai/runtime/working
+  printf 'command: verify\n' > .ai/runtime/working/T-1
+  jig task abandon T-1 >/dev/null
+
+  run jig task start T-2
+  assert_eq 0 "$RC"
+}
+
+# One session that finishes a task, goes back to the base and starts the next
+# is not occupying the tree: the finished task's branch is not HEAD any more.
+# (`ready`, not consolidated: the task has not landed yet.)
+test_checkout_start_is_not_refused_by_a_task_whose_branch_left_this_checkout() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task set T-1 status ready >/dev/null
+  git checkout -q main
+  jig task new T-2 >/dev/null
+  assert_file .ai/runtime/working/T-1
+
+  run jig task start T-2
+  assert_eq 0 "$RC"
+  assert_eq "task/T-2" "$(git symbolic-ref --short HEAD)"
+}
+
+# Two records are refused for together, and the message says there are more.
+test_checkout_start_refusal_counts_the_other_records() {
+  checkout_setup
+  jig task new T-2 >/dev/null
+  mkdir -p .ai/runtime/working
+  printf 'command: verify\n' > .ai/runtime/working/session-a
+  printf 'command: verify\n' > .ai/runtime/working/session-b
+
+  run jig task start T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "(and 1 more)"
+}
+
+# A project that works on one branch by choice moves no HEAD, so there is
+# nothing to take over.
+test_checkout_start_on_a_shared_branch_is_not_refused() {
+  checkout_setup
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  git add -A
+  git commit -q -m "one branch"
+  jig task new T-2 >/dev/null
+  mkdir -p .ai/runtime/working
+  printf 'command: verify\n' > .ai/runtime/working/session-a
+
+  run jig task start T-2
+  assert_eq 0 "$RC"
 }
