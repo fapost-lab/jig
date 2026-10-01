@@ -39,9 +39,10 @@ export JIG_HOME="$ROOT"
 export JIG_BIN="$ROOT/scripts/jig"
 
 # Shared only within this run; tests receive independent copies.
-JIG_TEST_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-cache.XXXXXX") || exit 1
-export JIG_TEST_CACHE
+# Everything this run creates lives under RESULTS (see below), so one trap removes it.
 RESULTS=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-results.XXXXXX") || exit 1
+JIG_TEST_CACHE="$RESULTS/cache"
+export JIG_TEST_CACHE
 
 # Sweep what an earlier run could not remove itself (SIGKILL cannot be trapped,
 # and earlier versions of this runner left `jig-test.*` directories): this
@@ -160,6 +161,13 @@ enter_test_env() {
   cd "$1" || exit 1
   export HOME="$1"
   export JIG_TEST_TMP="$1"
+  # A test's `mktemp "${TMPDIR:-/tmp}/..."` — and jig's own — lands beside the test's
+  # directory, not in the machine's $TMPDIR: hundreds of call sites in tests/ made a
+  # directory there and never removed it (4600+ `jig-*` directories at once, each a
+  # git repository for fseventsd and Spotlight to walk). Beside, not inside: the test
+  # directory is often the repository under test and must not list it.
+  mkdir -p "$1.tmpdir" || exit 1
+  export TMPDIR="$1.tmpdir"
   export GIT_CONFIG_NOSYSTEM=1
   # A run started by a narrowed `jig verify` carries the scope it was given,
   # and CI sets CI: neither describes the project a test builds. A test that
@@ -223,7 +231,9 @@ run_test() {
     "$name"
   ) >"$RESULTS/$idx.log" 2>&1 || rc=$?
   printf '%s\t%s\t%s\n' "$rc" "$((SECONDS - start))" "$full" > "$RESULTS/$idx.result"
-  rm -rf "$tmp" "$tmp.out" "$tmp.out.err"
+  # The test's directory and every sibling it made beside it ($JIG_TEST_TMP.out,
+  # .src, .tmpdir ...): the suffix after the random part is the test's own.
+  rm -rf "$tmp" "$tmp".*
   if [ "$rc" -eq 0 ]; then
     printf 'ok   %s\n' "$full"
   elif [ "$rc" -eq 77 ]; then
@@ -271,14 +281,14 @@ if [ "$jobs" -eq 1 ]; then
 else
   # The shared fixture is built before any test starts (fixture_cache_prepare
   # explains what two tests building it at once would do).
-  cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-cache-build.XXXXXX") || exit 1
+  cache_dir=$(mktemp -d "$RESULTS/cache-build.XXXXXX") || exit 1
   if ! ( enter_test_env "$cache_dir"; fixture_cache_prepare ) >"$RESULTS/cache.log" 2>&1; then
     printf 'tests/run.sh: could not build the fixture cache\n' >&2
     sed 's/^/     | /' "$RESULTS/cache.log" >&2
-    rm -rf "$cache_dir"
+    rm -rf "$cache_dir" "$cache_dir".*
     exit 1
   fi
-  rm -rf "$cache_dir"
+  rm -rf "$cache_dir" "$cache_dir".*
 
   # A FIFO holding one token per worker: a test starts by taking one and gives
   # it back when it ends. Plain bash 3.2 — `wait -n` does not exist there — and
