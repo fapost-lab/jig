@@ -1915,6 +1915,200 @@ test_verify_shell_profile_map_decision_glob_token_is_not_expanded_against_files(
   assert_not_contains "$OUT" "filter 'a2'"
 }
 
+# --- shell profile: a change to a shared library narrows by function -------
+#
+# A script with no test file of its own used to be ALL. Now the functions the
+# diff edited are looked up in the other scripts, transitively, and the tests
+# of the scripts that mention them run. Anything the diff cannot name — a new
+# or removed function, a global — stays ALL.
+
+_fixture_shell_lib_project() {
+  _fixture_shell_scope_project
+  mkdir -p scripts/lib
+  cat > scripts/lib/shared.sh <<'EOS'
+# shared helpers
+SHARED_GLOBAL=1
+
+fa() {
+  printf 'a\n'
+}
+
+fb() {
+  printf 'b\n'
+}
+
+# one-line function
+fc() { printf 'c\n'; }
+EOS
+  printf '#!/usr/bin/env bash\nuse_a() {\n  fa\n}\n' > scripts/lib/one.sh
+  printf '#!/usr/bin/env bash\nuse_b() {\n  fb\n}\n' > scripts/lib/two.sh
+  printf '#!/usr/bin/env bash\nuse_one() {\n  use_a\n}\n' > scripts/lib/three.sh
+  printf 'test_x() { :; }\n' > tests/one.t.sh
+  printf 'test_x() { :; }\n' > tests/two.t.sh
+  printf 'test_x() { :; }\n' > tests/three.t.sh
+  sc_stub 1.0.0 0
+  git add -A
+  git commit -q -m "baseline"
+}
+
+# _edit_fn <name> — add a line to the body of a function in the shared library.
+_edit_fn() {
+  awk -v fn="$1" '{ print } index($0, fn "() {") == 1 { print "  : edited" }' \
+    scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+}
+
+# Run the narrowed shell profile (explain) the way `jig verify --changed` does.
+_shell_lib_plan() {
+  run jig verify --explain --changed --profile shell
+  assert_eq 0 "$RC"
+}
+
+test_verify_shell_library_function_edit_narrows_to_its_callers_tests() {
+  _fixture_shell_lib_project
+  _edit_fn fb
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: filtered (test filters: two::)"
+
+  git checkout -q scripts/lib/shared.sh
+  _edit_fn fa
+  _shell_lib_plan
+  # fa is called by use_a (one.sh), which three.sh calls: both tests, not two.
+  assert_contains "$OUT" "test filters: one::,three::"
+  assert_not_contains "$OUT" "two::"
+}
+
+test_verify_shell_library_function_edit_runs_only_the_selected_tests() {
+  _fixture_shell_lib_project
+  _edit_fn fb
+  rm -f run-log
+  run jig verify --changed --profile shell
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: 1 filters)"
+  assert_file_contains run-log "two::"
+}
+
+test_verify_shell_library_one_line_function_is_a_function() {
+  _fixture_shell_lib_project
+  sed 's/^fc() { printf/fc() { : edited; printf/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+  git diff --quiet scripts/lib/shared.sh && fail "the edit did not land"
+  _shell_lib_plan
+  # fc has no caller: the library's own file asks for no test, so nothing runs.
+  assert_contains "$OUT" "no changed file maps to this check"
+}
+
+test_verify_shell_library_comment_only_change_reaches_no_test() {
+  _fixture_shell_lib_project
+  sed 's/^# one-line function$/# a one-line function/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+  _shell_lib_plan
+  assert_contains "$OUT" "no changed file maps to this check"
+}
+
+test_verify_shell_library_changes_the_diff_cannot_name_stay_full() {
+  _fixture_shell_lib_project
+  # A global, outside any function.
+  sed 's/^SHARED_GLOBAL=1$/SHARED_GLOBAL=2/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+  git checkout -q scripts/lib/shared.sh
+
+  # A new function: nothing calls it yet, so its callers cannot be listed.
+  printf '\nfd() { :; }\n' >> scripts/lib/shared.sh
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+  git checkout -q scripts/lib/shared.sh
+
+  # A removed function.
+  sed '/^fb() {$/,/^}$/d' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+  git checkout -q scripts/lib/shared.sh
+
+  # A brand new file.
+  printf 'fz() { :; }\n' > scripts/lib/fresh.sh
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+}
+
+test_verify_shell_library_caller_without_a_test_keeps_the_full_set() {
+  _fixture_shell_lib_project
+  printf '#!/usr/bin/env bash\nuse_b2() {\n  fb\n}\n' > scripts/lib/untested.sh
+  git add -A
+  git commit -q -m "a caller nobody tests"
+  _edit_fn fb
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+}
+
+# The project map answers for a caller the change did not touch: a script with
+# no .sh name is ALL by the built-in rules and would otherwise widen the run.
+test_verify_shell_library_caller_is_mapped_by_the_project_map() {
+  _fixture_shell_lib_project
+  printf '#!/usr/bin/env bash\nfb\n' > scripts/entry
+  chmod +x scripts/entry
+  git add -A
+  git commit -q -m "entry script"
+  _edit_fn fb
+  _shell_lib_plan
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: full"
+
+  git checkout -q scripts/lib/shared.sh
+  mkdir -p .ai/verify
+  printf 'scripts/entry two::\n' > .ai/verify/shell.map
+  git add -A
+  git commit -q -m "map"
+  _edit_fn fb
+  _shell_lib_plan
+  assert_contains "$OUT" "test filters: two::)"
+}
+
+# --- shell profile: ALL beside filters under verify.full_run: ci -----------
+
+test_verify_shell_full_run_ci_leaves_the_full_set_to_ci_beside_filters() {
+  _fixture_shell_lib_project
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "ci"
+  sed 's/^SHARED_GLOBAL=1$/SHARED_GLOBAL=2/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+  printf 'test_y() { :; }\n' >> tests/two.t.sh
+
+  run jig verify --changed --profile shell
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: 1 filters, full set left to CI)"
+  assert_file_contains run-log "two::"
+}
+
+test_verify_shell_full_run_ci_alone_still_runs_the_full_set() {
+  _fixture_shell_lib_project
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "ci"
+  sed 's/^SHARED_GLOBAL=1$/SHARED_GLOBAL=2/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+
+  run jig verify --changed --profile shell
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: not narrowable, ran full set)"
+  assert_file_contains run-log "(full)"
+}
+
+test_verify_shell_full_run_local_keeps_all_beside_filters() {
+  _fixture_shell_lib_project
+  sed 's/^SHARED_GLOBAL=1$/SHARED_GLOBAL=2/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+  printf 'test_y() { :; }\n' >> tests/two.t.sh
+
+  run jig verify --changed --profile shell
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "scope: not narrowable, ran full set"
+  assert_not_contains "$OUT" "left to CI"
+}
+
 # --- shell profile: .shellcheckrc widens the lint to the whole tree --------
 
 test_verify_shell_profile_widens_lint_to_whole_tree_when_shellcheckrc_changes() {

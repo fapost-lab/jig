@@ -46,7 +46,7 @@ Whenever a run is narrowed (`--changed`, `--base`, or `verify.full_run: ci`) and
 profile declares `scope: [changed, map]`, `jig verify` applies the map to the changed-file
 list and hands the profile `JIG_VERIFY_MAPPED`: a path to a file of `<path><TAB><decision>`
 lines, one per changed path, in the same order as `JIG_VERIFY_FILES`. `?` stands for a path
-no line matched — the profile's own built-in rules answer for it. Without a map, or for a
+no line matched — the profile's own built-in rules answer for it. `JIG_VERIFY_MAPPED_ALL` is the same file for every tracked path outside `tests/` and the documentation, so a profile that follows a changed function to its callers asks the map about files the change did not touch. Without a map, or for a
 profile that does not declare `map`, the variable is unset. The result line names the map:
 
 ```
