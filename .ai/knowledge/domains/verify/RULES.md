@@ -155,6 +155,20 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   `jp_run`, `jp_version`, `jp_exec` or `jp_have`: a bare `command -v`, a host's absolute
   path or a shell function would escape the prefix
   (adr-20261001-checks-run-where-the-project-runs).
+- **A script with no test of its own narrows by the functions the diff edited.** The shell
+  profile reads `git diff` against `JIG_VERIFY_BASE`, names the functions that changed, looks
+  them up by word in the other scripts, follows the functions that mention them to a fixpoint
+  (twenty rounds at most), and runs the tests of every script reached, each decided by the
+  project map (`JIG_VERIFY_MAPPED_ALL`, parsed by `cmd_verify` for every tracked file) or the
+  built-in rules. A global, a `source`, a new or removed function, a new file, an untested
+  caller, or a fixpoint that does not settle is ALL: a name that did not exist before has
+  callers nobody can list. The proof is by damage (`conventions/detectors.md`): break the
+  function and watch the red land in the selected tests.
+- **Under `verify.full_run: ci`, an ALL beside filters is left to CI.** The key is the project's
+  claim that CI runs the full set, so the profile runs the filters and the result line says
+  `full set left to CI`. ALL alone stays a full run: a narrowed run that selected nothing would
+  be a pass nothing produced. Without the key nothing changes. The profile unsets
+  `JIG_VERIFY_FULL_RUN`, `JIG_VERIFY_BASE` and `JIG_VERIFY_MAPPED_ALL` before the suite starts.
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.

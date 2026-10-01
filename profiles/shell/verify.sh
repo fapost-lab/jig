@@ -115,13 +115,192 @@ _shell_changed_scripts() {
   return 0
 }
 
+# _shell_fn_spans — read a script on stdin and print its top-level functions,
+# one `<name> <first line> <last line>` per line. A function is a `name() {` at
+# column 0 closed by a `}` at column 0, the layout every script in this
+# repository uses; a script written another way yields fewer spans, which only
+# makes the narrowing below give up (ALL), never narrow wrongly.
+_shell_fn_spans() {
+  awk '
+    /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/ && !name {
+      name = $0; sub(/[[:space:]]*\(\).*/, "", name); first = NR
+      # A one-line function closes where it opens.
+      if ($0 ~ /\{.*\}[[:space:]]*$/) { print name, first, NR; name = "" }
+      next
+    }
+    /^}/ && name { print name, first, NR; name = "" }
+  '
+}
+
+# _shell_changed_functions <file> — the functions of <file> the change edited,
+# one per line; ALL when that cannot be told. Read from `git diff` against the
+# base the run narrows to (JIG_VERIFY_BASE, HEAD without one): an added line
+# belongs to the function that holds it in the new file, a removed one to the
+# function that held it in the old. Anything but comments and blank lines
+# changed outside a function (a global, a `source`), a function that is new,
+# or one removed, is ALL: the callers of a name that did not exist before
+# cannot be listed, and top-level code runs for every test that loads the file.
+_shell_changed_functions() {
+  local f="$1" base="${JIG_VERIFY_BASE:-HEAD}" newspans oldspans hits name
+  git cat-file -e "$base:$f" 2>/dev/null || { printf 'ALL\n'; return 0; }
+  newspans=$(_shell_fn_spans < "$f")
+  oldspans=$(git show "$base:$f" 2>/dev/null | _shell_fn_spans) || oldspans=""
+  hits=$(git diff -U0 --no-color --no-ext-diff "$base" -- "$f" 2>/dev/null \
+    | NEWSPANS="$newspans" OLDSPANS="$oldspans" awk '
+        function load(text, nm, lo, hi,   rows, n, i, p) {
+          n = split(text, rows, "\n")
+          for (i = 1; i <= n; i++) {
+            split(rows[i], p, " "); nm[i] = p[1]; lo[i] = p[2]; hi[i] = p[3]
+          }
+          return n
+        }
+        function owner(line, nm, lo, hi, n,   i) {
+          for (i = 1; i <= n; i++) if (line >= lo[i] && line <= hi[i]) return nm[i]
+          return "ALL"
+        }
+        BEGIN {
+          nn = load(ENVIRON["NEWSPANS"], nnm, nlo, nhi)
+          no = load(ENVIRON["OLDSPANS"], onm, olo, ohi)
+        }
+        /^@@/ {
+          inhunk = 1
+          o = $2; sub(/^-/, "", o); split(o, q, ","); oldl = q[1] + 0
+          h = $3; sub(/^\+/, "", h); split(h, q, ","); newl = q[1] + 0
+          next
+        }
+        !inhunk { next }
+        /^[-+]/ {
+          body = substr($0, 2)
+          blank = (body ~ /^[[:space:]]*(#.*)?$/)
+          if ($0 ~ /^\+/) {
+            if (!blank) print owner(newl, nnm, nlo, nhi, nn)
+            newl++
+          } else {
+            if (!blank) print owner(oldl, onm, olo, ohi, no)
+            oldl++
+          }
+        }
+      ' | LC_ALL=C sort -u) || hits=ALL
+  case $'\n'"$hits"$'\n' in *$'\n'ALL$'\n'*) printf 'ALL\n'; return 0 ;; esac
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    # In both versions, or the change is a new or a removed function.
+    case $'\n'"$newspans" in *$'\n'"$name "*) ;; *) printf 'ALL\n'; return 0 ;; esac
+    case $'\n'"$oldspans" in *$'\n'"$name "*) ;; *) printf 'ALL\n'; return 0 ;; esac
+    printf '%s\n' "$name"
+  done <<EOF2
+$hits
+EOF2
+  return 0
+}
+
+# _shell_function_filters <file> — the tests a script with no test file of its
+# own reaches, found through the functions the change edited and their
+# callers rather than the file name. The edited functions are looked up by
+# word in every other script (not the tests); each function that mentions one
+# joins the set, until no new function joins (twenty rounds at most, past
+# which it is ALL). Each script that mentions a name is mapped as the project
+# map or the built-in rules map it, so one that has no test of its own either
+# is ALL — the library's own file is not asked for a test it does not have. Prints filters, ALL, or nothing when only comments changed.
+_shell_function_filters() {
+  local f="$1" names seen pat depth=0 out new found s scripts
+  names=$(_shell_changed_functions "$f")
+  case $'\n'"$names"$'\n' in *$'\n'ALL$'\n'*) printf 'ALL\n'; return 0 ;; esac
+  [ -n "$names" ] || return 0
+  scripts=$(_shell_all_scripts | sed '/^tests\//d')
+  seen="$names"
+  found=""
+  while :; do
+    pat=$(printf '%s\n' "$seen" | paste -sd'|' -)
+    # One pass over every script: the files that mention a name, and the
+    # functions that do. $scripts is split on newlines only, never globbed.
+    set -f
+    # shellcheck disable=SC2086
+    out=$(IFS=$'\n'; awk -v pat="(^|[^A-Za-z0-9_])($pat)([^A-Za-z0-9_]|\$)" '
+      FNR == 1 { fn = "" }
+      /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/ && !fn {
+        fn = $0; sub(/[[:space:]]*\(\).*/, "", fn)
+        # A one-line function ends where it starts.
+        one = ($0 ~ /\{.*\}[[:space:]]*$/)
+      }
+      $0 ~ pat { hit[FILENAME] = 1; if (fn) print "FN " fn }
+      /^}/ || one { fn = ""; one = 0 }
+      END { for (h in hit) print "FILE " h }
+    ' $scripts)
+    set +f
+    found=$(printf '%s\n' "$out" | sed -n 's/^FILE //p' | LC_ALL=C sort -u)
+    new=$(printf '%s\n%s\n' "$seen" "$(printf '%s\n' "$out" | sed -n 's/^FN //p')" \
+      | sed '/^$/d' | LC_ALL=C sort -u)
+    [ "$new" != "$(printf '%s\n' "$seen" | LC_ALL=C sort -u)" ] || break
+    depth=$((depth + 1))
+    if [ "$depth" -ge 20 ]; then printf 'ALL\n'; return 0; fi
+    seen="$new"
+  done
+  # No script but its own mentions the edited functions: a call by a computed
+  # name, or only by a test. Nobody can say what reaches it, so no test is
+  # named — ALL, never a pass that ran nothing.
+  if [ -z "$(printf '%s\n' "$found" | sed -e '/^$/d' -e "\\#^$f\$#d")" ]; then
+    printf 'ALL\n'
+    return 0
+  fi
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    [ "$s" != "$f" ] || continue
+    _shell_caller_filters "$s"
+  done <<EOF2
+$found
+EOF2
+  return 0
+}
+
+# _shell_caller_filters <path> — what a script that calls a changed function
+# needs: the project map's answer when it names the path (JIG_VERIFY_MAPPED_ALL,
+# parsed by `jig verify` for every tracked file), the built-in rules otherwise.
+_shell_caller_filters() {
+  local f="$1" decision="?" tok
+  if [ -n "${JIG_VERIFY_MAPPED_ALL:-}" ] && [ -f "${JIG_VERIFY_MAPPED_ALL:-}" ]; then
+    decision=$(awk -F '\t' -v p="$f" '$1 == p { print $2; exit }' "$JIG_VERIFY_MAPPED_ALL")
+    [ -n "$decision" ] || decision="?"
+  fi
+  case "$decision" in
+    '?') _shell_builtin_filters "$f" noscan ;;
+    -) ;;
+    *)
+      set -f
+      for tok in $decision; do
+        printf '%s\n' "$tok"
+      done
+      set +f
+      ;;
+  esac
+  return 0
+}
+
+# _shell_trim_ci — with `verify.full_run: ci` the project has said CI runs the
+# full set, so an ALL that sits beside filters is left to CI and the filters run
+# here. Alone, ALL stays: nothing would run otherwise, and a green that ran
+# nothing is the defect the filter check below exists to prevent. Works on the
+# global `filters`; sets ci_left=1 when ALL was dropped.
+ci_left=0
+_shell_trim_ci() {
+  local rest
+  ci_left=0
+  [ "${JIG_VERIFY_FULL_RUN:-}" = ci ] || return 0
+  case $'\n'"$filters"$'\n' in *$'\n'ALL$'\n'*) ;; *) return 0 ;; esac
+  rest=$(printf '%s\n' "$filters" | sed -e '/^ALL$/d' -e '/^$/d')
+  [ -n "$rest" ] || return 0
+  filters="$rest"
+  ci_left=1
+  return 0
+}
+
 # _shell_builtin_filters <path> — the profile's own answer for one path, true
 # for any project: a tests/run.sh filter per line, ALL for "run everything",
 # nothing when the path cannot affect a test. Anything specific to one
 # project's layout belongs in its map (.ai/verify/shell.map, ADR-0041), never
 # here: this file is copied into every project that uses the profile.
 _shell_builtin_filters() {
-  local f="$1" base
+  local f="$1" scan="${2:-scan}" base
   case "$f" in
     # Documentation, knowledge and plans carry no shell behaviour.
     *.md|docs/*|.ai/knowledge/*|.ai/workspace/*|.ai/specs/*) return 0 ;;
@@ -141,7 +320,7 @@ _shell_builtin_filters() {
       if [ -f "tests/$base.t.sh" ]; then
         printf '%s::\n' "$base"
       else
-        printf 'ALL\n'
+        if [ "$scan" = scan ]; then _shell_function_filters "$f"; else printf 'ALL\n'; fi
       fi
       ;;
     *) printf 'ALL\n' ;;
@@ -245,6 +424,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan tests/run.sh full "full scope"
   else
     filters=$(_shell_test_filters | LC_ALL=C sort -u)
+    _shell_trim_ci
     case $'\n'"$filters"$'\n' in *$'\n'ALL$'\n'*) filters=ALL ;; esac
     if [ -n "$filters" ] && [ "$filters" != ALL ]; then
       names=$(_shell_test_names)
@@ -255,7 +435,11 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $filters
 EOF
     fi
-    jp_plan_selection tests/run.sh "$filters" "test filters"
+    if [ "$ci_left" = 1 ]; then
+      jp_plan_selection tests/run.sh "$filters" "test filters, full set left to CI"
+    else
+      jp_plan_selection tests/run.sh "$filters" "test filters"
+    fi
   fi
   exit 0
 fi
@@ -343,6 +527,10 @@ if [ -x tests/run.sh ]; then
   if [ "$scoped" = 1 ]; then
     filters=$(_shell_test_filters | LC_ALL=C sort -u)
     reason="not narrowable"
+    _shell_trim_ci
+    # What the decision needed is read; the suite below must not inherit it,
+    # as it does not inherit the scope (tests/run.sh unsets the others).
+    unset JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN JIG_VERIFY_MAPPED_ALL
 
     # A filter that selects no test is not a narrowing: tests/run.sh reports
     # `0 passed` and exits 0, and a pass nothing produced is the defect this
@@ -394,7 +582,11 @@ EOF
       done <<EOF
 $filters
 EOF
-      _shell_tests_verdict "$t_worst" "scope: $t_count filters"
+      if [ "$ci_left" = 1 ]; then
+        _shell_tests_verdict "$t_worst" "scope: $t_count filters, full set left to CI"
+      else
+        _shell_tests_verdict "$t_worst" "scope: $t_count filters"
+      fi
     fi
   else
     ran_any=1

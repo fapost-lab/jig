@@ -71,6 +71,7 @@ environment variables. A profile receives them only if `scope` declares the capa
 |---|---|
 | `changed` | `JIG_VERIFY_SCOPE=changed` and `JIG_VERIFY_FILES`, a file of changed paths (ADR-0013) |
 | `map` | additionally `JIG_VERIFY_MAPPED`, the project's verify map applied to those paths (`schemas/verify-map.md`, ADR-0041). It means nothing without `changed`, which is checked first |
+| | A `map` profile also receives `JIG_VERIFY_MAPPED_ALL` (the same decisions for every tracked file that is not a test or a document, for a profile that narrows by caller), `JIG_VERIFY_BASE` (the ref the changed list was taken against, empty for `HEAD`) and `JIG_VERIFY_FULL_RUN` (`local` or `ci`) |
 | `explain` | `JIG_VERIFY_EXPLAIN=1` asks for a plan instead of checks. The profile prints one `PLAN <profile>: <check>: full\|filtered\|skip\|conditional (<reason>)` line per check, runs no project tool and exits 0. `conditional` names what remains unknown and whether the full set is possible |
 | `environment` | `JIG_RUN_EXEC`, the command prefix that reaches the environment the project runs in (`docker compose exec -T -w /app app`), set only when `jig verify` decided the checks run there. The profile promises that every project command goes through `jp_run`, `jp_version`, `jp_exec` or `jp_have` — never a bare `command -v`, a host's absolute path or a shell function — so the prefix reaches all of them (adr-20261001-checks-run-where-the-project-runs) |
 
