@@ -203,7 +203,7 @@ _node_all_glob_changed() {
 
 MGR=$(_node_pm)
 MGR_BIN=""
-if command -v "$MGR" >/dev/null 2>&1; then
+if jp_have "$MGR"; then
   MGR_BIN="$MGR"
 fi
 

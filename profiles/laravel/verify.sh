@@ -143,7 +143,7 @@ _laravel_all_reason() {
 }
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  if [ ! -f artisan ] || ! command -v php >/dev/null 2>&1; then
+  if [ ! -f artisan ] || ! jp_have php; then
     jp_plan "artisan test" skip "artisan or php not found"
   else
     filters=$(jp_decide _laravel_builtin)
@@ -166,7 +166,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   exit 0
 fi
 
-if [ ! -f artisan ] || ! command -v php >/dev/null 2>&1; then
+if [ ! -f artisan ] || ! jp_have php; then
   jp_skip "artisan test" "artisan or php not found"
   jp_end
 fi

@@ -460,6 +460,22 @@ cmd_verify() {
 
   [ -z "$header" ] || printf '%s\n' "$header"
 
+  # Where the project's commands run, decided once for every profile
+  # (adr-20261001-checks-run-where-the-project-runs). A refusal means nothing
+  # was checked: exit 3, before anyone waits for the clone.
+  # shellcheck source=lib/runenv.sh
+  . "$JIG_LIB/runenv.sh"
+  unset JIG_RUN_EXEC
+  runenv_resolve
+  if [ -n "$RUNENV_REFUSAL" ]; then
+    printf 'verify: refused: %s\n' "$RUNENV_REFUSAL"
+    if [ "$explain" = 1 ]; then return 1; fi
+    return 3
+  fi
+  if [ "$explain" = 1 ] || [ -n "$RUNENV_EXEC" ]; then
+    printf 'verify: checks run in %s\n' "$RUNENV_WHERE"
+  fi
+
   # Taken here, after every refusal above has had its chance: nobody should
   # wait for the clone only to be told their arguments were wrong.
   if [ "$explain" = 0 ]; then
@@ -517,6 +533,26 @@ cmd_verify() {
       printf 'PLAN %s: unknown (profile does not support explain)\n' "$p"
       unknown=$((unknown + 1))
       continue
+    fi
+
+    # Under an environment, a profile that never declared it can reach it
+    # would run its checks on the host: it is not run at all, and says so.
+    if [ -n "$RUNENV_EXEC" ] && ! profiles_supports "$pdir" environment; then
+      if [ "$explain" = 1 ]; then
+        printf 'PLAN %s: unknown (not adapted to run in %s)\n' "$p" "$RUNENV_WHERE"
+        unknown=$((unknown + 1))
+      else
+        printf 'RESULT %s: skip (not adapted to run in %s; its checks were not run on the host)\n' "$p" "$RUNENV_WHERE"
+        skip=$((skip + 1))
+        [ "$is_fallback" = 1 ] || covered_needs_install=$((covered_needs_install + 1))
+      fi
+      continue
+    fi
+    if [ -n "$RUNENV_EXEC" ]; then
+      JIG_RUN_EXEC="$RUNENV_EXEC"
+      export JIG_RUN_EXEC
+    else
+      unset JIG_RUN_EXEC
     fi
 
     note=""

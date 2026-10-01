@@ -295,13 +295,48 @@ jp_files() {
   return 0
 }
 
+# jp_exec <cmd...> — run a command where the project runs. `jig verify`
+# hands a profile that declares `scope: [..., environment]` the command prefix
+# that reaches the project's environment as JIG_RUN_EXEC (`docker compose exec
+# -T -w /app app`), and the command runs through it; with no prefix it runs as
+# is, on this machine. A profile that does not declare the capability never
+# receives one, so for it this is exactly "$@"
+# (adr-20261001-checks-run-where-the-project-runs). The prefix is plain words,
+# split on blanks and never globbed. Stdin is closed under a prefix: `docker
+# compose exec` would otherwise read the input of the loop a profile calls it
+# from.
+jp_exec() {
+  local -a pre
+  if [ -z "${JIG_RUN_EXEC:-}" ]; then
+    "$@"
+    return
+  fi
+  read -r -a pre <<EOF
+$JIG_RUN_EXEC
+EOF
+  "${pre[@]}" "$@" </dev/null
+}
+
+# jp_have <cmd> — exit 0 when <cmd> can be run where the project runs: the
+# environment's own `command -v` under a prefix, this shell's otherwise. A
+# profile that probes with `command -v` asks the host, which under a container
+# environment is the wrong machine.
+jp_have() {
+  if [ -z "${JIG_RUN_EXEC:-}" ]; then
+    command -v "$1" >/dev/null 2>&1
+    return
+  fi
+  # shellcheck disable=SC2016  # $1 is the inner shell's argument, by design
+  jp_exec sh -c 'command -v "$1" >/dev/null 2>&1' sh "$1" >/dev/null 2>&1
+}
+
 # jp_version <cmd...> — the first non-empty line of a tool's version answer
 # (Gradle's banner starts with a blank line), or `unknown`. Never fails the
 # profile: a tool that cannot answer --version must not abort the check it
 # only annotates (domains/verify RULES).
 jp_version() {
   local v
-  v=$("$@" 2>/dev/null | sed '/^[[:space:]]*$/d' | sed -n '1p') || v=""
+  v=$(jp_exec "$@" 2>/dev/null | sed '/^[[:space:]]*$/d' | sed -n '1p') || v=""
   [ -n "$v" ] || v="unknown"
   printf '%s\n' "$v"
 }
@@ -322,7 +357,7 @@ jp_run() {
   shift 2
   [ -z "$note" ] || suffix=" ($note)"
   JP_RAN=1
-  "$@" || rc=$?
+  jp_exec "$@" || rc=$?
   if [ "$rc" -eq 0 ]; then
     printf '%s: %s: pass%s\n' "$JP_PROFILE" "$check" "$suffix"
   elif [ "$rc" -ge 128 ]; then

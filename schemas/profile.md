@@ -12,7 +12,7 @@ absent key means is decided by its reader, not by this file.
 | `description` | scalar | one line on what the profile checks and which tools it reaches for. Read by no script either |
 | `detect` | `always`, or an inline list of globs | how `profiles_detect` recognises a project of this stack — see **Detection** |
 | `requires` | inline list of profile names | profiles this one builds on. Detection closes over it, and `profiles_check_requires` warns when an active profile's requirement is not active — see **Requires** |
-| `scope` | inline list of capabilities | which parts of the verify scope protocol this profile's `verify.sh` understands: `changed` (ADR-0013), `map` (ADR-0041), `explain` — see **Scope** |
+| `scope` | inline list of capabilities | which parts of the verify scope protocol this profile's `verify.sh` understands: `changed` (ADR-0013), `map` (ADR-0041), `explain`, `environment` — see **Scope** |
 
 ## Grammar
 
@@ -73,6 +73,7 @@ environment variables. A profile receives them only if `scope` declares the capa
 | `map` | additionally `JIG_VERIFY_MAPPED`, the project's verify map applied to those paths (`schemas/verify-map.md`, ADR-0041). It means nothing without `changed`, which is checked first |
 | | A `map` profile also receives `JIG_VERIFY_MAPPED_ALL` (the same decisions for every tracked file that is not a test or a document, for a profile that narrows by caller), `JIG_VERIFY_BASE` (the ref the changed list was taken against, empty for `HEAD`) and `JIG_VERIFY_FULL_RUN` (`local` or `ci`) |
 | `explain` | `JIG_VERIFY_EXPLAIN=1` asks for a plan instead of checks. The profile prints one `PLAN <profile>: <check>: full\|filtered\|skip\|conditional (<reason>)` line per check, runs no project tool and exits 0. `conditional` names what remains unknown and whether the full set is possible |
+| `environment` | `JIG_RUN_EXEC`, the command prefix that reaches the environment the project runs in (`docker compose exec -T -w /app app`), set only when `jig verify` decided the checks run there. The profile promises that every project command goes through `jp_run`, `jp_version`, `jp_exec` or `jp_have` — never a bare `command -v`, a host's absolute path or a shell function — so the prefix reaches all of them (adr-20261001-checks-run-where-the-project-runs) |
 
 Support is declared, never inferred. A profile that does not declare a capability is run
 with those variables explicitly unset — not merely left as the caller's environment had
@@ -84,6 +85,13 @@ For `--explain`, a profile without the `explain` capability is not run at all. J
 nonzero or prints no valid plan line makes the preview fail with exit 1. A real `jig verify`
 always unsets `JIG_VERIFY_EXPLAIN`, even if its caller exported it. The preview never takes
 the clone's verification run record and never treats a plan as a verification result.
+
+Under an environment (`run.exec`, `schemas/config.md`), a profile without the `environment`
+capability is not run at all — running it would put its checks on the host. Its result is
+`skip (not adapted to run in <where>; …)`, counted like a skip for a missing tool, and in
+`--explain` it is `unknown`. Without an environment, `JIG_RUN_EXEC` is unset for every
+profile, so `jp_run` and `jp_version` behave exactly as they did before the capability
+existed.
 
 ## The reader is tolerant, and that is the design
 

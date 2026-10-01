@@ -17,7 +17,7 @@
 # `autopilot.parallel` are also in JIG_CFG_LOCAL_ONLY_KEYS below: they answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel run.exec"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -32,9 +32,13 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # `autopilot.parallel` bounds how many task agents a phase run builds at once,
 # which is a question about one person's machine and their tolerance for
 # agents working unwatched, not about the project.
+# `run.exec` says where this machine runs the project's checks — a container
+# on one laptop, the host on a colleague's — and a committed value would send
+# every contributor's checks to one person's environment
+# (adr-20261001-checks-run-where-the-project-runs).
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel run.exec"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -137,6 +141,7 @@ autopilot.parallel 2
 knowledge.require_frontmatter true
 verify.full_run local
 verify.busy_ttl 30m
+run.exec auto
 EOF
 }
 
@@ -412,7 +417,10 @@ _cfg_parallel() {
 # - agent.git and agent.ci_timeout: the checks of jig_agent_git and
 #   jig_ci_timeout;
 # - autopilot.parallel: the check of jig_autopilot_parallel;
-# - git.worktree_root: any path _cfg_read gives back unchanged.
+# - git.worktree_root: any path _cfg_read gives back unchanged;
+# - run.exec: `auto`, `host` or a command prefix of plain words — runenv.sh
+#   splits it on blanks and interprets nothing, so a quote, `$`, backtick or
+#   backslash would reach the command as a literal character.
 # Nothing may hold a line break, a `#` (_cfg_read cuts a comment there) or
 # surrounding blanks (it trims them).
 jig_config_value_problem() {
@@ -454,6 +462,14 @@ jig_config_value_problem() {
     autopilot.parallel)
       _cfg_parallel "$value" \
         || { printf 'not a whole number of tasks (1 to 16)\n'; return 1; }
+      ;;
+    run.exec)
+      case "$value" in
+        *[\"\'\`\$\\]*)
+          printf 'a quote, $, backtick or backslash; write the command prefix as plain words (e.g. docker compose exec -T app)\n'
+          return 1
+          ;;
+      esac
       ;;
     git.worktree_root)
       case "$value" in
