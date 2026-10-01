@@ -6,7 +6,7 @@ domains: []
 paths:
   - ".github/workflows/**"
 summary: Why the branch rules require only the ci-ok job, why a matrix job's name can never be a required check, and how a throwaway probe branch answers a routing question in a minute instead of 25.
-reviewed_at: 2026-09-25
+reviewed_at: 2026-10-01
 ---
 # CI gating
 
@@ -17,9 +17,9 @@ rule, and the rationale is the pull request it cost.
 
 | Rule | Rationale |
 |---|---|
-| The branch rules require exactly one status check, `ci-ok`: a job that needs every other job, runs with `always()`, and fails unless each ended as `success` or `skipped`. A new job joins its `needs` list rather than the branch rule. | A rule listing jobs by hand drifts from the workflow, and the drift is only visible as a merge button that is wrong in one direction or the other. |
+| The branch rules require exactly one status check, `ci-ok`: a job that needs every other job, runs with `always()`, and fails when a job failed, was cancelled, or was skipped although `scope` and the event required it to run (`.github/scripts/ci-ok.sh`). A new job joins its `needs` list, its result is passed to the script, and the script learns what decides whether it runs; the branch rule stays as it is. | A rule listing jobs by hand drifts from the workflow, and the drift is only visible as a merge button that is wrong in one direction or the other. |
 | A matrix job's name is never a required check. | `test` is named `${{ matrix.os }}` and `test-windows` `${{ matrix.shard }}/${{ strategy.job-total }}`, so changing how many shares the Windows suite runs in renames its jobs and leaves `ci-ok` alone — which is the reason the rule names one check. When `scope` skips such a job, GitHub never expands the expression: it reports one skipped check called `matrix.os`, and the contexts `ubuntu-latest` and `macos-latest` are never sent. A rule naming them leaves the pull request at "Expected — waiting for status to be reported" with a green suite behind it and no way to merge — which is what happened to #86, hours after the rule was changed to name them. |
-| A skipped job counts as a pass. | Skipping is how `scope` answers that the change needed no run, and how a job says it does not apply to this event. GitHub already reads a skipped required check as successful, so the aggregate must agree with it or the two disagree about the same run. |
+| A skipped job passes only when something decided it should not run. | Skipping is how `scope` answers that the change needed no run, and how a job says it does not apply to this event; GitHub reads a skipped required check as successful. A skip nobody decided — a broken `if`, a runner that never started — looks identical, and the one required check would stay green over nothing. `ci-ok.sh` recomputes from `scope`'s outputs and the event which jobs had to run; its conditions are a deliberate second copy of each job's `if:`, because a verdict reading the same expression would agree with it when it is wrong. |
 
 ## Example
 
@@ -31,8 +31,9 @@ The check that decides it, in `.github/workflows/ci.yml`:
     if: always()
 ```
 
-Its step reads `${{ join(needs.*.result, ' ') }}` and fails on anything that is neither
-`success` nor `skipped`, an empty list included.
+Its step passes `scope`'s outputs, the event and each `needs.<job>.result` to
+`.github/scripts/ci-ok.sh`, which fails on a failed or cancelled job and on a skip the scope
+did not decide, an empty list included.
 
 ## Probing the workflow itself
 

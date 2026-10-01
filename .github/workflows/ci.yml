@@ -423,32 +423,37 @@ jobs:
   # (seen on #86). `test-windows` has the same shape.
   #
   # This job's name never changes, `always()` makes it report on every event,
-  # and it gathers what the others ended as. A skipped job passes: skipping is
-  # how `scope` says the change needed no run, and how a job declares itself
-  # irrelevant to this event. Anything else — failure, cancellation — fails
-  # here, so the rule blocks the merge while the suite is still running and
-  # after it broke.
+  # and it gathers what the others ended as. A skipped job passes only when
+  # something decided it should not run: .github/scripts/ci-ok.sh recomputes
+  # from scope's outputs and the event which jobs had to run, and a job that
+  # had to and was skipped fails here. Without that, skipping would read as
+  # passing however it came about — a broken `if`, a runner that never
+  # started — and the one required check would be green over nothing. Failure
+  # and cancellation fail here too, so the rule blocks the merge while the
+  # suite is still running and after it broke.
+  #
+  # Every job in `needs` must be named in the call below, and the script
+  # refuses a name it does not know.
   ci-ok:
     needs: [scope, knowledge, test, test-windows, smoke-windows, changelog, epic-pr]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+
       - name: Gather the results of every job
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          FULL: ${{ needs.scope.outputs.full }}
+          WINDOWS: ${{ needs.scope.outputs.windows }}
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          echo "job results: $RESULTS"
-          # An empty list would pass the loop without checking anything, so an
-          # expression that rendered to nothing fails here instead of reading
-          # as a green suite.
-          if [ -z "$(printf '%s' "$RESULTS" | tr -d ' ')" ]; then
-            echo "ci-ok: no job results were reported"
-            exit 1
-          fi
-          for result in $RESULTS; do
-            case "$result" in
-              success | skipped) ;;
-              *) echo "ci-ok: a job ended as '$result'"; exit 1 ;;
-            esac
-          done
-          echo "ci-ok: every job passed or was skipped"
+          .github/scripts/ci-ok.sh \
+            "scope=${{ needs.scope.result }}" \
+            "knowledge=${{ needs.knowledge.result }}" \
+            "test=${{ needs.test.result }}" \
+            "test-windows=${{ needs.test-windows.result }}" \
+            "smoke-windows=${{ needs.smoke-windows.result }}" \
+            "changelog=${{ needs.changelog.result }}" \
+            "epic-pr=${{ needs.epic-pr.result }}"
