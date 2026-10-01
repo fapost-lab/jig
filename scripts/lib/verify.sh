@@ -445,7 +445,7 @@ cmd_verify() {
 
   # One trap for both the temporary files and the run record: the record has to
   # come back on every exit, not only on a run that narrowed.
-  trap '_verify_cleanup' EXIT INT TERM
+  jig_on_exit '_verify_cleanup'
 
   if [ "$scope" = 1 ]; then
     JIG_VERIFY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-files.XXXXXX") \

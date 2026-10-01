@@ -226,6 +226,78 @@ test_runner_shard_and_skip_still_apply_with_two_jobs() {
   assert_contains "$OUT" "2 passed, 0 failed, 1 skipped"
 }
 
+# --- nothing of a run outlives it ---------------------------------------------
+# Hundreds of tests made `mktemp "${TMPDIR:-/tmp}/jig-..."` directories and never
+# removed them: 4600+ git repositories at once in the machine's $TMPDIR, which
+# fseventsd and Spotlight walked. The runner now points every test's TMPDIR at a
+# directory of its own, inside the run, so these tests run a suite against a scratch
+# $TMPDIR and assert it is empty afterwards.
+
+# rn_write_leaky_fixture — tests that leave a directory in $TMPDIR (and a sibling of
+# their own directory), one of them failing.
+rn_write_leaky_fixture() {
+  cat > root/tests/leak.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_leaves_a_dir() { mkdir "$(mktemp -d "${TMPDIR:-/tmp}/jig-leak.XXXXXX")/x"; mkdir "$JIG_TEST_TMP.sibling"; }
+test_2_fails_leaving_a_dir() { mktemp -d "${TMPDIR:-/tmp}/jig-leak.XXXXXX" >/dev/null; return 1; }
+test_3_leaves_a_file() { mktemp "${TMPDIR:-/tmp}/jig-leak.XXXXXX" >/dev/null; }
+EOF
+}
+
+test_runner_leaves_nothing_in_tmpdir_after_a_run_that_fails() {
+  rn_build_suite
+  rn_write_leaky_fixture
+  mkdir scratch
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=2 TMPDIR="$PWD/scratch" \
+    "$PWD/root/tests/run.sh"
+  assert_contains "$OUT" "2 passed, 1 failed"
+  assert_eq "" "$(ls -A scratch)" "the run left something in TMPDIR"
+}
+
+test_runner_leaves_nothing_in_tmpdir_with_one_job() {
+  rn_build_suite
+  rn_write_leaky_fixture
+  mkdir scratch
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=1 TMPDIR="$PWD/scratch" \
+    "$PWD/root/tests/run.sh"
+  assert_contains "$OUT" "2 passed, 1 failed"
+  assert_eq "" "$(ls -A scratch)" "the run left something in TMPDIR"
+}
+
+test_runner_leaves_nothing_in_tmpdir_when_interrupted() {
+  rn_build_suite
+  cat > root/tests/slow.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_waits() { mktemp -d "${TMPDIR:-/tmp}/jig-leak.XXXXXX" >/dev/null; : > "$JIG_TEST_TMP.started"; sleep 30; }
+EOF
+  mkdir scratch
+  # Job control gives the background run its own signal dispositions.
+  set -m
+  env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=2 TMPDIR="$PWD/scratch" \
+    "$PWD/root/tests/run.sh" >/dev/null 2>&1 &
+  local pid=$!
+  set +m
+  local until=$((SECONDS + 60))
+  while [ -z "$(find scratch -name '*.started' 2>/dev/null)" ] && [ "$SECONDS" -lt "$until" ]; do sleep 0.2; done
+  [ -n "$(find scratch -name '*.started')" ] || fail "the test never started"
+  kill -TERM "$pid"
+  wait "$pid" 2>/dev/null || true
+  assert_eq "" "$(ls -A scratch)" "an interrupted run left something in TMPDIR"
+}
+
+test_runner_sweeps_its_own_directories_older_than_a_day() {
+  rn_build_suite
+  rn_write_ab_fixture
+  mkdir -p scratch/jig-test.OLD scratch/jig-test-results.OLD scratch/jig-test.NEW scratch/unrelated
+  touch -t 202001010000 scratch/jig-test.OLD scratch/jig-test-results.OLD scratch/unrelated
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=1 TMPDIR="$PWD/scratch" \
+    "$PWD/root/tests/run.sh"
+  assert_no_file scratch/jig-test.OLD
+  assert_no_file scratch/jig-test-results.OLD
+  assert_dir scratch/jig-test.NEW "a recent directory was swept"
+  assert_dir scratch/unrelated "a directory that is not the runner's was swept"
+}
+
 # --- not completed (a killed test is a third outcome) -----------------------
 # adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass: a test
 # killed by a signal is neither a pass nor a failure. bash reports a child

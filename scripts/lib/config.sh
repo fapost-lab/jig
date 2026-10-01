@@ -638,7 +638,8 @@ _config_set() {
   [ -d "$dir" ] || jig_die "config set: no $JIG_AI_DIR/ directory at ${dir%/*}; run jig init there first"
 
   _CONFIG_TMP="$file.tmp.$$"
-  trap 'rm -f "$_CONFIG_TMP" "$_CONFIG_TMP.next"' EXIT
+  jig_cleanup_add "$_CONFIG_TMP"
+  jig_cleanup_add "$_CONFIG_TMP.next"
   if [ -f "$file" ]; then
     cat "$file" > "$_CONFIG_TMP"
   else
@@ -734,7 +735,8 @@ _config_unset() {
   fi
 
   _CONFIG_TMP="$file.tmp.$$"
-  trap 'rm -f "$_CONFIG_TMP" "$_CONFIG_TMP.next"' EXIT
+  jig_cleanup_add "$_CONFIG_TMP"
+  jig_cleanup_add "$_CONFIG_TMP.next"
   cat "$file" > "$_CONFIG_TMP"
   # The report is built here, against the file as it still is, so "unset" and
   # "not set" say what actually happened rather than what was asked for.

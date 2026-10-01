@@ -233,6 +233,7 @@ _upgrade_self_check() {
 # lives in the destination's directory so the rename stays on one filesystem.
 _upgrade_place() {
   local staged_abs="$1" local_abs="$2" tmp="$2.tmp.$$"
+  jig_cleanup_add "$tmp"
   mkdir -p "$(dirname "$local_abs")"
   cp -p "$staged_abs" "$tmp" || jig_die "upgrade: could not write $local_abs"
   mv -f "$tmp" "$local_abs" || jig_die "upgrade: could not write $local_abs"
@@ -493,6 +494,7 @@ _upgrade_section() {
 
   if [ "$dry_run" != 1 ]; then
     _UPGRADE_SECTION_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-upgrade-section.XXXXXX")
+    jig_cleanup_add "$_UPGRADE_SECTION_TMP"
     jig_section_read "$template" > "$_UPGRADE_SECTION_TMP"
     jig_section_write "$file" "$_UPGRADE_SECTION_TMP" \
       || jig_die "upgrade: could not replace the Jig section of AGENTS.md"
@@ -1042,8 +1044,7 @@ _upgrade_finish() {
     _upgrade_next
     return 0
   fi
-  # jig_ship_pr sets an EXIT trap of its own for the body it cuts; by now this
-  # command's temporaries are gone, so replacing its trap loses nothing.
+  # jig_ship_pr registers the body it cuts with the same exit cleanup.
   jig_ship_pr "upgrade" "$_UPGRADE_BRANCH" "$base" "$msg"
   if [ "$level" = merge ] && [ -n "$JIG_SHIP_URL" ]; then
     jig_ship_merge "upgrade" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" any
@@ -1065,9 +1066,8 @@ _upgrade_next() {
 # --- cmd_upgrade -------------------------------------------------------------
 
 # Staging directory / union-of-paths temp file / hash-table work directory for
-# the current cmd_upgrade run. Script-global (not `local`) so the EXIT/INT/TERM cleanup trap below
-# still sees them if the process dies mid-run — same pattern as
-# scripts/lib/knowledge.sh's KM_*_FILE variables.
+# the current cmd_upgrade run. Script-global (not `local`), registered with jig_cleanup_add
+# (common.sh) so an interrupted run still removes them.
 _UPGRADE_STAGE=""
 _UPGRADE_UNION_FILE=""
 _UPGRADE_WORK=""
@@ -1092,11 +1092,6 @@ cmd_upgrade() {
   . "$JIG_LIB/profiles.sh"
   # shellcheck source=lib/section.sh
   . "$JIG_LIB/section.sh"
-
-  trap '[ -n "$_UPGRADE_STAGE" ] && rm -rf "$_UPGRADE_STAGE"
-        [ -n "$_UPGRADE_UNION_FILE" ] && rm -f "$_UPGRADE_UNION_FILE"
-        [ -n "$_UPGRADE_SECTION_TMP" ] && rm -f "$_UPGRADE_SECTION_TMP"
-        [ -n "$_UPGRADE_WORK" ] && rm -rf "$_UPGRADE_WORK"' EXIT INT TERM
 
   local source
   if [ -n "$from" ]; then
@@ -1167,12 +1162,15 @@ cmd_upgrade() {
   from_version=$(manifest_header_get jig.version)
 
   _UPGRADE_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/jig-upgrade-stage.XXXXXX")
+  jig_cleanup_add -d "$_UPGRADE_STAGE"
   _upgrade_build_staged "$source" "$_UPGRADE_STAGE" "$active_profiles" "$active_adapters"
 
   _UPGRADE_UNION_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-upgrade-union.XXXXXX")
+  jig_cleanup_add "$_UPGRADE_UNION_FILE"
   { (cd "$_UPGRADE_STAGE" && find . -type f | sed 's|^\./||'); manifest_paths; } | sort -u > "$_UPGRADE_UNION_FILE"
 
   _UPGRADE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/jig-upgrade-work.XXXXXX")
+  jig_cleanup_add -d "$_UPGRADE_WORK"
   _upgrade_hash_table "$_UPGRADE_UNION_FILE" "$_UPGRADE_STAGE" "$_UPGRADE_WORK" \
     > "$_UPGRADE_WORK/table"
 
@@ -1248,7 +1246,7 @@ cmd_upgrade() {
 # mutates the project. Built on top of --dry-run rather than duplicating the
 # staging/decision-table logic — `cmd_upgrade --dry-run` already computes
 # exactly this, and command substitution already runs it in a subshell, so
-# its own EXIT/INT/TERM trap and locals never touch the caller's.
+# its own exit cleanup (common.sh) and locals never touch the caller's.
 #
 # Callers: `jig status` (drift's pending count) and `jig verify` (refuse to
 # run on a stale install). Precondition: the project is initialised

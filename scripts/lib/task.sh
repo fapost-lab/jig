@@ -435,6 +435,7 @@ _task_likely_owner() {
 _task_write_task_md() {
   local id="$1" dest="$2" from="${3:-}" source tmpl tmp
   tmp="$dest.tmp.$$"
+  jig_cleanup_add "$tmp"
   if [ -n "$from" ]; then
     if [ "$from" = "-" ]; then
       sed "s/{{TASK_ID}}/$id/g" > "$tmp"
@@ -485,6 +486,7 @@ _task_rewrite_state() {
   local dir="$1" key="$2" value="$3" file tmp today
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   JIG_S_KEY="$key" JIG_S_VALUE="$value" JIG_S_TODAY="$today" \
     awk '
@@ -519,6 +521,7 @@ _task_rewrite_state_remove() {
   local dir="$1" key="$2" file tmp today
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   awk -v key="$key" -v today="$today" '
     {
@@ -548,6 +551,7 @@ _task_touch_state() {
   file="$dir/state"
   [ -f "$file" ] || return 0
   tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   awk -v today="$today" '
     /^updated_at:/ { print "updated_at: " today; next }
@@ -810,6 +814,7 @@ task_new() {
   # happened to be on, and four of them claimed a branch they had nothing to
   # do with in a single day (ADR-0026, as amended).
   local tmp="$dir/state.tmp.$$"
+  jig_cleanup_add "$tmp"
   {
     printf 'task_id: %s\n' "$id"
     [ -z "$class" ] || printf 'class: %s\n' "$class"
@@ -1285,6 +1290,7 @@ _task_autopilot_log() {
   dir=$(task_dir "$id")
   file="$dir/autopilot"
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   if [ -f "$file" ]; then
     cp "$file" "$tmp"
   else
@@ -1775,6 +1781,7 @@ task_finding_add() {
   file="$dir/findings"
   fid=$(_task_finding_next_id "$file")
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   if [ -f "$file" ]; then
     cp "$file" "$tmp"
   else
@@ -1836,6 +1843,7 @@ task_finding_set() {
 
   local tmp today
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   today=$(jig_today)
   # Values reach awk through the environment, not `-v`: awk expands escape
   # sequences in a `-v` value, so a reason spelling a literal backslash-t
@@ -1948,6 +1956,7 @@ _task_review_dir() {
 _task_review_tree() {
   local dir="$1" tmp tree
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-task-review-tree.XXXXXX") || return 1
+  jig_cleanup_add "$tmp"
   rm -f "$tmp"
 
   if git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
@@ -2125,6 +2134,7 @@ task_receipt_write() {
 
   file="$dir/receipt"
   tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
   {
     printf 'stage: %s\n' "$stage"
     printf 'reviewed_at: %s\n' "$(jig_today)"
@@ -2737,6 +2747,7 @@ task_artifact() {
   root=$(_task_workspace_root "$id" "task artifact") || return 1
   dest="$root/$kind.md"
   tmp="$dest.tmp.$$"
+  jig_cleanup_add "$tmp"
   # A link is refused rather than resolved. `mv` would replace it and `append`
   # would read through it, out of the workspace and back in — and
   # `task artifacts` already treats an artifact that leaves the workspace as

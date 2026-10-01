@@ -84,6 +84,7 @@ ctx_stateless() {
   elif [ "$no_task" -eq 0 ]; then
     local tc_rc=0 tc_err_file
     tc_err_file=$(mktemp "${TMPDIR:-/tmp}/jig-context-current.XXXXXX")
+    jig_cleanup_add "$tc_err_file"
     task_id=$(task_current 2>"$tc_err_file") || tc_rc=$?
     [ "$tc_rc" -eq 2 ] && cat "$tc_err_file" >&2
     [ "$tc_rc" -eq 0 ] || task_id=""
@@ -312,6 +313,7 @@ _ctx_parse_selectors() {
     # quieter than the command they extend.
     local tc_rc=0 tc_err_file
     tc_err_file=$(mktemp "${TMPDIR:-/tmp}/jig-context-current.XXXXXX")
+    jig_cleanup_add "$tc_err_file"
     CTX_TASK=$(task_current 2>"$tc_err_file") || tc_rc=$?
     if [ "$tc_rc" -eq 2 ]; then cat "$tc_err_file" >&2; fi
     if [ "$tc_rc" -ne 0 ]; then CTX_TASK=""; fi
@@ -524,6 +526,7 @@ _ctx_cache_write() {
   local task="$1" rows="$2" cache tmp
   cache=$(_ctx_cache_file "$task")
   tmp="$cache.tmp.$$"
+  jig_cleanup_add "$tmp"
   if { _ctx_cache_fingerprint; printf '%s\n' "$_CTX_CACHE_MARK"; cat "$rows"; } > "$tmp"; then
     mv "$tmp" "$cache"
   else
@@ -873,6 +876,7 @@ ctx_acknowledge() {
 
   ledger=$(_ctx_ledger_file "$task_id")
   tmp="$ledger.tmp.$$"
+  jig_cleanup_add "$tmp"
 
   # Rewrite through a temporary and `mv` (convention-shell): a crash must not
   # leave a half-written ledger, which would read as "already acknowledged".
@@ -930,6 +934,7 @@ _ctx_pending_paths() {
   paths=$(_ctx_tracked_paths "$rows")
   [ -n "$paths" ] || return 0
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-context-pending.XXXXXX")
+  jig_cleanup_add "$tmp"
   while IFS= read -r relpath; do
     [ -n "$relpath" ] || continue
     printf '%s\n' "$relpath"
