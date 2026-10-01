@@ -60,6 +60,13 @@ their own file is answered by `config unset` too — say that the key then answe
    whether it may `git fetch` (`fetch`, true). Recommend the defaults.
 7. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
    task folders somewhere other than `../<project>.worktrees`.
+8. **Where the checks run** (`run.exec`). First run `.ai/scripts/jig verify --explain` and read
+   its `verify: checks run in …` or `verify: refused: …` line: it names what Jig detected, or
+   the signs of a container it could not place. Ask: "Where do this project's tests run — here,
+   or in a container?" With a detection that is right, nothing needs writing (`auto` keeps
+   finding it); say so. Otherwise offer `host`, or the command prefix that reaches the
+   container — work it out from the project (`docker compose exec -T -w <dir> <service>`,
+   `docker exec -i -w <dir> <container>`) and show it; never ask the person to type one.
 
 Ask about no other key. If `jig config set` refuses a key as not local, this version of Jig
 does not have it: drop the question.

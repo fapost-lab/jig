@@ -204,7 +204,7 @@ EOF
     fi
   done
 
-  if ! command -v composer >/dev/null 2>&1; then
+  if ! jp_have composer; then
     jp_plan "composer validate" skip "composer not found in PATH"
   elif jp_scoped && ! jp_changed_any composer.json composer.lock; then
     jp_plan "composer validate" skip "composer.json/composer.lock not changed"
@@ -313,7 +313,7 @@ fi
 # always in full mode; in a scoped run, only when the manifest or lock file
 # it validates actually changed.
 
-if command -v composer >/dev/null 2>&1; then
+if jp_have composer; then
   v=$(jp_version composer --version)
   if jp_scoped && ! jp_changed_any composer.json composer.lock; then
     jp_skip "composer validate" "scope: composer.json/composer.lock not changed"

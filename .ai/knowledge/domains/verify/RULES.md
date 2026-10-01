@@ -14,7 +14,8 @@ paths:
   - "profiles/**"
   - tests/run.sh
   - scripts/lib/profile.sh
-reviewed_at: 2026-09-30
+  - scripts/lib/runenv.sh
+reviewed_at: 2026-10-01
 ---
 # Verify rules
 
@@ -146,6 +147,14 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   only it knows its stack; the shared library only names the path (`jp_decide_cause`), and it
   names none for a path the project's own map widened, since attributing that line to a rule
   of the profile's would be a wrong explanation rather than a missing one.
+- **A project's checks are never run on the host by guess.** `jig verify` decides once,
+  before any profile, where the project's commands run (`runenv_resolve`); a sign of a
+  container that no detector recognised is a refusal with exit 3, never a host run with a
+  warning. Under an environment, a profile without the `environment` capability is not run
+  at all. A shipped profile that declares the capability runs every project command through
+  `jp_run`, `jp_version`, `jp_exec` or `jp_have`: a bare `command -v`, a host's absolute
+  path or a shell function would escape the prefix
+  (adr-20261001-checks-run-where-the-project-runs).
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.

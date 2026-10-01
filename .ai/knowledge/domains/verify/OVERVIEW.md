@@ -15,7 +15,8 @@ paths:
   - ".ai/verify/**"
   - scripts/lib/profile.sh
   - schemas/profile.md
-reviewed_at: 2026-09-18
+  - scripts/lib/runenv.sh
+reviewed_at: 2026-10-01
 ---
 # Verify
 
@@ -46,6 +47,10 @@ it actually did.
   restore the full set. The mode and its reason are printed in a header line.
 - The project map `.ai/verify/<profile>.map` (`schemas/verify-map.md`): parsed and validated
   here, handed as `JIG_VERIFY_MAPPED` to profiles declaring `scope: [changed, map]`.
+- Where the project's checks run (adr-20261001-checks-run-where-the-project-runs):
+  `scripts/lib/runenv.sh` decides once per run — `run.exec`, the Sail and docker compose
+  detectors, the signs that refuse, the readiness probe — and the prefix reaches profiles
+  declaring `scope: [..., environment]` as `JIG_RUN_EXEC`.
 - Honest reporting: a narrowed run says what it narrowed to, and an ignored scope is
   printed rather than dropped.
 
@@ -71,7 +76,9 @@ contract. A change to how profiles are *copied* still belongs to `install`.
   `_verify_map_apply`.
 - `scripts/lib/profile.sh` — `jp_begin`, `jp_changed`, `jp_changed_any`, `jp_decide`,
   `jp_path_matches`, `jp_is_doc`, `jp_first_missing`, `jp_files`, `jp_version`, `jp_run`,
-  `jp_skip`, `jp_end`.
+  `jp_exec`, `jp_have`, `jp_skip`, `jp_end`.
+- `scripts/lib/runenv.sh` — `runenv_resolve`, `_runenv_detect`, `_runenv_signs`,
+  `_runenv_probe`.
 - `profiles/python/verify.sh` — the reference profile on the library; each profile's header
   comment states where its tools come from and how it narrows.
 - `profiles/shell/verify.sh` — `_shell_builtin_filters`, the reference for what a shipped
