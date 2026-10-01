@@ -71,6 +71,7 @@ environment variables. A profile receives them only if `scope` declares the capa
 |---|---|
 | `changed` | `JIG_VERIFY_SCOPE=changed` and `JIG_VERIFY_FILES`, a file of changed paths (ADR-0013) |
 | `map` | additionally `JIG_VERIFY_MAPPED`, the project's verify map applied to those paths (`schemas/verify-map.md`, ADR-0041). It means nothing without `changed`, which is checked first |
+| | A `map` profile also receives `JIG_VERIFY_MAPPED_ALL` (the same decisions for every tracked file that is not a test or a document, for a profile that narrows by caller), `JIG_VERIFY_BASE` (the ref the changed list was taken against, empty for `HEAD`) and `JIG_VERIFY_FULL_RUN` (`local` or `ci`) |
 | `explain` | `JIG_VERIFY_EXPLAIN=1` asks for a plan instead of checks. The profile prints one `PLAN <profile>: <check>: full\|filtered\|skip\|conditional (<reason>)` line per check, runs no project tool and exits 0. `conditional` names what remains unknown and whether the full set is possible |
 
 Support is declared, never inferred. A profile that does not declare a capability is run

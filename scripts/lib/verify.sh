@@ -288,7 +288,10 @@ EOF
 # variables are script-global, never `local`, because the trap runs after the
 # function that set them has returned (conventions/shell.md).
 _verify_cleanup() {
-  rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}" 2>/dev/null || true
+  if [ -n "${JIG_VERIFY_MAP_ALL_TMP:-}" ]; then
+    rm -f "$JIG_VERIFY_MAP_ALL_TMP.list" 2>/dev/null || true
+  fi
+  rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}" "${JIG_VERIFY_MAP_ALL_TMP:-}" 2>/dev/null || true
   if [ -n "${JIG_VERIFY_BUSY:-}" ]; then
     _verify_busy_release "$JIG_VERIFY_BUSY"
     JIG_VERIFY_BUSY=""
@@ -316,6 +319,7 @@ cmd_verify() {
   local covered_needs_install=0 is_fallback=0 run_output
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
+  JIG_VERIFY_MAP_ALL_TMP=""
   JIG_VERIFY_BUSY=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -552,6 +556,17 @@ cmd_verify() {
         JIG_VERIFY_MAP_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-map.XXXXXX") \
           || jig_die "verify: cannot create temporary file"
         _verify_map_apply "$JIG_PROJECT/$map" "$JIG_VERIFY_TMP" > "$JIG_VERIFY_MAP_TMP"
+        # The same decisions for every tracked file that could call a changed
+        # function: a profile that narrows by caller needs the map's answer for
+        # a path the change did not touch, and must not parse the map itself.
+        JIG_VERIFY_MAP_ALL_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-mapall.XXXXXX") \
+          || jig_die "verify: cannot create temporary file"
+        { git -C "$JIG_PROJECT" ls-files -co --exclude-standard \
+            | grep -v -e '^tests/' -e '^docs/' -e '\.mdx\{0,1\}$' || true; } \
+          > "$JIG_VERIFY_MAP_ALL_TMP.list"
+        _verify_map_apply "$JIG_PROJECT/$map" "$JIG_VERIFY_MAP_ALL_TMP.list" \
+          > "$JIG_VERIFY_MAP_ALL_TMP"
+        rm -f "$JIG_VERIFY_MAP_ALL_TMP.list"
         map_ok=1
         note=" (scope: changed, $nfiles files, map $map)"
       fi
@@ -570,15 +585,17 @@ cmd_verify() {
       if [ "$map_ok" = 1 ]; then
         plan_output=$( cd "$JIG_PROJECT" \
           && JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
-             JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" bash "$pdir/verify.sh" )
+             JIG_VERIFY_BASE="$base" JIG_VERIFY_FULL_RUN="$full_run" \
+             JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" JIG_VERIFY_MAPPED_ALL="$JIG_VERIFY_MAP_ALL_TMP" bash "$pdir/verify.sh" )
       elif [ "$scope_ok" = 1 ]; then
         plan_output=$( cd "$JIG_PROJECT" \
-          && unset JIG_VERIFY_MAPPED \
+          && unset JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL \
           && JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
+             JIG_VERIFY_BASE="$base" JIG_VERIFY_FULL_RUN="$full_run" \
              bash "$pdir/verify.sh" )
       else
         plan_output=$( cd "$JIG_PROJECT" \
-          && unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
+          && unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN \
           && JIG_VERIFY_EXPLAIN=1 bash "$pdir/verify.sh" )
       fi
       rc=$?
@@ -586,14 +603,16 @@ cmd_verify() {
       run_output=$( cd "$JIG_PROJECT" \
         && unset JIG_VERIFY_EXPLAIN \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
-           JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" \
+             JIG_VERIFY_BASE="$base" JIG_VERIFY_FULL_RUN="$full_run" \
+           JIG_VERIFY_MAPPED="$JIG_VERIFY_MAP_TMP" JIG_VERIFY_MAPPED_ALL="$JIG_VERIFY_MAP_ALL_TMP" \
            bash "$pdir/verify.sh" 2>&1 )
       rc=$?
       [ -z "$run_output" ] || printf '%s\n' "$run_output"
     elif [ "$scope_ok" = 1 ]; then
       run_output=$( cd "$JIG_PROJECT" \
-        && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_MAPPED \
+        && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL \
         && JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_VERIFY_TMP" \
+             JIG_VERIFY_BASE="$base" JIG_VERIFY_FULL_RUN="$full_run" \
            bash "$pdir/verify.sh" 2>&1 )
       rc=$?
       [ -z "$run_output" ] || printf '%s\n' "$run_output"
@@ -605,14 +624,15 @@ cmd_verify() {
       # reads as "not narrowed", the same answer this branch always gave.
       run_output=""
       ( cd "$JIG_PROJECT" \
-        && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED \
+        && unset JIG_VERIFY_EXPLAIN JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN \
         && bash "$pdir/verify.sh" )
       rc=$?
     fi
     set -e
     if [ "$map_ok" = 1 ]; then
-      rm -f "$JIG_VERIFY_MAP_TMP"
+      rm -f "$JIG_VERIFY_MAP_TMP" "$JIG_VERIFY_MAP_ALL_TMP"
       JIG_VERIFY_MAP_TMP=""
+      JIG_VERIFY_MAP_ALL_TMP=""
     fi
 
     if [ "$explain" = 1 ]; then
