@@ -34,23 +34,12 @@ mangled — and a value carrying the right two characters can write a second lin
 file, which is enough to make a task that never started look started. The correct mechanism is
 already used elsewhere in Jig; this puts it everywhere a value is written.
 
-**An interrupted command must not leave its scratch files in your project.** Jig writes a new file
-beside the old one and renames it into place, so a command that dies halfway can never leave you
-half a file. What it does leave is the spare copy, and nothing cleans it up afterwards.
-
 ## Then: what tells you something untrue
 
 **Redrawing the status page must not impersonate a session.** The page refreshes itself by running
 Jig again, through the same path an ordinary command takes. So the refresh overwrites the checkout's
 record of what is actually happening in it, and it can swallow the "HEAD moved underneath you"
 warning that was meant for the session working next to you — the one case that warning exists for.
-
-**Jig's own required check must tell a skipped job from a passed one.** The single check that gates
-every change to Jig treats a job that was skipped as a job that succeeded. A broken condition, a
-runner failure or a typo in a path filter therefore reads as green, and nothing anywhere turns red.
-This is a statement about how Jig is built rather than about your project, which is why it is
-written here rather than left unsaid: a project whose gate cannot distinguish *checked and passed*
-from *never checked* has not earned the trust it asks of you.
 
 **A Jig project cloned on Windows must upgrade like the original.** With Git's default settings on
 Windows, a clone or a task worktree gets Jig's files with Windows line endings, its manifest among

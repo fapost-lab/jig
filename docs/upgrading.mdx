@@ -122,6 +122,41 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.17.1 to 0.18.0
+
+Nothing on the checklist the upgrade itself prints. Two things about running Jig change, and one is unchanged.
+
+**If your project runs in a container, `jig verify` may now refuse, where it used to run on this
+machine.** On Laravel Sail, or with one docker compose service that mounts the project, Jig finds the
+container and runs the checks in it; `jig verify --explain` prints where. If there are signs of a
+container it cannot place — a `.devcontainer/`, `.ddev/` or `.lando.yml`, two services mounting the
+project, a `DB_HOST` in `.env` that names a compose service — it exits 3 with the reason. Say *"set
+up Jig for me"* (`jig-setup` now asks where your tests run) or set it yourself, in your own
+`.ai/config.local.yaml`:
+
+```bash
+jig config set run.exec "docker compose exec -T -w /app app" --local   # the command that reaches the container
+jig config set run.exec host --local                                   # this machine is right after all
+```
+
+A stopped container is refused too, with the command that starts it where Jig knows one. In a
+task's worktree, a container that mounts another copy of the project is refused: start an
+environment for the worktree. Projects that need none of this see no change; with `CI` set and
+`run.exec` at `auto`, nothing is detected or refused.
+
+**`jig task start` now refuses a checkout another session is working in.** Where it used to move
+HEAD under that session, it stops, names the task or session and how long ago it ran, and offers
+`jig task start <id> --worktree`, waiting, or deleting the stale record it names. Start the task in a
+worktree, or finish the other work first.
+
+**Leftover temporary files from older versions stay.** Jig no longer leaves `*.tmp.<pid>` files
+behind when a command is interrupted, but the ones an earlier version already left are not removed.
+They are files named like a real file followed by `.tmp.` and a number (`.new.`, `.join.` and
+`.restore.` too); nothing reads them, so delete them once, with no Jig command running.
+
+Unchanged: `jig task set <id> status consolidated` still refuses until the task's pull request has
+merged, as it has since 0.17.0.
+
 ## From 0.16.1 to 0.17.0
 
 Nothing on the checklist the upgrade itself prints — that only names steps from 0.15.0 and older,
