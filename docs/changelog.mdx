@@ -8,6 +8,51 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.19.0 — 2026-10-02
+
+`jig verify` now knows the common local PHP environments, runs every built-in profile where your
+project runs, and `jig doctor` says when this machine's runtime is not the one your project asks for.
+
+- **More environments are recognised, so fewer projects are refused.** DDEV (`.ddev/config.yaml`,
+  through `ddev exec --raw`), Lando (`.lando.yml`) and a devcontainer (`.devcontainer/devcontainer.json`,
+  through the `devcontainer` CLI when it is installed, otherwise the labelled container) now have
+  detectors; Lando and a devcontainer without its CLI are reached with `docker exec`. A stopped one is
+  refused with its start command (`ddev start`, `lando start`, `devcontainer up`); a shell already
+  inside one of them runs on the spot. Jig still refuses a `.devcontainer/` or `.ddev/` folder without
+  its manifest. **Devilbox** is found by its PHP container (compose service `php`, data folder mounted
+  at `/shared/httpd`) wherever your data folder lives, and its checks run there as Devilbox's own user.
+  **Laravel Herd** is found when the project is one of Herd's sites; its checks run on this machine
+  with Herd's `bin` folder first on `PATH`. Devilbox's detection was tried against a real running stack (the container was found and `php -v`
+  ran through the prefix); a full `jig verify` there, and its refusals, were exercised only with
+  stand-ins. DDEV,
+  Lando, the devcontainer CLI and Herd were exercised only with stand-ins for their commands and
+  fixture files, never a real install; if one is not recognised or answers wrongly, `run.exec` and
+  `run.path` override it ([Configuration](/configuration#where-checks-run)).
+- **New personal setting `run.path`.** A folder put first on `PATH` for the checks when they run on this
+  machine, for a PHP that is not first there; `auto` (the default) uses what Jig detected (Herd's).
+  Blanks are allowed in it; it must be an absolute folder that exists, and a missing one is refused.
+- **Every built-in profile runs where your project runs.** The `shell`, `python`, `go`, `rust`, `ruby`,
+  `jvm`, `dotnet`, `dart` and `swift` profiles joined `php`, `laravel`, `node` and `generic`: inside an
+  environment their checks go through its prefix instead of being skipped. Under an environment, Python
+  does not use the `$VIRTUAL_ENV` or poetry of this machine; its tools come from a `.venv/` or `venv/`
+  that runs there, otherwise from the environment's own `PATH`. This was tested with a stand-in for
+  `docker` whose tools exist only inside the "container", not in real containers.
+- **`jig doctor` and `jig verify --explain` warn when this machine's runtime is not the one your project
+  asks for.** When the checks run on this machine, Jig compares the PHP, Node and Python found here with
+  `require.php` in `composer.json`, `engines.node` in `package.json` and `.python-version`. Common forms
+  (`^`, `~`, comparisons, wildcards, "and", "or") are judged; any other form is reported as "could not
+  compare", never as fine, and so is a runtime that is not installed on this machine. `jig doctor` also
+  lists the runtimes that match; `jig verify --explain` prints only the warnings. Nothing is said when
+  your project asks for nothing, or when the checks run in an environment. These are warnings: they do
+  not stop `jig verify`.
+- **`jig task start` refuses less often.** Only a task that has been started, is not finished, and holds
+  the branch checked out in this checkout now counts as working in it. A session that only filed a task
+  with `jig task new` or ran `jig status` no longer blocks the next start. The refusal and
+  `jig upgrade`'s matching stop no longer advise deleting the other session's record: it lapses by itself
+  after `checkout.busy_ttl`.
+- **Paths with a backslash no longer confuse container detection.** The container reader now passes
+  project paths to `awk` in a way that keeps backslashes as they are.
+
 ## 0.18.0 — 2026-10-02
 
 `jig verify` learns to run a project's checks where the project runs, and Jig stops leaving its
