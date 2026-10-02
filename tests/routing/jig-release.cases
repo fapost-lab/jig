@@ -1,0 +1,7 @@
+# jig-release: choosing what goes into the next release and making it.
++ plan the next release
++ what goes into the next release
++ cut a release from the tasks we have
+- review this change before it ships
+- write a spec for the new sync engine
+- take the csv export on autopilot

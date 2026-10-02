@@ -7,7 +7,7 @@
 #
 # A task links to a spec through one `Spec: .ai/specs/<id>/ — Phase <n>` line in
 # its task.md. `new` creates a spec, `done` checks a linked task's roadmap
-# items, `remove` unlinks a spec's open tasks and moves the spec to trash,
+# items, `link` writes a filed task's `Spec:` line, `remove` unlinks a spec's open tasks and moves the spec to trash,
 # `close` removes a spec whose roadmap is complete, `epic` declares, cuts,
 # finishes and reopens a spec's epic branch (ADR-0035, ADR-0040 as amended),
 # and `ship` carries a declaration, an epic or an epic's final pull request as
@@ -15,7 +15,7 @@
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -28,6 +28,7 @@ cmd_spec() {
     list) spec_list "$@" ;;
     plan) spec_plan "$@" ;;
     done) spec_done "$@"; jig_status_page_touch ;;
+    link) spec_link "$@" ;;
     remove) spec_remove "$@"; jig_status_page_touch ;;
     close) spec_close "$@"; jig_status_page_touch ;;
     epic) spec_epic "$@"; jig_status_page_touch ;;
@@ -1971,6 +1972,118 @@ spec_remove() {
   mkdir -p "${dest%/*}" || jig_die "spec remove: cannot create ${rel_dest%/*}"
   mv "$dir" "$dest" || jig_die "spec remove: could not move $JIG_AI_DIR/specs/$sid to $rel_dest"
   printf 'moved          %s/specs/%s -> %s\n' "$JIG_AI_DIR" "$sid" "$rel_dest"
+}
+
+# spec_link <spec-id> <task-id> — link a task that is already filed to a spec:
+# write its `Spec: .ai/specs/<spec-id>/ — Phase <n>` line, the line `jig-idea`
+# §10 writes for a task filed from a roadmap item, under the first heading of
+# its task.md. The opposite of what `spec remove` does to the same line
+# (adr-20261002-a-release-is-a-spec-with-an-epic).
+#
+# The phase is read from the roadmap, never given: the item that names the
+# task (`` `<task-id>` — ``) sits under one `## Phase <n>` heading, and a
+# second source could disagree with it. The roadmap item is the agent's to
+# write first; this command checks that the roadmap and the task agree, the
+# condition `spec done` later stands on.
+#
+# A started task is refused: its branch was cut when it started, from the
+# default branch, and it reaches an epic only by being rewritten. It ships
+# where it was cut from, and an epic gets it when the default branch is merged
+# into it — which `spec epic --finish` requires anyway. A borrowed task
+# directory is refused as `spec remove` refuses it: the task.md belongs to the
+# checkout that filed it.
+spec_link() {
+  [ $# -ge 2 ] || jig_die "spec link: missing argument (usage: jig spec link <spec-id> <task-id>)"
+  [ $# -eq 2 ] || jig_die "spec link: unexpected argument: $3"
+  local sid="$1" tid="$2" roadmap tdir tasks_root st branch link rc=0 phases count phase line
+  spec_valid_id "$sid" || jig_die "spec link: invalid spec id: $sid"
+  jig_valid_id "$tid" || jig_die "spec link: invalid task id: $tid"
+  jig_require_init
+  roadmap="$(spec_dir)/$sid/roadmap.md"
+  [ -d "$(spec_dir)/$sid" ] || jig_die "spec link: no such spec in this checkout: $JIG_AI_DIR/specs/$sid"
+  [ -f "$roadmap" ] || jig_die "spec link: $JIG_AI_DIR/specs/$sid has no roadmap.md"
+  tasks_root="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  [ ! -L "$tasks_root" ] \
+    || jig_die "spec link: this checkout borrows its task workspaces; run it in the checkout that owns them"
+  tdir=$(spec_task_dir "$tid") || jig_die "spec link: invalid task id: $tid"
+  [ ! -L "$tdir" ] || jig_die "spec link: the workspace of $tid is a link; run it in the checkout that owns it"
+  [ -f "$tdir/task.md" ] || jig_die "spec link: unknown task: $tid (no $JIG_AI_DIR/workspace/tasks/$tid/task.md)"
+
+  st=$(spec_task_state "$tdir" status)
+  case "$st" in
+    consolidated | abandoned) jig_die "spec link: $tid is $st; only a live task is linked" ;;
+  esac
+  link=$(jig_spec_link "$tdir/task.md") || rc=$?
+  [ "$rc" = 0 ] || jig_die "spec link: $tid links to more than one spec in its task.md"
+  if [ "$link" = "$sid" ]; then
+    printf 'spec link: %s already linked to %s\n' "$tid" "$sid"
+    return 0
+  fi
+  [ -z "$link" ] || jig_die "spec link: $tid is linked to spec $link; unlink it there first"
+  branch=$(spec_task_state "$tdir" branch)
+  [ -z "$branch" ] \
+    || jig_die "spec link: $tid is started on $branch; a started task is not moved — ship it where it was cut from, and an epic gets it when the default branch is merged into it"
+
+  # Every phase whose items name the task, once each; `-` for an item above
+  # the first `## Phase` heading.
+  phases=$(awk -v id="$tid" '
+    /^##[[:space:]]/ {
+      phase = "-"
+      h = $0
+      sub(/^##[[:space:]]+/, "", h)
+      if (h ~ /^Phase[[:space:]]+[0-9]+/) {
+        sub(/^Phase[[:space:]]+/, "", h)
+        sub(/[^0-9].*$/, "", h)
+        phase = h
+      }
+      next
+    }
+    /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/ {
+      text = $0
+      sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]*/, "", text)
+      head = "`" id "`"
+      if (substr(text, 1, length(head)) == head &&
+          substr(text, length(head) + 1) ~ /^[[:space:]]+(—|-|--)[[:space:]]/) {
+        p = (phase == "" ? "-" : phase)
+        if (!(p in seen)) { seen[p] = 1; print p }
+      }
+    }
+  ' "$roadmap")
+  [ -n "$phases" ] \
+    || jig_die "spec link: no item in $JIG_AI_DIR/specs/$sid/roadmap.md names $tid; add \`- [ ] \`$tid\` — <goal>\` to its phase first"
+  count=$(printf '%s\n' "$phases" | wc -l | tr -d ' ')
+  [ "$count" = 1 ] \
+    || jig_die "spec link: items naming $tid sit in more than one phase of $JIG_AI_DIR/specs/$sid/roadmap.md; keep them in one"
+  phase="$phases"
+  if [ "$phase" = - ]; then
+    line="Spec: .ai/specs/$sid/"
+  else
+    line="Spec: .ai/specs/$sid/ — Phase $phase"
+  fi
+  spec_link_task "$tdir/task.md" "$line" || jig_die "spec link: could not write $JIG_AI_DIR/workspace/tasks/$tid/task.md"
+  printf 'spec link: %s linked: %s\n' "$tid" "$line"
+}
+
+# spec_link_task <task.md> <line> — put <line> under the first `# ` heading,
+# after a blank line, or at the top when there is none. Written atomically.
+spec_link_task() {
+  local file="$1" line="$2" tmp
+  tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
+  if ! JIG_SL_LINE="$line" awk '
+    { lines[NR] = $0; if (!at && /^# /) at = NR }
+    END {
+      if (!at) { print ENVIRON["JIG_SL_LINE"]; print "" }
+      for (i = 1; i <= NR; i++) {
+        print lines[i]
+        if (i == at) { print ""; print ENVIRON["JIG_SL_LINE"] }
+      }
+    }
+  ' "$file" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$file"
 }
 
 # spec_links_to <task.md> <spec-id> — whether any `Spec:` line names exactly

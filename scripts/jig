@@ -87,6 +87,7 @@ Usage: jig <command> [args]
   spec new <id>                  create .ai/specs/<id>/ from the specification templates
   spec list                      specifications under .ai/specs/ and their roadmap progress
   spec done <task-id>            check the roadmap items that name a spec-linked task
+  spec link <spec-id> <task-id>  link a filed, not-started task to the spec phase naming it
   spec close <id> [--leftovers-handled]
                                  remove a spec whose roadmap is done (no epic)
   spec epic <id> [--finish [--leftovers-handled] | --reopen]

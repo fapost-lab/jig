@@ -62,7 +62,7 @@ _task_usage() {
     abandon) printf 'usage: jig task abandon <id>\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
     resume) printf 'usage: jig task resume <id>\n' ;;
-    list) printf 'usage: jig task list [--all] [--status <status>]\n' ;;
+    list) printf 'usage: jig task list [--all] [--status <status>] [--goals]\n' ;;
     show) printf 'usage: jig task show <id>\n' ;;
     current) printf 'usage: jig task current\n' ;;
     changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
@@ -2588,10 +2588,11 @@ _task_is_live() {
 
 task_list() {
   jig_require_init
-  local show_all=0 want_status=""
+  local show_all=0 want_status="" goals=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --all) show_all=1; shift ;;
+      --goals) goals=1; shift ;;
       --status)
         [ $# -ge 2 ] || jig_die "task list: --status requires a value"
         _task_valid_status "$2" || jig_die "task list: invalid status: $2"
@@ -2640,6 +2641,9 @@ task_list() {
       line="$line base=$base_branch"
     fi
     [ "$paused" = "true" ] && line="$line paused"
+    # The goal rides on the line through the sort, after a unit separator,
+    # and is put on a line of its own below it once sorted.
+    [ "$goals" -eq 0 ] || line="$line"$'\037'"goal: $(_task_goal "${dir}task.md")"
     lines="$lines
 $line"
   done
@@ -2652,9 +2656,31 @@ $line"
     fi
     return 0
   fi
-  printf '%s\n' "$lines" | sort
+  printf '%s\n' "$lines" | sort | awk -F '\037' '{ print $1; if (NF > 1) print "  " $2 }'
   [ "$hidden" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$hidden"
   return 0
+}
+
+# _task_goal <task.md> — the first paragraph under the `## Goal` heading of a
+# task's brief, joined into one line, or `(none)` when the brief has no such
+# heading or nothing under it. What `jig task list --goals` shows a person
+# choosing which tasks go into a release; a missing goal is a gap in the
+# brief, said as one, not a field to add.
+_task_goal() {
+  local goal=""
+  [ -f "$1" ] && goal=$(awk '
+    /^##[[:space:]]+Goal[[:space:]]*$/ { in_goal = 1; next }
+    in_goal && /^#/ { exit }
+    in_goal && /^[[:space:]]*$/ { if (text != "") exit; next }
+    in_goal {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      text = (text == "" ? line : text " " line)
+    }
+    END { print text }
+  ' "$1")
+  [ -n "$goal" ] || goal="(none)"
+  printf '%s\n' "$goal"
 }
 
 task_show() {

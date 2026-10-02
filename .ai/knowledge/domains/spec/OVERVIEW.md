@@ -11,6 +11,7 @@ paths:
   - scripts/lib/spec.sh
   - "templates/spec/**"
   - "skills/jig-idea/**"
+  - "skills/jig-release/**"
 reviewed_at: 2026-09-30
 ---
 # Spec
@@ -44,9 +45,13 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
 - The phase plan (`jig spec plan <id> --phase <n>`): each wave of a phase with its items, their tasks
   and states, what earlier waves still hold, and which tasks may start under the strict-wave rule a
   phase run follows. The waves grammar and the matching rule are in `schemas/spec.md`.
-- The link between a task and its spec: the `Spec:` line in the task's `task.md`, checking its
-  roadmap items at the knowledge decision (`jig spec done`), and taking a spec out with its links
+- The link between a task and its spec: the `Spec:` line in the task's `task.md`, written for a
+  task filed earlier by `jig spec link` (never for a started one), checking its roadmap items at
+  the knowledge decision (`jig spec done`), and taking a spec out with its links
   (`jig spec remove`).
+- The `jig-release` skill: a release planned as a spec with an epic — the order tasks are picked
+  in, the gate on the list and the level, the notes task and its checklist
+  (adr-20261002-a-release-is-a-spec-with-an-epic).
 
 ## Boundaries
 
@@ -55,7 +60,7 @@ Outside: knowledge. Nothing here is resolved by `jig context` or validated by
 `.ai/specs/` — that would turn a plan into a description of the system.
 
 Outside: task lifecycle. A spec never starts a task, and `spec.sh` never writes a task
-`state`. It reads `status`, `branch` and `base_commit`, writes only the `Spec:` line out of a
+`state`. It reads `status`, `branch` and `base_commit`, writes only the `Spec:` line into or out of a
 `task.md`, and abandons a task by running `jig task abandon` through the dispatcher. The id grammar
 is shared with tasks through `jig_valid_id` in `common.sh`, because a roadmap names task ids;
 `spec.sh` must not source `task.sh`, so it builds a workspace path itself in `spec_task_dir`.

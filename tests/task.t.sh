@@ -1165,6 +1165,39 @@ test_task_list_status_filter() {
   assert_contains "$OUT" "requires a value"
 }
 
+test_task_list_goals_prints_the_first_goal_paragraph_under_each_task() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  jig task new b-task --from - >/dev/null <<'EOF'
+# B
+
+## Goal
+
+The first line of the goal
+and its second line.
+
+A second paragraph that is not shown.
+
+## Scope
+EOF
+  jig task new a-task --from - >/dev/null <<'EOF'
+# A
+
+No goal heading here.
+EOF
+
+  run jig task list --goals
+  assert_eq 0 "$RC"
+  assert_eq "a-task class=- status=active not-started
+  goal: (none)
+b-task class=- status=active not-started
+  goal: The first line of the goal and its second line." "$OUT"
+
+  # Without the flag the listing is as it was.
+  run jig task list
+  assert_not_contains "$OUT" "goal:"
+}
+
 test_task_list_reports_no_live_tasks() {
   fixture_repo
   run jig init --from "$JIG_HOME"

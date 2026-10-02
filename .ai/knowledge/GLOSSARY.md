@@ -154,6 +154,13 @@ tasks are cut from it and merged into it; it reaches the default branch in one p
 the version raised, after `jig spec epic <id> --finish` (ADR-0040). Declared by the `Epic:` line of
 the roadmap. Informal synonyms: epic, feature branch.
 
+## Release Spec
+
+A Specification that plans one release: `release-<YYYY-MM-DD>`, one phase whose items are the tasks
+going in and, last, the task that writes the release notes, with `Epic:` and `Release:` lines. Built
+and shipped by the same commands as any epic; planned by the `jig-release` skill
+(adr-20261002-a-release-is-a-spec-with-an-epic). Informal synonyms: release, release epic.
+
 ## Linked Source (Stub)
 
 A knowledge document whose frontmatter names an existing tracked file with `source:`, so a project's own

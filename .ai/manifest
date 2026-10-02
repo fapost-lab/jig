@@ -4,5 +4,5 @@ jig.source: .
 jig.mode: link
 installed_at: 2026-10-02
 adapters: [claude, codex]
-instructions.section: 7e107ab1945d51e351cec426cd76a97555bb340f AGENTS.md
+instructions.section: e858830f151e3929c98a29247b0f86cea7bbbcf5 AGENTS.md
 ---

@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -894,6 +894,146 @@ test_spec_done_complete_hint_absent_when_already_done() {
   assert_eq 0 "$RC"
   assert_eq "spec done: T-1 already done in .ai/specs/alpha/roadmap.md" "$OUT"
   assert_not_contains "$OUT" "roadmap complete"
+}
+
+# --- spec link: a filed task joins a spec (a release) --------------------------
+
+# spec_link_fixture — a spec `rel` whose Phase 1 names T-1, and T-1 filed with
+# a brief of its own.
+spec_link_fixture() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/rel
+  printf '# Release\n' > .ai/specs/rel/spec.md
+  cat > .ai/specs/rel/roadmap.md <<'EOF'
+# Roadmap — Release
+
+Destination: the release is out.
+
+## Phase 1 — Release
+
+- [ ] `T-1` — fix the thing
+- [ ] `notes` — release notes
+EOF
+  jig task new T-1 --from - >/dev/null <<'EOF'
+# Fix the thing
+
+## Goal
+
+The thing works.
+EOF
+}
+
+test_spec_link_writes_the_phase_line_under_the_heading() {
+  spec_link_fixture
+  run jig spec link rel T-1
+  assert_eq 0 "$RC"
+  assert_eq "spec link: T-1 linked: Spec: .ai/specs/rel/ — Phase 1" "$OUT"
+  assert_eq "# Fix the thing" "$(sed -n 1p .ai/workspace/tasks/T-1/task.md)"
+  assert_eq "" "$(sed -n 2p .ai/workspace/tasks/T-1/task.md)"
+  assert_eq "Spec: .ai/specs/rel/ — Phase 1" "$(sed -n 3p .ai/workspace/tasks/T-1/task.md)"
+  assert_file_contains .ai/workspace/tasks/T-1/task.md "The thing works."
+
+  # The line is the one `spec done` reads.
+  run jig spec "done" T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec done: T-1 checked in .ai/specs/rel/roadmap.md"
+}
+
+test_spec_link_twice_is_already_linked() {
+  spec_link_fixture
+  jig spec link rel T-1 >/dev/null
+  cp .ai/workspace/tasks/T-1/task.md before.md
+  run jig spec link rel T-1
+  assert_eq 0 "$RC"
+  assert_eq "spec link: T-1 already linked to rel" "$OUT"
+  assert_eq "$(cat before.md)" "$(cat .ai/workspace/tasks/T-1/task.md)"
+}
+
+test_spec_link_without_a_heading_puts_the_line_on_top() {
+  spec_link_fixture
+  printf 'no heading here\n' > .ai/workspace/tasks/T-1/task.md
+  run jig spec link rel T-1
+  assert_eq 0 "$RC"
+  assert_eq "Spec: .ai/specs/rel/ — Phase 1" "$(sed -n 1p .ai/workspace/tasks/T-1/task.md)"
+  assert_eq "no heading here" "$(sed -n 3p .ai/workspace/tasks/T-1/task.md)"
+}
+
+test_spec_link_item_outside_a_phase_links_without_one() {
+  spec_link_fixture
+  printf -- '- [ ] `T-1` — fix the thing\n' > .ai/specs/rel/roadmap.md
+  run jig spec link rel T-1
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/task.md "Spec: .ai/specs/rel/"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/task.md)" "Phase"
+}
+
+test_spec_link_refuses_a_task_the_roadmap_does_not_name() {
+  spec_link_fixture
+  jig task new T-2 >/dev/null
+  run jig spec link rel T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: no item in .ai/specs/rel/roadmap.md names T-2"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/task.md)" "Spec:"
+}
+
+test_spec_link_refuses_items_in_two_phases() {
+  spec_link_fixture
+  printf '\n## Phase 2 — Later\n\n- [ ] `T-1` — the rest of it\n' >> .ai/specs/rel/roadmap.md
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "items naming T-1 sit in more than one phase"
+}
+
+test_spec_link_refuses_a_started_task() {
+  spec_link_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  jig task start T-1 >/dev/null 2>&1
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: T-1 is started on task/T-1; a started task is not moved"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/task.md)" "Spec:"
+}
+
+test_spec_link_refuses_a_closed_task() {
+  spec_link_fixture
+  jig task abandon T-1 >/dev/null 2>&1
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: T-1 is abandoned; only a live task is linked"
+}
+
+test_spec_link_refuses_a_task_linked_elsewhere() {
+  spec_link_fixture
+  printf 'Spec: .ai/specs/other/\n' >> .ai/workspace/tasks/T-1/task.md
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: T-1 is linked to spec other; unlink it there first"
+}
+
+test_spec_link_refuses_unknown_spec_and_task() {
+  spec_link_fixture
+  run jig spec link nope T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: no such spec in this checkout: .ai/specs/nope"
+  run jig spec link rel ghost
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: unknown task: ghost"
+  run jig spec link rel -bad
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: invalid task id: -bad"
+  run jig spec link rel
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: missing argument"
+}
+
+test_spec_link_refuses_a_borrowed_task_directory() {
+  spec_link_fixture
+  mv .ai/workspace/tasks ../owner-tasks
+  ln -s "$PWD/../owner-tasks" .ai/workspace/tasks
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: this checkout borrows its task workspaces"
+  assert_not_contains "$(cat ../owner-tasks/T-1/task.md)" "Spec:"
 }
 
 # --- spec remove: argument handling and preconditions --------------------------
