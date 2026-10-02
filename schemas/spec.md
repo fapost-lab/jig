@@ -95,6 +95,21 @@ An item names the task when its text starts with the backticked id and a dash �
 grammar above — compared as a string. Run when the knowledge decision is recorded, before the
 commit (ADR-0035).
 
+## `jig spec link <spec-id> <task-id>`
+
+Writes the `Spec:` line into a task that is already filed, under the first `# ` heading of its
+`task.md` (at the top when it has none). The phase is read from the roadmap: the `## Phase <n>`
+heading above the item that names the task.
+
+| Situation | Result |
+|---|---|
+| one phase's items name the task | `spec link: <id> linked: Spec: …`, written atomically |
+| already linked to this spec | `already linked`, exit 0, file unchanged |
+| no item names it, or items in two phases | error: write the roadmap item first, in one phase |
+| task started (`branch` in its state) | error: a started task ships where it was cut from |
+| task `consolidated` or `abandoned`, linked to another spec, or to two | error |
+| spec, roadmap or task missing; task directory borrowed through a link | error |
+
 ## `jig spec remove <spec-id> [--dry-run] [--abandon-unstarted]`
 
 Report lines, one per decision:

@@ -243,5 +243,11 @@ such a change raises minor). After the merge, CI runs the tests and tags `v<JIG_
 merge that leaves the version alone creates nothing, and a version lower than the latest release
 fails the job. Nobody tags by hand (ADR-0034).
 
+A release is planned with the `jig-release` skill: it proposes which live tasks go in and at what
+level, builds them on a release epic, and has a task of its own write the notes against the merged
+pull requests' diffs (adr-20261002-a-release-is-a-spec-with-an-epic).
+After the merge, watch CI on `main` until the tag exists: some Windows jobs run only there, and a red
+`main` gets no tag.
+
 A release that changes installation on Windows also goes through
 [`.github/WINDOWS_RELEASE_CHECKLIST.md`](.github/WINDOWS_RELEASE_CHECKLIST.md).

@@ -61,6 +61,10 @@ lists them with their roadmap progress. A spec released once, at the end, is bui
 epic branch (`jig spec epic`): its tasks are cut from the epic and their pull requests go
 into it.
 
+`jig-release` plans a release with a person: which filed tasks go in, in what order and at what
+version level. A release is a spec with an epic, so the same commands build it; `jig spec link`
+links a task filed earlier, and a started task stays out of the epic.
+
 `jig-autopilot` runs one task's route without waiting between stages and stops only where a
 human is needed; the route, the gates and `agent.git` stay what they are.
 

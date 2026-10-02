@@ -219,6 +219,10 @@ Rewriting `roadmap.md` here is editing the spec: it happens on `spec/<id>` (or t
 never straight on the default branch — the reason §1 resumes the spec before this step is
 ever reached, not after.
 
+A task filed earlier, outside the roadmap, joins a phase the other way round: write its item
+first, then `jig spec link <spec-id> <task-id>` writes the `Spec:` line for the phase that item is
+in. It refuses a started task — its branch is already cut, and it stays where it was cut from.
+
 The tasks are filed, not started. When the human wants to begin one, hand it to `jig-task`. The
 item is checked later by `jig spec done`, called from consolidation — never by hand.
 
