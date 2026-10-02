@@ -804,3 +804,22 @@ test_config_local_key_lists_are_inside_the_inventory() {
   assert_eq 0 "$RC"
   assert_eq "" "$OUT" "these local keys are in no jig_config_keys row: $OUT"
 }
+
+# route.depth trades one person's time against process
+# (adr-20261002-route-depth-is-a-personal-choice): full or lean, local only.
+test_config_set_route_depth_validation() {
+  fixture_jig_repo
+  _config_accepts route.depth full
+  _config_accepts route.depth lean
+  _config_rejects route.depth light
+  _config_rejects route.depth Lean
+}
+
+test_config_route_depth_is_local_only() {
+  fixture_jig_repo
+  printf 'route.depth: lean\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: route.depth in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+}

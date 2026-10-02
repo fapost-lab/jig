@@ -21,6 +21,7 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `gate_design` | `jig task gate` | the hash of the approved design — the same value a review receipt's `design` pins (`design.md`, and for T4 `spec.md` and `alternatives.md`). A different current hash means the design changed after its approval. `task set` refuses it |
 | `gate_by` | `jig task gate` | `human`, or `agent` for the self-approval of an unattended run (`--by agent`, refused unless the task's autopilot run is `on` and `unattended`). Absent on an approval recorded before it existed, read as `human`. `task set` refuses it (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `pr_url` | `jig task ship` | the `https://` address of the pull request `ship` opened or found open. A fact about what `ship` did, not a merge state: whether it was merged is still derived by housekeeping every run (ADR-0005). `task set` refuses it |
+| `route_depth` | `jig task new --lean`, or `jig task set` | `full` or `lean`: how much of its class's route this task runs. Absent means the person's `route.depth` answers (default `full`); an invalid value reads as `full`. `jig task route <id>` prints the route at this depth, and `jig status` marks a lean task `depth=lean`. No gate reads it (adr-20261002-route-depth-is-a-personal-choice) |
 | `domains` | skill via `jig task set` | comma-separated tags `^[a-z0-9-]+(,[a-z0-9-]+)*$`; used by `jig context` |
 | `paused` | `jig task pause` / `resume` | `true`; the line is removed on resume, so an absent key means false |
 | `paused_at` | `jig task pause` | `YYYY-MM-DD` |
@@ -29,8 +30,8 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `created_at` | `jig task new` | `YYYY-MM-DD` |
 | `updated_at` | every `jig task set` | `YYYY-MM-DD` |
 
-`jig task set` accepts only `class`, `status`, `knowledge_consolidated`, `domains` and
-validates the value; every other key is refused, the four `paused*` keys included:
+`jig task set` accepts only `class`, `status`, `knowledge_consolidated`, `domains`,
+`route_depth` and validates the value; every other key is refused, the four `paused*` keys included:
 they are written only by `jig task pause` and `jig task resume` (ADR-0012).
 Two values are refused on top of validation, to keep the order of ADR-0030: `status
 consolidated` while `knowledge_consolidated` is not `true`, and `knowledge_consolidated

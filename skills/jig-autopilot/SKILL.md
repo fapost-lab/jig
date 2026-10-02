@@ -19,7 +19,7 @@ Classify, file and start the task with `jig-task` (or resume one that is filed).
 
 It prints `autopilot: on (unattended)` when this clone set `autopilot.unattended: true`: then
 the run asks nothing, and §5 replaces §3. Say in one line what will happen: the class, the
-route, and where the run will end — merged with `agent.git: merge`, an open pull request with
+route and its depth as `jig task route <id>` names them, and where the run will end — merged with `agent.git: merge`, an open pull request with
 `pr`, or "ready for your commit" with `none`. Offer to
 open the status page with `.ai/scripts/jig status --open`, where the human can watch the run
 and sees first what it needs from them.

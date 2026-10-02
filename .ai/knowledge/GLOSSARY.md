@@ -199,6 +199,16 @@ Profile's checks — `<glob> <decision>`, first match wins. Project-owned; parse
 
 Risk/complexity class `T0`–`T4` assigned by the Agent that selects the workflow.
 
+## Route Depth
+
+How much of its class's route a task runs: `full` (the default) or `lean`, which trims the
+analysis, the plan and a second review round where the class allows it, and never the class's
+floor — tests on changed files, CI before a merge, consolidation, the T3/T4 gate and architecture
+review. A person's local-only `route.depth`, overridden per task by `route_depth`
+(`jig task new --lean`); `jig task route <id>` names the result
+(adr-20261002-route-depth-is-a-personal-choice). Not a class: a depth never lowers one. Informal
+synonyms: lean route, lighter route.
+
 ## Human Gate
 
 A stage where the workflow stops until a human approves (T3, T4). The decision is written

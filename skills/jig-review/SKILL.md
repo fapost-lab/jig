@@ -61,3 +61,8 @@ review's receipt (`jig task receipt <id> --stage review`), which pins what you r
 
 Then either apply the fixes or hand them back, depending on what the user asked. A review
 that ends without a decision on every finding is unfinished.
+
+At `depth: lean` (`jig task route <id>`) a review is one round. P2 and P3 stay `open` in
+the ledger and are listed in the pull request instead of fixed: a fix after the review makes the
+receipt stale and asks for another round. A P0 or P1 is fixed and re-reviewed as always — the
+ledger blocks until a re-review closes it, and lean does not change that.

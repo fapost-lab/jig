@@ -6,11 +6,12 @@
 # Settings that are yours alone go in .ai/config.local.yaml: same format,
 # gitignored, one file per clone. It wins over this file for the keys it is
 # allowed to answer (the housekeeping.* ones, checkout.busy_ttl and
-# git.worktree_root), and `jig status` shows what it changes. Four more are
+# git.worktree_root), and `jig status` shows what it changes. Five more are
 # read from there and never from this file at all, because a value committed
 # here would decide for every contributor what their own agent may do on their
 # behalf: agent.git (how far the agent takes a finished task), agent.ci_timeout,
-# autopilot.unattended and autopilot.parallel.
+# autopilot.unattended, autopilot.parallel and route.depth (full or lean: how
+# much of a class's route your tasks run).
 #
 # `jig config keys` lists every key this version reads, its default, and which
 # of the two files answers for it. Run it after an upgrade: nothing edits this

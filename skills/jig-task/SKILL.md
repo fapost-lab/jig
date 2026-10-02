@@ -167,6 +167,20 @@ Announce the route, then start the first stage. Each stage is its own skill:
 | T3 | discover → design → **human gate** → jig-implement → jig-architecture-review → jig-verify → jig-consolidate |
 | T4 | discover → specify → alternatives → design → **human gate** → jig-implement → independent jig-review → jig-verify → jig-consolidate |
 
+**Depth.** The class sets the floor; the person may want no more than that. A personal
+`route.depth: lean`, or `jig task new <id> --lean` for one task, asks for a lighter route.
+Add `--lean` only when the person asked for it for this task. Name the route from the script,
+not from the table above:
+
+```
+.ai/scripts/jig task route <id>
+```
+
+Announce and run the `route:` it prints; its `lean:` line says what is trimmed — at T1 the
+analysis is a few lines in `task.md`, at T2 the plan is part of the analysis, from T2 up one
+review round. Lean never trims tests on changed files, CI before a merge, consolidation, the
+gate or architecture review of T3/T4, or the class itself.
+
 Every route ends in `jig-consolidate`, even when nothing durable came out of the task: it
 records the knowledge decision before the commit and, once the change has landed, closes
 the task. A task stopped at `ready` is never cleaned up.
