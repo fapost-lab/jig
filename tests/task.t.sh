@@ -2166,6 +2166,7 @@ test_task_start_refuses_a_task_that_is_already_started() {
   run jig task start T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "already started on task/T-1"
+  assert_contains "$OUT" "jig task start T-1 --worktree"
 }
 
 test_task_start_repairs_a_branch_recorded_at_filing() {
@@ -2224,6 +2225,95 @@ test_task_start_worktree_leaves_this_checkout_alone() {
   assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
   assert_contains "$(git status --porcelain)" "README.md"
   assert_eq "task/T-2" "$(git -C "$OUT" symbolic-ref --short HEAD)"
+}
+
+# --- start --worktree on a started task: moving it out of this checkout ---------
+
+test_task_start_worktree_moves_a_started_task_out_of_this_checkout() {
+  task_setup_nested
+  task_started T-1
+  printf 'work\n' > work.txt
+  git add work.txt
+  git commit -q -m "work on T-1"
+  before=$(git rev-parse HEAD)
+  state_before=$(cat .ai/workspace/tasks/T-1/state)
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  assert_eq "$(cd .. && pwd -P)/repo.worktrees/T-1" "$OUT"
+  assert_contains "$ERR" "moved to its own worktree; this checkout is on main now"
+  assert_eq "task/T-1" "$(git -C "$OUT" symbolic-ref --short HEAD)"
+  # The commits ride with the branch; the task's record is untouched.
+  assert_eq "$before" "$(git -C "$OUT" rev-parse HEAD)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$state_before" "$(cat .ai/workspace/tasks/T-1/state)"
+  # The workspace is reachable from the worktree through the link.
+  [ -f "$OUT/.ai/workspace/tasks/T-1/state" ] || fail "workspace not linked"
+}
+
+test_task_start_worktree_on_a_started_task_refuses_a_dirty_tree() {
+  task_setup_nested
+  task_started T-1
+  printf 'dirty\n' >> README.md
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "uncommitted changes"
+  assert_contains "$OUT" "jig task pause T-1 --stash"
+  # Nothing was changed.
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  [ ! -e ../repo.worktrees/T-1 ] || fail "a worktree was left behind"
+}
+
+test_task_start_worktree_on_a_started_task_refuses_when_the_base_is_taken() {
+  task_setup_nested
+  task_started T-1
+  git worktree add -q ../elsewhere main
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "cannot leave task/T-1 here"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  [ ! -e ../repo.worktrees/T-1 ] || fail "a worktree was left behind"
+}
+
+test_task_start_worktree_on_a_started_task_needs_no_switch_when_it_is_not_checked_out() {
+  task_setup_nested
+  task_started T-1
+  git switch -q main
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  assert_not_contains "$ERR" "this checkout is on"
+  assert_eq "task/T-1" "$(git -C "$OUT" symbolic-ref --short HEAD)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_task_start_worktree_on_a_task_already_in_a_worktree_says_where() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  wt="$OUT"
+
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already on task/T-1 in its own worktree: $wt"
+}
+
+test_task_start_worktree_on_a_started_task_puts_head_back_when_the_worktree_cannot_be_made() {
+  skip_unless_readonly_dirs
+  task_setup_nested
+  task_started T-1
+  # An unwritable worktree root makes the add fail after HEAD has moved off.
+  mkdir -p ../repo.worktrees
+  chmod 555 ../repo.worktrees
+  run jig task start T-1 --worktree
+  rc=$RC
+  chmod 755 ../repo.worktrees
+  assert_eq 1 "$rc"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null || fail "the branch was lost"
 }
 
 test_task_start_worktree_borrows_the_workspace_by_link() {
