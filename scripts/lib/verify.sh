@@ -472,9 +472,17 @@ cmd_verify() {
     if [ "$explain" = 1 ]; then return 1; fi
     return 3
   fi
-  if [ "$explain" = 1 ] || [ -n "$RUNENV_EXEC" ]; then
+  if [ "$explain" = 1 ] || [ -n "$RUNENV_EXEC" ] || [ -n "$RUNENV_PATH" ]; then
     printf 'verify: checks run in %s\n' "$RUNENV_WHERE"
   fi
+  # A host runtime that is not first on PATH (Herd, or run.path): every
+  # profile runs on this machine as before, with that directory first — the
+  # PHP a person's own terminal finds, not a capability a profile must learn.
+  if [ -n "$RUNENV_PATH" ]; then
+    PATH="$RUNENV_PATH:$PATH"
+    export PATH
+  fi
+
   # On the host, say when its runtime is not the one the project asks for.
   if [ "$explain" = 1 ] && [ -z "$RUNENV_EXEC" ]; then
     # shellcheck source=lib/hostruntime.sh

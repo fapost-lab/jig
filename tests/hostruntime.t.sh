@@ -163,3 +163,17 @@ test_hostruntime_verify_explain_is_quiet_when_it_meets() {
   run env PATH="$PWD/stub-bin:$PATH" "$JIG_BIN" verify --explain --profile generic
   assert_not_contains "$OUT" "warning: host php"
 }
+
+test_hostruntime_checks_the_php_the_checks_would_run_with() {
+  _hr_project '^8.4'
+  _hr_stub php 8.2.12
+  mkdir -p herd-bin
+  printf '#!/bin/sh\nprintf "8.4.1"\n' > herd-bin/php
+  chmod +x herd-bin/php
+  jig config set run.path "$PWD/herd-bin" --local >/dev/null
+  run env PATH="$PWD/stub-bin:$PATH" "$JIG_BIN" doctor
+  assert_contains "$OUT" "ok    host php: php 8.4.1 meets ^8.4"
+  assert_not_contains "$OUT" "warn  host php"
+  run env PATH="$PWD/stub-bin:$PATH" "$JIG_BIN" verify --explain --profile generic
+  assert_not_contains "$OUT" "warning: host php"
+}

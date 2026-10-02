@@ -215,7 +215,10 @@ _hostruntime_required() {
 # commands would meet on this machine; exit 1 when there is none. The one
 # place that says which binary that is.
 _hostruntime_version() {
-  local out
+  local out PATH=$PATH
+  # A host runtime that is not first on PATH (Herd, run.path) is the one the
+  # checks meet: runenv_resolve names its directory.
+  if [ -n "${RUNENV_PATH:-}" ]; then PATH="$RUNENV_PATH:$PATH"; fi
   case "$1" in
     php)
       command -v php >/dev/null 2>&1 || return 1
