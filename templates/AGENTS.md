@@ -82,6 +82,11 @@ the **highest** one whose answers fit; the full test, with examples, is in the `
 | T3 architectural | discover, design, human gate, implement, architecture review, verify, consolidate |
 | T4 critical | discover, specify, alternatives, design, human gate, implement, independent review, verify, consolidate |
 
+A person may take less than the full route: `route.depth: lean` in their own settings, or
+`jig task new <id> --lean` for one task. `jig task route <id>` names the route at the task's
+depth. Lean never trims tests on changed files, CI before a merge, consolidation, or the gate
+and architecture review of T3/T4.
+
 Every route ends in consolidation, and a task with a workspace ends it in two records.
 Before the commit, the knowledge decision — `NO_DURABLE_KNOWLEDGE` included — is recorded
 with `jig task set <id> knowledge_consolidated true`. After the change has landed, when

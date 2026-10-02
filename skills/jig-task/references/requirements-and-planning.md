@@ -7,7 +7,8 @@ For T2+, label in-scope acceptance criteria (AC-01, etc.) and keep one table in 
 | AC-01: resume preserves status | Resume a paused task and inspect state | Pending | not-run |
 
 Reuse a sufficient map in design.md/spec.md when a separate plan earns no value. Name
-that owner; other artifacts link to it. T0/T1 need only proportional prose, not a matrix.
+that owner; other artifacts link to it. At `depth: lean` (`jig task route <id>`) a T2 has no
+plan.md: the map lives in the analysis (discovery.md). T0/T1 need only proportional prose, not a matrix.
 
 For a changed contract describe relevant added, modified, removed behavior and preserved
 invariants. Give before/after scenarios where needed, and compatibility consequences for

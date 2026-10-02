@@ -166,6 +166,26 @@ what you decided and does not implement until you approve. A summary is never wh
 **Every route ends in consolidation**, even a typo fix: the task decides what the project should
 remember, and records "nothing" explicitly when that is the answer.
 
+### A lighter route
+
+The routes above are the full ones. If your time and tokens matter more to you than a second look
+at low-risk details, you can ask for a **lean** route — for all your tasks with the personal setting
+`route.depth: lean` ([Configuration](/configuration)), or for one task by saying so (*"do this one
+lean"*, which files it with `jig task new <id> --lean`). Lean trims only what does not change the
+risk assessment:
+
+| Class | Lean |
+|---|---|
+| **T0** | the same route |
+| **T1** | the analysis is a few lines in the task's notes, not a document of its own |
+| **T2** | the plan is part of the analysis; one review round — small findings (P2/P3) are listed in the pull request instead of fixed |
+| **T3**, **T4** | the same route, design approval and architecture review included; one review round when it found nothing blocking |
+
+Lean never trims the tests on the files you changed, CI before a merge, consolidation, a blocking
+finding's re-review, or the class itself: a risky change stays risky however little time you have.
+`jig task route <task-id>` prints the route a task will run, and `jig status` marks a lean task
+with `depth=lean`. Your setting is yours alone — putting it in the project's file does nothing.
+
 ## What a review leaves behind
 
 A review does not end in an opinion. It ends in two records that the rest of the route has to

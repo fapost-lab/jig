@@ -54,13 +54,19 @@ their own file is answered by `config unset` too — say that the key then answe
    may agents work on at the same time?" Each one gets its own folder and its own agent, so
    more means more of the machine and more to read when they finish. Default 2, at most 16.
    Recommend 2, or 1 for someone who wants to watch every change.
-6. **Cleanup** (`housekeeping.*`) — one question, offer to skip: how long an abandoned task is
+6. **Process** (`route.depth`). "How much process should your tasks get?" `full` — each risk
+   class's whole route (default); `lean` — a shorter analysis, the plan folded into it, one
+   review round where the class allows it. Say what never changes: tests on changed files, CI
+   before a merge, the design approval and architecture review of risky work. Recommend `full`;
+   `lean` for someone who would rather trade a little review depth for time and tokens. One
+   task can always differ.
+7. **Cleanup** (`housekeeping.*`) — one question, offer to skip: how long an abandoned task is
    kept (`abandoned_ttl`, 14d), how long the trash is kept (`trash_ttl`, 7d), when an idle task
    is called stale (`stale_after`, 60d), how often cleanup runs (`cadence`, whole days, 1d),
    whether it may `git fetch` (`fetch`, true). Recommend the defaults.
-7. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
+8. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
    task folders somewhere other than `../<project>.worktrees`.
-8. **Where the checks run** (`run.exec`). First run `.ai/scripts/jig verify --explain` and read
+9. **Where the checks run** (`run.exec`). First run `.ai/scripts/jig verify --explain` and read
    its `verify: checks run in …` or `verify: refused: …` line: it names what Jig detected, or
    the signs of a container it could not place. Ask: "Where do this project's tests run — here,
    or in a container?" With a detection that is right, nothing needs writing (`auto` keeps

@@ -25,6 +25,7 @@ Absent keys take the default. Paths are not configurable.
 | `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |
 | `autopilot.unattended` | `false` | only | `true`: an autopilot run asks nothing — each stop becomes a safe default recorded in the pull request — and an epic's final pull request may be merged (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `autopilot.parallel` | `2` | only | how many tasks of a roadmap phase a phase run has agents building at once, 1 to 16; a task whose work is consolidated and waiting its turn to ship holds no slot, and the agents that repair the merge queue are outside the limit (adr-20260922-a-phase-run-is-coordinated) |
+| `route.depth` | `full` | only | how much of its class's route a task runs: `full`, or `lean`, which trims the analysis, the plan and a second review round where the class allows it and never below the class's floor — tests on changed files, CI before a merge, consolidation, and a T3/T4 gate and architecture review stay. A task's own `route_depth` (`jig task new --lean`, `jig task set`) wins over it; `jig task route <id>` names the result (adr-20261002-route-depth-is-a-personal-choice) |
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
 | `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 | `verify.busy_ttl` | `30m` | yes | how long a run record still counts as a live `jig verify` on this clone; a second run waits while one is live, `0` never waits, and `CI` switches the whole mechanism off (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) |
@@ -61,6 +62,7 @@ Values `set` accepts, per key:
 | `agent.git` | `none`, `commit`, `push`, `pr`, `merge` |
 | `agent.ci_timeout` | whole minutes, 0 to 9999 |
 | `autopilot.parallel` | a whole number, 1 to 16 |
+| `route.depth` | `full` or `lean` |
 | `git.worktree_root` | a path, unquoted |
 | `run.exec` | `auto`, `host`, or a command of plain words: no quote, `$`, backtick or backslash |
 | `run.path` | `auto` or the absolute path of a directory, unquoted; blanks inside it are kept |

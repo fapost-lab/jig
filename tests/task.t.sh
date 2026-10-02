@@ -4394,7 +4394,7 @@ test_task_autopilot_start_writes_state_and_journal() {
   task_started T-1
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "autopilot: on" "$OUT"
+  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\t')"
@@ -4474,7 +4474,7 @@ test_task_autopilot_start_after_done_starts_a_fresh_run() {
   jig task autopilot T-1 end >/dev/null
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "autopilot: on" "$OUT"
+  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
 }
 
@@ -5135,7 +5135,7 @@ test_task_autopilot_start_records_the_attended_mode_by_default() {
   task_started T-1
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "autopilot: on" "$OUT"
+  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: attended"
 }
 
@@ -5145,7 +5145,7 @@ test_task_autopilot_start_records_the_unattended_mode() {
   unattended_local
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "autopilot: on (unattended)" "$OUT"
+  assert_eq "$(printf 'autopilot: on (unattended)\ndepth: full (route.depth)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\tunattended')"
 }
@@ -5349,4 +5349,147 @@ test_task_ship_is_silent_about_verification_when_a_profile_covers_the_project() 
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "committed "
   assert_not_contains "$OUT" "ships unverified"
+}
+
+# --- route depth (adr-20261002-route-depth-is-a-personal-choice) --------------
+
+test_task_new_lean_records_the_depth_in_state() {
+  task_setup
+  run jig task new T-1 --class T2 --lean
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "^route_depth: lean$"
+}
+
+test_task_new_without_lean_records_no_depth() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "route_depth"
+}
+
+test_task_route_full_by_default_names_the_class_route() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "class: T2"
+  assert_contains "$OUT" "depth: full (route.depth)"
+  assert_contains "$OUT" "route: analyze, plan, implement, review, verify, consolidate"
+  assert_not_contains "$OUT" "lean:"
+  assert_contains "$OUT" "never trimmed: tests on changed files, CI before a merge, consolidation"
+}
+
+test_task_route_lean_task_folds_the_plan_into_the_analysis() {
+  task_setup
+  jig task new T-1 --class T2 --lean >/dev/null
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "depth: lean (task)"
+  assert_contains "$OUT" "route: analyze, implement, review, verify, consolidate"
+  assert_contains "$OUT" "lean: the plan is part of the analysis; one review round"
+  assert_contains "$OUT" "a re-review only closes a fixed P0/P1"
+}
+
+# The floor: lean never removes the gate or the architecture review of T3, nor
+# a stage of T4's route.
+test_task_route_lean_keeps_every_stage_of_t3_and_t4() {
+  task_setup
+  jig task new T-3 --class T3 --lean >/dev/null
+  jig task new T-4 --class T4 --lean >/dev/null
+  run jig task route T-3
+  assert_contains "$OUT" "route: discover, design, human gate, implement, architecture review, verify, consolidate"
+  assert_contains "$OUT" "lean: the gate, the architecture review and verify are unchanged"
+  run jig task route T-4
+  assert_contains "$OUT" "route: discover, specify, alternatives, design, human gate, implement, independent review, verify, consolidate"
+}
+
+test_task_route_follows_the_personal_setting_and_the_task_overrides_it() {
+  task_setup
+  jig task new T-1 --class T1 >/dev/null
+  jig config set route.depth lean --local >/dev/null
+  run jig task route T-1
+  assert_contains "$OUT" "depth: lean (route.depth)"
+  assert_contains "$OUT" "lean: the analysis is a few lines in task.md"
+  run jig task set T-1 route_depth full
+  assert_eq 0 "$RC" "$OUT"
+  run jig task route T-1
+  assert_contains "$OUT" "depth: full (task)"
+  assert_not_contains "$OUT" "lean:"
+}
+
+# A project value does nothing: the setting is one person's (local-only), and
+# a hand-written invalid local value reads as full — a mistake costs process,
+# never a stage.
+test_task_route_ignores_a_project_value_and_reads_an_invalid_one_as_full() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  printf 'route.depth: lean\n' >> .ai/config.yaml
+  run jig task route T-1
+  assert_contains "$OUT" "depth: full (route.depth)"
+  printf 'route.depth: light\n' > .ai/config.local.yaml
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "depth: full (route.depth)"
+  assert_contains "$OUT" "route: analyze, plan, implement, review, verify, consolidate"
+}
+
+test_task_route_unclassified_task_has_no_route_yet() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "class: -"
+  assert_contains "$OUT" "route: none until the task is classified (jig task set T-1 class Tn)"
+}
+
+test_task_route_unknown_task_dies() {
+  task_setup
+  run jig task route nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task route: unknown task: nope"
+}
+
+test_task_set_route_depth_refuses_anything_but_full_or_lean() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  run jig task set T-1 route_depth light
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: invalid route_depth: light (full or lean)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "route_depth"
+}
+
+test_task_autopilot_start_and_report_name_the_depth() {
+  task_setup
+  task_started T-1 --class T2 --lean
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "depth: lean (task)"
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "depth: lean (task)"
+  assert_contains "$OUT" "autopilot: done, repairs: 0/2"
+}
+
+# `jig task artifacts` follows the same depth: a lean T2 has no plan stage and
+# its implement stage reads the analysis, not a plan that will never be written.
+test_task_artifacts_lean_t2_has_no_plan_stage() {
+  task_setup
+  jig task new T-1 --class T2 --lean >/dev/null
+  run jig task artifacts T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task: T-1; class: T2; depth: lean"
+  assert_not_contains "$OUT" "plan: "
+  assert_contains "$OUT" "implement: needs-input; inputs: task discovery"
+  printf 'analysis\n' > .ai/workspace/tasks/T-1/discovery.md
+  run jig task artifacts T-1
+  assert_contains "$OUT" "implement: inputs-available; inputs: task discovery"
+}
+
+test_task_artifacts_full_t2_keeps_the_plan_stage() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  run jig task artifacts T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task: T-1; class: T2; depth: full"
+  assert_contains "$OUT" "plan: needs-input; inputs: task discovery"
 }

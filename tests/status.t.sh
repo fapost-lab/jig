@@ -2445,3 +2445,36 @@ test_status_page_from_a_worktree_is_the_main_checkouts_page() {
   # The main checkout sees every task, not only the worktree's own.
   assert_contains "$(cat "$main/.ai/runtime/status.html")" "<code>T-2</code>"
 }
+
+# --- route depth (adr-20261002-route-depth-is-a-personal-choice) --------------
+
+test_status_marks_a_lean_task_and_says_nothing_of_a_full_one() {
+  fixture_jig_repo
+  jig task new T-lean --class T2 --lean >/dev/null
+  jig task new T-full --class T2 >/dev/null
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task T-lean class=T2 status=active depth=lean"
+  assert_contains "$OUT" "task T-full class=T2 status=active"
+  assert_not_contains "$OUT" "T-full class=T2 status=active depth"
+}
+
+test_status_marks_every_task_lean_under_a_lean_setting_unless_the_task_says_full() {
+  fixture_jig_repo
+  jig task new T-a --class T1 >/dev/null
+  jig task new T-b --class T1 >/dev/null
+  jig task set T-b route_depth full >/dev/null
+  jig config set route.depth lean --local >/dev/null
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task T-a class=T1 status=active depth=lean"
+  assert_not_contains "$OUT" "T-b class=T1 status=active depth"
+}
+
+test_status_html_badges_a_lean_task() {
+  fixture_jig_repo
+  jig task new T-lean --class T2 --lean >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat .ai/runtime/status.html)" '<td>T2 <span class="badge">lean</span></td>'
+}

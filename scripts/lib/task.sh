@@ -40,6 +40,7 @@ cmd_task() {
     ship) task_ship "$@" ;;
     autopilot) task_autopilot "$@" ;;
     gate) task_gate "$@" ;;
+    route) task_route "$@" ;;
     *) jig_die "$(_task_usage)" ;;
   esac
   # One redraw of the status page for however many writes the command made
@@ -53,8 +54,8 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate ...\n' ;;
-    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>]\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
+    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>] [--lean]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap]\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id>\n' ;;
     set) printf 'usage: jig task set <id> <key> <value>\n' ;;
@@ -93,6 +94,7 @@ _task_usage() {
       printf '       jig task autopilot <id> report\n'
       ;;
     gate) printf 'usage: jig task gate <id> approved [--by human|agent]\n' ;;
+    route) printf 'usage: jig task route <id>\n' ;;
     *) return 1 ;;
   esac
 }
@@ -754,9 +756,10 @@ task_new() {
   [ $# -ge 1 ] || jig_die "$(_task_usage new)"
   local id="$1"
   shift
-  local class="" domains="" from=""
+  local class="" domains="" from="" depth=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --lean) depth=lean; shift ;;
       --class) [ $# -ge 2 ] || jig_die "task new: --class requires a value"; class="$2"; shift 2 ;;
       --domains) [ $# -ge 2 ] || jig_die "task new: --domains requires a value"; domains="$2"; shift 2 ;;
       --from) [ $# -ge 2 ] || jig_die "task new: --from requires a value"; from="$2"; shift 2 ;;
@@ -818,6 +821,7 @@ task_new() {
     printf 'status: active\n'
     printf 'knowledge_consolidated: false\n'
     [ -z "$domains" ] || printf 'domains: %s\n' "$domains"
+    [ -z "$depth" ] || printf 'route_depth: %s\n' "$depth"
     printf 'created_at: %s\n' "$(jig_today)"
     printf 'updated_at: %s\n' "$(jig_today)"
   } > "$tmp"
@@ -1239,6 +1243,7 @@ task_set() {
     status) _task_valid_status "$value" || jig_die "task set: invalid status: $value" ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
+    route_depth) _cfg_route_depth "$value" || jig_die "task set: invalid route_depth: $value (full or lean)" ;;
     task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url)
       jig_die "task set: key is not writable: $key" ;;
@@ -1528,6 +1533,17 @@ _task_autopilot_start() {
     printf 'autopilot: on\n'
   fi
   [ -z "$phase" ] || printf 'phase: %s\n' "$phase"
+  _task_autopilot_depth_line "$id"
+}
+
+# _task_autopilot_depth_line <id> — `depth: <depth> (<source>)`, the route
+# depth (_task_route_depth) as `start` announces it and `report` repeats it.
+_task_autopilot_depth_line() {
+  local depth source
+  IFS=$'\t' read -r depth source <<EOF
+$(_task_route_depth "$1")
+EOF
+  printf 'depth: %s (%s)\n' "$depth" "$source"
 }
 
 # _task_autopilot_mode <id> — the mode the current run recorded at `start`:
@@ -1751,6 +1767,7 @@ _task_autopilot_report() {
   repairs=$(printf '%s\n' "$facts" | cut -f 2)
   [ -n "$repairs" ] || repairs=0
   [ "$(_task_autopilot_mode "$id")" != unattended ] || mode=", unattended"
+  _task_autopilot_depth_line "$id"
   printf 'autopilot: %s, repairs: %s/2%s\n' "$state" "$repairs" "$mode"
 }
 
@@ -2262,6 +2279,102 @@ task_receipt_check() {
   return 1
 }
 
+# --- route depth (adr-20261002-route-depth-is-a-personal-choice) --------------
+#
+# How much of its class's route a task runs: `full`, or `lean`, which trims
+# only what does not change the risk assessment. A task's own `route_depth`
+# (`task new --lean`, `task set <id> route_depth`) wins; without one, the
+# person's `route.depth` (local-only, config.sh) answers; without that, `full`.
+# Nothing that gates — verify, the findings ledger, the receipt, the human
+# gate, ship, consolidation — reads the depth, which is what keeps `lean` from
+# ever getting under them. The answer is computed here and only here: `jig task
+# route`, `jig status` and the autopilot report all ask _task_route_depth.
+
+# _task_route_depth <id> [<setting>] — `<depth>\t<source>`, where <source> is
+# `task` (the task's own key) or `route.depth` (the person's setting, or its
+# default). <setting> is what _task_route_setting printed, so a caller asking
+# for many tasks reads the file once.
+_task_route_depth() {
+  local id="$1" setting
+  if [ $# -ge 2 ]; then
+    setting="$2"
+  else
+    setting=$(_task_route_setting)
+  fi
+  _task_route_depth_of "$(task_state_get "$id" route_depth)" "$setting"
+}
+
+# _task_route_depth_of <own> <setting> — the rule itself, on values already
+# read: the task's own `route_depth` wins, the setting answers otherwise. A
+# caller holding the state row (`jig status`) asks this rather than repeating
+# the rule. An invalid value anywhere reads as `full`: a mistake costs process,
+# never a stage.
+_task_route_depth_of() {
+  if _cfg_route_depth "$1"; then
+    printf '%s\ttask\n' "$1"
+  elif _cfg_route_depth "$2"; then
+    printf '%s\troute.depth\n' "$2"
+  else
+    printf 'full\troute.depth\n'
+  fi
+}
+
+# _task_route_setting — route.depth (jig_route_depth), `full` when invalid.
+_task_route_setting() {
+  local value
+  if value=$(jig_route_depth); then
+    printf '%s\n' "$value"
+  else
+    printf 'full\n'
+  fi
+}
+
+# _task_route_stages <class> <depth> — the route's stages, comma-separated.
+# The one table of routes the scripts hold; the skills name what it prints.
+_task_route_stages() {
+  case "$1:$2" in
+    T0:*) printf 'implement, verify, consolidate\n' ;;
+    T1:*) printf 'analyze, implement, verify, consolidate\n' ;;
+    T2:lean) printf 'analyze, implement, review, verify, consolidate\n' ;;
+    T2:*) printf 'analyze, plan, implement, review, verify, consolidate\n' ;;
+    T3:*) printf 'discover, design, human gate, implement, architecture review, verify, consolidate\n' ;;
+    T4:*) printf 'discover, specify, alternatives, design, human gate, implement, independent review, verify, consolidate\n' ;;
+  esac
+}
+
+# _task_route_lean_note <class> — what `lean` changes for <class>, in one line.
+_task_route_lean_note() {
+  case "$1" in
+    T0) printf 'nothing to trim at T0\n' ;;
+    T1) printf 'the analysis is a few lines in task.md, not a document of its own\n' ;;
+    T2) printf 'the plan is part of the analysis; one review round: P2/P3 stay open and go to the pull request, and a re-review only closes a fixed P0/P1\n' ;;
+    T3 | T4) printf 'the gate, the architecture review and verify are unchanged; one review round: P2/P3 stay open and go to the pull request, and a re-review only closes a fixed P0/P1\n' ;;
+  esac
+}
+
+# task_route <id> — the task's class, depth and route, for the skills to name.
+task_route() {
+  jig_require_init
+  [ $# -eq 1 ] || jig_die "$(_task_usage route)"
+  local id="$1" class depth source
+  [ -f "$(task_dir "$id")/state" ] || jig_die "task route: unknown task: $id"
+  class=$(task_state_get "$id" class)
+  IFS=$'\t' read -r depth source <<EOF
+$(_task_route_depth "$id")
+EOF
+  printf 'class: %s\n' "${class:--}"
+  printf 'depth: %s (%s)\n' "$depth" "$source"
+  if ! _task_valid_class "$class"; then
+    printf 'route: none until the task is classified (jig task set %s class Tn)\n' "$id"
+    return 0
+  fi
+  printf 'route: %s\n' "$(_task_route_stages "$class" "$depth")"
+  if [ "$depth" = lean ]; then
+    printf 'lean: %s\n' "$(_task_route_lean_note "$class")"
+  fi
+  printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
+}
+
 # --- the human gate (adr-20260924-the-status-page-keeps-the-readers-place)
 #
 # A T3/T4 design is approved by a human in conversation, and the jig-task
@@ -2702,21 +2815,27 @@ _task_artifact_fact() {
   else printf 'present\n'; fi
 }
 
-# stage|documentary inputs|unassessed semantic prerequisites. This is not a router.
+# stage|documentary inputs|unassessed semantic prerequisites, for <class> at
+# <depth> (_task_route_depth; `full` when absent). This is not a router: the
+# stages are _task_route_stages', and lean changes only what T1 and T2 read —
+# the analysis lives in task.md at T1, and the plan inside the analysis at T2
+# (adr-20261002-route-depth-is-a-personal-choice).
 _task_artifact_route() {
-  case "$1" in
-    T0) printf '%s\n' 'implement|task|task intent' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
-    T1) printf '%s\n' 'analyze|task|task intent' 'implement|task discovery|analysis sufficiency' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
-    T2) printf '%s\n' 'analyze|task|task intent' 'plan|task discovery|analysis sufficiency' 'implement|task plan|plan sufficiency' 'review|task plan|implementation' 'verify|task plan|implementation and review outcome' 'consolidate|task plan|implementation, review and verification outcomes' ;;
-    T3) printf '%s\n' 'discover|task|task intent' 'design|task discovery|discovery sufficiency' 'human-gate|task design|human design decision' 'implement|task design|human design approval' 'architecture-review|task design|implementation' 'verify|task design|implementation and architecture review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
-    T4) printf '%s\n' 'discover|task|task intent' 'specify|task discovery|discovery sufficiency' 'alternatives|task spec|specification sufficiency' 'design|task spec alternatives|alternatives evaluated' 'human-gate|task spec design|human design decision' 'implement|task spec design|human design approval' 'review|task spec design|implementation and independent reviewer' 'verify|task spec design|implementation and independent review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
+  case "$1:${2:-full}" in
+    T1:lean) printf '%s\n' 'analyze|task|task intent' 'implement|task|analysis sufficiency' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
+    T2:lean) printf '%s\n' 'analyze|task|task intent' 'implement|task discovery|analysis and plan sufficiency' 'review|task discovery|implementation' 'verify|task discovery|implementation and review outcome' 'consolidate|task discovery|implementation, review and verification outcomes' ;;
+    T0:*) printf '%s\n' 'implement|task|task intent' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
+    T1:*) printf '%s\n' 'analyze|task|task intent' 'implement|task discovery|analysis sufficiency' 'verify|task|implementation' 'consolidate|task|implementation and verification outcome' ;;
+    T2:*) printf '%s\n' 'analyze|task|task intent' 'plan|task discovery|analysis sufficiency' 'implement|task plan|plan sufficiency' 'review|task plan|implementation' 'verify|task plan|implementation and review outcome' 'consolidate|task plan|implementation, review and verification outcomes' ;;
+    T3:*) printf '%s\n' 'discover|task|task intent' 'design|task discovery|discovery sufficiency' 'human-gate|task design|human design decision' 'implement|task design|human design approval' 'architecture-review|task design|implementation' 'verify|task design|implementation and architecture review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
+    T4:*) printf '%s\n' 'discover|task|task intent' 'specify|task discovery|discovery sufficiency' 'alternatives|task spec|specification sufficiency' 'design|task spec alternatives|alternatives evaluated' 'human-gate|task spec design|human design decision' 'implement|task spec design|human design approval' 'review|task spec design|implementation and independent reviewer' 'verify|task spec design|implementation and independent review outcome' 'consolidate|task verification|implementation, review and verification outcomes' ;;
   esac
 }
 
 task_artifacts() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage artifacts)"
-  local id="$1" root class provided="" seen=0 kinds kind fact stage inputs semantic availability facts="" t
+  local id="$1" root class provided="" seen=0 kinds kind fact stage inputs semantic availability facts="" t depth
   shift
   root=$(_task_workspace_root "$id" "task artifacts") || return 1
   class=$(task_state_get "$id" class)
@@ -2740,7 +2859,8 @@ task_artifacts() {
     esac
   done
   t=$(printf '\t')
-  printf 'task: %s; class: %s\nartifacts (optional unless consumed by a route stage):\n' "$id" "$class"
+  depth=$(_task_route_depth "$id" | cut -f 1)
+  printf 'task: %s; class: %s; depth: %s\nartifacts (optional unless consumed by a route stage):\n' "$id" "$class" "$depth"
   for kind in task discovery spec alternatives design plan review verification handoff; do
     fact=$(_task_artifact_fact "$root" "$kind" "$provided")
     facts="$facts$kind$t$fact
@@ -2754,7 +2874,7 @@ task_artifacts() {
       case "$fact" in unavailable*) availability="needs-input" ;; esac
     done
     printf '%s: %s; inputs: %s\n  unassessed: %s\n' "$stage" "$availability" "$inputs" "$semantic"
-  done < <(_task_artifact_route "$class")
+  done < <(_task_artifact_route "$class" "$depth")
   printf 'Presence and provided claims do not prove approval, quality or completion; state unchanged.\n'
 }
 

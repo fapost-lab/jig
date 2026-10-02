@@ -7,7 +7,7 @@ domains: [skills, sdlc]
 paths:
   - "skills/**"
 summary: Why a written rubric picks the task class and human gates are full stops.
-reviewed_at: 2026-09-24
+reviewed_at: 2026-10-02
 ---
 # ADR-0009: One entry skill routes by a fixed rubric; gates are explicit stops
 
@@ -105,3 +105,12 @@ help, and picks by effort rather than by risk.
 > own decision rather than an edit to an illustration. It is named once in the tie-break instead,
 > beside "trivial to write but hard to undo is not T0": that is a rule the agent reasons from, not
 > a list it matches, and it fixes no class.
+
+> **Amendment (2026-10-02).** The context above rejected ai-factory's per-task process mode, and
+> adr-20261002-route-depth-is-a-personal-choice lets a person choose a lighter route. The two are
+> not the same choice. The class is still the rubric's answer, never the person's: no depth lowers
+> it, and every stage that holds a class's risk — the gate and architecture review of T3/T4, tests
+> on changed files, CI before a merge, the findings ledger, consolidation — runs at either depth.
+> What the person picks is only how much of the rest they buy with their time: a shorter analysis,
+> the plan inside it, one review round. The default is `full`, so nobody carries the choice unless
+> they want it — the burden this ADR refused to put back on the person.
