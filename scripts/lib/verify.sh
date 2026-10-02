@@ -315,7 +315,7 @@ cmd_verify() {
   local list_only=0 explain=0 profile_given=0 profiles_words="" p pdir raw tok
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
   local header="" base_branch base_ref mb map map_ok map_err
-  local incomplete=0 covered=0 explained=0 unknown=0 plan_output plan_bad
+  local incomplete=0 covered=0 explained=0 unknown=0 plan_output plan_bad hr_state hr_rt hr_text
   local covered_needs_install=0 is_fallback=0 run_output
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
@@ -474,6 +474,16 @@ cmd_verify() {
   fi
   if [ "$explain" = 1 ] || [ -n "$RUNENV_EXEC" ]; then
     printf 'verify: checks run in %s\n' "$RUNENV_WHERE"
+  fi
+  # On the host, say when its runtime is not the one the project asks for.
+  if [ "$explain" = 1 ] && [ -z "$RUNENV_EXEC" ]; then
+    # shellcheck source=lib/hostruntime.sh
+    . "$JIG_LIB/hostruntime.sh"
+    while IFS=$'\t' read -r hr_state hr_rt hr_text; do
+      case "$hr_state" in
+        mismatch | unknown) printf 'verify: warning: host %s: %s\n' "$hr_rt" "$hr_text" ;;
+      esac
+    done < <(hostruntime_report)
   fi
 
   # Taken here, after every refusal above has had its chance: nobody should
