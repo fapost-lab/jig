@@ -122,6 +122,44 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.18.0 to 0.19.0
+
+Nothing on the checklist the upgrade itself prints. What changes is what `jig verify` finds, and one
+of your own settings gains a sibling.
+
+**`.devcontainer/`, `.ddev/` and `.lando.yml` are no longer reasons to refuse.** The 0.18.0 section
+below names them as signs Jig could not place. Now a project with `.ddev/config.yaml`,
+`.lando.yml` or `.devcontainer/devcontainer.json` has its checks run in that environment, and a
+stopped one is refused with its start command. Of the signs 0.18.0 listed, only a `.devcontainer/` or `.ddev/` folder without its
+manifest, services mounting the project that Jig cannot pick one of, or a `DB_HOST` naming a compose
+service still stop `jig verify` with exit 3; a stopped environment is refused too, with its start
+command. The DDEV, Lando and devcontainer detectors have been tried with stand-ins for
+their commands only; if one misreads your setup, `jig config set run.exec <command> --local` overrides
+it, and `jig verify --explain` shows where the checks go.
+
+**A Devilbox or Laravel Herd project may now run somewhere new.** A project served by Devilbox (its PHP
+container mounts your project, wherever its data folder lives) has its checks run in that container; a
+Herd site runs them on this machine with Herd's PHP first on `PATH`. Neither needs a setting. If
+Herd's PHP is not the one you want, or Jig did not find it, name the folder yourself:
+
+```bash
+jig config set run.path "/Users/me/Library/Application Support/Herd/bin" --local
+```
+
+**The other nine profiles now run in the environment instead of being skipped.** In 0.18.0, inside a
+container the `shell`, `python`, `go`, `rust`, `ruby`, `jvm`, `dotnet`, `dart` and `swift` profiles were skipped
+with a reason; now they run there, so a check that was reported as skipped may now run, and fail. Under an
+environment, Python's tools come from a `.venv/` or `venv/` that runs there, otherwise from the
+environment's own `PATH`, not from the virtualenv of this machine.
+
+**`jig doctor` and `jig verify --explain` may now warn.** When the checks run on this machine, they
+compare its PHP, Node and Python with `composer.json`, `package.json` (`engines.node`) and
+`.python-version`. A warning is advice only; nothing is refused because of it.
+
+**`jig task start` and `jig upgrade` no longer suggest deleting a session's record.** The refusals name a
+worktree or waiting; the record expires on its own after `checkout.busy_ttl`. A session that only filed
+tasks no longer occupies the checkout.
+
 ## From 0.17.1 to 0.18.0
 
 Nothing on the checklist the upgrade itself prints. Two things about running Jig change, and one is unchanged.
