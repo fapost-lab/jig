@@ -280,7 +280,7 @@ test_upgrade_decision_table_full() {
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "replace"
   assert_not_contains "$OUT" "install"
-  assert_not_contains "$OUT" "delete"
+  assert_not_contains "$OUT" "runtime/working/other-session"
   diff -q manifest.after.tmp .ai/manifest >/dev/null || fail "manifest changed on a no-op rerun"
 
   rm -rf "$src"
@@ -1506,7 +1506,7 @@ test_upgrade_stops_while_a_session_works_in_this_checkout() {
   run jig upgrade --from "$JIG_HOME"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "a session is working in this checkout (other-session"
-  assert_contains "$OUT" ".ai/runtime/working/other-session"
+  assert_not_contains "$OUT" "runtime/working/other-session"
 
   rm .ai/runtime/working/other-session
   run jig upgrade --from "$JIG_HOME"

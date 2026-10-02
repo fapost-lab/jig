@@ -82,7 +82,7 @@ case "\$1" in
     case "\$*" in *"label=$label"*) echo abc123 ;; esac
     ;;
   inspect)
-    printf '/proj_app_1\n$src\t/workspace\n/other\t/elsewhere\n'
+    printf '/proj_app_1\n%s\t/workspace\n/other\t/elsewhere\n' '$src'
     ;;
   exec)
     shift
@@ -431,6 +431,18 @@ test_runenv_detects_a_devcontainer_through_the_container_label_without_the_cli()
   _env_resolve
   assert_contains "$OUT" "exec=[docker exec -i -w /workspace proj_app_1]"
   assert_contains "$OUT" "(devcontainer, detected)"
+  assert_contains "$OUT" "refusal=[]"
+}
+
+test_runenv_container_match_keeps_a_backslash_in_the_project_path() {
+  unset CI
+  mkdir 'proj\tdir'
+  cd 'proj\tdir' || return 1
+  : > .devcontainer.json
+  _env_hide devcontainer
+  _env_labelled_docker_stub "devcontainer.local_folder=$PWD"
+  _env_resolve
+  assert_contains "$OUT" "exec=[docker exec -i -w /workspace proj_app_1]"
   assert_contains "$OUT" "refusal=[]"
 }
 
