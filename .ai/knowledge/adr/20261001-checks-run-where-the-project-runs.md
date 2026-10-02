@@ -14,7 +14,7 @@ paths:
   - schemas/config.md
   - skills/jig-setup/SKILL.md
 summary: Why jig verify decides once where a project's commands run (host or a container prefix from run.exec or a detector), refuses rather than guessing the host, and passes the prefix only to profiles declaring the environment capability.
-reviewed_at: 2026-10-01
+reviewed_at: 2026-10-02
 ---
 # A project's checks run where the project runs, and never on the host by guess
 
@@ -41,10 +41,19 @@ run a project's checks on the host silently when signs say the project lives els
 - **Detectors under `auto`**, first match wins: Laravel Sail (`vendor/bin/sail` and the
   `APP_SERVICE` service, `laravel.test` by default, mounting the project; runs as Sail's
   `sail` user), then docker compose (exactly one service mounting the project root with a
-  short-syntax volume; `-w` its mount target). Each one also knows how to start its
-  environment, for the refusal below.
+  short-syntax volume; `-w` its mount target). DDEV (`.ddev/config.yaml`: `ddev exec --raw`),
+  Lando (`.lando.yml`) and a devcontainer (`devcontainer.json`) follow, before the generic
+  compose reading, because a devcontainer or Lando project may well contain a compose file.
+  Lando and a devcontainer without its CLI are reached with `docker exec -i -w <target>
+  <container>`, the container found by its label (`io.lando.container`,
+  `devcontainer.local_folder`) among those mounting the project — `lando ssh -c` takes one
+  string, which a prefix of plain words cannot build. A detector that recognises the project
+  but finds no running container refuses with its start command. A shell already inside such
+  an environment (`REMOTE_CONTAINERS`, `CODESPACES`, `IS_DDEV_PROJECT`, `LANDO`) runs on the
+  host: it is where the project runs. Each detector also knows how to start its environment,
+  for the refusal below.
 - **A sign without a detector is a refusal.** Two services mounting the project, `DB_HOST`
-  in `.env` naming a compose service, `.devcontainer/`, `.ddev/`, `.lando.yml`: `jig verify`
+  in `.env` naming a compose service, a `.devcontainer/` or `.ddev/` folder without its manifest: `jig verify`
   prints why and exits 3 — no verdict — rather than running anything on the host. A compose
   file whose app does not mount the project and whose `DB_HOST` is local is not a sign:
   that is an ordinary host setup and keeps working.
@@ -91,7 +100,7 @@ run a project's checks on the host silently when signs say the project lives els
 
 - A Sail or compose project is checked in its container with no setting written; a project
   with signs and no detector stops with a sentence that says what to do.
-- Every further environment (devcontainer, DDEV, Lando, Herd, Devilbox) is a detector in
+- Every further environment (Herd, Devilbox; devcontainer, DDEV and Lando are done) is a detector in
   `runenv.sh` plus a test, and every further profile adaptation is `environment` in its
   `scope` plus `jp_have` for `command -v`. Both are filed as follow-up tasks.
 - A worktree with a container of the main checkout is refused; giving each worktree its own

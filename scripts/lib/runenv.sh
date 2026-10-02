@@ -105,23 +105,84 @@ _runenv_dotenv() {
     | sed -n '$p' | tr -d '\r' | sed "s/^[\"']//; s/[\"']\$//"
 }
 
+# _runenv_inside — exit 0 when this very process already runs in a project
+# environment: the tool that owns it sets a marker in every shell it opens
+# (a devcontainer, a Codespace, DDEV's web container, a Lando service). The
+# project's commands then run here, and a prefix that goes looking for the
+# container from inside it would find nothing.
+_runenv_inside() {
+  [ "${REMOTE_CONTAINERS:-}" = true ] || [ "${CODESPACES:-}" = true ] \
+    || [ "${IS_DDEV_PROJECT:-}" = true ] || [ "${LANDO:-}" = ON ]
+}
+
+# _runenv_container <label> — a running container that carries <label> and
+# mounts the project root: prints `<name><TAB><mount target>`, nothing when
+# there is none (or docker does not answer). Looking at the mounts, not at
+# names, keeps this independent of how a tool names its containers.
+_runenv_container() {
+  local id here real
+  here=$JIG_PROJECT
+  real=$(cd "$JIG_PROJECT" 2>/dev/null && pwd -P) || real=$here
+  local ids
+  ids=$(docker ps -q --filter "label=$1" 2>/dev/null) || ids=""
+  # The devcontainer label holds the folder as the tooling spelt it, which
+  # may be the real path of a symlinked one.
+  case "$1" in
+    devcontainer.local_folder=*)
+      [ "$real" = "$here" ] || ids="$ids $(docker ps -q --filter "label=devcontainer.local_folder=$real" 2>/dev/null)"
+      ;;
+  esac
+  for id in $ids; do
+    docker inspect -f '{{.Name}}{{"\n"}}{{range .Mounts}}{{.Source}}{{"\t"}}{{.Destination}}{{"\n"}}{{end}}' "$id" 2>/dev/null \
+      | awk -F '\t' -v a="$here" -v b="$real" '
+          NR == 1 { n = $1; sub(/^\//, "", n); next }
+          ($1 == a || $1 == b) && $2 != "" { print n "\t" $2; exit }'
+  done | sed -n '1p'
+}
+
+# _runenv_container_env <what> <label> <up> — shared by the detectors that
+# reach a container through `docker exec`: sets the prefix from the container
+# found by <label>; when there is none the environment is not running, which
+# is a refusal that carries <up>, the command that starts it.
+_runenv_container_env() {
+  local found name target
+  found=$(_runenv_container "$2")
+  if [ -n "$found" ]; then
+    name=$(printf '%s\n' "$found" | cut -f1)
+    target=$(printf '%s\n' "$found" | cut -f2)
+    RUNENV_EXEC="docker exec -i -w $target $name"
+    RUNENV_WHERE="$RUNENV_EXEC ($1, detected)"
+    RUNENV_UP="$3"
+  else
+    RUNENV_WHERE="$1, detected"
+    RUNENV_REFUSAL="the environment is not running ($1: no running container mounts the project); start it with: $3"
+  fi
+}
+
 # _runenv_detect — set RUNENV_EXEC, RUNENV_WHERE and RUNENV_UP from the first
-# detector that recognises the project; exit 1 when none does. Order: Laravel
-# Sail, then a docker compose service that mounts the project root.
+# detector that recognises the project; exit 1 when none does. A detector that
+# recognises the project but finds its environment stopped sets RUNENV_REFUSAL
+# instead of a prefix, and still counts as a match. Order: Laravel Sail, DDEV,
+# Lando, a devcontainer, then a docker compose service that mounts the project
+# root — the tools with a manifest of their own before the generic reading of
+# a compose file, which a devcontainer or Lando project may well contain.
 _runenv_detect() {
   local file data svc target mounts unread n
   file=$(_runenv_compose_file)
-  [ -n "$file" ] || return 1
-  data=$(_runenv_compose_read "$JIG_PROJECT/$file")
-  mounts=$(printf '%s\n' "$data" | sed -n 's/^M	//p')
-  unread=$(printf '%s\n' "$data" | sed -n 's/^U	//p')
-  [ -n "$mounts" ] || return 1
+  if [ -n "$file" ]; then
+    data=$(_runenv_compose_read "$JIG_PROJECT/$file")
+    mounts=$(printf '%s\n' "$data" | sed -n 's/^M	//p')
+    unread=$(printf '%s\n' "$data" | sed -n 's/^U	//p')
+  else
+    mounts=""
+    unread=""
+  fi
 
   # Sail: its own launcher is installed and the service it runs commands in
   # (APP_SERVICE, laravel.test unless .env names another) mounts the project.
   # Sail runs them as its `sail` user; root would leave root-owned files in
   # the mounted tree.
-  if [ -f "$JIG_PROJECT/vendor/bin/sail" ]; then
+  if [ -n "$mounts" ] && [ -f "$JIG_PROJECT/vendor/bin/sail" ]; then
     svc=$(_runenv_dotenv APP_SERVICE)
     [ -n "$svc" ] || svc=laravel.test
     target=$(printf '%s\n' "$mounts" | awk -F '\t' -v s="$svc" '$1 == s && !f { print $2; f = 1 }')
@@ -132,6 +193,41 @@ _runenv_detect() {
       return 0
     fi
   fi
+
+  # DDEV: `ddev exec` runs in the web container at the directory that matches
+  # the one it is run from. --raw hands the words over as they are: without
+  # it DDEV joins them and has bash read the result, which loses quoting.
+  if [ -f "$JIG_PROJECT/.ddev/config.yaml" ]; then
+    RUNENV_EXEC="ddev exec --raw"
+    RUNENV_WHERE="$RUNENV_EXEC (DDEV, detected)"
+    RUNENV_UP="ddev start"
+    return 0
+  fi
+
+  # Lando: `lando ssh -c` takes the command as one string, which a prefix of
+  # plain words cannot build, so the service's container is reached directly:
+  # Lando labels every container it starts.
+  if [ -f "$JIG_PROJECT/.lando.yml" ]; then
+    _runenv_container_env "Lando" "io.lando.container=TRUE" "lando start"
+    return 0
+  fi
+
+  # A devcontainer: the CLI when it is installed (it finds the container by
+  # the project folder, and `up` can start it); otherwise the container the
+  # tooling labelled with that folder. A folder holding a devcontainer.json
+  # is the only form read; other layouts stay a sign for the refusal.
+  if [ -f "$JIG_PROJECT/.devcontainer/devcontainer.json" ] || [ -f "$JIG_PROJECT/.devcontainer.json" ]; then
+    if command -v devcontainer >/dev/null 2>&1; then
+      RUNENV_EXEC="devcontainer exec --workspace-folder ."
+      RUNENV_WHERE="$RUNENV_EXEC (devcontainer, detected)"
+      RUNENV_UP="devcontainer up --workspace-folder ."
+    else
+      _runenv_container_env "devcontainer" "devcontainer.local_folder=$JIG_PROJECT" "devcontainer up --workspace-folder . (or reopen the folder in the container from your editor)"
+    fi
+    return 0
+  fi
+
+  [ -n "$mounts" ] || return 1
 
   # One service, read in full: a second one, or a mount of the project this
   # reader could not take apart, leaves the choice to a person.
@@ -171,11 +267,12 @@ _runenv_signs() {
       signs="$signs; .env sets DB_HOST=$db, a service in $file"
     fi
   fi
+  # The three below are recognised when they carry their manifest; what is
+  # left here is a folder without one, which no detector reads.
   if [ -d "$JIG_PROJECT/.devcontainer" ] || [ -f "$JIG_PROJECT/.devcontainer.json" ]; then
     signs="$signs; a devcontainer is defined"
   fi
   [ ! -d "$JIG_PROJECT/.ddev" ] || signs="$signs; a DDEV project (.ddev/)"
-  [ ! -f "$JIG_PROJECT/.lando.yml" ] || signs="$signs; a Lando project (.lando.yml)"
   printf '%s\n' "${signs#; }"
 }
 
@@ -247,6 +344,10 @@ runenv_resolve() {
         RUNENV_WHERE="host (CI is set)"
         return 0
       fi
+      if _runenv_inside; then
+        RUNENV_WHERE="host (this shell is already inside the project's environment)"
+        return 0
+      fi
       if ! _runenv_detect; then
         signs=$(_runenv_signs)
         if [ -n "$signs" ]; then
@@ -254,6 +355,7 @@ runenv_resolve() {
         fi
         return 0
       fi
+      [ -z "$RUNENV_REFUSAL" ] || return 0
       ;;
     *)
       RUNENV_EXEC="$value"

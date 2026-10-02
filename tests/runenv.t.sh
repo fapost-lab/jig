@@ -45,6 +45,74 @@ STUB
   export PATH
 }
 
+# _env_wrapper_stub <tool> <skip> [down] — a `<tool>` on PATH that logs its
+# call to <tool>.log, drops its first <skip> words (its own subcommand and
+# options) and runs the rest on this machine; `down` fails the way the tool
+# does for an environment that is not running.
+_env_wrapper_stub() {
+  local tool="$1" skip="$2" mode="${3:-up}"
+  mkdir -p stub-bin
+  cat > "stub-bin/$tool" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/$tool.log"
+if [ "$mode" = down ]; then
+  printf '$tool: the environment is not running\n' >&2
+  exit 1
+fi
+shift $skip
+exec "\$@"
+STUB
+  chmod +x "stub-bin/$tool"
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# _env_labelled_docker_stub <label> [<mount source>] — a `docker` that knows
+# one running container, proj_app_1, carrying <label> and mounting
+# <mount source> (default: this directory) at /workspace; `exec` runs the
+# command after its options on this machine.
+_env_labelled_docker_stub() {
+  local label="$1" src="${2:-$(pwd -P)}"
+  mkdir -p stub-bin
+  cat > stub-bin/docker <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/docker.log"
+case "\$1" in
+  ps)
+    case "\$*" in *"label=$label"*) echo abc123 ;; esac
+    ;;
+  inspect)
+    printf '/proj_app_1\n$src\t/workspace\n/other\t/elsewhere\n'
+    ;;
+  exec)
+    shift
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -w) shift 2 ;;
+        -*) shift ;;
+        *) break ;;
+      esac
+    done
+    shift
+    exec "\$@"
+    ;;
+esac
+STUB
+  chmod +x stub-bin/docker
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# _env_hide <tool> — drop from PATH every directory that holds <tool>.
+_env_hide() {
+  local d kept="" IFS=:
+  for d in $PATH; do
+    [ -x "$d/$1" ] || kept="${kept:+$kept:}$d"
+  done
+  PATH="$kept"
+  export PATH
+}
+
 # _env_php_stub — a `php` that answers `--version` and logs `artisan test`.
 _env_php_stub() {
   mkdir -p stub-bin
@@ -235,12 +303,12 @@ EOF
   assert_contains "$OUT" "2 services in compose.yml mount the project (web,worker)"
 }
 
-test_runenv_refuses_for_devcontainer_ddev_and_lando() {
+test_runenv_refuses_for_a_devcontainer_or_ddev_folder_without_a_manifest() {
   unset CI
   mkdir .devcontainer .ddev
-  : > .lando.yml
   _env_resolve
-  assert_contains "$OUT" "a devcontainer is defined; a DDEV project (.ddev/); a Lando project (.lando.yml)"
+  assert_contains "$OUT" "a devcontainer is defined; a DDEV project (.ddev/)"
+  assert_contains "$OUT" "exec=[]"
 }
 
 test_runenv_plain_project_runs_on_the_host() {
@@ -277,6 +345,136 @@ test_runenv_a_set_prefix_is_used_as_is() {
   assert_contains "$OUT" "exec=[inbox php-container"
   assert_contains "$OUT" "where=[inbox php-container (run.exec)"
   assert_contains "$OUT" "refusal=[]"
+}
+
+# --- DDEV, Lando, devcontainer --------------------------------------------------------
+
+test_runenv_detects_ddev() {
+  unset CI
+  mkdir .ddev
+  printf 'name: site\n' > .ddev/config.yaml
+  _env_wrapper_stub ddev 2
+  _env_resolve
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "exec=[ddev exec --raw]"
+  assert_contains "$OUT" "(DDEV, detected)"
+  assert_contains "$OUT" "up=[ddev start]"
+  assert_contains "$OUT" "refusal=[]"
+  assert_contains "$(cat ddev.log)" "exec --raw sh -c"
+}
+
+test_runenv_ddev_that_is_stopped_is_refused_with_its_start_command() {
+  unset CI
+  mkdir .ddev
+  : > .ddev/config.yaml
+  _env_wrapper_stub ddev 2 down
+  _env_resolve
+  assert_contains "$OUT" "refusal=[the environment is not running (ddev exec --raw (DDEV, detected)): ddev: the environment is not running; start it with: ddev start]"
+}
+
+test_runenv_ddev_comes_before_a_compose_service_that_mounts_the_project() {
+  unset CI
+  mkdir .ddev
+  : > .ddev/config.yaml
+  printf 'services:\n  app:\n    volumes:\n      - .:/app\n' > compose.yaml
+  _env_wrapper_stub ddev 2
+  _env_resolve
+  assert_contains "$OUT" "exec=[ddev exec --raw]"
+}
+
+test_runenv_detects_lando_through_its_labelled_container() {
+  unset CI
+  printf 'name: site\nrecipe: lamp\n' > .lando.yml
+  _env_labelled_docker_stub io.lando.container=TRUE
+  _env_resolve
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "exec=[docker exec -i -w /workspace proj_app_1]"
+  assert_contains "$OUT" "(Lando, detected)"
+  assert_contains "$OUT" "up=[lando start]"
+  assert_contains "$OUT" "refusal=[]"
+}
+
+test_runenv_lando_without_a_running_container_is_refused_with_its_start_command() {
+  unset CI
+  : > .lando.yml
+  _env_labelled_docker_stub io.lando.container=TRUE /somewhere/else
+  _env_resolve
+  assert_contains "$OUT" "exec=[]"
+  assert_contains "$OUT" "refusal=[the environment is not running (Lando: no running container mounts the project); start it with: lando start]"
+}
+
+test_runenv_detects_a_devcontainer_through_its_cli() {
+  unset CI
+  mkdir .devcontainer
+  : > .devcontainer/devcontainer.json
+  _env_wrapper_stub devcontainer 3
+  _env_resolve
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "exec=[devcontainer exec --workspace-folder .]"
+  assert_contains "$OUT" "(devcontainer, detected)"
+  assert_contains "$OUT" "up=[devcontainer up --workspace-folder .]"
+  assert_contains "$OUT" "refusal=[]"
+}
+
+test_runenv_detects_a_devcontainer_through_the_container_label_without_the_cli() {
+  unset CI
+  : > .devcontainer.json
+  _env_hide devcontainer
+  _env_labelled_docker_stub "devcontainer.local_folder=$PWD"
+  _env_resolve
+  assert_contains "$OUT" "exec=[docker exec -i -w /workspace proj_app_1]"
+  assert_contains "$OUT" "(devcontainer, detected)"
+  assert_contains "$OUT" "refusal=[]"
+}
+
+test_runenv_devcontainer_that_is_stopped_is_refused() {
+  unset CI
+  mkdir .devcontainer
+  : > .devcontainer/devcontainer.json
+  _env_wrapper_stub devcontainer 3 down
+  _env_resolve
+  assert_contains "$OUT" "refusal=[the environment is not running (devcontainer exec --workspace-folder . (devcontainer, detected)): devcontainer: the environment is not running; start it with: devcontainer up --workspace-folder .]"
+}
+
+test_runenv_devcontainer_without_a_cli_or_container_is_refused() {
+  unset CI
+  mkdir .devcontainer
+  : > .devcontainer/devcontainer.json
+  _env_hide devcontainer
+  _env_labelled_docker_stub "devcontainer.local_folder=/not/here"
+  _env_resolve
+  assert_contains "$OUT" "refusal=[the environment is not running (devcontainer: no running container mounts the project); start it with: devcontainer up --workspace-folder ."
+}
+
+test_runenv_inside_the_environment_runs_on_the_host() {
+  unset CI
+  mkdir .devcontainer .ddev
+  : > .devcontainer/devcontainer.json
+  : > .ddev/config.yaml
+  : > .lando.yml
+  local marker
+  for marker in REMOTE_CONTAINERS=true CODESPACES=true IS_DDEV_PROJECT=true LANDO=ON; do
+    run env "$marker" bash -c '
+      JIG_LIB="$JIG_HOME/scripts/lib"; JIG_PROJECT="$(pwd)"
+      . "$JIG_LIB/common.sh"; . "$JIG_LIB/runenv.sh"
+      cfg() { printf "%s\n" "$2"; }
+      runenv_resolve
+      printf "exec=[%s] where=[%s] refusal=[%s]\n" "$RUNENV_EXEC" "$RUNENV_WHERE" "$RUNENV_REFUSAL"
+    '
+    assert_contains "$OUT" "exec=[] where=[host (this shell is already inside the project's environment)] refusal=[]"
+  done
+}
+
+test_runenv_verify_runs_php_through_ddev() {
+  unset CI
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles php >/dev/null
+  mkdir .ddev
+  : > .ddev/config.yaml
+  _env_wrapper_stub ddev 2
+  run jig verify --explain --profile php
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: checks run in ddev exec --raw (DDEV, detected)"
 }
 
 # --- readiness ---------------------------------------------------------------------
