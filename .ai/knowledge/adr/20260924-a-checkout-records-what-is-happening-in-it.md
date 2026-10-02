@@ -143,15 +143,18 @@ every time".
 > A report may say "someone is here" on weak evidence; a refusal blocks a person, so it is
 > narrower than the report. It asks only where the start takes over this checkout: not for
 > `--worktree`, which leaves it as it was, and not when `git.branch_per_task` is off, where
-> no HEAD moves. Beyond what the reader already leaves out (this session's own id, expired
-> records, work in another worktree, leftover temporaries) it sets aside records of tasks
-> that are `consolidated` or `abandoned`, and of started tasks whose branch is no longer the
-> one checked out here — a session that finished a task, went back to the base and starts the
-> next is not occupying the tree. The message names the record's owner and age and three
-> exits: a worktree of its own, waiting, or deleting the record by hand. One known false
-> refusal remains, chosen on purpose: a single session that runs `task new B` while its own
-> task A is still on HEAD leaves A's record, and a record named by a task cannot say which
-> session wrote it, so `task start B` is refused and the session takes `--worktree`.
+> no HEAD moves. And it counts a record only when it stands for a HEAD: the record is named
+> by a task that has been started (it has a `branch`), is not `consolidated` or `abandoned`,
+> and its branch is the one checked out here. A record named by a session id — what a command
+> leaves when no task is on HEAD, `task new` and `status` among them — occupies nothing, and
+> neither does a task that was only filed, or one that went back to the base. A coordinator
+> that files tasks in `main` while agents work is not refused for it. The message names the
+> record's owner and age and two exits: a worktree of its own, or waiting. It no longer
+> suggests deleting the record: what is left is a live task on HEAD, and the record lapses
+> by itself after `checkout.busy_ttl`. One known false refusal remains, chosen on purpose: a
+> single session that runs `task new B` while its own task A is still on HEAD leaves A's
+> record, and a record named by a task cannot say which session wrote it, so `task start B`
+> is refused and the session takes `--worktree`.
 
 **A record's freshness window is `checkout.busy_ttl`, 12 hours by default**, read through
 the one duration grammar the framework already has (`jig_duration_seconds`); an
