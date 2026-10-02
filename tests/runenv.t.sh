@@ -436,7 +436,10 @@ test_runenv_detects_a_devcontainer_through_the_container_label_without_the_cli()
 
 test_runenv_container_match_keeps_a_backslash_in_the_project_path() {
   unset CI
-  mkdir 'proj\tdir'
+  # Windows treats `\` as a separator, so the name cannot exist there.
+  if ! mkdir 'proj\tdir' 2>/dev/null || [ -d proj ]; then
+    skip "this filesystem has no backslash in a file name"
+  fi
   cd 'proj\tdir' || return 1
   : > .devcontainer.json
   _env_hide devcontainer
