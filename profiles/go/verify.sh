@@ -118,7 +118,7 @@ _go_first_missing_pkg() {
 # when `go list` cannot answer (no go.mod, a build error, ...): the caller
 # falls back to the full set (D4: "if go list fails").
 _go_list_importpath_dir() {
-  "$go" list -f '{{.ImportPath}} {{.Dir}}' ./... > "$1" 2>/dev/null || return 1
+  jp_exec go list -f '{{.ImportPath}} {{.Dir}}' ./... > "$1" 2>/dev/null || return 1
   [ -s "$1" ] || return 1
   return 0
 }
@@ -128,10 +128,31 @@ _go_list_importpath_dir() {
 # transitive closure, so this one pass finds every package that depends on
 # a changed one through any number of hops.
 _go_list_dir_deps() {
-  "$go" list -f '{{.Dir}} {{join .Deps " "}}' ./... > "$1" 2>/dev/null || return 1
+  jp_exec go list -f '{{.Dir}} {{join .Deps " "}}' ./... > "$1" 2>/dev/null || return 1
   [ -s "$1" ] || return 1
   return 0
 }
+
+# _go_root — the project root as `go list` prints it: this directory on the
+# host, and the environment's own working directory under one (a container
+# mounts the project somewhere else, `/app`). Exit 1 when the environment
+# cannot say: guessing the host's path would match no package and quietly
+# drop the importers, so the caller falls back to the full set.
+_go_root() {
+  local r
+  if [ -z "${JIG_RUN_EXEC:-}" ]; then
+    printf '%s\n' "$PWD"
+    return 0
+  fi
+  r=$(jp_exec sh -c pwd 2>/dev/null | sed -n '$p' | tr -d '\r') || r=""
+  [ -n "$r" ] || return 1
+  printf '%s\n' "$r"
+  return 0
+}
+
+# The root `go list` paths are relative to, set once per narrowed run by
+# _go_test_packages.
+GO_ROOT_DIR=""
 
 # _go_importpath_for_dir <dir> <impmap-file> — the import path of the
 # package whose directory is <dir> (relative to the repository root, "."
@@ -141,9 +162,9 @@ _go_list_dir_deps() {
 _go_importpath_for_dir() {
   local dir="$1" file="$2" want
   if [ "$dir" = . ]; then
-    want="$PWD"
+    want="$GO_ROOT_DIR"
   else
-    want="$PWD/$dir"
+    want="$GO_ROOT_DIR/$dir"
   fi
   awk -v want="$want" '$2 == want { print $1; exit }' "$file"
   return 0
@@ -157,7 +178,7 @@ _go_importpath_for_dir() {
 # it instead (conventions/shell.md).
 _go_reverse_dependents() {
   local targets="$1" depmap="$2"
-  awk -v pwd="$PWD" '
+  awk -v pwd="$GO_ROOT_DIR" '
     NR == FNR { want[$1] = 1; next }
     {
       dir = $1
@@ -186,7 +207,7 @@ _go_test_packages() {
   impmap=$(mktemp "${TMPDIR:-/tmp}/jig-go-imp.XXXXXX") || return 1
   depmap=$(mktemp "${TMPDIR:-/tmp}/jig-go-dep.XXXXXX") || return 1
   targets=$(mktemp "${TMPDIR:-/tmp}/jig-go-tgt.XXXXXX") || return 1
-  if ! _go_list_importpath_dir "$impmap" || ! _go_list_dir_deps "$depmap"; then
+  if ! GO_ROOT_DIR=$(_go_root) || ! _go_list_importpath_dir "$impmap" || ! _go_list_dir_deps "$depmap"; then
     rm -f "$impmap" "$depmap" "$targets"
     return 1
   fi
@@ -213,7 +234,7 @@ $(_go_reverse_dependents "$targets" "$depmap")"
 # --- tool --------------------------------------------------------------------
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  if ! command -v go >/dev/null 2>&1; then
+  if ! jp_have go; then
     jp_plan vet skip "go not found in PATH"
     jp_plan test skip "go not found in PATH"
     exit 0
@@ -251,18 +272,13 @@ EOF
   exit 0
 fi
 
-go=""
-if command -v go >/dev/null 2>&1; then
-  go=$(command -v go)
-fi
-
-if [ -z "$go" ]; then
+if ! jp_have go; then
   jp_skip "vet" "go not found in \$PATH"
   jp_skip "test" "go not found in \$PATH"
   jp_end
 fi
 
-v=$(jp_version "$go" version)
+v=$(jp_version go version)
 
 # The packages the changed files affect directly (D4); shared by vet, which
 # runs on exactly them, and test, which adds their importers. Empty and
@@ -272,11 +288,11 @@ pkg_patterns=$(jp_decide _go_builtin)
 # --- go vet --------------------------------------------------------------------
 
 if ! jp_scoped; then
-  jp_run "vet" "$v" "$go" vet ./...
+  jp_run "vet" "$v" go vet ./...
 elif [ -z "$pkg_patterns" ]; then
   jp_skip "vet" "scope: no changed file maps to a package"
 elif [ "$pkg_patterns" = ALL ]; then
-  jp_run "vet" "$v, scope: module-wide file changed, whole project" "$go" vet ./...
+  jp_run "vet" "$v, scope: module-wide file changed, whole project" go vet ./...
 else
   IFS='
 '
@@ -286,10 +302,10 @@ else
   set +f
   IFS=$' \t\n'
   if missing=$(_go_first_missing_pkg "$@"); then
-    jp_run "vet" "$v, scope: package '$missing' has no .go files, ran full set" "$go" vet ./...
+    jp_run "vet" "$v, scope: package '$missing' has no .go files, ran full set" go vet ./...
   else
     n=$#
-    jp_run "vet" "$v, scope: $n packages" "$go" vet "$@"
+    jp_run "vet" "$v, scope: $n packages" go vet "$@"
   fi
 fi
 
@@ -301,9 +317,9 @@ _go_test_run() {
   local note="$1"
   shift
   if [ $# -eq 0 ]; then
-    jp_run "test" "$note" "$go" test ./...
+    jp_run "test" "$note" go test ./...
   else
-    jp_run "test" "$note" "$go" test "$@"
+    jp_run "test" "$note" go test "$@"
   fi
 }
 

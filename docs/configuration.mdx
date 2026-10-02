@@ -275,9 +275,11 @@ for the worktree, or verify in the checkout the container mounts.
 In CI (`CI` is set) nothing is detected and nothing is refused: the pipeline describes its own
 environment, and the checks run where it runs them.
 
-The `php`, `laravel`, `node` and `generic` profiles run through the environment today. A profile not
-yet adapted is **not** run on the host when an environment is in use: its result is a skip that
-says why, and when nothing else passed, the run is not a pass. Your own profile opts in by adding
+Every built-in profile runs through the environment. For Python, a virtualenv made on your machine
+is of no use inside a container, so there the tools come from a `.venv/` or `venv/` that runs in
+the environment, and otherwise from the environment's own `PATH`. A profile that is not adapted
+(your own, until you do it) is **not** run on the host when an environment is in use: its result
+is a skip that says why, and when nothing else passed, the run is not a pass. Your own profile opts in by adding
 `environment` to its `scope` and running its commands through `jp_run`, `jp_version` and `jp_have`
 (`schemas/profile.md` in the Jig source).
 

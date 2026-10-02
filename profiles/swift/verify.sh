@@ -37,7 +37,7 @@ _swift_builtin() {
 }
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  if ! command -v swift >/dev/null 2>&1; then
+  if ! jp_have swift; then
     jp_plan build skip "swift not found on PATH"
     jp_plan test skip "swift not found on PATH"
   else
@@ -53,7 +53,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   exit 0
 fi
 
-if ! command -v swift >/dev/null 2>&1; then
+if ! jp_have swift; then
   jp_skip "build" "swift not found on PATH"
   jp_skip "test" "swift not found on PATH"
   jp_end

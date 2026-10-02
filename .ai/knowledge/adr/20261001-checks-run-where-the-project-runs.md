@@ -14,7 +14,7 @@ paths:
   - schemas/config.md
   - skills/jig-setup/SKILL.md
 summary: Why jig verify decides once where a project's commands run (host or a container prefix from run.exec or a detector), refuses rather than guessing the host, and passes the prefix only to profiles declaring the environment capability.
-reviewed_at: 2026-10-01
+reviewed_at: 2026-10-02
 ---
 # A project's checks run where the project runs, and never on the host by guess
 
@@ -94,6 +94,12 @@ run a project's checks on the host silently when signs say the project lives els
 - Every further environment (devcontainer, DDEV, Lando, Herd, Devilbox) is a detector in
   `runenv.sh` plus a test, and every further profile adaptation is `environment` in its
   `scope` plus `jp_have` for `command -v`. Both are filed as follow-up tasks.
+- Every built-in profile now declares the capability (a follow-up completed the nine that were
+  left). Two choices there: a profile's host-resolved absolute paths and shell-function wrappers
+  became command words run through `jp_run`/`jp_exec` (`go`, `dotnet`, the Gradle and Maven
+  commands), and the python profile, which reads tools from the project's own virtualenv, takes
+  them under an environment from a `.venv/` or `venv/` that runs there, else from the
+  environment's `PATH`, never from the host's `$VIRTUAL_ENV` or poetry.
 - A worktree with a container of the main checkout is refused; giving each worktree its own
   environment is the person's choice and cost.
 - The prefix is plain words: a path with a blank cannot be written in `run.exec` (Herd's

@@ -92,7 +92,7 @@ _rb_test_check_name() {
 
 RB_TEST=$(_rb_test_check_name)
 
-if ! command -v bundle >/dev/null 2>&1; then
+if ! jp_have bundle; then
   if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan rubocop skip "bundle not found on PATH"
     jp_plan "$RB_TEST" skip "bundle not found on PATH"

@@ -19,6 +19,9 @@
 set -eu
 set -o pipefail
 
+# shellcheck source=../../scripts/lib/profile.sh
+. "$(dirname "$0")/../../scripts/lib/profile.sh"
+
 status=0
 ran_any=0
 incomplete=0
@@ -387,13 +390,12 @@ _shell_test_names() {
 # --- shellcheck --------------------------------------------------------------
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  # shell is older than the shared profile library. Source it only for the
-  # new plan format; the ordinary verification path keeps its own verdicts.
-  # shellcheck source=../../scripts/lib/profile.sh
-  . "$(dirname "$0")/../../scripts/lib/profile.sh"
+  # shell is older than the shared profile library: it uses the library's
+  # plan format and where-the-project-runs helpers, while the ordinary
+  # verification path keeps its own verdicts.
   jp_begin shell
 
-  if ! command -v shellcheck >/dev/null 2>&1; then
+  if ! jp_have shellcheck; then
     jp_plan shellcheck skip "shellcheck not found"
   elif [ "$scoped" = 1 ] && grep -qE '(^|/)\.shellcheckrc$' "$JIG_VERIFY_FILES"; then
     scripts=$(_shell_all_scripts)
@@ -444,7 +446,7 @@ EOF
   exit 0
 fi
 
-if command -v shellcheck >/dev/null 2>&1; then
+if jp_have shellcheck; then
   # Every shellcheck verdict names the version that produced it. Rule sets
   # move between releases — SC2015 fires in 0.10.0 and not in 0.11.0 — so the
   # same tree honestly passes on one machine and fails on another. That is
@@ -461,7 +463,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   # wrapper) would abort this profile here — printing nothing at all, for
   # either check, and taking the tests down with it. A version probe must
   # never be able to fail the thing it only annotates.
-  sc_version=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p' | head -n 1) \
+  sc_version=$(jp_exec shellcheck --version 2>/dev/null | sed -n 's/^version: //p' | head -n 1) \
     || sc_version=""
   [ -n "$sc_version" ] || sc_version="unknown"
 
@@ -491,7 +493,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     # (e.g. `. "$LIB_DIR/foo.sh"`) rather than a literal, shellcheck-visible
     # path — jig's own .ai/scripts/lib/*.sh included (see .shellcheckrc at
     # the framework's own source root, which disables it the same way).
-    shellcheck -s bash -e SC1091 "$f" || sc_failed=1
+    jp_exec shellcheck -s bash -e SC1091 "$f" || sc_failed=1
   done < "$list"
   rm -f "$list"
   trap - EXIT INT TERM
@@ -558,7 +560,7 @@ EOF
     if [ "$filters" = ALL ] || [ "$has_all" = 1 ]; then
       ran_any=1
       t_rc=0
-      tests/run.sh || t_rc=$?
+      jp_exec tests/run.sh || t_rc=$?
       _shell_tests_verdict "$t_rc" "scope: $reason, ran full set"
     elif [ -z "$filters" ]; then
       echo "shell: tests/run.sh: skip (scope: no changed file maps to a test)"
@@ -570,7 +572,7 @@ EOF
         [ -n "$filter" ] || continue
         t_count=$((t_count + 1))
         t_rc=0
-        tests/run.sh "$filter" || t_rc=$?
+        jp_exec tests/run.sh "$filter" || t_rc=$?
         # The worst answer of the filters decides, and "did not finish" is
         # worse than "failed": one filter killed makes the whole narrowed run
         # unfinished, whatever the others said.
@@ -591,7 +593,7 @@ EOF
   else
     ran_any=1
     t_rc=0
-    tests/run.sh || t_rc=$?
+    jp_exec tests/run.sh || t_rc=$?
     _shell_tests_verdict "$t_rc" ""
   fi
 else
