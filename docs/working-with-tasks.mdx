@@ -155,30 +155,15 @@ Starting a task with `--worktree` carries that state across for you: your projec
 [verification profiles](/configuration#verification-profiles) declare what their stack needs
 (PHP's `vendor`, Node's `node_modules`, Laravel's `.env`), and the project can add its own with
 `worktree.carry` in [`.ai/config.yaml`](/configuration#git-and-branches). It
-copies what each worktree must have its own of.
+copies what each worktree must have its own of. Never carry a folder of separate Git repositories
+you edit — a copy is a second clone, and its commits go when the worktree goes; share it instead,
+as [described below](#sharing-a-folder-of-packages-you-edit).
 
 Jig only carries what your project keeps out of Git, and it checks rather than assumes: after
 placing something it asks Git what it now sees in the worktree, and takes straight back out
 anything Git noticed, telling you to add that path to `.gitignore` first. The reason is narrow but
 absolute — a worktree holding anything Git can see cannot be removed afterwards, so Jig would be
 leaving you a folder to delete by hand.
-
-<Warning>
-**Do not declare a directory of separate repositories as `worktree.carry`.** If you keep
-sibling packages next to your project — separate Git repositories wired in as Composer path
-repositories, say, under an ignored `packages/` — carrying is not a way to get them into a
-worktree. A copy gives that worktree its own clone of each one, so work you do there is
-invisible to the checkout beside it and lives in no other clone.
-
-Jig's own cleanup will not throw that away: before removing a worktree it asks each repository
-it finds inside an ignored path whether anything there is nowhere else, and keeps the worktree
-if the answer is yes. **`git worktree remove` run by hand has no such manners** — the path is
-ignored, so Git deletes it without a word, committed work included. That is Git's own contract
-and not something Jig can change.
-
-Jig does not yet serve this layout; support for it is being designed separately. Until then,
-work on those packages in your main checkout rather than in a worktree.
-</Warning>
 
 Carrying is never required to succeed — if the owning checkout has nothing to carry either, Jig
 says so and names the install command to run yourself, rather than installing anything over the
@@ -229,6 +214,40 @@ git status --porcelain --ignored
 Every line starting with `!!` is ignored, and ignored is what gets deleted. Copy out what you want
 to keep, and push from inside any repository of its own. Running `git worktree remove` yourself is
 exactly as dangerous as it always was — that half belongs to git, and no setting in Jig changes it.
+
+### Sharing a folder of packages you edit
+
+Some projects keep, next to their own code, a folder of separate Git repositories they edit as
+they go — Composer path repositories under an ignored `packages/`, say. Each package has one
+checkout, and an edit made from any worktree has to land in it. Copying is the wrong tool for
+that: a copy gives the worktree a second clone of every package, work done there is invisible to
+the checkout beside it, and `git worktree remove` deletes an ignored folder without a word,
+commits included.
+
+Declare such a folder as shared instead:
+
+```yaml
+# .ai/config.yaml
+worktree.share: [packages]
+```
+
+The worktree then gets a real `packages/` folder in which every entry is a link to the package in
+your main checkout (on Windows without symbolic links, a junction). There is one copy of each
+package, so a commit made from any worktree is in it at once, and removing the worktree — by Jig's
+cleanup or by `git worktree remove` — removes the links and never the packages. A folder declared
+both ways is shared, not copied.
+
+Two things to know:
+
+- **The folder must be in `.gitignore`**, as with `carry`. If Git can see the shared folder, Jig
+  takes it back out and tells you to add it.
+- **A package added later does not appear by itself.** The worktree gets links to the packages
+  that existed when it was created. Run `jig task bootstrap <id>` and the new ones are linked in;
+  nothing that is already there is touched. A folder you create *inside* the worktree's
+  `packages/` is that worktree's own, not shared — create new packages in the main checkout.
+
+If `packages/` is tracked by your project's Git, the worktree already has it and the declaration
+does nothing.
 
 ## Seeing where things stand
 

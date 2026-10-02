@@ -857,3 +857,222 @@ test_bootstrap_backstop_catches_a_rename_that_really_nested() {
   [ ! -e "$root/wt/data/data" ] \
     || fail "the carried tree was left nested inside the destination"
 }
+
+# --- share: a directory mirrored, one link per entry -------------------------
+# (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it)
+
+# share_repo <dir> — a repository of its own with one commit and no remote: a
+# package under edit whose work exists in no other repository.
+share_repo() {
+  mkdir -p "$1"
+  git -C "$1" init -q
+  printf 'package\n' > "$1/index.php"
+  git -C "$1" add index.php
+  git -C "$1" -c user.email=t@e -c user.name=t commit -q -m "package"
+}
+
+test_share_mirrors_a_directory_one_link_per_entry() {
+  bootstrap_setup_nested
+  # `packages/` is already in .gitignore (bootstrap_ignore), as it is in every
+  # project this serves: the slashed pattern is the case a directory link fails.
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages/alpha
+  share_repo packages/beta
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "shared packages: linked 2 entries"
+  [ -d "$wt/packages" ] && [ ! -L "$wt/packages" ] \
+    || fail "the shared directory is not a real directory in the worktree"
+  assert_symlink "$wt/packages/alpha"
+  assert_symlink "$wt/packages/beta"
+  assert_eq "" "$(git -C "$wt" status --porcelain)" \
+    "the mirror is visible to git, so the worktree could never be removed"
+
+  # One source of truth: an edit made through the worktree is the owner's.
+  printf 'edited in the worktree\n' > "$wt/packages/alpha/new.php"
+  assert_file packages/alpha/new.php
+}
+
+# The named risk, measured on 2026-09-24 with `carry`: a commit and an
+# uncommitted file made in a package inside the worktree, then `git worktree
+# remove` without --force. It returns 0 and, the path being ignored, deletes
+# what it finds there without a word. Under `carry` that is the package's only
+# clone holding the commit, and the commit is gone. Under `share` it is a link,
+# and the work is where it was made: in the owner's checkout.
+test_share_keeps_the_work_when_git_removes_the_worktree() {
+  bootstrap_setup_nested
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages/sso
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT" sha
+  printf 'fix\n' > "$wt/packages/sso/fix.php"
+  git -C "$wt/packages/sso" add fix.php
+  git -C "$wt/packages/sso" -c user.email=t@e -c user.name=t commit -q -m "fix made in the worktree"
+  sha=$(git -C "$wt/packages/sso" rev-parse HEAD)
+  printf 'not committed\n' > "$wt/packages/sso/draft.php"
+  # The blind spot itself: git in the worktree sees nothing to protect.
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+
+  run git worktree remove "$wt"
+  assert_eq 0 "$RC" "git worktree remove refused the worktree: $OUT"
+  git -C packages/sso cat-file -t "$sha" >/dev/null 2>&1 \
+    || fail "the commit made in the shared package went with the worktree"
+  assert_file packages/sso/draft.php "the uncommitted file went with the worktree"
+  assert_file packages/sso/index.php
+}
+
+# F11 (P2) of the first attempt. A shared directory the project does not keep
+# out of git is a mirror git can see, and a worktree nobody can remove. It is
+# taken back; and taking it back deletes links, never what they point at — the
+# owner's packages are intact afterwards, which on Windows runs with junctions.
+test_share_refuses_a_directory_git_would_see_and_keeps_the_owners() {
+  bootstrap_setup_nested
+  printf 'worktree.share: [libs]\n' >> .ai/config.yaml
+  share_repo libs/one
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "not sharing libs: git does not ignore it"
+  assert_contains "$ERR" ".gitignore"
+  [ ! -e "$wt/libs" ] && [ ! -L "$wt/libs" ] \
+    || fail "a mirror git can see was left in the worktree, which strands it"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+  assert_file libs/one/index.php "taking the mirror back deleted the owner's package"
+}
+
+test_share_tops_up_a_mirror_with_what_the_owner_gained() {
+  bootstrap_setup_nested
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+
+  share_repo packages/gamma
+  run jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "shared packages: linked gamma"
+  assert_symlink "$wt/packages/gamma"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+
+  run jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "shared packages"
+}
+
+# A directory git brought is the worktree's own, whatever it is declared as;
+# two of three live projects measured track `packages/`. It is asked of git
+# from inside the directory, so a case variant on macOS answers the same way
+# (F10 of the first attempt asked by pathspec and missed it).
+test_share_leaves_a_directory_git_brought_alone() {
+  bootstrap_setup_nested
+  printf 'worktree.share: [modules]\n' >> .ai/config.yaml
+  mkdir -p modules/tracked
+  printf 'tracked\n' > modules/tracked/file
+  git add modules
+  git commit -q -m "a tracked modules directory"
+  printf 'modules/extra/\n' >> .gitignore
+  git add .gitignore
+  git commit -q -m "ignore extra"
+  mkdir -p modules/extra
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_not_contains "$ERR" "shared modules"
+  [ ! -e "$wt/modules/extra" ] && [ ! -L "$wt/modules/extra" ] \
+    || fail "a directory git brought was mirrored into"
+}
+
+test_share_refuses_a_directory_that_is_a_repository_itself() {
+  bootstrap_setup_nested
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "refusing to share packages: it is a git repository itself"
+  assert_no_file "$wt/packages"
+}
+
+# Declared both ways, the copy is the mistake that loses work, so it is the one
+# not made.
+test_share_wins_over_a_carry_of_the_same_directory() {
+  bootstrap_setup_nested
+  printf 'worktree.share: [packages]\nworktree.carry: [packages]\n' >> .ai/config.yaml
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "not carrying packages: it overlaps packages, which is shared"
+  assert_symlink "$wt/packages/alpha"
+  assert_not_contains "$ERR" "carried packages"
+}
+
+test_share_overlap_is_found_inside_around_and_in_another_case() {
+  # shellcheck source=/dev/null
+  . "$JIG_HOME/scripts/lib/bootstrap.sh"
+  local list='packages
+nova'
+  assert_eq packages "$(_bootstrap_overlap packages/sso "$list")"
+  assert_eq nova "$(_bootstrap_overlap Nova "$list")"
+  assert_eq packages "$(_bootstrap_overlap packages "$list")"
+  assert_eq packages/sso "$(_bootstrap_overlap packages "packages/sso")"
+  _bootstrap_overlap vendor "$list" >/dev/null && fail "vendor overlaps nothing shared"
+  _bootstrap_overlap packages-old "$list" >/dev/null && fail "a sibling with a common prefix is not inside"
+  return 0
+}
+
+# F13's reproducer was on `share`: the record of what was made is
+# newline-separated, and an entry whose own name holds a newline arrived there
+# as two lines naming nothing. Such an entry is named and skipped.
+test_share_skips_an_entry_whose_name_holds_a_newline() {
+  bootstrap_setup_nested
+  local odd
+  odd="$(printf 'a\nb')"
+  mkdir -p "packages/$odd" 2>/dev/null || skip "this filesystem has no newline in a file name"
+  [ -d "packages/$odd" ] || skip "this filesystem has no newline in a file name"
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages/ok
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "could not link (a name holding a newline)"
+  assert_symlink "$wt/packages/ok"
+  [ ! -e "$wt/packages/$odd" ] || fail "an entry with a newline in its name was linked"
+  assert_eq "" "$(git -C "$wt" status --porcelain)"
+}
+
+test_share_links_a_file_entry_only_by_a_symlink() {
+  bootstrap_setup_nested
+  mkdir -p owner/packages wt
+  printf 'readme\n' > owner/packages/README.md
+  local rc=0
+  (
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/bootstrap.sh"
+    # shellcheck disable=SC2034
+    _JIG_LINK_KIND=junction
+    # shellcheck disable=SC2329
+    jig_link_detect() { :; }
+    _bootstrap_link_entry "$(pwd -P)/owner/packages/README.md" "$(pwd -P)/wt/README.md"
+  ) || rc=$?
+  assert_eq 2 "$rc" "a file was not refused where only junctions can be made"
+  assert_no_file wt/README.md
+}
