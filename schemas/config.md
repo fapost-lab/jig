@@ -27,7 +27,8 @@ Absent keys take the default. Paths are not configurable.
 | `knowledge.require_frontmatter` | `true` | | `jig knowledge check` fails on missing frontmatter |
 | `verify.full_run` | `local` | | `local` runs everything by default; `ci` narrows a flag-less `jig verify` to changed files, trusting CI to run the full set on the pull request |
 | `verify.busy_ttl` | `30m` | yes | how long a run record still counts as a live `jig verify` on this clone; a second run waits while one is live, `0` never waits, and `CI` switches the whole mechanism off (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) |
-| `run.exec` | `auto` | only | where this machine runs the project's checks: `auto` detects (Laravel Sail, a docker compose service mounting the project) and refuses when a container is likely but unrecognised; `host` runs them here; anything else is a command prefix of plain words put in front of each check (adr-20261001-checks-run-where-the-project-runs) |
+| `run.exec` | `auto` | only | where this machine runs the project's checks: `auto` detects (Laravel Sail, DDEV, Lando, a devcontainer, a docker compose service mounting the project, Devilbox) and refuses when a container is likely but unrecognised; `host` runs them here; anything else is a command prefix of plain words put in front of each check (adr-20261001-checks-run-where-the-project-runs) |
+| `run.path` | `auto` | only | a directory put first on `PATH` for the checks when they run on this machine — a host runtime that is not first there; `auto` takes the Laravel Herd detector's answer, nothing otherwise (adr-20261001-checks-run-where-the-project-runs) |
 
 Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 
@@ -61,6 +62,7 @@ Values `set` accepts, per key:
 | `autopilot.parallel` | a whole number, 1 to 16 |
 | `git.worktree_root` | a path, unquoted |
 | `run.exec` | `auto`, `host`, or a command of plain words: no quote, `$`, backtick or backslash |
+| `run.path` | `auto` or the absolute path of a directory, unquoted; blanks inside it are kept |
 
 No value may hold a line break, a `#` (the file reads one as the start of a comment) or
 surrounding blanks.

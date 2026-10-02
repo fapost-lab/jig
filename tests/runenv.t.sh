@@ -152,14 +152,21 @@ EOF
 }
 
 # _env_resolve — run runenv_resolve in a plain directory, with `cfg` answering
-# run.exec from $RUN_EXEC (default auto), and print what it decided.
+# run.exec from $RUN_EXEC and run.path from $RUN_PATH (default auto for
+# both), and print what it decided.
 _env_resolve() {
   run bash -c '
     JIG_LIB="$JIG_HOME/scripts/lib"; JIG_PROJECT="$(pwd)"
     . "$JIG_LIB/common.sh"; . "$JIG_LIB/runenv.sh"
-    cfg() { printf "%s\n" "${RUN_EXEC:-$2}"; }
+    cfg() {
+      case "$1" in
+        run.exec) printf "%s\n" "${RUN_EXEC:-$2}" ;;
+        run.path) printf "%s\n" "${RUN_PATH:-$2}" ;;
+        *) printf "%s\n" "$2" ;;
+      esac
+    }
     runenv_resolve
-    printf "exec=[%s]\nwhere=[%s]\nup=[%s]\nrefusal=[%s]\n" "$RUNENV_EXEC" "$RUNENV_WHERE" "$RUNENV_UP" "$RUNENV_REFUSAL"
+    printf "exec=[%s]\nwhere=[%s]\nup=[%s]\nrefusal=[%s]\npath=[%s]\n" "$RUNENV_EXEC" "$RUNENV_WHERE" "$RUNENV_UP" "$RUNENV_REFUSAL" "$RUNENV_PATH"
   '
 }
 
@@ -631,4 +638,240 @@ test_runenv_config_set_accepts_a_prefix_and_refuses_quotes() {
   run jig config set run.exec "docker exec 'php'" --local
   assert_eq 1 "$RC" "$OUT"
   assert_contains "$OUT" "plain words"
+}
+
+# --- Devilbox -------------------------------------------------------------------------
+
+# _env_devilbox_stub [running|stopped] [<mount source>] [<destination>] [<env>]
+# — a `docker` that knows one Devilbox PHP container, server-php-1 (compose
+# service php, stack folder /stack), mounting <mount source> (default: the
+# parent of this directory, as Docker Desktop on macOS spells it) at
+# <destination> (default /shared/httpd), with <env> (default MY_USER=devilbox)
+# in its environment; `exec` runs the command after its options here.
+_env_devilbox_stub() {
+  local state="${1:-running}" src="${2:-/host_mnt$(dirname "$(pwd -P)")}" dst="${3:-/shared/httpd}" env="${4-MY_USER=devilbox}" run=true
+  [ "$state" = running ] || run=false
+  mkdir -p stub-bin
+  cat > stub-bin/docker <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/docker.log"
+case "\$1" in
+  ps)
+    case "\$*" in *"-a"*"label=com.docker.compose.service=php"*) echo f00d ;; esac
+    ;;
+  inspect)
+    printf '/server-php-1\t$run\t/stack\n'
+    printf 'M\t/host_mnt/stack/backups\t/shared/backups\n'
+    printf 'M\t$src\t$dst\n'
+    printf 'E\tPATH=/usr/bin\n'
+    [ -z "$env" ] || printf 'E\t%s\n' "$env"
+    ;;
+  exec)
+    shift
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -u|-w) shift 2 ;;
+        -*) shift ;;
+        *) break ;;
+      esac
+    done
+    shift
+    exec "\$@"
+    ;;
+esac
+STUB
+  chmod +x stub-bin/docker
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+test_runenv_detects_devilbox_by_the_container_that_mounts_an_ancestor() {
+  unset CI
+  _env_devilbox_stub
+  _env_resolve
+  local name
+  name=$(basename "$(pwd -P)")
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "exec=[docker exec -i -u devilbox -w /shared/httpd/$name server-php-1]"
+  assert_contains "$OUT" "(Devilbox, detected)"
+  assert_contains "$OUT" "up=[cd /stack && docker compose up -d]"
+  assert_contains "$OUT" "refusal=[]"
+  assert_contains "$(cat docker.log)" "exec -i -u devilbox -w /shared/httpd/$name server-php-1 sh -c"
+}
+
+test_runenv_devilbox_reads_its_user_and_a_deeper_project() {
+  unset CI
+  local base
+  base=$(pwd -P)
+  mkdir -p www/group/app
+  cd www/group/app || fail "cd"
+  _env_devilbox_stub running "/run/desktop/mnt/host$base/www" /shared/httpd "MY_USER=web"
+  _env_resolve
+  assert_contains "$OUT" "exec=[docker exec -i -u web -w /shared/httpd/group/app server-php-1]"
+  _env_devilbox_stub running "$base/www/group/app" /shared/httpd ""
+  _env_resolve
+  assert_contains "$OUT" "exec=[docker exec -i -u devilbox -w /shared/httpd server-php-1]"
+}
+
+test_runenv_devilbox_that_is_stopped_is_refused_with_its_start_command() {
+  unset CI
+  _env_devilbox_stub stopped
+  _env_resolve
+  assert_contains "$OUT" "exec=[]"
+  assert_contains "$OUT" "refusal=[the environment is not running (Devilbox: its PHP container server-php-1 is stopped); start it with: cd /stack && docker compose up -d]"
+}
+
+test_runenv_a_container_that_mounts_elsewhere_or_not_as_devilbox_is_not_devilbox() {
+  unset CI
+  _env_devilbox_stub running /host_mnt/somewhere/else
+  _env_resolve
+  assert_contains "$OUT" "exec=[]"
+  assert_contains "$OUT" "where=[host]"
+  # An ancestor mounted anywhere but Devilbox's data folder: not a match.
+  _env_devilbox_stub running "/host_mnt$(dirname "$(pwd -P)")" /home/user
+  _env_resolve
+  assert_contains "$OUT" "where=[host]"
+  assert_contains "$OUT" "refusal=[]"
+}
+
+test_runenv_a_compose_service_of_the_project_comes_before_devilbox() {
+  unset CI
+  _env_devilbox_stub
+  cat > compose.yml <<'EOF'
+services:
+  app:
+    volumes:
+      - .:/app
+EOF
+  _env_resolve
+  assert_contains "$OUT" "(docker compose service app, detected)"
+}
+
+test_runenv_devilbox_refuses_a_worktree_outside_its_data_folder() {
+  unset CI
+  mkdir -p data
+  git init -q data/app
+  git -C data/app commit -q --allow-empty -m init
+  git -C data/app worktree add -q ../../wt 2>/dev/null || fail "worktree add"
+  cd wt || fail "cd"
+  _env_devilbox_stub running "/host_mnt$(cd ../data && pwd -P)"
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; JIG_PROJECT="$(pwd)"; JIG_AI_DIR=.ai
+    . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"; . "$JIG_LIB/runenv.sh"
+    cfg() { printf "%s\n" "$2"; }
+    runenv_resolve
+    printf "exec=[%s]\nrefusal=[%s]\n" "$RUNENV_EXEC" "$RUNENV_REFUSAL"
+  '
+  assert_contains "$OUT" "exec=[]"
+  assert_contains "$OUT" "refusal=[the environment does not see this checkout (Devilbox, detected): its PHP container server-php-1 mounts the main checkout's folder"
+}
+
+test_runenv_a_sign_in_the_project_outranks_a_stack_on_the_machine() {
+  unset CI
+  _env_devilbox_stub
+  mkdir .ddev
+  _env_resolve
+  assert_contains "$OUT" "exec=[]"
+  assert_contains "$OUT" "refusal=[this project looks like it runs in a container (a DDEV project (.ddev/))"
+}
+
+# --- Laravel Herd ---------------------------------------------------------------------
+
+# _env_herd <home layout> <paths json> — a Herd install under $PWD/home:
+# `mac` (Library/Application Support/Herd) or `win` (.config/herd), with a
+# php in its bin that names itself, and a Valet config listing <paths json>.
+_env_herd() {
+  local h
+  case "$1" in
+    mac) h="$PWD/home/Library/Application Support/Herd" ;;
+    *) h="$PWD/home/.config/herd" ;;
+  esac
+  mkdir -p "$h/bin" "$h/config/valet"
+  printf '#!/usr/bin/env bash\necho "herd php"\n' > "$h/bin/php"
+  chmod +x "$h/bin/php"
+  printf '{\n    "tld": "test",\n    "paths": %s\n}\n' "$2" > "$h/config/valet/config.json"
+  HERD_BIN="$h/bin"
+}
+
+test_runenv_detects_a_herd_site_in_a_parked_folder() {
+  unset CI
+  mkdir -p sites/app
+  _env_herd mac "[\"$PWD/sites\"]"
+  cd sites/app || fail "cd"
+  HOME="$OLDPWD/home" _env_resolve
+  assert_contains "$OUT" "exec=[]"
+  assert_contains "$OUT" "path=[$HERD_BIN]"
+  assert_contains "$OUT" "where=[host, with $HERD_BIN first on PATH (Laravel Herd, detected)]"
+  assert_contains "$OUT" "refusal=[]"
+}
+
+test_runenv_detects_a_linked_herd_site_with_escaped_json() {
+  unset CI
+  mkdir -p app links
+  _env_herd win "[\"$(printf '%s' "$PWD/links" | sed 's#/#\\/#g')\", \"/no/such\"]"
+  plant_dir_link "$PWD/app" links/app
+  cd app || fail "cd"
+  HOME="$OLDPWD/home" _env_resolve
+  assert_contains "$OUT" "path=[$HERD_BIN]"
+}
+
+test_runenv_herd_leaves_a_project_that_is_not_its_site_alone() {
+  unset CI
+  mkdir -p sites app
+  _env_herd mac "[\"$PWD/sites\"]"
+  cd app || fail "cd"
+  HOME="$OLDPWD/home" _env_resolve
+  assert_contains "$OUT" "where=[host]"
+  assert_contains "$OUT" "path=[]"
+  # run.exec host turns the detection off with the rest.
+  mkdir -p ../sites/site
+  cd ../sites/site || fail "cd"
+  HOME="$OLDPWD/../home" RUN_EXEC=host _env_resolve
+  assert_contains "$OUT" "where=[host (run.exec: host)]"
+  assert_contains "$OUT" "path=[]"
+}
+
+test_runenv_run_path_names_a_directory_with_a_blank_or_is_refused() {
+  unset CI
+  mkdir -p "my php/bin"
+  RUN_PATH="$PWD/my php/bin" _env_resolve
+  assert_contains "$OUT" "path=[$PWD/my php/bin]"
+  assert_contains "$OUT" "where=[host, with $PWD/my php/bin first on PATH (run.path)]"
+  RUN_PATH="$PWD/missing" _env_resolve
+  assert_contains "$OUT" "refusal=[run.path names $PWD/missing, which is not a directory on this machine"
+  RUN_PATH="my php/bin" _env_resolve
+  assert_contains "$OUT" "refusal=[run.path is my php/bin, not an absolute path"
+  # Under a prefix, run.path is not used.
+  _env_sail_project
+  _env_docker_stub
+  RUN_PATH="$PWD/my php/bin" _env_resolve
+  assert_contains "$OUT" "(Laravel Sail, detected)"
+  assert_contains "$OUT" "path=[]"
+}
+
+test_runenv_verify_puts_the_herd_bin_first_on_path_for_every_profile() {
+  unset CI
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local here
+  here=$(pwd -P)
+  mkdir -p .ai/profiles/probe
+  printf 'name: probe\ndescription: probe.\ndetect: always\n' > .ai/profiles/probe/profile.yaml
+  printf '#!/usr/bin/env bash\necho "probe: $(php)"\nexit 0\n' > .ai/profiles/probe/verify.sh
+  _env_herd mac "[\"$(dirname "$here")\"]"
+  HOME="$PWD/home" run jig verify --profile probe
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: checks run in host, with $HERD_BIN first on PATH (Laravel Herd, detected)"
+  assert_contains "$OUT" "probe: herd php"
+}
+
+test_runenv_config_set_accepts_a_run_path_with_a_blank() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  run jig config set run.path "/Users/me/Library/Application Support/Herd/bin" --local
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat .ai/config.local.yaml)" "run.path: /Users/me/Library/Application Support/Herd/bin"
+  run jig config set run.path "Herd/bin" --local
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "not auto or an absolute path"
 }
