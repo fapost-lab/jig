@@ -252,11 +252,17 @@ It decides in this order:
    the service Sail runs in (`laravel.test`, or `APP_SERVICE` from `.env`) mounting the project — runs
    checks as Sail's own user. **docker compose** — exactly one service in `compose.yaml` or
    `docker-compose.yml` mounting the project directory (`.:/app`) — runs them in that service, in the
-   directory it is mounted at.
+   directory it is mounted at. **DDEV** (`.ddev/config.yaml`) runs them with `ddev exec`; **Lando**
+   (`.lando.yml`) and a **devcontainer** (`.devcontainer/devcontainer.json`) run them in the container
+   that mounts the project — for a devcontainer through the `devcontainer` CLI when it is installed.
+   They are tried in that order, the tool with a file of its own before a bare compose service. A shell
+   that is already inside one of these environments (a Codespace, DDEV's web container) just runs on
+   the spot.
 3. **The host**, when nothing suggests a container.
 
 When something does suggest one and no detector recognised it — two services mounting the project,
-`DB_HOST` in `.env` naming a compose service, a `.devcontainer/`, `.ddev/` or `.lando.yml` — Jig
+`DB_HOST` in `.env` naming a compose service, a `.devcontainer/` or `.ddev/` folder without its
+manifest — Jig
 **refuses** rather than running the checks on this machine, exits 3, and names what it saw. A
 database in a container beside an app on the host is not such a sign. Run the `jig-setup` skill, or
 set the command yourself:
@@ -268,7 +274,7 @@ jig config set run.exec host --local   # this machine is right after all
 
 Before the first check, Jig asks the environment for one thing: is it running, and does it see
 this checkout? A container that is stopped is a refusal with the command that starts it
-(`./vendor/bin/sail up -d`, `docker compose up -d`). In a task's worktree, a container that mounts
+(`./vendor/bin/sail up -d`, `docker compose up -d`, `ddev start`, `lando start`, `devcontainer up`). In a task's worktree, a container that mounts
 the main checkout instead would check other code, and that is a refusal too: start an environment
 for the worktree, or verify in the checkout the container mounts.
 
