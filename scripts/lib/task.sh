@@ -867,8 +867,13 @@ task_start() {
   local existing
   existing=$(task_state_get "$id" branch)
   if [ -n "$existing" ]; then
-    [ -z "$(task_state_get "$id" base_commit)" ] \
-      || jig_die "task start: already started on $existing"
+    if [ -n "$(task_state_get "$id" base_commit)" ]; then
+      if [ "$worktree" -eq 1 ]; then
+        _task_move_to_worktree "$id" "$dir" "$existing" "$bootstrap"
+        return 0
+      fi
+      jig_die "task start: already started on $existing; to give it a worktree of its own: \`jig task start $id --worktree\`"
+    fi
     jig_info "task start: $id recorded $existing when it was filed, with no fork point; starting it now"
   fi
 
@@ -982,6 +987,93 @@ _task_start_in_worktree() {
   _task_paused_hint "$id" " there"
   jig_info "task start: $id is on $branch in its own worktree; open a new agent session in $path"
   printf '%s\n' "$path"
+}
+
+# _task_move_to_worktree <id> <dir> <branch> <bootstrap> — give a task that is
+# already started a worktree of its own: `jig task start <id> --worktree` on a
+# started task. It is the way out of the refusal `task start` gives when this
+# checkout is in use, and the move the moved-HEAD notice names.
+#
+# What it does is the four manual steps: free the branch here, add the worktree
+# on it, link the workspace, carry the declared state. Nothing is recorded
+# anew: the branch, the fork point and the base are the task's already, and the
+# commits made so far ride along with the branch.
+#
+# Freeing the branch is the move `checkout-is-occupied` warns about, so it is
+# made only when it takes nothing from anybody: the tree must have no tracked
+# changes (a dirty one is a fork, as for `task start`: commit, or `jig task
+# pause <id> --stash`), and HEAD goes to the task's base branch, which git
+# refuses when that branch is checked out elsewhere or the switch would
+# overwrite a file. Every refusal comes before anything is changed, and a
+# failure after the switch puts HEAD back. The branch is never deleted, and
+# the way back (a worktree into this checkout) is not offered: `git worktree
+# remove` and `git switch` do it.
+_task_move_to_worktree() {
+  local id="$1" dir="$2" branch="$3" bootstrap="${4:-1}" path owner here other target="" moved=0
+  cfg_bool git.branch_per_task true \
+    || jig_die "task start: --worktree needs git.branch_per_task: true (one branch cannot be checked out in two worktrees)"
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 \
+    || jig_die "task start: $id is started on $branch, which does not exist here; nothing to move"
+  # `_task_worktrees` leaves this checkout out, so what it finds is elsewhere.
+  other=$(_task_worktree_for "$branch" "$(_task_worktrees)")
+  if [ -n "$other" ]; then
+    jig_die "task start: $id is already on $branch in its own worktree: $other"
+  fi
+  here=$(_task_current_branch)
+  path="$(_task_worktree_root)/$id"
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    jig_die "task start: worktree path already exists: $path"
+  fi
+  owner=$(cd -P "$dir" && pwd -P) || jig_die "task start: cannot resolve the workspace of $id"
+  jig_link_detect
+  [ "$_JIG_LINK_KIND" != none ] \
+    || jig_die "task start: --worktree needs a directory link, and neither a symlink nor a junction can be made here"
+
+  if [ "$here" = "$branch" ]; then
+    # This checkout holds the branch: it has to let go first.
+    if [ -n "$(jig_tracked_changes)" ]; then
+      jig_die "task start: $branch is checked out here with uncommitted changes, and a worktree cannot take them along; commit them, or run \`jig task pause $id --stash\`, then move the task"
+    fi
+    target=$(task_state_get "$id" base_branch)
+    [ -n "$target" ] || target=$(cfg git.base_branch main)
+    git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$target" >/dev/null 2>&1 \
+      || jig_die "task start: cannot leave $branch here: base branch $target does not exist locally; switch this checkout to another branch, then run this again"
+    git -C "$JIG_PROJECT" switch -q "$target" >/dev/null 2>&1 \
+      || jig_die "task start: cannot leave $branch here: switching this checkout to $target failed (checked out in another worktree, or it would overwrite a file); switch it to another branch yourself, then run this again"
+    moved=1
+  fi
+
+  if ! git -C "$JIG_PROJECT" worktree add -q "$path" "$branch" >/dev/null 2>&1; then
+    _task_undo_move "$moved" "$branch" "$path"
+    jig_die "task start: could not create worktree $path; $id stays on $branch"
+  fi
+  if ! _task_link_workspace "$owner" "$path" "$id"; then
+    _task_undo_move "$moved" "$branch" "$path"
+    jig_die "task start: could not link the workspace of $id into $path"
+  fi
+  path=$(cd -P "$path" && pwd -P) || jig_die "task start: cannot resolve worktree $path"
+
+  if [ "$bootstrap" = 1 ]; then
+    _task_carry_into "$JIG_PROJECT" "$path" "task start"
+  fi
+
+  _task_paused_hint "$id" " there"
+  if [ "$moved" -eq 1 ]; then
+    jig_info "task start: $id moved to its own worktree; this checkout is on $target now"
+  fi
+  jig_info "task start: $id is on $branch in its own worktree; open a new agent session in $path"
+  printf '%s\n' "$path"
+}
+
+# _task_undo_move <moved> <branch> <path> — undo a half-made move: remove the
+# worktree, and put this checkout back on the branch when it was taken off it.
+# Never deletes the branch: it was the task's before the move began.
+_task_undo_move() {
+  git -C "$JIG_PROJECT" worktree remove "$3" >/dev/null 2>&1 || true
+  git -C "$JIG_PROJECT" worktree prune >/dev/null 2>&1 || true
+  [ "$1" -eq 1 ] || return 0
+  git -C "$JIG_PROJECT" switch -q "$2" >/dev/null 2>&1 \
+    || jig_info "task start: could not put this checkout back on $2 (a worktree is still at $3); remove it with \`git worktree remove\`, then \`git switch $2\`"
 }
 
 # _task_carry_into <owner-abs> <tree-abs> <verb> — load the bootstrap library

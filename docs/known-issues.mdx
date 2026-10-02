@@ -106,33 +106,6 @@ Keeping `.ai/knowledge/` to documents that earn their place helps proportionally
 is per path pattern. If your agent has started skipping `jig context` because it is slow, that is
 this fault, not a preference — the fix is coming rather than the feature being optional.
 
-## A task that has already started cannot be moved into a worktree
-
-{/* closed by jig task: task-move-to-worktree — remove this entry in the PR that merges the fix */}
-
-You can ask for a worktree when a task starts. You cannot ask for one afterwards:
-
-```text
-$ jig task start my-task --worktree
-jig: error: task start: already started on task/my-task
-```
-
-The refusal is about starting a task twice, and it is raised before the request for a worktree is
-looked at — so there is no way to say "this task has begun, now give it a place of its own". You
-meet this exactly when it would help most: something else has come up, and the task you started is
-in the way.
-
-**What to do instead.** Move the *other* work, not this one. A task can have a worktree from the
-moment it starts, so give the new task one:
-
-```text Send to your agent
-Start the next task in its own worktree.
-```
-
-If it really has to be this task that moves, that is Git's job rather than Jig's, and it is worth
-doing with your agent while you watch: the branch has to be checked out in the new folder and let
-go of by the old one.
-
 ## After a spec session, `jig task start` refuses and does not say how to go on
 
 {/* closed by jig task: idea-leaves-a-tree-task-start-refuses — remove this entry in the PR that merges the fix */}

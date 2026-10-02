@@ -237,11 +237,9 @@ decision of its own, with its own line in that document.
   id, is invisible, and its HEAD moves silently. It gets the moved-HEAD message on its
   next orienting command, which has no false positives at all and arrives within seconds
   for a session that runs jig constantly.
-- The moved-HEAD message names a move that has no command yet: taking an already started
-  task into a worktree. `jig task start --worktree` on a started task fails earlier and
-  with a different text, and the manual route has four steps, the last of which is freeing
-  the branch in this checkout — the very move the message warns against. Until
-  `jig task move --worktree` exists, the message names the move in words.
+- The moved-HEAD message names the move: `jig task start <id> --worktree` on an already
+  started task gives it a worktree of its own, freeing the branch here by switching this
+  checkout to the task's base branch (only when the tree has no tracked changes).
 - A false refusal — a record that outlived a dead session — costs one worktree that nobody
   needed; housekeeping removes it under the ordinary rules. A miss costs what has already
   happened twice. The refusal leans towards the false one deliberately, which is why the

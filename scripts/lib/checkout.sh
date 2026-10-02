@@ -520,8 +520,9 @@ _jig_checkout_notice_inner() {
   if [ -n "$told" ]; then
     printf 'checkout: HEAD here moved %s -> %s since you were told\n' "$told" "$head" >&2
     printf '  another session may be working on this checkout; to give the branch\n' >&2
-    printf '  back, move that task to a worktree of its own — do not just switch\n' >&2
-    printf '  this checkout back under it\n' >&2
+    printf '  back, move that task to a worktree of its own with\n' >&2
+    printf '  "jig task start <id> --worktree" — do not just switch this checkout\n' >&2
+    printf '  back under it\n' >&2
   fi
 
   # A session's own file holds this one key and nothing else. The shared file
