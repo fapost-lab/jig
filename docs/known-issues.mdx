@@ -23,37 +23,6 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## Removing a task worktree by hand has no protection
-
-{/* closed by jig task: worktree-share — remove this entry in the PR that merges the fix */}
-
-`worktree.carry` copies ignored state into a task worktree, and a path you name can itself contain
-a Git repository — a `packages/` folder of local clones, say. Jig's own cleanup handles this: it
-asks every Git repository inside a worktree whether it holds work that exists nowhere else, and
-keeps the worktree instead of removing it when one does.
-
-Nothing extends that to `git worktree remove` typed by a person. That command is Git's, it deletes
-ignored files without asking, and Jig does not change its behaviour. So a commit you made inside a
-carried clone — one that lives only there, never pushed, never in the main checkout — goes with
-the folder, and Git's own reflog cannot help you because the repository that held it is gone.
-
-Separately: `carry` accepts a path with a `.git` inside it without a word of warning, so nothing
-tells you at the moment you configure it that this is the case you are setting up.
-
-**What to do instead.** Remove task worktrees through Jig rather than by hand, and let its cleanup
-answer the question. Before removing one any other way, push what is inside the carried
-repositories, or check them:
-
-```bash
-git -C <worktree>/<carried path> status --short
-git -C <worktree>/<carried path> log --branches --not --remotes --oneline
-```
-
-The second command lists commits that exist in that clone and nowhere else. If it prints anything,
-that work is what the removal would take. There is no Jig setting that makes a carried path
-shared rather than copied; a project that needs one checkout of a package shared across worktrees
-has no option today but to leave it out of `carry` and accept that the worktree cannot build.
-
 ## Housekeeping can leave `git fetch` hung, and the count grows
 
 {/* closed by jig task: fetch-never-waits-for-a-prompt — remove this entry in the PR that merges the fix */}

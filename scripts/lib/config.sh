@@ -129,6 +129,7 @@ git.branch_per_task true
 git.branch_template task/{id}
 git.worktree_root ../<project>.worktrees
 worktree.carry []
+worktree.share []
 forge auto
 housekeeping.cadence 1d
 housekeeping.fetch true

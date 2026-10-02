@@ -72,20 +72,14 @@ without naming `jig spec ship`, the command that takes a spec where it belongs.
 
 ## After that: new capabilities
 
-Two are designed and waiting. Neither starts before the list above is done, and saying so is the
+One is designed and waiting. It does not start before the list above is done, and saying so is the
 point of this page.
-
-**A shared folder in a task worktree.** Today an ignored folder can be copied into a worktree, which
-is right for derived state such as `vendor/`, `node_modules/` or `.env`. It is wrong for a folder of
-local packages that several worktrees must share: copying gives each worktree its own clone, and
-edits in one are invisible to the others. A project built that way cannot use worktrees at all until
-this exists.
 
 **Stages a task can hand to another agent.** Running a route's stages in separate agents, so that
 review genuinely arrives with fresh eyes and independent work can proceed at the same time. The
 groundwork for this shipped with autopilot; the capability itself is next in line among features,
 not among fixes.
 
-Beyond those, two ideas have written plans and no start date: knowledge that lives in a section of
+Beyond that, two ideas have written plans and no start date: knowledge that lives in a section of
 an existing file rather than a whole one, and project hooks — a way for a project to bind its own
 rules and its own checks to stages of the route.

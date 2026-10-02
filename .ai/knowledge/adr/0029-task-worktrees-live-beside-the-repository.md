@@ -276,12 +276,12 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > a directory of separate repositories remains unsupported regardless, because the second clone is
 > the defect and a held worktree is not a working one.
 >
-> Sharing one by link is a separate decision, held by the `worktree-share` task. Note for whoever
-> takes it: linking a directory whole reads as untracked, because git does not match a
-> trailing-slash ignore pattern such as `packages/` against a symlink, and that alone would make
-> the worktree un-removable for the rest of its life. A mirror — a real directory whose entries
-> are links — was built for this and then removed again; it is **a mechanism no longer here**, and
-> its measurements and findings live with that task.
+> Sharing one is a separate decision, since made: `worktree.share` gives the worktree a mirror — a
+> real directory whose entries are links to the owner's — because linking a directory whole reads
+> as untracked (git does not match a trailing-slash ignore pattern such as `packages/` against a
+> symlink) and would make the worktree un-removable for the rest of its life. Removing a mirror
+> removes links, never the work they point at
+> (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it).
 
 > **Amendment (2026-09-25).** The Consequences above measured that `git worktree remove` "deletes
 > *ignored* files silently", and stopped there. It still does, and that is no longer the end of the

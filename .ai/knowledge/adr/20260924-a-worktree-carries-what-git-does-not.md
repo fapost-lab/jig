@@ -65,8 +65,9 @@ nothing is lost when a tree goes.
 **State that must stay single is deliberately out of scope**, not forgotten. A directory of
 separate git repositories wired in as composer path repositories — `packages/` — is a source of
 truth under edit, and copying it is not a lesser version of serving it but a different and worse
-thing: see the risk named under Consequences, and the `worktree-share` task, which holds that
-analysis whole.
+thing: see the risk named under Consequences. Such a directory is served by `worktree.share`,
+which mirrors it as links instead of copying it
+(adr-20261002-a-worktree-shares-a-directory-by-mirroring-it).
 
 **Only what the worktree does not already have is carried.** A path git brings itself is left
 alone, which needs no list of exceptions.
@@ -194,7 +195,8 @@ at runtime and holds no absolute host path; `node_modules/.bin/*` entries are re
 Composer path repositories appear in `vendor/` as **relative** symlinks
 (`vendor/bpartner/sso-server -> ../../packages/sso-server/`), with no absolute one found, so
 after a copy they resolve inside the worktree — where they find whatever the project put there,
-which for a path-repository layout is the open question the `worktree-share` task inherits.
+which for a path-repository layout is the shared mirror of
+adr-20261002-a-worktree-shares-a-directory-by-mirroring-it, and through it the owner's checkout.
 All three copy methods preserve symlinks as symlinks.
 
 **`python` deliberately declares nothing.** A virtualenv is not relocatable: copied elsewhere,

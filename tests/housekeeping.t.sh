@@ -1794,6 +1794,37 @@ test_housekeeping_keeps_a_worktree_whose_carried_clone_holds_a_local_commit() {
   git -C "$wt/vendor/dep" cat-file -t "$sha" >/dev/null 2>&1 || fail "the commit did not survive"
 }
 
+test_housekeeping_removes_a_worktree_sharing_a_package_and_keeps_the_work() {
+  # The same work as above, made where `worktree.share` puts it
+  # (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it): the package
+  # in the worktree is a link to the owner's, so the commit and the uncommitted
+  # file are the owner's. Nothing in the worktree holds work that is nowhere
+  # else -- the walk does not follow links -- so the worktree goes, and the
+  # removal takes the links and not what they point at.
+  hk_worktree_setup
+  local wt sha
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  hk_worktree_ignores 'packages/'
+  hk_nested_repo packages/sso
+  wt=$(hk_worktree_task T-1)
+  [ -L "$wt/packages/sso" ] || fail "the package was not shared into the worktree"
+  printf 'fix\n' > "$wt/packages/sso/fix.txt"
+  git -C "$wt/packages/sso" add fix.txt
+  git -C "$wt/packages/sso" commit -q -m "fix made through the worktree"
+  sha=$(git -C "$wt/packages/sso" rev-parse HEAD)
+  printf 'draft\n' > "$wt/packages/sso/draft.txt"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "remove worktree $wt"
+  assert_no_file "$wt"
+  git -C packages/sso cat-file -t "$sha" >/dev/null 2>&1 \
+    || fail "the commit made in the shared package went with the worktree"
+  assert_file packages/sso/draft.txt
+  assert_file packages/sso/notes.txt
+}
+
 test_housekeeping_keeps_a_worktree_whose_ignored_repository_has_an_unborn_head() {
   # "Has a commit" is not "HEAD resolves". After `git checkout --orphan` a
   # repository's commits are still on another branch while HEAD is unborn, and a

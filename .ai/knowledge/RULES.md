@@ -44,7 +44,11 @@
   directory sits under `.ai/runtime/` so that git ignores it: anything a carry leaves in a
   worktree that git does not ignore reads as untracked, and `git worktree remove` without
   `--force` — the only removal jig performs — then refuses that worktree for good.
-  (adr-20260924-a-worktree-carries-what-git-does-not) `jig verify`'s run record is the
+  (adr-20260924-a-worktree-carries-what-git-does-not) A shared directory adds no deletion: its
+  mirror is built and taken back by the same steps, so what is deleted is a directory of links in
+  the staging directory, and deleting a link — a symlink, or a junction under Git Bash — never
+  touches the owner's entry it points at.
+  (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it) `jig verify`'s run record is the
   sixth, and it is the shape ADR-0035 already allows rather than a new one: the directory
   `<clone root>/.ai/runtime/verify/busy/` is created by a plain `mkdir` — the atomic claim
   itself, so making it and finding it taken are one act — and given back by removing the one

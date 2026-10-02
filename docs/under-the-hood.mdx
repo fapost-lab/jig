@@ -117,7 +117,9 @@ The script answers from file metadata alone; the agent then reads the listed fil
 - **`jig task start --worktree`**, and **`jig task bootstrap`**, which repeats it, carry into the
   worktree whatever your project's checks need that Git does not track — `vendor/`, `node_modules`,
   `.env` — as declared by the active profiles' `carry` and the project's own `worktree.carry`
-  in `.ai/config.yaml`. Only a path the worktree does not already have is touched;
+  in `.ai/config.yaml`. A folder named in `worktree.share` is not copied: the worktree gets a
+  real folder of that name whose entries are links to this checkout's, and `jig task bootstrap`
+  links in entries added since. Only a path the worktree does not already have is touched;
   a path under `.ai/` is always refused. Never fatal: a carry that fails partway leaves the worktree and its branch exactly as they
   are, for `jig task bootstrap` to try again.
 
