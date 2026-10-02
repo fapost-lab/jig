@@ -66,7 +66,9 @@ their own file is answered by `config unset` too — say that the key then answe
    or in a container?" With a detection that is right, nothing needs writing (`auto` keeps
    finding it); say so. Otherwise offer `host`, or the command prefix that reaches the
    container — work it out from the project (`docker compose exec -T -w <dir> <service>`,
-   `docker exec -i -w <dir> <container>`) and show it; never ask the person to type one.
+   `docker exec -i -w <dir> <container>`) and show it; never ask the person to type one. A PHP on
+   this machine that is not first on `PATH` and was not detected (Herd's is) goes to `run.path`,
+   the folder that holds it.
 
 Ask about no other key. If `jig config set` refuses a key as not local, this version of Jig
 does not have it: drop the question.

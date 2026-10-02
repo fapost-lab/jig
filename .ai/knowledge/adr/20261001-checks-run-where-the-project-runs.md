@@ -52,6 +52,31 @@ run a project's checks on the host silently when signs say the project lives els
   an environment (`REMOTE_CONTAINERS`, `CODESPACES`, `IS_DDEV_PROJECT`, `LANDO`) runs on the
   host: it is where the project runs. Each detector also knows how to start its environment,
   for the refusal below.
+- **Stacks that live outside the project come last**, and only when the project shows no
+  sign of its own: an ambiguous mount, a `DB_HOST` naming a compose service or a
+  manifest-less `.ddev/` keep their refusal rather than lose it to a stack found on the
+  machine. **Devilbox** keeps every project under one data folder outside the project —
+  often not the stack's own `data/www` — so nothing in the project names it; its PHP
+  container does: the compose service `php` with a bind mount at `/shared/httpd` whose
+  source (Docker Desktop's `/host_mnt` or `/run/desktop/mnt/host` prefix removed) is the
+  project root or an ancestor of it. The prefix is `docker exec -i -u <MY_USER, else
+  devilbox> -w /shared/httpd/<the project's relative path> <container>`. Stopped containers
+  are read too (`docker ps -a`): one found only stopped is a refusal with `docker compose up
+  -d` in the stack's folder, not a quiet run on the host. A worktree outside the data folder
+  whose main checkout is inside it is refused like any environment that does not see this
+  checkout. **Laravel Herd** is a host runtime, not a container: when Herd is installed
+  (`~/Library/Application Support/Herd` or `~/.config/herd`, with `bin/php`) and the
+  project, or its main checkout, is one of its sites (a direct child of a folder in `paths`
+  of its Valet `config.json`, or the target of a link there), the answer is a directory for
+  `PATH`, not a prefix.
+- **A directory for `PATH` is a second local-only key, `run.path`**: `auto` (default — the
+  Herd detector's answer) or a directory, blanks allowed, put first on `PATH` whenever the
+  checks run on this machine and ignored under a prefix. It must be absolute: a relative one
+  would name another folder depending on where verify starts. `cmd_verify` prepends it for
+  every profile, adapted or not: it changes which host tool answers, the one a person's own
+  shell finds, and breaks nothing a profile does on the host, so it is not a capability. A
+  directory that does not exist is a refusal. `run.exec: host` turns the Herd detection off
+  with the rest; an explicit `run.path` still applies.
 - **A sign without a detector is a refusal.** Two services mounting the project, `DB_HOST`
   in `.env` naming a compose service, a `.devcontainer/` or `.ddev/` folder without its manifest: `jig verify`
   prints why and exits 3 — no verdict — rather than running anything on the host. A compose
@@ -95,12 +120,21 @@ run a project's checks on the host silently when signs say the project lives els
   environment; fewer keys is what zero-config means for the person.
 - **A project-layer key.** Rejected: colleagues on the same project run it on Herd, Sail or
   Devilbox.
+- **Recognise Devilbox by the project's path** (`<stack>/data/www/<project>`). Rejected: real
+  installs move the data folder out of the stack (`HOST_PATH_HTTPD_DATADIR`), and the stack's
+  folder is not knowable from the project; the container's mount is.
+- **Any running container that mounts an ancestor of the project.** Rejected: a container
+  that mounts `$HOME` or `/Users` (an IDE server, a tool's helper) would take every project's
+  checks into a container that has neither the project's runtime nor its user. Each such
+  stack is a named detector with a signature of its own.
+- **Herd through `run.exec env PATH=...`.** Rejected: the prefix is plain words, Herd's macOS
+  home holds a blank, and `PATH=` would replace the search path rather than extend it.
 
 ## Consequences
 
 - A Sail or compose project is checked in its container with no setting written; a project
   with signs and no detector stops with a sentence that says what to do.
-- Every further environment (Herd, Devilbox; devcontainer, DDEV and Lando are done) is a detector in
+- Every further environment (devcontainer, DDEV, Lando, Devilbox and Herd are done) is a detector in
   `runenv.sh` plus a test, and every further profile adaptation is `environment` in its
   `scope` plus `jp_have` for `command -v`. Both are filed as follow-up tasks.
 - Every built-in profile now declares the capability (a follow-up completed the nine that were
@@ -111,5 +145,8 @@ run a project's checks on the host silently when signs say the project lives els
   environment's `PATH`, never from the host's `$VIRTUAL_ENV` or poetry.
 - A worktree with a container of the main checkout is refused; giving each worktree its own
   environment is the person's choice and cost.
-- The prefix is plain words: a path with a blank cannot be written in `run.exec` (Herd's
-  case), which the Herd detector has to answer differently.
+- The prefix is plain words: a path with a blank cannot be written in `run.exec`; Herd's
+  case is answered by `run.path`, and a Devilbox project whose folder holds a blank is refused.
+- With `run.exec: auto`, every run that no project file places asks `docker ps -a` once
+  (tens of milliseconds; nothing when docker is absent or its daemon is down): Devilbox leaves
+  no trace in the project to ask first.

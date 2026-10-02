@@ -17,7 +17,7 @@
 # `autopilot.parallel` are also in JIG_CFG_LOCAL_ONLY_KEYS below: they answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel run.exec"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel run.exec run.path"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -35,10 +35,12 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # `run.exec` says where this machine runs the project's checks — a container
 # on one laptop, the host on a colleague's — and a committed value would send
 # every contributor's checks to one person's environment
-# (adr-20261001-checks-run-where-the-project-runs).
+# (adr-20261001-checks-run-where-the-project-runs). `run.path` is the same
+# question for a host runtime that is not first on PATH (Laravel Herd): a
+# directory on one person's machine.
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel run.exec"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel run.exec run.path"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -142,6 +144,7 @@ knowledge.require_frontmatter true
 verify.full_run local
 verify.busy_ttl 30m
 run.exec auto
+run.path auto
 EOF
 }
 
@@ -420,7 +423,10 @@ _cfg_parallel() {
 # - git.worktree_root: any path _cfg_read gives back unchanged;
 # - run.exec: `auto`, `host` or a command prefix of plain words — runenv.sh
 #   splits it on blanks and interprets nothing, so a quote, `$`, backtick or
-#   backslash would reach the command as a literal character.
+#   backslash would reach the command as a literal character;
+# - run.path: `auto` or the absolute path of a directory, unquoted — read as
+#   one value, so a blank inside it is kept (Herd's macOS home has one); a
+#   relative one would name a different folder from wherever verify starts.
 # Nothing may hold a line break, a `#` (_cfg_read cuts a comment there) or
 # surrounding blanks (it trims them).
 jig_config_value_problem() {
@@ -469,6 +475,12 @@ jig_config_value_problem() {
           printf 'a quote, $, backtick or backslash; write the command prefix as plain words (e.g. docker compose exec -T app)\n'
           return 1
           ;;
+      esac
+      ;;
+    run.path)
+      case "$value" in
+        auto | /* | [A-Za-z]:[\\/]*) ;;
+        *) printf 'not auto or an absolute path of a folder\n'; return 1 ;;
       esac
       ;;
     git.worktree_root)

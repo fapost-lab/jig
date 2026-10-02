@@ -11,6 +11,12 @@
 #   host      this machine, signs not consulted
 #   <prefix>  plain words put in front of every command a profile runs
 #
+# A host runtime that is not first on PATH (Laravel Herd) needs no prefix but
+# another PATH, which a prefix of plain words cannot carry when the directory
+# holds a blank. A second local-only key answers it, `run.path`: `auto`
+# (default; the Herd detector's answer, nothing otherwise) or a directory put
+# first on PATH whenever the checks run on this machine.
+#
 # A sign without a detector is a refusal, never a quiet run on the host: a
 # Laravel app on Sail whose `.env` says DB_HOST=mysql gave a wrong verdict
 # from the host's PHP against a database that does not resolve there.
@@ -24,6 +30,8 @@ RUNENV_EXEC=""
 RUNENV_WHERE=""
 RUNENV_UP=""
 RUNENV_REFUSAL=""
+RUNENV_PATH=""
+_RUNENV_HERD=1
 
 # _runenv_compose_file — the project's compose file, relative to JIG_PROJECT,
 # in the order docker compose itself looks for one; nothing when there is none.
@@ -227,20 +235,199 @@ _runenv_detect() {
     return 0
   fi
 
-  [ -n "$mounts" ] || return 1
-
   # One service, read in full: a second one, or a mount of the project this
   # reader could not take apart, leaves the choice to a person.
   [ -z "$unread" ] || return 1
-  n=$(printf '%s\n' "$mounts" | cut -f1 | sort -u | grep -c .)
-  [ "$n" -eq 1 ] || return 1
-  mounts=$(printf '%s\n' "$mounts" | sed -n '1p')
-  svc=$(printf '%s\n' "$mounts" | cut -f1)
-  target=$(printf '%s\n' "$mounts" | cut -f2)
-  RUNENV_EXEC="docker compose exec -T -w $target $svc"
-  RUNENV_WHERE="$RUNENV_EXEC (docker compose service $svc, detected)"
-  RUNENV_UP="docker compose up -d"
+  if [ -n "$mounts" ]; then
+    n=$(printf '%s\n' "$mounts" | cut -f1 | sort -u | grep -c .)
+    [ "$n" -eq 1 ] || return 1
+    mounts=$(printf '%s\n' "$mounts" | sed -n '1p')
+    svc=$(printf '%s\n' "$mounts" | cut -f1)
+    target=$(printf '%s\n' "$mounts" | cut -f2)
+    RUNENV_EXEC="docker compose exec -T -w $target $svc"
+    RUNENV_WHERE="$RUNENV_EXEC (docker compose service $svc, detected)"
+    RUNENV_UP="docker compose up -d"
+    return 0
+  fi
+
+  # Nothing in the project names its environment from here on: a stack that
+  # lives elsewhere on the machine and serves this folder. A compose file
+  # that mounts the project, even ambiguously, is closer evidence and has
+  # been answered above; so is any other sign in the project, which keeps
+  # its refusal rather than lose it to a stack found on the machine.
+  [ -z "$(_runenv_signs)" ] || return 1
+  if _runenv_devilbox; then
+    return 0
+  fi
+  _runenv_herd
+}
+
+# _runenv_devilbox — Devilbox serves every project under one data directory
+# that lives outside the project (HOST_PATH_HTTPD_DATADIR, often customised),
+# so nothing in the project names it. Its PHP container does: the compose
+# service `php`, with the data directory bind-mounted at /shared/httpd. A
+# container like that whose mount source is the project root or an ancestor
+# of it is where the project runs, at the same relative path under
+# /shared/httpd, as Devilbox's own user (MY_USER in the image, `devilbox`
+# otherwise). Stopped containers count too (`ps -a`): one found only stopped
+# is a refusal with its start command, not a quiet run on the host. So is a
+# container that mounts only the main checkout of this worktree: its verdict
+# would be about other code. Exit 1 when there is no such container, or no
+# docker.
+#
+# Not "any container that mounts an ancestor of the project": a container
+# that mounts $HOME would take every project's checks
+# (adr-20261001-checks-run-where-the-project-runs).
+_runenv_devilbox() {
+  local ids id here real main="" found state name user rel wd dir
+  command -v docker >/dev/null 2>&1 || return 1
+  ids=$(docker ps -aq --filter label=com.docker.compose.service=php 2>/dev/null) || return 1
+  [ -n "$ids" ] || return 1
+  here=$JIG_PROJECT
+  real=$(cd "$JIG_PROJECT" 2>/dev/null && pwd -P) || real=$here
+  if type jig_config_clone_root >/dev/null 2>&1; then
+    main=$(cd "$(jig_config_clone_root)" 2>/dev/null && pwd -P) || main=""
+    [ "$main" != "$real" ] || main=""
+  fi
+  # Docker Desktop reports a bind source under the path of its VM:
+  # /host_mnt/Users/... on macOS, /run/desktop/mnt/host/c/... on Windows,
+  # which is the path Git Bash spells /c/....
+  found=$(
+    for id in $ids; do
+      docker inspect -f '{{.Name}}{{"\t"}}{{.State.Running}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project.working_dir"}}{{"\n"}}{{range .Mounts}}M{{"\t"}}{{.Source}}{{"\t"}}{{.Destination}}{{"\n"}}{{end}}{{range .Config.Env}}E{{"\t"}}{{.}}{{"\n"}}{{end}}' "$id" 2>/dev/null \
+        | tr -d '\r' | RUNENV_A="$here" RUNENV_B="$real" RUNENV_C="$main" awk -F '\t' '
+            BEGIN { a = ENVIRON["RUNENV_A"]; b = ENVIRON["RUNENV_B"]; c = ENVIRON["RUNENV_C"] }
+            NR == 1 { name = $1; sub(/^\//, "", name); run = $2; wd = $3; next }
+            $1 == "E" && $2 ~ /^MY_USER=/ { u = $2; sub(/^MY_USER=/, "", u) }
+            $1 == "M" && $3 == "/shared/httpd" { src = $2 }
+            END {
+              if (src == "") exit
+              sub(/^\/host_mnt\//, "/", src)
+              sub(/^\/run\/desktop\/mnt\/host\//, "/", src)
+              if (src != "/") sub(/\/+$/, "", src)
+              rel = ""
+              if (a == src || b == src) rel = "."
+              else if (index(a, src "/") == 1) rel = substr(a, length(src) + 2)
+              else if (index(b, src "/") == 1) rel = substr(b, length(src) + 2)
+              else if (c != "" && (c == src || index(c, src "/") == 1)) rel = "!"
+              if (rel == "") exit
+              if (u == "") u = "devilbox"
+              state = (run == "true" ? 0 : 1)
+              if (rel == "!") state = 2
+              print state "\t" name "\t" u "\t" rel "\t" wd
+            }'
+    done | sort | sed -n '1p'
+  )
+  [ -n "$found" ] || return 1
+  state=$(printf '%s\n' "$found" | cut -f1)
+  name=$(printf '%s\n' "$found" | cut -f2)
+  user=$(printf '%s\n' "$found" | cut -f3)
+  rel=$(printf '%s\n' "$found" | cut -f4)
+  wd=$(printf '%s\n' "$found" | cut -f5)
+  dir=/shared/httpd
+  [ "$rel" = . ] || dir="/shared/httpd/$rel"
+  if [ -n "$wd" ]; then
+    RUNENV_UP="cd $(_runenv_unix_path "$wd") && docker compose up -d"
+  else
+    RUNENV_UP="docker start $name"
+  fi
+  RUNENV_WHERE="Devilbox, detected"
+  if [ "$state" = 2 ]; then
+    RUNENV_REFUSAL="the environment does not see this checkout (Devilbox, detected): its PHP container $name mounts the main checkout's folder but not this worktree's, so its verdict would be about other code; put the worktree under Devilbox's data folder (git.worktree_root), or run jig verify in the main checkout"
+    return 0
+  fi
+  case "$dir" in
+    *[[:space:]]*)
+      RUNENV_REFUSAL="the project's folder inside Devilbox ($dir) holds a blank, which a command prefix of plain words cannot reach; rename the folder, or set run.exec host to run the checks on this machine"
+      return 0
+      ;;
+  esac
+  if [ "$state" != 0 ]; then
+    RUNENV_REFUSAL="the environment is not running (Devilbox: its PHP container $name is stopped); start it with: $RUNENV_UP"
+    return 0
+  fi
+  RUNENV_EXEC="docker exec -i -u $user -w $dir $name"
+  RUNENV_WHERE="$RUNENV_EXEC (Devilbox, detected)"
   return 0
+}
+
+# _runenv_unix_path <path> — <path> as this shell spells it: a Windows path
+# (`C:\Users\x`) through cygpath when there is one, anything else unchanged.
+_runenv_unix_path() {
+  case "$1" in
+    [A-Za-z]:[\\/]*)
+      if command -v cygpath >/dev/null 2>&1; then
+        cygpath -u "$1"
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' "$1"
+}
+
+# _runenv_herd — Laravel Herd: the PHP of this machine, served from Herd's
+# own bin directory, which need not be first on PATH (Homebrew's PHP, or a
+# shell that never read the profile Herd edited). Recognised when Herd is
+# installed — its home on macOS or on Windows, holding bin/php — and the
+# project is one of its sites: a direct child of a directory Herd serves
+# (`paths` in its Valet config: the parked folders and the Sites folder of
+# links), or the target of a link there. A worktree answers for its main
+# checkout: same project, same PHP. Sets RUNENV_PATH, no prefix; exit 1
+# otherwise, and always while run.path names a directory of its own.
+_runenv_herd() {
+  local home bin conf roots root rreal p preal entry
+  [ "$_RUNENV_HERD" = 1 ] || return 1
+  for home in "$HOME/Library/Application Support/Herd" "$HOME/.config/herd"; do
+    bin="$home/bin"
+    conf="$home/config/valet/config.json"
+    [ -e "$bin/php" ] || [ -e "$bin/php.exe" ] || [ -e "$bin/php.bat" ] || continue
+    [ -f "$conf" ] || continue
+    roots=$JIG_PROJECT
+    if type jig_config_clone_root >/dev/null 2>&1; then
+      roots="$roots
+$(jig_config_clone_root)"
+    fi
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      p=$(_runenv_unix_path "$p")
+      preal=$(cd "$p" 2>/dev/null && pwd -P) || continue
+      while IFS= read -r root; do
+        [ -n "$root" ] || continue
+        rreal=$(cd "$root" 2>/dev/null && pwd -P) || continue
+        if [ "$(dirname "$rreal")" = "$preal" ]; then
+          _runenv_herd_found "$bin"
+          return 0
+        fi
+        for entry in "$p"/*; do
+          [ -L "$entry" ] || continue
+          if [ "$(cd "$entry" 2>/dev/null && pwd -P)" = "$rreal" ]; then
+            _runenv_herd_found "$bin"
+            return 0
+          fi
+        done
+      done <<EOF
+$roots
+EOF
+    done <<EOF
+$(_runenv_herd_paths "$conf")
+EOF
+  done
+  return 1
+}
+
+# _runenv_herd_paths <config.json> — the directories in its `paths` array,
+# one per line, JSON escapes of `/` and `\` undone. A reader of the one
+# array Valet writes, not a JSON parser.
+_runenv_herd_paths() {
+  tr -d '\r\n' < "$1" \
+    | sed -n 's/.*"paths"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' \
+    | tr ',' '\n' \
+    | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//; s#\\/#/#g; s#\\\\#\\#g'
+}
+
+_runenv_herd_found() {
+  RUNENV_PATH=$1
+  RUNENV_WHERE="host, with $1 first on PATH (Laravel Herd, detected)"
 }
 
 # _runenv_signs — the reasons to believe the project lives in a container that
@@ -324,10 +511,41 @@ EOF
 }
 
 # runenv_resolve — decide where the project's checks run. Sets RUNENV_EXEC
-# (empty for the host), RUNENV_WHERE (what to tell a person), RUNENV_UP (how
-# to start the environment, when known) and RUNENV_REFUSAL (non-empty: do not
+# (empty for the host), RUNENV_PATH (a directory to put first on PATH, for
+# the host only), RUNENV_WHERE (what to tell a person), RUNENV_UP (how to
+# start the environment, when known) and RUNENV_REFUSAL (non-empty: do not
 # run anything, and say this). Needs cfg (config.sh) and JIG_PROJECT.
 runenv_resolve() {
+  local path
+  RUNENV_PATH=""
+  path=$(cfg run.path auto)
+  _RUNENV_HERD=0
+  [ "$path" != auto ] || _RUNENV_HERD=1
+  _runenv_place
+  [ -z "$RUNENV_REFUSAL" ] || return 0
+  [ -z "$RUNENV_EXEC" ] || return 0
+  [ "$path" != auto ] || return 0
+  path=$(_runenv_unix_path "$path")
+  case "$path" in
+    /*) ;;
+    *)
+      RUNENV_REFUSAL="run.path is $path, not an absolute path; set the full path of the folder with jig config set run.path '<dir>' --local"
+      return 0
+      ;;
+  esac
+  if [ ! -d "$path" ]; then
+    RUNENV_REFUSAL="run.path names $path, which is not a directory on this machine; fix it with jig config set run.path '<dir>' --local, or remove it with jig config unset run.path --local"
+    return 0
+  fi
+  # shellcheck disable=SC2034  # read by verify.sh
+  RUNENV_PATH=$path
+  RUNENV_WHERE="$RUNENV_WHERE, with $path first on PATH (run.path)"
+  return 0
+}
+
+# _runenv_place — runenv_resolve without run.path: the host, a prefix, or a
+# refusal, from run.exec and the detectors.
+_runenv_place() {
   local value signs
   RUNENV_EXEC=""
   RUNENV_WHERE="host"
@@ -356,6 +574,8 @@ runenv_resolve() {
         return 0
       fi
       [ -z "$RUNENV_REFUSAL" ] || return 0
+      # A detector that answers with a PATH (Herd) leaves nothing to probe.
+      [ -n "$RUNENV_EXEC" ] || return 0
       ;;
     *)
       RUNENV_EXEC="$value"

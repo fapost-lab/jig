@@ -48,9 +48,11 @@ it actually did.
 - The project map `.ai/verify/<profile>.map` (`schemas/verify-map.md`): parsed and validated
   here, handed as `JIG_VERIFY_MAPPED` to profiles declaring `scope: [changed, map]`.
 - Where the project's checks run (adr-20261001-checks-run-where-the-project-runs):
-  `scripts/lib/runenv.sh` decides once per run — `run.exec`, the Sail and docker compose
-  detectors, the signs that refuse, the readiness probe — and the prefix reaches profiles
-  declaring `scope: [..., environment]` as `JIG_RUN_EXEC`.
+  `scripts/lib/runenv.sh` decides once per run — `run.exec`, the detectors (Sail, DDEV,
+  Lando, devcontainer, docker compose, Devilbox, Herd), the signs that refuse, the readiness
+  probe — and the prefix reaches profiles declaring `scope: [..., environment]` as
+  `JIG_RUN_EXEC`. A host runtime not first on `PATH` (Herd, or `run.path`) is a directory
+  `cmd_verify` puts first on `PATH` for every profile, not a prefix.
 - Honest reporting: a narrowed run says what it narrowed to, and an ignored scope is
   printed rather than dropped.
 
