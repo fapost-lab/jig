@@ -142,9 +142,9 @@ _runenv_container() {
   esac
   for id in $ids; do
     docker inspect -f '{{.Name}}{{"\n"}}{{range .Mounts}}{{.Source}}{{"\t"}}{{.Destination}}{{"\n"}}{{end}}' "$id" 2>/dev/null \
-      | awk -F '\t' -v a="$here" -v b="$real" '
+      | RUNENV_A="$here" RUNENV_B="$real" awk -F '\t' '
           NR == 1 { n = $1; sub(/^\//, "", n); next }
-          ($1 == a || $1 == b) && $2 != "" { print n "\t" $2; exit }'
+          ($1 == ENVIRON["RUNENV_A"] || $1 == ENVIRON["RUNENV_B"]) && $2 != "" { print n "\t" $2; exit }'
   done | sed -n '1p'
 }
 

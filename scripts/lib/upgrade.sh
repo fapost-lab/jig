@@ -790,7 +790,7 @@ _upgrade_stop_reasons() {
   here=$(jig_checkout_here_task)
   while read -r name age cmd; do
     [ -n "$name" ] || continue
-    printf '%s\n' "a session is working in this checkout ($name ran \`jig $cmd\` $(jig_checkout_ago "$age") ago); run the upgrade when it has finished — if it already has, delete $JIG_AI_DIR/runtime/working/$name"
+    printf '%s\n' "a session is working in this checkout ($name ran \`jig $cmd\` $(jig_checkout_ago "$age") ago); run the upgrade when it has finished"
   done < <(jig_checkout_busy "$here")
 
   # 4. A `jig verify` running in this checkout: replacing the scripts it is
