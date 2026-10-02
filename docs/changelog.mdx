@@ -8,6 +8,53 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.18.0 — 2026-10-02
+
+`jig verify` learns to run a project's checks where the project runs, and Jig stops leaving its
+scratch files behind.
+
+- **`jig verify` runs the checks where your project runs, and refuses rather than guess.** Before any
+  check, it decides once whether the commands go to this machine or through a prefix that reaches
+  your container, and says so — `verify: checks run in <where>` — with `--explain`, and whenever the
+  checks go through a prefix. **Laravel Sail** and a **docker
+  compose** service that mounts the project are recognised on their own; the new personal setting
+  `run.exec` (`auto`, `host`, or the command that reaches the container, written in plain words with
+  no quotes, `$` or backslashes) overrides what Jig found.
+  When there are signs of a container no detector recognises — two compose services mounting the
+  project, `DB_HOST` naming a compose service, a `.devcontainer/`, `.ddev/` or `.lando.yml` — Jig
+  exits 3 and names what it saw instead of running the checks on the host; a stopped container, or
+  one that mounts another checkout than the task's worktree, is refused the same way. The `php`,
+  `laravel`, `node` and `generic` profiles run through the environment; when checks run in one, a
+  profile not yet adapted is skipped with the reason, never run on the host. With `CI` set and
+  `run.exec` left at `auto`, nothing is detected and nothing is refused. The `jig-setup` skill now asks where your tests run, as its eighth question
+  ([Configuration](/configuration#where-checks-run), [Troubleshooting](/troubleshooting)).
+- **`jig task start` refuses a checkout another session is working in.** It reads the record every
+  Jig command already writes in the checkout and, when other work is live there, stops and names the
+  owner, how long ago it ran, and the ways out: start in its own worktree (`--worktree`), wait, or
+  delete the record if that session is over. There is no override. It does not apply to
+  `--worktree`, to a project on one branch, or to records of tasks that are consolidated or
+  abandoned, or whose branch is no longer the one checked out.
+- **An interrupted Jig command removes its own temporary files.** `Ctrl-C` (SIGINT) and SIGTERM now end
+  a command with exit 130 and 143 and run its cleanup, and the temporary files and folders Jig makes
+  are removed when the command exits or is stopped by either signal — the `*.tmp.<pid>` files that
+  used to pile up beside your project's files. A command killed with SIGKILL cannot clean up, and a
+  closed terminal is not caught either. The test runner no longer leaves its `jig-*` folders in your
+  temporary directory (more than 4,600 had piled up at once).
+- **A shared shell library change narrows what `jig verify` runs.** With the `shell` profile, a
+  change to a script that has no test file of its own (`scripts/lib/common.sh`, say) now runs the
+  tests of the scripts that call the functions it edited, instead of the whole suite. When it cannot
+  name them — a changed global, a `source`, a new or removed function or file, a function nobody
+  calls, a caller with no test — it still means the whole suite. With `verify.full_run: ci`, that
+  whole-suite part is left to CI when filters ran beside it, and the line says so:
+  `scope: N filters, full set left to CI`.
+- **`load: domain` knowledge reaches the files it names.** A document with `load: domain` was
+  required only when its domain was entered; its `paths` were ignored. `jig context` now requires it
+  for a matching domain or a matching file, so an agent editing a file a domain pack names gets the
+  pack without passing `--domains`. Cached answers made under the old rule are not served.
+- **The status page redraws after knowledge commands.** `jig knowledge new`, `paths`, `reviewed`,
+  `accept` and `reject` now refresh the `jig status --html` page they changed, so its proposal and
+  changed-source counts are no longer stale until the next task command.
+
 ## 0.17.1 — 2026-09-30
 
 No change to how Jig behaves. One test of 0.17.0's `jig doctor` `latest release` line was wrong on
