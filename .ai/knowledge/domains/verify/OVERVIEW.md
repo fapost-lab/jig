@@ -16,6 +16,7 @@ paths:
   - scripts/lib/profile.sh
   - schemas/profile.md
   - scripts/lib/runenv.sh
+  - scripts/lib/hostruntime.sh
 reviewed_at: 2026-10-01
 ---
 # Verify
@@ -53,6 +54,11 @@ it actually did.
   probe — and the prefix reaches profiles declaring `scope: [..., environment]` as
   `JIG_RUN_EXEC`. A host runtime not first on `PATH` (Herd, or `run.path`) is a directory
   `cmd_verify` puts first on `PATH` for every profile, not a prefix.
+- The host runtime check (`scripts/lib/hostruntime.sh`): when the checks run on the host,
+  `jig doctor` and `jig verify --explain` compare the host's php, node and python with what
+  the project asks for (`composer.json` `require.php`, `package.json` `engines.node`,
+  `.python-version`). Common constraint forms are judged; any other is "could not compare",
+  never an ok. `_hostruntime_version` is the one place that names which binary the host runs.
 - Honest reporting: a narrowed run says what it narrowed to, and an ignored scope is
   printed rather than dropped.
 
@@ -81,6 +87,7 @@ contract. A change to how profiles are *copied* still belongs to `install`.
   `jp_exec`, `jp_have`, `jp_skip`, `jp_end`.
 - `scripts/lib/runenv.sh` — `runenv_resolve`, `_runenv_detect`, `_runenv_signs`,
   `_runenv_probe`.
+- `scripts/lib/hostruntime.sh` — `hostruntime_report`, `_hr_satisfies`, `_hostruntime_version`.
 - `profiles/python/verify.sh` — the reference profile on the library; each profile's header
   comment states where its tools come from and how it narrows.
 - `profiles/shell/verify.sh` — `_shell_builtin_filters`, the reference for what a shipped

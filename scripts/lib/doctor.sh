@@ -491,6 +491,33 @@ _doctor_check_agent_git() {
   fi
 }
 
+# Whether the runtime the project's checks would meet on this machine is one
+# the project asks for (hostruntime.sh answers, from composer.json,
+# package.json and .python-version). Asked only where the checks run on the
+# host: with an environment prefix the host's PHP is not the one that runs.
+# Silent when the project states no requirement, and when verify would refuse
+# to run at all (that is verify's message to give).
+_doctor_check_host_runtime() {
+  local state rt text
+  # shellcheck source=lib/runenv.sh
+  . "$JIG_LIB/runenv.sh"
+  # shellcheck source=lib/hostruntime.sh
+  . "$JIG_LIB/hostruntime.sh"
+  runenv_resolve
+  if [ -n "$RUNENV_REFUSAL" ] || [ -n "$RUNENV_EXEC" ]; then return 0; fi
+  while IFS=$'\t' read -r state rt text; do
+    [ -n "$state" ] || continue
+    case "$state" in
+      ok) _doctor_ok "host $rt" "$text" ;;
+      mismatch)
+        _doctor_warn "host $rt" "$text" \
+          "run the checks where the project runs (jig config set run.exec '<prefix>' --local, or ask the jig-setup skill), or switch this machine's $rt to the project's version"
+        ;;
+      *) _doctor_warn "host $rt" "$text" "compare the versions by hand" ;;
+    esac
+  done < <(hostruntime_report)
+}
+
 # --- cmd_doctor ---------------------------------------------------------------
 
 cmd_doctor() {
@@ -531,6 +558,7 @@ cmd_doctor() {
       _doctor_check_config_local
       _doctor_check_config_keys
       _doctor_check_agent_git
+      _doctor_check_host_runtime
     else
       _doctor_warn "project" "not initialised" "jig init"
     fi
