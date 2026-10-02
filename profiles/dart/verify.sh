@@ -107,7 +107,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   for check in analyze format; do
     tool="$DART_RUNNER"
     if [ "$check" = format ]; then tool=dart; fi
-    if ! command -v "$tool" >/dev/null 2>&1; then
+    if ! jp_have "$tool"; then
       jp_plan "$check" skip "$tool not found on PATH"
     elif jp_scoped && jp_changed_any pubspec.yaml pubspec.lock analysis_options.yaml; then
       jp_plan "$check" full "pubspec or analysis options changed"
@@ -122,7 +122,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
       jp_plan "$check" full "full scope"
     fi
   done
-  if ! command -v "$DART_RUNNER" >/dev/null 2>&1; then
+  if ! jp_have "$DART_RUNNER"; then
     jp_plan test skip "$DART_RUNNER not found on PATH"
   else
     filters=$(jp_decide _dart_builtin_test)
@@ -146,7 +146,7 @@ fi
 
 # --- analyze ---------------------------------------------------------------
 
-if ! command -v "$DART_RUNNER" >/dev/null 2>&1; then
+if ! jp_have "$DART_RUNNER"; then
   jp_skip analyze "$DART_RUNNER not found on PATH"
 else
   v=$(jp_version "$DART_RUNNER" --version)
@@ -179,7 +179,7 @@ fi
 # its own copy of `dart` too, so a project with either toolchain installed
 # ordinarily has it; a project with only a bare `flutter` shim on PATH does
 # not, and the check skips rather than guessing at `flutter format`.
-if ! command -v dart >/dev/null 2>&1; then
+if ! jp_have dart; then
   jp_skip format "dart not found on PATH"
 else
   v=$(jp_version dart --version)
@@ -207,7 +207,7 @@ fi
 
 # --- test --------------------------------------------------------------------
 
-if ! command -v "$DART_RUNNER" >/dev/null 2>&1; then
+if ! jp_have "$DART_RUNNER"; then
   jp_skip test "$DART_RUNNER not found on PATH"
 else
   v=$(jp_version "$DART_RUNNER" --version)

@@ -30,7 +30,7 @@ set -o pipefail
 
 jp_begin rust
 
-if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ] && ! command -v cargo >/dev/null 2>&1; then
+if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ] && ! jp_have cargo; then
   jp_skip "fmt" "cargo not found on PATH"
   jp_skip "clippy" "cargo not found on PATH"
   jp_skip "test" "cargo not found on PATH"
@@ -187,7 +187,7 @@ $c
 # --- cargo fmt ---------------------------------------------------------------
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  if ! command -v cargo >/dev/null 2>&1; then
+  if ! jp_have cargo; then
     jp_plan fmt skip "cargo not found on PATH"
     jp_plan clippy skip "cargo not found on PATH"
     jp_plan test skip "cargo not found on PATH"
@@ -212,7 +212,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   exit 0
 fi
 
-if cargo fmt --version >/dev/null 2>&1; then
+if jp_exec cargo fmt --version >/dev/null 2>&1; then
   v=$(jp_version cargo fmt --version)
   if _rust_scope; then
     IFS='
@@ -232,7 +232,7 @@ fi
 
 # --- cargo clippy -------------------------------------------------------------
 
-if cargo clippy --version >/dev/null 2>&1; then
+if jp_exec cargo clippy --version >/dev/null 2>&1; then
   v=$(jp_version cargo clippy --version)
   if _rust_scope; then
     IFS='

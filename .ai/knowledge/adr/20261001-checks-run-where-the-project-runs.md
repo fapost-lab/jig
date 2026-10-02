@@ -103,6 +103,12 @@ run a project's checks on the host silently when signs say the project lives els
 - Every further environment (Herd, Devilbox; devcontainer, DDEV and Lando are done) is a detector in
   `runenv.sh` plus a test, and every further profile adaptation is `environment` in its
   `scope` plus `jp_have` for `command -v`. Both are filed as follow-up tasks.
+- Every built-in profile now declares the capability (a follow-up completed the nine that were
+  left). Two choices there: a profile's host-resolved absolute paths and shell-function wrappers
+  became command words run through `jp_run`/`jp_exec` (`go`, `dotnet`, the Gradle and Maven
+  commands), and the python profile, which reads tools from the project's own virtualenv, takes
+  them under an environment from a `.venv/` or `venv/` that runs there, else from the
+  environment's `PATH`, never from the host's `$VIRTUAL_ENV` or poetry.
 - A worktree with a container of the main checkout is refused; giving each worktree its own
   environment is the person's choice and cost.
 - The prefix is plain words: a path with a blank cannot be written in `run.exec` (Herd's

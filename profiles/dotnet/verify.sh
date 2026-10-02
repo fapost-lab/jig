@@ -55,7 +55,7 @@ _dotnet_always_all_changed() {
 
 DOTNET_WHERE="not found on PATH"
 
-if ! command -v dotnet >/dev/null 2>&1; then
+if ! jp_have dotnet; then
   if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan format skip "$DOTNET_WHERE"
     jp_plan test skip "$DOTNET_WHERE"
@@ -66,9 +66,8 @@ if ! command -v dotnet >/dev/null 2>&1; then
   jp_end
 fi
 
-dotnet=$(command -v dotnet)
 if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ]; then
-  v=$(jp_version "$dotnet" --version)
+  v=$(jp_version dotnet --version)
 fi
 
 # --- format --------------------------------------------------------------------
@@ -89,12 +88,12 @@ if jp_scoped && ! _dotnet_always_all_changed; then
     set -- $files
     set +f
     IFS=$' \t\n'
-    jp_run "format" "$v, scope: $n files" "$dotnet" format --verify-no-changes --include "$@"
+    jp_run "format" "$v, scope: $n files" dotnet format --verify-no-changes --include "$@"
   fi
 elif jp_scoped; then
-  jp_run "format" "$v, scope: sln/build config changed, whole project" "$dotnet" format --verify-no-changes
+  jp_run "format" "$v, scope: sln/build config changed, whole project" dotnet format --verify-no-changes
 else
-  jp_run "format" "$v" "$dotnet" format --verify-no-changes
+  jp_run "format" "$v" dotnet format --verify-no-changes
 fi
 fi
 
@@ -184,11 +183,11 @@ _dotnet_test() {
   local note="$1" proj failed=0
   shift
   if [ $# -eq 0 ]; then
-    if "$dotnet" test; then jp_pass "test" "$note"; else jp_fail "test" "$note"; fi
+    if jp_exec dotnet test; then jp_pass "test" "$note"; else jp_fail "test" "$note"; fi
     return 0
   fi
   for proj in "$@"; do
-    "$dotnet" test "$proj" || failed=1
+    jp_exec dotnet test "$proj" || failed=1
   done
   if [ "$failed" = 0 ]; then jp_pass "test" "$note"; else jp_fail "test" "$note"; fi
   return 0

@@ -9,6 +9,14 @@
 # pytest or ruff is never used — another version with other plugins says
 # nothing about this project.
 #
+# Under an environment (`jig verify` ran the project's commands through a
+# container prefix, adr-20261001-checks-run-where-the-project-runs) the host's
+# $VIRTUAL_ENV and poetry mean nothing there, and a container's interpreter
+# is itself the project's environment. So the tools come from a .venv/ or
+# venv/ inside the project that runs in the environment (a virtualenv made
+# on the host usually does not: its shebang points into the host), and
+# otherwise from the environment's own PATH.
+#
 # Narrowing (ADR-0041, adr-20260918-profiles-narrow-per-check-with-project-tools), per check: ruff lints the changed .py
 # files; mypy always runs in full, because checking a file alone misses
 # errors in the unchanged code that calls it; pytest runs the test files the
@@ -54,6 +62,7 @@ PY_FRONTEND_NOT_GLOBS="static/* */static/* staticfiles/* */staticfiles/* tests/*
 # _py_poetry_env — the poetry environment's directory, when the project uses
 # poetry and poetry is installed; nothing otherwise.
 _py_poetry_env() {
+  [ -z "${JIG_RUN_EXEC:-}" ] || return 0
   [ -f poetry.lock ] || return 0
   command -v poetry >/dev/null 2>&1 || return 0
   poetry env info -p 2>/dev/null | sed -n '1p' || true
@@ -64,6 +73,18 @@ _py_poetry_env() {
 # the environment contains, not which OS this is (ADR-0037).
 _py_tool() {
   local name="$1" d b poetry_dir=""
+  if [ -n "${JIG_RUN_EXEC:-}" ]; then
+    for d in .venv venv; do
+      if [ -f "$d/bin/$name" ] && jp_exec "$d/bin/$name" --version >/dev/null 2>&1; then
+        printf '%s\n' "$d/bin/$name"
+        return 0
+      fi
+    done
+    if jp_have "$name"; then
+      printf '%s\n' "$name"
+    fi
+    return 0
+  fi
   if [ "${JIG_VERIFY_EXPLAIN:-}" != 1 ]; then
     poetry_dir=$(_py_poetry_env)
   fi
@@ -83,7 +104,11 @@ _py_tool() {
   return 0
 }
 
-PY_WHERE="not found in \$VIRTUAL_ENV, .venv, venv or the poetry environment"
+if [ -n "${JIG_RUN_EXEC:-}" ]; then
+  PY_WHERE="not found in .venv, venv or the PATH of the environment the project runs in"
+else
+  PY_WHERE="not found in \$VIRTUAL_ENV, .venv, venv or the poetry environment"
+fi
 
 # _py_is_test <path> — a pytest test file by pytest's default naming.
 _py_is_test() {
@@ -181,7 +206,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   for check in ruff mypy pytest; do
     tool=$(_py_tool "$check")
     if [ -z "$tool" ]; then
-      if [ -f poetry.lock ] && command -v poetry >/dev/null 2>&1; then
+      if [ -z "${JIG_RUN_EXEC:-}" ] && [ -f poetry.lock ] && command -v poetry >/dev/null 2>&1; then
         jp_plan "$check" conditional "poetry environment needs a tool query; full set possible"
       else
         jp_plan "$check" skip "$PY_WHERE"
@@ -282,7 +307,7 @@ fi
 _py_pytest() {
   local note="$1" rc=0
   shift
-  "$pytest" "$@" || rc=$?
+  jp_exec "$pytest" "$@" || rc=$?
   case "$rc" in
     0) jp_pass "pytest" "$note" ;;
     5) jp_skip "pytest" "no tests collected${note:+; $note}" ;;

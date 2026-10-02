@@ -142,7 +142,7 @@ _jvm_maven_builtin() {
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if [ "$HAS_GRADLE" = 0 ]; then
     jp_plan check skip "no root Gradle build"
-  elif [ ! -f ./gradlew ] && ! command -v gradle >/dev/null 2>&1; then
+  elif [ ! -f ./gradlew ] && ! jp_have gradle; then
     jp_plan check skip "gradlew not found and gradle not found on PATH"
   else
     filters=$(jp_decide _jvm_gradle_builtin)
@@ -158,7 +158,7 @@ EOF
   fi
   if [ "$HAS_MAVEN" = 0 ]; then
     jp_plan test skip "no root pom.xml"
-  elif [ ! -f ./mvnw ] && ! command -v mvn >/dev/null 2>&1; then
+  elif [ ! -f ./mvnw ] && ! jp_have mvn; then
     jp_plan test skip "mvnw not found and mvn not found on PATH"
   else
     filters=$(jp_decide _jvm_maven_builtin)
@@ -178,28 +178,19 @@ fi
 # --- Gradle ------------------------------------------------------------------
 
 if [ "$HAS_GRADLE" = 1 ]; then
-  GRADLE_VIA_SH=""
-  GRADLE_BIN=""
+  # The command as words, run through jp_run/jp_exec so it reaches the
+  # project's environment: the wrapper via sh (+x-independent), or gradle
+  # from the PATH of wherever the project runs.
+  GRADLE_CMD=()
   if [ -f ./gradlew ]; then
-    GRADLE_VIA_SH=1
-    GRADLE_BIN="./gradlew"
-  elif command -v gradle >/dev/null 2>&1; then
-    GRADLE_BIN=$(command -v gradle)
+    GRADLE_CMD=(sh ./gradlew)
+  elif jp_have gradle; then
+    GRADLE_CMD=(gradle)
   fi
 
-  if [ -z "$GRADLE_BIN" ]; then
+  if [ "${#GRADLE_CMD[@]}" -eq 0 ]; then
     jp_skip "check" "gradlew not found and gradle not found on PATH"
   else
-    # _jvm_gradle_exec <arg...> — gradlew (via sh, +x-independent) or gradle
-    # from PATH, whichever was resolved above.
-    _jvm_gradle_exec() {
-      if [ -n "$GRADLE_VIA_SH" ]; then
-        sh "$GRADLE_BIN" "$@"
-      else
-        "$GRADLE_BIN" "$@"
-      fi
-    }
-
     # Not jp_version: the real Gradle CLI's `--version` banner starts with
     # a blank line, so jp_version's plain first-line capture always reports
     # "unknown" for it -- a gap in the shared library, worth a version this
@@ -207,7 +198,7 @@ if [ "$HAS_GRADLE" = 1 ]; then
     # version so "green here, red there" has a visible cause). Same
     # guarantee as jp_version: guarded, so a tool that cannot answer this
     # way never fails the check it only annotates.
-    gv=$(_jvm_gradle_exec --version 2>/dev/null | sed -n 's/^Gradle //p' | sed -n '1p') || gv=""
+    gv=$(jp_exec "${GRADLE_CMD[@]}" --version 2>/dev/null | sed -n 's/^Gradle //p' | sed -n '1p') || gv=""
     [ -n "$gv" ] || gv="unknown"
 
     # _jvm_gradle_always_all <path> — a root build/settings file, the
@@ -221,9 +212,9 @@ if [ "$HAS_GRADLE" = 1 ]; then
       local note="$1"
       shift
       if [ $# -eq 0 ]; then
-        jp_run "check" "$note" _jvm_gradle_exec check
+        jp_run "check" "$note" "${GRADLE_CMD[@]}" check
       else
-        jp_run "check" "$note" _jvm_gradle_exec "$@"
+        jp_run "check" "$note" "${GRADLE_CMD[@]}" "$@"
       fi
     }
 
@@ -270,29 +261,17 @@ fi
 # --- Maven -------------------------------------------------------------------
 
 if [ "$HAS_MAVEN" = 1 ]; then
-  MVN_VIA_SH=""
-  MVN_BIN=""
+  MVN_CMD=()
   if [ -f ./mvnw ]; then
-    MVN_VIA_SH=1
-    MVN_BIN="./mvnw"
-  elif command -v mvn >/dev/null 2>&1; then
-    MVN_BIN=$(command -v mvn)
+    MVN_CMD=(sh ./mvnw)
+  elif jp_have mvn; then
+    MVN_CMD=(mvn)
   fi
 
-  if [ -z "$MVN_BIN" ]; then
+  if [ "${#MVN_CMD[@]}" -eq 0 ]; then
     jp_skip "test" "mvnw not found and mvn not found on PATH"
   else
-    # _jvm_maven_exec <arg...> — mvnw (via sh, +x-independent) or mvn from
-    # PATH, whichever was resolved above.
-    _jvm_maven_exec() {
-      if [ -n "$MVN_VIA_SH" ]; then
-        sh "$MVN_BIN" "$@"
-      else
-        "$MVN_BIN" "$@"
-      fi
-    }
-
-    mv_=$(jp_version _jvm_maven_exec --version)
+    mv_=$(jp_version "${MVN_CMD[@]}" --version)
 
     # _jvm_maven_always_all <path> — the root pom.xml, `.mvn/**` or the
     # wrapper's own files: none of these belong to one module.
@@ -304,9 +283,9 @@ if [ "$HAS_MAVEN" = 1 ]; then
       local note="$1"
       shift
       if [ $# -eq 0 ]; then
-        jp_run "test" "$note" _jvm_maven_exec test
+        jp_run "test" "$note" "${MVN_CMD[@]}" test
       else
-        jp_run "test" "$note" _jvm_maven_exec "$@" test
+        jp_run "test" "$note" "${MVN_CMD[@]}" "$@" test
       fi
     }
 
