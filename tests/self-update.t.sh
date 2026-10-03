@@ -594,7 +594,16 @@ test_self_update_refuses_branch_without_upstream() {
   # (su_clone_global_detached, su_clone_global_branch); dropping the
   # tracking branch afterwards leaves a clean tree on a branch with no
   # upstream, which is the condition under test.
-  git clone -q "$HOME/work" "$share"
+  #
+  # core.createObject=rename: on the macOS runner this clone died now and then
+  # with "fatal: hardlink different from source at .../objects/pack/tmp_pack_*"
+  # (git links a finished temporary file into place and checks the inode it
+  # got back), which deleted the half-made clone and left .local/bin/jig
+  # dangling: the symptom was "env: .../.local/bin/jig: No such file or
+  # directory" instead of "no upstream". Rename never takes that path. The
+  # clone is also checked, so a failure names itself.
+  git -c core.createObject=rename clone -q "$HOME/work" "$share" \
+    || fail "could not clone the source checkout into $share"
   git -C "$share" branch --unset-upstream
   su_link_global "$share"
 
