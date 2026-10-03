@@ -59,8 +59,12 @@ with its checkout, a person can choose a lighter route, and an agent can plan a 
   merge that edits a global knowledge document (the glossary, the architecture, the rules), or a document
   that applies to the files the task changed, still makes a receipt stale, because `jig context` returns
   those. And every receipt check now resolves that knowledge, which `jig status`, the `ready` status
-  and `jig task ship` all run; the cost was not measured, and it grows with the
-  [known issue](/known-issues) that `jig context` is slow on a large project. The roadmap entry for this is gone.
+  and `jig task ship` all run, and the cost grows with the [known issue](/known-issues) that `jig context`
+  is slow on a large project. `jig status` therefore no longer resolves it: it compares the change, the
+  design and the findings, and for a receipt that still matches says `not checked` rather than `current`;
+  `jig task receipt --check`, the `ready` status and `jig task ship` still check everything. Measured on
+  five tasks that each had a receipt and a worktree, `jig status` took 51 s with the check on every task
+  and 9 to 11 s without it. The roadmap entry for this is gone.
 - **Skills write a task's own documents through `jig task artifact`.** The command takes three more kinds,
   `knowledge-map`, `commit-message` and `pr-body` (the files are `commit-message.md` and `pr-body.md`), so
   `jig-consolidate`, `jig-map` and a phase run no longer write them with a shell redirect, which

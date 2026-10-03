@@ -2229,9 +2229,11 @@ _task_receipt_get() {
 # One function decides staleness so `--check`, the three completion gates and
 # `jig status` cannot disagree about what "stale" means (ARCHITECTURE.md,
 # Scripts layout: a reporting command consumes a peer's answer, never
-# recomputes it).
+# recomputes it). With a second argument `cheap`, the `context` part is not
+# computed — it costs a `jig context` process per task — so the answer says
+# only what is certainly changed, never that the knowledge is unchanged.
 _task_receipt_changed() {
-  local id="$1" file changed="" sep="" cur dir=""
+  local id="$1" mode="${2:-}" file changed="" sep="" cur dir=""
   file="$(task_dir "$id")/receipt"
   [ -f "$file" ] || return 0
 
@@ -2256,13 +2258,15 @@ _task_receipt_changed() {
       changed="$changed${sep}diff"
       sep=", "
     fi
-    cur=""
-    if [ -n "$dir" ]; then
-      cur=$(_task_receipt_context_hash "$id" "$dir") || cur=""
-    fi
-    if [ "$cur" != "$(_task_receipt_get "$id" context)" ]; then
-      changed="$changed${sep}context"
-      sep=", "
+    if [ "$mode" != cheap ]; then
+      cur=""
+      if [ -n "$dir" ]; then
+        cur=$(_task_receipt_context_hash "$id" "$dir") || cur=""
+      fi
+      if [ "$cur" != "$(_task_receipt_get "$id" context)" ]; then
+        changed="$changed${sep}context"
+        sep=", "
+      fi
     fi
   fi
   cur=$(_task_receipt_design_hash "$id")
@@ -2396,8 +2400,12 @@ task_receipt_write() {
 
 # task_receipt_check <id> — `receipt: current|stale (...)|none`, exit 1 for
 # stale and for a T4 task with none at all (design.md §3), exit 0 otherwise.
+# With a second argument `cheap` (what `jig status` asks) the knowledge the
+# review read is not resolved: a receipt whose diff, design and findings still
+# match answers `not checked (knowledge not resolved)`, never `current`, and
+# stale only when something cheap already moved. The gates ask without it.
 task_receipt_check() {
-  local id="$1" file changed class
+  local id="$1" mode="${2:-}" file changed class
   file="$(task_dir "$id")/receipt"
   if [ ! -f "$file" ]; then
     class=$(task_state_get "$id" class)
@@ -2409,8 +2417,12 @@ task_receipt_check() {
     return 0
   fi
 
-  changed=$(_task_receipt_changed "$id")
+  changed=$(_task_receipt_changed "$id" "$mode")
   if [ -z "$changed" ]; then
+    if [ "$mode" = cheap ] && [ -n "$(_task_receipt_get "$id" diff)" ]; then
+      printf 'receipt: not checked (knowledge not resolved; jig task receipt %s --check)\n' "$id"
+      return 0
+    fi
     printf 'receipt: current\n'
     return 0
   fi
