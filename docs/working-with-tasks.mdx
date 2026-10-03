@@ -141,7 +141,8 @@ A task of the highest risk class (T4) cannot be finished without such a pinned r
 
 To see whether the review still holds, ask *"is the review still current?"*, or run
 `jig task receipt <task-id> --check`. `jig status` marks a task whose review no longer holds with
-`review=stale`.
+`review=stale`. It does not resolve the knowledge the review read, so for a review that still matches it says
+`not checked`, not `current`; `--check` and shipping do the full check.
 </Accordion>
 
 ## Several agents at once

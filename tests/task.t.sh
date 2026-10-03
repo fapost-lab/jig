@@ -4655,6 +4655,41 @@ test_task_ship_refuses_stale_receipt_planted_after_consolidation() {
   assert_contains "$(git status --porcelain -- ship.txt)" "A  ship.txt"
 }
 
+# The knowledge half of the receipt is checked where it decides: ship refuses
+# when the base rewrote a convention the review applied, though the task's own
+# diff is the same (`jig status` does not look at it; it says "not checked").
+test_task_ship_refuses_a_receipt_stale_by_context() {
+  task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  _task_receipt_commit_work_convention
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  ship_cfg_local agent.git pr
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'the task work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+  sed 's/^knowledge_consolidated:.*/knowledge_consolidated: true/' \
+    .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  git checkout -q "$base"
+  printf 'v2\n' >> .ai/knowledge/rule-work.md
+  git commit -q -am "the base rewrites the convention"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+  printf 'Ship T-1\n\nBody.\n' > msg.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review is stale"
+  assert_contains "$OUT" "context"
+}
+
 # --- autopilot (design.md under .ai/workspace/tasks/autopilot-run) -------------
 #
 # `jig task autopilot <id> start|stage|repair|stop|resume|end|report`: a run
