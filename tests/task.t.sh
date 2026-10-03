@@ -1398,7 +1398,7 @@ test_sdd_artifacts_empty_external_and_internal_links() {
 test_sdd_artifacts_rejects_invalid_claims_and_class() {
   sdd_task_setup
   local provided
-  # `task` is writable by `jig task artifact` (nine kinds) but is deliberately
+  # `task` is writable by `jig task artifact` (twelve kinds) but is deliberately
   # not a valid `--provided` claim here (eight kinds): `_task_artifact_kind`
   # and `_task_artifact_writable_kind` are separate predicates on purpose.
   for provided in '' ',design' 'design,' 'design,,spec' approval implementation 'design,design' task; do
@@ -1469,14 +1469,14 @@ test_task_artifact_write_replaces_and_append_joins_with_a_newline_boundary() {
   assert_eq "$(printf 'line one\nline two')" "$(cat "$root/handoff.md")"
 }
 
-test_task_artifact_rejects_unknown_kind_and_accepts_the_nine_writable_kinds() {
+test_task_artifact_rejects_unknown_kind_and_accepts_the_twelve_writable_kinds() {
   sdd_task_setup
   run jig task artifact write scoped bogus <<< 'x'
   assert_eq 1 "$RC"
   assert_contains "$OUT" 'unknown kind: bogus'
 
   local kind
-  for kind in task discovery spec alternatives design plan review verification handoff; do
+  for kind in task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body; do
     run jig task artifact write scoped "$kind" <<< "content for $kind"
     assert_eq 0 "$RC" "kind $kind should be writable"
     assert_file_contains ".ai/workspace/tasks/scoped/$kind.md" "content for $kind"

@@ -9,10 +9,12 @@ description: Review a Jig task's diff against the project's knowledge, rules and
 
 ```
 .ai/scripts/jig task changes <id> --base <ref>
-.ai/scripts/jig task changes <id> --base <ref> --format paths > <workspace>/review-files
-.ai/scripts/jig context resolve --task <id> --stage review --files - < <workspace>/review-files
-.ai/scripts/jig context guard --task <id> --stage review --files - < <workspace>/review-files
+files=$(.ai/scripts/jig task changes <id> --base <ref> --format paths)
+printf '%s\n' "$files" | .ai/scripts/jig context resolve --task <id> --stage review --files -
+printf '%s\n' "$files" | .ai/scripts/jig context guard --task <id> --stage review --files -
 ```
+
+The list lives in a shell variable, not in a file: it is read twice and is not a document of the task.
 
 Establish ownership and inspect all patches/new contents using
 [change scope](references/change-scope.md), adding an explicit allowlist for unrelated work.
