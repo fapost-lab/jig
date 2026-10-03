@@ -46,10 +46,12 @@ again:
 .ai/scripts/jig task receipt <id> --stage review|architecture-review
 ```
 
-It pins what was reviewed: the working tree (everything but `.ai/knowledge/` and `.ai/specs/`,
-which consolidation writes afterwards), the approved `design.md`, and the ledger as it stands. A
-change to any of them afterwards — code edited, a finding closed by its author — makes the receipt
-stale, and `ready`, the knowledge decision and `task ship` refuse until a re-review writes a new
+It pins what the review read: the task's own change against its base (everything but
+`.ai/knowledge/` and `.ai/specs/`, which consolidation writes afterwards), the knowledge `jig
+context` resolves for that change, the approved `design.md`, and the ledger as it stands. A change
+to any of them afterwards — code edited, a convention the review applied rewritten, a finding closed
+by its author — makes the receipt stale (merging the base into the branch does not, unless it moves
+the task's diff or that knowledge), and `ready`, the knowledge decision and `task ship` refuse until a re-review writes a new
 one. A commit that changes no content leaves it current. A T4 task cannot be finished without one.
 `jig task receipt <id> --check` says whether it still holds.
 

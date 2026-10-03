@@ -80,8 +80,10 @@ one told to continue task X from stage Y.
 became ready. For the head of the queue, from its worktree:
 
 ```
-.ai/scripts/jig task ship <id> --message-file .ai/workspace/tasks/<id>/commit-message
+.ai/scripts/jig task ship <id> --message-file .ai/workspace/tasks/<id>/commit-message.md [--body-file .ai/workspace/tasks/<id>/pr-body.md]
 ```
+
+Pass `--body-file` when the task agent wrote a `pr-body.md`; without it the body is the rest of the commit message.
 
 - `agent.git: pr` — the pull request is open. Wait for CI (`gh pr checks`) and only with it
   green tell the person it is ready. They merge, in any order; you see it by `git fetch`.
@@ -136,9 +138,9 @@ rules verbatim:
   and the raw runner over everything are not: CI runs the full set
   ([what a reviewer runs](../../jig-review/references/what-to-run.md)).
 - End at consolidation: the knowledge decision recorded
-  (`jig task set <id> knowledge_consolidated true`), the change staged, the commit message in
-  `.ai/workspace/tasks/<id>/commit-message` and the pull request body — with
-  `jig task autopilot <id> report`'s blocks — in `pr-body`.
+  (`jig task set <id> knowledge_consolidated true`), the change staged, the commit message written
+  with `jig task artifact write <id> commit-message --from <file>` and the pull request body —
+  with `jig task autopilot <id> report`'s blocks — with `jig task artifact write <id> pr-body --from <file>`.
 - **Do not run `jig task ship` or `jig task autopilot end`.** Those are the coordinator's.
 - Report back: one line of outcome, the paths, the ledger and receipt state, and what is left.
 

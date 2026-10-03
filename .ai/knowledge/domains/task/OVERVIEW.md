@@ -166,7 +166,8 @@ from the author, so who may close or dismiss a finding is a rule of the skills
 **The status page shows this domain's answers verbatim, and this domain keeps it current**
 (adr-20260924-the-status-page-keeps-the-readers-place). The page lists each live task with the
 lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`current`, `stale (…)`,
-`none`, `none (required for T4)`), `_task_worktree_note` and the task base; an autopilot run as
+`none`, `none (required for T4)`; the page asks it `cheap`, which does not resolve the knowledge, so it shows
+`not checked (…)` where the gates would say `current`), `_task_worktree_note` and the task base; an autopilot run as
 `_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time,
 and the run's phase — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
 (`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
@@ -218,9 +219,12 @@ run's `autopilot_mode` (recorded by `autopilot start`) is `unattended` — and `
 did, not a merge state: ADR-0005 still holds, and housekeeping still derives whether it merged.
 
 **The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
-After the findings check, each gate asks one staleness function whether the working tree, the
-approved design or the ledger moved since the receipt, and a T4 task must have one. The tree is
-content, built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
+After the findings check, each gate asks one staleness function whether the task's own change (`diff`: the content difference
+against the merge base with its base branch, so a merge of the base that touches none of the task's
+files does not move it), the knowledge resolved for that change (`context`, `jig context`'s own
+matching, the task's own knowledge edits left out), the approved design or the ledger moved since the
+receipt, and a T4 task must have one (adr-20261003-receipt-pins-what-the-review-read). The pinned
+content is built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
 `.ai/specs/` because consolidation writes them after review. A new path that consolidation starts
 writing must join that exclusion, or every task will read as unreviewed at its last step.
 

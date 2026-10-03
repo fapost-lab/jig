@@ -133,7 +133,7 @@ editing tools, and never with a shell redirection:
 ```
 
 `<kind>` is `task`, `discovery`, `spec`, `alternatives`, `design`, `plan`, `review`,
-`verification` or `handoff`, and the content comes from a file you wrote or from stdin.
+`verification`, `handoff`, `knowledge-map`, `commit-message` or `pr-body`, and the content comes from a file you wrote or from stdin.
 In a worktree the workspace is only borrowed, and jig is what knows where it really is.
 
 When the user already wrote the task as a document, take it from disk instead of
@@ -214,7 +214,7 @@ alternatives — verbatim, with your objections after it, as
 [show the document](references/show-the-document.md) says. What changes, which
 alternatives lost and why, and what it costs to undo belong in the document itself; if
 they are missing, the document is not ready for the gate. Wait for the human to approve,
-change or reject it, and record the decision in `task.md`. Do not start implementing while
+change or reject it, and record the decision in `task.md` (`jig task artifact append <id> task --from <file>`). Do not start implementing while
 waiting, and do not treat silence or a general "ok, go on" from an earlier message as
 approval.
 
