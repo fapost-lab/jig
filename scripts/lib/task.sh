@@ -2047,9 +2047,10 @@ _task_review_dir() {
   printf '%s\n' "$dir"
 }
 
-# _task_review_tree <dir> — the git tree id of everything `git add -A` would
-# stage right now in the checkout <dir>, minus `.ai/knowledge/` and
-# `.ai/specs/`. Computed through a temporary index so the real one is never
+# _task_review_tree <dir> [--all] — the git tree id of everything `git add -A`
+# would stage right now in the checkout <dir>, minus `.ai/knowledge/` and
+# `.ai/specs/` (with `--all`, minus nothing: the task's own knowledge edits are
+# then visible to _task_receipt_context_hash). Computed through a temporary index so the real one is never
 # touched: every git call below is pointed at a throwaway `GIT_INDEX_FILE`,
 # cleaned up on every return path rather than through an EXIT trap, because
 # this function can run many times in one process — once per task with a
@@ -2060,7 +2061,7 @@ _task_review_dir() {
 # skipped in that case rather than treated as a failure, and the temporary
 # index simply starts empty (a missing GIT_INDEX_FILE reads as one).
 _task_review_tree() {
-  local dir="$1" tmp tree
+  local dir="$1" all="${2:-}" tmp tree
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-task-review-tree.XXXXXX") || return 1
   jig_cleanup_add "$tmp"
   rm -f "$tmp"
@@ -2075,11 +2076,102 @@ _task_review_tree() {
     rm -f "$tmp"
     return 1
   fi
-  GIT_INDEX_FILE="$tmp" git -C "$dir" rm -r -q --cached --ignore-unmatch \
-    -- "$JIG_AI_DIR/knowledge" "$JIG_AI_DIR/specs" >/dev/null 2>&1 || true
+  if [ "$all" != --all ]; then
+    GIT_INDEX_FILE="$tmp" git -C "$dir" rm -r -q --cached --ignore-unmatch \
+      -- "$JIG_AI_DIR/knowledge" "$JIG_AI_DIR/specs" >/dev/null 2>&1 || true
+  fi
   tree=$(GIT_INDEX_FILE="$tmp" git -C "$dir" write-tree 2>/dev/null) || { rm -f "$tmp"; return 1; }
   rm -f "$tmp"
   printf '%s\n' "$tree"
+}
+
+# _task_review_merge_base <id> <dir> — the commit the task's own change is
+# measured from: the merge base of the task's base branch (judged as
+# jig_base_ref judges it, origin first) and the HEAD of the checkout <dir>.
+# A merge of the base into the task's branch moves the merge base with it, so
+# what the base brought in never counts as the task's change. Without a base
+# ref the `base_commit` the task recorded at start answers; without that,
+# nothing, and the callers fall back to pinning the whole tree.
+_task_review_merge_base() {
+  local id="$1" dir="$2" ref mb
+  ref=$(jig_base_ref "$(jig_task_base "$id")")
+  if [ -n "$ref" ] && mb=$(git -C "$dir" merge-base "$ref" HEAD 2>/dev/null); then
+    printf '%s\n' "$mb"
+    return 0
+  fi
+  mb=$(task_state_get "$id" base_commit)
+  if [ -n "$mb" ] && git -C "$dir" rev-parse --verify --quiet "$mb^{commit}" >/dev/null 2>&1; then
+    printf '%s\n' "$mb"
+    return 0
+  fi
+  return 1
+}
+
+# _task_review_changed_files <id> <dir> — the repo-relative paths the task's
+# own change touches in the checkout <dir> (merge-base aware, untracked files
+# included, `.ai/knowledge/` and `.ai/specs/` left out), one per line. Fails
+# when there is no merge base to measure from.
+_task_review_changed_files() {
+  local id="$1" dir="$2" mb tree
+  mb=$(_task_review_merge_base "$id" "$dir") || return 1
+  tree=$(_task_review_tree "$dir") || return 1
+  git -C "$dir" diff-tree -r --no-renames --name-only "$mb" "$tree" \
+    -- . ":(exclude)$JIG_AI_DIR/knowledge" ":(exclude)$JIG_AI_DIR/specs" 2>/dev/null \
+    | LC_ALL=C sort -u
+}
+
+# _task_receipt_diff_hash <id> <dir> — the receipt's `diff` field: the hash of
+# the task's own change against its merge base, by content (the raw diff-tree
+# listing carries both blob ids of every path). The same change gives the same
+# value whatever the base has moved on to; a change to a file the task touches
+# gives another. `tree:<id>` — the whole tree, the old pin — when there is no
+# merge base: stricter, never softer.
+_task_receipt_diff_hash() {
+  local id="$1" dir="$2" mb tree
+  tree=$(_task_review_tree "$dir") || return 1
+  if ! mb=$(_task_review_merge_base "$id" "$dir"); then
+    printf 'tree:%s\n' "$tree"
+    return 0
+  fi
+  git -C "$dir" diff-tree -r --no-renames "$mb" "$tree" \
+    -- . ":(exclude)$JIG_AI_DIR/knowledge" ":(exclude)$JIG_AI_DIR/specs" 2>/dev/null \
+    | git hash-object --stdin
+}
+
+# _task_receipt_context_hash <id> <dir> — the receipt's `context` field: the
+# knowledge the review was done against, by content. The documents are what
+# `jig context` resolves for the files of the task's change, run in the
+# checkout <dir> with the task's domains (the global documents included, the
+# task's workspace left out), and the documents the task edited itself left out too: consolidation
+# writes them after the review (ADR-0030), and they are part of the task's own
+# change. The value hashes "<path> <content hash>" lines, so a document added,
+# removed or edited by anyone else changes it. Fails when it cannot be
+# computed; "-" when there is no merge base to find the task's files from.
+_task_receipt_context_hash() {
+  local id="$1" dir="$2" mb files full own domains matched path lines=""
+  mb=$(_task_review_merge_base "$id" "$dir") || { printf -- '-\n'; return 0; }
+  files=$(_task_review_changed_files "$id" "$dir") || return 1
+  full=$(_task_review_tree "$dir" --all) || return 1
+  own=$(git -C "$dir" diff-tree -r --no-renames --name-only "$mb" "$full" \
+    -- "$JIG_AI_DIR/knowledge" 2>/dev/null) || own=""
+  domains=$(task_state_get "$id" domains | tr ',' ' ')
+  # A process, not a sourced library: one command library never sources
+  # another (ARCHITECTURE.md, Scripts layout). `--no-task` keeps the task's
+  # workspace out; its domains are passed explicitly.
+  matched=$(printf '%s\n' "$files" | (cd "$dir" && "$JIG_SELF" context --no-task --files - \
+    ${domains:+--domains "$(printf '%s' "$domains" | tr ' ' ',')"} --format paths) 2>/dev/null) || return 1
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    jig_has_line "$path" "$own" && continue
+    if [ -f "$dir/$path" ]; then
+      lines="$lines$path $(jig_hash "$dir/$path")
+"
+    else
+      lines="$lines$path -
+"
+    fi
+  done < <(printf '%s\n' "$matched")
+  printf '%s' "$lines" | LC_ALL=C sort | git hash-object --stdin
 }
 
 # _task_receipt_design_hash <id> — the receipt's `design` field: the hash of
@@ -2127,27 +2219,51 @@ _task_receipt_get() {
   sed -n "s/^${key}:[[:space:]]*//p" "$file" | head -n 1
 }
 
-# _task_receipt_changed <id> — "tree", "design", "findings", any combination
-# joined by ", ", or empty, for the parts of an existing receipt that no
-# longer match the task's current state; empty (not an error) when the task
-# has no receipt at all. One function decides staleness so `--check`, the
-# three completion gates and `jig status` cannot disagree about what "stale"
-# means (ARCHITECTURE.md, Scripts layout: a reporting command consumes a
-# peer's answer, never recomputes it).
+# _task_receipt_changed <id> — "diff", "context", "design", "findings", any
+# combination joined by ", ", or empty, for the parts of an existing receipt
+# that no longer match the task's current state; empty (not an error) when the
+# task has no receipt at all. `diff` is the task's own change against its base,
+# `context` the knowledge the review relied on (ADR
+# 20261003-receipt-pins-what-the-review-read); a receipt written before they
+# existed has no such keys and is compared by `tree` until it is rewritten.
+# One function decides staleness so `--check`, the three completion gates and
+# `jig status` cannot disagree about what "stale" means (ARCHITECTURE.md,
+# Scripts layout: a reporting command consumes a peer's answer, never
+# recomputes it).
 _task_receipt_changed() {
-  local id="$1" file changed="" sep="" cur dir
+  local id="$1" file changed="" sep="" cur dir=""
   file="$(task_dir "$id")/receipt"
   [ -f "$file" ] || return 0
 
-  # A tree that cannot be read — the branch checked out nowhere — counts as
+  # A checkout that cannot be read — the branch checked out nowhere — counts as
   # changed: the gate must not pass on a change it could not look at.
-  cur=""
-  if dir=$(_task_review_dir "$id"); then
-    cur=$(_task_review_tree "$dir") || cur=""
-  fi
-  if [ "$cur" != "$(_task_receipt_get "$id" tree)" ]; then
-    changed="$changed${sep}tree"
-    sep=", "
+  dir=$(_task_review_dir "$id") || dir=""
+  if [ -z "$(_task_receipt_get "$id" diff)" ]; then
+    cur=""
+    if [ -n "$dir" ]; then
+      cur=$(_task_review_tree "$dir") || cur=""
+    fi
+    if [ "$cur" != "$(_task_receipt_get "$id" tree)" ]; then
+      changed="$changed${sep}tree"
+      sep=", "
+    fi
+  else
+    cur=""
+    if [ -n "$dir" ]; then
+      cur=$(_task_receipt_diff_hash "$id" "$dir") || cur=""
+    fi
+    if [ "$cur" != "$(_task_receipt_get "$id" diff)" ]; then
+      changed="$changed${sep}diff"
+      sep=", "
+    fi
+    cur=""
+    if [ -n "$dir" ]; then
+      cur=$(_task_receipt_context_hash "$id" "$dir") || cur=""
+    fi
+    if [ "$cur" != "$(_task_receipt_get "$id" context)" ]; then
+      changed="$changed${sep}context"
+      sep=", "
+    fi
   fi
   cur=$(_task_receipt_design_hash "$id")
   if [ "$cur" != "$(_task_receipt_get "$id" design)" ]; then
@@ -2162,6 +2278,25 @@ _task_receipt_changed() {
   printf '%s\n' "$changed"
 }
 
+# _task_receipt_gloss <changed> — one clause saying what each reason in the
+# list _task_receipt_changed returned means, so a person can tell the task's
+# own work moving from the knowledge under it moving.
+_task_receipt_gloss() {
+  local changed="$1" out="" sep="" reason
+  for reason in tree diff context design findings; do
+    case ", $changed, " in *", $reason, "*) ;; *) continue ;; esac
+    case "$reason" in
+      tree) out="$out${sep}tree: the working tree" ;;
+      diff) out="$out${sep}diff: the task's own change" ;;
+      context) out="$out${sep}context: the knowledge the review relied on, not the code" ;;
+      design) out="$out${sep}design: the approved design" ;;
+      findings) out="$out${sep}findings: the ledger" ;;
+    esac
+    sep="; "
+  done
+  printf '%s\n' "$out"
+}
+
 # _task_receipt_gate_message <id> — empty when the task's review receipt
 # needs no attention; otherwise the refusal text (the caller still prefixes
 # it with "<command>: ", same as _task_gate_blocking_message) for a stale
@@ -2173,8 +2308,8 @@ _task_receipt_gate_message() {
   if [ -f "$(task_dir "$id")/receipt" ]; then
     changed=$(_task_receipt_changed "$id")
     [ -n "$changed" ] || return 0
-    printf 'review is stale: code changed since review on %s (%s); re-review and run: jig task receipt %s --stage %s' \
-      "$(_task_receipt_get "$id" reviewed_at)" "$changed" "$id" "$(_task_receipt_get "$id" stage)"
+    printf 'review is stale: code changed since review on %s (%s; %s); re-review and run: jig task receipt %s --stage %s' \
+      "$(_task_receipt_get "$id" reviewed_at)" "$changed" "$(_task_receipt_gloss "$changed")" "$id" "$(_task_receipt_get "$id" stage)"
     return 0
   fi
   class=$(task_state_get "$id" class)
@@ -2227,12 +2362,14 @@ task_receipt() {
 # re-review, replaces it outright — the stage most recently written wins, and
 # nothing reads the one it overwrote.
 task_receipt_write() {
-  local id="$1" stage="$2" dir tree base_commit head design findings file tmp
+  local id="$1" stage="$2" dir tree base_commit head diff context design findings file tmp
   dir=$(task_dir "$id")
   local review_dir
   review_dir=$(_task_review_dir "$id") \
     || jig_die "task receipt: $(task_state_get "$id" branch) is not checked out in any worktree; review the task where its branch is"
   tree=$(_task_review_tree "$review_dir") || jig_die "task receipt: could not read the working tree"
+  diff=$(_task_receipt_diff_hash "$id" "$review_dir") || jig_die "task receipt: could not read the task's change"
+  context=$(_task_receipt_context_hash "$id" "$review_dir") || jig_die "task receipt: could not resolve the knowledge for the task's change"
   base_commit=$(task_state_get "$id" base_commit)
   head=$(git -C "$review_dir" rev-parse --verify --quiet HEAD 2>/dev/null) || head=""
   design=$(_task_receipt_design_hash "$id")
@@ -2245,6 +2382,8 @@ task_receipt_write() {
     printf 'stage: %s\n' "$stage"
     printf 'reviewed_at: %s\n' "$(jig_today)"
     printf 'tree: %s\n' "$tree"
+    printf 'diff: %s\n' "$diff"
+    printf 'context: %s\n' "$context"
     printf 'base_commit: %s\n' "$base_commit"
     printf 'head: %s\n' "$head"
     printf 'design: %s\n' "$design"

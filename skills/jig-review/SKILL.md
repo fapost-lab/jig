@@ -59,7 +59,8 @@ Findings ordered by severity, each with file and line, one line of description, 
 concrete fix. Say plainly when there are none. Record each one in the task's ledger with a
 severity, as [findings](references/findings.md) says: a finding only said here blocks nothing.
 On a re-review, close each `fixed` finding that is fixed and reopen the rest. Last, write the
-review's receipt (`jig task receipt <id> --stage review`), which pins what you reviewed.
+review's receipt (`jig task receipt <id> --stage review`), which pins what you read: the task's
+own change, the knowledge that applies to it, the design and the ledger.
 
 Then either apply the fixes or hand them back, depending on what the user asked. A review
 that ends without a decision on every finding is unfinished.

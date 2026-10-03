@@ -218,9 +218,12 @@ run's `autopilot_mode` (recorded by `autopilot start`) is `unattended` — and `
 did, not a merge state: ADR-0005 still holds, and housekeeping still derives whether it merged.
 
 **The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
-After the findings check, each gate asks one staleness function whether the working tree, the
-approved design or the ledger moved since the receipt, and a T4 task must have one. The tree is
-content, built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
+After the findings check, each gate asks one staleness function whether the task's own change (`diff`: the content difference
+against the merge base with its base branch, so a merge of the base that touches none of the task's
+files does not move it), the knowledge resolved for that change (`context`, `jig context`'s own
+matching, the task's own knowledge edits left out), the approved design or the ledger moved since the
+receipt, and a T4 task must have one (adr-20261003-receipt-pins-what-the-review-read). The pinned
+content is built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
 `.ai/specs/` because consolidation writes them after review. A new path that consolidation starts
 writing must join that exclusion, or every task will read as unreviewed at its last step.
 

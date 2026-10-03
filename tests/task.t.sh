@@ -4056,12 +4056,14 @@ test_task_receipt_writes_all_keys() {
   assert_file .ai/workspace/tasks/T-1/receipt
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/receipt | tr '\n' ' ')
-  assert_eq "stage reviewed_at tree base_commit head design findings " "$keys"
+  assert_eq "stage reviewed_at tree diff context base_commit head design findings " "$keys"
 
   assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: review"
   assert_file_contains .ai/workspace/tasks/T-1/receipt "reviewed_at: $(date +%Y-%m-%d)"
   assert_file_contains .ai/workspace/tasks/T-1/receipt "base_commit: $expected_base"
   assert_file_contains .ai/workspace/tasks/T-1/receipt "findings: -"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "diff: "
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "context: "
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/receipt)" "design: -"
 }
 
@@ -4087,7 +4089,7 @@ test_task_receipt_reads_the_worktree_that_holds_the_task_branch() {
   printf 'task work\n' > "$wt/work.txt"
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "receipt: stale (tree"
+  assert_contains "$OUT" "receipt: stale (diff"
 }
 
 test_task_receipt_refuses_when_the_task_branch_is_checked_out_nowhere() {
@@ -4109,7 +4111,7 @@ test_task_receipt_check_counts_an_unreadable_tree_as_changed() {
   git checkout -q main
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "receipt: stale (tree"
+  assert_contains "$OUT" "receipt: stale (diff"
 }
 
 test_task_receipt_architecture_review_stage() {
@@ -4212,7 +4214,7 @@ test_task_receipt_check_current_right_after_writing() {
   assert_eq "receipt: current" "$OUT"
 }
 
-test_task_receipt_check_stale_after_a_tracked_code_edit_names_tree() {
+test_task_receipt_check_stale_after_a_tracked_code_edit_names_diff() {
   task_setup_clean
   jig task new T-1 --class T2 >/dev/null
   jig task start T-1 >/dev/null
@@ -4222,7 +4224,7 @@ test_task_receipt_check_stale_after_a_tracked_code_edit_names_tree() {
 
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "receipt: stale (tree, reviewed $(date +%Y-%m-%d))"
+  assert_contains "$OUT" "receipt: stale (diff, reviewed $(date +%Y-%m-%d))"
 }
 
 test_task_receipt_check_stale_after_a_new_untracked_file() {
@@ -4235,7 +4237,7 @@ test_task_receipt_check_stale_after_a_new_untracked_file() {
 
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "receipt: stale (tree"
+  assert_contains "$OUT" "receipt: stale (diff"
 }
 
 test_task_receipt_check_current_after_editing_knowledge_or_specs() {
@@ -4285,7 +4287,245 @@ test_task_receipt_check_stale_after_an_amend_that_changes_content() {
 
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "receipt: stale (tree"
+  assert_contains "$OUT" "receipt: stale (diff"
+}
+
+# The case this key exists for: the base moves on and is merged into the
+# task's branch, bringing files the task never touched. The task's own change
+# is the same, so the receipt stays current.
+test_task_receipt_check_current_after_merging_unrelated_base_changes() {
+  task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'the task work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+
+  git checkout -q "$base"
+  printf 'someone else\n' > other.txt
+  git add other.txt
+  git commit -q -m "unrelated change on the base"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+  assert_file other.txt
+
+  run jig task receipt T-1 --check
+  assert_eq 0 "$RC"
+  assert_eq "receipt: current" "$OUT"
+}
+
+# ...and the other way: the same merge, but the task's own file changes after
+# the review, so the receipt goes stale.
+test_task_receipt_check_stale_when_the_task_diff_changes_after_a_base_merge() {
+  task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'the task work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+
+  git checkout -q "$base"
+  printf 'someone else\n' > other.txt
+  git add other.txt
+  git commit -q -m "unrelated change on the base"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+  printf 'the task work, changed\n' > work.txt
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (diff, reviewed"
+}
+
+# A base change to a file the task also touches changes the task's own diff
+# once merged: the review did not see that interaction.
+test_task_receipt_check_stale_when_a_base_merge_changes_a_file_the_task_touches() {
+  task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  printf 'line one\nline two\nline three\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "shared file"
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'line one\nline two\nline three\ntask line\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "task edit"
+  jig task receipt T-1 --stage review >/dev/null
+
+  git checkout -q "$base"
+  printf 'base line\nline one\nline two\nline three\n' > shared.txt
+  git add shared.txt
+  git commit -q -m "base edits the same file"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (diff, reviewed"
+}
+
+# The knowledge the review resolved is pinned by content. Another hand editing
+# it makes the receipt stale and the message says it is the knowledge, not the
+# code; the task's own knowledge edits (consolidation) leave it current.
+test_task_receipt_context_follows_resolved_knowledge_not_the_tasks_own() {
+  task_setup_clean
+  mkdir -p .ai/knowledge
+  cat > .ai/knowledge/rule-work.md <<'EOF2'
+---
+id: rule-work
+type: convention
+status: accepted
+paths:
+  - work.txt
+summary: Work files follow this.
+---
+# Work files
+v1
+EOF2
+  git add -A
+  git commit -q -m "a convention for work.txt"
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'the task work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+
+  # The task's own knowledge, written at consolidation: not a reason.
+  cat > .ai/knowledge/adr-own.md <<'EOF2'
+---
+id: adr-own
+type: adr
+status: accepted
+paths:
+  - work.txt
+summary: The task's own decision.
+---
+# The task decided this
+EOF2
+  run jig task receipt T-1 --check
+  assert_eq "receipt: current" "$OUT"
+
+  # The convention the review relied on changes, not by the task.
+  printf 'v2\n' >> .ai/knowledge/rule-work.md
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (context, reviewed"
+  run jig task set T-1 status ready
+  assert_contains "$OUT" "the knowledge the review relied on, not the code"
+}
+
+# Writes the convention rule-work.md (v1) that matches work.txt and commits it.
+_task_receipt_commit_work_convention() {
+  mkdir -p .ai/knowledge
+  cat > .ai/knowledge/rule-work.md <<'EOF2'
+---
+id: rule-work
+type: convention
+status: accepted
+paths:
+  - work.txt
+summary: Work files follow this.
+---
+# Work files
+v1
+EOF2
+  git add -A
+  git commit -q -m "a convention for work.txt"
+}
+
+# The base moves a convention the review applied and that is merged into the
+# task's branch: the task's diff is the same, the knowledge under it is not.
+test_task_receipt_check_stale_when_a_base_merge_changes_resolved_knowledge() {
+  task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  _task_receipt_commit_work_convention
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'the task work\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+
+  git checkout -q "$base"
+  printf 'v2\n' >> .ai/knowledge/rule-work.md
+  git commit -q -am "the base rewrites the convention"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (context, reviewed"
+}
+
+# The same, seen from the checkout that files the task while the branch lives
+# in its own worktree: the knowledge is resolved where the branch is.
+test_task_receipt_context_is_resolved_in_the_tasks_worktree() {
+  task_setup_nested
+  _task_receipt_commit_work_convention
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 --worktree >/dev/null
+  local wt
+  wt=$(git worktree list --porcelain | awk '/^worktree /{ p = substr($0, 10) } /^branch refs\/heads\/task\/T-1$/{ print p }')
+  [ -n "$wt" ] || fail "task worktree not found"
+  printf 'the task work\n' > "$wt/work.txt"
+  jig task receipt T-1 --stage review >/dev/null
+
+  # Editing the convention in the filing checkout is not what the review read.
+  printf 'v2\n' >> .ai/knowledge/rule-work.md
+  run jig task receipt T-1 --check
+  assert_eq "receipt: current" "$OUT"
+
+  printf 'v2\n' >> "$wt/.ai/knowledge/rule-work.md"
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (context, reviewed"
+}
+
+# Without a base to measure from, the pin is the whole tree, as before: any
+# change is a change, and an unrelated file is not forgiven.
+test_task_receipt_without_a_merge_base_pins_the_whole_tree() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  sed 's/^base_branch:.*/base_branch: no-such-branch/; s/^base_commit:.*/base_commit: 0000000000000000000000000000000000000000/' \
+    .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+  jig task receipt T-1 --stage review >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "diff: tree:"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "context: -"
+  run jig task receipt T-1 --check
+  assert_eq "receipt: current" "$OUT"
+
+  printf 'unrelated\n' > unrelated.txt
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (diff"
+}
+
+# A receipt written before `diff` and `context` existed is compared by `tree`.
+test_task_receipt_without_diff_key_is_compared_by_tree() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  grep -v '^diff:\|^context:' .ai/workspace/tasks/T-1/receipt > r.tmp
+  mv r.tmp .ai/workspace/tasks/T-1/receipt
+  run jig task receipt T-1 --check
+  assert_eq "receipt: current" "$OUT"
+
+  printf 'new\n' > untracked.txt
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "receipt: stale (tree, reviewed"
 }
 
 test_task_receipt_check_stale_after_editing_design_md_names_design() {
@@ -4360,7 +4600,7 @@ test_task_set_status_ready_refuses_stale_receipt() {
 
   run jig task set T-1 status ready
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "task set: review is stale: code changed since review on $(date +%Y-%m-%d) (tree); re-review and run: jig task receipt T-1 --stage review"
+  assert_contains "$OUT" "task set: review is stale: code changed since review on $(date +%Y-%m-%d) (diff; diff: the task's own change); re-review and run: jig task receipt T-1 --stage review"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
 }
 
