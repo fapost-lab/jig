@@ -40,7 +40,7 @@ do not know, show the whole document.
 
 ## Record the decision
 
-At a gate, write in `task.md`: the date, which documents were shown in full, and the
+At a gate, write in `task.md` (`jig task artifact append <id> task --from <file>`): the date, which documents were shown in full, and the
 human's decision in their words — approved, change, or rejected. This is a claim, not
 proof (ADR-0020): no script sees the conversation.
 

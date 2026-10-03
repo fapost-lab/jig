@@ -62,6 +62,7 @@ long-lived branch and would otherwise crowd out the work in flight.
 | `receipt` | `jig task receipt <id> --stage review\|architecture-review` | what the last review saw, flat `key: value`: `stage`, `reviewed_at`, `tree` (git tree id of the working tree without `.ai/knowledge/` and `.ai/specs/`, built in a temporary index), `base_commit`, `head`, `design` (hash of `design.md`; for T4 also `spec.md`, `alternatives.md`), `findings` (hash of the ledger); `-` for an absent file. Rewritten by each re-review. When `tree`, `design` or `findings` no longer match, or a T4 task has none, `status ready`, `knowledge_consolidated true` and `task ship` refuse (adr-20260921-review-receipt-pins-what-was-reviewed) |
 | `autopilot` | `jig task autopilot <id> start` | the run's journal: one tab-separated line per event — UTC time, `start`/`stage`/`repair`/`stop`/`resume`/`approve`/`decide`/`end`, a one-line text (`start` carries the mode; `approve` and `decide` are what an unattended run did instead of stopping, printed by `report` as the "Approved by the agent, not a human" and "Decided without you" blocks). Read back by `jig task autopilot <id> report` and, as data, by `_task_autopilot_facts` for the status page |
 | `discovery.md`, `spec.md`, `alternatives.md`, `design.md`, `plan.md`, `review.md`, `verification.md`, `handoff.md` | skills, when the task class calls for them, through `jig task artifact write\|append` | stage artifacts (domains/task) |
+| `knowledge-map.md`, `commit-message.md`, `pr-body.md` | `jig-map`; `jig-consolidate`, and a task agent in a phase run, through `jig task artifact write` | the map a `jig-map` proposal rests on; the commit message and pull request body a task ends with, handed to `jig task ship --message-file`/`--body-file` |
 
 ## Artifact input report (ADR-0020)
 
@@ -94,9 +95,11 @@ task's workspace: `write` replaces the document, `append` adds to it and creates
 absent, inserting a newline first when the existing document does not end in one. Content
 comes from `--from <file>`, or from stdin when `--from` is `-` or absent.
 
-`<kind>` is one of nine — `task`, `discovery`, `spec`, `alternatives`, `design`, `plan`,
-`review`, `verification`, `handoff` — one wider than the `--provided` vocabulary above,
-which has no use for `task`. An unknown kind is refused rather than written, so a misspelt
+`<kind>` is one of twelve — `task`, `discovery`, `spec`, `alternatives`, `design`, `plan`,
+`review`, `verification`, `handoff`, `knowledge-map`, `commit-message`, `pr-body` — wider than
+the `--provided` vocabulary above, which has no use for `task` or for the last three: those
+are documents the skills write (the map `jig-map` proposes from, the commit message and
+pull request body a task ends with), not inputs to a stage. An unknown kind is refused rather than written, so a misspelt
 name cannot become a file the report above never looks at.
 
 The write is atomic (temporary file, then `mv`), it refreshes `updated_at` and redraws the

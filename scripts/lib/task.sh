@@ -70,7 +70,7 @@ _task_usage() {
     artifact)
       printf 'usage: jig task artifact write <id> <kind> [--from <file>|-]\n'
       printf '       jig task artifact append <id> <kind> [--from <file>|-]\n'
-      printf '       <kind>: task discovery spec alternatives design plan review verification handoff\n'
+      printf '       <kind>: task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body\n'
       ;;
     finding)
       printf 'usage: jig task finding add <id> --severity P0|P1|P2|P3 --where <path[:line]|-> --summary <text>\n'
@@ -2906,14 +2906,19 @@ task_artifacts() {
 
 # --- artifact writes (ADR-0029: a worktree never writes through the link) ----
 
-# The kinds `task artifact` will write. One wider than _task_artifact_kind
-# above, which serves `--provided` and has no use for `task`: `task.md` is
-# where jig-analyze puts its analysis and where an unattended run records the
-# gate it approved, so it is the most edited document of all. The two
-# predicates stay separate on purpose — widening the `--provided` vocabulary
-# would let a caller claim an input that is never an input.
+# The kinds `task artifact` will write. Wider than _task_artifact_kind above,
+# which serves `--provided` and has no use for the rest:
+#   - `task`: where jig-analyze puts its analysis and where an unattended run
+#     records the gate it approved, so it is the most edited document of all;
+#   - `knowledge-map`, `commit-message`, `pr-body`: documents the skills have
+#     always written into the workspace (jig-map, jig-consolidate and a phase
+#     run's task agents). Without a kind they could only be written around
+#     jig, which is the one thing the skills forbid; a rule that cannot be
+#     kept is broken. They are inputs to nothing `task artifacts` reports.
+# The two predicates stay separate on purpose — widening the `--provided`
+# vocabulary would let a caller claim an input that is never an input.
 _task_artifact_writable_kind() {
-  case "$1" in task | discovery | spec | alternatives | design | plan | review | verification | handoff) return 0 ;; *) return 1 ;; esac
+  case "$1" in task | discovery | spec | alternatives | design | plan | review | verification | handoff | knowledge-map | commit-message | pr-body) return 0 ;; *) return 1 ;; esac
 }
 
 # task_artifact write|append <id> <kind> [--from <file>|-]
@@ -2968,7 +2973,7 @@ task_artifact() {
     esac
   done
   _task_artifact_writable_kind "$kind" \
-    || jig_die "task artifact: unknown kind: $kind (one of: task discovery spec alternatives design plan review verification handoff)"
+    || jig_die "task artifact: unknown kind: $kind (one of: task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body)"
 
   # Validated before the workspace is touched, so an unreadable source never
   # gets as far as the temporary file (task_new --from does the same).

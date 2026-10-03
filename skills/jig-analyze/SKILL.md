@@ -49,7 +49,7 @@ higher class in `jig-task/references/classification.md`, say so and re-classify:
 
 ## 4. Report
 
-For T2 and above, write the analysis in `task.md` under Notes so the next session does not
+For T2 and above, write the analysis in `task.md` under Notes (append it through jig) so the next session does not
 redo the work:
 
 ```
