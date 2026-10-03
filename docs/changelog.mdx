@@ -8,6 +8,65 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.20.0 — 2026-10-03
+
+A started task can be moved into a worktree of its own, a worktree can share a folder of packages
+with its checkout, a person can choose a lighter route, and an agent can plan a release.
+
+- **A task that has already started can move into its own worktree.** `jig task start <id> --worktree`
+  on a started task (with `git.branch_per_task` on) used to refuse with "already started"; it now
+  frees the branch in this checkout,
+  adds the worktree on it, links the workspace and carries the declared state. Commits made so far stay
+  on the branch. It moves nothing that is not safe to move: when this checkout holds its branch and has uncommitted changes to tracked files it
+  refuses and names `jig task pause <id> --stash`, and the checkout goes back to the task's base branch;
+  every refusal comes before anything changes, and a failure afterwards puts the checkout back on the
+  branch. The branch is never deleted. Moving back out of a worktree stays with Git. The "HEAD moved"
+  notice now names this command. This was tried in tests on throwaway repositories.
+- **New setting `worktree.share`.** For a project that keeps separate repositories under edit beside its
+  code (a `packages/` folder, Composer path repositories): `worktree.share: [packages]` gives each task
+  worktree a real `packages/` folder in which every entry is a link (a junction where symbolic links
+  cannot be made) to the package in your main checkout. There is one copy of each package, and removing
+  the worktree, by Jig's cleanup or by `git worktree remove`, removes the links and never the packages. A
+  test makes a commit and leaves an uncommitted file through the worktree, removes it with a bare
+  `git worktree remove`, and finds both in the owner's checkout; the same steps with `carry`, tried by
+  hand on 2026-09-24 and not kept as a test, lost the commit. The folder must be in `.gitignore`; a package added later is linked in by `jig task bootstrap
+  <id>`; a path declared as both `carry` and `share` is shared. Jig refuses a shared folder that is itself
+  a Git repository. The known issue about removing a carried worktree by hand is gone, and
+  [Working with tasks](/working-with-tasks#sharing-a-folder-of-packages-you-edit) says how to set it up.
+  The junction path is exercised by the Windows CI job, not by hand on a real Windows machine.
+- **New personal setting `route.depth`, and `jig task route`.** `route.depth: lean` (set with
+  `jig config set route.depth lean --local`; the default is `full`) lets you run less of a class's route:
+  a T1 analysis is a few lines in `task.md`, a T2 plan is part of the analysis, and T2 to T4 run one review
+  round, with P2 and P3 findings left open and listed in the pull request. Tests on changed files, CI
+  before a merge, consolidation, the T3/T4 gate and architecture review, a re-review of a fixed P0/P1 and
+  the task's class are never trimmed. A value in `.ai/config.yaml` is ignored and reported, as for
+  `agent.git`. For one task: `jig task new <id> --lean`, or `jig task set <id> route_depth full|lean`; the
+  task's own value wins. `jig task route <id>` prints the class, the depth and where it came from, the
+  route and what lean trims. `jig status` marks a lean task `depth=lean`, the status page badges it, and
+  `jig task autopilot start` and `report` print the depth. See [Concepts](/concepts).
+- **`jig-release`: an agent can plan a release.** A new skill (placed by `jig upgrade`) looks at the filed
+  tasks and open specs, proposes what goes in, in what order and at what version level, and, once you
+  agree, builds the release as a spec with an epic. `jig spec link <spec-id> <task-id>` links a task filed
+  earlier (it refuses a started one, a closed one, or one linked elsewhere), and `jig task list --goals`
+  prints the first paragraph of each task's goal under its line. See [Skills](/skills). The skill was
+  proven by its tests and by being used for this release; it has no run of its own beyond that.
+- **A review stays valid when the base moves.** The review receipt used to pin the whole working tree, so
+  merging the base into a task branch made it stale even when the task's own change had not moved. It now
+  compares four things by content: the task's own change against its merge base, the knowledge `jig
+  context` resolves for that change (without the knowledge the task wrote itself), the approved design and
+  the findings. The stale message says which part moved. A receipt written before this version is
+  compared by the working tree until the next review rewrites it. Two consequences to know. An unrelated
+  merge that edits a global knowledge document (the glossary, the architecture, the rules), or a document
+  that applies to the files the task changed, still makes a receipt stale, because `jig context` returns
+  those. And every receipt check now resolves that knowledge, which `jig status`, the `ready` status
+  and `jig task ship` all run; the cost was not measured, and it grows with the
+  [known issue](/known-issues) that `jig context` is slow on a large project. The roadmap entry for this is gone.
+- **Skills write a task's own documents through `jig task artifact`.** The command takes three more kinds,
+  `knowledge-map`, `commit-message` and `pr-body` (the files are `commit-message.md` and `pr-body.md`), so
+  `jig-consolidate`, `jig-map` and a phase run no longer write them with a shell redirect, which
+  `jig-task` forbids. `jig-review` and `jig-architecture-review` keep the list of changed paths in a shell
+  variable instead of a workspace file.
+
 ## 0.19.0 — 2026-10-02
 
 `jig verify` now knows the common local PHP environments, runs every built-in profile where your

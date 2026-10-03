@@ -55,12 +55,6 @@ once in total — tens of seconds on a small project, minutes on a large one, pa
 an ordinary task. The measurements and the fix are both known; what matters is that this is the
 feature's condition for being used at all, since anyone meeting the cost switches the feature off.
 
-**A review receipt must pin the change, not the tree.** A signed review is invalidated when
-somebody else's work merges into your base, although your own diff has not moved a line. The
-reviewer is then recalled to certify a change it has already certified. Pinning what the task
-actually changed keeps the signature valid across unrelated merges while still invalidating it for
-any edit inside the task's own work.
-
 **The installer must accept a drive root that is already your repository.** Refusing the root of a
 drive was meant for a drive a repository would swallow whole. One that already is the top of a
 repository — a `subst` drive, a volume kept for one project — is refused too, although nothing of
