@@ -702,7 +702,12 @@ test_doctor_newest_release_could_not_check_when_origin_is_unreachable() {
   assert_contains "$OUT" "warn  latest release: could not check: git ls-remote origin failed"
   assert_not_contains "$OUT" "up to date"
   assert_not_contains "$OUT" "latest release: v"
-  if [ "$elapsed" -ge 3 ]; then
+  # The stall itself is caught by the message above: a check that waited out
+  # its budget says "did not answer within", not "ls-remote origin failed".
+  # What is left to bound is the whole of doctor on a slow runner (a Windows
+  # one took 3s with the check itself instant), so the limit is twice the
+  # check's budget (5s) -- a wait that long can only be a stall.
+  if [ "$elapsed" -ge 10 ]; then
     fail "doctor took ${elapsed}s against an unreachable origin; expected a fast failure, not a stall"
   fi
 

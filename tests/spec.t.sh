@@ -1029,7 +1029,7 @@ test_spec_link_refuses_unknown_spec_and_task() {
 test_spec_link_refuses_a_borrowed_task_directory() {
   spec_link_fixture
   mv .ai/workspace/tasks ../owner-tasks
-  ln -s "$PWD/../owner-tasks" .ai/workspace/tasks
+  plant_dir_link "$(cd .. && pwd -P)/owner-tasks" .ai/workspace/tasks
   run jig spec link rel T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "spec link: this checkout borrows its task workspaces"
