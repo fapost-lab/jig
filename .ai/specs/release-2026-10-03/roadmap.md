@@ -11,15 +11,17 @@ Release: minor
 Goal: the picked tasks are on the epic and described. Done when: every item below is merged into
 the epic and the notes describe them against their diffs.
 
-- [ ] `adr-0038-premise-outlived-two-changes` — ADR-0038's premise matches what a worktree receives today, measured
-- [ ] `skills-write-through-the-door-they-name` — skills no longer require what AGENTS.md forbids
-- [ ] `receipt-pins-more-than-the-task` — a review receipt goes stale only on changes the review touches
+- [x] `adr-0038-premise-outlived-two-changes` — ADR-0038's premise matches what a worktree receives today, measured
+- [x] `skills-write-through-the-door-they-name` — skills no longer require what AGENTS.md forbids
+- [x] `receipt-pins-more-than-the-task` — a review receipt goes stale only on changes the review touches
+- [ ] `receipt-check-stays-off-the-status-path` — `jig status` costs what it did before #175: the receipt check stays off its path (after: `receipt-pins-more-than-the-task` — it fixes that change)
 - [ ] `release-notes-0-20-0` — the changelog and upgrading sections for 0.20.0, written against the diffs (after: every other item — the notes describe what merged)
 
 ## Waves
 
 1. adr-0038-premise-outlived-two-changes; skills-write-through-the-door-they-name; receipt-pins-more-than-the-task
-2. release-notes-0-20-0
+2. receipt-check-stays-off-the-status-path
+3. release-notes-0-20-0
 
 <!--
 Rules (jig-idea §8):
