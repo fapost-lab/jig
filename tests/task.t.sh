@@ -6320,6 +6320,40 @@ test_route_gate_in_an_unattended_run_is_the_agents() {
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
 }
 
+test_route_gate_in_an_unattended_clone_is_refused_before_a_run_starts() {
+  route_task --class T3
+  unattended_local
+  route_design
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "its run is not on"
+  assert_contains "$OUT" "jig task autopilot T-1 start"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+}
+
+test_route_gate_in_an_unattended_clone_is_refused_when_the_run_is_stopped() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason r3 >/dev/null || true
+  route_design
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "its run is not on"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+}
+
+test_route_gate_in_an_attended_clone_stays_the_humans() {
+  route_task --class T3
+  route_design
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
+}
+
 test_route_evidence_ignores_the_persons_depth() {
   route_task --class T2
   # A lean setting trims the plan, which leaves no record; the review is
