@@ -275,7 +275,7 @@ $rel"
       [ "$bcount" -eq 0 ] || line="$line blocking=$bcount"
     fi
     # The answer `jig task receipt --check` gives (task_receipt_check,
-    # task.sh), read once per task in _status_live_collect: a receipt that
+    # task.sh, asked `cheap`), read once per task in _status_live_collect: a receipt that
     # exists but no longer matches the reviewed state. A task with no receipt
     # at all is not flagged here — that is "not reviewed yet", not "stale".
     case "$_ST_RECEIPT" in
@@ -373,7 +373,9 @@ _status_task_rows() {
 # _status_live_collect [page] — fill _STATUS_LIVE, _STATUS_FINISHED and
 # _STATUS_WORKTREES. Per live task it asks the peers once: where its branch is
 # checked out (git's own list, ADR-0029) and how many files wait there, and
-# the receipt line `jig task receipt --check` prints (task_receipt_check). With
+# the receipt line `jig task receipt --check` prints (task_receipt_check, asked
+# `cheap`: no `jig context` process per task, so "not checked", not "current",
+# when the diff has not moved). With
 # `page`, also the answers only the page shows: the gate of a T3/T4 design
 # (_task_gate_state) and the autopilot run (_task_autopilot_facts).
 _status_live_collect() {
@@ -401,7 +403,7 @@ EOF
     fi
     # task_receipt_check exits 1 for stale and for a T4 with none; its line
     # is the answer either way.
-    receipt=$(task_receipt_check "$id" || true)
+    receipt=$(task_receipt_check "$id" cheap || true)
     gate="" facts=""
     if [ "$page" = page ]; then
       case "$class" in

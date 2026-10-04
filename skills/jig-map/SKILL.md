@@ -35,7 +35,7 @@ A project that adopts Jig often keeps its rules somewhere already: `docs/`, its 
 `CONTRIBUTING.md`, instruction files of other tools. Proposing new documents beside them makes
 two copies of every rule. The inventory lists the candidates: `instructions:` lines, and `doc:`
 lines with their git state and size. Read them. Everything below goes into the
-`knowledge-map.md` §4 describes — start it now, in the task workspace; if you are not in a task,
+`knowledge-map.md` §4 describes — start it now, in the task workspace, with `jig task artifact write <id> knowledge-map --from <file>` (`append` as you go); if you are not in a task,
 file one with `jig-task` first.
 
 Files `jig init` wrote — `AGENTS.md`, and `CLAUDE.md` when it only points at `AGENTS.md` — are
@@ -103,7 +103,7 @@ a fact becomes a rule nobody remembers agreeing to.
 
 ## 4. Write the proposal
 
-`knowledge-map.md` in the task workspace: candidate domains, their boundaries, the
+`knowledge-map.md` in the task workspace, written with `jig task artifact write <id> knowledge-map --from <file>`: candidate domains, their boundaries, the
 evidence for each, and — as its own section — **what you could not determine**. A map
 that claims complete coverage of a codebase it read for twenty minutes is not credible.
 

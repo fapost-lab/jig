@@ -14,7 +14,7 @@ paths:
   - templates/gitignore
   - templates/config.yaml
 summary: Why a contributor's own settings go in a gitignored config.local.yaml that answers only for whitelisted keys, one file per clone, and warns rather than refuses when it is not ignored.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-10-03
 ---
 # ADR-0038: Per-clone settings live in a gitignored local layer that answers only for whitelisted keys
 
@@ -146,3 +146,30 @@ of this ADR's lines hold: only the clone's file, never `.ai/config.yaml`, refusa
 
 `jig config show --local` names the ignored keys after printing the file, so the report a person
 acts on and the list `jig status` prints cannot disagree.
+
+## Amendment (2026-10-03): the premise narrowed; the decision did not
+
+The Context says a task worktree "receives nothing from the checkout it was added from except
+its workspace link (ADR-0029)". That was the premise for reading the local file from the main
+checkout, and it has stopped being true three times, none of them amending this ADR:
+
+- `jig task start --worktree` carries state git does not track — `vendor/`, `node_modules/`,
+  `.env` — from the owning checkout (adr-20260924-a-worktree-carries-what-git-does-not);
+- the workspace link, as amended in ADR-0029 (2026-09-25), covers the owner's whole `.ai/workspace/tasks/`,
+  not one task's workspace;
+- `worktree.share` mirrors declared directories into the worktree
+  (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it).
+
+What holds is the narrower premise: **no untracked or ignored file inside `.ai/` reaches a
+worktree except the link to the task directory.** Git still checks out what `.ai/` tracks, but
+`.ai/config.local.yaml` is gitignored, and carry and share both refuse any path inside `.ai/` by
+name, so it is still never placed in a worktree, and the argument for reading it from
+the main checkout stands — now by those two rules together, not by one general absence. The
+"Link or copy the file into a worktree" alternative stays rejected for its own reasons.
+
+Measured on 2026-10-03 in a scratch project with a local file setting `housekeeping.abandoned_ttl`,
+`git.worktree_root` and `agent.git`: after `task start --worktree` the worktree held no
+`.ai/config.local.yaml`; `cfg`, `jig config show --local` and `jig status` inside it answered with
+the owner's three values; declaring `.ai/config.local.yaml` in `worktree.carry` or `.ai` in
+`worktree.share` was refused with "inside .ai/". The decision, the layers and the key lists are
+unchanged.

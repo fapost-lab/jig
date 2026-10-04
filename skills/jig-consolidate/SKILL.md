@@ -126,8 +126,8 @@ or when the change moved after its review; resolve the finding or re-review firs
 **In a phase run this task is not yours to finish.** When `jig task show <id>` has an
 `autopilot_phase` line, a coordinator started this task as one of a roadmap wave
 (adr-20260922-a-phase-run-is-coordinated). Then **stop here**: the rest of this section and §6
-are the coordinator's. Stage the change, write the commit message to
-`.ai/workspace/tasks/<id>/commit-message` and the pull request body to `pr-body`, and report
+are the coordinator's. Stage the change, write the commit message and the pull request body with
+`jig task artifact write <id> commit-message --from <file>` and `… pr-body --from <file>`, and report
 back. The coordinator ships one task at a time so that two of them cannot merge past each
 other, runs `jig task ship` and `jig task autopilot <id> end` itself, and checks the roadmap
 item after the merge — `spec done` below refuses in this branch, by design.
@@ -150,10 +150,12 @@ spec through `jig-idea`, or a task) or drop it, and run it again with `--leftove
 an epic is closed on the epic by `--finish`, not here.
 
 Then hand the change over. Stage the task's changes — only this task's, hunk by hunk when
-the tree holds other work — write a commit message, and run:
+the tree holds other work — write the commit message with
+`jig task artifact write <id> commit-message --from <file>` (it prints the path, in the task's
+workspace and not in a shared directory), and run:
 
 ```
-.ai/scripts/jig task ship <id> --message-file <file>
+.ai/scripts/jig task ship <id> --message-file <the path it printed>
 ```
 
 It commits, pushes and opens the pull request into the task's base as far as `agent.git` in

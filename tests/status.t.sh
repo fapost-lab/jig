@@ -380,6 +380,47 @@ test_status_omits_review_stale_when_the_receipt_is_current() {
   assert_not_contains "$OUT" "review=stale"
 }
 
+# A copy of the framework's scripts whose `jig context` only leaves a mark, so
+# a test can tell whether a command resolved knowledge at all.
+# It lives outside the project, so it is not part of the change under review;
+# the mark is $TRIPWIRE/context-ran.
+_status_context_tripwire() {
+  TRIPWIRE=$(mktemp -d "${TMPDIR:-/tmp}/jig-tripwire.XXXXXX")
+  cp -R "$JIG_HOME/scripts" "$TRIPWIRE/scripts"
+  printf 'touch "%s/context-ran"\n' "$TRIPWIRE" > "$TRIPWIRE/scripts/lib/context.sh"
+}
+
+test_status_does_not_resolve_knowledge_for_the_receipt() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+  jig task receipt TASK-1 --stage review >/dev/null
+  _status_context_tripwire
+
+  run "$TRIPWIRE/scripts/jig" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task TASK-1 class=T2 status=active"
+  assert_not_contains "$OUT" "review=stale"
+  assert_eq "no" "$([ -e "$TRIPWIRE/context-ran" ] && echo yes || echo no)"
+
+  # The full check, the one the gates use, does resolve it and still says current.
+  run "$TRIPWIRE/scripts/jig" task receipt TASK-1 --check
+  assert_eq "yes" "$([ -e "$TRIPWIRE/context-ran" ] && echo yes || echo no)"
+  rm -rf "$TRIPWIRE"
+}
+
+test_status_page_says_not_checked_where_it_did_not_look_at_the_knowledge() {
+  fixture_jig_repo
+  jig task new TASK-1 --class T2 >/dev/null
+  jig task start TASK-1 >/dev/null
+  jig task receipt TASK-1 --stage review >/dev/null
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" "not checked"
+  assert_not_contains "$(cat .ai/runtime/status.html)" ">current<"
+}
+
 test_status_omits_review_stale_when_there_is_no_receipt_at_all() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
@@ -1451,7 +1492,7 @@ EOF2
   assert_contains "$page" "jig task findings blocked"
   # Receipt states as `jig task receipt --check` answers them.
   assert_contains "$page" '<span class="badge bad">stale (tree, findings, reviewed 2026-09-08)</span>'
-  assert_contains "$page" '<span class="badge ok">current</span>'
+  assert_contains "$page" '<span class="badge">not checked (knowledge not resolved; jig task receipt reviewed --check)</span>'
   assert_contains "$page" '<span class="badge bad">none (required for T4)</span>'
   assert_contains "$page" '<span class="badge">none</span>'
   assert_contains "$page" '<td class="id"><code>t2-unreviewed</code></td><td>T2</td><td>active</td><td><span class="muted">filed, not started</span></td><td class="muted">-</td>'

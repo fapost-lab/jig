@@ -122,6 +122,43 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.19.0 to 0.20.0
+
+Nothing on the checklist the upgrade itself prints. Two things are placed for you, two are yours to
+choose, and one changes what a stale review means.
+
+**Placed for you.** `jig upgrade` adds the `jig-release` skill (under `.claude/skills/` and
+`.codex/skills/`, as for the other skills), updates the other skills that changed, and refreshes the
+section between `<!-- jig:begin -->` and `<!-- jig:end -->` in your `AGENTS.md` when Jig may: it gains a
+paragraph on `jig-release` and one on lean routes. `.ai/config.yaml` is not touched; the upgrade's usual
+report of keys it does not mention will include `worktree.share`, and leaving it on its default (nothing
+shared) is correct for most projects.
+
+**Yours to choose: `worktree.share`.** If your project keeps separate repositories under edit in a folder
+such as `packages/`, declare it in `.ai/config.yaml` and put the folder in `.gitignore`:
+
+```yaml
+worktree.share: [packages]
+```
+
+Do not also leave that folder in `worktree.carry`; if you do, it is shared and the copy is skipped with a
+warning. The 0.19.0 and earlier advice to work on such packages in the main checkout no longer applies.
+Worktrees that already exist are not changed; `jig task bootstrap <id>` links the shared entries into one.
+
+**Yours to choose: `route.depth`.** The default, `full`, is the route you ran before; nothing changes
+unless you set it. To take less, `jig config set route.depth lean --local`; it is personal and is
+ignored in `.ai/config.yaml`. Read what lean trims first (`jig task route <id>`, or
+[Concepts](/concepts)).
+
+**A task that has already started can be given a worktree.** `jig task start <id> --worktree` on it
+now moves it, instead of refusing. This does not change a task you have not started.
+
+**Reviews in flight.** A review receipt written by 0.19.0 or earlier has no `diff` or `context`, so it is
+compared by the working tree, as before, until the task is reviewed again and the receipt is rewritten.
+After that, merging the base branch into a task no longer makes the review stale when nothing the task
+touches moved. If a task is stale after the upgrade, the message now says whether its own change or the
+knowledge under it moved.
+
 ## From 0.18.0 to 0.19.0
 
 Nothing on the checklist the upgrade itself prints. What changes is what `jig verify` finds, and one

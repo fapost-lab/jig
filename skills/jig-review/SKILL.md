@@ -9,10 +9,12 @@ description: Review a Jig task's diff against the project's knowledge, rules and
 
 ```
 .ai/scripts/jig task changes <id> --base <ref>
-.ai/scripts/jig task changes <id> --base <ref> --format paths > <workspace>/review-files
-.ai/scripts/jig context resolve --task <id> --stage review --files - < <workspace>/review-files
-.ai/scripts/jig context guard --task <id> --stage review --files - < <workspace>/review-files
+files=$(.ai/scripts/jig task changes <id> --base <ref> --format paths)
+printf '%s\n' "$files" | .ai/scripts/jig context resolve --task <id> --stage review --files -
+printf '%s\n' "$files" | .ai/scripts/jig context guard --task <id> --stage review --files -
 ```
+
+The list lives in a shell variable, not in a file: it is read twice and is not a document of the task.
 
 Establish ownership and inspect all patches/new contents using
 [change scope](references/change-scope.md), adding an explicit allowlist for unrelated work.
@@ -57,7 +59,8 @@ Findings ordered by severity, each with file and line, one line of description, 
 concrete fix. Say plainly when there are none. Record each one in the task's ledger with a
 severity, as [findings](references/findings.md) says: a finding only said here blocks nothing.
 On a re-review, close each `fixed` finding that is fixed and reopen the rest. Last, write the
-review's receipt (`jig task receipt <id> --stage review`), which pins what you reviewed.
+review's receipt (`jig task receipt <id> --stage review`), which pins what you read: the task's
+own change, the knowledge that applies to it, the design and the ledger.
 
 Then either apply the fixes or hand them back, depending on what the user asked. A review
 that ends without a decision on every finding is unfinished.

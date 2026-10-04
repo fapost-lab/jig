@@ -1,12 +1,12 @@
 # Establish and inspect the whole task change
 
-Record a justified base commit and task scope in plan.md or review.md. Before implementation,
+Record a justified base commit and task scope in plan.md or review.md (`jig task artifact write|append <id> plan|review --from <file>`). Before implementation,
 record starting HEAD and pre-existing changes. For historical work inspect task records and
 Git history; ask only if ownership cannot be established. Main alone is not a task baseline.
 
 Use `jig task changes <id> --base <ref>` to discover all candidate layers. Narrow with
-`--files <a,b|->` only after accounting for unexpected paths. Store the selected `--format
-paths` output in the task workspace and feed that exact list to context resolve/guard.
+`--files <a,b|->` only after accounting for unexpected paths. Keep the selected `--format
+paths` output in a shell variable and feed that exact list to context resolve/guard.
 An empty list is not evidence that all requirements were implemented.
 
 Inspect standard Git patches with the reported resolved base/HEAD and literal paths:
