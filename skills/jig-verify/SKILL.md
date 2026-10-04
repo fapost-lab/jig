@@ -31,8 +31,9 @@ task back to verify.
 touches regardless of `verify.full_run`, and each profile reports whether it honoured the
 scope or ran everything anyway.
 
-Wait on the run's own handle and read that exit code: `.ai/scripts/jig verify >verify.log
-2>&1 & wait $!` in plain shell, or the completion signal of the tracked background job if
+Wait on the run's own handle and read that exit code: `.ai/scripts/jig verify & wait $!`
+in plain shell (its report goes to the terminal; do not redirect it into a file in the
+working tree), or the completion signal of the tracked background job if
 the harness started one. Never poll with `pgrep -f <pattern>` — the polling command's own
 command line contains the pattern, so it matches itself and waits forever.
 
