@@ -114,3 +114,10 @@ help, and picks by effort rather than by risk.
 > What the person picks is only how much of the rest they buy with their time: a shorter analysis,
 > the plan inside it, one review round. The default is `full`, so nobody carries the choice unless
 > they want it — the burden this ADR refused to put back on the person.
+
+> **Amendment (2026-10-04).** The route was announced by the skills and enforced by nothing: a T3
+> task with no gate recorded shipped, and a class lowered from T3 to T1 passed in silence. The
+> completion gates now refuse a route whose stages left no record — the gate approval matching the
+> design, the review or architecture-review receipt, verify's `status ready` — and lowering a class
+> takes `--reason`, shown wherever the class is; an unattended run cannot lower a T3/T4 task below
+> T3. Re-classification stays normal. See adr-20261004-a-route-stage-is-proven-by-its-record.

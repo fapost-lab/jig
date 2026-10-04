@@ -145,6 +145,26 @@ To see whether the review still holds, ask *"is the review still current?"*, or 
 `not checked`, not `current`; `--check` and shipping do the full check.
 </Accordion>
 
+### When a stage was skipped
+
+A task's class names the stages it goes through, and the stages that leave a record must have left
+it before the task can be marked done, recorded as consolidated, or shipped: your approval of the
+design for T3 and T4, the review (or the architecture review) for T2 and up, and the agent's own
+verification for every class. When one is missing, Jig refuses and names it, with the command that
+records it — the agent goes back to that stage instead of working around it. A
+[lighter route](/concepts#a-lighter-route) trims none of these.
+
+<Accordion title="For developers: what counts as the record">
+`jig task set <id> status ready` asks for every record before verification: `design.md` and an
+approval (`jig task gate`) that still matches it, for T4 also `spec.md` and `alternatives.md`, and a
+review receipt for the review stage the route names (`jig task receipt <id> --stage review` or
+`--stage architecture-review`; the receipt remembers every stage it was written for).
+`knowledge_consolidated true` and `jig task ship` also ask for `status ready`, verification's own
+sign-off. Discovery, analysis and the plan are prose the agent writes for itself, so no file is asked
+for them. A task filed before this check existed is not refused: the same list is printed as a
+warning, and the task finishes under the rules it started with.
+</Accordion>
+
 ## Several agents at once
 
 One checkout holds one piece of uncommitted work. When an agent is already working and you want to
@@ -365,6 +385,11 @@ A task starts with a class the agent chose from the risk it saw. When the work t
 "local fix" that touches an interface other parts depend on — the agent re-classifies it and runs
 the stages the new class requires, including your approval where the new route has a human gate.
 Risk sets the floor: a one-line change to authentication is never trivial.
+
+A class can go down too, when the work turns out smaller — but lowering it drops stages, so the agent
+has to say why. The reason is kept, and shown wherever the class is: `jig task route <task-id>`,
+`jig status` (`lowered=T3`), the status page and the autopilot report in the pull request. A run
+without stops never lowers a task below the classes that need your design approval.
 
 ## Who commits
 

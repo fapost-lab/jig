@@ -73,7 +73,7 @@ An agent that reports "done" while the ledger has an open P0/P1, or the receipt 
 not done: send it back. Attended, questions accumulate: when no agent of the wave is still
 working (or sooner, if the person is there), send **one** message with every question, each
 carrying its document whole, plus the pull requests that are ready and their CI state.
-An answer goes back as `jig task autopilot <id> resume` and an agent — the same one, or a new
+An answer goes back as `jig task autopilot <id> resume --answer "<the person's answer>"` and an agent — the same one, or a new
 one told to continue task X from stage Y.
 
 **5. Ship, one at a time.** Tasks with `knowledge_consolidated: true` queue in the order they

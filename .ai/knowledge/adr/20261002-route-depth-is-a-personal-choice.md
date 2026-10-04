@@ -80,6 +80,9 @@ hold the class's risk (ADR-0009, amendment of 2026-10-02).
   is simpler and needs nothing filled in.
 - **Scripts refusing a skipped stage.** Scripts do not run stages (ARCHITECTURE.md); the floor is
   already enforced where a skipped stage would show — the ledger, the receipt, verify, ship.
+  (Superseded on 2026-10-04: the floor was not held for the gate, which nothing read. The completion
+  gates now refuse a route whose recorded stages are missing, reading the class's `full` route from
+  `_task_route_stages`; see adr-20261004-a-route-stage-is-proven-by-its-record.)
 
 ## Consequences
 

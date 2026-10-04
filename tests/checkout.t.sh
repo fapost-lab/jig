@@ -672,6 +672,7 @@ test_checkout_start_is_not_refused_by_a_consolidated_task() {
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
   jig task new T-2 >/dev/null
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   jig task set T-1 status consolidated >/dev/null
   assert_file .ai/runtime/working/T-1
@@ -714,6 +715,7 @@ test_checkout_start_is_not_refused_by_a_task_whose_branch_left_this_checkout() {
   checkout_setup
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
+  task_route_class T-1
   jig task set T-1 status ready >/dev/null
   git checkout -q main
   jig task new T-2 >/dev/null

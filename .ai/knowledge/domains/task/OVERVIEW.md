@@ -62,8 +62,20 @@ tasks. Rename a field here and `spec.sh` changes with it.
 (ADR-0030). `knowledge_consolidated: true` is written at the end of every route, before the
 commit; `status: consolidated` closes the task after its change has landed, prompted by
 housekeeping's `needs-consolidation`. `task set` refuses the status while the flag is not
-`true`, and refuses `false` on a closed task. Apart from the findings gates below, this is the
-only cross-key rule in `task_set`: every other key is validated on its own value alone.
+`true`, and refuses `false` on a closed task. Apart from the findings gates below and the route
+evidence, this is the only cross-key rule in `task_set`: every other key is validated on its own
+value alone.
+
+**The route is enforced by its records** (adr-20261004-a-route-stage-is-proven-by-its-record).
+`_task_route_evidence_missing` walks `_task_route_stages` for the class's full route (never the depth) and asks
+each stage that leaves a record for it — design documents, the gate approval matching the design,
+a receipt whose `stages` cover the review, `status ready` for verify. `status ready` asks for what
+precedes verify; `knowledge_consolidated true` and `task ship` (before the commit and before a
+merge) ask for verify as well. Only a task filed with `route_evidence: required` (written by
+`task new`) is refused; an older one is warned. Lowering a class is the other cross-key write:
+it needs `--reason` and records `class_lowered_from` and `class_lowered_reason`, refused out of
+T3/T4 below T3 where nobody answers (`_task_nobody_answers`: the clone is unattended, or the task's
+unattended run is on or stopped).
 
 One consequence lands squarely on this domain, and ADR-0026 is the answer to it.
 Housekeeping can only establish that work landed when the task had a branch of its own: a
@@ -148,8 +160,8 @@ the wrong branch. How far it goes is `agent.git`, a local-only key of the config
 steps themselves — commit, push, pull request — are `jig_ship_*` in `common.sh`, shared with
 `jig spec ship` (adr-20260922-spec-work-ships-by-the-agent-git-level), and the forge they open the
 pull request on is resolved by `jig_forge_kind`, the same answer housekeeping reads PR state from.
-At `merge` it also merges, through `jig_ship_merge`, after asking `_task_blocking_findings` and
-`_task_receipt_gate_message` once more; `--draft` opens a draft that is never merged, and is the one
+At `merge` it also merges, through `jig_ship_merge`, after asking `_task_blocking_findings`,
+`_task_receipt_gate_message` and the route evidence once more; `--draft` opens a draft that is never merged, and is the one
 ship those completion gates and `knowledge_consolidated` do not refuse — it is how an unattended run
 whose repairs ran out shows where it stopped
 (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).

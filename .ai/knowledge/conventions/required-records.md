@@ -89,3 +89,11 @@ here, belonging to no ecosystem's convention, which no profile can name. Not one
 that justified the proposal would have been reached by the mechanism proposed to catch them. A
 proposal can pass the ritual test and fail this one, and it fails it quietly, because the
 evidence and the instrument are almost always argued in separate paragraphs.
+
+The rule has also shaped a third proposal, which it let through in part. Making the completion
+gates refuse a route that skipped a stage asked, stage by stage, which record could stand as proof.
+The gate's approval pins the design and goes stale when it moves; a review receipt is computed and
+written by the reviewer; `status ready` is itself a gated command — those three were taken. The
+analysis, the plan and the autopilot journal are written by the actor about itself, so their
+absence is not asked for, and an actor field on every record was refused outright: nothing can
+check it (adr-20261004-a-route-stage-is-proven-by-its-record).

@@ -1890,6 +1890,8 @@ RM
   assert_not_contains "$phase" "<code>run-2</code>"
 
   # Consolidated work gives its slot back and joins the ship queue.
+  jig task receipt run-1 --stage review >/dev/null
+  task_route_done run-1
   jig task set run-1 knowledge_consolidated true >/dev/null
   run jig status --html
   phase=$(status_page_section "$(cat .ai/runtime/status.html)" phase-run)

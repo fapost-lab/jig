@@ -124,4 +124,15 @@ Classification is a first estimate, not a verdict. When a task turns out bigger:
 
 Then run the stages the new class requires that were skipped: at minimum design and its
 gate for T3, specify and alternatives for T4. Say plainly that the class changed and why.
-Never keep a T1 route on work that turned out to be T3.
+Never keep a T1 route on work that turned out to be T3. The completion gates hold you to it:
+`status ready`, the knowledge decision and `task ship` refuse while a stage of the current
+route left no record, and name it.
+
+Lowering a class sheds stages, so it takes a reason the person can read:
+
+```
+.ai/scripts/jig task set <id> class T1 --reason "<why the risk test now answers T1>"
+```
+
+The reason is kept and shown wherever the class is (`jig task route`, `jig status`, the
+autopilot report). An unattended run cannot lower a T3/T4 task below T3.

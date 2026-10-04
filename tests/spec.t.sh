@@ -1109,6 +1109,7 @@ test_spec_remove_keeps_consolidated_task_untouched() {
   cat >> .ai/workspace/tasks/T-1/task.md <<'EOF'
 Spec: .ai/specs/alpha/ — Phase 1
 EOF
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   jig task set T-1 status consolidated >/dev/null
   cp .ai/workspace/tasks/T-1/task.md task.before
@@ -1380,6 +1381,7 @@ EOF
 
   jig task new T-kept >/dev/null
   printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-kept/task.md
+  task_route_done T-kept
   jig task set T-kept knowledge_consolidated true >/dev/null
   jig task set T-kept status consolidated >/dev/null
 
@@ -1435,6 +1437,7 @@ EOF
 
   jig task new T-kept >/dev/null
   printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-kept/task.md
+  task_route_done T-kept
   jig task set T-kept knowledge_consolidated true >/dev/null
   jig task set T-kept status consolidated >/dev/null
   cp .ai/workspace/tasks/T-kept/task.md kept.before
@@ -2503,6 +2506,7 @@ RM
   assert_contains "$OUT" "may start now: T-a, T-b (1 of 2 slots free)"
 
   # T-a's agent finished: the work waits to ship, the slot is free again.
+  task_route_done T-a
   jig task set T-a knowledge_consolidated true >/dev/null
   run jig spec plan alpha --phase 1 --format tsv
   assert_eq 0 "$RC"
@@ -2559,9 +2563,12 @@ test_spec_plan_merged_from_roadmap_closed_task_and_newest_housekeeping_run() {
 RM
   local t
   for t in T-a T-b T-c T-d; do jig task new "$t" >/dev/null; done
+  task_route_class T-a
   jig task set T-a status ready >/dev/null
+  task_route_done T-a
   jig task set T-a knowledge_consolidated true >/dev/null
   jig task set T-a status consolidated >/dev/null
+  task_route_class T-b
   jig task set T-b status ready >/dev/null
   mkdir -p .ai/runtime
   {
