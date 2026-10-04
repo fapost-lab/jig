@@ -2800,10 +2800,14 @@ task_gate() {
     if [ "$(task_state_get "$id" autopilot)" != on ] || [ "$(_task_autopilot_mode "$id")" != unattended ]; then
       jig_die "task gate: --by agent is an unattended run's self-approval; $id has no unattended autopilot run on, so the gate is the human's"
     fi
-  elif [ "$(task_state_get "$id" autopilot)" = on ] && [ "$(_task_autopilot_mode "$id")" = unattended ]; then
-    # Nobody answers in an unattended run, so an approval recorded there is the
-    # agent's, and is said to be (adr-20261004-a-route-stage-is-proven-by-its-record).
-    jig_die "task gate: $id's run is unattended, so this approval is the agent's: jig task gate $id approved --by agent"
+  elif _task_nobody_answers "$id"; then
+    # Nobody answers where this clone is unattended or the task's unattended run
+    # is on or stopped, so an approval recorded there is the agent's, and is
+    # said to be (adr-20261004-a-route-stage-is-proven-by-its-record).
+    if [ "$(task_state_get "$id" autopilot)" = on ]; then
+      jig_die "task gate: $id's run is unattended, so this approval is the agent's: jig task gate $id approved --by agent"
+    fi
+    jig_die "task gate: nobody answers for $id (unattended) and its run is not on, so there is no approval to give here; an unattended run approves with --by agent once it is on: jig task autopilot $id start"
   fi
   class=$(task_state_get "$id" class)
   case "$class" in
