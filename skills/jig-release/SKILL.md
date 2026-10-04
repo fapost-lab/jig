@@ -79,8 +79,11 @@ made smaller than a person approved, and a `major` still waits for one.
 ## 6. Release
 
 Finish the epic as `jig-idea` §11 says: merge the latest default branch in, `--finish`, raise the
-version by the recorded level, `jig spec ship`. Who merges is unchanged: the person — except an
-unattended run at `agent.git: merge`, which merges on green CI; a `major` release is always a
+version by the recorded level, `jig spec ship`. The epic is never pushed to for this: `spec ship`
+carries the finish on `finish/<id>`, cut from it, and opens the pull request from there, so an
+epic protected like the default branch needs no bypass. Who merges is unchanged: the person —
+except an unattended run at `agent.git: merge` with `release.merge: agent` (the default), which
+merges on green CI; `release.merge: human` leaves it to the person; a `major` release is always a
 draft for a person.
 
 Then watch CI on the merge commit of the default branch until the release exists (a tag, a

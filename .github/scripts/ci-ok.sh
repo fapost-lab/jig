@@ -76,7 +76,7 @@ main() {
         ;;
       epic-pr)
         if [ "$event" = pull_request ] && [ "$base" = main ]; then
-          case "$head" in epic/*) expect=run ;; *) expect=skip ;; esac
+          case "$head" in epic/* | finish/*) expect=run ;; *) expect=skip ;; esac
         else
           expect=skip
         fi

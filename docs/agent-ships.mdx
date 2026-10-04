@@ -208,7 +208,7 @@ prints it (`mode: declare`, `mode: epic` or `mode: final`) and goes as far as yo
 |---|---|---|---|---|
 | The spec and its epic line reach the main branch | yours | committed on `spec/<id>` | and pushed | and a pull request into main |
 | The epic branch, after it is cut or after main was merged into it | yours | yours | pushed | pushed |
-| The finished epic: the spec's removal with the version bump | yours | committed on the epic | and pushed | and a pull request into main |
+| The finished epic: the spec's removal with the version bump | yours | committed on `finish/<id>`, cut from the epic | and pushed | and a pull request into main |
 
 What stays yours at every level:
 
@@ -218,7 +218,11 @@ What stays yours at every level:
   recorded.
 - **Merging.** Merging the epic's final pull request is the release. Only an unattended run at
   `merge` does it — with a merge commit, once CI passed and every roadmap item is done — and never
-  for a `major` release, which it opens as a draft for you.
+  for a `major` release, which it opens as a draft for you. Set `release.merge: human` in
+  `.ai/config.local.yaml` and even that run leaves the merge to you.
+- **Protected epic branches.** The epic is never pushed to after it is cut: the finish goes on a
+  branch cut from it, `finish/<id>`, and the pull request into main comes from there, so a
+  repository that protects `epic/*` like main needs no bypass.
 
 `jig spec ship` keeps the limits of `jig task ship` below: it never force-pushes or skips hooks,
 never merges a spec reaching main, merges the epic only as above, commits only what was staged, and refuses when task notes or runtime files are staged. A spec

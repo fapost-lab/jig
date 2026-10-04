@@ -106,6 +106,12 @@ test_ci_ok_requires_the_epic_gate_for_a_pull_request_from_an_epic_branch() {
     scope=success knowledge=skipped test=success test-windows=success \
     smoke-windows=success changelog=success epic-pr=success
   assert_eq 0 "$RC" "$OUT"
+  # The finish branch `jig spec ship` cuts from the epic is gated the same way.
+  co_run true true pull_request main finish/some-feature \
+    scope=success knowledge=skipped test=success test-windows=success \
+    smoke-windows=success changelog=success epic-pr=skipped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "'epic-pr' was skipped"
   # Into another branch than main the gate has no reason to run.
   co_run true true pull_request epic/some-feature task/x \
     scope=success knowledge=skipped test=success test-windows=success \
@@ -181,7 +187,7 @@ test_ci_ok_expectations_match_the_conditions_in_the_workflow() {
       fail "the condition of smoke-windows changed; update ci-ok.sh"
     grep -qF "changelog: if: github.event_name == 'pull_request'" <<< "$flat" ||
       fail "the condition of changelog changed; update ci-ok.sh"
-    grep -qF "&& github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'epic/')" <<< "$flat" ||
+    grep -qF "&& github.event_name == 'pull_request' && github.base_ref == 'main' && (startsWith(github.head_ref, 'epic/') || startsWith(github.head_ref, 'finish/'))" <<< "$flat" ||
       fail "the condition of epic-pr changed; update ci-ok.sh"
   }
 }

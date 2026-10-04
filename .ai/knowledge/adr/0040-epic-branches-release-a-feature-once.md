@@ -15,7 +15,7 @@ paths:
   - .github/scripts/epic-pr-check.sh
   - schemas/spec.md
 summary: Why a feature released once lives on an epic branch, how a spec declares, cuts and finishes it, and why phase workspaces wait for the epic to reach main.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-10-04
 ---
 # ADR-0040: A feature released once lives on an epic branch until it is finished
 
@@ -124,3 +124,27 @@ decisions answer. It stands on a base per task (ADR-0039).
 > worktree does not. It is removed once the phase has landed on the epic, under the checks of ADR-0029
 > as amended the same day, because the records the epic's review reads are in the workspace, not in
 > the worktree.
+
+> **Amendment (2026-10-04).** An epic is protected like the default branch where a repository says
+> so (the first release made through `jig-release`, 0.20.0, ran into it), so the flow never needs a
+> direct push to it. Three rules follow, none detecting protection through the forge's API:
+>
+> - **The epic is pushed once, when it is cut.** Afterwards every commit reaches it through a pull
+>   request: a task's, or the final one. The coordinator's local commits on the epic — the wave's
+>   filing and the roadmap checkmarks of a phase run — stay local and travel inside the next task's
+>   pull request, the last ones inside the final pull request.
+> - **The finish goes on a branch of its own.** `--finish` and `--reopen` run on the epic or on any
+>   branch other than the default one that contains the epic's tip. `jig spec ship` in `final` mode,
+>   started on the epic, cuts `finish/<id>` there (as a declaration cuts `spec/<id>`), commits the
+>   removal and the version bump on it, pushes it and opens the pull request into the default branch
+>   from it; it never pushes the epic. Started on another branch cut from the epic, it cuts
+>   `finish/<id>` from that one, so the CI check always sees the same name. The
+>   `epic-pr` check accepts a head of `finish/<id>`, and reads the epic from it.
+> - **Who merges the release is a personal setting, `release.merge`** (`agent` by default, `human`),
+>   local-only like `agent.git`. `human` makes an unattended run at `agent.git: merge` open the final
+>   pull request and leave the merge — the release — to the person; task pull requests stay under
+>   `agent.git`. The default keeps the behaviour of adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci.
+>
+> Not added: a full-platform CI run before the owner merges. The final pull request is judged by the
+> same scope rules as any pull request, against the default branch and so over the whole epic's
+> diff; the shards skipped on the phases' pull requests into the epic are decided again there.

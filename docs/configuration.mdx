@@ -122,7 +122,7 @@ round, about a line in `.ai/config.yaml` that sets a key Jig does not read at al
 or a setting a later version dropped.
 
 Personal settings are left out of both: Jig never reads `agent.git`, `agent.ci_timeout`,
-`autopilot.unattended`, `autopilot.parallel`, `route.depth`, `run.exec` or `run.path` from the project's file, so naming them there
+`autopilot.unattended`, `autopilot.parallel`, `route.depth`, `release.merge`, `run.exec` or `run.path` from the project's file, so naming them there
 would only invite you to write a line that does nothing.
 
 ## Personal settings — `.ai/config.local.yaml`
@@ -153,6 +153,9 @@ Some settings are a matter of personal taste rather than project policy. Put the
   approval and architecture review of T3/T4 are never trimmed. Local only: it is your time you are
   trading. One task can differ: `jig task new <id> --lean`, or `jig task set <id> route_depth full`.
   See [A lighter route](/concepts#a-lighter-route).
+- `release.merge` — who merges an epic's final pull request, which is the release, in an unattended
+  run at `agent.git: merge`: `agent` (the default) merges it once CI passed, `human` opens it and
+  leaves the merge to you. It changes nothing for task pull requests; local only.
 - `run.exec` — where this machine runs the project's checks: `auto` (the default: Jig finds out),
   `host`, or the command that reaches the project's container. Local only: the place is a property
   of your machine, not of the project. See [Where checks run](#where-checks-run).
