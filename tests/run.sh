@@ -31,6 +31,11 @@
 # skipped without running them — for a check that says nothing new on a given
 # platform; a skip stays visible, never a pass.
 #
+# A filter is a substring of `<file>::<test>`. `<file>.t.sh::...` and
+# `tests/<file>.t.sh::...` are accepted as the same thing as `<file>::...`.
+# A non-empty filter that selects no test at all (before sharding) is an error,
+# exit 1: "0 passed" is not a green run, it is a run that checked nothing.
+#
 # Usage: tests/run.sh [name-filter]
 set -u
 
@@ -119,6 +124,20 @@ trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
 trap 'kill $(jobs -p) 2>/dev/null; _run_release_busy; exit 130' INT TERM
 
 filter="${1:-}"
+given_filter="$filter"
+# `context.t.sh::test_x` and `tests/context.t.sh::test_x` name the same tests as
+# `context::test_x`: the file part is the file's name, written either way.
+filter=${filter#tests/}
+case "$filter" in
+  *.t.sh::*) filter="${filter%%.t.sh::*}::${filter#*.t.sh::}" ;;
+  *.t.sh) filter=${filter%.t.sh} ;;
+esac
+# A filter that was nothing but that decoration names no test; it must not turn
+# into "no filter" and run everything.
+if [ -n "$given_filter" ] && [ -z "$filter" ]; then
+  printf 'tests/run.sh: no test matched %s\n' "$given_filter" >&2
+  exit 1
+fi
 
 shard_i=1
 shard_n=1
@@ -257,12 +276,14 @@ list="$RESULTS/list"
 : > "$list"
 idx=0
 seq=0
+matched=0
 for file in "$ROOT"/tests/*.t.sh; do
   [ -e "$file" ] || continue
   base=$(basename "$file" .t.sh)
   for name in $(list_tests "$file"); do
     full="$base::$name"
     case "$full" in *"$filter"*) ;; *) continue ;; esac
+    matched=$((matched + 1))
     seq=$((seq + 1))
     [ $(( (seq - 1) % shard_n )) -eq $((shard_i - 1)) ] || continue
     idx=$((idx + 1))
@@ -270,6 +291,13 @@ for file in "$ROOT"/tests/*.t.sh; do
   done
 done
 total=$idx
+
+# Counted before the shard is applied: a share that happens to hold none of the
+# selected tests is an ordinary run, a filter that names no test is a mistake.
+if [ -n "$filter" ] && [ "$matched" -eq 0 ]; then
+  printf 'tests/run.sh: no test matched %s\n' "$given_filter" >&2
+  exit 1
+fi
 
 start_all=$SECONDS
 t=$(printf '\t')

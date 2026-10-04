@@ -121,7 +121,7 @@ those six minutes into forty, and blocked two reviews for the best part of an ho
 ```bash
 .ai/scripts/jig verify             # what this change touched — start here
 bash tests/run.sh knowledge::      # one file's tests
-bash tests/run.sh knowledge::test_reject
+bash tests/run.sh knowledge::test_reject   # a filter that matches no test exits 1
 .ai/scripts/jig knowledge check
 bash tests/run.sh                  # everything, in parallel, one job per CPU — CI's job
 ```
