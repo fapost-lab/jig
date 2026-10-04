@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/status.sh
 summary: Why parallel agent sessions get a worktree per task beside the repository, borrow the owner's task directory by link, and are cleaned up by git.
-reviewed_at: 2026-09-25
+reviewed_at: 2026-10-04
 ---
 # ADR-0029: A task can start in a worktree of its own, beside the repository, removed by git
 
@@ -325,3 +325,24 @@ so each one resolves inside the worktree it is checked out in, and `.ai/workspac
 > a task directory of its own, naming the checkout the task belongs in. It refuses in a worktree
 > somebody made by hand for the same reason. Losing a statement silently is not a shape this
 > command is allowed to have.
+
+> **Amendment (2026-10-04).** "Accepts this one borrowed link and refuses every other" (amendment of
+> 2026-09-24) was true of the single-task link only. The check asked `[ -L ]` of the task's own path,
+> and `-L` sees the last component alone; a link one or two levels up — `.ai/workspace/tasks`, the
+> shape every `task start --worktree` now makes, or `.ai/workspace`, the shape a coordinator uses to
+> share the main checkout's workspace — skipped it, and the comparison left in its place resolved both
+> of its sides through that same link and could not fail. A planted `tasks` link sent
+> `jig task artifact write` outside the repository with exit 0.
+>
+> **A link is judged by where it leads, never by its shape or its level.** The tasks directory, resolved
+> physically, must be `<W>/.ai/workspace/tasks` for this checkout or a worktree `git worktree list`
+> names for this repository; a task entry inside it that is itself a link must lead to
+> `<W'>/.ai/workspace/tasks/<id>` for such a worktree; any other entry must be the one named after the
+> task. Git is the witness because it is the only thing that knows which checkouts belong to this
+> repository, and the comparison is physical, so a symlink and a Windows junction are the same case.
+> A borrowed directory vouches for itself and not for the entries in it. A link into some other
+> worktree of the same repository is accepted: it stays inside the repository, and the checkout holding
+> the task's `state` is its owner by ADR-0008. One shape is refused that nothing refused before — a
+> `.ai/workspace` linked to a directory that is no checkout of this repository — because nothing tells
+> it from a planted one. The check stays in `_task_workspace_root`, the single function every verb
+> that reads or writes an artifact passes through.

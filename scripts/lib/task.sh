@@ -269,15 +269,17 @@ _task_worktree_note() {
   printf 'worktree=%s uncommitted=%s\n' "$1" "$n"
 }
 
-# _task_borrowed_tasks_root — the physical path of `.ai/workspace/tasks` when
-# this checkout borrows the whole directory from another worktree of this
-# repository. Non-zero for a directory of its own, and for any other link,
-# which could point anywhere.
-_task_borrowed_tasks_root() {
-  local link real list p
-  link="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  [ -L "$link" ] || return 1
-  real=$(cd -P "$link" 2>/dev/null && pwd -P) || return 1
+# _task_worktree_holds <physical-path> <relative> — zero when <physical-path>
+# is <W>/<relative> for this checkout or for any worktree git lists for this
+# repository. It is what tells a directory link jig made from one planted by
+# anybody else: a link jig makes leads into a checkout of this repository, and
+# only git knows which checkouts those are. Paths compare physically, so a
+# symlink and an NTFS junction (which bash reads as a link, and `cd -P`
+# follows) are judged by where they lead, not by what they are.
+_task_worktree_holds() {
+  local want="$1" rel="$2" list p
+  p=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 1
+  [ "$want" != "$p/$rel" ] || return 0
   list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 1
   while IFS= read -r p; do
     case "$p" in
@@ -285,12 +287,22 @@ _task_borrowed_tasks_root() {
       *) continue ;;
     esac
     p=$(cd -P "$p" 2>/dev/null && pwd -P) || continue
-    if [ "$real" = "$p/$JIG_AI_DIR/workspace/tasks" ]; then
-      printf '%s\n' "$real"
-      return 0
-    fi
+    [ "$want" != "$p/$rel" ] || return 0
   done < <(printf '%s\n' "$list")
   return 1
+}
+
+# _task_borrowed_tasks_root — the physical path of `.ai/workspace/tasks` when
+# this checkout borrows the whole directory from another worktree of this
+# repository. Non-zero for a directory of its own, and for any other link,
+# which could point anywhere.
+_task_borrowed_tasks_root() {
+  local link real
+  link="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  [ -L "$link" ] || return 1
+  real=$(cd -P "$link" 2>/dev/null && pwd -P) || return 1
+  _task_worktree_holds "$real" "$JIG_AI_DIR/workspace/tasks" || return 1
+  printf '%s\n' "$real"
 }
 
 # _task_link_workspace <owner-task-dir> <tree> <id> — give <tree> the task
@@ -343,10 +355,12 @@ _task_link_workspace() {
 # cannot carry a directory link still gets). Non-zero for any other link, which
 # could point anywhere.
 _task_borrowed_workspace() {
-  local id="$1" link real list p root
+  local id="$1" link real root
   # The whole directory borrowed: every task under it is the owner's, and this
-  # task's workspace is simply the one named after it.
-  if root=$(_task_borrowed_tasks_root); then
+  # task's workspace is simply the one named after it -- unless that name is a
+  # link itself, which the borrowed directory vouches nothing for and the
+  # check below judges like any other.
+  if root=$(_task_borrowed_tasks_root) && [ ! -L "$root/$id" ]; then
     [ -d "$root/$id" ] || return 1
     printf '%s\n' "$root/$id"
     return 0
@@ -354,19 +368,8 @@ _task_borrowed_workspace() {
   link=$(task_dir "$id")
   [ -L "$link" ] || return 1
   real=$(cd -P "$link" 2>/dev/null && pwd -P) || return 1
-  list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 1
-  while IFS= read -r p; do
-    case "$p" in
-      "worktree "*) p=${p#worktree } ;;
-      *) continue ;;
-    esac
-    p=$(cd -P "$p" 2>/dev/null && pwd -P) || continue
-    if [ "$real" = "$p/$JIG_AI_DIR/workspace/tasks/$id" ]; then
-      printf '%s\n' "$real"
-      return 0
-    fi
-  done < <(printf '%s\n' "$list")
-  return 1
+  _task_worktree_holds "$real" "$JIG_AI_DIR/workspace/tasks/$id" || return 1
+  printf '%s\n' "$real"
 }
 
 # --- candidates (design §1) -----------------------------------------------------
@@ -3179,32 +3182,39 @@ task_changes() {
 # reads or writes an artifact must pass (RULES.md: the check lives at a single
 # function, not once per caller).
 #
-# A linked task directory can point outside the validated checkout workspace,
-# and only one of the two shapes is checked here. A symlink at the task's own
-# path goes through `_task_borrowed_workspace`, which confirms the target is
-# this task's workspace in another worktree of this repository. A link at the
-# parent -- the whole `tasks/` directory, which `task start --worktree` now
-# makes the usual shape -- does not reach that check: `-L` asks about the last
-# component only, so this falls to the comparison below, where both sides
-# resolve through the same link and it cannot fail. That gap is older than the
-# borrowed directory (the body of this function is unchanged by the change
-# that introduced it) and belongs to task
-# `artifact-write-trusts-a-borrowed-directory-link`; it is not a property to
-# rely on. <command> names the caller in the refusals, so the message still
+# A link anywhere on the way is judged by where it leads, never by its shape.
+# `-L` asks about the last component only, and comparing the task's directory
+# with the tasks directory proves nothing when both resolve through the same
+# link above them: a planted `.ai/workspace/tasks` (or `.ai/workspace`) passed
+# that comparison wherever it pointed, outside the repository included. So
+# the tasks directory itself must physically be the one of a checkout of this
+# repository -- this one, or the owner a `task start --worktree` link (a
+# symlink, or a junction on Windows) leads to, or the owner a coordinator's
+# workspace link leads to (ADR-0029 as amended). Inside it, a task directory
+# that is a link must lead to this task's workspace in some worktree of this
+# repository (the single-task link `task start` still makes where the whole
+# directory cannot be linked); any other must be exactly the entry named after
+# the task. <command> names the caller in the refusals, so the message still
 # says which verb refused.
 _task_workspace_root() {
-  local id="$1" cmd="$2" root tasks_root
+  local id="$1" cmd="$2" root tasks_root real
   root=$(task_dir "$id") || return 1
   [ -f "$root/state" ] || jig_die "$cmd: unknown task: $id"
+  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" 2>/dev/null && pwd -P) \
+    || jig_die "$cmd: cannot inspect $JIG_AI_DIR/workspace/tasks"
+  _task_worktree_holds "$tasks_root" "$JIG_AI_DIR/workspace/tasks" \
+    || jig_die "$cmd: $JIG_AI_DIR/workspace/tasks leads to $tasks_root, which is no checkout of this repository"
   if [ -L "$root" ]; then
-    _task_borrowed_workspace "$id" \
-      || jig_die "$cmd: linked task workspace is unsupported unless it is this task's workspace in another worktree"
+    real=$(cd -P "$root" 2>/dev/null && pwd -P) || real=""
+    if [ -z "$real" ] || ! _task_worktree_holds "$real" "$JIG_AI_DIR/workspace/tasks/$id"; then
+      jig_die "$cmd: linked task workspace is unsupported unless it is this task's workspace in another worktree"
+    fi
+    printf '%s\n' "$real"
     return 0
   fi
-  root=$(cd -P "$root" && pwd -P) || jig_die "$cmd: cannot inspect workspace"
-  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" && pwd -P) || return 1
-  case "$root" in "$tasks_root"/"$id") ;; *) jig_die "$cmd: workspace outside task root" ;; esac
-  printf '%s\n' "$root"
+  real=$(cd -P "$root" && pwd -P) || jig_die "$cmd: cannot inspect workspace"
+  [ "$real" = "$tasks_root/$id" ] || jig_die "$cmd: workspace outside task root"
+  printf '%s\n' "$real"
 }
 
 _task_artifact_kind() {
