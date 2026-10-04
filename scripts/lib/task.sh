@@ -58,7 +58,10 @@ _task_usage() {
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>] [--lean]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap]\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id>\n' ;;
-    set) printf 'usage: jig task set <id> <key> <value>\n' ;;
+    set)
+      printf 'usage: jig task set <id> <key> <value>\n'
+      printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
+      ;;
     abandon) printf 'usage: jig task abandon <id>\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
     resume) printf 'usage: jig task resume <id>\n' ;;
@@ -89,7 +92,7 @@ _task_usage() {
       printf '       jig task autopilot <id> stop --reason <text>\n'
       printf '       jig task autopilot <id> approve --reason <text>\n'
       printf '       jig task autopilot <id> decide --reason <text>\n'
-      printf '       jig task autopilot <id> resume\n'
+      printf '       jig task autopilot <id> resume --answer <the human'"'"'s answer>\n'
       printf '       jig task autopilot <id> end\n'
       printf '       jig task autopilot <id> report\n'
       ;;
@@ -820,6 +823,9 @@ task_new() {
     [ -z "$class" ] || printf 'class: %s\n' "$class"
     printf 'status: active\n'
     printf 'knowledge_consolidated: false\n'
+    # Filed under the route-evidence check (adr-20261004-a-route-stage-is-proven-by-its-record):
+    # a task without this key was filed before it and is only warned.
+    printf 'route_evidence: required\n'
     [ -z "$domains" ] || printf 'domains: %s\n' "$domains"
     [ -z "$depth" ] || printf 'route_depth: %s\n' "$depth"
     printf 'created_at: %s\n' "$(jig_today)"
@@ -1232,9 +1238,17 @@ _task_undo_worktree_start() {
 }
 
 task_set() {
-  [ $# -eq 3 ] || jig_die "$(_task_usage set)"
+  [ $# -eq 3 ] || [ $# -eq 5 ] || jig_die "$(_task_usage set)"
   jig_require_init
-  local id="$1" key="$2" value="$3" dir
+  local id="$1" key="$2" value="$3" dir reason="" has_reason=0
+  if [ $# -eq 5 ]; then
+    [ "$4" = --reason ] || jig_die "task set: unknown argument: $4"
+    [ "$key" = class ] || jig_die "task set: --reason is only for lowering a class"
+    reason="$5"
+    has_reason=1
+    [ -n "$reason" ] || jig_die "task set: --reason must not be empty"
+    _task_finding_valid_field "$reason" || jig_die "task set: --reason must be a single line with no tab"
+  fi
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task set: unknown task: $id"
 
@@ -1245,7 +1259,8 @@ task_set() {
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     route_depth) _cfg_route_depth "$value" || jig_die "task set: invalid route_depth: $value (full or lean)" ;;
     task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
-      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url)
+      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
+      | route_evidence | class_lowered_from | class_lowered_reason)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -1308,9 +1323,81 @@ task_set() {
     local receipt_msg
     receipt_msg=$(_task_receipt_gate_message "$id")
     [ -z "$receipt_msg" ] || jig_die "task set: $receipt_msg"
+    # The stages the route requires, each by its record
+    # (adr-20261004-a-route-stage-is-proven-by-its-record): `ready` is verify's
+    # sign-off, so it asks for what comes before verify; the knowledge
+    # decision is consolidation's, so it asks for verify too.
+    if [ "$key" = status ]; then
+      _task_route_evidence_gate "$id" ready "task set"
+    else
+      _task_route_evidence_gate "$id" consolidate "task set"
+    fi
   fi
 
+  if [ "$key" = class ]; then
+    _task_set_class "$id" "$dir" "$value" "$has_reason" "$reason"
+    return 0
+  fi
+  [ "$has_reason" -eq 0 ] || jig_die "task set: --reason is only for lowering a class"
+
   _task_rewrite_state "$dir" "$key" "$value"
+}
+
+# _task_nobody_answers <id> — exit 0 when no human answers for <id>: this
+# clone sets `autopilot.unattended`, or the task's run was started unattended
+# and has not ended (`on` or `stopped`). Checked on the recorded mode too, so
+# unsetting the key halfway through a run changes nothing about it.
+_task_nobody_answers() {
+  if jig_unattended; then return 0; fi
+  case "$(task_state_get "$1" autopilot)" in
+    on | stopped) [ "$(_task_autopilot_mode "$1")" = unattended ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# _task_set_class <id> <dir> <class> <has-reason> <reason> — write the class.
+# Re-classification is normal (ADR-0009), and lowering is the one direction
+# that sheds stages, so it is the one that has to say why: refused without
+# `--reason`, and recorded as `class_lowered_from` (the highest class the task
+# was lowered from) and `class_lowered_reason`, which `jig task route`,
+# `jig status` and the autopilot report show — a lowering is never quieter than
+# the gate it may have skipped. Where nobody answers — `autopilot.unattended`
+# set in this clone, or the task's unattended run on or stopped — a T3/T4 task
+# is not lowered below T3: nobody there can read the reason before the gate is
+# gone, and staying in the class is the cautious, reversible choice. Raising the class
+# back to where it was lowered from clears the record
+# (adr-20261004-a-route-stage-is-proven-by-its-record).
+_task_set_class() {
+  local id="$1" dir="$2" value="$3" has_reason="$4" reason="$5" old from
+  old=$(task_state_get "$id" class)
+  if _task_valid_class "$old" && [ "${value#T}" -lt "${old#T}" ]; then
+    [ "$has_reason" -eq 1 ] \
+      || jig_die "task set: lowering $id from $old to $value sheds stages of its route; say why: jig task set $id class $value --reason <text>"
+    case "$old" in
+      T3 | T4)
+        if [ "${value#T}" -lt 3 ] && _task_nobody_answers "$id"; then
+          jig_die "task set: an unattended run does not lower $id from $old below T3: nobody can read the reason before the gate is gone; stay in $old"
+        fi ;;
+    esac
+    from=$(task_state_get "$id" class_lowered_from)
+    if ! _task_valid_class "$from" || [ "${old#T}" -gt "${from#T}" ]; then
+      from="$old"
+    fi
+    _task_rewrite_state "$dir" class "$value"
+    _task_rewrite_state "$dir" class_lowered_from "$from"
+    _task_rewrite_state "$dir" class_lowered_reason "$reason"
+    if [ "$(task_state_get "$id" autopilot)" = on ]; then
+      _task_autopilot_log "$id" lower "$old to $value: $reason"
+    fi
+    return 0
+  fi
+  [ "$has_reason" -eq 0 ] || jig_die "task set: --reason is only for lowering a class; $value is not lower than ${old:-unclassified}"
+  _task_rewrite_state "$dir" class "$value"
+  from=$(task_state_get "$id" class_lowered_from)
+  if _task_valid_class "$from" && [ "${value#T}" -ge "${from#T}" ]; then
+    _task_rewrite_state_remove "$dir" class_lowered_from
+    _task_rewrite_state_remove "$dir" class_lowered_reason
+  fi
 }
 
 task_abandon() {
@@ -1692,27 +1779,51 @@ _task_autopilot_unattended_event() {
   printf '%s: %s\n' "$event" "$reason"
 }
 
-# resume: after the human answers a stop. Requires `stopped` and resets the
-# repair count to 0 — the human just gave the run a new direction, so the
-# two repairs already spent no longer count against it (task.md human gate).
+# resume --answer <text>: after the human answers a stop. Requires `stopped`
+# and resets the repair count to 0 — the human just gave the run a new
+# direction, so the two repairs already spent no longer count against it
+# (task.md human gate). The answer is required and journaled, and `report`
+# prints it for the pull request: the script cannot tell who answered, but a
+# run that resumed itself now quotes an answer nobody gave, where the person
+# reads it, instead of resetting its limit in silence. An unattended run is
+# never resumed: nobody answers there, and its repair-limit stop ends the run
+# in a draft (adr-20261004-a-route-stage-is-proven-by-its-record).
 _task_autopilot_resume() {
   local id="$1"
   shift
-  [ $# -eq 0 ] || jig_die "task autopilot resume: unknown argument: $1"
+  local answer="" has_answer=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --answer)
+        [ $# -ge 2 ] || jig_die "task autopilot resume: --answer requires a value"
+        answer="$2"; has_answer=1; shift 2 ;;
+      *) jig_die "task autopilot resume: unknown argument: $1" ;;
+    esac
+  done
   local dir
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task autopilot resume: unknown task: $id"
   [ "$(task_state_get "$id" autopilot)" = "stopped" ] \
     || jig_die "task autopilot resume: not stopped: $id"
+  [ "$(_task_autopilot_mode "$id")" != unattended ] \
+    || jig_die "task autopilot resume: $id's run is unattended, and nobody answers there: its stop is its end; ship what there is as a draft: jig task ship $id --message-file <file> --draft"
+  [ "$has_answer" -eq 1 ] \
+    || jig_die "task autopilot resume: --answer is required: the human's answer to the stop, in their words: jig task autopilot $id resume --answer <text>"
+  [ -n "$answer" ] || jig_die "task autopilot resume: --answer must not be empty"
+  _task_finding_valid_field "$answer" \
+    || jig_die "task autopilot resume: --answer must be a single line with no tab"
 
   _task_rewrite_state "$dir" autopilot on
   _task_rewrite_state "$dir" autopilot_repairs 0
-  _task_autopilot_log "$id" resume ""
+  _task_autopilot_log "$id" resume "$answer"
   printf 'autopilot: on\n'
 }
 
 # end: the run reached the end of its route (design §1 step 5, after
-# consolidation). Requires an active run.
+# consolidation). Requires an active run. An unattended run ends only once the
+# knowledge decision is recorded: `end` then `start` is a fresh run with a
+# fresh repair count, and nobody there would have answered for it
+# (adr-20261004-a-route-stage-is-proven-by-its-record).
 _task_autopilot_end() {
   local id="$1"
   shift
@@ -1722,6 +1833,9 @@ _task_autopilot_end() {
   [ -f "$dir/state" ] || jig_die "task autopilot end: unknown task: $id"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot end: no active autopilot run: $id; run: jig task autopilot $id start"
+  if [ "$(_task_autopilot_mode "$id")" = unattended ] && [ "$(task_state_get "$id" knowledge_consolidated)" != true ]; then
+    jig_die "task autopilot end: $id's unattended run ends after consolidation (knowledge_consolidated true); a run whose repairs ran out stays stopped and ships a draft"
+  fi
 
   _task_rewrite_state "$dir" autopilot "done"
   _task_autopilot_log "$id" end ""
@@ -1760,6 +1874,15 @@ _task_autopilot_report() {
   [ -z "$block" ] || printf '\nDecided without you:\n%s\n' "$block"
   block=$(awk -F '\t' '$2 == "approve" { print "- " $3 }' "$file")
   [ -z "$block" ] || printf '\nApproved by the agent, not a human:\n%s\n' "$block"
+  # A resume quotes the answer it was given and a lowering its reason, so the
+  # person checks both where they read the run: in the pull request.
+  block=$(awk -F '\t' '$2 == "resume" && $3 != "" { print "- " $3 }' "$file")
+  [ -z "$block" ] || printf '\nResumed on an answer (check it was yours):\n%s\n' "$block"
+  local from
+  from=$(task_state_get "$id" class_lowered_from)
+  if [ -n "$from" ]; then
+    printf '\nClass lowered:\n- from %s to %s: %s\n' "$from" "$(task_state_get "$id" class)" "$(task_state_get "$id" class_lowered_reason)"
+  fi
 
   local facts state repairs mode=""
   facts=$(_task_autopilot_facts "$id")
@@ -2378,12 +2501,21 @@ task_receipt_write() {
   head=$(git -C "$review_dir" rev-parse --verify --quiet HEAD 2>/dev/null) || head=""
   design=$(_task_receipt_design_hash "$id")
   findings=$(_task_receipt_findings_hash "$id")
+  # Every stage a receipt of this task was ever written for, so a re-review
+  # under another stage does not erase that the first one happened (the route
+  # evidence, adr-20261004-a-route-stage-is-proven-by-its-record). A receipt
+  # from before the list counts its own `stage:`.
+  local stages
+  stages=$(_task_receipt_get "$id" stages)
+  [ -n "$stages" ] || stages=$(_task_receipt_get "$id" stage)
+  stages=$(printf '%s,%s\n' "$stages" "$stage" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
 
   file="$dir/receipt"
   tmp="$file.tmp.$$"
   jig_cleanup_add "$tmp"
   {
     printf 'stage: %s\n' "$stage"
+    printf 'stages: %s\n' "$stages"
     printf 'reviewed_at: %s\n' "$(jig_today)"
     printf 'tree: %s\n' "$tree"
     printf 'diff: %s\n' "$diff"
@@ -2437,8 +2569,9 @@ task_receipt_check() {
 # (`task new --lean`, `task set <id> route_depth`) wins; without one, the
 # person's `route.depth` (local-only, config.sh) answers; without that, `full`.
 # Nothing that gates — verify, the findings ledger, the receipt, the human
-# gate, ship, consolidation — reads the depth, which is what keeps `lean` from
-# ever getting under them. The answer is computed here and only here: `jig task
+# gate, ship, consolidation, the route evidence (which reads the class's `full`
+# route) — reads the depth, which is what keeps `lean` from ever getting under
+# them. The answer is computed here and only here: `jig task
 # route`, `jig status` and the autopilot report all ask _task_route_depth.
 
 # _task_route_depth <id> [<setting>] — `<depth>\t<source>`, where <source> is
@@ -2524,6 +2657,110 @@ EOF
     printf 'lean: %s\n' "$(_task_route_lean_note "$class")"
   fi
   printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
+  local from
+  from=$(task_state_get "$id" class_lowered_from)
+  if [ -n "$from" ]; then
+    printf 'lowered: from %s: %s\n' "$from" "$(task_state_get "$id" class_lowered_reason)"
+  fi
+}
+
+# --- route evidence (adr-20261004-a-route-stage-is-proven-by-its-record) -------
+#
+# A class decides the process by mechanics, not by prose: the stages of the
+# class's route (_task_route_stages, `full`) that leave a record
+# must have left it before the completion gates pass. Only records that resist
+# ritual count (convention-required-records): the human gate's approval pinned
+# to the current design, a receipt the reviewer computed, verify's own
+# `status ready`, and the design documents the gate pinned. A stage whose only
+# trace is prose the actor writes for itself — discover, analyze, plan — or
+# the diff — implement — is not asked for, and neither is the autopilot
+# journal, which the actor writes about itself under names of its choosing.
+#
+# The depth is not read: the records asked for are the class's `full` route's,
+# so a person's local `route.depth` can never loosen a gate. Lean trims only
+# stages that leave no record (the plan), so a lean run is asked the same
+# records; a depth that ever trimmed a recorded stage would be refused here,
+# not let through.
+#
+# A task filed before this check — no `route_evidence: required` in its state,
+# which `jig task new` writes — is judged as before: what is missing is
+# printed as a warning and the gate passes, so no task in flight is stopped
+# halfway through a route it began under other rules.
+
+# _task_receipt_covers <id> <stage> — exit 0 when the task's receipt records a
+# review of <stage>: its `stages:` list, or, for a receipt written before the
+# list existed, its `stage:`.
+_task_receipt_covers() {
+  local id="$1" stage="$2" stages
+  [ -f "$(task_dir "$id")/receipt" ] || return 1
+  stages=$(_task_receipt_get "$id" stages)
+  [ -n "$stages" ] || stages=$(_task_receipt_get "$id" stage)
+  case ",$stages," in
+    *",$stage,"*) return 0 ;;
+  esac
+  return 1
+}
+
+# _task_route_evidence_missing <id> <point> — one line per stage of the task's
+# class's full route that leaves a record and has not, each naming the command that writes
+# it; nothing when the route is complete. <point> is `ready` (every stage
+# before verify) or `consolidate` (verify too: `status ready` is its record).
+_task_route_evidence_missing() {
+  local id="$1" point="$2" dir class stages stage
+  dir=$(task_dir "$id")
+  class=$(task_state_get "$id" class)
+  if ! _task_valid_class "$class"; then
+    printf 'class (not classified, so there is no route: jig task set %s class Tn)\n' "$id"
+    return 0
+  fi
+  stages=$(_task_route_stages "$class" full)
+  while IFS= read -r stage; do
+    case "$stage" in
+      specify)
+        [ -s "$dir/spec.md" ] || printf 'specify (no spec.md: jig task artifact write %s spec)\n' "$id" ;;
+      alternatives)
+        [ -s "$dir/alternatives.md" ] || printf 'alternatives (no alternatives.md: jig task artifact write %s alternatives)\n' "$id" ;;
+      design)
+        [ -s "$dir/design.md" ] || printf 'design (no design.md: jig task artifact write %s design)\n' "$id" ;;
+      'human gate')
+        case "$(_task_gate_state "$id")" in
+          approved) ;;
+          changed) printf 'human gate (the design changed after its approval: take it back to the gate, then jig task gate %s approved)\n' "$id" ;;
+          *) printf 'human gate (no approval recorded: jig task gate %s approved)\n' "$id" ;;
+        esac ;;
+      review | 'independent review')
+        _task_receipt_covers "$id" review \
+          || printf '%s (no review receipt: jig task receipt %s --stage review)\n' "$stage" "$id" ;;
+      'architecture review')
+        _task_receipt_covers "$id" architecture-review \
+          || printf 'architecture review (no architecture-review receipt: jig task receipt %s --stage architecture-review)\n' "$id" ;;
+      verify)
+        [ "$point" = consolidate ] || continue
+        case "$(task_state_get "$id" status)" in
+          ready | consolidated) ;;
+          *) printf 'verify (not signed off: jig verify, then jig task set %s status ready)\n' "$id" ;;
+        esac ;;
+    esac
+  done < <(printf '%s\n' "$stages" | tr ',' '\n' | sed 's/^ *//')
+}
+
+# _task_route_evidence_list <id> <point> — what _task_route_evidence_missing
+# printed, on one line joined by "; "; nothing when the route is complete.
+_task_route_evidence_list() {
+  _task_route_evidence_missing "$1" "$2" | awk 'NR > 1 { printf "; " } { printf "%s", $0 } END { if (NR) printf "\n" }'
+}
+
+# _task_route_evidence_gate <id> <point> <command> — refuse, as <command>, a
+# task filed under this check whose route is missing a record; warn, and pass,
+# for a task filed before it.
+_task_route_evidence_gate() {
+  local id="$1" point="$2" cmd="$3" missing
+  missing=$(_task_route_evidence_list "$id" "$point")
+  [ -n "$missing" ] || return 0
+  if [ "$(task_state_get "$id" route_evidence)" = required ]; then
+    jig_die "$cmd: the route of $id ($(task_state_get "$id" class)) is missing: $missing"
+  fi
+  jig_warn "$cmd: $id was filed before route evidence was checked, so this passes without: $missing"
 }
 
 # --- the human gate (adr-20260924-the-status-page-keeps-the-readers-place)
@@ -2560,6 +2797,10 @@ task_gate() {
     if [ "$(task_state_get "$id" autopilot)" != on ] || [ "$(_task_autopilot_mode "$id")" != unattended ]; then
       jig_die "task gate: --by agent is an unattended run's self-approval; $id has no unattended autopilot run on, so the gate is the human's"
     fi
+  elif [ "$(task_state_get "$id" autopilot)" = on ] && [ "$(_task_autopilot_mode "$id")" = unattended ]; then
+    # Nobody answers in an unattended run, so an approval recorded there is the
+    # agent's, and is said to be (adr-20261004-a-route-stage-is-proven-by-its-record).
+    jig_die "task gate: $id's run is unattended, so this approval is the agent's: jig task gate $id approved --by agent"
   fi
   class=$(task_state_get "$id" class)
   case "$class" in
@@ -3302,6 +3543,10 @@ task_ship() {
     # a later code edit, or a re-review nobody ran — must still refuse here.
     receipt_msg=$(_task_receipt_gate_message "$id")
     [ -z "$receipt_msg" ] || jig_die "task ship: $receipt_msg"
+
+    # And the route, for the same reason: the gate's approval goes stale the
+    # moment the design changes after it, whenever that happens.
+    _task_route_evidence_gate "$id" consolidate "task ship"
   fi
 
   local branch base cur
@@ -3360,6 +3605,14 @@ task_ship() {
   if [ -n "$receipt_msg" ]; then
     printf 'not merged: %s\n' "$receipt_msg"
     return 0
+  fi
+  local missing
+  if [ "$(task_state_get "$id" route_evidence)" = required ]; then
+    missing=$(_task_route_evidence_list "$id" consolidate)
+    if [ -n "$missing" ]; then
+      printf 'not merged: the route of %s is missing: %s\n' "$id" "$missing"
+      return 0
+    fi
   fi
   jig_ship_merge "task ship" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" any
 }

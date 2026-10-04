@@ -41,3 +41,8 @@ adds a second router. Automatically advancing state confuses documentation with 
 The route table and skills must agree. Callers must substantiate provided claims and check
 semantic prerequisites. Task state remains compatible with ADR-0005/0012. Approved as part
 of the SDD/OpenSpec design on 2026-09-10.
+
+> **Amendment (2026-10-04).** Presence still proves nothing, and nothing reads a document as
+> approval. The completion gates now refuse the *absence* of the documents a T3/T4 gate shows —
+> `design.md`, and for T4 `spec.md` and `alternatives.md` — next to the gate's own record; no other
+> stage's file is asked for. See adr-20261004-a-route-stage-is-proven-by-its-record.

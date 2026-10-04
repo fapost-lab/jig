@@ -26,6 +26,27 @@ fixture_jig_repo() {
   cp -R "$JIG_TEST_CACHE/installed/." .
 }
 
+# task_route_class <id> — classify a task filed without a class as T0, the
+# route that records nothing before verify; a task with a class keeps it. The
+# completion gates refuse an unclassified task filed under the route-evidence
+# check (adr-20261004-a-route-stage-is-proven-by-its-record), and most tests
+# file one only to reach those gates.
+task_route_class() {
+  if ! grep -q '^class:' ".ai/workspace/tasks/$1/state" 2>/dev/null; then
+    jig task set "$1" class T0 >/dev/null 2>&1
+  fi
+  return 0
+}
+
+# task_route_done <id> — task_route_class, then verify's sign-off (`status
+# ready`), which `knowledge_consolidated true` and `task ship` ask for. Silent:
+# a refused `ready` is left for the test's own assertion to meet.
+task_route_done() {
+  task_route_class "$1"
+  jig task set "$1" status ready >/dev/null 2>&1
+  return 0
+}
+
 # fixture_cache_prepare — build the cached install fixture_jig_repo copies, once
 # per runner invocation. Lazy when tests run one at a time; a parallel runner
 # calls it before it starts any test, because two tests building it at once

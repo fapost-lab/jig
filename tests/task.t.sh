@@ -59,7 +59,7 @@ test_task_new_creates_state_with_expected_keys_in_order() {
   # Filing writes only what it knows: no branch, no fork point.
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id status knowledge_consolidated created_at updated_at " "$keys"
+  assert_eq "task_id status knowledge_consolidated route_evidence created_at updated_at " "$keys"
 
   assert_file_contains .ai/workspace/tasks/T-1/state "task_id: T-1"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
@@ -75,7 +75,7 @@ test_task_new_with_class_and_domains_order() {
 
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id class status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id class status knowledge_consolidated route_evidence domains created_at updated_at " "$keys"
   assert_file_contains .ai/workspace/tasks/T-1/state "class: T2"
   assert_file_contains .ai/workspace/tasks/T-1/state "domains: flow,triggers"
 }
@@ -176,7 +176,7 @@ test_task_new_from_with_class_and_domains() {
   assert_file_contains .ai/workspace/tasks/T-1/task.md "Doc body."
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id class status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id class status knowledge_consolidated route_evidence domains created_at updated_at " "$keys"
 }
 
 test_task_new_duplicate_id_dies() {
@@ -293,6 +293,7 @@ test_task_set_class() {
 test_task_set_status() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
@@ -301,6 +302,7 @@ test_task_set_status() {
 test_task_set_knowledge_consolidated() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_done T-1
   run jig task set T-1 knowledge_consolidated true
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: true"
@@ -314,7 +316,7 @@ test_task_set_domains_when_absent_inserts_before_created_at() {
   assert_file_contains .ai/workspace/tasks/T-1/state "domains: flow,triggers"
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/state | tr '\n' ' ')
-  assert_eq "task_id status knowledge_consolidated domains created_at updated_at " "$keys"
+  assert_eq "task_id status knowledge_consolidated route_evidence domains created_at updated_at " "$keys"
 }
 
 test_task_set_invalid_class_dies() {
@@ -357,6 +359,7 @@ test_task_set_status_consolidated_without_knowledge_consolidated_dies() {
 test_task_set_status_consolidated_succeeds_after_knowledge_consolidated() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   run jig task set T-1 status consolidated
   assert_eq 0 "$RC"
@@ -424,6 +427,7 @@ pr_check_ship_T1() {
   ship_cfg forge github
   pr_check_stub_gh "" "$1"
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
   jig task ship T-1 --message-file msg.txt >/dev/null
@@ -459,6 +463,7 @@ test_task_set_status_consolidated_refuses_when_the_forge_cannot_confirm() {
 test_task_set_knowledge_consolidated_false_on_consolidated_task_dies() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   jig task set T-1 status consolidated >/dev/null
   run jig task set T-1 knowledge_consolidated false
@@ -528,6 +533,7 @@ test_task_set_unknown_key_dies() {
 
 test_task_set_unknown_task_dies() {
   task_setup
+  task_route_class NOPE
   run jig task set NOPE status ready
   assert_eq 1 "$RC"
   assert_contains "$OUT" "unknown task"
@@ -540,6 +546,8 @@ test_task_set_refreshes_updated_at() {
   mv .ai/workspace/tasks/T-1/state.new .ai/workspace/tasks/T-1/state
   assert_file_contains .ai/workspace/tasks/T-1/state "updated_at: 2020-01-01"
 
+  task_route_class T-1
+
   run jig task set T-1 status ready
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "updated_at: $(date +%Y-%m-%d)"
@@ -549,6 +557,7 @@ test_task_set_refreshes_updated_at() {
 test_task_set_no_state_tmp_left_behind() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_class T-1
   jig task set T-1 status ready >/dev/null
   run bash -c 'ls .ai/workspace/tasks/T-1/state.tmp.* 2>/dev/null'
   assert_eq "" "$OUT"
@@ -662,6 +671,7 @@ test_task_current_excludes_abandoned() {
 test_task_current_excludes_consolidated() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   jig task set T-1 status consolidated >/dev/null
   run jig task current
@@ -755,6 +765,7 @@ test_task_subcommands_reject_path_traversal_ids() {
   local before
   before=$(cat "$JIG_TEST_TMP/state")
   for bad in .. ../../x .hidden . 'a b' ''; do
+    task_route_class "$bad"
     run jig task set "$bad" status ready
     assert_eq 1 "$RC" "task set accepted id [$bad]"
     assert_contains "$OUT" "invalid task id"
@@ -1104,6 +1115,7 @@ test_task_list_hides_finished_by_default() {
   run jig init --from "$JIG_HOME"
   run jig task new live-one
   run jig task new done-one
+  task_route_done done-one
   run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
   run jig task new gone-one
@@ -1122,6 +1134,7 @@ test_task_list_all_shows_everything() {
   run jig init --from "$JIG_HOME"
   run jig task new live-one
   run jig task new done-one
+  task_route_done done-one
   run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
 
@@ -1148,6 +1161,7 @@ test_task_list_status_filter() {
   run jig init --from "$JIG_HOME"
   run jig task new live-one
   run jig task new done-one
+  task_route_done done-one
   run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
 
@@ -1202,6 +1216,7 @@ test_task_list_reports_no_live_tasks() {
   fixture_repo
   run jig init --from "$JIG_HOME"
   run jig task new done-one
+  task_route_done done-one
   run jig task set done-one knowledge_consolidated true
   run jig task set done-one status consolidated
   run jig task list
@@ -1350,6 +1365,8 @@ test_sdd_artifacts_t3_presence_never_approves_or_changes_state() {
 test_sdd_artifacts_routes_and_conversation_claims() {
   sdd_task_setup
   local class
+  # Start from the bottom, so every set below raises the class.
+  jig task set scoped class T0 --reason "fixture" >/dev/null
   for class in T0 T1 T2 T3 T4; do
     jig task set scoped class "$class" >/dev/null
     run jig task artifacts scoped --provided discovery,spec,alternatives,design,plan,verification
@@ -1370,7 +1387,7 @@ test_sdd_artifacts_routes_and_conversation_claims() {
   run jig task artifacts scoped
   assert_contains "$OUT" 'design: needs-input; inputs: task spec alternatives'
   assert_contains "$OUT" 'unassessed: implementation and independent reviewer'
-  jig task set scoped class T0 >/dev/null
+  jig task set scoped class T0 --reason "fixture" >/dev/null
   run jig task artifacts scoped
   assert_not_contains "$OUT" 'needs-input'
 }
@@ -2955,6 +2972,7 @@ STUB
 
 test_task_ship_none_level_exits_3_and_changes_nothing() {
   ship_setup
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
   local head_before
@@ -2981,6 +2999,7 @@ test_task_ship_requires_knowledge_consolidated() {
 test_task_ship_wrong_branch_refuses() {
   ship_setup
   ship_cfg_local agent.git commit
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   git checkout -q main
 
@@ -2999,6 +3018,7 @@ test_task_ship_on_base_branch_refuses() {
   git commit -q -m "branch_per_task off"
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_cfg_local agent.git commit
   printf 'msg\n' > msg.txt
@@ -3011,6 +3031,7 @@ test_task_ship_on_base_branch_refuses() {
 test_task_ship_staged_workspace_path_refuses() {
   ship_setup
   ship_cfg_local agent.git commit
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   local head_before
   head_before=$(git rev-parse HEAD)
@@ -3029,6 +3050,7 @@ test_task_ship_staged_workspace_path_refuses() {
 test_task_ship_commit_level_commits_only_staged_and_does_not_push() {
   ship_setup
   ship_cfg_local agent.git commit
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   # An untracked file that is not part of this task's staged change: `git
   # commit -F` without `-a` must leave it alone.
@@ -3053,6 +3075,7 @@ test_task_ship_commit_level_commits_only_staged_and_does_not_push() {
 test_task_ship_empty_index_with_a_clean_tree_ships_the_earlier_commit() {
   ship_setup
   ship_cfg_local agent.git push
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
   git commit -q -m "committed by an earlier run"
@@ -3075,6 +3098,7 @@ test_task_ship_empty_index_with_a_clean_tree_ships_the_earlier_commit() {
 test_task_ship_unstaged_change_refuses_and_ships_nothing() {
   ship_setup_forge
   ship_cfg_local agent.git merge
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
   git commit -q -m "committed by an earlier run"
@@ -3097,6 +3121,7 @@ test_task_ship_unstaged_change_refuses_and_ships_nothing() {
 test_task_ship_empty_branch_refuses_before_anything_leaves_the_machine() {
   ship_setup_forge
   ship_cfg_local agent.git merge
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
 
   run jig task ship T-1 --message-file msg.txt
@@ -3115,6 +3140,7 @@ test_task_ship_empty_branch_refuses_before_anything_leaves_the_machine() {
 test_task_ship_empty_branch_refuses_at_commit_level_too() {
   ship_setup
   ship_cfg_local agent.git commit
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   local head_before
   head_before=$(git rev-parse HEAD)
@@ -3152,6 +3178,7 @@ test_ship_every_outward_step_refuses_before_the_ship_said_what_it_sends() {
 test_task_ship_push_level_pushes_and_stops() {
   ship_setup
   ship_cfg_local agent.git push
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3170,6 +3197,7 @@ test_task_ship_push_level_pushes_and_stops() {
 test_task_ship_push_never_waits_for_a_prompt() {
   ship_setup
   ship_cfg_local agent.git push
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3194,6 +3222,7 @@ test_task_ship_pr_level_creates_pr_into_base_branch() {
   ship_cfg forge github
   ship_stub_gh ""
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3215,6 +3244,7 @@ test_task_ship_pr_level_does_not_duplicate_an_existing_open_pr() {
   ship_cfg forge github
   ship_stub_gh "https://github.com/example/example/pull/7"
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3229,6 +3259,7 @@ test_task_ship_pr_level_creates_mr_with_gitlab() {
   ship_cfg forge gitlab
   ship_stub_glab ""
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3250,6 +3281,7 @@ test_task_ship_pr_level_does_not_duplicate_an_existing_open_mr() {
   ship_cfg forge gitlab
   ship_stub_glab "https://gitlab.example/x/-/merge_requests/7"
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3264,6 +3296,7 @@ test_task_ship_pr_level_gitlab_mr_create_failure_dies() {
   ship_cfg forge gitlab
   ship_stub_glab_mr_create_fails
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3276,6 +3309,7 @@ test_task_ship_pr_level_with_no_forge_stops_with_message() {
   ship_setup
   ship_cfg forge none
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3288,6 +3322,7 @@ test_task_ship_pr_level_with_no_forge_stops_with_message() {
 test_task_ship_invalid_agent_git_level_dies() {
   ship_setup
   ship_cfg_local agent.git yolo
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
 
   run jig task ship T-1 --message-file msg.txt
@@ -3409,6 +3444,7 @@ mship_setup() {
   if [ "$1" = github ]; then mship_stub_gh; else mship_stub_glab; fi
   ship_cfg_local agent.git merge
   ship_cfg_local agent.ci_timeout 0
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 }
@@ -3552,6 +3588,7 @@ test_task_ship_draft_at_pr_level_opens_a_draft() {
   ship_cfg forge github
   ship_stub_gh ""
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3597,6 +3634,7 @@ test_task_ship_merge_level_with_no_forge_leaves_the_merge_to_the_human() {
   ship_setup
   ship_cfg forge none
   ship_cfg_local agent.git merge
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3630,6 +3668,7 @@ test_task_ship_merge_level_ignores_the_project_ci_timeout() {
 test_task_ship_merge_level_ignores_agent_git_merge_in_the_project_config() {
   ship_setup
   printf 'agent.git: merge\n' >> .ai/config.yaml
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -3953,6 +3992,7 @@ test_task_set_status_ready_refuses_open_p1() {
   task_setup
   jig task new T-1 --class T2 >/dev/null
   jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:1374 --summary "bad flag" >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 1 "$RC"
   assert_contains "$OUT" "1 blocking finding (F1 P1 open scripts/lib/task.sh:1374)"
@@ -3966,6 +4006,7 @@ test_task_set_status_ready_refuses_fixed_p1() {
   jig task new T-1 >/dev/null
   jig task finding add T-1 --severity P1 --where - --summary "x" >/dev/null
   jig task finding set T-1 F1 fixed >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 1 "$RC"
   assert_contains "$OUT" "1 blocking finding (F1 P1 fixed -)"
@@ -3976,6 +4017,7 @@ test_task_set_status_ready_succeeds_once_closed() {
   jig task new T-1 >/dev/null
   jig task finding add T-1 --severity P1 --where - --summary "x" >/dev/null
   jig task finding set T-1 F1 closed >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
@@ -3985,6 +4027,7 @@ test_task_set_status_ready_open_p2_does_not_block() {
   task_setup
   jig task new T-1 >/dev/null
   jig task finding add T-1 --severity P2 --where - --summary "x" >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
@@ -3995,6 +4038,7 @@ test_task_set_knowledge_consolidated_refuses_planted_p1_on_t2_task() {
   task_setup
   jig task new T-1 --class T2 >/dev/null
   jig task finding add T-1 --severity P1 --where scripts/lib/task.sh:42 --summary "planted finding" >/dev/null
+  task_route_done T-1
   run jig task set T-1 knowledge_consolidated true
   assert_eq 1 "$RC"
   assert_contains "$OUT" "blocking finding"
@@ -4006,6 +4050,7 @@ test_task_set_knowledge_consolidated_dismissed_p0_does_not_block() {
   jig task new T-1 >/dev/null
   jig task finding add T-1 --severity P0 --where - --summary "x" >/dev/null
   jig task finding set T-1 F1 dismissed --reason "false positive, agreed with the human" >/dev/null
+  task_route_done T-1
   run jig task set T-1 knowledge_consolidated true
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: true"
@@ -4014,8 +4059,10 @@ test_task_set_knowledge_consolidated_dismissed_p0_does_not_block() {
 test_task_set_no_findings_file_unchanged_behaviour() {
   task_setup
   jig task new T-1 >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 0 "$RC"
+  task_route_done T-1
   run jig task set T-1 knowledge_consolidated true
   assert_eq 0 "$RC"
 }
@@ -4056,7 +4103,7 @@ test_task_receipt_writes_all_keys() {
   assert_file .ai/workspace/tasks/T-1/receipt
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/receipt | tr '\n' ' ')
-  assert_eq "stage reviewed_at tree diff context base_commit head design findings " "$keys"
+  assert_eq "stage stages reviewed_at tree diff context base_commit head design findings " "$keys"
 
   assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: review"
   assert_file_contains .ai/workspace/tasks/T-1/receipt "reviewed_at: $(date +%Y-%m-%d)"
@@ -4418,6 +4465,7 @@ EOF2
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
   assert_contains "$OUT" "receipt: stale (context, reviewed"
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_contains "$OUT" "the knowledge the review relied on, not the code"
 }
@@ -4598,6 +4646,8 @@ test_task_set_status_ready_refuses_stale_receipt() {
   jig task receipt T-1 --stage review >/dev/null
   printf '# edited\n' >> AGENTS.md
 
+  task_route_class T-1
+
   run jig task set T-1 status ready
   assert_eq 1 "$RC"
   assert_contains "$OUT" "task set: review is stale: code changed since review on $(date +%Y-%m-%d) (diff; diff: the task's own change); re-review and run: jig task receipt T-1 --stage review"
@@ -4611,6 +4661,8 @@ test_task_set_knowledge_consolidated_refuses_stale_receipt() {
   jig task receipt T-1 --stage review >/dev/null
   printf '# edited\n' >> AGENTS.md
 
+  task_route_done T-1
+
   run jig task set T-1 knowledge_consolidated true
   assert_eq 1 "$RC"
   assert_contains "$OUT" "review is stale: code changed since review on"
@@ -4621,18 +4673,22 @@ test_task_set_status_ready_refuses_t4_without_a_receipt() {
   task_setup
   jig task new T-1 --class T4 >/dev/null
   jig task start T-1 >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 1 "$RC"
   assert_contains "$OUT" "task set: T4 needs a review receipt; run the independent review, then: jig task receipt T-1 --stage review"
 }
 
-test_task_set_status_ready_passes_t3_without_a_receipt() {
+test_task_set_status_ready_refuses_t3_without_an_architecture_review() {
   task_setup
   jig task new T-1 --class T3 >/dev/null
   jig task start T-1 >/dev/null
+  printf 'design\n' > .ai/workspace/tasks/T-1/design.md
+  jig task gate T-1 approved >/dev/null
   run jig task set T-1 status ready
-  assert_eq 0 "$RC"
-  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "architecture review (no architecture-review receipt"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
 }
 
 # task ship refuses on a stale receipt even when knowledge_consolidated was
@@ -5025,12 +5081,12 @@ test_task_autopilot_resume_resets_repairs_and_sets_on() {
   jig task autopilot T-1 start >/dev/null
   jig task autopilot T-1 repair --reason r1 >/dev/null
   jig task autopilot T-1 stop --reason "gate" >/dev/null
-  run jig task autopilot T-1 resume
+  run jig task autopilot T-1 resume --answer "go on"
   assert_eq 0 "$RC"
   assert_eq "autopilot: on" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
-  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tresume\t')"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tresume\tgo on')"
   # The reset is real, not cosmetic: two more repairs after resume must not
   # trip the limit early.
   run jig task autopilot T-1 repair --reason r2
@@ -5126,11 +5182,13 @@ test_task_autopilot_report_after_resume_and_end() {
   task_started T-1
   jig task autopilot T-1 start >/dev/null
   jig task autopilot T-1 stop --reason "gate" >/dev/null
-  jig task autopilot T-1 resume >/dev/null
+  jig task autopilot T-1 resume --answer "approved as shown" >/dev/null
   jig task autopilot T-1 end >/dev/null
   run jig task autopilot T-1 report
   assert_eq 0 "$RC"
-  assert_contains "$OUT" " resume"
+  assert_contains "$OUT" " resume: approved as shown"
+  assert_contains "$OUT" "Resumed on an answer (check it was yours):
+- approved as shown"
   assert_contains "$OUT" " end"
   assert_contains "$OUT" "autopilot: done, repairs: 0/2"
 }
@@ -5161,6 +5219,7 @@ test_task_set_status_ready_still_refuses_with_autopilot_on_and_an_open_p1_findin
   task_started T-1
   jig task autopilot T-1 start >/dev/null
   jig task finding add T-1 --severity P1 --where a.sh:1 --summary "bug" >/dev/null
+  task_route_class T-1
   run jig task set T-1 status ready
   assert_eq 1 "$RC"
   assert_contains "$OUT" "blocking finding"
@@ -5211,6 +5270,8 @@ test_task_status_page_set_status_ready_changes_the_page() {
   jig task start T-1 >/dev/null
   jig status --html >/dev/null
   assert_file_contains .ai/runtime/status.html "status=active"
+
+  task_route_class T-1
 
   jig task set T-1 status ready >/dev/null
   assert_file_contains .ai/runtime/status.html "status=ready"
@@ -5410,6 +5471,7 @@ test_task_ship_pr_level_records_pr_url_in_state() {
   ship_cfg forge github
   ship_stub_gh ""
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -5423,6 +5485,7 @@ test_task_ship_pr_level_already_open_pr_still_records_pr_url_in_state() {
   ship_cfg forge github
   ship_stub_gh "https://github.com/example/example/pull/7"
   ship_cfg_local agent.git pr
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
 
@@ -5472,9 +5535,7 @@ test_task_autopilot_mode_holds_when_the_key_changes_mid_run() {
   task_started T-1
   unattended_local
   jig task autopilot T-1 start >/dev/null
-  jig task autopilot T-1 stop --reason "x" >/dev/null
   : > .ai/config.local.yaml
-  jig task autopilot T-1 resume >/dev/null
   run jig task autopilot T-1 decide --reason "kept the old API"
   assert_eq 0 "$RC"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
@@ -5521,6 +5582,8 @@ test_task_autopilot_report_lists_what_was_decided_and_self_approved() {
   assert_eq "approve: design.md approved at the gate" "$OUT"
   jig task autopilot T-1 decide --reason "kept the old flag name: renaming it breaks callers" >/dev/null
   jig task autopilot T-1 decide --reason "did not delete the old directory" >/dev/null
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
   jig task autopilot T-1 end >/dev/null
 
   run jig task autopilot T-1 report
@@ -5620,6 +5683,7 @@ test_task_set_refuses_autopilot_mode_and_gate_by_keys() {
 test_task_ship_says_nothing_verifies_a_project_no_profile_covers() {
   ship_setup
   ship_cfg_local agent.git commit
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
   # The fixture project runs `generic` alone, which declares `detect: always`
@@ -5639,6 +5703,7 @@ test_task_ship_says_nothing_verifies_a_project_no_profile_covers() {
 test_task_ship_is_silent_about_verification_when_a_profile_covers_the_project() {
   ship_setup
   ship_cfg_local agent.git commit
+  task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   # A profile that claims a stack rather than covering everything.
   mkdir -p .ai/profiles/stack
@@ -5800,4 +5865,376 @@ test_task_artifacts_full_t2_keeps_the_plan_stage() {
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "task: T-1; class: T2; depth: full"
   assert_contains "$OUT" "plan: needs-input; inputs: task discovery"
+}
+
+# --- route evidence (adr-20261004-a-route-stage-is-proven-by-its-record) ------
+
+# route_task [<task new args>] — T-1 filed with <args> and started.
+route_task() {
+  task_setup
+  jig task new T-1 "$@" >/dev/null
+  jig task start T-1 >/dev/null
+}
+
+route_design() {
+  printf '# design\n\nthe answer\n' > .ai/workspace/tasks/T-1/design.md
+}
+
+test_route_evidence_t3_without_a_gate_is_refused_at_ready() {
+  route_task --class T3
+  route_design
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: the route of T-1 (T3) is missing: human gate (no approval recorded: jig task gate T-1 approved)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+test_route_evidence_t3_without_a_design_names_design_and_gate() {
+  route_task --class T3
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "design (no design.md: jig task artifact write T-1 design); human gate (no approval recorded"
+}
+
+test_route_evidence_t3_without_an_architecture_review_is_refused_at_ready() {
+  route_task --class T3
+  route_design
+  jig task gate T-1 approved >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is missing: architecture review (no architecture-review receipt: jig task receipt T-1 --stage architecture-review)"
+}
+
+test_route_evidence_t3_review_receipt_is_not_an_architecture_review() {
+  route_task --class T3
+  route_design
+  jig task gate T-1 approved >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "architecture review (no architecture-review receipt"
+}
+
+test_route_evidence_t3_design_changed_after_the_gate_is_refused() {
+  route_task --class T3
+  route_design
+  jig task gate T-1 approved >/dev/null
+  printf 'changed after approval\n' >> .ai/workspace/tasks/T-1/design.md
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "human gate (the design changed after its approval: take it back to the gate, then jig task gate T-1 approved)"
+}
+
+# route_t3_complete — every record a T3 route leaves, in route order.
+route_t3_complete() {
+  route_design
+  jig task gate T-1 approved >/dev/null
+  jig task receipt T-1 --stage architecture-review >/dev/null
+}
+
+test_route_evidence_t3_complete_full_run_passes_every_gate() {
+  route_task --class T3
+  route_t3_complete
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "missing"
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "knowledge_consolidated: true"
+}
+
+test_route_evidence_t3_complete_lean_run_passes_and_lean_keeps_the_gate() {
+  route_task --class T3 --lean
+  route_design
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  # Lean trims nothing a T3 route records: the gate is still asked for.
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "human gate (no approval recorded"
+  jig task gate T-1 approved >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_unattended_self_approval_counts_as_the_gate() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  route_design
+  jig task gate T-1 approved --by agent >/dev/null
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_receipt_remembers_every_stage_it_was_written_for() {
+  route_task --class T3
+  route_t3_complete
+  # A re-review under the other stage does not erase the architecture review.
+  jig task receipt T-1 --stage review >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: review"
+  assert_file_contains .ai/workspace/tasks/T-1/receipt "stages: architecture-review,review"
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_receipt_without_stages_counts_its_own_stage() {
+  route_task --class T3
+  route_t3_complete
+  # A receipt written before `stages:` existed (the stale check ignores the
+  # line, so dropping it changes nothing else).
+  grep -v '^stages:' .ai/workspace/tasks/T-1/receipt > r.tmp
+  mv r.tmp .ai/workspace/tasks/T-1/receipt
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_t2_without_a_review_is_refused_at_ready() {
+  route_task --class T2
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: the route of T-1 (T2) is missing: review (no review receipt: jig task receipt T-1 --stage review)"
+}
+
+test_route_evidence_t2_complete_full_and_lean_runs_pass() {
+  route_task --class T2
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC" "$OUT"
+
+  jig task new T-2 --class T2 --lean >/dev/null
+  jig task start T-2 >/dev/null
+  run jig task set T-2 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review (no review receipt"
+  jig task receipt T-2 --stage review >/dev/null
+  run jig task set T-2 status ready
+  assert_eq 0 "$RC" "$OUT"
+  run jig task set T-2 knowledge_consolidated true
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_t4_names_the_spec_and_the_alternatives() {
+  route_task --class T4
+  route_design
+  jig task gate T-1 approved >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "specify (no spec.md: jig task artifact write T-1 spec); alternatives (no alternatives.md: jig task artifact write T-1 alternatives)"
+  printf 'spec\n' > .ai/workspace/tasks/T-1/spec.md
+  printf 'alternatives\n' > .ai/workspace/tasks/T-1/alternatives.md
+  # The documents the gate pins changed: approve and review them again.
+  jig task gate T-1 approved >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_knowledge_decision_asks_for_verify_sign_off() {
+  route_task --class T0
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: the route of T-1 (T0) is missing: verify (not signed off: jig verify, then jig task set T-1 status ready)"
+  jig task set T-1 status ready >/dev/null
+  run jig task set T-1 knowledge_consolidated true
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_evidence_unclassified_task_is_refused() {
+  route_task
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is missing: class (not classified, so there is no route: jig task set T-1 class Tn)"
+}
+
+test_route_evidence_a_task_filed_before_the_check_passes_with_a_warning() {
+  route_task --class T3
+  grep -v '^route_evidence:' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "jig: warning: task set: T-1 was filed before route evidence was checked, so this passes without: design (no design.md"
+  assert_contains "$OUT" "human gate (no approval recorded"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: ready"
+}
+
+test_route_evidence_task_set_refuses_its_keys() {
+  route_task --class T1
+  local key
+  for key in route_evidence class_lowered_from class_lowered_reason; do
+    run jig task set T-1 "$key" x
+    assert_eq 1 "$RC"
+    assert_contains "$OUT" "not writable: $key"
+  done
+}
+
+test_route_evidence_ship_rechecks_the_route() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  # Verify's sign-off withdrawn after the knowledge decision.
+  jig task set T-1 status active >/dev/null
+  ship_stage_change
+  local head_before
+  head_before=$(git rev-parse HEAD)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: the route of T-1 (T0) is missing: verify (not signed off"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+# --- lowering a class ----------------------------------------------------------
+
+test_route_lowering_a_class_needs_a_reason() {
+  route_task --class T3
+  run jig task set T-1 class T1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: lowering T-1 from T3 to T1 sheds stages of its route; say why: jig task set T-1 class T1 --reason <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "class: T3"
+}
+
+test_route_lowering_is_recorded_and_shown() {
+  route_task --class T3
+  run jig task set T-1 class T1 --reason "only a message changes"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "class: T1"
+  assert_file_contains .ai/workspace/tasks/T-1/state "class_lowered_from: T3"
+  assert_file_contains .ai/workspace/tasks/T-1/state "class_lowered_reason: only a message changes"
+  run jig task route T-1
+  assert_contains "$OUT" "lowered: from T3: only a message changes"
+  run jig status
+  assert_contains "$OUT" "task T-1 class=T1 status=active lowered=T3"
+  # Lowering again keeps the highest class it came from.
+  jig task set T-1 class T0 --reason "nothing to analyze" >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "class_lowered_from: T3"
+  # Raising back to where it came from clears the record.
+  jig task set T-1 class T3 >/dev/null
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "class_lowered_from"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "class_lowered_reason"
+}
+
+test_route_lowering_reason_is_only_for_a_lower_class() {
+  route_task --class T1
+  run jig task set T-1 class T2 --reason "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is only for lowering a class"
+  run jig task set T-1 status active --reason "x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason is only for lowering a class"
+}
+
+test_route_lowering_out_of_the_gate_is_refused_in_an_unattended_run() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  run jig task set T-1 class T2 --reason "small after all"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "an unattended run does not lower T-1 from T3 below T3"
+  assert_file_contains .ai/workspace/tasks/T-1/state "class: T3"
+}
+
+test_route_lowering_is_journaled_and_reported_in_a_run() {
+  route_task --class T4
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  # T4 to T3 keeps the gate, so an unattended run may do it.
+  run jig task set T-1 class T3 --reason "no money involved"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tlower\tT4 to T3: no money involved')"
+  run jig task autopilot T-1 report
+  assert_contains "$OUT" "Class lowered:
+- from T4 to T3: no money involved"
+}
+
+# --- resume needs an answer --------------------------------------------------------
+
+test_route_resume_without_an_answer_is_refused() {
+  route_task --class T1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "which API?" >/dev/null
+  run jig task autopilot T-1 resume
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--answer is required"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+}
+
+test_route_resume_is_refused_in_an_unattended_run() {
+  route_task --class T1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason r3 >/dev/null
+  run jig task autopilot T-1 resume --answer "try again"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is unattended, and nobody answers there"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+}
+
+test_route_lowering_out_of_the_gate_is_refused_after_an_unattended_run_stopped() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "stuck" >/dev/null
+  # The key unset afterwards changes nothing: the run was unattended.
+  : > .ai/config.local.yaml
+  run jig task set T-1 class T1 --reason "small after all"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "an unattended run does not lower T-1 from T3 below T3"
+}
+
+test_route_lowering_out_of_the_gate_is_refused_where_the_clone_is_unattended() {
+  route_task --class T4
+  unattended_local
+  run jig task set T-1 class T2 --reason "small after all"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "does not lower T-1 from T4 below T3"
+}
+
+test_route_unattended_run_ends_only_after_the_knowledge_decision() {
+  route_task --class T0
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  # Ending and starting again would be two fresh repairs nobody granted.
+  run jig task autopilot T-1 end
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unattended run ends after consolidation"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  jig task set T-1 status ready >/dev/null
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  run jig task autopilot T-1 end
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_route_gate_in_an_unattended_run_is_the_agents() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  route_design
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "this approval is the agent's: jig task gate T-1 approved --by agent"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+}
+
+test_route_evidence_ignores_the_persons_depth() {
+  route_task --class T2
+  # A lean setting trims the plan, which leaves no record; the review is
+  # still asked for, whatever the person's depth.
+  printf 'route.depth: lean\n' >> .ai/config.local.yaml
+  run jig task set T-1 status ready
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "review (no review receipt"
 }

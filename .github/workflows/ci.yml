@@ -323,6 +323,7 @@ jobs:
           git -C "$wt" commit -q -m "work for ci-demo"
           sleep 2
           git merge -q --ff-only task/ci-demo
+          .ai/scripts/jig task set ci-demo status ready
           .ai/scripts/jig task set ci-demo knowledge_consolidated true
           .ai/scripts/jig task set ci-demo status consolidated
           .ai/scripts/jig housekeeping --verbose

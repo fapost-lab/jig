@@ -44,7 +44,9 @@ Run each stage's skill in order, and mark it as you enter it:
 
   Exit 3 means the limit (2 per run) is used up and the run is stopped. Do not try again.
 - **The gates are not obstacles.** When `status ready`, the knowledge decision or `task ship`
-  refuses, the refusal is the process working: go back to the stage it names.
+  refuses, the refusal is the process working: go back to the stage it names. A refusal that
+  says `the route of <id> is missing:` names a stage of the route that left no record — the
+  gate, a review receipt, verify's `status ready` — and the command that records it.
 
 ## 3. Stop only here
 
@@ -72,14 +74,14 @@ rewriting published history, deleting files outside the task's own change, migra
 deleting data, and anything the runtime asks permission for that the human has not given.
 The scripts cannot see your commands — this stop is yours to keep.
 
-After the human answers:
+After the human answers, quote their answer:
 
 ```
-.ai/scripts/jig task autopilot <id> resume
+.ai/scripts/jig task autopilot <id> resume --answer "<their answer, in their words>"
 ```
 
-It resets the repair count: the human gave the run a new direction. Continue from the stage
-you stopped in.
+It resets the repair count: the human gave the run a new direction. The answer goes into the
+report, so never resume without one. Continue from the stage you stopped in.
 
 ## 4. End
 
@@ -105,7 +107,8 @@ default below, recorded so they read it in the pull request, in plain words, not
 | The gate of a T3/T4 task, or a re-classification into one | Write the design as usual, then `jig task gate <id> approved --by agent`, `jig task autopilot <id> approve --reason "<what was approved>"`, and in `task.md` (`jig task artifact append <id> task --from -`): "Human gate — approved by the agent (unattended)". Put `design.md` verbatim in the pull request under `## Design — approved by the agent, not a human` |
 | A decision nobody made | The most cautious option that is easiest to undo. `jig task autopilot <id> decide --reason "<what you chose, and why>"` |
 | A destructive operation | Never. Find another way or leave that part out, and say so with `decide --reason` |
-| `repair` exited 3 | The run ends unfinished: stage what there is and run `jig task ship <id> --message-file <file> --draft`. The body starts with `Not finished: <why>`. A draft is never merged; the run stays `stopped`, and the status page shows it waiting |
+| `repair` exited 3 | The run ends unfinished: stage what there is and run `jig task ship <id> --message-file <file> --draft`. The body starts with `Not finished: <why>`. A draft is never merged; the run stays `stopped`, and the status page shows it waiting. `resume` is refused in an unattended run |
+| The class turns out lower | Lower it with `jig task set <id> class <Tn> --reason "<why>"`, except out of T3/T4 below T3: the script refuses that unattended, so keep the route. `end` comes after the knowledge decision, never to start a fresh run |
 
 What never changes: a P0/P1 is never dismissed, the gates are never worked around, and nothing
 is merged but by `task ship`. Before shipping, put `jig task autopilot <id> report`'s

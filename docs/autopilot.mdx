@@ -66,7 +66,9 @@ it, and it carries on from where it stopped.
 | The next step would destroy something — force-push, delete a branch, delete data, rewrite history | Allow it, or ask for another way |
 
 After you answer, the agent continues, and it gets two fresh attempts at fixing: your answer gave
-the run a new direction.
+the run a new direction. It carries your answer into the run's record word for word, and the report
+lists it under **Resumed on an answer** — if you see an answer there you never gave, the agent
+resumed itself.
 
 ## The report
 
@@ -118,7 +120,8 @@ request, in plain words:
 | Approving the design of a risky task | Approves its own design. The design is in the pull request under **Design — approved by the agent, not a human** |
 | A decision nobody has made | Picks the most careful option, the one easiest to undo. Listed under **Decided without you** |
 | Something that would destroy data or history | Never does it. It finds another way or leaves that part out, and says so under **Decided without you** |
-| A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged |
+| A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged, and the run never resumes itself for more attempts |
+| The task turns out smaller than its design approval assumed | Keeps the risky task's route. Only a person can lower a task out of the classes that need a design approval |
 
 Read these sections in the pull request, even after it merged: they are everything the agent chose
 without you. The run's report (`jig task autopilot <task-id> report`) lists them too.

@@ -79,3 +79,9 @@ findings and receipt gates refuse to finish a task that is not reviewed as it st
 > own branch). The route, the stages, the repair limit and the stops are unchanged; a stop is
 > answered in the coordinator's session, and it holds the next wave rather than the one in flight
 > (adr-20260922-a-phase-run-is-coordinated).
+
+> **Amendment (2026-10-04).** `resume` lifted the repair limit on nothing but `stopped`, and `stop`
+> needs no human, so a run could reset its own limit. `resume` now requires `--answer <text>`, the
+> human's answer, journaled and printed by `report` under "Resumed on an answer" for the pull
+> request; in an unattended run it is refused, since nobody answers there and its repair-limit stop
+> ends the run in a draft (adr-20261004-a-route-stage-is-proven-by-its-record).

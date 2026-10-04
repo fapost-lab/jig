@@ -78,3 +78,11 @@ on every task.
 - Every gate check builds one temporary index: a cost of one `git add -A` over the working tree,
   which also writes a blob for each new or changed file into the object store. Nothing refers to
   them, and `git gc` prunes them like any unreferenced object.
+
+> **Amendment (2026-10-04).** Two lines of this decision no longer hold. "T0–T3 without one pass":
+> a T2 task now needs a receipt covering `review` and a T3 one covering `architecture-review` before
+> `status ready`, the alternative rejected above — the review is a stage of their routes, and the
+> receipt is the record that proves it ran. "Rewritten by each re-review": still rewritten, but the
+> new `stages:` line carries over every stage a receipt of the task was written for, so a re-review
+> under another stage does not erase the first. A task filed before the change is warned, not
+> refused. See adr-20261004-a-route-stage-is-proven-by-its-record.

@@ -49,7 +49,8 @@ item that did not pass.
 10. `jig task new demo` and `jig task start demo --worktree` succeed; `jig doctor` reports
     directory links as `junction`.
 11. Commit something on the task branch, merge it into `main`, close the task
-    (`jig task set demo knowledge_consolidated true`, then `status consolidated`), run
+    (`jig task set demo class T0`, `status ready`, `knowledge_consolidated true`, then
+    `status consolidated`), run
     `jig housekeeping`. The worktree directory is gone, and the project's
     `.ai/workspace/` still holds every other task.
 

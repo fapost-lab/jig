@@ -940,6 +940,7 @@ test_status_forgets_a_flag_once_the_task_is_consolidated() {
 
   # Consolidate it: the next run purges it, and the stale flag from the
   # previous run must not keep being reported.
+  task_route_done ff
   jig task set ff knowledge_consolidated true >/dev/null
   jig task set ff status consolidated >/dev/null
   jig housekeeping >/dev/null
@@ -1673,6 +1674,7 @@ hk_worktree_task() {
   git -C "$wt" commit -q -m "work for $id"
   hk_tick
   git merge -q --ff-only "task/$id"
+  task_route_done "$id"
   jig task set "$id" knowledge_consolidated true >/dev/null
   jig task set "$id" status consolidated >/dev/null
   printf '%s\n' "$wt"
@@ -1998,6 +2000,7 @@ hk_foreign_worktree_task() {
   git -C ../manual commit -q -m "work"
   hk_tick
   git merge -q --ff-only "task/$id"
+  task_route_done "$id"
   jig task set "$id" knowledge_consolidated true >/dev/null
   jig task set "$id" status consolidated >/dev/null
 }
@@ -2122,6 +2125,7 @@ hk_epic_worktree_task() {
     git merge -q --no-ff -m "merge task/$id into epic/x" "task/$id"
     git checkout -q main
   fi
+  task_route_done "$id"
   jig task set "$id" knowledge_consolidated true >/dev/null
   case "$status" in
     consolidated) jig task set "$id" status consolidated >/dev/null ;;
