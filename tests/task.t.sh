@@ -1623,7 +1623,6 @@ test_task_artifact_write_refreshes_updated_at_and_becomes_present_in_artifacts()
 # worktree must still land in the ORIGINAL checkout's workspace. Modeled on
 # test_task_start_worktree_borrows_the_workspace_by_link below.
 test_task_artifact_worktree_writes_through_the_borrowed_link() {
-  skip_unless_symlinks
   task_setup_nested
   jig task new T-1 >/dev/null
   local wt owner content_file result rc
@@ -2737,6 +2736,98 @@ test_task_artifact_refuses_a_link_to_anywhere_else() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "linked task workspace is unsupported"
   assert_no_file elsewhere/T-1/plan.md
+}
+
+# The same refusal one level up. `task start --worktree` links the whole
+# `.ai/workspace/tasks` now, so a link at the parent is the usual shape, and
+# `-L` on the task's own path cannot see it: the check must judge the tasks
+# directory by where it leads. Here it leads to a directory no checkout of
+# this repository holds, outside the repository, and every verb that reads or
+# writes through `_task_workspace_root` refuses before touching it. Planted
+# with plant_dir_link, so Windows is checked with a junction rather than
+# skipped.
+test_task_artifact_refuses_a_borrowed_directory_that_leads_outside() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  mkdir ../outside
+  cp -R .ai/workspace/tasks/T-1 ../outside/T-1
+  rm -rf .ai/workspace/tasks
+  plant_dir_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace/tasks"
+
+  run jig task artifact write T-1 plan <<< 'planted'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task artifact: .ai/workspace/tasks leads to"
+  assert_contains "$OUT" "which is no checkout of this repository"
+  assert_no_file ../outside/T-1/plan.md
+
+  run jig task artifact append T-1 plan <<< 'planted'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "which is no checkout of this repository"
+  assert_no_file ../outside/T-1/plan.md
+
+  run jig task artifacts T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task artifacts: .ai/workspace/tasks leads to"
+}
+
+# Two levels up: a link at `.ai/workspace` resolves the task directory and the
+# tasks directory through the same link just as well, so it is judged the same
+# way.
+test_task_artifact_refuses_a_workspace_link_that_leads_outside() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  mkdir -p ../outside/tasks
+  cp -R .ai/workspace/tasks/T-1 ../outside/tasks/T-1
+  rm -rf .ai/workspace
+  plant_dir_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace"
+
+  run jig task artifact write T-1 plan <<< 'planted'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "which is no checkout of this repository"
+  assert_no_file ../outside/tasks/T-1/plan.md
+}
+
+# A borrowed directory vouches for itself, not for what sits in it: a task
+# entry there that is a link of its own is judged like any other link, from
+# the worktree as from the owner.
+test_task_artifact_refuses_a_task_link_inside_a_borrowed_directory() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  [ -L "$wt/.ai/workspace/tasks" ] || fail "the worktree did not borrow the task directory"
+  mkdir ../outside
+  mv .ai/workspace/tasks/T-1 ../outside/T-1
+  plant_dir_link "$(cd ../outside/T-1 && pwd -P)" "$PWD/.ai/workspace/tasks/T-1"
+
+  set +e
+  OUT=$(cd "$wt" && jig task artifact write T-1 plan <<< 'planted' 2>&1)
+  RC=$?
+  set -e
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "linked task workspace is unsupported"
+  assert_no_file ../outside/T-1/plan.md
+}
+
+# The other half of the rule: a link at `.ai/workspace` that leads into
+# another checkout of this repository is how a coordinator shares the main
+# checkout's workspace from a second worktree, and it keeps working.
+test_task_artifact_writes_through_a_workspace_link_into_another_worktree() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local owner coord result rc
+  owner=$(pwd -P)
+  git worktree add -q ../coord >/dev/null 2>&1 || fail "could not add a worktree"
+  coord=$(cd ../coord && pwd -P)
+  rm -rf "$coord/.ai/workspace"
+  plant_dir_link "$owner/.ai/workspace" "$coord/.ai/workspace"
+
+  set +e
+  result=$(cd "$coord" && jig task artifact write T-1 plan <<< 'from the coordinator' 2>&1)
+  rc=$?
+  set -e
+  assert_eq 0 "$rc" "$result"
+  assert_file_contains "$owner/.ai/workspace/tasks/T-1/plan.md" 'from the coordinator'
 }
 
 test_task_start_worktree_failure_leaves_nothing_behind() {

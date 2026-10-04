@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-09-30
+reviewed_at: 2026-10-04
 ---
 # Task
 
@@ -134,8 +134,10 @@ about the worktree road are easy to get wrong from inside this domain's code:
   the one-task link instead, and `task new` then refuses to file a task in that worktree
   rather than lose it when the tree goes.
   Nothing may delete or move a workspace through that link. `_task_workspace_root` is
-  where that is decided, for reading and for writing alike: it refuses every link but
-  this one, and `task artifacts` and `task artifact` both go through it. A third command
+  where that is decided, for reading and for writing alike: it judges a link at any level
+  of the path by where it physically leads, accepts only the task directory of a checkout
+  `git worktree list` names for this repository (ADR-0029, amendment of 2026-10-04), and
+  `task artifacts` and `task artifact` both go through it. A third command
   that reaches an artifact adds a call, never a second copy of the check (RULES.md).
 - Writing an artifact is `task artifact write|append`, not a shell redirection, and the
   reason is the worktree. An agent's editing tools refuse a path that resolves outside
