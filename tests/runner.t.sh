@@ -84,6 +84,77 @@ rn_names() {
   printf '%s\n' "$1" | grep -E '^(ok|FAIL|skip) ' | awk '{print $2}'
 }
 
+# --- the name filter ----------------------------------------------------
+
+test_runner_filter_matching_nothing_is_an_error() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" "nonesuch"
+  assert_eq 1 "$RC" "a filter that selects no test exits 1"
+  assert_contains "$OUT" "no test matched nonesuch"
+  assert_not_contains "$OUT" "0 passed"
+}
+
+test_runner_filter_error_names_the_filter_as_given() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" "a.t.sh::test_nonesuch"
+  assert_eq 1 "$RC" "exit code"
+  assert_contains "$OUT" "no test matched a.t.sh::test_nonesuch"
+}
+
+test_runner_filter_accepts_the_file_name_with_its_suffix() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" "a::test_2_keep"
+  assert_eq 0 "$RC" "plain form"
+  rn_run "" "" "a.t.sh::test_2_keep"
+  assert_eq 0 "$RC" "file name with .t.sh"
+  assert_eq "a::test_2_keep" "$(rn_names "$OUT")" "the one test"
+  rn_run "" "" "tests/a.t.sh::test_2_keep"
+  assert_eq 0 "$RC" "path with .t.sh"
+  assert_eq "a::test_2_keep" "$(rn_names "$OUT")" "the one test, by path"
+  rn_run "" "" "a.t.sh::"
+  assert_eq 0 "$RC" "whole file"
+  assert_eq 4 "$(rn_names "$OUT" | grep -c .)" "all four tests of a"
+  rn_run "" "" "b.t.sh"
+  assert_eq 0 "$RC" "file name alone"
+  assert_eq 3 "$(rn_names "$OUT" | grep -c .)" "all three tests of b"
+}
+
+test_runner_filter_that_is_only_decoration_is_not_no_filter() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" "tests/"
+  assert_eq 1 "$RC" "tests/ names no test"
+  assert_contains "$OUT" "no test matched tests/"
+  assert_eq 0 "$(rn_names "$OUT" | grep -c .)" "nothing ran"
+  rn_run "" "" ".t.sh"
+  assert_eq 1 "$RC" ".t.sh names no test"
+}
+
+test_runner_filter_matching_nothing_in_a_shard_is_not_an_error() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  # One test selected, three shares: two of them hold none of it.
+  rn_run "2/3" "" "b::test_3_keep"
+  assert_eq 0 "$RC" "a share without the selected test still passes"
+}
+
+test_runner_empty_filter_runs_everything_and_is_not_an_error() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run "" "" ""
+  assert_eq 0 "$RC" "no filter"
+  assert_eq 7 "$(rn_names "$OUT" | grep -c .)" "all tests"
+}
+
 # --- JIG_TEST_SHARD ------------------------------------------------------
 
 test_runner_shard_shares_partition_the_suite() {

@@ -534,9 +534,9 @@ if [ -x tests/run.sh ]; then
     # as it does not inherit the scope (tests/run.sh unsets the others).
     unset JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN JIG_VERIFY_MAPPED_ALL
 
-    # A filter that selects no test is not a narrowing: tests/run.sh reports
-    # `0 passed` and exits 0, and a pass nothing produced is the defect this
-    # check exists to prevent (ADR-0041). Such a filter runs the full set.
+    # A filter that selects no test is not a narrowing: tests/run.sh answers
+    # "no test matched" and exits 1, and a red nobody earned is as wrong as a
+    # green nothing produced (ADR-0041). Such a filter runs the full set.
     # Whole-line and substring tests are `case`s, never `printf | grep -q`:
     # grep quits on the first hit while printf still writes, and pipefail
     # turns the SIGPIPE into "no match" (conventions/shell.md).
