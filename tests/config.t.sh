@@ -815,6 +815,24 @@ test_config_set_route_depth_validation() {
   _config_rejects route.depth Lean
 }
 
+# release.merge says who merges an epic's final pull request: agent or human,
+# local only (ADR-0040, amendment of 2026-10-04).
+test_config_set_release_merge_validation() {
+  fixture_jig_repo
+  _config_accepts release.merge agent
+  _config_accepts release.merge human
+  _config_rejects release.merge nobody
+}
+
+test_config_release_merge_is_local_only() {
+  fixture_jig_repo
+  printf 'release.merge: human\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: release.merge in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+}
+
 test_config_route_depth_is_local_only() {
   fixture_jig_repo
   printf 'route.depth: lean\n' >> .ai/config.yaml

@@ -229,13 +229,15 @@ item is checked later by `jig spec done`, called from consolidation — never by
 ## 11. Moving or dropping a spec
 
 - **Finishing an epic**, when the human says every phase is in: merge the latest default branch
-  into the epic and run `jig spec epic <id> --finish` on it. It removes the spec — its decisions are
+  into the epic and run `jig spec epic <id> --finish` on it (or on a branch cut from it: the
+  epic may be protected like the default branch, and nothing here pushes to it). It removes the spec — its decisions are
   knowledge by now — and first lists what knowledge does not hold: unchecked items, fog, open
   questions, untested assumptions. Ask the human about each: move it to another spec or a task, or
   drop it; then run `--finish --leftovers-handled`. It prints the recorded `release:` level; raise
   the version by it (propose one, and let the human confirm, when it says `not recorded`), stage the
   removal with the bump and run `jig spec ship <id> --message-file <file>`: it commits, pushes the
-  epic and opens the pull request into the default branch as far as `agent.git` allows. Reviewing
+  epic's finish on a branch of its own, `finish/<id>` — the epic itself is not pushed — and opens the
+  pull request into the default branch from it as far as `agent.git` allows. Reviewing
   and merging that pull request is the human's — the merge is the release — except in an
   unattended run, below. If review needs a fix,
   `jig spec epic <id> --reopen` on the epic brings the spec back from git; fix it as an ordinary
@@ -246,7 +248,8 @@ item is checked later by `jig spec done`, called from consolidation — never by
   finished" and stop there. Drop fog, open questions and untested assumptions with
   `--leftovers-handled`, and quote each one verbatim in the pull request body under
   `## Dropped without you`. Raise the version by the recorded level, `minor` when none was
-  recorded. At `agent.git: merge`, `spec ship` merges with a merge commit once CI passed, and
+  recorded. At `agent.git: merge`, `spec ship` merges with a merge commit once CI passed — unless
+  `release.merge` is `human` in this clone, which leaves every release to the person — and
   opens a `major` release as a draft that needs a human instead; `not merged: <why>` leaves the
   pull request open — say why.
 

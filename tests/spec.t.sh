@@ -2054,7 +2054,7 @@ test_spec_epic_finish_requires_being_on_the_epic_branch() {
 
   run jig spec epic idea-x --finish
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "--finish runs on epic/idea-x; switch to it first"
+  assert_contains "$OUT" "--finish runs on epic/idea-x or on a branch cut from it; switch to one first"
 }
 
 test_spec_epic_finish_requires_main_merged_in() {
@@ -2183,11 +2183,14 @@ test_spec_epic_reopen_requires_being_on_the_epic() {
   jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
   git add -A
   git commit -q -m "finish epic idea-x"
+  git checkout -q main
+  git rm -rq .ai/specs/idea-x
+  git commit -q -m "drop the spec from main"
   git checkout -q -b other-branch
 
   run jig spec epic idea-x --reopen
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "spec epic: --reopen runs on epic/idea-x; switch to it first"
+  assert_contains "$OUT" "spec epic: --reopen runs on epic/idea-x or on a branch cut from it; switch to one first"
 }
 
 test_spec_epic_reopen_no_removed_spec_in_history_dies() {
@@ -3004,19 +3007,57 @@ test_spec_ship_final_at_pr_commits_pushes_and_opens_the_pr_into_main() {
   sship_finished idea-x
   sship_stub_gh ""
   sship_cfg_local agent.git pr
+  local before
+  before=$(git ls-remote origin refs/heads/epic/idea-x)
 
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 0 "$RC"
   assert_contains "$OUT" "mode: final"
   assert_contains "$OUT" "committed "
-  assert_contains "$OUT" "pushed epic/idea-x"
+  assert_contains "$OUT" "switched to finish/idea-x"
+  assert_contains "$OUT" "pushed finish/idea-x"
+  assert_not_contains "$OUT" "pushed epic/idea-x"
+  assert_eq "finish/idea-x" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$before" "$(git ls-remote origin refs/heads/epic/idea-x)"
   assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
   assert_eq "" "$(git ls-files -- .ai/specs/idea-x)"
   local argv
   argv=$(cat gh-create.argv)
   assert_contains "$argv" "$(printf -- '--base\nmain')"
-  assert_contains "$argv" "$(printf -- '--head\nepic/idea-x')"
+  assert_contains "$argv" "$(printf -- '--head\nfinish/idea-x')"
   assert_contains "$argv" "$(printf -- '--title\nRelease idea-x')"
+}
+
+# A release branch the person cut from the epic still ships on finish/<id>,
+# the name the epic-pr check of CI watches; neither branch is the epic.
+test_spec_ship_final_from_a_branch_cut_from_the_epic_ships_on_finish() {
+  epic_ready_to_finish idea-x
+  sship_origin
+  git checkout -q -b release/1.0.0
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
+  printf '1.0.0\n' > VERSION
+  git add -A .ai/specs/idea-x VERSION
+  printf 'Release idea-x\n\nThe epic, finished.\n' > msg.txt
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+  local before
+  before=$(git ls-remote origin refs/heads/epic/idea-x)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "switched to finish/idea-x"
+  assert_contains "$OUT" "pushed finish/idea-x"
+  assert_eq "$before" "$(git ls-remote origin refs/heads/epic/idea-x)"
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--head\nfinish/idea-x')"
+}
+
+test_spec_epic_finish_runs_on_a_branch_cut_from_the_epic() {
+  epic_ready_to_finish idea-x
+  git checkout -q -b release/1.0.0
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_no_file .ai/specs/idea-x/roadmap.md
 }
 
 test_spec_ship_final_reports_an_open_pr_instead_of_a_second() {
@@ -3065,7 +3106,7 @@ test_spec_ship_final_runs_only_on_the_epic() {
 
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "shipped from epic/idea-x — switch to it first"
+  assert_contains "$OUT" "an epic's final pull request runs on epic/idea-x or on a branch cut from it; switch to one first"
 }
 
 # --- spec ship: the epic's final merge (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci)
@@ -3182,6 +3223,17 @@ test_spec_ship_final_at_merge_is_the_humans_outside_an_unattended_run() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
   assert_contains "$OUT" "not merged: the epic's final merge is the release, and outside an unattended run it is the human's"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_unattended_leaves_the_merge_to_the_person_when_release_merge_is_human() {
+  mfin_finished idea-x
+  sship_cfg_local release.merge human
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_contains "$OUT" "not merged: release.merge is human in this clone; the release's merge is the person's"
   assert_no_file gh-merge.argv
 }
 

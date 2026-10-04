@@ -19,7 +19,7 @@
 #
 # This script fails the pull request in either case, before it can be merged:
 #
-#   - the head ref is missing or is not an epic branch  → fail;
+#   - the head ref is missing or is neither epic/<id> nor finish/<id> → fail;
 #   - JIG_VERSION already has a release tag on origin    → fail;
 #   - a roadmap still declares the epic in an Epic: line → fail;
 #   - otherwise                                          → exit 0.
@@ -41,18 +41,23 @@ LIB_DIR="$(cd "$SCRIPT_DIR/../../scripts/lib" && pwd)"
 . "$SCRIPT_DIR/release-lib.sh"
 
 main() {
-  local head_ref="" repo version remote_tags existing roadmap line norm found=0 epic_id
+  local head_ref="" epic_ref repo version remote_tags existing roadmap line norm found=0 epic_id
 
   if [ $# -eq 1 ] && [ -n "$1" ]; then
     head_ref="$1"
   else
     _epic_die "usage: epic-pr-check.sh <head-ref>"
   fi
+  # The final pull request of an epic comes from the epic itself, or from the
+  # `finish/<id>` branch `jig spec ship` cuts from it where the epic is
+  # protected like main (ADR-0040 as amended 2026-10-04). The roadmap line
+  # that must be gone names the epic either way.
   case "$head_ref" in
-    epic/*) ;;
-    *) _epic_die "head ref '$head_ref' does not start with epic/" ;;
+    epic/*) epic_ref=$head_ref ;;
+    finish/*) epic_ref="epic/${head_ref#finish/}" ;;
+    *) _epic_die "head ref '$head_ref' starts with neither epic/ nor finish/" ;;
   esac
-  epic_id=${head_ref#epic/}
+  epic_id=${epic_ref#epic/}
 
   repo=$(git rev-parse --show-toplevel 2>/dev/null) \
     || _epic_die "not inside a git repository"
@@ -83,16 +88,16 @@ main() {
     while IFS= read -r line || [ -n "$line" ]; do
       norm=$(printf '%s' "$line" \
         | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/[[:space:]]\{1,\}/ /g')
-      if [ "$norm" = "Epic: $head_ref" ] \
-        || [ "$norm" = "Epic: $head_ref — finished" ] \
-        || [ "$norm" = "Epic: $head_ref - finished" ] \
-        || [ "$norm" = "Epic: $head_ref -- finished" ]; then
+      if [ "$norm" = "Epic: $epic_ref" ] \
+        || [ "$norm" = "Epic: $epic_ref — finished" ] \
+        || [ "$norm" = "Epic: $epic_ref - finished" ] \
+        || [ "$norm" = "Epic: $epic_ref -- finished" ]; then
         found=1
         break
       fi
     done < "$roadmap"
     if [ "$found" = 1 ]; then
-      _epic_die "${roadmap#"$repo"/} still declares $head_ref; run 'jig spec epic $epic_id --finish' on the epic before merging"
+      _epic_die "${roadmap#"$repo"/} still declares $epic_ref; run 'jig spec epic $epic_id --finish' on the epic before merging"
     fi
   done
 

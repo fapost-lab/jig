@@ -81,6 +81,31 @@ test_epic_pr_check_no_specs_at_all_passes() {
   assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
 }
 
+# The final pull request may come from finish/<id>, the branch `jig spec ship`
+# cuts from the epic where the epic is protected (ADR-0040, 2026-10-04); the
+# roadmap line that must be gone names the epic, not the head.
+test_epic_pr_check_finish_branch_passes_once_the_spec_is_gone() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" finish/epic-branches
+  assert_eq 0 "$RC" "a finish branch of a removed spec should pass: $OUT"
+  assert_contains "$OUT" "epic-pr-check: finish/epic-branches is finished and v0.5.0 is a new version"
+}
+
+test_epic_pr_check_finish_branch_fails_while_the_roadmap_declares_the_epic() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  ec_new_repo "$repo" 0.5.0
+  ec_write_roadmap "$repo" epic-branches "Epic: epic/epic-branches"
+  ec_build_origin "$repo" "$bare"
+
+  run ec_check "$repo" finish/epic-branches
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" \
+    "still declares epic/epic-branches; run 'jig spec epic epic-branches --finish' on the epic before merging"
+}
+
 test_epic_pr_check_roadmap_with_no_epic_line_passes() {
   local repo="$PWD/repo" bare="$PWD/origin.git"
   ec_new_repo "$repo" 0.5.0
@@ -174,7 +199,7 @@ test_epic_pr_check_head_ref_not_epic_fails() {
   run ec_check "$repo" feature/epic-branches
   [ "$RC" != 0 ] || fail "epic-pr-check must refuse a non-epic head ref: $OUT"
   assert_contains "$OUT" \
-    "epic-pr-check: error: head ref 'feature/epic-branches' does not start with epic/"
+    "epic-pr-check: error: head ref 'feature/epic-branches' starts with neither epic/ nor finish/"
 }
 
 test_epic_pr_check_missing_head_ref_fails() {

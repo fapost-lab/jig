@@ -73,8 +73,8 @@ spec_template() {
 # so cutting a spec's branch cannot read three different ways
 # (idea-leaves-a-tree-task-start-refuses).
 _spec_cut_own_branch() {
-  local id="$1" cmd="$2" branch
-  branch="spec/$id"
+  local id="$1" cmd="$2" prefix="${3:-spec}" branch
+  branch="$prefix/$id"
   git check-ref-format --branch "$branch" >/dev/null 2>&1 \
     || jig_die "$cmd: git rejects the branch name: $branch"
   if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
@@ -1034,13 +1034,36 @@ spec_epic_declare() {
   jig_info "spec epic: $(spec_ship_hint cut "$id" "$branch" "$rel")"
 }
 
+# spec_epic_site <cmd> <epic-branch> <what> — exit 0 when HEAD may carry the
+# epic's finish: the epic itself, or a branch other than the default one that
+# already contains the epic's tip (a release branch cut from it). The epic is
+# protected like the default branch where a repository says so, so its finish
+# is never pushed to it: `spec ship` carries it on a branch of its own
+# (ADR-0040, amendment of 2026-10-04). Dies naming the two places that work.
+spec_epic_site() {
+  local cmd="$1" branch="$2" what="$3" here default tip
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$here" != "$branch" ] || return 0
+  default=$(cfg git.base_branch main)
+  if [ -n "$here" ] && [ "$here" != "$default" ]; then
+    for tip in "refs/heads/$branch" "refs/remotes/origin/$branch"; do
+      if git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip^{commit}" >/dev/null 2>&1; then
+        if git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" HEAD 2>/dev/null; then
+          return 0
+        fi
+        break
+      fi
+    done
+  fi
+  jig_die "$cmd: $what runs on $branch or on a branch cut from it; switch to one first"
+}
+
 spec_epic_finish() {
-  local id="$1" roadmap="$2" rel="$3" line="$4" handled="$5" branch here default start
+  local id="$1" roadmap="$2" rel="$3" line="$4" handled="$5" branch default start
   [ -n "$line" ] || jig_die "spec epic: $rel declares no epic"
   branch=${line% *}
   [ "${line##* }" = open ] || jig_die "spec epic: $rel marks epic $branch finished, as an older jig did; drop \"— finished\" from the line, then run --finish again"
-  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-  [ "$here" = "$branch" ] || jig_die "spec epic: --finish runs on $branch; switch to it first"
+  spec_epic_site "spec epic" "$branch" --finish
   default=$(cfg git.base_branch main)
   jig_fetch_branches "spec epic" "$default"
   start=$(jig_fresh_base_ref "$default" "spec epic") || exit 1
@@ -1066,7 +1089,7 @@ spec_epic_finish() {
 # committed, else from the commit before the one that deleted the roadmap.
 # Files are written with `git show`, so the index is left alone.
 spec_epic_reopen() {
-  local id="$1" dir rel roadmap src del line rc=0 branch here path
+  local id="$1" dir rel roadmap src del line rc=0 branch path
   dir="$(spec_dir)/$id"
   rel="$JIG_AI_DIR/specs/$id"
   roadmap="$rel/roadmap.md"
@@ -1083,8 +1106,7 @@ spec_epic_reopen() {
     jig_die "spec epic: the removed $roadmap declares no epic"
   fi
   branch=${line% *}
-  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-  [ "$here" = "$branch" ] || jig_die "spec epic: --reopen runs on $branch; switch to it first"
+  spec_epic_site "spec epic" "$branch" --reopen
   # Restored into a directory of its own first and moved into place whole: a
   # failure halfway must not leave a partial spec that the "is here" check
   # would then refuse to restore over. A partial copy goes to trash, not to
@@ -1299,15 +1321,14 @@ spec_ship() {
   else
     mode=final
     branch=$(spec_ship_removed_epic "$id") || exit 1
-    [ "$here" = "$branch" ] \
-      || jig_die "spec ship: $rel is not here; an epic's final pull request is shipped from $branch — switch to it first"
+    spec_epic_site "spec ship" "$branch" "an epic's final pull request"
   fi
 
   printf 'mode: %s\n' "$mode"
   case "$mode" in
     declare) spec_ship_declare "$id" "$level" "$here" "$default" "$message_file" "$title" "$body_file" "$line" ;;
     epic) spec_ship_epic "$id" "$level" "$branch" ;;
-    final) spec_ship_final "$id" "$level" "$branch" "$default" "$message_file" "$title" "$body_file" ;;
+    final) spec_ship_final "$id" "$level" "$branch" "$default" "$message_file" "$title" "$body_file" "$here" ;;
   esac
 }
 
@@ -1435,8 +1456,8 @@ _SPEC_SHIP_BODY_TMP=""
 # the pull request opens as a draft that says so — and no `Release:` line
 # reads as `minor`. Anywhere else the merge is the human's, as it was.
 spec_ship_final() {
-  local id="$1" level="$2" branch="$3" default="$4" message_file="$5" title="$6" body_file="$7"
-  local rel start src release draft=0 unattended=0
+  local id="$1" level="$2" branch="$3" default="$4" message_file="$5" title="$6" body_file="$7" here="$8"
+  local rel start src release draft=0 unattended=0 head="$8" refused=""
   rel="$JIG_AI_DIR/specs/$id"
   [ -n "$message_file" ] || jig_die "spec ship: the final pull request commits; --message-file is required"
   jig_fetch_branches "spec ship" "$default"
@@ -1453,6 +1474,9 @@ spec_ship_final() {
 
   src=$(spec_ship_removed_src "$id") || exit 1
   if [ "$level" = merge ] && jig_unattended; then
+    [ "$(jig_release_merge)" = agent ] || refused=human
+  fi
+  if [ "$level" = merge ] && jig_unattended && [ -z "$refused" ]; then
     unattended=1
     release=$(jig_git_show_path "$src" "$rel/roadmap.md" 2>/dev/null \
       | spec_release_check "spec ship" "$rel/roadmap.md") || exit 1
@@ -1473,8 +1497,21 @@ spec_ship_final() {
     fi
   fi
 
-  spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file" "$draft"
+  # The epic is never pushed to by a finish: where it is protected like the
+  # default branch that would need a bypass. The finish and the version bump
+  # go on a branch cut from it, and that branch is the pull request's head.
+  # Always `finish/<id>`, from the epic or from a branch cut from it: that
+  # name is what the `epic-pr` check of CI watches.
+  if [ "$here" != "finish/$id" ]; then
+    head=$(_spec_cut_own_branch "$id" "spec ship" finish) || exit 1
+    printf 'switched to %s\n' "$head"
+  fi
+  spec_ship_steps "$level" "$head" "$default" "$message_file" "$title" "$body_file" "$draft"
   [ "$level" = merge ] || return 0
+  if [ "$refused" = human ]; then
+    printf "not merged: release.merge is human in this clone; the release's merge is the person's\n"
+    return 0
+  fi
   if [ "$unattended" -eq 0 ]; then
     printf "not merged: the epic's final merge is the release, and outside an unattended run it is the human's\n"
     return 0

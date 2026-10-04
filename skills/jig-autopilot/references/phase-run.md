@@ -115,6 +115,11 @@ drafts). Only then:
 
 Never in the middle of a wave: it touches what is still being worked on.
 
+**Never push the epic yourself.** Where `epic/*` is protected like the default branch, a direct
+push goes through only as an administrator's bypass. Every commit of yours on the epic — the
+wave's filing, the checkmarks — stays local and reaches `origin` inside the next pull request into
+it; the last ones travel in the final pull request, which `jig spec ship` opens from `finish/<id>`.
+
 **8. Round again**, from step 1. A stop in wave N with no answer yet holds wave N+1: say so and
 wait. Phase done — report it. Finishing the epic itself is `jig-idea` §11, not this loop.
 
