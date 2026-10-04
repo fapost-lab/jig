@@ -95,3 +95,16 @@ write the same `state` file.
 > workspaces with it" no longer holds for a worktree jig made, because it has none of its own; it
 > still holds for one made by hand, and there `jig task new` refuses rather than let a task be
 > filed into it.
+
+> **Amendment (2026-10-04).** The exceptions above are exactly three shapes of directory link, and
+> each leads into a checkout of this repository: the whole `.ai/workspace/tasks/` (or, where git
+> ignores only a file, the one task's workspace) a `task start --worktree` gives a worktree, and a
+> hand-made link at `.ai/workspace` by which a coordinator shares the main checkout's workspace
+> (ADR-0029 as amended 2026-10-04). Anything else is refused, and not only by the artifact commands:
+> every writer of a workspace — `state`, the autopilot journal, findings, the receipt, gate, pause
+> and resume, `ship`, context's ledger and cache, `task new`, and housekeeping's move into trash —
+> asks the one check, `_task_workspace_root`, before it writes or does anything on the way to
+> writing (a stash, a commit). `jig spec link` and `jig spec remove`, which write `task.md` and may not
+> source `task.sh`, compare the workspace's physical path with this checkout's own and so refuse
+> every link, including a coordinator's. `jig task new`, which may have to make the tasks directory,
+> asks the same of `.ai/workspace` when the tasks directory is not there yet.

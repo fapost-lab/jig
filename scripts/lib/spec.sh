@@ -1911,7 +1911,14 @@ spec_remove() {
   # below; for a borrowed directory the answer is the same for every task at
   # once, and is said rather than left to look like an empty queue.
   local borrowed=0
-  if [ -L "$tasks_root" ]; then
+  # A link above the tasks directory (`.ai/workspace`) leads outside the same
+  # way and `-L` on the directory does not see it: the directory must
+  # physically be this checkout's own, as spec link asks of one workspace.
+  if [ ! -L "$tasks_root" ] && [ -d "$tasks_root" ] \
+    && [ "$(cd -P "$tasks_root" 2>/dev/null && pwd -P)" != "$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P)/$JIG_AI_DIR/workspace/tasks" ]; then
+    borrowed=1
+    jig_warn "spec remove: $JIG_AI_DIR/workspace/tasks is not inside this checkout, so no task is unlinked here; run it in the checkout that owns them"
+  elif [ -L "$tasks_root" ]; then
     borrowed=1
     jig_warn "spec remove: this checkout borrows its task workspaces, so no task is unlinked here; run it in the checkout that owns them"
   fi
@@ -2032,7 +2039,7 @@ spec_remove() {
 spec_link() {
   [ $# -ge 2 ] || jig_die "spec link: missing argument (usage: jig spec link <spec-id> <task-id>)"
   [ $# -eq 2 ] || jig_die "spec link: unexpected argument: $3"
-  local sid="$1" tid="$2" roadmap tdir tasks_root st branch link rc=0 phases count phase line
+  local sid="$1" tid="$2" roadmap tdir tasks_root st branch link rc=0 phases count phase line real
   spec_valid_id "$sid" || jig_die "spec link: invalid spec id: $sid"
   jig_valid_id "$tid" || jig_die "spec link: invalid task id: $tid"
   jig_require_init
@@ -2045,6 +2052,13 @@ spec_link() {
   tdir=$(spec_task_dir "$tid") || jig_die "spec link: invalid task id: $tid"
   [ ! -L "$tdir" ] || jig_die "spec link: the workspace of $tid is a link; run it in the checkout that owns it"
   [ -f "$tdir/task.md" ] || jig_die "spec link: unknown task: $tid (no $JIG_AI_DIR/workspace/tasks/$tid/task.md)"
+  # A link anywhere above the workspace (`.ai/workspace` too) would carry the
+  # write out of this checkout: the workspace must physically be the one this
+  # checkout keeps. spec.sh sources no other command library, so the check is
+  # the plain comparison, and a borrowing checkout is refused as above.
+  real=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || real=""
+  [ -n "$real" ] && [ "$(cd -P "$tdir" 2>/dev/null && pwd -P)" = "$real/$JIG_AI_DIR/workspace/tasks/$tid" ] \
+    || jig_die "spec link: the workspace of $tid is not inside this checkout; run it in the checkout that owns it"
 
   st=$(spec_task_state "$tdir" status)
   case "$st" in

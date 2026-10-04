@@ -1336,6 +1336,37 @@ EOF
 
 # --- context ledger: guard / pending / acknowledge --------------------------------------
 
+# The ledger and the cache live in the task's workspace, so they are written
+# under the same rule as `state`: through a link that leads outside the
+# repository, acknowledging is refused and the cache is simply not written.
+test_context_writers_refuse_a_planted_tasks_link() {
+  mkdir repo || return 1
+  cd repo || return 1
+  ctx_setup
+  jig task new T-1 >/dev/null
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+load: always
+---
+EOF
+  mkdir ../outside
+  cp -R .ai/workspace/tasks/. ../outside/
+  rm -rf .ai/workspace/tasks
+  plant_dir_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace/tasks"
+
+  run jig context acknowledge --task T-1 --files .ai/knowledge/features/checkout.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context acknowledge: .ai/workspace/tasks leads to"
+  assert_no_file ../outside/T-1/context
+
+  run jig context --task T-1 --files src/a.php
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file ../outside/T-1/context-cache
+}
+
 test_context_guard_ledger_round_trip() {
   ctx_setup
   jig task new T-1 >/dev/null

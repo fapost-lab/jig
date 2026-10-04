@@ -308,6 +308,48 @@ test_housekeeping_purges_consolidated_merged_to_trash() {
   assert_contains "$OUT" "  ff"
 }
 
+# A link at `.ai/workspace` leads the walk to a tasks directory outside the
+# repository; moving a workspace out of it into trash would take a file that is
+# not this project's. The purge refuses, and the outside stays where it is.
+test_housekeeping_purge_refuses_a_planted_workspace_link() {
+  mkdir repo || return 1
+  cd repo || return 1
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+  mkdir ../outside
+  cp -R .ai/workspace/. ../outside/
+  rm -rf .ai/workspace
+  hk_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace"
+
+  run jig housekeeping
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "which is no checkout of this repository"
+  assert_file ../outside/tasks/ff/state
+  assert_no_file ".ai/runtime/trash/$(date +%Y-%m-%d)/ff/state"
+}
+
+# The refusal comes before anything is done because of what the planted link
+# says: a task whose branch is merged has its worktree retired as its workspace
+# goes, and a refused run must not have removed it first.
+test_housekeeping_refusal_on_a_planted_link_retires_no_worktree() {
+  mkdir repo || return 1
+  cd repo || return 1
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+  git worktree add -q ../ff-wt ff-merged >/dev/null 2>&1 || fail "could not add a worktree"
+  mkdir ../outside
+  cp -R .ai/workspace/. ../outside/
+  rm -rf .ai/workspace
+  hk_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace"
+
+  run jig housekeeping
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "which is no checkout of this repository"
+  assert_dir ../ff-wt
+}
+
 test_housekeeping_purge_keeps_the_workspace_readable_in_trash() {
   # Recovery is a plain `mv` back, which only works if the contents survive.
   hk_setup
