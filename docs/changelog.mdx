@@ -8,6 +8,65 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.21.0 — 2026-10-05
+
+A task can no longer be finished past a stage its class asks for, an epic finishes without a push to
+the epic branch, and your agent can hand writing and reviewing the code to a helper on a model you
+choose.
+
+- **A task whose route skipped a recorded stage is refused.** `jig task set <id> status ready`,
+  `jig task set <id> knowledge_consolidated true` and `jig task ship` read the class's full route and
+  refuse when a stage that leaves a record left none, naming what is missing and the command that
+  writes it: the approved design for T3 and T4 (the approval must still match `design.md`), `spec.md`
+  and `alternatives.md` for T4, a review receipt for the review of T2 and up and for the architecture
+  review of T3, and `status ready`, verification's own sign-off, before consolidation and shipping. A
+  lighter route (`route.depth: lean`) trims none of this, and a task filed with this version and given no class is refused. A task
+  filed before this version is not refused: it gets the same list as a warning and finishes under the
+  rules it started with. A review receipt now remembers every stage it was written for, so a re-review
+  under another stage does not erase the first. Proven by tests on throwaway repositories that run both
+  directions; no run on a real project is kept.
+- **Lowering a class needs a reason, and an unattended run cannot lower a risky one.**
+  `jig task set <id> class T1 --reason <text>` records the reason and the class it came from, and
+  `jig task route`, `jig status` (`lowered=T3`), the status page and the autopilot report show it. Where
+  nobody answers (an unattended clone or run), a task cannot be lowered below T3 out of T3 or T4. Raising
+  a class is unchanged.
+- **An autopilot run cannot resume itself.** `jig task autopilot <id> resume` now needs
+  `--answer <the human's answer>`, which is journaled and printed in the report under "Resumed on an
+  answer"; in an unattended run `resume` is refused, and `end` there requires `knowledge_consolidated
+  true`, so a run cannot reset its repair limit by ending and starting again. `jig task gate <id>
+  approved` without `--by agent` is refused wherever nobody answers: in an unattended clone, whether
+  the run is not started, on or stopped. In an attended clone nothing changes.
+- **A planted link cannot send a task's files elsewhere.** A link planted on `.ai/workspace`,
+  `.ai/workspace/tasks` or a task's own entry used to slip past the check of `jig task artifact write`
+  and `append` (a planted `tasks` link wrote `plan.md` outside the repository with exit 0). Every
+  command that writes into a task workspace, `jig task new`, `jig spec link` and `remove` and
+  housekeeping included, now follows the link to where it leads, symbolic link or Windows junction alike,
+  and refuses unless that is this checkout or a worktree Git lists for this repository. The links
+  `jig task start --worktree` makes and a coordinator's own `.ai/workspace` link keep working. The
+  junction case was exercised by tests that plant links the way Windows CI does, not by hand on a real
+  Windows machine.
+- **An epic finishes without a push to the epic branch.** `jig spec epic --finish` and `--reopen` run on
+  the epic or on a branch cut from it, and the final `jig spec ship` cuts `finish/<id>` from the epic,
+  commits the spec's removal and the version bump there, and opens the pull request into the default
+  branch from it. The epic is never pushed after it is cut, so a repository that protects `epic/*` like
+  the main branch needs no bypass; the `epic-pr` check accepts a `finish/<id>` head. See
+  [Agent ships](/agent-ships).
+- **New personal setting `release.merge`.** `agent` (the default) keeps today's behaviour: an unattended
+  run at `agent.git: merge` merges an epic's final pull request once CI passed. `human` opens it and
+  leaves the merge to you. Local only, set with `jig config set release.merge human --local`; task pull
+  requests are not affected. See [Configuration](/configuration).
+- **Hand writing and reviewing the code to a helper on a model you choose.** Two new personal settings,
+  `claude.implement_model` and `claude.review_model` (set by hand or through a new `jig-setup`
+  question), name the model a helper agent in Claude Code uses for the implementation and for every
+  review of a route; `jig task route <id>` prints a `delegate:` line for each stage that will be handed
+  over. Jig carries the name as written and never checks it. With nothing set, the default, nothing is
+  handed over and every route runs as before; in Codex the settings are ignored. The helper's findings
+  and receipts count like anyone's: the checks still have to pass. Proven by tests of the settings and
+  of the `delegate:` lines; no run of a helper on another model is kept as a test. See
+  [Autopilot](/autopilot#helpers-on-another-model).
+- **`jig-verify` no longer leaves a log in your working tree.** The skill used to tell the agent to
+  redirect `jig verify` into `verify.log` in the project; the report now goes to the terminal.
+
 ## 0.20.0 — 2026-10-03
 
 A started task can be moved into a worktree of its own, a worktree can share a folder of packages
