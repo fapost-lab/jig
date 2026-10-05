@@ -82,6 +82,114 @@ test_doctor_uninitialised_repository_warns_project_not_initialised() {
   assert_not_contains "$OUT" "framework version:"
 }
 
+# --- the two forms (output.sh, adr-20261005-output-is-decorated-only-on-a-terminal)
+#
+# A pipe gets the report exactly as doctor printed it before the output layer
+# existed; a terminal gets what needs a person first and the passing checks in
+# one line. _doctor_fixed_env makes every line of the report known in advance
+# on any machine that can simulate "no links": PATH holds the curated tools
+# (no global jig, no cmd) and an `ln` that always fails.
+
+_doctor_fixed_env() {
+  local tools stub
+  tools=$(_doctor_tools_bin)
+  stub=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-fixed.XXXXXX")
+  printf '#!/bin/sh\nexit 1\n' > "$stub/ln"
+  chmod +x "$stub/ln"
+  mkdir work || return 1
+  cd work || return 1
+  git config --global user.name "Doctor Test"
+  git config --global user.email "doctor@example.com"
+  DOCTOR_PATH="$stub:$tools"
+  DOCTOR_GIT_VERSION=$(env PATH="$DOCTOR_PATH" git --version)
+}
+
+_doctor_fixed_problems() {
+  printf 'warn  global jig: not found on PATH\n'
+  printf '      fix: curl -fsSL https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh | bash\n'
+  printf 'warn  directory links: task worktrees are unavailable\n'
+  printf '      fix: enable Windows Developer Mode, or use a local NTFS or POSIX filesystem\n'
+}
+
+# The byte-for-byte proof: this expected text is the report in the format
+# doctor had before the layer, and the same test passes on the commit before
+# it (doctor-reads-in-one-pass, verification.md).
+test_doctor_a_pipe_gets_the_report_byte_for_byte_as_before() {
+  skip_unless_link_simulation
+  _doctor_fixed_env || return 1
+  {
+    printf 'ok    git: %s\n' "$DOCTOR_GIT_VERSION"
+    printf 'ok    git identity: Doctor Test <doctor@example.com>\n'
+    printf 'warn  global jig: not found on PATH\n'
+    printf '      fix: curl -fsSL https://raw.githubusercontent.com/fapost-lab/jig/main/install.sh | bash\n'
+    printf 'warn  directory links: task worktrees are unavailable\n'
+    printf '      fix: enable Windows Developer Mode, or use a local NTFS or POSIX filesystem\n'
+    printf 'doctor: 2 ok, 2 warn, 0 fail\n'
+  } > ../expected.txt
+  env PATH="$DOCTOR_PATH" "$JIG_BIN" doctor > ../actual.txt 2>&1
+  assert_eq 0 "$?"
+  cmp ../expected.txt ../actual.txt || fail "piped report changed: $(diff ../expected.txt ../actual.txt)"
+}
+
+test_doctor_a_terminal_gets_problems_first_and_the_passing_checks_in_one_line() {
+  skip_unless_link_simulation
+  _doctor_fixed_env || return 1
+  {
+    _doctor_fixed_problems
+    printf '\n'
+    printf 'ok    2 passed: git, git identity\n'
+    printf 'doctor: 2 ok, 2 warn, 0 fail\n'
+  } > ../expected.txt
+  env PATH="$DOCTOR_PATH" JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" doctor > ../actual.txt 2>&1
+  assert_eq 0 "$?"
+  cmp ../expected.txt ../actual.txt || fail "terminal report differs: $(diff ../expected.txt ../actual.txt)"
+}
+
+test_doctor_a_terminal_colours_the_level_words() {
+  skip_unless_link_simulation
+  _doctor_fixed_env || return 1
+  local esc
+  esc=$(printf '\033')
+  run env -u NO_COLOR PATH="$DOCTOR_PATH" TERM=xterm JIG_TERMINAL=1 "$JIG_BIN" doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "${esc}[33mwarn${esc}[0m  global jig: not found on PATH"
+  assert_contains "$OUT" "${esc}[32mok${esc}[0m    2 passed: git, git identity"
+}
+
+# A failure comes before every warning, whatever order the checks ran in, and
+# the exit code is the one the plain form gives.
+test_doctor_a_terminal_puts_a_failure_first() {
+  fixture_repo
+  local src first
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src-del.XXXXXX")
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+  jig init --from "$src" >/dev/null
+  rm -rf "$src"
+
+  run env JIG_TERMINAL=1 NO_COLOR=1 .ai/scripts/jig doctor
+  assert_eq 1 "$RC"
+  first=$(printf '%s\n' "$OUT" | sed -n 1p)
+  assert_eq "fail  upgrade check: cannot determine pending state" "$first"
+  assert_not_contains "$OUT" "ok    upgrade check"
+  assert_contains "$OUT" " passed: "
+}
+
+# Runs everywhere, Windows included: whatever the machine reports, a pipe gets
+# no escape byte, no grouped line, and only the line shapes doctor always had.
+test_doctor_a_pipe_gets_only_the_plain_line_shapes() {
+  fixture_jig_repo
+  local esc odd
+  esc=$(printf '\033')
+  run env TERM=xterm "$JIG_BIN" doctor
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "$esc"
+  assert_not_contains "$OUT" " passed: "
+  odd=$(printf '%s\n' "$OUT" | grep -v -e '^ok    ' -e '^warn  ' -e '^fail  ' \
+    -e '^      fix: ' -e '^doctor: [0-9]* ok, [0-9]* warn, [0-9]* fail$' || true)
+  assert_eq "" "$odd"
+}
+
 # --- git identity --------------------------------------------------------------
 # The runner exports GIT_AUTHOR_NAME/EMAIL for commits but never sets the
 # `user.name`/`user.email` config `git config --get` reads, so the default

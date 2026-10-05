@@ -20,7 +20,8 @@ paths:
   - scripts/jig.cmd
   - templates/gitattributes
   - scripts/lib/section.sh
-reviewed_at: 2026-09-30
+  - scripts/lib/output.sh
+reviewed_at: 2026-10-05
 ---
 # Install
 
@@ -144,7 +145,9 @@ project owns.
   checked against a hash or signature — a known gap, not a guarantee.
 - `jig doctor`: whether jig works on this machine and in this project, one line and a `fix:`
   per check. A reporting command — it calls `status`, `upgrade` and `common.sh` functions and
-  writes nothing.
+  writes nothing. At a terminal it prints what needs a person first and the passing checks in
+  one line; in a pipe, the same lines in check order, byte for byte as before the output layer
+  (adr-20261005-output-is-decorated-only-on-a-terminal).
 - Releases: a merge into `main` that raises `JIG_VERSION` is tagged `v<JIG_VERSION>` by the
   `release` job in CI once the tests pass; `.github/scripts/release-tag.sh` decides (ADR-0034).
   Raise the version in the pull request that should become the release, in
@@ -216,6 +219,9 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
 - `install.ps1` — `Install-Jig`, `Initialize-JigProject`, `Uninstall-JigFramework`; tested by
   `tests/install.t.ps1`, which runs only on Windows CI.
 - `scripts/lib/doctor.sh` — `cmd_doctor`, one `_doctor_check_*` per line of its report.
+- `scripts/lib/output.sh` — the output layer: `out_init` decides plain or terminal form once,
+  `out_status`, `out_detail`, `out_group`, `out_gap`, `out_summary` are the blocks a report is
+  built from; `tests/output.t.sh` pins their bytes.
 - `scripts/jig.cmd` — the PowerShell entry; `.github/WINDOWS_RELEASE_CHECKLIST.md` — what CI cannot
   check before a release that changes installation on Windows.
 - `scripts/lib/self-update.sh` — `cmd_self_update`.

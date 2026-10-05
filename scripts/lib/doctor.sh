@@ -30,26 +30,63 @@
 # the caller's locals (cmd_doctor), updated here by dynamic scope — the same
 # pattern _upgrade_process_path uses for new_entries, so no check has to
 # thread three counters through every call.
+#
+# The lines go through the shared output layer (output.sh). In a pipe they are
+# printed at once, as each check runs, in exactly the bytes doctor printed
+# before the layer existed. At a terminal they are kept (`ok_names`,
+# `problems`, cmd_doctor's locals) and _doctor_report prints them at the end
+# in the order a person reads them: what needs them first, with its fix, and
+# every passing check in one line (adr-20261005-output-is-decorated-only-on-a-terminal).
 
-_doctor_line() {
-  printf '%-6s%s: %s\n' "$1" "$2" "$3"
+# _doctor_record <level> <check> <text> [<fix>]
+_doctor_record() {
+  if ! out_terminal; then
+    out_status "$1" "$2: $3"
+    [ -z "${4:-}" ] || out_detail fix "$4"
+    return 0
+  fi
+  if [ "$1" = ok ]; then
+    ok_names+=("$2")
+  else
+    problems+=("$1" "$2" "$3" "${4:-}")
+  fi
 }
 
 _doctor_ok() {
-  _doctor_line ok "$1" "$2"
+  _doctor_record ok "$1" "$2"
   ok_count=$((ok_count + 1))
 }
 
 _doctor_warn() {
-  _doctor_line warn "$1" "$2"
+  _doctor_record warn "$1" "$2" "${3:-}"
   warn_count=$((warn_count + 1))
-  [ -z "${3:-}" ] || printf '      fix: %s\n' "$3"
 }
 
 _doctor_fail() {
-  _doctor_line fail "$1" "$2"
+  _doctor_record fail "$1" "$2" "${3:-}"
   fail_count=$((fail_count + 1))
-  [ -z "${3:-}" ] || printf '      fix: %s\n' "$3"
+}
+
+# _doctor_report — the terminal form's body, printed once every check has run:
+# failures, then warnings, each with its fix, then the passing checks as one
+# group. `problems` holds four fields per entry: level, check, text, fix.
+_doctor_report() {
+  local level i n=${#problems[@]} shown=0
+  out_terminal || return 0
+  for level in fail warn; do
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      if [ "${problems[$i]}" = "$level" ]; then
+        out_status "$level" "${problems[$((i + 1))]}: ${problems[$((i + 2))]}"
+        [ -z "${problems[$((i + 3))]}" ] || out_detail fix "${problems[$((i + 3))]}"
+        shown=1
+      fi
+      i=$((i + 4))
+    done
+  done
+  [ "${#ok_names[@]}" -gt 0 ] || return 0
+  [ "$shown" = 0 ] || out_gap
+  out_group ok "${#ok_names[@]} passed" "${ok_names[@]}"
 }
 
 # _doctor_bracket_list <value> — an `.ai/manifest` or `.ai/config.yaml`
@@ -523,7 +560,13 @@ _doctor_check_host_runtime() {
 cmd_doctor() {
   [ $# -eq 0 ] || jig_die "doctor: unknown argument: $1"
 
+  # shellcheck source=lib/output.sh
+  . "$JIG_LIB/output.sh"
+  out_init
+
   local ok_count=0 warn_count=0 fail_count=0
+  # Kept by _doctor_record at a terminal, printed by _doctor_report.
+  local ok_names=() problems=()
   # Set by _doctor_check_framework_version, read by _doctor_check_upgrade.
   local version_state="" version_project=""
   local global_exe=""
@@ -564,6 +607,7 @@ cmd_doctor() {
     fi
   fi
 
-  printf 'doctor: %d ok, %d warn, %d fail\n' "$ok_count" "$warn_count" "$fail_count"
+  _doctor_report
+  out_summary "doctor: $ok_count ok, $warn_count warn, $fail_count fail"
   [ "$fail_count" -eq 0 ]
 }

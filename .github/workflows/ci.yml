@@ -306,6 +306,9 @@ jobs:
           git add -A
           git commit -q -m "jig init"
           .ai/scripts/jig doctor
+          # The terminal form of the report, forced: proves it runs in Git Bash
+          # and exits as the plain one does. That it renders is not provable here.
+          JIG_TERMINAL=1 .ai/scripts/jig doctor
           .ai/scripts/jig upgrade --dry-run
           .ai/scripts/jig task new ci-demo --class T1 --domains core
           wt=$(.ai/scripts/jig task start ci-demo --worktree)
