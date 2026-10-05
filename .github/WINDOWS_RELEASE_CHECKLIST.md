@@ -24,11 +24,16 @@ item that did not pass.
    name and e-mail for git, set up jig. The first one is the check CI cannot make: you
    pasted the line without changing directory, so the current directory is your profile,
    and the installer must **refuse** it instead of offering it as the folder. Note whether
-   the refusal reads as an instruction -- it should name the folder, say that jig itself is
-   installed, and print the two commands to run -- and that typing a folder name at the
-   same question then works. Note the time from paste to the last answer, download time
-   excluded.
-4. `jig doctor` output ends with `0 fail`. Note every `warn`.
+   the refusal reads as an instruction -- a yellow `warn` block that names the folder, says
+   that jig itself is installed, and sets the three commands to run (`mkdir`, `cd`,
+   `jig init`) off under the sentence that introduces them -- and that typing a folder name
+   at the same question then works. Each question starts with a cyan `ask` on the same line
+   as the question and its answer. Note the time from paste to the last answer, download
+   time excluded.
+4. Each step's result is a green `ok` (or a yellow `warn`) line, and no line shows raw
+   escape codes such as `←[32m`. `jig doctor` lists what needs you first, then the passing
+   checks in one `ok    N passed: …` line, and ends with `doctor: N ok, N warn, 0 fail`.
+   Note every `warn`.
 5. The closing line tells you what to say to the agent.
 
 ## First session

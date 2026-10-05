@@ -278,6 +278,167 @@ function Test-GetJigInstalledInfoParsesAllThreeForms {
     Assert-JigEqual 'v0.2.0' $elsewhere.Ref 'elsewhere form ref'
 }
 
+# --- the output blocks (adr-20261005-the-installer-speaks-one-form-in-two-shells)
+#
+# The whole run sets JIG_TERMINAL=0 (see the run section below), as
+# tests/run.sh takes the overrides out of the bash suite: every scenario reads
+# the plain form, the lines install.ps1 printed before it spoke in blocks,
+# whether or not this file itself runs in a console. The tests here switch
+# the terminal form on for themselves, without colour, so the captured lines
+# are whole.
+
+# Get-JigHostText <scriptblock> -- what the block wrote through Write-Host,
+# one line per call, joined with LF.
+function Get-JigHostText {
+    param([Parameter(Mandatory)][scriptblock]$Block)
+    $raw = & $Block *>&1
+    $lines = foreach ($item in $raw) {
+        if ($item -is [System.Management.Automation.InformationRecord]) { [string]$item.MessageData }
+        else { "$item" }
+    }
+    return (@($lines) -join "`n")
+}
+
+# Set-JigTestTerminal <'0'|'1'> [-NoColor] -- the overrides one test reads.
+function Set-JigTestTerminal {
+    param([Parameter(Mandatory)][string]$Value, [switch]$NoColor)
+    $env:JIG_TERMINAL = $Value
+    if ($NoColor) { $env:NO_COLOR = '1' }
+    else { Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue }
+}
+
+function Test-BlockLinesLayOutTheForm {
+    $lines = Get-JigBlockLines -Level ok -Text 'found: C:\Git\cmd\git.exe'
+    Assert-JigEqual 1 $lines.Count 'one line of text is one line of block'
+    Assert-JigEqual 'ok    found: C:\Git\cmd\git.exe' $lines[0] 'the level word is padded to six columns'
+
+    $lines = Get-JigBlockLines -Level warn -Text "Refusing here: C:\Users\me`nMake a folder, for example:`n    mkdir C:\Users\me\p`n`nType a folder."
+    Assert-JigEqual 5 $lines.Count 'every line of the text is a line of the block'
+    Assert-JigEqual 'warn  Refusing here: C:\Users\me' $lines[0] 'the first line follows the level word'
+    Assert-JigEqual '      Make a folder, for example:' $lines[1] 'a further line is indented six columns'
+    Assert-JigEqual '          mkdir C:\Users\me\p' $lines[2] 'a further line keeps its own indentation'
+    Assert-JigEqual '' $lines[3] 'an empty line stays empty'
+    Assert-JigEqual '      Type a folder.' $lines[4] 'the line after an empty one is indented too'
+
+    Assert-JigEqual 'fail  x' (Get-JigBlockLines -Level fail -Text 'x')[0] 'fail is padded like warn'
+    Assert-JigEqual 'ask   Project folder' (Get-JigBlockLines -Level ask -Text 'Project folder')[0] 'ask is a level word too'
+}
+
+function Test-TerminalFormFollowsTheOverrides {
+    $savedTerm = $env:TERM
+    try {
+        $env:TERM = 'xterm'
+        Set-JigTestTerminal '1'
+        Assert-JigTrue (Test-JigTerminal) 'JIG_TERMINAL=1 is a terminal'
+        Assert-JigTrue (Test-JigColor) 'a terminal has colour'
+        Set-JigTestTerminal '1' -NoColor
+        Assert-JigTrue (Test-JigTerminal) 'NO_COLOR keeps the terminal form'
+        Assert-JigTrue (-not (Test-JigColor)) 'NO_COLOR takes the colour away'
+        Set-JigTestTerminal '1'
+        $env:TERM = 'dumb'
+        Assert-JigTrue (-not (Test-JigColor)) 'TERM=dumb takes the colour away'
+        Set-JigTestTerminal '0'
+        Assert-JigTrue (-not (Test-JigTerminal)) 'JIG_TERMINAL=0 is never a terminal'
+        Assert-JigTrue (-not (Test-JigColor)) 'no colour off a terminal'
+    }
+    finally {
+        Set-JigTestTerminal '0'
+        [Environment]::SetEnvironmentVariable('TERM', $savedTerm, 'Process')
+    }
+}
+
+function Test-ResultKeepsItsLineOffATerminal {
+    try {
+        Set-JigTestTerminal '0'
+        Assert-JigEqual '    skipped: jig needs a git repository' `
+            (Get-JigHostText { Write-JigResult -Level warn 'skipped: jig needs a git repository' }) `
+            'off a terminal a result is the line it always was'
+        Set-JigTestTerminal '1' -NoColor
+        Assert-JigEqual 'warn  skipped: jig needs a git repository' `
+            (Get-JigHostText { Write-JigResult -Level warn 'skipped: jig needs a git repository' }) `
+            'at a terminal a result is a block of its level'
+        Assert-JigEqual 'ok    found: x' (Get-JigHostText { Write-JigResult 'found: x' }) `
+            'a result is ok unless said otherwise'
+    }
+    finally {
+        Set-JigTestTerminal '0'
+    }
+}
+
+# Doctor's colour is escape codes, which an old console prints as text: at a
+# terminal Invoke-JigDoctorCheck asks for the grouped form without colour
+# itself, whatever NO_COLOR the person has, and puts the environment back.
+function Test-DoctorAtATerminalIsAskedForNoColour {
+    $savedCommand = ${function:script:Invoke-JigCommand}
+    $script:SeenDoctorEnv = $null
+    try {
+        ${function:script:Invoke-JigCommand} = {
+            param([string]$BashExe, [string]$JigScriptPath, [string]$WorkingDirectory, [string[]]$JigArgs)
+            $script:SeenDoctorEnv = "JIG_TERMINAL=$env:JIG_TERMINAL NO_COLOR=$env:NO_COLOR"
+            return [PSCustomObject]@{ Output = @(); ExitCode = 0 }
+        }
+        Set-JigTestTerminal '1'
+        Invoke-JigDoctorCheck -BashExe 'not-run' -JigScriptPath 'not-run' | Out-Null
+        Assert-JigEqual 'JIG_TERMINAL=1 NO_COLOR=1' $script:SeenDoctorEnv 'doctor at a terminal runs grouped and without colour'
+        Assert-JigTrue ([string]::IsNullOrEmpty($env:NO_COLOR)) 'NO_COLOR is put back the way it was'
+        Set-JigTestTerminal '0'
+        Invoke-JigDoctorCheck -BashExe 'not-run' -JigScriptPath 'not-run' | Out-Null
+        Assert-JigEqual 'JIG_TERMINAL=0 NO_COLOR=' $script:SeenDoctorEnv 'off a terminal doctor gets the environment as it is'
+    }
+    finally {
+        ${function:script:Invoke-JigCommand} = $savedCommand
+        Set-JigTestTerminal '0'
+    }
+}
+
+function Test-TerminalInstallSpeaksInBlocks {
+    $projectDir = New-JigTempDir -Prefix 'blocks'
+    try {
+        Set-JigTestTerminal '1' -NoColor
+        $result = Invoke-JigInstaller -InstallerArgs @(
+            '-Yes', '-Project', $projectDir,
+            '-GitName', 't', '-GitEmail', 't@example.com',
+            '-InstallSh', $script:InstallShPath,
+            '-Repository', $script:RemoteDir
+        )
+    }
+    finally {
+        Set-JigTestTerminal '0'
+    }
+    Assert-JigEqual 0 $result.ExitCode "a terminal-form install should succeed:`n$($result.Output)"
+    Assert-JigContains $result.Output "`nok    found: " 'a step result is an ok block'
+    Assert-JigContains $result.Output "`nok    jig installed: " 'the installed line is an ok block'
+    Assert-JigTrue ($result.Output -notmatch '(?m)^jig installed: ') `
+        "install.sh's own summary line is not repeated at a terminal:`n$($result.Output)"
+    Assert-JigContains $result.Output ' passed: ' 'jig doctor is asked for its terminal form'
+    Assert-JigTrue (-not $result.Output.Contains([string][char]27)) `
+        'no escape code reaches the console: doctor runs without colour'
+    Assert-JigTrue (Test-Path (Join-Path $projectDir '.ai\config.yaml')) 'the project is still set up'
+}
+
+function Test-TerminalRefusalIsAFailBlockWithItsCommands {
+    try {
+        Set-JigTestTerminal '1' -NoColor
+        $result = Invoke-JigInstaller -InstallerArgs @(
+            '-Yes', '-Project', $env:USERPROFILE,
+            '-InstallSh', $script:InstallShPath,
+            '-Repository', $script:RemoteDir
+        )
+    }
+    finally {
+        Set-JigTestTerminal '0'
+    }
+    Assert-JigEqual 1 $result.ExitCode "the profile must still be refused:`n$($result.Output)"
+    Assert-JigContains $result.Output 'fail  jig install failed: Refusing to set up a project in your home folder' `
+        'a refusal that ends the run is a fail block'
+    Assert-JigContains $result.Output "`n      jig itself is installed and ready" `
+        'the refusal goes on under its first line'
+    Assert-JigContains $result.Output "`n          mkdir " `
+        'the command to type stays set off under the sentence that introduces it'
+    Assert-JigTrue (-not (Test-Path (Join-Path $env:USERPROFILE '.git'))) `
+        'a refused run must not make the profile a git repository'
+}
+
 # --- scenarios -----------------------------------------------------------------
 
 function Test-GitPresentFreshInstall {
@@ -694,6 +855,10 @@ function Test-FindGitReturnsOneStringWithSeveralOnPath {
 $script:OriginalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $script:OriginalUserProfile = $env:USERPROFILE
 $script:OriginalHome = $env:HOME
+$script:OriginalTerminal = $env:JIG_TERMINAL
+$script:OriginalNoColor = $env:NO_COLOR
+# The plain form for every scenario; the block tests switch it per test.
+$env:JIG_TERMINAL = '0'
 
 $script:TestTmp = Join-Path $env:TEMP "jig-install-test-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 New-Item -ItemType Directory -Path $script:TestTmp -Force | Out-Null
@@ -716,6 +881,12 @@ try {
     Invoke-JigTest 'RepeatRunIsIdempotent' { Test-RepeatRunIsIdempotent }
     Invoke-JigTest 'ExistingRepositoryGetsNoCommit' { Test-ExistingRepositoryGetsNoCommit }
     Invoke-JigTest 'RefusesProfileAsProject' { Test-RefusesProfileAsProject }
+    Invoke-JigTest 'BlockLinesLayOutTheForm' { Test-BlockLinesLayOutTheForm }
+    Invoke-JigTest 'TerminalFormFollowsTheOverrides' { Test-TerminalFormFollowsTheOverrides }
+    Invoke-JigTest 'ResultKeepsItsLineOffATerminal' { Test-ResultKeepsItsLineOffATerminal }
+    Invoke-JigTest 'DoctorAtATerminalIsAskedForNoColour' { Test-DoctorAtATerminalIsAskedForNoColour }
+    Invoke-JigTest 'TerminalInstallSpeaksInBlocks' { Test-TerminalInstallSpeaksInBlocks }
+    Invoke-JigTest 'TerminalRefusalIsAFailBlockWithItsCommands' { Test-TerminalRefusalIsAFailBlockWithItsCommands }
     Invoke-JigTest 'ProjectDirRefusalTable' { Test-ProjectDirRefusalTable }
     Invoke-JigTest 'InteractiveRefusalAsksAgainAndNeverAccepts' { Test-InteractiveRefusalAsksAgainAndNeverAccepts }
     Invoke-JigTest 'NoInitSkipsProject' { Test-NoInitSkipsProject }
@@ -727,6 +898,8 @@ finally {
     [Environment]::SetEnvironmentVariable('Path', $script:OriginalUserPath, 'User')
     $env:USERPROFILE = $script:OriginalUserProfile
     $env:HOME = $script:OriginalHome
+    [Environment]::SetEnvironmentVariable('JIG_TERMINAL', $script:OriginalTerminal, 'Process')
+    [Environment]::SetEnvironmentVariable('NO_COLOR', $script:OriginalNoColor, 'Process')
     Remove-Item -Recurse -Force -LiteralPath $script:TestTmp -ErrorAction SilentlyContinue
 }
 
