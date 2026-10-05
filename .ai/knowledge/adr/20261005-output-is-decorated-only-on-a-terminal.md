@@ -9,6 +9,7 @@ domains:
 paths:
   - scripts/lib/output.sh
   - scripts/lib/doctor.sh
+  - scripts/lib/upgrade.sh
 summary: A report is grouped and coloured only when stdout is a terminal, decided once in scripts/lib/output.sh; a pipe, CI and an agent get the bytes printed before the layer existed.
 reviewed_at: 2026-10-05
 ---
@@ -55,6 +56,18 @@ so where the form is decided and what blocks it is built from has to be decided 
   one before. At a terminal it prints failures, then warnings, each with its fix, then every
   passing check in one line (`ok    13 passed: git, git identity, …`), then the tally. The
   exit code does not depend on the form.
+
+- **`jig upgrade` is the second.** In a pipe its report is byte-identical to the one before.
+  At a terminal the replacements (and an interrupted run's reconciliations) are said once,
+  grouped by their first two directories (`ok    replace 50 file(s): .ai/scripts (14),
+  .claude/skills (17), …`), just before the summary — so a run that dies midway names none it
+  had replaced, and its repeat reports them as `already-placed`; installs, deletions and links stay one
+  `ok` line each, every file kept (`keep-modified`, `keep-conflict`, …) one `warn` line, and
+  each hint a detail under its note. An upgrade of 58 files went from 66 lines to 17.
+- **A reader inside Jig asks for the plain form.** Code that captures a Jig report to filter
+  its lines — `upgrade_pending`, the upgrade's self-check — sets `JIG_TERMINAL=0` for that
+  run, because the person's `JIG_TERMINAL=1` reaches it through the environment and would
+  hand it lines its filter does not know.
 
 ## Alternatives
 

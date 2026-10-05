@@ -1812,3 +1812,140 @@ test_upgrade_manual_steps_silent_when_project_is_no_older_than_0_16_0() {
 
   rm -rf "$src"
 }
+
+# --- the report's two forms (adr-20261005-output-is-decorated-only-on-a-terminal)
+
+# _report_scenario — a committed project and a source (printed) that make one
+# run produce every kind of line a person may have to act on: replacements in
+# three places, installs, a deletion, a file kept because it was edited, one
+# kept because it is in the way, and an AGENTS.md whose end marker is gone,
+# which is reported with an explanation under it. The source keeps
+# the running version, so this code writes the report.
+_report_scenario() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+  _unbump_source "$src"
+  printf '\n<!-- v2 -->\n' >> "$src/skills/jig-review/SKILL.md"
+  printf '\n<!-- v2 -->\n' >> "$src/skills/jig-verify/SKILL.md"
+  rm -f "$src/profiles/generic/profile.yaml"
+  printf '\n# local edit\n' >> .ai/scripts/lib/config.sh
+  mkdir -p .claude/skills/jig-newthing
+  echo "pre-existing, not from jig" > .claude/skills/jig-newthing/SKILL.md
+  grep -v 'jig:end' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  git add -A
+  git commit -q -m "local changes"
+  printf '%s\n' "$src"
+}
+
+_report_branch() {
+  printf 'jig/upgrade-%s' "$(sed -n 's/^JIG_VERSION="\(.*\)"$/\1/p' "$JIG_HOME/scripts/lib/version.sh")"
+}
+
+# The byte-for-byte proof: the expected text is the report in the format
+# upgrade printed before the output layer, and the same test passes on the
+# commit before it (upgrade-says-what-changed, verification.md).
+test_upgrade_a_pipe_gets_the_report_byte_for_byte_as_before() {
+  local src branch
+  src=$(_report_scenario)
+  branch=$(_report_branch)
+  {
+    printf 'upgrade: working on branch %s, cut from main\n' "$branch"
+    printf 'delete .ai/profiles/generic/profile.yaml\n'
+    printf 'replace .ai/profiles/generic/verify.sh\n'
+    printf 'keep-modified .ai/scripts/lib/config.sh\n'
+    printf 'keep-conflict .claude/skills/jig-newthing/SKILL.md\n'
+    printf 'replace .claude/skills/jig-review/SKILL.md\n'
+    printf 'replace .claude/skills/jig-verify/SKILL.md\n'
+    printf 'install .codex/skills/jig-newthing/SKILL.md\n'
+    printf 'replace .codex/skills/jig-review/SKILL.md\n'
+    printf 'replace .codex/skills/jig-verify/SKILL.md\n'
+    printf 'keep-malformed AGENTS.md (Jig section)\n'
+    printf '  expected one <!-- jig:begin --> and one <!-- jig:end -->, in that order\n'
+    printf 'jig upgrade: 6 placed, N kept, 1 removed, 1 conflict(s); manifest updated\n'
+    # shellcheck disable=SC2016
+    printf 'upgrade: the change is staged; commit it with `git commit -F .ai/runtime/upgrade/message`\n'
+    printf 'next: this upgrade is on branch %s; once it is merged into main, merge that into the branches still in progress\n' "$branch"
+    # shellcheck disable=SC2016
+    printf 'next: to go back to what you were doing: `git checkout main`\n'
+  } > ../expected.txt
+  # The kept count moves with the number of files Jig ships, so it is the one
+  # thing not pinned.
+  jig upgrade --from "$src" 2>&1 \
+    | sed -E 's/^(jig upgrade: 6 placed, )[0-9]+( kept)/\1N\2/' > ../actual.txt
+  assert_eq 0 "${PIPESTATUS[0]}"
+  cmp ../expected.txt ../actual.txt || fail "piped report changed: $(diff ../expected.txt ../actual.txt)"
+  rm -rf "$src"
+}
+
+test_upgrade_a_terminal_groups_the_replacements_and_keeps_the_rest() {
+  local src branch
+  src=$(_report_scenario)
+  branch=$(_report_branch)
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "ok    replace 5 file(s): .ai/profiles, .claude/skills (2), .codex/skills (2)"
+  assert_not_contains "$OUT" "replace .ai/profiles/generic/verify.sh"
+  assert_contains "$OUT" "ok    install .codex/skills/jig-newthing/SKILL.md"
+  assert_contains "$OUT" "ok    delete .ai/profiles/generic/profile.yaml"
+  assert_contains "$OUT" "warn  keep-modified .ai/scripts/lib/config.sh"
+  assert_contains "$OUT" "warn  keep-conflict .claude/skills/jig-newthing/SKILL.md"
+  assert_contains "$OUT" "warn  keep-malformed AGENTS.md (Jig section)"
+  assert_contains "$OUT" "      note: expected one <!-- jig:begin --> and one <!-- jig:end -->, in that order"
+  assert_contains "$OUT" "upgrade: working on branch $branch, cut from main"
+  # The grouped line comes right before the summary, after every expanded one.
+  local before
+  before=$(printf '%s\n' "$OUT" | grep -B1 '^jig upgrade: 6 placed, ' | sed -n 1p)
+  assert_contains "$before" "ok    replace 5 file(s): "
+  # The commit message carries the summary in plain words.
+  assert_contains "$(cat .ai/runtime/upgrade/message)" "jig upgrade: 6 placed, "
+  rm -rf "$src"
+}
+
+test_upgrade_a_terminal_colours_the_level_words() {
+  local src esc
+  src=$(_report_scenario)
+  esc=$(printf '\033')
+  run env -u NO_COLOR TERM=xterm JIG_TERMINAL=1 "$JIG_BIN" upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "${esc}[32mok${esc}[0m    replace 5 file(s): "
+  assert_contains "$OUT" "${esc}[33mwarn${esc}[0m  keep-modified .ai/scripts/lib/config.sh"
+  assert_not_contains "$(cat .ai/runtime/upgrade/message)" "$esc"
+  rm -rf "$src"
+}
+
+# The two readers inside jig — upgrade_pending and the self-check — filter the
+# plain lines, so a reader who asked for the terminal form must not blind them.
+test_upgrade_a_terminal_reader_does_not_blind_the_pending_check() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  rm -f .ai/scripts/lib/spec.sh
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "1 pending"
+}
+
+test_upgrade_a_terminal_reader_still_hears_what_is_not_installed() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local src anchor
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-next.XXXXXX")
+  _mk_source_v2 "$src"
+  _unbump_source "$src"
+  # shellcheck disable=SC2016
+  anchor='cp -p "$source/templates/AGENTS.md" "$stage/.ai/templates/AGENTS.md"'
+  grep -qF "$anchor" "$src/scripts/lib/upgrade.sh" \
+    || fail "the staging line this test patches is gone; rewrite the test"
+  awk -v anchor="$anchor" '
+    { print }
+    index($0, anchor) { print "  cp -p \"$source/templates/AGENTS.md\" \"$stage/.ai/templates/NEWTHING.md\"" }
+  ' "$src/scripts/lib/upgrade.sh" > "$src/scripts/lib/upgrade.sh.tmp"
+  mv "$src/scripts/lib/upgrade.sh.tmp" "$src/scripts/lib/upgrade.sh"
+
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "fail  1 item(s) still not installed"
+  assert_contains "$OUT" "      install .ai/templates/NEWTHING.md"
+  rm -rf "$src"
+}
