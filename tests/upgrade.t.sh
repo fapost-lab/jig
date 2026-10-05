@@ -1579,6 +1579,26 @@ test_upgrade_in_a_tasks_own_worktree_points_to_the_main_checkout() {
   git worktree remove --force "$wt" >/dev/null 2>&1 || true
 }
 
+# A worktree of a bare repository has no main checkout to move to: the answer to
+# "is this the main checkout" is the one the rest of Jig gives (the clone root
+# is the tree itself), so the refusal does not send the upgrade to a checkout
+# that does not exist.
+test_upgrade_in_a_bare_repositorys_worktree_does_not_name_a_main_checkout() {
+  _unit_project
+  local bare="$PWD/../bare.git" wt="$PWD/../bare-wt"
+  git clone -q --bare "$PWD" "$bare" || fail "could not make a bare clone"
+  git -C "$bare" worktree add -q "$wt" HEAD >/dev/null 2>&1 || fail "could not add a worktree"
+  cd "$wt" || fail "could not enter the worktree"
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null 2>&1
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task T-1 is started and its branch task/T-1 is checked out here"
+  assert_not_contains "$OUT" "run \`jig upgrade\` in the main checkout instead"
+  assert_contains "$OUT" "\`jig task start T-1 --worktree\`"
+}
+
 # With one branch for everything no HEAD moves, so, as for `task start`, the
 # task on it occupies nothing the upgrade would take.
 test_upgrade_without_branch_per_task_is_not_stopped_by_the_task_on_head() {

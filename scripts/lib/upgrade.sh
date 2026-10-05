@@ -864,20 +864,6 @@ _upgrade_handoff() {
   JIG_UPGRADE_HANDED_OFF="$JIG_VERSION" exec bash "$source/scripts/jig" upgrade --from "$source" $q
 }
 
-# _upgrade_in_linked_worktree — exit 0 when this checkout is a linked worktree
-# (ADR-0029), not the repository's main working tree: git's own answer, a git
-# dir that differs from the common one. Asked from the top of the checkout in
-# one call, where the main tree answers `.git` twice and a linked one names
-# `.git/worktrees/<name>` and the common dir apart.
-_upgrade_in_linked_worktree() {
-  local dirs gd common
-  dirs=$(cd "$JIG_PROJECT" 2>/dev/null && git rev-parse --git-dir --git-common-dir 2>/dev/null) || return 1
-  gd=${dirs%%$'\n'*}
-  common=${dirs#*$'\n'}
-  [ -n "$gd" ] || return 1
-  [ "$gd" != "$common" ]
-}
-
 # _upgrade_stop_reasons <source> — why a real run must not start here, one
 # reason per line; nothing when it may. Asked before anything is touched.
 _upgrade_stop_reasons() {
@@ -929,7 +915,10 @@ _upgrade_stop_reasons() {
   #    long command that broke under a script swap has its own stop (4).
   #    Asked only where a HEAD moves — not with `git.branch_per_task: false`,
   #    and not on a repeat on the upgrade's own branch, which no task holds.
-  #    The way out depends on where this checkout is: in the main checkout,
+  #    Where this checkout is is answered as the rest of Jig answers it,
+  #    jig_config_clone_root: a worktree of a clone has a main checkout that
+  #    differs from it; a bare repository's worktree has none, so it is asked
+  #    as a main checkout. The way out depends on that: in the main checkout,
   #    `task start <id> --worktree` moves the task out and puts this checkout
   #    back on the base; in a worktree of its own the task already has one,
   #    that command cannot hand this tree the base (git keeps a branch in one
@@ -937,7 +926,7 @@ _upgrade_stop_reasons() {
   if cfg_bool git.branch_per_task true; then
     while read -r name _; do
       [ -n "$name" ] || continue
-      if _upgrade_in_linked_worktree; then
+      if [ "$(jig_config_clone_root)" != "$JIG_PROJECT" ]; then
         exit_hint="this is a worktree of its own, so run \`jig upgrade\` in the main checkout instead"
       else
         exit_hint="if that work is yours or its session has ended, give it a worktree of its own with \`jig task start $name --worktree\` (this checkout goes back to its base branch), then run \`jig upgrade\` again; if another session is still working on it, run the upgrade when it has finished"
