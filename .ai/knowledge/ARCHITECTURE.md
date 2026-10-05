@@ -27,8 +27,10 @@ sources `lib/version.sh`, `lib/common.sh`, `lib/config.sh`, then sources
 file per command (`tests/<command>.t.sh`). Shared parsers live in their own libraries
 (`lib/frontmatter.sh`, `lib/manifest.sh`, `lib/section.sh`) and are sourced by the commands
 that need them. How a report looks is one such library, `lib/output.sh`: whether stdout is a
-terminal is decided there and nowhere else, and a command that prints through its blocks prints
-today's bytes to a pipe (adr-20261005-output-is-decorated-only-on-a-terminal). A subject large enough to crowd out its command gets a library of its own even
+terminal is decided there and nowhere else in `scripts/`, and a command that prints through its
+blocks prints today's bytes to a pipe (adr-20261005-output-is-decorated-only-on-a-terminal). The
+two installers, which run before any checkout exists, speak the same blocks through their own
+copies (adr-20261005-the-installer-speaks-one-form-in-two-shells). A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
 lifecycle.

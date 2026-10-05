@@ -215,8 +215,11 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
 - `scripts/lib/section.sh` — `jig_section_state|read|hash|report_state|write`.
 - `adapters/<runtime>/adapter.sh` — the three functions each adapter must define.
 - `install.sh` — the per-user bootstrap; cannot source libraries, so it carries copies of the
-  release-ordering helpers.
-- `install.ps1` — `Install-Jig`, `Initialize-JigProject`, `Uninstall-JigFramework`; tested by
+  release-ordering helpers and of the output blocks (`_install_out_init`, `_install_block`,
+  held to `out_status` by `tests/install.t.sh`).
+- `install.ps1` — `Install-Jig`, `Initialize-JigProject`, `Uninstall-JigFramework`; its output
+  blocks are `Test-JigTerminal`, `Get-JigBlockLines`, `Write-JigBlock`, `Write-JigResult`
+  (adr-20261005-the-installer-speaks-one-form-in-two-shells); tested by
   `tests/install.t.ps1`, which runs only on Windows CI.
 - `scripts/lib/doctor.sh` — `cmd_doctor`, one `_doctor_check_*` per line of its report.
 - `scripts/lib/upgrade.sh` — its report: `_upgrade_line` (one per path), `_upgrade_note`,

@@ -37,14 +37,137 @@
 # executing a truncated stream up to the point of failure); here, nothing
 # above the last line ever runs unless the whole file parsed.
 
+# --- terminal output -----------------------------------------------------------
+#
+# The same form as scripts/lib/output.sh and install.sh, written again here
+# because PowerShell cannot source a bash layer
+# (adr-20261005-the-installer-speaks-one-form-in-two-shells). The form is the
+# vocabulary and the layout, not the code: a block is a level word -- ok,
+# warn, fail, or ask for a question -- padded to six columns, then the text;
+# every further line of the text is indented six columns and keeps its own
+# indentation, so a command the person types stays set off under the sentence
+# that introduces it.
+#
+# Only at a terminal. Redirected output (a test, CI, a log) gets exactly the
+# lines this installer printed before blocks existed. JIG_TERMINAL=1 treats
+# the output as a terminal, 0 never does; a non-empty NO_COLOR, or TERM=dumb,
+# takes the colour away and keeps the layout. Colour goes through
+# Write-Host -ForegroundColor -- the console's own API, which an old conhost
+# honours without virtual-terminal processing -- never through escape codes,
+# which such a console prints as text. Functions rather than $script:
+# variables, for the reason Get-JigGitMissingMessage gives: `irm | iex` has no
+# script scope of its own.
+
+function Test-JigTerminal {
+    if ($env:JIG_TERMINAL -eq '1') { return $true }
+    if ($env:JIG_TERMINAL -eq '0') { return $false }
+    try {
+        return (-not [Console]::IsOutputRedirected)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-JigColor {
+    if (-not (Test-JigTerminal)) { return $false }
+    if (-not [string]::IsNullOrEmpty($env:NO_COLOR)) { return $false }
+    if ($env:TERM -eq 'dumb') { return $false }
+    return $true
+}
+
+# Get-JigBlockLines -Level <level> -Text <text> -- the lines of one block, as
+# text: the level word padded to six columns before the first line, six
+# spaces before every further one, and an empty line left empty.
+function Get-JigBlockLines {
+    param(
+        [Parameter(Mandatory)][ValidateSet('ok', 'warn', 'fail', 'ask')][string]$Level,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+    $lines = @($Text -split "`r?`n")
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add($Level.PadRight(6) + $lines[0])
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -eq '') { $out.Add('') }
+        else { $out.Add('      ' + $lines[$i]) }
+    }
+    return , $out.ToArray()
+}
+
+function Get-JigLevelColor {
+    param([Parameter(Mandatory)][string]$Level)
+    switch ($Level) {
+        'ok' { return 'Green' }
+        'warn' { return 'Yellow' }
+        'fail' { return 'Red' }
+        default { return 'Cyan' }
+    }
+}
+
+# Write-JigLevelWord <level> -- the padded level word with no line end, for a
+# block's first line and for the question Read-Host then writes after it.
+function Write-JigLevelWord {
+    param([Parameter(Mandatory)][string]$Level)
+    if (Test-JigColor) {
+        Write-Host $Level -ForegroundColor (Get-JigLevelColor $Level) -NoNewline
+        Write-Host (''.PadRight(6 - $Level.Length)) -NoNewline
+    }
+    else {
+        Write-Host $Level.PadRight(6) -NoNewline
+    }
+}
+
+# Write-JigBlock -Level <level> -Text <text> -- one block of the terminal
+# form. Without colour each line is one Write-Host call, so a capture reads
+# the lines whole.
+function Write-JigBlock {
+    param(
+        [Parameter(Mandatory)][ValidateSet('ok', 'warn', 'fail', 'ask')][string]$Level,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+    $lines = Get-JigBlockLines -Level $Level -Text $Text
+    if (Test-JigColor) {
+        Write-JigLevelWord $Level
+        Write-Host $lines[0].Substring(6)
+    }
+    else {
+        Write-Host $lines[0]
+    }
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        Write-Host $lines[$i]
+    }
+}
+
+# Write-JigIndented <lines> -- words that belong to the question after them,
+# at a terminal indented under the level column; as they are otherwise.
+function Write-JigIndented {
+    param([Parameter(Mandatory)][string[]]$Lines)
+    $terminal = Test-JigTerminal
+    foreach ($line in $Lines) {
+        if ($terminal) { Write-Host ('      ' + $line) }
+        else { Write-Host $line }
+    }
+}
+
 function Write-JigStep {
     param([Parameter(Mandatory)][string]$Message)
     Write-Host "==> $Message"
 }
 
+# Write-JigResult <message> [-Level ok|warn] -- what a step came to. warn is
+# for an outcome the person may want to know about: a fallback taken, a
+# step skipped, something left in place.
 function Write-JigResult {
-    param([Parameter(Mandatory)][string]$Message)
-    Write-Host "    $Message"
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [ValidateSet('ok', 'warn')][string]$Level = 'ok'
+    )
+    if (Test-JigTerminal) {
+        Write-JigBlock -Level $Level -Text $Message
+    }
+    else {
+        Write-Host "    $Message"
+    }
 }
 
 # The one message shown for every "Git for Windows is unusable and we could
@@ -343,7 +466,7 @@ function Install-JigGitViaDownloadedInstaller {
         # differently packaged asset, whichever the release happens to list first.
         $asset = $release.assets | Where-Object { $_.name -match '^Git-[0-9.]+-64-bit\.exe$' } | Select-Object -First 1
         if (-not $asset) {
-            Write-JigResult 'no Git-<version>-64-bit.exe asset found on the latest release'
+            Write-JigResult -Level warn 'no Git-<version>-64-bit.exe asset found on the latest release'
             return
         }
         $downloaded = Join-Path $env:TEMP $asset.name
@@ -360,7 +483,7 @@ function Install-JigGitViaDownloadedInstaller {
             if ($_.Exception.NativeErrorCode -ne 1223) {
                 throw
             }
-            Write-JigResult 'permission declined; installing for the current user only'
+            Write-JigResult -Level warn 'permission declined; installing for the current user only'
             $currentUserOnly = $true
             $proc = Start-Process -FilePath $downloaded -ArgumentList '/VERYSILENT', '/NORESTART', '/CURRENTUSER' -Wait -PassThru
         }
@@ -370,7 +493,7 @@ function Install-JigGitViaDownloadedInstaller {
         # as "installed" even though git never actually landed.
         if (-not $proc -or $proc.ExitCode -ne 0) {
             $code = if ($proc) { $proc.ExitCode } else { 'unknown' }
-            Write-JigResult "the installer reported a failure (exit code $code)"
+            Write-JigResult -Level warn "the installer reported a failure (exit code $code)"
             return
         }
         if ($currentUserOnly) {
@@ -381,7 +504,7 @@ function Install-JigGitViaDownloadedInstaller {
         }
     }
     catch {
-        Write-JigResult "could not install Git for Windows this way: $($_.Exception.Message)"
+        Write-JigResult -Level warn "could not install Git for Windows this way: $($_.Exception.Message)"
     }
     finally {
         if ($downloaded -and (Test-Path $downloaded)) {
@@ -410,7 +533,7 @@ function Install-JigGitForWindows {
             Write-JigResult 'installed via winget'
             return
         }
-        Write-JigResult 'winget did not leave a usable git; falling back to a direct download'
+        Write-JigResult -Level warn 'winget did not leave a usable git; falling back to a direct download'
     }
     Install-JigGitViaDownloadedInstaller
     Update-JigSessionPath
@@ -477,8 +600,26 @@ function Install-JigFramework {
         $bashArgs += @('--repository', (ConvertTo-JigBashPath $Repository))
     }
 
-    $result = Invoke-JigNative -FilePath $BashExe -NativeArgs $bashArgs
-    $result.Output | ForEach-Object { Write-Host $_ }
+    # A reader inside Jig asks for the plain form
+    # (adr-20261005-output-is-decorated-only-on-a-terminal): the summary line
+    # below is parsed, and a JIG_TERMINAL=1 of the person's own would reach
+    # install.sh through the environment.
+    $terminal = Test-JigTerminal
+    $savedTerminal = $env:JIG_TERMINAL
+    $env:JIG_TERMINAL = '0'
+    try {
+        $result = Invoke-JigNative -FilePath $BashExe -NativeArgs $bashArgs
+    }
+    finally {
+        if ($null -eq $savedTerminal) { Remove-Item Env:\JIG_TERMINAL -ErrorAction SilentlyContinue }
+        else { $env:JIG_TERMINAL = $savedTerminal }
+    }
+    # At a terminal its lines are shown only when it failed: on success the
+    # step's own `ok    jig installed: ...` says what they would, and the PATH
+    # advice install.sh gives under --no-path is what this script then does.
+    if ((-not $terminal) -or ($result.ExitCode -ne 0)) {
+        $result.Output | ForEach-Object { Write-Host $_ }
+    }
     if ($result.ExitCode -ne 0) {
         throw 'installing jig failed (see the output above and the log)'
     }
@@ -494,7 +635,7 @@ function Install-JigFramework {
         Add-JigUserPath -Dir $winPathDir
     }
     else {
-        Write-JigResult "jig is already on PATH from another checkout; using this run's own copy directly ($winJigScript) without changing PATH"
+        Write-JigResult -Level warn "jig is already on PATH from another checkout; using this run's own copy directly ($winJigScript) without changing PATH"
     }
     return [PSCustomObject]@{ JigScript = $winJigScript; Ref = $info.Ref }
 }
@@ -533,6 +674,7 @@ function Read-JigConfirm {
     if ($Yes) {
         return $true
     }
+    if (Test-JigTerminal) { Write-JigLevelWord 'ask' }
     $answer = Read-Host "$Prompt [Y/n]"
     if ([string]::IsNullOrWhiteSpace($answer)) {
         return $true
@@ -546,6 +688,7 @@ function Read-JigValue {
         [string]$Default
     )
     $label = if ($Default) { "$Prompt [$Default]" } else { $Prompt }
+    if (Test-JigTerminal) { Write-JigLevelWord 'ask' }
     $val = Read-Host $label
     if ([string]::IsNullOrWhiteSpace($val)) {
         return $Default
@@ -890,11 +1033,19 @@ function Initialize-JigProject {
     if (-not $Project) {
         $cwdRefusal = Get-JigProjectDirRefusal -Path $cwdPath -GitExe $GitExe
     }
+    # At a terminal a refusal the question follows is a warn block -- the run
+    # goes on and waits for the person -- and one that ends the run is the
+    # fail block Install-Jig prints.
     if ((-not $Project) -and (-not $Yes) -and $cwdRefusal) {
         Write-Host ''
-        Write-Host $cwdRefusal -ForegroundColor Red
-        Write-Host ''
-        Write-Host 'Type a folder to use instead; it does not have to exist yet.'
+        if (Test-JigTerminal) {
+            Write-JigBlock -Level warn -Text ($cwdRefusal + "`n`n" + 'Type a folder to use instead; it does not have to exist yet.')
+        }
+        else {
+            Write-Host $cwdRefusal -ForegroundColor Red
+            Write-Host ''
+            Write-Host 'Type a folder to use instead; it does not have to exist yet.'
+        }
     }
     $projectDir = $null
     $refusedAnswers = 0
@@ -930,7 +1081,12 @@ function Initialize-JigProject {
             throw ($refusal + "`n" + 'No project was set up: three folders in a row could not be used.')
         }
         Write-Host ''
-        Write-Host $refusal -ForegroundColor Red
+        if (Test-JigTerminal) {
+            Write-JigBlock -Level warn -Text $refusal
+        }
+        else {
+            Write-Host $refusal -ForegroundColor Red
+        }
     }
     if (-not (Test-Path -LiteralPath $projectDir)) {
         New-Item -ItemType Directory -Path $projectDir -Force | Out-Null
@@ -957,7 +1113,7 @@ function Initialize-JigProject {
         }
     }
     if (-not $isRepo) {
-        Write-JigResult 'skipped: jig needs a git repository'
+        Write-JigResult -Level warn 'skipped: jig needs a git repository'
         return $null
     }
 
@@ -993,15 +1149,18 @@ function Initialize-JigProject {
     # delete task workspaces -- in the background at every Claude Code
     # session start, and a user who is not told cannot know to look for it.
     Write-Host ''
-    Write-Host 'Setting up jig adds .ai\, AGENTS.md, CLAUDE.md and the jig skills to this folder.'
+    $explained = @('Setting up jig adds .ai\, AGENTS.md, CLAUDE.md and the jig skills to this folder.')
     $initArgs = @('init')
     if ($SessionHook) {
-        Write-Host 'It also creates .claude\settings.json with a Claude Code session hook: at the start'
-        Write-Host 'of each session it runs `jig housekeeping` in the background, which moves the'
-        Write-Host 'workspaces of merged or long-abandoned tasks to trash and later deletes them.'
-        Write-Host 'Run the installer with -NoSessionHook to leave the hook out.'
+        $explained += @(
+            'It also creates .claude\settings.json with a Claude Code session hook: at the start',
+            'of each session it runs `jig housekeeping` in the background, which moves the',
+            'workspaces of merged or long-abandoned tasks to trash and later deletes them.',
+            'Run the installer with -NoSessionHook to leave the hook out.'
+        )
         $initArgs += '--session-hook'
     }
+    Write-JigIndented -Lines $explained
     if (-not (Read-JigConfirm -Prompt 'Set up jig in this folder?' -Yes $Yes)) {
         return $projectDir
     }
@@ -1017,8 +1176,14 @@ function Initialize-JigProject {
     # repository it did not create).
     if ($repoCreatedThisRun) {
         if ($preExisting.Count -gt 0) {
-            Write-Host "$($preExisting.Count) existing file(s) will be included in the first commit:"
-            $preExisting | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+            $listed = @($preExisting | Select-Object -First 5 | ForEach-Object { "  $_" })
+            if (Test-JigTerminal) {
+                Write-JigBlock -Level warn -Text ((@("$($preExisting.Count) existing file(s) will be included in the first commit:") + $listed) -join "`n")
+            }
+            else {
+                Write-Host "$($preExisting.Count) existing file(s) will be included in the first commit:"
+                $listed | ForEach-Object { Write-Host $_ }
+            }
         }
         Invoke-JigGitOrThrow -GitExe $GitExe -Description "Could not stage files in $projectDir" `
             -GitArgs @('-C', $projectDir, 'add', '-A') | Out-Null
@@ -1059,8 +1224,23 @@ function Invoke-JigDoctorCheck {
         [Parameter(Mandatory)][string]$JigScriptPath,
         [string]$ProjectDir
     )
-    $result = Invoke-JigCommand -BashExe $BashExe -JigScriptPath $JigScriptPath `
-        -WorkingDirectory $ProjectDir -JigArgs @('doctor')
+    # At a terminal doctor is asked for its terminal form -- what needs the
+    # person first, the passing checks in one line -- without colour: its
+    # colour is escape codes, which an old console prints as text.
+    $saved = @{ JIG_TERMINAL = $env:JIG_TERMINAL; NO_COLOR = $env:NO_COLOR }
+    if (Test-JigTerminal) {
+        $env:JIG_TERMINAL = '1'
+        $env:NO_COLOR = '1'
+    }
+    try {
+        $result = Invoke-JigCommand -BashExe $BashExe -JigScriptPath $JigScriptPath `
+            -WorkingDirectory $ProjectDir -JigArgs @('doctor')
+    }
+    finally {
+        foreach ($name in @($saved.Keys)) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+        }
+    }
     $result.Output | ForEach-Object { Write-Host $_ }
 }
 
@@ -1116,7 +1296,7 @@ function Uninstall-JigFramework {
             Write-JigResult "removed: $binJig"
         }
         else {
-            Write-JigResult "left in place (not a link into $installDir): $binJig"
+            Write-JigResult -Level warn "left in place (not a link into $installDir): $binJig"
         }
     }
 
@@ -1131,16 +1311,16 @@ function Uninstall-JigFramework {
         (Test-Path -LiteralPath (Join-Path $installDir 'templates'))
     )
     if (-not $isSourceRoot) {
-        Write-JigResult "refusing to remove ${installDir}: not a jig checkout"
+        Write-JigResult -Level warn "refusing to remove ${installDir}: not a jig checkout"
         return
     }
     if (-not $GitExe) {
-        Write-JigResult "refusing to remove ${installDir}: git is not available to verify it is unmodified"
+        Write-JigResult -Level warn "refusing to remove ${installDir}: git is not available to verify it is unmodified"
         return
     }
     $statusResult = Invoke-JigNative -FilePath $GitExe -NativeArgs @('-C', $installDir, 'status', '--porcelain')
     if ($statusResult.ExitCode -ne 0 -or $statusResult.Output.Count -gt 0) {
-        Write-JigResult "refusing to remove ${installDir}: it has local changes or is not a git checkout"
+        Write-JigResult -Level warn "refusing to remove ${installDir}: it has local changes or is not a git checkout"
         return
     }
     Remove-Item -Recurse -Force -LiteralPath $installDir
@@ -1205,7 +1385,12 @@ function Install-Jig {
         $transcribing = $true
     }
     catch {
-        Write-Host "jig: could not open $logPath for logging; continuing without it" -ForegroundColor Yellow
+        if (Test-JigTerminal) {
+            Write-JigBlock -Level warn -Text "jig: could not open $logPath for logging; continuing without it"
+        }
+        else {
+            Write-Host "jig: could not open $logPath for logging; continuing without it" -ForegroundColor Yellow
+        }
     }
 
     try {
@@ -1223,7 +1408,7 @@ function Install-Jig {
                 Write-JigResult "found: $gitExe"
             }
             else {
-                Write-JigResult 'not found'
+                Write-JigResult -Level warn 'not found'
                 if ($NoGitInstall) {
                     throw (Get-JigGitMissingMessage)
                 }
@@ -1280,8 +1465,14 @@ function Install-Jig {
     catch {
         $message = $_.Exception.Message
         Write-Host ''
-        Write-Host "jig install failed: $message" -ForegroundColor Red
-        Write-Host "See $logPath for the full log, or run the same line again after fixing this." -ForegroundColor Red
+        if (Test-JigTerminal) {
+            Write-JigBlock -Level fail -Text ("jig install failed: $message`n" `
+                + "See $logPath for the full log, or run the same line again after fixing this.")
+        }
+        else {
+            Write-Host "jig install failed: $message" -ForegroundColor Red
+            Write-Host "See $logPath for the full log, or run the same line again after fixing this." -ForegroundColor Red
+        }
         $exitCode = 1
     }
     finally {

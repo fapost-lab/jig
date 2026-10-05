@@ -977,3 +977,168 @@ test_install_same_repository_treats_urls_literally_never_resolving_them() {
     "$SAME_URL1==$SAME_URL1 $SAME_URL1!=$SAME_URL2 $SAME_URL1!=$SAME_B " \
     "$OUT"
 }
+
+# --- the output blocks (adr-20261005-the-installer-speaks-one-form-in-two-shells)
+#
+# Not a terminal: the bytes install.sh printed before it spoke in blocks,
+# compared whole, stdout and stderr apart. A terminal (JIG_TERMINAL=1): what
+# needs the person first as a warn block, the closing ok line last, an error
+# as a fail block. And install.sh's copy of the block is held byte for byte
+# to scripts/lib/output.sh's out_status, since it cannot source it.
+
+# inst_installed_line — the closing line this machine's install prints: the
+# link form where `ln -s` makes a link, the scripts/ form where it copies.
+inst_installed_line() {
+  if [ -L "$(inst_bin)/jig" ]; then
+    printf 'jig installed: %s/jig -> %s (%s)\n' "$(inst_bin)" "$(inst_share)" "$1"
+  else
+    printf 'jig installed: %s/scripts/jig (%s)\n' "$(inst_share)" "$1"
+  fi
+}
+
+test_install_plain_output_is_byte_for_byte_the_report_before_the_blocks() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  export SHELL=/bin/bash
+  export PATH
+  PATH=$(inst_system_path)
+
+  bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" > out.txt 2> err.txt \
+    || fail "install should succeed: $(cat out.txt err.txt)"
+
+  local dir
+  dir=$(inst_path_dir)
+  {
+    printf '\n'
+    printf 'Added %s to PATH in %s/.bashrc.\n' "$dir" "$HOME"
+    printf 'Open a new terminal, or run this in the current one:\n'
+    # shellcheck disable=SC2016 # the literal $PATH install.sh prints
+    printf '  export PATH="%s:$PATH"\n' "$dir"
+    inst_installed_line v0.1.0
+  } > expected.txt
+  cmp -s expected.txt out.txt \
+    || fail "a piped install must print the bytes it printed before: $(cat out.txt)"
+  assert_eq "" "$(cat err.txt)" "a successful install writes nothing to stderr"
+}
+
+test_install_plain_output_keeps_the_note_about_another_checkout() {
+  skip_unless_symlinks
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  inst_fixture_source_tree "$HOME/other-jig"
+  mkdir -p "$(inst_bin)"
+  ln -s "$HOME/other-jig/scripts/jig" "$(inst_bin)/jig"
+
+  bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path > out.txt 2> err.txt \
+    || fail "install should succeed: $(cat out.txt err.txt)"
+
+  local other
+  other=$(cd -P "$HOME/other-jig" && pwd -P)
+  {
+    printf 'note: %s/jig already selects another Jig checkout (%s); left unchanged.\n' "$(inst_bin)" "$other"
+    printf 'jig installed: %s (v0.1.0)\n' "$(inst_share)"
+  } > expected.txt
+  cmp -s expected.txt out.txt \
+    || fail "a piped install must print the bytes it printed before: $(cat out.txt)"
+}
+
+test_install_plain_error_is_byte_for_byte_the_error_before_the_blocks() {
+  bash "$JIG_HOME/install.sh" --bogus > out.txt 2> err.txt && fail "an unknown argument must fail"
+  printf 'install.sh: error: unknown argument: --bogus (see --help)\n' > expected.txt
+  cmp -s expected.txt err.txt || fail "a piped error must be the error printed before: $(cat err.txt)"
+  assert_eq "" "$(cat out.txt)"
+}
+
+test_install_terminal_puts_what_needs_the_person_before_the_closing_line() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  export SHELL=/bin/bash
+  export PATH
+  PATH=$(inst_system_path)
+
+  JIG_TERMINAL=1 NO_COLOR=1 bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" \
+    > out.txt 2> err.txt || fail "install should succeed: $(cat out.txt err.txt)"
+
+  local dir
+  dir=$(inst_path_dir)
+  {
+    printf 'warn  Added %s to PATH in %s/.bashrc.\n' "$dir" "$HOME"
+    printf '      Open a new terminal, or run this in the current one:\n'
+    # shellcheck disable=SC2016 # the literal $PATH install.sh prints
+    printf '        export PATH="%s:$PATH"\n' "$dir"
+    printf 'ok    %s\n' "$(inst_installed_line v0.1.0)"
+  } > expected.txt
+  cmp -s expected.txt out.txt || fail "unexpected terminal form: $(cat out.txt)"
+}
+
+test_install_terminal_says_another_checkout_as_a_warn_block() {
+  skip_unless_symlinks
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  inst_fixture_source_tree "$HOME/other-jig"
+  mkdir -p "$(inst_bin)"
+  ln -s "$HOME/other-jig/scripts/jig" "$(inst_bin)/jig"
+
+  JIG_TERMINAL=1 NO_COLOR=1 bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path \
+    > out.txt 2> err.txt || fail "install should succeed: $(cat out.txt err.txt)"
+
+  local other
+  other=$(cd -P "$HOME/other-jig" && pwd -P)
+  {
+    printf 'warn  %s/jig already selects another Jig checkout (%s); left unchanged.\n' "$(inst_bin)" "$other"
+    printf 'ok    jig installed: %s (v0.1.0)\n' "$(inst_share)"
+  } > expected.txt
+  cmp -s expected.txt out.txt || fail "unexpected terminal form: $(cat out.txt)"
+}
+
+test_install_terminal_colours_the_level_word_unless_no_color() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  local esc
+  esc=$(printf '\033')
+
+  ( unset NO_COLOR; JIG_TERMINAL=1 TERM=xterm bash "$JIG_HOME/install.sh" \
+      --repository "$PWD/remote.git" --no-path ) > out.txt 2> err.txt \
+    || fail "install should succeed: $(cat out.txt err.txt)"
+  assert_eq "${esc}[32mok${esc}[0m    $(inst_installed_line v0.1.0)" "$(cat out.txt)"
+
+  rm -rf "$(inst_share)" "$(inst_bin)"
+  JIG_TERMINAL=1 TERM=dumb bash "$JIG_HOME/install.sh" \
+    --repository "$PWD/remote.git" --no-path > out.txt 2> err.txt \
+    || fail "install should succeed: $(cat out.txt err.txt)"
+  assert_eq "ok    $(inst_installed_line v0.1.0)" "$(cat out.txt)" "TERM=dumb takes the colour away"
+}
+
+test_install_terminal_error_is_a_fail_block_on_stderr() {
+  JIG_TERMINAL=1 NO_COLOR=1 bash "$JIG_HOME/install.sh" --bogus > out.txt 2> err.txt \
+    && fail "an unknown argument must fail"
+  printf 'fail  unknown argument: --bogus (see --help)\n' > expected.txt
+  cmp -s expected.txt err.txt || fail "unexpected terminal error: $(cat err.txt)"
+  assert_eq "" "$(cat out.txt)"
+}
+
+test_install_jig_terminal_0_keeps_the_plain_form() {
+  JIG_TERMINAL=0 bash "$JIG_HOME/install.sh" --bogus > out.txt 2> err.txt \
+    && fail "an unknown argument must fail"
+  assert_eq "install.sh: error: unknown argument: --bogus (see --help)" "$(cat err.txt)"
+}
+
+# The copy and its source, side by side: every level, with and without
+# colour, and a block's further lines under the text.
+test_install_block_is_byte_for_byte_out_status() {
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  run bash -c 'JIG_INSTALL_NO_MAIN=1; . "$JIG_HOME/install.sh"
+    . "$JIG_HOME/scripts/lib/output.sh"
+    unset NO_COLOR; TERM=xterm; JIG_TERMINAL=1
+    out_init; _install_out_init
+    for level in ok warn fail; do
+      [ "$(_install_block 1 "$level" "the text")" = "$(out_status "$level" "the text")" ] \
+        || { echo "colour differs: $level"; exit 1; }
+    done
+    NO_COLOR=1; out_init; _install_out_init
+    for level in ok warn fail; do
+      [ "$(_install_block 0 "$level" "the text")" = "$(out_status "$level" "the text")" ] \
+        || { echo "plain differs: $level"; exit 1; }
+    done
+    [ "$(_install_block 0 warn "one
+  two")" = "warn  one
+        two" ] || { echo "further lines differ"; exit 1; }
+    echo same'
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq same "$OUT"
+}

@@ -22,9 +22,113 @@
 set -eu
 set -o pipefail
 
-_install_die()  { printf 'install.sh: error: %s\n' "$*" >&2; exit 1; }
+# --- terminal output ---------------------------------------------------------
+#
+# The part of scripts/lib/output.sh this installer speaks, copied, because it
+# runs before any checkout exists and cannot source it
+# (adr-20261005-the-installer-speaks-one-form-in-two-shells). Same rule: a
+# stream that is not a terminal gets exactly the bytes it got before the layer
+# existed; a terminal gets blocks -- the level word (ok, warn, fail) padded to
+# six columns, then the text, and every further line of the text indented six
+# columns, keeping its own indentation (an empty line stays empty).
+# tests/install.t.sh holds the bytes of a block equal to out_status's. stdout
+# and stderr are measured apart, so an error redirected into a file never
+# carries an escape code.
+#
+# The escape codes are made by printf inside _install_out_init rather than
+# with $'...' up here, and outside bash the form stays plain: `sh install.sh`
+# must still reach its own "must be run with bash" refusal, and every line
+# above main's call is only a definition.
+_INSTALL_OUT_TERMINAL=0
+_INSTALL_OUT_COLOR=0
+_INSTALL_ERR_TERMINAL=0
+_INSTALL_ERR_COLOR=0
+_INSTALL_SGR_RESET=""
+_INSTALL_SGR_OK=""
+_INSTALL_SGR_WARN=""
+_INSTALL_SGR_FAIL=""
+
+# _install_out_init — decide the form of each stream. JIG_TERMINAL=1 treats
+# both as a terminal, 0 neither; NO_COLOR (non-empty) or TERM=dumb takes the
+# colour away and keeps the layout.
+_install_out_init() {
+  _INSTALL_OUT_TERMINAL=0
+  _INSTALL_ERR_TERMINAL=0
+  # Under another shell the blocks themselves may not run (`local`), and the
+  # one thing left to say is the plain "must be run with bash" refusal.
+  [ -n "${BASH_VERSION:-}" ] || return 0
+  case "${JIG_TERMINAL:-}" in
+    1) _INSTALL_OUT_TERMINAL=1; _INSTALL_ERR_TERMINAL=1 ;;
+    0) ;;
+    *)
+      if [ -t 1 ]; then _INSTALL_OUT_TERMINAL=1; fi
+      if [ -t 2 ]; then _INSTALL_ERR_TERMINAL=1; fi
+      ;;
+  esac
+  _INSTALL_OUT_COLOR=0
+  _INSTALL_ERR_COLOR=0
+  if [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+    _INSTALL_OUT_COLOR=$_INSTALL_OUT_TERMINAL
+    _INSTALL_ERR_COLOR=$_INSTALL_ERR_TERMINAL
+  fi
+  _INSTALL_SGR_RESET=$(printf '\033[0m')
+  _INSTALL_SGR_OK=$(printf '\033[32m')
+  _INSTALL_SGR_WARN=$(printf '\033[33m')
+  _INSTALL_SGR_FAIL=$(printf '\033[1;31m')
+}
+
+# _install_block <colour 0|1> <ok|warn|fail> <text> — one block of the
+# terminal form, on stdout; the caller redirects it.
+_install_block() {
+  local color="$1" level="$2" text="$3" sgr="" pad="  " line first=1
+  case "$level" in
+    ok) sgr=$_INSTALL_SGR_OK; pad="    " ;;
+    warn) sgr=$_INSTALL_SGR_WARN ;;
+    fail) sgr=$_INSTALL_SGR_FAIL ;;
+  esac
+  while IFS= read -r line; do
+    if [ "$first" = 1 ]; then
+      if [ "$color" = 1 ]; then
+        printf '%s%s%s%s%s\n' "$sgr" "$level" "$_INSTALL_SGR_RESET" "$pad" "$line"
+      else
+        printf '%s%s%s\n' "$level" "$pad" "$line"
+      fi
+      first=0
+    elif [ -z "$line" ]; then
+      printf '\n'
+    else
+      printf '      %s\n' "$line"
+    fi
+  done <<EOF
+$text
+EOF
+}
+
+# _install_later <text> — a warn block, held back at a terminal until just
+# before the closing line, so what needs the person is read before it, as
+# jig doctor orders its report. A failed run never prints them: the cleanup
+# undoes what they were about.
+_install_later() {
+  INSTALL_LATER="$INSTALL_LATER$(_install_block "$_INSTALL_OUT_COLOR" warn "$1")
+"
+}
+
+_install_die() {
+  if [ "$_INSTALL_ERR_TERMINAL" = 1 ]; then
+    _install_block "$_INSTALL_ERR_COLOR" fail "$*" >&2
+  else
+    printf 'install.sh: error: %s\n' "$*" >&2
+  fi
+  exit 1
+}
 _install_info() { printf '%s\n' "$*"; }
-_install_warn() { printf 'install.sh: warning: %s\n' "$*" >&2; }
+_install_warn() {
+  if [ "$_INSTALL_ERR_TERMINAL" = 1 ]; then
+    _install_block "$_INSTALL_ERR_COLOR" warn "$*" >&2
+  else
+    printf 'install.sh: warning: %s\n' "$*" >&2
+  fi
+}
 
 # --- release versions and source-root check ---------------------------------
 #
@@ -404,7 +508,11 @@ _install_place_symlink() {
       dir=${resolved%/scripts/jig}
       if [ "$dir" != "$resolved" ] && jig_is_source_root "$dir"; then
         SYMLINK_ELSEWHERE=1
-        _install_info "note: $link already selects another Jig checkout ($dir); left unchanged."
+        if [ "$_INSTALL_OUT_TERMINAL" = 1 ]; then
+          _install_later "$link already selects another Jig checkout ($dir); left unchanged."
+        else
+          _install_info "note: $link already selects another Jig checkout ($dir); left unchanged."
+        fi
         return 0
       fi
     fi
@@ -517,6 +625,12 @@ _install_setup_path() {
     printf 'export PATH="%s:$PATH"\n' "$PATH_DIR"
   } >> "$rc_file" || _install_die "could not update $rc_file"
 
+  if [ "$_INSTALL_OUT_TERMINAL" = 1 ]; then
+    _install_later "Added $PATH_DIR to PATH in $rc_file.
+Open a new terminal, or run this in the current one:
+  export PATH=\"$PATH_DIR:\$PATH\""
+    return 0
+  fi
   _install_info ""
   _install_info "Added $PATH_DIR to PATH in $rc_file."
   _install_info "Open a new terminal, or run this in the current one:"
@@ -562,6 +676,8 @@ _install_cleanup_on_failure() {
 # --- entry point --------------------------------------------------------------
 
 main() {
+  _install_out_init
+  INSTALL_LATER=""
   _install_check_environment
 
   REPOSITORY="https://github.com/fapost-lab/jig.git"
@@ -627,15 +743,29 @@ main() {
   if [ "$ADD_PATH" = 1 ]; then
     _install_setup_path
   elif [ "$NO_SYMLINKS" = 1 ]; then
-    _install_info "Symbolic links cannot be made here; add $PATH_DIR to PATH to use jig."
+    if [ "$_INSTALL_OUT_TERMINAL" = 1 ]; then
+      _install_later "Symbolic links cannot be made here; add $PATH_DIR to PATH to use jig."
+    else
+      _install_info "Symbolic links cannot be made here; add $PATH_DIR to PATH to use jig."
+    fi
   fi
 
+  # The closing line, and install.ps1's machine contract
+  # (Get-JigInstalledInfo): it reads this line from a captured, never a
+  # terminal, stdout, and runs install.sh with JIG_TERMINAL=0 besides.
+  local installed
   if [ "$NO_SYMLINKS" = 1 ]; then
-    printf 'jig installed: %s (%s)\n' "$PATH_DIR/jig" "$ACTUAL_REF"
+    installed="jig installed: $PATH_DIR/jig ($ACTUAL_REF)"
   elif [ "$SYMLINK_ELSEWHERE" = 1 ]; then
-    printf 'jig installed: %s (%s)\n' "$INSTALL_DIR" "$ACTUAL_REF"
+    installed="jig installed: $INSTALL_DIR ($ACTUAL_REF)"
   else
-    printf 'jig installed: %s -> %s (%s)\n' "$BIN_DIR/jig" "$INSTALL_DIR" "$ACTUAL_REF"
+    installed="jig installed: $BIN_DIR/jig -> $INSTALL_DIR ($ACTUAL_REF)"
+  fi
+  if [ "$_INSTALL_OUT_TERMINAL" = 1 ]; then
+    printf '%s' "$INSTALL_LATER"
+    _install_block "$_INSTALL_OUT_COLOR" ok "$installed"
+  else
+    printf '%s\n' "$installed"
   fi
 }
 

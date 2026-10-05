@@ -110,7 +110,9 @@ so where the form is decided and what blocks it is built from has to be decided 
   only in the plain form; at a terminal a passing check is its name in the group line.
 - `tests/run.sh` unsets `JIG_TERMINAL` and `NO_COLOR`, so a developer's environment never
   changes the form a test reads.
-- `install.ps1` is PowerShell and cannot source this layer; what "the same form" means across
-  the two shells is decided by the installer's own item of the specification.
+- `install.ps1` is PowerShell and `install.sh` runs before any checkout exists, so neither can
+  source this layer: what "the same form" means across the two shells is
+  adr-20261005-the-installer-speaks-one-form-in-two-shells — the same vocabulary and layout,
+  a test-pinned copy in `install.sh`, console colours in `install.ps1`.
 - That ANSI renders for a person on Windows is proven by nothing in CI: CI proves only that the
   terminal form runs in Git Bash and produces the expected bytes.
