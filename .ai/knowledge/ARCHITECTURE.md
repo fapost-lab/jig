@@ -32,6 +32,9 @@ today's bytes to a pipe (adr-20261005-output-is-decorated-only-on-a-terminal). A
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
 lifecycle.
+`lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
+own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
+`upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05).
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`

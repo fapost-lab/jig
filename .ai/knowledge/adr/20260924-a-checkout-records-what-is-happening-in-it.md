@@ -13,7 +13,7 @@ paths:
   - scripts/lib/config.sh
   - "skills/jig-task/**"
 summary: Why every jig run records in the checkout that work is happening there, and why the record holds only what nothing can compute.
-reviewed_at: 2026-10-01
+reviewed_at: 2026-10-05
 ---
 # ADR: A checkout records what is happening in it, so a session is no longer invisible
 
@@ -155,6 +155,11 @@ every time".
 > single session that runs `task new B` while its own task A is still on HEAD leaves A's
 > record, and a record named by a task cannot say which session wrote it, so `task start B`
 > is refused and the session takes `--worktree`.
+>
+> *Amended 2026-10-05.* The filter above now lives in one function, `jig_checkout_occupants`
+> (`scripts/lib/checkout.sh`), and `jig upgrade` refuses on it too, with no exception for the
+> task on HEAD — the other command that moves HEAD here reads the same rule rather than a
+> second one (adr-20260930-an-upgrade-is-a-unit-of-work, amendment of the same date).
 
 **A record's freshness window is `checkout.busy_ttl`, 12 hours by default**, read through
 the one duration grammar the framework already has (`jig_duration_seconds`); an

@@ -9,8 +9,9 @@ paths:
   - scripts/lib/upgrade.sh
   - docs/upgrading.mdx
   - scripts/lib/common.sh
-summary: A real copy-mode upgrade hands itself to newer code, refuses a dirty tree, CRLF clone or busy checkout, works on its own branch cut from the base, and commits once after the self-check, shipping as far as agent.git allows.
-reviewed_at: 2026-09-30
+  - scripts/lib/checkout.sh
+summary: A real copy-mode upgrade hands itself to newer code, refuses a dirty tree, CRLF clone, a started task on HEAD or a running verify, works on its own branch cut from the base, and commits once after the self-check, shipping as far as agent.git allows.
+reviewed_at: 2026-10-05
 ---
 # A copy-mode `jig upgrade` is a unit of work: checked, run by the newest code, on its own branch, one commit
 
@@ -47,7 +48,9 @@ In copy mode a real `jig upgrade` runs in this order, and nothing is touched bef
    record for this same checkout. A run in another worktree executes its own files and does not
    stop it. The exception is a known limit: the dispatcher records every command run on a task's
    branch under that task's name — this upgrade included — so a second session on the same task
-   in the same checkout cannot be told from the one running the upgrade.
+   in the same checkout cannot be told from the one running the upgrade. *The session stop is
+   replaced by the amendment of 2026-10-05 below: the one occupancy rule of `task start`, with no
+   exception for the task on HEAD.*
 3. **Its own branch.** `jig/upgrade-<to-version>` (`-2`, `-3` when taken), cut from the fresh
    `git.base_branch` the way `task start` cuts, never from the current branch — a base that exists
    neither here nor on origin is a refusal, not a fallback to HEAD. An unmerged branch already
@@ -97,3 +100,51 @@ applies to them.
   from; `upgrade-carries-its-own-checklist` fills it.
 - The read side of the verify run record moved to `common.sh` (`jig_verify_busy_*`), since one
   command library never sources another.
+
+## Amendment 2026-10-05: an upgrade refuses only an occupied HEAD
+
+**What happened.** On 2026-10-05 an upgrade 0.17.1 → 0.20.0 in an installed project, run from
+`main`, refused twice over: a session that had run `jig status` three hours earlier, and one that
+had run `jig task show` on a task whose branch was not checked out there. The only way out was to
+delete files the message did not name. Meanwhile `task start` had been narrowed
+(adr-20260924-a-checkout-records-what-is-happening-in-it): a record named by a session id, a task
+never started, closed, or whose branch left HEAD occupies nothing. The upgrade did the inverse —
+it counted every one of those, and excepted the one task whose HEAD it moves.
+
+**Decision.**
+
+- **One rule, one function.** Who occupies a checkout is `jig_checkout_occupants`
+  (`scripts/lib/checkout.sh`): a fresh record named by a task that has been started, is not
+  `consolidated` or `abandoned`, and whose branch is the one checked out here. `task start` and
+  `upgrade` both read it; neither keeps a filter of its own. `jig status` still reports the wider
+  `jig_checkout_busy`: a report may say more than a refusal acts on.
+- **No exception for the task on HEAD.** It is exactly the task the upgrade takes off this
+  checkout when it switches to `jig/upgrade-*`. With the narrowed rule and that exception kept,
+  the stop could never fire. The dispatcher records the upgrade's own run under that task's name,
+  so for an upgrade the record is always fresh: in effect it refuses whenever a started, live task
+  is on HEAD. That is the same rule, and the same known false refusal `task start` accepts — a
+  record named by a task cannot say which session wrote it, so the person running the upgrade on
+  their own task's branch is refused too. The exit costs one command and touches nothing.
+- **The refusal names the task, its branch and the record, and the exit for a finished session**:
+  `jig task start <id> --worktree`, which gives the task its own worktree and puts this checkout
+  back on its base branch, then `jig upgrade` again; or waiting, while another session still works
+  on it. In a linked worktree (ADR-0029) that exit does not exist — the task already has its
+  worktree, and git keeps the base branch in the main checkout — so there the refusal says to run
+  the upgrade in the main checkout. It quotes no age or command — they would describe this upgrade — and does not suggest
+  deleting the record, which the next run would rewrite anyway.
+- **Asked only where HEAD moves**, as in `task start`: not with `git.branch_per_task: false`, and a
+  repeat on the upgrade's own branch holds no task.
+- **A session that only oriented itself does not protect the scripts.** The upgrade also replaces
+  the scripts, so the question was asked separately and answered no. A record says a command ran
+  within `checkout.busy_ttl`, not that one is running, and cannot tell a live session from one
+  that ended hours ago — that is the refusal above. Between commands, the swap is the upgrade
+  doing its job: the session's next command runs the new version whole. The harm is confined to a
+  command executing during the swap, and the long one that suffered it, `jig verify`, has its own
+  stop whose record lives exactly as long as the run. Should another long command need the same,
+  the answer is a record of *that command running*, not a wider reading of "someone was here".
+  A coordinator on the base branch loses HEAD to the upgrade as it would to `task start`, and gets
+  the moved-HEAD notice on its next orienting command; the upgrade also prints the way back.
+
+**Consequences.** An upgrade from the base branch is no longer stopped by records at all; one run
+from a started task's branch always is, with the way out named. `jig upgrade --dry-run` on such a
+branch prints it as a note, as it prints every stop.
