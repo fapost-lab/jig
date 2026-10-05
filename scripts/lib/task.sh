@@ -20,6 +20,7 @@ cmd_task() {
       if _task_usage "$sub"; then return 0; fi
       ;;
   esac
+  _TASK_VERB="task $sub"
   case "$sub" in
     new) task_new "$@" ;;
     set) task_set "$@" ;;
@@ -492,6 +493,7 @@ EOF
 # second, bogus key (task_finding_set below uses the same ENVIRON pattern).
 _task_rewrite_state() {
   local dir="$1" key="$2" value="$3" file tmp today
+  _task_guard_dir "$dir"
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
   jig_cleanup_add "$tmp"
@@ -527,6 +529,7 @@ _task_rewrite_state() {
 # A no-op, beyond refreshing `updated_at`, when <key> is already absent.
 _task_rewrite_state_remove() {
   local dir="$1" key="$2" file tmp today
+  _task_guard_dir "$dir"
   file="$dir/state"
   tmp="$dir/state.tmp.$$"
   jig_cleanup_add "$tmp"
@@ -556,6 +559,7 @@ _task_rewrite_state_remove() {
 # _task_rewrite_state, and a no-op when the state file is gone.
 _task_touch_state() {
   local dir="$1" file tmp today
+  _task_guard_dir "$dir"
   file="$dir/state"
   [ -f "$file" ] || return 0
   tmp="$dir/state.tmp.$$"
@@ -793,6 +797,18 @@ task_new() {
   local dir
   dir=$(task_dir "$id")
   [ -e "$dir" ] && jig_die "task new: task already exists: $id"
+  # The tasks directory may not exist yet (`mkdir -p` below makes it), and then
+  # it is `.ai/workspace` that has to be this repository's: made through a link
+  # there it would be made outside.
+  local ws_path="$JIG_PROJECT/$JIG_AI_DIR/workspace" ws_real
+  if [ -e "$ws_path/tasks" ] || [ -L "$ws_path/tasks" ]; then
+    _task_tasks_root "task new" >/dev/null
+  elif [ -e "$ws_path" ] || [ -L "$ws_path" ]; then
+    ws_real=$(cd -P "$ws_path" 2>/dev/null && pwd -P) \
+      || jig_die "task new: cannot inspect $JIG_AI_DIR/workspace"
+    _task_worktree_holds "$ws_real" "$JIG_AI_DIR/workspace" \
+      || jig_die "task new: $JIG_AI_DIR/workspace leads to $ws_real, which is no checkout of this repository"
+  fi
 
   [ -z "$class" ] || _task_valid_class "$class" || jig_die "task new: invalid class: $class"
   [ -z "$domains" ] || _task_valid_domains "$domains" || jig_die "task new: invalid domains: $domains"
@@ -870,7 +886,7 @@ task_start() {
     || jig_die "task start: --no-bootstrap says what not to carry into a worktree; it needs --worktree"
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task start: unknown task: $id"
+  _task_guard_write "$id" "task start"
 
   # A `branch` with no `base_commit` was recorded at filing, before starting
   # was a separate step: it is the branch the checkout happened to be on, not
@@ -1126,7 +1142,7 @@ task_bootstrap() {
   [ $# -eq 0 ] || jig_die "task bootstrap: unknown argument: $1"
 
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task bootstrap: unknown task: $id"
+  _task_guard_write "$id" "task bootstrap"
   branch=$(task_state_get "$id" branch)
   [ -n "$branch" ] || jig_die "task bootstrap: $id has not been started yet"
 
@@ -1253,7 +1269,7 @@ task_set() {
     _task_finding_valid_field "$reason" || jig_die "task set: --reason must be a single line with no tab"
   fi
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task set: unknown task: $id"
+  _task_guard_write "$id" "task set"
 
   case "$key" in
     class) _task_valid_class "$value" || jig_die "task set: invalid class: $value" ;;
@@ -1472,6 +1488,7 @@ _task_autopilot_repairs() {
 _task_autopilot_log() {
   local id="$1" event="$2" text="$3" dir file tmp
   dir=$(task_dir "$id")
+  _task_guard_dir "$dir"
   file="$dir/autopilot"
   tmp="$file.tmp.$$"
   jig_cleanup_add "$tmp"
@@ -1601,7 +1618,7 @@ _task_autopilot_start() {
   fi
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot start: unknown task: $id"
+  _task_guard_write "$id" "task autopilot start"
   case "$(task_state_get "$id" autopilot)" in
     on) jig_die "task autopilot start: already running: $id" ;;
     stopped) jig_die "task autopilot start: $id is stopped; run: jig task autopilot $id resume" ;;
@@ -1658,7 +1675,7 @@ _task_autopilot_stage() {
   [ $# -eq 0 ] || jig_die "task autopilot stage: unknown argument: $1"
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot stage: unknown task: $id"
+  _task_guard_write "$id" "task autopilot stage"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot stage: no active autopilot run: $id; run: jig task autopilot $id start"
   _task_autopilot_valid_stage "$name" \
@@ -1693,7 +1710,7 @@ _task_autopilot_repair() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot repair: unknown task: $id"
+  _task_guard_write "$id" "task autopilot repair"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot repair: no active autopilot run: $id; run: jig task autopilot $id start"
 
@@ -1739,7 +1756,7 @@ _task_autopilot_stop() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot stop: unknown task: $id"
+  _task_guard_write "$id" "task autopilot stop"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot stop: no active autopilot run: $id; run: jig task autopilot $id start"
 
@@ -1772,7 +1789,7 @@ _task_autopilot_unattended_event() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot $event: unknown task: $id"
+  _task_guard_write "$id" "task autopilot $event"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot $event: no active autopilot run: $id; run: jig task autopilot $id start"
   [ "$(_task_autopilot_mode "$id")" = unattended ] \
@@ -1805,7 +1822,7 @@ _task_autopilot_resume() {
   done
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot resume: unknown task: $id"
+  _task_guard_write "$id" "task autopilot resume"
   [ "$(task_state_get "$id" autopilot)" = "stopped" ] \
     || jig_die "task autopilot resume: not stopped: $id"
   [ "$(_task_autopilot_mode "$id")" != unattended ] \
@@ -1833,7 +1850,7 @@ _task_autopilot_end() {
   [ $# -eq 0 ] || jig_die "task autopilot end: unknown argument: $1"
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task autopilot end: unknown task: $id"
+  _task_guard_write "$id" "task autopilot end"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot end: no active autopilot run: $id; run: jig task autopilot $id start"
   if [ "$(_task_autopilot_mode "$id")" = unattended ] && [ "$(task_state_get "$id" knowledge_consolidated)" != true ]; then
@@ -1983,7 +2000,7 @@ task_finding_add() {
   shift
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task finding add: unknown task: $id"
+  _task_guard_write "$id" "task finding add"
 
   local severity="" where="" summary="" has_severity=0 has_where=0 has_summary=0
   while [ $# -gt 0 ]; do
@@ -2046,7 +2063,7 @@ task_finding_set() {
 
   local dir file
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task finding set: unknown task: $id"
+  _task_guard_write "$id" "task finding set"
   file="$dir/findings"
   [ -f "$file" ] || jig_die "task finding set: no findings recorded for task: $id"
 
@@ -2494,6 +2511,7 @@ task_receipt() {
 task_receipt_write() {
   local id="$1" stage="$2" dir tree base_commit head diff context design findings file tmp
   dir=$(task_dir "$id")
+  _task_guard_write "$id" "task receipt"
   local review_dir
   review_dir=$(_task_review_dir "$id") \
     || jig_die "task receipt: $(task_state_get "$id" branch) is not checked out in any worktree; review the task where its branch is"
@@ -2794,7 +2812,7 @@ task_gate() {
     esac
   fi
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task gate: unknown task: $id"
+  _task_guard_write "$id" "task gate"
   [ "$decision" = approved ] || jig_die "task gate: unknown decision: $decision (expected approved)"
   if [ "$by" = agent ]; then
     if [ "$(task_state_get "$id" autopilot)" != on ] || [ "$(_task_autopilot_mode "$id")" != unattended ]; then
@@ -2870,7 +2888,7 @@ task_pause() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task pause: unknown task: $id"
+  _task_guard_write "$id" "task pause"
   [ "$(task_state_get "$id" paused)" != "true" ] || jig_die "task pause: already paused: $id"
 
   # paused_reason is one flat `key: value` line (schemas/state.md); an
@@ -2925,7 +2943,7 @@ task_resume() {
   [ $# -eq 1 ] || jig_die "$(_task_usage resume)"
   local id="$1" dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task resume: unknown task: $id"
+  _task_guard_write "$id" "task resume"
   [ "$(task_state_get "$id" paused)" = "true" ] || jig_die "task resume: not paused: $id"
 
   # A task that was filed and paused before it was ever started has no branch
@@ -3204,10 +3222,7 @@ _task_workspace_root() {
   local id="$1" cmd="$2" root tasks_root real
   root=$(task_dir "$id") || return 1
   [ -f "$root/state" ] || jig_die "$cmd: unknown task: $id"
-  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" 2>/dev/null && pwd -P) \
-    || jig_die "$cmd: cannot inspect $JIG_AI_DIR/workspace/tasks"
-  _task_worktree_holds "$tasks_root" "$JIG_AI_DIR/workspace/tasks" \
-    || jig_die "$cmd: $JIG_AI_DIR/workspace/tasks leads to $tasks_root, which is no checkout of this repository"
+  tasks_root=$(_task_tasks_root "$cmd")
   if [ -L "$root" ]; then
     real=$(cd -P "$root" 2>/dev/null && pwd -P) || real=""
     if [ -z "$real" ] || ! _task_worktree_holds "$real" "$JIG_AI_DIR/workspace/tasks/$id"; then
@@ -3219,6 +3234,37 @@ _task_workspace_root() {
   real=$(cd -P "$root" && pwd -P) || jig_die "$cmd: cannot inspect workspace"
   [ "$real" = "$tasks_root/$id" ] || jig_die "$cmd: workspace outside task root"
   printf '%s\n' "$real"
+}
+
+# _task_tasks_root <command> — the physical path of `.ai/workspace/tasks`, once
+# it is known to be the tasks directory of a checkout of this repository
+# (see above); dies naming <command> otherwise. The half of the check that
+# does not need a task, so `task new` can make it before a task exists.
+_task_tasks_root() {
+  local cmd="$1" tasks_root
+  tasks_root=$(cd -P "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks" 2>/dev/null && pwd -P) \
+    || jig_die "$cmd: cannot inspect $JIG_AI_DIR/workspace/tasks"
+  _task_worktree_holds "$tasks_root" "$JIG_AI_DIR/workspace/tasks" \
+    || jig_die "$cmd: $JIG_AI_DIR/workspace/tasks leads to $tasks_root, which is no checkout of this repository"
+  printf '%s\n' "$tasks_root"
+}
+
+# _task_guard_write <id> <command> — the check every writer of a task's
+# workspace (`state`, the journal, findings, the receipt, artifacts) passes
+# before it writes anything, including a side effect that comes first (a stash,
+# a commit). Dies, naming <command>, unless the workspace is this checkout's
+# own, a worktree's, or the owner's a start linked; unknown task included.
+# Called as a plain command, never inside $(...), so the refusal ends the
+# process rather than a subshell.
+_task_guard_write() {
+  _task_workspace_root "$1" "$2" >/dev/null
+}
+
+# _task_guard_dir <dir> — the same check for a low-level writer that is handed
+# a workspace directory (task_dir's answer, or the physical root of one). The
+# verb is the running `jig task` subcommand, set by cmd_task.
+_task_guard_dir() {
+  _task_workspace_root "${1##*/}" "${_TASK_VERB:-task}" >/dev/null
 }
 
 _task_artifact_kind() {
@@ -3522,7 +3568,7 @@ task_ship() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -f "$dir/state" ] || jig_die "task ship: unknown task: $id"
+  _task_guard_write "$id" "task ship"
 
   # Level first, before anything else changes: an invalid value must refuse
   # exactly like every other check here, not read as "none" by accident.

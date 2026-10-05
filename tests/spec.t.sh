@@ -1036,6 +1036,38 @@ test_spec_link_refuses_a_borrowed_task_directory() {
   assert_not_contains "$(cat ../owner-tasks/T-1/task.md)" "Spec:"
 }
 
+# A link one level above the tasks directory is not seen by the checks on the
+# directory and on the task, and carried the write into task.md outside.
+test_spec_link_refuses_a_workspace_link_that_leads_outside() {
+  mkdir repo || return 1
+  cd repo || return 1
+  spec_link_fixture
+  mkdir ../outside
+  cp -R .ai/workspace/. ../outside/
+  rm -rf .ai/workspace
+  plant_dir_link "$(cd .. && pwd -P)/outside" .ai/workspace
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: the workspace of T-1 is not inside this checkout"
+  assert_not_contains "$(cat ../outside/tasks/T-1/task.md)" "Spec:"
+}
+
+# `spec remove` rewrites every linked task's task.md; through a link at
+# `.ai/workspace` that was a write outside the checkout.
+test_spec_remove_refuses_a_workspace_link_that_leads_outside() {
+  mkdir repo || return 1
+  cd repo || return 1
+  spec_link_fixture
+  jig spec link rel T-1 >/dev/null
+  mkdir ../outside
+  cp -R .ai/workspace/. ../outside/
+  rm -rf .ai/workspace
+  plant_dir_link "$(cd .. && pwd -P)/outside" .ai/workspace
+  run jig spec remove rel
+  assert_contains "$OUT" "is not inside this checkout"
+  assert_contains "$(cat ../outside/tasks/T-1/task.md)" "Spec: .ai/specs/rel/"
+}
+
 # --- spec remove: argument handling and preconditions --------------------------
 
 test_spec_remove_missing_id_fails() {

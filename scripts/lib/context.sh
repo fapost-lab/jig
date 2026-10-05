@@ -539,6 +539,10 @@ _ctx_cache_read() {
 # never a requirement to have one.
 _ctx_cache_write() {
   local task="$1" rows="$2" cache tmp
+  # A cache is optional (see above), so a workspace that is not this
+  # repository's own is left unwritten rather than refused: the same check as
+  # every other writer, asked in a subshell so a refusal only skips the cache.
+  ( _task_guard_write "$task" "context" ) >/dev/null 2>&1 || return 0
   cache=$(_ctx_cache_file "$task")
   tmp="$cache.tmp.$$"
   jig_cleanup_add "$tmp"
@@ -878,6 +882,7 @@ ctx_acknowledge() {
 
   [ -n "$task_id" ] || jig_die "context acknowledge: --task is required"
   [ -f "$(task_dir "$task_id")/state" ] || jig_die "context: unknown task: $task_id"
+  _task_guard_write "$task_id" "context acknowledge"
 
   if [ "$files_stdin" -eq 1 ]; then
     files=$(cat)

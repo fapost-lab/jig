@@ -122,6 +122,13 @@ cmd_housekeeping() {
       fi
       found=1
 
+      # Before anything is read through the workspace or acted on because of it
+      # (a worktree retired, a checkout record kept, a purge): a workspace that
+      # is not this repository's own is refused for the whole run. In this
+      # shell, not in a $(...), so the refusal ends the run. A dry run writes
+      # nothing and is left to report.
+      [ "$dry" = 1 ] || _task_guard_write "$tid" "housekeeping"
+
       st=$(task_state_get "$tid" status)
       paused=$(task_state_get "$tid" paused)
       branch=$(task_state_get "$tid" branch)

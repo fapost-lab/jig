@@ -2830,6 +2830,159 @@ test_task_artifact_writes_through_a_workspace_link_into_another_worktree() {
   assert_file_contains "$owner/.ai/workspace/tasks/T-1/plan.md" 'from the coordinator'
 }
 
+# --- every writer of a workspace refuses a planted link --------------------------
+#
+# #183 closed the artifact commands; the commands that write `state`, the
+# journal, the findings and the receipt went through task_dir and did not look.
+# Every writer now passes the one check (_task_guard_write / _task_guard_dir),
+# and each is exercised here against a `.ai/workspace/tasks` that leads outside
+# the repository: it must refuse and leave what is outside exactly as it was.
+
+# task_outside_sum — one number standing for everything under ../outside.
+task_outside_sum() {
+  (cd ../outside && find . -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done | cksum)
+}
+
+# task_plant_tasks_link — move the tasks directory outside the repository and
+# put a link to it where it was (a symlink, or a junction on Windows).
+task_plant_tasks_link() {
+  mkdir ../outside
+  cp -R .ai/workspace/tasks/. ../outside/
+  rm -rf .ai/workspace/tasks
+  plant_dir_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace/tasks"
+}
+
+# task_refused_on_planted_link <label> <command...> — the command exits 1 with
+# the refusal and nothing outside changed.
+task_refused_on_planted_link() {
+  local label="$1" before after
+  shift
+  before=$(task_outside_sum)
+  run "$@"
+  assert_eq 1 "$RC" "$label: $OUT"
+  assert_contains "$OUT" "which is no checkout of this repository" "$label"
+  after=$(task_outside_sum)
+  assert_eq "$before" "$after" "$label changed a file outside the repository"
+}
+
+test_task_writers_refuse_a_planted_tasks_link() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  printf 'msg\n' > msg.txt
+  task_plant_tasks_link
+  printf 'dirty\n' > dirty.txt
+
+  task_refused_on_planted_link set jig task set T-1 class T2
+  task_refused_on_planted_link abandon jig task abandon T-1
+  task_refused_on_planted_link pause jig task pause T-1 --reason why
+  task_refused_on_planted_link pause-stash jig task pause T-1 --stash
+  assert_eq "" "$(git stash list)" "pause --stash stashed before the refusal"
+  assert_file dirty.txt
+  task_refused_on_planted_link resume jig task resume T-1
+  task_refused_on_planted_link gate jig task gate T-1 approved --by agent
+  task_refused_on_planted_link receipt jig task receipt T-1 --stage review
+  task_refused_on_planted_link finding-add jig task finding add T-1 --severity P2 --where - --summary s
+  task_refused_on_planted_link finding-set jig task finding set T-1 F1 fixed
+  task_refused_on_planted_link autopilot-start jig task autopilot T-1 start
+  task_refused_on_planted_link autopilot-stage jig task autopilot T-1 stage implement
+  task_refused_on_planted_link autopilot-repair jig task autopilot T-1 repair --reason r
+  task_refused_on_planted_link autopilot-stop jig task autopilot T-1 stop --reason r
+  task_refused_on_planted_link autopilot-decide jig task autopilot T-1 decide --reason r
+  task_refused_on_planted_link autopilot-resume jig task autopilot T-1 resume --answer a
+  task_refused_on_planted_link autopilot-end jig task autopilot T-1 end
+  task_refused_on_planted_link start jig task start T-2
+  task_refused_on_planted_link start-worktree jig task start T-2 --worktree
+  task_refused_on_planted_link bootstrap jig task bootstrap T-1
+  task_refused_on_planted_link ship jig task ship T-1 --message-file msg.txt
+  task_refused_on_planted_link artifact-write jig task artifact write T-1 plan --from msg.txt
+  task_refused_on_planted_link artifact-append jig task artifact append T-1 plan --from msg.txt
+  task_refused_on_planted_link new jig task new T-3
+  assert_no_file ../outside/T-3/state
+  assert_eq "./T-1
+./T-2" "$(cd ../outside && find . -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)" "a task directory appeared outside"
+}
+
+# The same, one level up, where a link at `.ai/workspace` carries the tasks
+# directory with it.
+test_task_writers_refuse_a_planted_workspace_link() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  mkdir -p ../outside
+  cp -R .ai/workspace/. ../outside/
+  rm -rf .ai/workspace
+  plant_dir_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace"
+
+  task_refused_on_planted_link set jig task set T-1 class T2
+  task_refused_on_planted_link new jig task new T-3
+  task_refused_on_planted_link pause jig task pause T-1
+  assert_no_file ../outside/tasks/T-3/state
+}
+
+# `task new` makes the tasks directory when there is none; made through a link
+# at `.ai/workspace` it would be made outside the repository.
+test_task_new_refuses_a_workspace_link_to_a_directory_without_tasks() {
+  task_setup_nested
+  rm -rf .ai/workspace
+  mkdir ../outside
+  plant_dir_link "$(cd ../outside && pwd -P)" "$PWD/.ai/workspace"
+
+  run jig task new T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: .ai/workspace leads to"
+  assert_contains "$OUT" "which is no checkout of this repository"
+  [ ! -e ../outside/tasks ] || fail "a tasks directory appeared outside"
+}
+
+# A link planted as one task's own directory is refused by the writers as well.
+test_task_writers_refuse_a_planted_task_link() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  mkdir ../outside
+  mv .ai/workspace/tasks/T-1 ../outside/T-1
+  plant_dir_link "$(cd ../outside/T-1 && pwd -P)" "$PWD/.ai/workspace/tasks/T-1"
+
+  run jig task set T-1 class T2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "linked task workspace is unsupported"
+  assert_not_contains "$(cat ../outside/T-1/state)" "class: T2"
+}
+
+# The legitimate shapes still write: a worktree that borrowed the tasks
+# directory, and a coordinator whose `.ai/workspace` leads into the owner's.
+test_task_writers_work_through_the_links_jig_makes() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local owner coord wt
+  owner=$(pwd -P)
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  [ -L "$wt/.ai/workspace/tasks" ] || fail "the worktree did not borrow the task directory"
+
+  set +e
+  OUT=$(cd "$wt" && jig task set T-1 class T2 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "T2" "$(sed -n 's/^class: //p' "$owner/.ai/workspace/tasks/T-1/state")"
+  set +e
+  OUT=$(cd "$wt" && jig task autopilot T-1 start 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC" "$OUT"
+  assert_file "$owner/.ai/workspace/tasks/T-1/autopilot"
+
+  git worktree add -q ../coord >/dev/null 2>&1 || fail "could not add a worktree"
+  coord=$(cd ../coord && pwd -P)
+  rm -rf "$coord/.ai/workspace"
+  plant_dir_link "$owner/.ai/workspace" "$coord/.ai/workspace"
+  set +e
+  OUT=$(cd "$coord" && jig task finding add T-1 --severity P2 --where - --summary s 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains "$owner/.ai/workspace/tasks/T-1/findings" "F1"
+}
+
 test_task_start_worktree_failure_leaves_nothing_behind() {
   # `git worktree add -b` creates the branch before the directory. Without an
   # undo, a failed start left the branch behind and every retry died with
