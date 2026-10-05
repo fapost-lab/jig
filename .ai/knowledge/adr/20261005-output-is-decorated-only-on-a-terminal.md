@@ -10,6 +10,7 @@ paths:
   - scripts/lib/output.sh
   - scripts/lib/doctor.sh
   - scripts/lib/upgrade.sh
+  - scripts/lib/status.sh
 summary: A report is grouped and coloured only when stdout is a terminal, decided once in scripts/lib/output.sh; a pipe, CI and an agent get the bytes printed before the layer existed.
 reviewed_at: 2026-10-05
 ---
@@ -64,6 +65,22 @@ so where the form is decided and what blocks it is built from has to be decided 
   had replaced, and its repeat reports them as `already-placed`; installs, deletions and links stay one
   `ok` line each, every file kept (`keep-modified`, `keep-conflict`, …) one `warn` line, and
   each hint a detail under its note. An upgrade of 58 files went from 66 lines to 17.
+- **`jig status` is the third.** In a pipe its report is byte-identical to the one before. At a
+  terminal the plain report is written first and read back (`_status_terminal`), so the two forms
+  cannot disagree: what needs the person comes first, failures before warnings — a refusal, a
+  task that is paused, blocked, stale, stopped or lowered (judged by the words the task line
+  builder writes, never by a worktree path or a pause reason), drift, an epic whose branch is
+  missing, knowledge awaiting a decision, a flag
+  housekeeping left (`see:` its log), a hint (the newer-release hint is a `warn` with the command
+  as its `hint:`) — and then the rest in a few `ok` lines: the active tasks (each a `task:`
+  detail), this checkout, the install, the knowledge (an open epic is an `ok` line of its own
+  after it), `agent.git` and `config.local`, closed by
+  `jig X: nothing needs you` or `jig X: N item(s) need you`. The form is decided in `cmd_status`
+  alone, above every reader of the report: the status page and each of its redraws
+  (`jig status --html|--refresh`, `jig_status_page_touch`, the hand-off from a worktree) call
+  `_status_report` itself and so always embed the plain lines, and `jig doctor` reads
+  `_status_framework_versions`, which only ever prints plain. In this repository, 31 lines
+  became 12.
 - **A reader inside Jig asks for the plain form.** Code that captures a Jig report to filter
   its lines — `upgrade_pending`, the upgrade's self-check — sets `JIG_TERMINAL=0` for that
   run, because the person's `JIG_TERMINAL=1` reaches it through the environment and would

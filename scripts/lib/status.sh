@@ -24,7 +24,18 @@ cmd_status() {
     return 0
   fi
   _status_load
-  _status_report
+  # shellcheck source=lib/output.sh
+  . "$JIG_LIB/output.sh"
+  out_init
+  # The form is decided here and nowhere below: the plain report
+  # (_status_report) is what every other reader gets — the status page and
+  # every redraw of it, a pipe, an agent — so none of them can be handed the
+  # terminal form (adr-20261005-output-is-decorated-only-on-a-terminal).
+  if out_terminal; then
+    _status_terminal_report
+  else
+    _status_report
+  fi
   # A full report is also when the page's cached counts are refreshed — only
   # where the page lives and only once it exists: `jig status` writes nothing
   # in a project that never asked for the page.
@@ -126,7 +137,10 @@ _status_load() {
   . "$JIG_LIB/task.sh"
 }
 
-# _status_report — the plain-text report `jig status` prints.
+# _status_report — the plain-text report `jig status` prints. At a terminal
+# the same lines are read back and regrouped by _status_terminal, which knows
+# every line shape printed here: a new one is classified there too, or it is
+# shown as a line of its own under what is fine.
 _status_report() {
   printf '%s\n' "jig $JIG_VERSION"
 
@@ -328,6 +342,267 @@ EOF
 
   _status_session_hook
   _status_instructions
+}
+
+# --- the terminal form (adr-20261005-output-is-decorated-only-on-a-terminal) ----
+#
+# At a terminal `jig status` says first what needs the reader — a refusal, a
+# stale or blocked task, a hint, a flag housekeeping left — each with what to
+# do, then what is fine in a few grouped lines: the tasks in flight, this
+# checkout, the install, the knowledge, agent.git and config.local. It is the
+# plain report read back line by line, so the plain form stays byte for byte
+# what it was, and the two forms cannot say different things.
+
+# What one terminal report tells the reader, filled by _status_terminal.
+_STT_NEED_LEVEL=()   # fail | warn, one per item that needs the reader
+_STT_NEED_TEXT=()    # its status line
+_STT_NEED_DETAIL=()  # its detail lines, "label<TAB>text", newline-joined
+_STT_TASKS=()        # task lines that need nothing
+_STT_HERE=()         # this checkout: current task, housekeeping
+_STT_OTHERS=()       # who else is working here, one label per session
+_STT_INSTALL=()      # manifest, framework, drift, session hook, instructions
+_STT_KNOW=()         # proposals, specs
+_STT_EPICS=()        # open epics that are fine
+_STT_CFG=()          # config.local keys in effect
+_STT_REST=()         # agent.git, and any line no rule here knows
+
+# _status_terminal_report — the plain report into a file, in this shell (its
+# answers are memoised into globals cmd_status still reads), then its
+# terminal form.
+_status_terminal_report() {
+  local tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jig-status-report.XXXXXX")
+  jig_cleanup_add "$tmp"
+  _status_report > "$tmp"
+  _status_terminal < "$tmp"
+  rm -f "$tmp"
+}
+
+# _status_need <level> <text> — one item that needs the reader.
+_status_need() {
+  _STT_NEED_LEVEL+=("$1")
+  _STT_NEED_TEXT+=("$2")
+  _STT_NEED_DETAIL+=("")
+}
+
+# _status_task_needs <task line> — exit 0 when a `task ...` line asks for the
+# reader: paused, blocking findings, a stale review, a stopped run, a lowered
+# class (adr-20261004-a-route-stage-is-proven-by-its-record). Only the fields
+# the line builder writes are looked at, never the text a person wrote — a
+# worktree path or a pause reason may hold any of those words.
+_status_task_needs() {
+  local t="$1" head last
+  # The fixed words before the worktree, the base and the pause.
+  head=${t%% worktree=*}
+  head=${head%% base=*}
+  head=${head%% paused*}
+  case "$head" in *" lowered="*) return 0 ;; esac
+  # The words after the pause reason, peeled off from the end.
+  while :; do
+    last=${t##* }
+    case "$last" in
+      blocking=*[!0-9]* | blocking=) break ;;
+      blocking=* | review=stale | autopilot=stopped) return 0 ;;
+      autopilot=on) ;;
+      *) break ;;
+    esac
+    t=${t% *}
+  done
+  case "$t" in
+    *" paused" | *" paused ("*")") return 0 ;;
+  esac
+  return 1
+}
+
+# _status_need_detail <label> <text> — a detail line under the last item.
+_status_need_detail() {
+  local i=$((${#_STT_NEED_TEXT[@]} - 1)) d
+  d=${_STT_NEED_DETAIL[$i]}
+  if [ -n "$d" ]; then d="$d"$'\n'; fi
+  _STT_NEED_DETAIL[i]="$d$1"$'\t'"$2"
+}
+
+# _status_terminal — read the plain report on stdin and print its terminal
+# form.
+_status_terminal() {
+  local l t v m version="" prev_need="" list="" finished="" ntasks=0
+  _STT_NEED_LEVEL=() _STT_NEED_TEXT=() _STT_NEED_DETAIL=() _STT_TASKS=() _STT_HERE=()
+  _STT_OTHERS=() _STT_INSTALL=() _STT_KNOW=() _STT_EPICS=() _STT_CFG=() _STT_REST=()
+  while IFS= read -r l || [ -n "$l" ]; do
+    # A line indented by two spaces belongs to the list named above it
+    # (modified:, missing:), which belongs to the drift line before that.
+    case "$l" in
+      "  "*)
+        if [ -n "$list" ]; then
+          _status_need_detail "$list" "${l#  }"
+          continue
+        fi
+        ;;
+    esac
+    list=""
+    # A hint is a detail of the line it follows; the newer-release hint is
+    # an item of its own, since nothing above it asked for it.
+    case "$l" in
+      "hint: jig v"*" is out; "*)
+        t=${l#hint: }
+        _status_need warn "${t%%; *}"
+        _status_need_detail hint "${t#*; }"
+        prev_need=""
+        continue
+        ;;
+      "hint: "*)
+        if [ -n "$prev_need" ]; then
+          _status_need_detail hint "${l#hint: }"
+        else
+          _status_need warn "${l#hint: }"
+        fi
+        prev_need=""
+        continue
+        ;;
+    esac
+    prev_need=""
+    case "$l" in
+      "jig "*) [ -n "$version" ] || version=${l#jig } ;;
+      "initialised: yes") ;;
+      "initialised: "*) _status_need warn "$l"; prev_need=1 ;;
+      "config.local: "*" is not ignored by git"*" (fix: "*")")
+        t=${l##* (fix: }
+        _status_need warn "${l% (fix: *}"
+        _status_need_detail fix "${t%)}"
+        ;;
+      "config.local: ignored "* | "config.local: "*" is ignored (set it in "*)
+        _status_need warn "$l"
+        ;;
+      "config.local: "*) _STT_CFG+=("${l#config.local: }") ;;
+      "agent.git: invalid value "*) _status_need fail "$l" ;;
+      "manifest: version="*)
+        t=${l#manifest: version=}
+        v=${t%% mode=*}
+        m=${t#* mode=}
+        m=${m%% source=*}
+        _STT_INSTALL+=("manifest $v ($m)")
+        ;;
+      "manifest: "*) _status_need warn "$l" ;;
+      "framework versions: "*" current") _STT_INSTALL+=("framework current") ;;
+      "framework versions: "*"=unavailable") _STT_INSTALL+=("global jig unavailable") ;;
+      "framework versions: "*) _status_need warn "$l"; prev_need=1 ;;
+      "drift: 0 modified, 0 missing, 0 pending") _STT_INSTALL+=("no drift") ;;
+      # Pending is left off the plain line when it cannot be told, and "could
+      # not check" is not "nothing pending".
+      "drift: 0 modified, 0 missing") _STT_INSTALL+=("no drift (pending: unknown)") ;;
+      "drift: "*) _status_need warn "$l" ;;
+      "modified:" | "missing:") list=${l%:} ;;
+      "proposals: none") _STT_KNOW+=("no proposals") ;;
+      "proposals: "* | "sources changed: "*) _status_need warn "$l" ;;
+      "specs: none") _STT_KNOW+=("no specs") ;;
+      "specs: "*) _STT_KNOW+=("specs: ${l#specs: }") ;;
+      "epic: "*", branch missing") _status_need warn "$l" ;;
+      "epic: "*) _STT_EPICS+=("$l") ;;
+      "task "*)
+        ntasks=$((ntasks + 1))
+        if _status_task_needs "$l"; then
+          _status_need warn "$l"
+        else
+          _STT_TASKS+=("${l#task }")
+        fi
+        ;;
+      "no active tasks") ;;
+      "("*" finished; jig task list --all)")
+        t=${l#(}
+        finished=${t%% *}
+        ;;
+      "current task: ambiguous"*) _status_need warn "$l" ;;
+      "current task: "*) _STT_HERE+=("current task ${l#current task: }") ;;
+      "working here: "*)
+        t=${l#working here: }
+        _STT_OTHERS+=("${t%% (jig *}")
+        ;;
+      # A runtime that does not name its sessions is a boundary, not
+      # something to fix: every person in a terminal of their own has one.
+      "sessions: not observable (no active runtime names its sessions here)")
+        _STT_HERE+=("sessions not observable")
+        ;;
+      "sessions: "*) _status_need warn "$l" ;;
+      "housekeeping: "*) _STT_HERE+=("housekeeping ${l#housekeeping: }") ;;
+      "needs consolidation: "*" (see "*")" | "worktrees kept: "*" (see "*")" \
+        | "wrong base: "*" (see "*")")
+        t=${l##* (see }
+        _status_need warn "${l% (see *}"
+        _status_need_detail see "${t%)}"
+        ;;
+      "session hook ("*"): installed") _STT_INSTALL+=("${l%: installed}") ;;
+      "session hook ("*) _status_need warn "$l" ;;
+      "instructions ("*"): ok") _STT_INSTALL+=("${l%: ok}") ;;
+      # Text a person changed in their own section is theirs to keep, and an
+      # upgrade keeps it: nothing to do, as doctor says too.
+      "instructions ("*"): Jig section in AGENTS.md was changed here; upgrades keep your text")
+        t=${l%%:*}
+        _STT_INSTALL+=("$t (section changed here)")
+        ;;
+      "instructions ("*) _status_need warn "$l" ;;
+      "") ;;
+      *) _STT_REST+=("$l") ;;
+    esac
+  done
+  _status_terminal_print "$version" "$ntasks" "$finished"
+}
+
+# _status_terminal_print <version> <tasks> <finished> — print what
+# _status_terminal gathered: failures, then warnings, each with its details;
+# a gap; the grouped lines of what is fine; the summary.
+_status_terminal_print() {
+  local version="$1" ntasks="$2" finished="$3" level i n t
+  n=${#_STT_NEED_TEXT[@]}
+  for level in fail warn; do
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      if [ "${_STT_NEED_LEVEL[$i]}" = "$level" ]; then
+        out_status "$level" "${_STT_NEED_TEXT[$i]}"
+        while IFS= read -r t; do
+          [ -n "$t" ] || continue
+          out_detail "${t%%$'\t'*}" "${t#*$'\t'}"
+        done <<< "${_STT_NEED_DETAIL[$i]}"
+      fi
+      i=$((i + 1))
+    done
+  done
+  [ "$n" = 0 ] || out_gap
+
+  # An uninitialised project's report stops before the tasks: no line here.
+  if [ "$ntasks" -gt 0 ] || [ -n "$finished" ] || [ ${#_STT_HERE[@]} -gt 0 ]; then
+    if [ "$ntasks" -gt 0 ]; then t="$ntasks active task(s)"; else t="no active tasks"; fi
+    [ -z "$finished" ] || t="$t, $finished finished (jig task list --all)"
+    out_status ok "$t"
+    if [ ${#_STT_TASKS[@]} -gt 0 ]; then
+      for t in "${_STT_TASKS[@]}"; do out_detail task "$t"; done
+    fi
+  fi
+  if [ ${#_STT_HERE[@]} -gt 0 ]; then out_group ok "this checkout" "${_STT_HERE[@]}"; fi
+  # Each session is one label; several with the same label are counted.
+  if [ ${#_STT_OTHERS[@]} -gt 0 ]; then
+    local -a others=()
+    while IFS= read -r t; do others+=("$t"); done < <(
+      printf '%s\n' "${_STT_OTHERS[@]}" | awk '
+        { if (!($0 in c)) k[++m] = $0; c[$0]++ }
+        END { for (j = 1; j <= m; j++) print (c[k[j]] > 1 ? k[j] " (" c[k[j]] ")" : k[j]) }
+      ')
+    out_group ok "also working here" "${others[@]}"
+  fi
+  if [ ${#_STT_INSTALL[@]} -gt 0 ]; then out_group ok "install" "${_STT_INSTALL[@]}"; fi
+  if [ ${#_STT_KNOW[@]} -gt 0 ]; then out_group ok "knowledge" "${_STT_KNOW[@]}"; fi
+  if [ ${#_STT_EPICS[@]} -gt 0 ]; then
+    for t in "${_STT_EPICS[@]}"; do out_status ok "$t"; done
+  fi
+  if [ ${#_STT_REST[@]} -gt 0 ]; then
+    for t in "${_STT_REST[@]}"; do out_status ok "$t"; done
+  fi
+  if [ ${#_STT_CFG[@]} -gt 0 ]; then out_group ok "config.local" "${_STT_CFG[@]}"; fi
+
+  if [ "$n" = 0 ]; then
+    out_summary "jig $version: nothing needs you"
+  else
+    out_summary "jig $version: $n item(s) need you"
+  fi
 }
 
 # The live tasks, read once per report and shared by the text report and the
