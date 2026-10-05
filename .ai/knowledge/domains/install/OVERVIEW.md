@@ -219,6 +219,9 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
 - `install.ps1` — `Install-Jig`, `Initialize-JigProject`, `Uninstall-JigFramework`; tested by
   `tests/install.t.ps1`, which runs only on Windows CI.
 - `scripts/lib/doctor.sh` — `cmd_doctor`, one `_doctor_check_*` per line of its report.
+- `scripts/lib/upgrade.sh` — its report: `_upgrade_line` (one per path), `_upgrade_note`,
+  `_upgrade_flush` (the grouped replacements at a terminal), `_upgrade_summary_text` (the
+  summary in plain words, for the report and the commit message alike).
 - `scripts/lib/output.sh` — the output layer: `out_init` decides plain or terminal form once,
   `out_status`, `out_detail`, `out_group`, `out_gap`, `out_summary` are the blocks a report is
   built from; `tests/output.t.sh` pins their bytes.

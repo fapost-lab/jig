@@ -10,6 +10,105 @@
 # variable, seen by every helper it calls (directly or transitively).
 _upgrade_out() { [ "${quiet:-0}" = 1 ] || printf '%s\n' "$*"; }
 
+# --- the report's two forms ----------------------------------------------------
+#
+# The report goes through the shared output layer (output.sh,
+# adr-20261005-output-is-decorated-only-on-a-terminal). In a pipe every line is
+# the bytes upgrade printed before the layer existed, printed as it happens:
+# agents, CI and upgrade_pending's filter read them. At a terminal the run says
+# what changed rather than every file it touched: the replacements (and the
+# reconciliations of an interrupted run) are kept here and said once, grouped
+# by where they live, just before the summary; what a person may have to act
+# on — an install, a deletion, a file kept because it was changed or is in the
+# way, a hint — stays one line each, with its level word.
+
+# "<verb> <rel>" lines kept for the grouped line, one per line.
+_UPGRADE_GROUPED=""
+
+# _upgrade_line <level> <verb> <rel> — one per-path report line. Plain:
+# "<verb> <rel>". Terminal: replace and already-placed are kept for
+# _upgrade_flush; any other verb is a status line of <level>.
+_upgrade_line() {
+  if [ "${quiet:-0}" = 1 ]; then return 0; fi
+  if ! out_terminal; then
+    printf '%s %s\n' "$2" "$3"
+    return 0
+  fi
+  case "$2" in
+    replace | already-placed)
+      _UPGRADE_GROUPED="$_UPGRADE_GROUPED$2 $3
+"
+      ;;
+    *) out_status "$1" "$2 $3" ;;
+  esac
+}
+
+# _upgrade_line_note <text> — the explanation under the per-path line above
+# it. Plain: indented by two spaces. Terminal: a `note:` detail.
+_upgrade_line_note() {
+  if [ "${quiet:-0}" = 1 ]; then return 0; fi
+  if out_terminal; then
+    out_detail note "$1"
+  else
+    printf '  %s\n' "$1"
+  fi
+}
+
+# _upgrade_note <level> <text> [<hint>] — a remark about the whole run, and
+# the hint that goes with it. Plain: the text, then "hint: <hint>". Terminal:
+# a status line of <level>, the hint a detail under it.
+_upgrade_note() {
+  if [ "${quiet:-0}" = 1 ]; then return 0; fi
+  if out_terminal; then
+    out_status "$1" "$2"
+    [ -z "${3:-}" ] || out_detail hint "$3"
+  else
+    printf '%s\n' "$2"
+    [ -z "${3:-}" ] || printf 'hint: %s\n' "$3"
+  fi
+}
+
+# _upgrade_flush — at a terminal, the kept replacements and reconciliations,
+# one line per verb: "ok    replace 50 file(s): .ai/scripts (12), ...". A
+# path is counted under its first two directories (`.ai/scripts`,
+# `.claude/skills`), or its one directory (`.ai/manifest` under `.ai`), a path
+# with none under itself; the count is left out where it is one. Areas keep
+# the order the paths came in, which is sorted.
+#
+# Said only when the summary is: a run that dies midway names, at a terminal,
+# none of the files it had already replaced. Repeating the command is what
+# finishes such a run (adr-20260926-an-interrupted-upgrade-is-repeated-not-
+# rolled-back), and the repeat reports them as `already-placed`.
+_upgrade_flush() {
+  [ -n "$_UPGRADE_GROUPED" ] || return 0
+  local verb total area areas=()
+  for verb in replace already-placed; do
+    total=0
+    areas=()
+    while IFS= read -r area; do
+      if [ "$total" = 0 ]; then total=$area; else areas+=("$area"); fi
+    done < <(printf '%s' "$_UPGRADE_GROUPED" | awk -v verb="$verb" '
+      {
+        sp = index($0, " ")
+        if (substr($0, 1, sp - 1) != verb) next
+        rel = substr($0, sp + 1)
+        n = split(rel, part, "/")
+        if (n > 2) a = part[1] "/" part[2]; else if (n == 2) a = part[1]; else a = rel
+        if (!(a in count)) order[++k] = a
+        count[a]++
+        total++
+      }
+      END {
+        if (total == 0) exit
+        print total
+        for (i = 1; i <= k; i++) print (count[order[i]] > 1 ? order[i] " (" count[order[i]] ")" : order[i])
+      }')
+    [ "$total" != 0 ] || continue
+    out_group ok "$verb $total file(s)" "${areas[@]}"
+  done
+  _UPGRADE_GROUPED=""
+}
+
 # --- staging: build the tree the source would install right now -----------
 
 # _upgrade_build_staged <source> <stage> <profiles> <adapters>
@@ -121,10 +220,24 @@ _upgrade_records_source() {
 # is reported rather than left to silence. `manifest <state>` is the part the
 # reader needs most: an upgrade can end with no file placed and no manifest
 # written at all, and until it said so that was invisible.
-_upgrade_summary() {
+#
+# _upgrade_summary_text prints the line, in the same words in both forms, for
+# the commit message as well; _upgrade_summary reports it, and at a terminal
+# says the grouped replacements first.
+_upgrade_summary_text() {
   local line="jig upgrade: $1 placed, $2 kept"
   if [ "$3" != 0 ]; then line="$line, $3 removed"; fi
-  _upgrade_out "$line, $4 conflict(s); manifest $5"
+  printf '%s\n' "$line, $4 conflict(s); manifest $5"
+}
+
+_upgrade_summary() {
+  if [ "${quiet:-0}" = 1 ]; then return 0; fi
+  if out_terminal; then
+    _upgrade_flush
+    out_summary "$(_upgrade_summary_text "$@")"
+  else
+    _upgrade_summary_text "$@"
+  fi
 }
 
 # _upgrade_kept_source_note <source> <mode> — why the manifest still names
@@ -134,8 +247,8 @@ _upgrade_summary() {
 _upgrade_kept_source_note() {
   local source="$1" link_flag=""
   if [ "$2" = link ]; then link_flag=" --link"; fi
-  _upgrade_out "nothing was placed from $source, so this project stays installed from $(manifest_source)"
-  _upgrade_out "hint: to install it from that checkout instead, run \`jig init$link_flag --from $source\`"
+  _upgrade_note warn "nothing was placed from $source, so this project stays installed from $(manifest_source)" \
+    "to install it from that checkout instead, run \`jig init$link_flag --from $source\`"
 }
 
 # _upgrade_config_note <dry-run> — after a real run, one line when the
@@ -156,9 +269,9 @@ _upgrade_config_note() {
   keys=$(jig_config_unmentioned | tr '\n' ' ' | sed 's/ $//')
   [ -n "$keys" ] || return 0
   n=$(printf '%s\n' "$keys" | wc -w | tr -d ' ')
-  _upgrade_out "$JIG_AI_DIR/config.yaml does not mention $n key(s) this version reads, each on its default: $(printf '%s\n' "$keys" | sed 's/ /, /g')"
   # shellcheck disable=SC2016
-  _upgrade_out 'hint: `jig config keys` lists them; that file is yours to change or leave as it is'
+  _upgrade_note warn "$JIG_AI_DIR/config.yaml does not mention $n key(s) this version reads, each on its default: $(printf '%s\n' "$keys" | sed 's/ /, /g')" \
+    '`jig config keys` lists them; that file is yours to change or leave as it is'
 }
 
 # _upgrade_self_check <dry-run> — after a real run, ask the install that now
@@ -199,20 +312,26 @@ _upgrade_self_check() {
   [ "$1" != 1 ] || return 0
   local jig="$JIG_PROJECT/$JIG_AI_DIR/scripts/jig" out rc=0 n
   [ -f "$jig" ] || return 0
-  out=$( (cd "$JIG_PROJECT" && bash "$jig" upgrade --dry-run) </dev/null 2>&1 ) || rc=$?
+  # JIG_TERMINAL=0: the lines are read by the filter below, so the child
+  # reports in the plain form even when this run's reader asked for the
+  # terminal one (output.sh).
+  out=$( (cd "$JIG_PROJECT" && JIG_TERMINAL=0 bash "$jig" upgrade --dry-run) </dev/null 2>&1 ) || rc=$?
   if [ "$rc" != 0 ]; then
-    _upgrade_out "could not confirm this install is complete; run \`jig doctor\`"
+    _upgrade_note warn "could not confirm this install is complete; run \`jig doctor\`"
     return 2
   fi
   out=$(printf '%s\n' "$out" | grep -E '^(install|link|replace) ' || true)
   [ -n "$out" ] || return 0
   n=$(printf '%s\n' "$out" | grep -c . || true)
-  _upgrade_out "$n item(s) still not installed; run \`jig upgrade\` again"
+  _upgrade_note fail "$n item(s) still not installed; run \`jig upgrade\` again"
   # Indented, the way every other note under a report line is: these are
   # another run's words quoted back, and unindented they would be
   # indistinguishable from this run's own `install`/`replace` lines — to a
   # reader, and to anything that reads the report by its line starts.
-  _upgrade_out "$(printf '%s\n' "$out" | sed 's/^/  /')"
+  # At a terminal, under the `fail` line's text, where its details stand.
+  local indent='  '
+  if out_terminal; then indent=$_OUT_PAD; fi
+  _upgrade_out "$(printf '%s\n' "$out" | sed "s/^/$indent/")"
   return 1
 }
 
@@ -311,7 +430,7 @@ _upgrade_process_path() {
       # the file is current. `reconciled_count` is counted separately because
       # it decides whether the manifest is rewritten at all, below.
       if [ "$manifest_hash" != "$staged_hash" ]; then
-        _upgrade_out "already-placed $rel"
+        _upgrade_line ok already-placed "$rel"
         reconciled_count=$((reconciled_count + 1))
       fi
       kept_count=$((kept_count + 1))
@@ -324,7 +443,7 @@ $staged_hash $rel"
       if [ "$dry_run" != 1 ]; then
         _upgrade_place "$staged_abs" "$local_abs"
       fi
-      _upgrade_out "replace $rel"
+      _upgrade_line ok replace "$rel"
       placed_count=$((placed_count + 1))
       new_entries="$new_entries
 $staged_hash $rel"
@@ -333,23 +452,23 @@ $staged_hash $rel"
       if [ "$dry_run" != 1 ]; then
         _upgrade_place "$staged_abs" "$local_abs"
       fi
-      _upgrade_out "install $rel"
+      _upgrade_line ok install "$rel"
       placed_count=$((placed_count + 1))
       new_entries="$new_entries
 $staged_hash $rel"
       ;;
     keep-modified)
-      _upgrade_out "keep-modified $rel"
+      _upgrade_line warn keep-modified "$rel"
       kept_count=$((kept_count + 1))
       new_entries="$new_entries
 $manifest_hash $rel"
       ;;
     keep-conflict)
-      _upgrade_out "keep-conflict $rel"
+      _upgrade_line warn keep-conflict "$rel"
       conflict_count=$((conflict_count + 1))
       ;;
     keep-orphaned-modified)
-      _upgrade_out "keep-orphaned-modified $rel"
+      _upgrade_line warn keep-orphaned-modified "$rel"
       kept_count=$((kept_count + 1))
       new_entries="$new_entries
 $manifest_hash $rel"
@@ -361,7 +480,7 @@ $manifest_hash $rel"
       # `.ai/` or an adapter's skills directory, and never through `..`: the
       # manifest is a file in the project, and a path in it is not proof.
       if ! _upgrade_deletable "$rel"; then
-        _upgrade_out "keep-outside $rel"
+        _upgrade_line warn keep-outside "$rel"
         kept_count=$((kept_count + 1))
         new_entries="$new_entries
 $manifest_hash $rel"
@@ -370,7 +489,7 @@ $manifest_hash $rel"
       if [ "$dry_run" != 1 ]; then
         rm -f "$local_abs"
       fi
-      _upgrade_out "delete $rel"
+      _upgrade_line ok delete "$rel"
       removed_count=$((removed_count + 1))
       ;;
   esac
@@ -432,18 +551,18 @@ _upgrade_section() {
     case "$state" in
       absent)
         _UPGRADE_SECTION_ACTION=keep-unmarked
-        _upgrade_out "keep-unmarked AGENTS.md"
-        _upgrade_out "  its Jig section is not marked, so upgrades cannot reach it; the jig-init skill adds the markers"
+        _upgrade_line warn keep-unmarked AGENTS.md
+        _upgrade_line_note "its Jig section is not marked, so upgrades cannot reach it; the jig-init skill adds the markers"
         ;;
       malformed)
         _UPGRADE_SECTION_ACTION=keep-malformed
-        _upgrade_out "keep-malformed AGENTS.md (Jig section)"
-        _upgrade_out "  expected one $JIG_SECTION_BEGIN and one $JIG_SECTION_END, in that order"
+        _upgrade_line warn keep-malformed "AGENTS.md (Jig section)"
+        _upgrade_line_note "expected one $JIG_SECTION_BEGIN and one $JIG_SECTION_END, in that order"
         ;;
       *)
         _UPGRADE_SECTION_ACTION=keep-conflict
-        _upgrade_out "keep-conflict AGENTS.md (Jig section)"
-        _upgrade_out "  jig did not write this section, so it does not update it; run \`jig init\` to adopt it"
+        _upgrade_line warn keep-conflict "AGENTS.md (Jig section)"
+        _upgrade_line_note "jig did not write this section, so it does not update it; run \`jig init\` to adopt it"
         ;;
     esac
     return 0
@@ -451,8 +570,8 @@ _upgrade_section() {
 
   if [ "$state" = malformed ]; then
     _UPGRADE_SECTION_ACTION=keep-malformed
-    _upgrade_out "keep-malformed AGENTS.md (Jig section)"
-    _upgrade_out "  expected one $JIG_SECTION_BEGIN and one $JIG_SECTION_END, in that order"
+    _upgrade_line warn keep-malformed "AGENTS.md (Jig section)"
+    _upgrade_line_note "expected one $JIG_SECTION_BEGIN and one $JIG_SECTION_END, in that order"
     return 0
   fi
 
@@ -461,7 +580,7 @@ _upgrade_section() {
   # reached about a deleted session-hook line).
   if [ "$state" = absent ]; then
     _UPGRADE_SECTION_ACTION=keep-modified
-    _upgrade_out "keep-modified AGENTS.md (Jig section)"
+    _upgrade_line warn keep-modified "AGENTS.md (Jig section)"
     return 0
   fi
 
@@ -481,14 +600,14 @@ _upgrade_section() {
     if [ "$cur_hash" != "$rec_hash" ]; then
       _UPGRADE_SECTION_ACTION=already-placed
       _UPGRADE_SECTION_RECORD="$new_hash AGENTS.md"
-      _upgrade_out "already-placed AGENTS.md (Jig section)"
+      _upgrade_line ok already-placed "AGENTS.md (Jig section)"
     fi
     return 0 # already current, and silent like every other unchanged path
   fi
 
   if [ "$cur_hash" != "$rec_hash" ]; then
     _UPGRADE_SECTION_ACTION=keep-modified
-    _upgrade_out "keep-modified AGENTS.md (Jig section)"
+    _upgrade_line warn keep-modified "AGENTS.md (Jig section)"
     return 0
   fi
 
@@ -503,7 +622,7 @@ _upgrade_section() {
   fi
   _UPGRADE_SECTION_ACTION=replace
   _UPGRADE_SECTION_RECORD="$new_hash AGENTS.md"
-  _upgrade_out "replace AGENTS.md (Jig section)"
+  _upgrade_line ok replace "AGENTS.md (Jig section)"
 }
 
 # _upgrade_deletable <rel> — true when <rel> is a relative path with no `..`
@@ -581,9 +700,9 @@ _upgrade_link_one() {
   before_conflict=$conflict_count
   _init_place_symlink "$target_abs" "$link_abs" "$dry_run"
   if [ "$created_count" != "$before_created" ]; then
-    _upgrade_out "link $rel"
+    _upgrade_line ok link "$rel"
   elif [ "$conflict_count" != "$before_conflict" ]; then
-    _upgrade_out "keep-conflict $rel"
+    _upgrade_line warn keep-conflict "$rel"
   fi
 }
 
@@ -1120,6 +1239,10 @@ cmd_upgrade() {
     esac
   done
   jig_require_init
+  # shellcheck source=lib/output.sh
+  . "$JIG_LIB/output.sh"
+  out_init
+  _UPGRADE_GROUPED=""
   # shellcheck source=lib/manifest.sh
   . "$JIG_LIB/manifest.sh"
   # shellcheck source=lib/profiles.sh
@@ -1269,7 +1392,7 @@ cmd_upgrade() {
   _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "$manifest_state"
   [ "$manifest_state" = updated ] || _upgrade_kept_source_note "$source" "copy"
   _upgrade_finish "$from_version" "$to_version" \
-    "$(quiet=0; _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "$manifest_state")"
+    "$(_upgrade_summary_text "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "$manifest_state")"
 }
 
 # --- upgrade_pending ---------------------------------------------------------
@@ -1303,7 +1426,11 @@ cmd_upgrade() {
 #      hard failure for status/verify — the caller's own subsequent logic
 #      (e.g. verify's profile-name validation) surfaces the real error.
 upgrade_pending() {
-  local out rc=0 _upgrade_skip_preflight=1
+  # JIG_TERMINAL=0: the dry run's lines are read by the filter below, so it
+  # reports in the plain form whatever the caller's reader is (output.sh).
+  # Read by out_init inside cmd_upgrade, which shellcheck cannot see.
+  # shellcheck disable=SC2034
+  local out rc=0 _upgrade_skip_preflight=1 JIG_TERMINAL=0
   out=$(cmd_upgrade --dry-run 2>&1) || rc=$?
   [ "$rc" = 0 ] || return 3
 
