@@ -1095,13 +1095,16 @@ test_install_terminal_colours_the_level_word_unless_no_color() {
   ( unset NO_COLOR; JIG_TERMINAL=1 TERM=xterm bash "$JIG_HOME/install.sh" \
       --repository "$PWD/remote.git" --no-path ) > out.txt 2> err.txt \
     || fail "install should succeed: $(cat out.txt err.txt)"
-  assert_eq "${esc}[32mok${esc}[0m    $(inst_installed_line v0.1.0)" "$(cat out.txt)"
+  # The closing line: without symbolic links (Git Bash), --no-path puts a
+  # warn block before it.
+  assert_eq "${esc}[32mok${esc}[0m    $(inst_installed_line v0.1.0)" "$(tail -n 1 out.txt)"
 
   rm -rf "$(inst_share)" "$(inst_bin)"
   JIG_TERMINAL=1 TERM=dumb bash "$JIG_HOME/install.sh" \
     --repository "$PWD/remote.git" --no-path > out.txt 2> err.txt \
     || fail "install should succeed: $(cat out.txt err.txt)"
-  assert_eq "ok    $(inst_installed_line v0.1.0)" "$(cat out.txt)" "TERM=dumb takes the colour away"
+  assert_eq "ok    $(inst_installed_line v0.1.0)" "$(tail -n 1 out.txt)" "TERM=dumb takes the colour away"
+  case "$(cat out.txt)" in *"$esc"*) fail "TERM=dumb must leave no escape code: $(cat out.txt)" ;; esac
 }
 
 test_install_terminal_error_is_a_fail_block_on_stderr() {
