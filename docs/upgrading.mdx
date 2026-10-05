@@ -88,9 +88,13 @@ From the next release on, `jig upgrade` does its work as one separate change, th
      task they belong to (new files git does not track yet do not count);
    - Git converts line endings here (`core.autocrlf=true`) and nothing keeps Jig's files at LF — it
      names the lines to add to `.gitattributes`;
-   - another agent session is working in this checkout, or `jig verify` is running in it — run the
-     upgrade when it has finished. If that session has already ended, the message names the file
-     to delete.
+   - you are on the branch of a started task — the upgrade would take this checkout off it. Give
+     the task a worktree of its own with `jig task start <id> --worktree`, which puts this checkout
+     back on your base branch, and run the upgrade again; if another session is still working on
+     that task here, wait until it has finished. In the task's own worktree, run the upgrade in
+     the main checkout instead. A session that only looked around (`jig status`,
+     `jig task show` of another task) does not stop it;
+   - `jig verify` is running in this checkout — run the upgrade when it has finished.
 3. **It works on a branch of its own**, `jig/upgrade-<version>`, cut from your base branch
    (`git.base_branch`) — not from the branch you were on, so the upgrade never ends up inside a
    task's pull request.

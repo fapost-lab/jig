@@ -1498,20 +1498,100 @@ test_upgrade_dry_run_is_clean_after_a_windows_style_clone() {
   rm -rf "$clone"
 }
 
-test_upgrade_stops_while_a_session_works_in_this_checkout() {
+# Who occupies a checkout is the one rule `task start` reads
+# (jig_checkout_occupants; adr-20260930-an-upgrade-is-a-unit-of-work, amended
+# 2026-10-05). The refusal that opened this task, from an installed project on
+# main: a session that ran `jig status` 3h ago, and another that ran
+# `jig task show` on a task whose branch was not checked out here. Neither has
+# a HEAD here to lose, so neither stops the upgrade.
+test_upgrade_is_not_stopped_by_a_session_that_only_ran_status() {
   _unit_project
   mkdir -p .ai/runtime/working
-  printf 'command: task show other\n' > .ai/runtime/working/other-session
+  printf 'command: status\n' > .ai/runtime/working/708010ad-0000-4000-8000-000000000000
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "nothing was changed"
+  assert_not_contains "$OUT" "708010ad"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_upgrade_is_not_stopped_by_a_task_whose_branch_is_not_here() {
+  _unit_project
+  jig task new kabanchik-k2-payments >/dev/null
+  jig task start kabanchik-k2-payments >/dev/null
+  git checkout -q main
+  jig task show kabanchik-k2-payments >/dev/null
+  assert_file .ai/runtime/working/kabanchik-k2-payments
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "nothing was changed"
+  assert_not_contains "$OUT" "kabanchik-k2-payments"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+# The task on HEAD is the one whose branch the upgrade takes off this checkout,
+# so it is not excepted: the refusal names the task, its branch and the record,
+# and the way out when that work is yours or its session is over. It quotes no
+# age or command, since the record was just rewritten by this very run, and
+# never advises deleting the record.
+test_upgrade_stops_on_a_started_task_checked_out_here() {
+  _unit_project
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  local head
+  head=$(git rev-parse HEAD)
 
   run jig upgrade --from "$JIG_HOME"
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "a session is working in this checkout (other-session"
-  assert_not_contains "$OUT" "runtime/working/other-session"
+  assert_contains "$OUT" "nothing was changed"
+  assert_contains "$OUT" "task T-1 is started and its branch task/T-1 is checked out here (record .ai/runtime/working/T-1)"
+  assert_contains "$OUT" "\`jig task start T-1 --worktree\`"
+  assert_contains "$OUT" "if another session is still working on it, run the upgrade when it has finished"
+  assert_not_contains "$OUT" " ago"
+  assert_not_contains "$OUT" "delete"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  [ -z "$(git branch --list 'jig/upgrade-*')" ] || fail "a refused upgrade cut a branch"
+}
 
-  rm .ai/runtime/working/other-session
+# In the task's own worktree the main-checkout exit does not exist: the task
+# already has a worktree, and `task start --worktree` cannot hand this tree the
+# base branch that the main checkout holds. The refusal sends the upgrade there.
+test_upgrade_in_a_tasks_own_worktree_points_to_the_main_checkout() {
+  _unit_project
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null | tail -1)
+  [ -d "$wt" ] || fail "no worktree was made: $wt"
+  cd "$wt" || fail "could not enter the worktree"
+  jig task show T-1 >/dev/null
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task T-1 is started and its branch task/T-1 is checked out here"
+  assert_contains "$OUT" "run \`jig upgrade\` in the main checkout instead"
+  assert_not_contains "$OUT" "jig task start T-1 --worktree"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+
+  cd - >/dev/null || fail "could not leave the worktree"
+  git worktree remove --force "$wt" >/dev/null 2>&1 || true
+}
+
+# With one branch for everything no HEAD moves, so, as for `task start`, the
+# task on it occupies nothing the upgrade would take.
+test_upgrade_without_branch_per_task_is_not_stopped_by_the_task_on_head() {
+  _unit_project
+  sed 's/^git\.branch_per_task: true/git.branch_per_task: false/' .ai/config.yaml > config.tmp
+  mv config.tmp .ai/config.yaml
+  git commit -q -am "one branch"
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+
   run jig upgrade --from "$JIG_HOME"
   assert_eq 0 "$RC"
-  assert_not_contains "$OUT" "a session is working"
+  assert_not_contains "$OUT" "is started and its branch"
 }
 
 test_upgrade_stops_while_verify_runs_in_this_checkout() {

@@ -685,34 +685,23 @@ _task_dirty_only_spec() {
 # _task_refuse_busy_checkout <id> — refuse to move this checkout's HEAD under
 # another session (adr-20260924-a-checkout-records-what-is-happening-in-it).
 #
-# Reads the record the dispatcher already writes (`jig_checkout_busy`), which
-# already leaves out the task being started, this session's own id, expired
-# records and work whose branch lives in another worktree. A report may say
-# "someone is here" on weak evidence; a refusal blocks a person, so it is
-# narrower: this checkout is occupied when a task that has been started holds
-# its own branch, and that branch is the one checked out here. Everything else
-# is set aside: a record named by a session id (a command that ran with no task
-# on HEAD, `task new` among them), a task that was never started, one that is
-# consolidated or abandoned, one whose branch is no longer the one checked out
-# here. None of them has this checkout's HEAD, whatever the record's age says.
-# Nothing is deleted. Only the start that takes over this checkout asks:
-# `--worktree` leaves it as it was, and a project on one branch moves no HEAD.
+# Who occupies this checkout is decided in one place, jig_checkout_occupants
+# (checkout.sh), which `jig upgrade` reads too: a fresh record named by a task
+# that has been started, is not consolidated or abandoned, and whose branch is
+# the one checked out here. The task being started and this session's own id
+# are left out. Nothing is deleted. Only the start that takes over this
+# checkout asks: `--worktree` leaves it as it was, and a project on one branch
+# moves no HEAD.
 #
 # The way out is named, as the dirty-tree refusal names its own. There is no
 # override (ADR-0029 records that the dirty-tree one was overridden every
 # time), and no advice to delete a record: what is left is a live session's
 # task on HEAD, and the record lapses by itself after checkout.busy_ttl.
 _task_refuse_busy_checkout() {
-  local id="$1" name age cmd st tb fname="" fage="" fcmd="" rest=0 more="" here_branch
+  local id="$1" name age cmd fname="" fage="" fcmd="" rest=0 more=""
   cfg_bool git.branch_per_task true || return 0
-  here_branch=$(_task_current_branch)
   while read -r name age cmd; do
     [ -n "$name" ] || continue
-    [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$name/state" ] || continue
-    st=$(task_state_get "$name" status)
-    case "$st" in consolidated | abandoned) continue ;; esac
-    tb=$(task_state_get "$name" branch)
-    if [ -z "$tb" ] || [ "$tb" != "$here_branch" ]; then continue; fi
     if [ -z "$fname" ]; then
       fname="$name"
       fage="$age"
@@ -720,7 +709,7 @@ _task_refuse_busy_checkout() {
     else
       rest=$((rest + 1))
     fi
-  done < <(jig_checkout_busy "$id")
+  done < <(jig_checkout_occupants "$id")
   [ -n "$fname" ] || return 0
   [ "$rest" -eq 0 ] || more=" (and $rest more)"
   jig_die "task start: this checkout is in use: task $fname ran \`jig $fcmd\` $(jig_checkout_ago "$fage") ago$more; start $id in its own worktree: \`jig task start $id --worktree\`, or wait until that work has finished"

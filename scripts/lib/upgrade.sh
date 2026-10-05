@@ -745,10 +745,24 @@ _upgrade_handoff() {
   JIG_UPGRADE_HANDED_OFF="$JIG_VERSION" exec bash "$source/scripts/jig" upgrade --from "$source" $q
 }
 
+# _upgrade_in_linked_worktree — exit 0 when this checkout is a linked worktree
+# (ADR-0029), not the repository's main working tree: git's own answer, a git
+# dir that differs from the common one. Asked from the top of the checkout in
+# one call, where the main tree answers `.git` twice and a linked one names
+# `.git/worktrees/<name>` and the common dir apart.
+_upgrade_in_linked_worktree() {
+  local dirs gd common
+  dirs=$(cd "$JIG_PROJECT" 2>/dev/null && git rev-parse --git-dir --git-common-dir 2>/dev/null) || return 1
+  gd=${dirs%%$'\n'*}
+  common=${dirs#*$'\n'}
+  [ -n "$gd" ] || return 1
+  [ "$gd" != "$common" ]
+}
+
 # _upgrade_stop_reasons <source> — why a real run must not start here, one
 # reason per line; nothing when it may. Asked before anything is touched.
 _upgrade_stop_reasons() {
-  local source="$1" cur tracked eol lines here name age cmd ttl dir holder checkout
+  local source="$1" cur tracked eol lines name exit_hint ttl dir holder checkout
 
   # 1. Uncommitted work: the rule of `task start` — tracked changes block,
   #    untracked files do not. A repeat on the upgrade's own branch is the
@@ -783,15 +797,35 @@ _upgrade_stop_reasons() {
     fi
   fi
 
-  # 3. A live session in this checkout (adr-20260924-a-checkout-records-what-
-  #    is-happening-in-it): switching its branch and replacing its scripts
-  #    under it is exactly what that record exists to prevent. The task whose
-  #    branch is checked out here is the reader's own, as in `jig status`.
-  here=$(jig_checkout_here_task)
-  while read -r name age cmd; do
-    [ -n "$name" ] || continue
-    printf '%s\n' "a session is working in this checkout ($name ran \`jig $cmd\` $(jig_checkout_ago "$age") ago); run the upgrade when it has finished"
-  done < <(jig_checkout_busy "$here")
+  # 3. A started task on this checkout's HEAD: the upgrade cuts its branch from
+  #    the base and switches to it, so it takes HEAD from whoever is working on
+  #    that task here. Who occupies the checkout is the one rule `task start`
+  #    reads, jig_checkout_occupants (adr-20260930-an-upgrade-is-a-unit-of-
+  #    work, amended 2026-10-05), with no exception for the task on HEAD: that
+  #    task is the one whose HEAD moves. The dispatcher has just recorded this
+  #    very run under that task's name, so the record is always fresh here and
+  #    its age and command would only describe this upgrade; the message names
+  #    the record and leaves them out. A record named by a session id stops
+  #    nothing: it says a command ran, not that one is running, and the one
+  #    long command that broke under a script swap has its own stop (4).
+  #    Asked only where a HEAD moves — not with `git.branch_per_task: false`,
+  #    and not on a repeat on the upgrade's own branch, which no task holds.
+  #    The way out depends on where this checkout is: in the main checkout,
+  #    `task start <id> --worktree` moves the task out and puts this checkout
+  #    back on the base; in a worktree of its own the task already has one,
+  #    that command cannot hand this tree the base (git keeps a branch in one
+  #    worktree at a time), and the upgrade belongs in the main checkout.
+  if cfg_bool git.branch_per_task true; then
+    while read -r name _; do
+      [ -n "$name" ] || continue
+      if _upgrade_in_linked_worktree; then
+        exit_hint="this is a worktree of its own, so run \`jig upgrade\` in the main checkout instead"
+      else
+        exit_hint="if that work is yours or its session has ended, give it a worktree of its own with \`jig task start $name --worktree\` (this checkout goes back to its base branch), then run \`jig upgrade\` again; if another session is still working on it, run the upgrade when it has finished"
+      fi
+      printf '%s\n' "task $name is started and its branch $cur is checked out here (record $JIG_AI_DIR/runtime/working/$name); the upgrade would take this checkout off it; $exit_hint"
+    done < <(jig_checkout_occupants)
+  fi
 
   # 4. A `jig verify` running in this checkout: replacing the scripts it is
   #    executing turned one run into 34 false failures on 2026-09-26. A run
