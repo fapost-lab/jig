@@ -2039,7 +2039,7 @@ spec_remove() {
 spec_link() {
   [ $# -ge 2 ] || jig_die "spec link: missing argument (usage: jig spec link <spec-id> <task-id>)"
   [ $# -eq 2 ] || jig_die "spec link: unexpected argument: $3"
-  local sid="$1" tid="$2" roadmap tdir tasks_root st branch link rc=0 phases count phase line real
+  local sid="$1" tid="$2" roadmap tdir tasks_root st branch link rc=0 phases count phase line real phys
   spec_valid_id "$sid" || jig_die "spec link: invalid spec id: $sid"
   jig_valid_id "$tid" || jig_die "spec link: invalid task id: $tid"
   jig_require_init
@@ -2057,8 +2057,11 @@ spec_link() {
   # checkout keeps. spec.sh sources no other command library, so the check is
   # the plain comparison, and a borrowing checkout is refused as above.
   real=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || real=""
-  [ -n "$real" ] && [ "$(cd -P "$tdir" 2>/dev/null && pwd -P)" = "$real/$JIG_AI_DIR/workspace/tasks/$tid" ] \
-    || jig_die "spec link: the workspace of $tid is not inside this checkout; run it in the checkout that owns it"
+  phys=""
+  [ -z "$real" ] || phys=$(cd -P "$tdir" 2>/dev/null && pwd -P) || phys=""
+  if [ -z "$real" ] || [ "$phys" != "$real/$JIG_AI_DIR/workspace/tasks/$tid" ]; then
+    jig_die "spec link: the workspace of $tid is not inside this checkout; run it in the checkout that owns it"
+  fi
 
   st=$(spec_task_state "$tdir" status)
   case "$st" in
