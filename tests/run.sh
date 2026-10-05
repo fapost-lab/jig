@@ -202,6 +202,11 @@ enter_test_env() {
   # machine for a reason that was not in the repository. A test that wants one
   # sets the variable itself.
   unset CLAUDE_CODE_SESSION_ID
+  # The output layer's overrides (scripts/lib/output.sh): JIG_TERMINAL=1
+  # exported in a developer's shell would turn every report a test reads into
+  # the terminal form, and the suite's assertions are written against the
+  # plain one. A test that wants a form or a colour sets them itself.
+  unset JIG_TERMINAL NO_COLOR
   # Every test builds its own repository under <dir> and expects git to find
   # it there. A suite started from a shell that names another repository — a
   # git hook, a `GIT_DIR=... bash tests/run.sh` — would run every test against
