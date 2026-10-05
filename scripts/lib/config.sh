@@ -15,10 +15,11 @@
 #
 # `agent.git`, `agent.ci_timeout`, `autopilot.unattended`,
 # `autopilot.parallel` and `route.depth` are also in JIG_CFG_LOCAL_ONLY_KEYS
-# below (with `run.exec` and `run.path`): they answer
+# below (with `run.exec`, `run.path` and the two `claude.*_model` keys): they
+# answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -46,9 +47,15 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # (adr-20261001-checks-run-where-the-project-runs). `run.path` is the same
 # question for a host runtime that is not first on PATH (Laravel Herd): a
 # directory on one person's machine.
+# `claude.implement_model` and `claude.review_model` name the model a stage is
+# handed to when the agent delegates it to a subagent: which model is worth
+# its cost depends on one person's plan, runtime and budget, and a committed
+# value would spend every contributor's. Jig carries the value as an opaque
+# string and never interprets it; empty means no delegation
+# (adr-20261005-jig-names-the-roles-not-the-models).
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -156,6 +163,8 @@ verify.full_run local
 verify.busy_ttl 30m
 run.exec auto
 run.path auto
+claude.implement_model
+claude.review_model
 EOF
 }
 
@@ -483,7 +492,10 @@ _cfg_parallel() {
 #   backslash would reach the command as a literal character;
 # - run.path: `auto` or the absolute path of a directory, unquoted — read as
 #   one value, so a blank inside it is kept (Herd's macOS home has one); a
-#   relative one would name a different folder from wherever verify starts.
+#   relative one would name a different folder from wherever verify starts;
+# - claude.implement_model and claude.review_model: anything — the value is
+#   the runtime's to understand, never Jig's
+#   (adr-20261005-jig-names-the-roles-not-the-models).
 # Nothing may hold a line break, a `#` (_cfg_read cuts a comment there) or
 # surrounding blanks (it trims them).
 jig_config_value_problem() {
@@ -553,6 +565,7 @@ jig_config_value_problem() {
         \"* | \'*) printf 'quoted; write the path without quotes\n'; return 1 ;;
       esac
       ;;
+    claude.implement_model | claude.review_model) ;;
     *) printf 'not a local key\n'; return 1 ;;
   esac
   return 0
@@ -659,6 +672,9 @@ _config_keys() {
   printf '%-31s%-25s%s\n' "key" "default" "answered by"
   while read -r key default; do
     [ -n "$key" ] || continue
+    # An empty default — a key that is off until a person sets it — prints as
+    # `-`, so the columns still read as columns.
+    [ -n "$default" ] || default=-
     note=""
     if ! jig_config_local_only_key "$key" && ! _cfg_mentions "$file" "$key"; then
       note="not mentioned in $JIG_AI_DIR/config.yaml"

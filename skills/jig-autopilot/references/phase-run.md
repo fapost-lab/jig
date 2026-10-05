@@ -136,7 +136,9 @@ rules verbatim:
   `... repair --reason "<what you are fixing>"` before every repair (exit 3 means stop and
   report), `... stop --reason "<question>"` at a stop; a gate is `jig task gate`.
 - Follow the class's route as `jig-autopilot` §2–3 says (§5 when the run is unattended). Review
-  and architecture review go to a subagent in a fresh context; after its report, check the
+  and architecture review go to a subagent in a fresh context, implement and review on the model
+  a `delegate:` line of `jig task route <id>` names
+  ([delegation](../../jig-task/references/delegation.md)); after its report, check the
   ledger with `jig task findings <id>` — only the ledger closes a finding.
 - Run only the tests that cover the changed files, and `shellcheck` at the version CI uses.
   `jig verify` without flags is right — it narrows itself to the project's setting. `--full`

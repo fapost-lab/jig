@@ -13,7 +13,7 @@ paths:
   - skills/jig-consolidate/SKILL.md
   - scripts/lib/common.sh
 summary: Why agent.git (none|commit|push|pr, later merge) is read only from the clone's local config, and why jig task ship does the git work up to that level.
-reviewed_at: 2026-10-02
+reviewed_at: 2026-10-05
 ---
 # Whether an agent commits, pushes or opens a pull request is a per-clone setting, and a script ships the change
 
@@ -104,3 +104,9 @@ contributor's agent starts committing.
 > `full`), how much of a class's route a person's tasks run. It is personal for the same reason —
 > trading review depth for one's own time is not the project's call — and it can never lower a class
 > or a gate (adr-20261002-route-depth-is-a-personal-choice).
+
+> **Amendment (2026-10-05).** Two more local-only keys: `claude.implement_model` and
+> `claude.review_model`, the model a stage is handed to when the agent delegates it to a subagent.
+> They are personal for the same reason — which model is worth its cost is one person's budget, not
+> the project's call — and unlike every key before them their value is never checked: it is the
+> runtime's word, carried as written (adr-20261005-jig-names-the-roles-not-the-models).

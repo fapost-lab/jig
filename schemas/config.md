@@ -32,6 +32,8 @@ Absent keys take the default. Paths are not configurable.
 | `verify.busy_ttl` | `30m` | yes | how long a run record still counts as a live `jig verify` on this clone; a second run waits while one is live, `0` never waits, and `CI` switches the whole mechanism off (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) |
 | `run.exec` | `auto` | only | where this machine runs the project's checks: `auto` detects (Laravel Sail, DDEV, Lando, a devcontainer, a docker compose service mounting the project, Devilbox) and refuses when a container is likely but unrecognised; `host` runs them here; anything else is a command prefix of plain words put in front of each check (adr-20261001-checks-run-where-the-project-runs) |
 | `run.path` | `auto` | only | a directory put first on `PATH` for the checks when they run on this machine — a host runtime that is not first there; `auto` takes the Laravel Herd detector's answer, nothing otherwise (adr-20261001-checks-run-where-the-project-runs) |
+| `claude.implement_model` | - | only | the model Claude Code hands the implement stage to, as a subagent: any value the runtime understands (`sonnet`, `opus`, `haiku`, a full model id), carried as written and never checked by Jig. Unset, nobody is handed the stage and the agent implements it itself; `jig task route <id>` prints a `delegate:` line when it is set (adr-20261005-jig-names-the-roles-not-the-models) |
+| `claude.review_model` | - | only | the same for every review stage of a route — review, a T4's independent review, a T3/T4's architecture review; unset, a review still runs in a fresh context where the skill asks for one, on the session's own model. No line for a route without a review (T0, T1) |
 
 Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 
@@ -68,6 +70,7 @@ Values `set` accepts, per key:
 | `git.worktree_root` | a path, unquoted |
 | `run.exec` | `auto`, `host`, or a command of plain words: no quote, `$`, backtick or backslash |
 | `run.path` | `auto` or the absolute path of a directory, unquoted; blanks inside it are kept |
+| `claude.implement_model`, `claude.review_model` | anything the file can hold: the value is the runtime's to understand, not Jig's |
 
 No value may hold a line break, a `#` (the file reads one as the start of a comment) or
 surrounding blanks.
