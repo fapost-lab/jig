@@ -744,7 +744,10 @@ EOF
 
   assert_eq 0 "$RC"
   assert_contains "$OUT" "warn  latest release: could not check: origin did not answer within"
-  if [ "$elapsed" -ge 10 ]; then
+  # The message above proves the budget fired. The bound only has to tell a
+  # killed call (budget 5s plus the rest of doctor, 10s on a slow Windows
+  # runner) from no bound at all (the stub sleeps 1000s): 30s leaves headroom.
+  if [ "$elapsed" -ge 30 ]; then
     fail "doctor took ${elapsed}s against a stalled ls-remote; expected it to be killed at the budget"
   fi
 
