@@ -346,34 +346,51 @@ EOF
 
 # --- the terminal form (adr-20261005-output-is-decorated-only-on-a-terminal) ----
 #
-# At a terminal `jig status` says first what needs the reader — a refusal, a
-# stale or blocked task, a hint, a flag housekeeping left — each with what to
-# do, then what is fine in a few grouped lines: the tasks in flight, this
-# checkout, the install, the knowledge, agent.git and config.local. It is the
-# plain report read back line by line, so the plain form stays byte for byte
-# what it was, and the two forms cannot say different things.
+# At a terminal `jig status` is read by section. A heading names the version,
+# the project and the install and ends in the verdict; then what needs the
+# reader — a refusal, a stale or blocked task, a hint, a flag housekeeping
+# left — each with what to do; then a section each for the install, the
+# settings, the tasks, the knowledge and the recent activity in this checkout,
+# one row per item in aligned columns. It is the plain report read back line by
+# line, so the plain form stays byte for byte what it was, and the two forms
+# cannot say different things. Two facts the plain report does not carry are
+# asked in the same process: the project's name, for the heading, and who
+# holds HEAD here (jig_checkout_occupants, the rule every refusal uses).
 
 # What one terminal report tells the reader, filled by _status_terminal.
 _STT_NEED_LEVEL=()   # fail | warn, one per item that needs the reader
 _STT_NEED_TEXT=()    # its status line
 _STT_NEED_DETAIL=()  # its detail lines, "label<TAB>text", newline-joined
-_STT_TASKS=()        # task lines that need nothing
-_STT_HERE=()         # this checkout: current task, housekeeping
-_STT_OTHERS=()       # who else is working here, one label per session
-_STT_INSTALL=()      # manifest, framework, drift, session hook, instructions
-_STT_KNOW=()         # proposals, specs
-_STT_EPICS=()        # open epics that are fine
-_STT_CFG=()          # config.local keys in effect
-_STT_REST=()         # agent.git, and any line no rule here knows
+_STT_TASKS=()        # task lines that need nothing, without "task "
+_STT_OTHERS=()       # work recorded here: "label<TAB>command<TAB>age"
+_STT_INSTALL=()      # install rows: "key<TAB>text"
+_STT_KNOW=()         # knowledge rows: "key<TAB>text<TAB>hint"
+_STT_CFG=()          # config.local keys in effect, "key=value"
+_STT_REST=()         # any line no rule here knows
+_STT_HOOKS=()        # session hooks installed, "session hook (claude)"
+_STT_INSTR=()        # runtimes whose instructions are fine
+_STT_INSTR_OWN=()    # runtimes whose Jig section was changed here
+_STT_AGENT=""        # the agent.git line's value, when it is valid
+_STT_CURRENT=""      # the current task, when it is not ambiguous
+_STT_UNSEEN=""       # 1 when the runtime does not name its sessions
+_STT_MODE=""         # the install's mode (copy, link)
+_STT_CURRENT_FW=""   # 1 when the project's framework is the global one
+_STT_INIT=""         # 1 when the project is initialised
+_STT_NAME=""         # the project's name, for the heading
+_STT_HEAD=""         # who holds HEAD here: "<name> <seconds> <command>"
 
 # _status_terminal_report — the plain report into a file, in this shell (its
 # answers are memoised into globals cmd_status still reads), then its
 # terminal form.
 _status_terminal_report() {
-  local tmp
+  local tmp root
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-status-report.XXXXXX")
   jig_cleanup_add "$tmp"
   _status_report > "$tmp"
+  root=$(jig_config_clone_root)
+  _STT_NAME=${root##*/}
+  _STT_HEAD=$(jig_checkout_occupants)
+  _STT_HEAD=${_STT_HEAD%%$'\n'*}
   _status_terminal < "$tmp"
   rm -f "$tmp"
 }
@@ -425,9 +442,11 @@ _status_need_detail() {
 # _status_terminal — read the plain report on stdin and print its terminal
 # form.
 _status_terminal() {
-  local l t v m version="" prev_need="" list="" finished="" ntasks=0
-  _STT_NEED_LEVEL=() _STT_NEED_TEXT=() _STT_NEED_DETAIL=() _STT_TASKS=() _STT_HERE=()
-  _STT_OTHERS=() _STT_INSTALL=() _STT_KNOW=() _STT_EPICS=() _STT_CFG=() _STT_REST=()
+  local l t v m version="" prev_need="" list="" finished="" ntasks=0 hk=""
+  _STT_NEED_LEVEL=() _STT_NEED_TEXT=() _STT_NEED_DETAIL=() _STT_TASKS=() _STT_OTHERS=()
+  _STT_INSTALL=() _STT_KNOW=() _STT_CFG=() _STT_REST=() _STT_HOOKS=() _STT_INSTR=()
+  _STT_INSTR_OWN=()
+  _STT_AGENT="" _STT_CURRENT="" _STT_UNSEEN="" _STT_MODE="" _STT_CURRENT_FW="" _STT_INIT=""
   while IFS= read -r l || [ -n "$l" ]; do
     # A line indented by two spaces belongs to the list named above it
     # (modified:, missing:), which belongs to the drift line before that.
@@ -463,7 +482,7 @@ _status_terminal() {
     prev_need=""
     case "$l" in
       "jig "*) [ -n "$version" ] || version=${l#jig } ;;
-      "initialised: yes") ;;
+      "initialised: yes") _STT_INIT=1 ;;
       "initialised: "*) _status_need warn "$l"; prev_need=1 ;;
       "config.local: "*" is not ignored by git"*" (fix: "*")")
         t=${l##* (fix: }
@@ -475,29 +494,43 @@ _status_terminal() {
         ;;
       "config.local: "*) _STT_CFG+=("${l#config.local: }") ;;
       "agent.git: invalid value "*) _status_need fail "$l" ;;
+      "agent.git: "*) _STT_AGENT=${l#agent.git: } ;;
       "manifest: version="*)
         t=${l#manifest: version=}
         v=${t%% mode=*}
         m=${t#* mode=}
-        m=${m%% source=*}
-        _STT_INSTALL+=("manifest $v ($m)")
+        _STT_MODE=${m%% source=*}
         ;;
       "manifest: "*) _status_need warn "$l" ;;
-      "framework versions: "*" current") _STT_INSTALL+=("framework current") ;;
-      "framework versions: "*"=unavailable") _STT_INSTALL+=("global jig unavailable") ;;
+      "framework versions: "*" current")
+        _STT_CURRENT_FW=1
+        t=${l#*project=}
+        _STT_INSTALL+=("framework"$'\t'"${t%% *} (project = global, current)")
+        ;;
+      "framework versions: "*"=unavailable")
+        t=${l#*project=}
+        _STT_INSTALL+=("framework"$'\t'"${t%% *} (global jig unavailable)")
+        ;;
       "framework versions: "*) _status_need warn "$l"; prev_need=1 ;;
-      "drift: 0 modified, 0 missing, 0 pending") _STT_INSTALL+=("no drift") ;;
+      "drift: 0 modified, 0 missing, 0 pending")
+        _STT_INSTALL+=("drift"$'\t'"$(out_join "0 modified" "0 missing" "0 pending")")
+        ;;
       # Pending is left off the plain line when it cannot be told, and "could
       # not check" is not "nothing pending".
-      "drift: 0 modified, 0 missing") _STT_INSTALL+=("no drift (pending: unknown)") ;;
+      "drift: 0 modified, 0 missing")
+        _STT_INSTALL+=("drift"$'\t'"$(out_join "0 modified" "0 missing" "pending unknown")")
+        ;;
       "drift: "*) _status_need warn "$l" ;;
       "modified:" | "missing:") list=${l%:} ;;
-      "proposals: none") _STT_KNOW+=("no proposals") ;;
+      "proposals: none") _STT_KNOW+=("proposals"$'\t'"none"$'\t') ;;
       "proposals: "* | "sources changed: "*) _status_need warn "$l" ;;
-      "specs: none") _STT_KNOW+=("no specs") ;;
-      "specs: "*) _STT_KNOW+=("specs: ${l#specs: }") ;;
+      "specs: none") _STT_KNOW+=("specs"$'\t'"none"$'\t') ;;
+      "specs: "*" (jig spec list)")
+        t=${l#specs: }
+        _STT_KNOW+=("specs"$'\t'"${t% (jig spec list)}"$'\t'"jig spec list")
+        ;;
       "epic: "*", branch missing") _status_need warn "$l" ;;
-      "epic: "*) _STT_EPICS+=("$l") ;;
+      "epic: "*) _STT_KNOW+=("epic"$'\t'"${l#epic: }"$'\t') ;;
       "task "*)
         ntasks=$((ntasks + 1))
         if _status_task_needs "$l"; then
@@ -512,97 +545,407 @@ _status_terminal() {
         finished=${t%% *}
         ;;
       "current task: ambiguous"*) _status_need warn "$l" ;;
-      "current task: "*) _STT_HERE+=("current task ${l#current task: }") ;;
-      "working here: "*)
+      "current task: "*) _STT_CURRENT=${l#current task: } ;;
+      "working here: "*" (jig "*", "*" ago)")
         t=${l#working here: }
-        _STT_OTHERS+=("${t%% (jig *}")
+        v=${t%% (jig *}
+        t=${t##* (jig }
+        t=${t% ago)}
+        _STT_OTHERS+=("$v"$'\t'"${t%, *}"$'\t'"${t##*, }")
         ;;
       # A runtime that does not name its sessions is a boundary, not
       # something to fix: every person in a terminal of their own has one.
       "sessions: not observable (no active runtime names its sessions here)")
-        _STT_HERE+=("sessions not observable")
+        _STT_UNSEEN=1
         ;;
       "sessions: "*) _status_need warn "$l" ;;
-      "housekeeping: "*) _STT_HERE+=("housekeeping ${l#housekeeping: }") ;;
+      "housekeeping: 0 days ago") hk="ran today" ;;
+      "housekeeping: never") hk="never ran" ;;
+      "housekeeping: "*) hk="ran ${l#housekeeping: }" ;;
       "needs consolidation: "*" (see "*")" | "worktrees kept: "*" (see "*")" \
         | "wrong base: "*" (see "*")")
         t=${l##* (see }
         _status_need warn "${l% (see *}"
         _status_need_detail see "${t%)}"
         ;;
-      "session hook ("*"): installed") _STT_INSTALL+=("${l%: installed}") ;;
+      "session hook ("*"): installed") _STT_HOOKS+=("${l%: installed}") ;;
       "session hook ("*) _status_need warn "$l" ;;
-      "instructions ("*"): ok") _STT_INSTALL+=("${l%: ok}") ;;
+      "instructions ("*"): ok")
+        t=${l#instructions (}
+        _STT_INSTR+=("${t%%)*}")
+        ;;
       # Text a person changed in their own section is theirs to keep, and an
       # upgrade keeps it: nothing to do, as doctor says too.
       "instructions ("*"): Jig section in AGENTS.md was changed here; upgrades keep your text")
-        t=${l%%:*}
-        _STT_INSTALL+=("$t (section changed here)")
+        t=${l#instructions (}
+        _STT_INSTR_OWN+=("${t%%)*}")
         ;;
       "instructions ("*) _status_need warn "$l" ;;
       "") ;;
       *) _STT_REST+=("$l") ;;
     esac
   done
+  _status_terminal_hooks
+  [ -z "$hk" ] || _STT_INSTALL+=("housekeeping"$'\t'"$hk")
   _status_terminal_print "$version" "$ntasks" "$finished"
 }
 
+# _status_terminal_hooks — the install's "hooks" row: the session hooks that
+# are installed and the runtimes whose instructions carry Jig's section.
+_status_terminal_hooks() {
+  local -a parts=()
+  local t
+  if [ ${#_STT_HOOKS[@]} -gt 0 ]; then parts+=("${_STT_HOOKS[@]}"); fi
+  if [ ${#_STT_INSTR[@]} -gt 0 ]; then
+    t=$(printf '%s, ' "${_STT_INSTR[@]}")
+    parts+=("instructions (${t%, })")
+  fi
+  if [ ${#_STT_INSTR_OWN[@]} -gt 0 ]; then
+    t=$(printf '%s, ' "${_STT_INSTR_OWN[@]}")
+    parts+=("instructions changed here (${t%, })")
+  fi
+  [ ${#parts[@]} -gt 0 ] || return 0
+  _STT_INSTALL+=("hooks"$'\t'"$(out_join "${parts[@]}")")
+}
+
 # _status_terminal_print <version> <tasks> <finished> — print what
-# _status_terminal gathered: failures, then warnings, each with its details;
-# a gap; the grouped lines of what is fine; the summary.
+# _status_terminal gathered: the heading, then a section each. A section with
+# nothing in it is left out; what needs the reader is said once, in its own
+# section, and not again in the section it belongs to.
 _status_terminal_print() {
-  local version="$1" ntasks="$2" finished="$3" level i n t
+  local version="$1" ntasks="$2" finished="$3" level i n t head verdict vlevel=ok
   n=${#_STT_NEED_TEXT[@]}
-  for level in fail warn; do
-    i=0
-    while [ "$i" -lt "$n" ]; do
-      if [ "${_STT_NEED_LEVEL[$i]}" = "$level" ]; then
-        out_status "$level" "${_STT_NEED_TEXT[$i]}"
-        while IFS= read -r t; do
-          [ -n "$t" ] || continue
-          out_detail "${t%%$'\t'*}" "${t#*$'\t'}"
-        done <<< "${_STT_NEED_DETAIL[$i]}"
-      fi
-      i=$((i + 1))
-    done
-  done
-  [ "$n" = 0 ] || out_gap
 
-  # An uninitialised project's report stops before the tasks: no line here.
-  if [ "$ntasks" -gt 0 ] || [ -n "$finished" ] || [ ${#_STT_HERE[@]} -gt 0 ]; then
-    if [ "$ntasks" -gt 0 ]; then t="$ntasks active task(s)"; else t="no active tasks"; fi
-    [ -z "$finished" ] || t="$t, $finished finished (jig task list --all)"
-    out_status ok "$t"
-    if [ ${#_STT_TASKS[@]} -gt 0 ]; then
-      for t in "${_STT_TASKS[@]}"; do out_detail task "$t"; done
-    fi
-  fi
-  if [ ${#_STT_HERE[@]} -gt 0 ]; then out_group ok "this checkout" "${_STT_HERE[@]}"; fi
-  # Each session is one label; several with the same label are counted.
-  if [ ${#_STT_OTHERS[@]} -gt 0 ]; then
-    local -a others=()
-    while IFS= read -r t; do others+=("$t"); done < <(
-      printf '%s\n' "${_STT_OTHERS[@]}" | awk '
-        { if (!($0 in c)) k[++m] = $0; c[$0]++ }
-        END { for (j = 1; j <= m; j++) print (c[k[j]] > 1 ? k[j] " (" c[k[j]] ")" : k[j]) }
-      ')
-    out_group ok "also working here" "${others[@]}"
-  fi
-  if [ ${#_STT_INSTALL[@]} -gt 0 ]; then out_group ok "install" "${_STT_INSTALL[@]}"; fi
-  if [ ${#_STT_KNOW[@]} -gt 0 ]; then out_group ok "knowledge" "${_STT_KNOW[@]}"; fi
-  if [ ${#_STT_EPICS[@]} -gt 0 ]; then
-    for t in "${_STT_EPICS[@]}"; do out_status ok "$t"; done
-  fi
-  if [ ${#_STT_REST[@]} -gt 0 ]; then
-    for t in "${_STT_REST[@]}"; do out_status ok "$t"; done
-  fi
-  if [ ${#_STT_CFG[@]} -gt 0 ]; then out_group ok "config.local" "${_STT_CFG[@]}"; fi
-
-  if [ "$n" = 0 ]; then
-    out_summary "jig $version: nothing needs you"
+  head="jig $version"
+  [ -z "$_STT_NAME" ] || head="$head$(out_join "" "$_STT_NAME")"
+  if [ -z "$_STT_INIT" ]; then
+    head="$head$(out_join "" "not initialised")"
   else
-    out_summary "jig $version: $n item(s) need you"
+    [ -z "$_STT_MODE" ] || head="$head$(out_join "" "$_STT_MODE mode")"
+    [ -z "$_STT_CURRENT_FW" ] || head="$head$(out_join "" "up to date")"
   fi
+  if [ "$n" = 0 ]; then
+    verdict="nothing needs you"
+  else
+    vlevel=warn
+    for level in "${_STT_NEED_LEVEL[@]}"; do
+      if [ "$level" = fail ]; then vlevel=fail; fi
+    done
+    if [ "$n" = 1 ]; then verdict="1 item needs you"; else verdict="$n items need you"; fi
+  fi
+  out_heading "$head" "$vlevel" "$verdict"
+
+  if [ "$n" -gt 0 ]; then
+    out_section "Needs you" "$n"
+    for level in fail warn; do
+      i=0
+      while [ "$i" -lt "$n" ]; do
+        if [ "${_STT_NEED_LEVEL[$i]}" = "$level" ]; then
+          printf '  '
+          out_status "$level" "${_STT_NEED_TEXT[$i]}"
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            printf '  '
+            out_detail "${t%%$'\t'*}" "${t#*$'\t'}"
+          done <<< "${_STT_NEED_DETAIL[$i]}"
+        fi
+        i=$((i + 1))
+      done
+    done
+  fi
+  # An uninitialised project's report stops before everything else.
+  [ -n "$_STT_INIT" ] || return 0
+
+  if [ ${#_STT_INSTALL[@]} -gt 0 ]; then
+    out_section "Install"
+    for t in "${_STT_INSTALL[@]}"; do
+      out_row ok 6 ok plain 14 "${t%%$'\t'*}" plain 0 "${t#*$'\t'}"
+    done
+  fi
+  _status_terminal_settings
+  _status_terminal_tasks "$ntasks" "$finished"
+  if [ ${#_STT_KNOW[@]} -gt 0 ]; then
+    out_section "Knowledge & specs"
+    local key rest
+    for t in "${_STT_KNOW[@]}"; do
+      key=${t%%$'\t'*}
+      rest=${t#*$'\t'}
+      out_row plain 12 "$key" plain 40 "${rest%%$'\t'*}" dim 0 "${rest#*$'\t'}"
+    done
+  fi
+  _status_terminal_activity
+  if [ ${#_STT_REST[@]} -gt 0 ]; then
+    out_section "Other"
+    for t in "${_STT_REST[@]}"; do out_row plain 0 "$t"; done
+  fi
+}
+
+# _status_terminal_settings — agent.git and the config.local keys in effect.
+# Keys that share their first segment (housekeeping.*, claude.*) are one row;
+# agent.git is the agent.git line, with the queue it leaves for the reader.
+_status_terminal_settings() {
+  local -a keys=() vals=() labels=() texts=()
+  local t k p i j n w=12 done_p=""
+  [ -n "$_STT_AGENT" ] || [ ${#_STT_CFG[@]} -gt 0 ] || return 0
+  if [ -n "$_STT_AGENT" ]; then
+    t=${_STT_AGENT#* (}
+    labels+=("agent.git")
+    texts+=("$(out_join "${_STT_AGENT%% (*}" "${t%)}")")
+  fi
+  if [ ${#_STT_CFG[@]} -gt 0 ]; then
+    for t in "${_STT_CFG[@]}"; do
+      [ "${t%%=*}" != agent.git ] || continue
+      keys+=("${t%%=*}")
+      vals+=("${t#*=}")
+    done
+  fi
+  i=0
+  while [ "$i" -lt ${#keys[@]} ]; do
+    k=${keys[$i]}
+    p=${k%%.*}
+    case " $done_p " in *" $p "*) i=$((i + 1)); continue ;; esac
+    j=0 n=0
+    while [ "$j" -lt ${#keys[@]} ]; do
+      if [ "${keys[$j]%%.*}" = "$p" ] && [ "${keys[$j]}" != "$p" ]; then n=$((n + 1)); fi
+      j=$((j + 1))
+    done
+    if [ "$n" -ge 2 ]; then
+      done_p="$done_p $p"
+      local -a sub=()
+      j=0
+      while [ "$j" -lt ${#keys[@]} ]; do
+        if [ "${keys[$j]%%.*}" = "$p" ] && [ "${keys[$j]}" != "$p" ]; then
+          sub+=("${keys[$j]#*.} ${vals[$j]}")
+        fi
+        j=$((j + 1))
+      done
+      labels+=("$p")
+      t=$(printf '%s\037' "${sub[@]}")
+      texts+=("${t%$'\037'}")
+    else
+      labels+=("$k")
+      texts+=("${vals[$i]}")
+    fi
+    i=$((i + 1))
+  done
+  # Nothing left when the one key is an agent.git the report refused: that
+  # is under "Needs you", and an empty section says nothing.
+  [ ${#labels[@]} -gt 0 ] || return 0
+  for k in "${labels[@]}"; do
+    [ $((${#k} + 3)) -le "$w" ] || w=$((${#k} + 3))
+  done
+  if [ ${#_STT_CFG[@]} -gt 0 ]; then out_section "Settings" "config.local"; else out_section "Settings"; fi
+  # A row of several keys that would run past the section's width goes on
+  # under itself, whole items to a line.
+  local room=$((OUT_WIDTH - 2 - w)) label line item
+  local -a items=()
+  i=0
+  while [ "$i" -lt ${#labels[@]} ]; do
+    label=${labels[$i]} line="" items=()
+    IFS=$'\037' read -r -a items <<< "${texts[$i]}"
+    for item in "${items[@]}"; do
+      if [ -n "$line" ] && [ $((${#line} + ${#OUT_SEP} + ${#item})) -gt "$room" ]; then
+        out_row plain "$w" "$label" plain 0 "$line"
+        label="" line=""
+      fi
+      if [ -n "$line" ]; then line="$line$OUT_SEP$item"; else line=$item; fi
+    done
+    out_row plain "$w" "$label" plain 0 "$line"
+    i=$((i + 1))
+  done
+}
+
+# _status_terminal_tasks <tasks> <finished> — one row per task that needs
+# nothing (a task that does is under "Needs you"): its class, its id, and
+# what differs from a task on its branch here — its own worktree and the files
+# waiting there, a base of its own, a lighter route, a running autopilot.
+_status_terminal_tasks() {
+  local ntasks="$1" finished="$2" t id rest words w class cstyle wd counts
+  local -a ids=() classes=() notes=() note=()
+  if [ "$ntasks" -gt 0 ]; then counts="$ntasks active"; else counts="no active tasks"; fi
+  [ -z "$finished" ] || counts=$(out_join "$counts" "$finished finished")
+  if [ ${#_STT_TASKS[@]} -gt 0 ]; then
+    for t in "${_STT_TASKS[@]}"; do
+      id=${t%% *}
+      rest=${t#* }
+      # The worktree's path is the one field a person chose: cut it out
+      # before the rest is split into words.
+      case "$rest" in
+        *" worktree="*" uncommitted="*)
+          words="${rest%% worktree=*} worktree uncommitted=${rest##* uncommitted=}"
+          ;;
+        *) words=$rest ;;
+      esac
+      class=""
+      note=()
+      for wd in $words; do
+        case "$wd" in
+          class=*) class=${wd#class=} ;;
+          status=active) ;;
+          status=*) note+=("${wd#status=}") ;;
+          depth=*) note+=("${wd#depth=}") ;;
+          worktree) note+=("worktree") ;;
+          uncommitted=0) ;;
+          uncommitted=*) note+=("${wd#uncommitted=} uncommitted") ;;
+          base=*) note+=("base ${wd#base=}") ;;
+          autopilot=on) note+=("autopilot on") ;;
+          *) note+=("$wd") ;;
+        esac
+      done
+      ids+=("$id")
+      classes+=("${class:--}")
+      t=""
+      if [ ${#note[@]} -gt 0 ]; then
+        for wd in "${note[@]}"; do
+          if [ -n "$t" ]; then t="$t$OUT_SEP$wd"; else t=$wd; fi
+        done
+      fi
+      notes+=("$t")
+    done
+  fi
+  [ "$ntasks" -gt 0 ] || [ -n "$finished" ] || [ -n "$_STT_CURRENT" ] || return 0
+  out_section "Tasks" "$counts"
+  w=20
+  for id in "${ids[@]+"${ids[@]}"}"; do
+    [ $((${#id} + 3)) -le "$w" ] || w=$((${#id} + 3))
+  done
+  local i=0
+  while [ "$i" -lt ${#ids[@]} ]; do
+    case "${classes[$i]}" in
+      T3 | T4) cstyle=warn ;;
+      T0 | T1) cstyle=dim ;;
+      *) cstyle=plain ;;
+    esac
+    out_row "$cstyle" 4 "${classes[$i]}" bold "$w" "${ids[$i]}" warn 0 "${notes[$i]}"
+    i=$((i + 1))
+  done
+  [ -z "$_STT_CURRENT" ] || out_row dim 4 "$OUT_MARK" plain 0 "current task: $_STT_CURRENT"
+}
+
+# _status_terminal_activity — what was recorded in this checkout lately
+# (checkout.sh), folded: the latest record on a row of its own, then one row
+# per command and hour, the records of each counted and their first ids
+# named. The last row says who holds HEAD here, the same rule a refusal uses
+# (jig_checkout_occupants).
+_status_terminal_activity() {
+  local t n=0 oldest="" age subject cmd ids cw=12 hold
+  local -a ages=() subjects=() cmds=() idlists=()
+  if [ ${#_STT_OTHERS[@]} -gt 0 ]; then
+    n=${#_STT_OTHERS[@]}
+    while IFS=$'\t' read -r age subject cmd ids; do
+      [ -n "$age" ] || continue
+      if [ "$age" = "@oldest" ]; then oldest=$subject; continue; fi
+      ages+=("$age")
+      subjects+=("$subject")
+      cmds+=("$cmd")
+      idlists+=("$ids")
+    done < <(printf '%s\n' "${_STT_OTHERS[@]}" | _status_activity_fold)
+  fi
+  if [ "$n" = 0 ]; then
+    out_section "Recent activity here" "no records"
+  elif [ "$n" = 1 ]; then
+    out_section "Recent activity here" "1 record, $oldest ago"
+  else
+    out_section "Recent activity here" "$n records, last $oldest"
+  fi
+  # The command first, so that what it was run on has the rest of the
+  # line: a group names as many of its ids as fit there.
+  local i=0 room
+  while [ "$i" -lt ${#ages[@]} ]; do
+    [ $((${#cmds[$i]} + 3)) -le "$cw" ] || cw=$((${#cmds[$i]} + 3))
+    i=$((i + 1))
+  done
+  [ "$cw" -le 30 ] || cw=30
+  room=$((OUT_WIDTH - 2 - 6 - cw))
+  i=0
+  while [ "$i" -lt ${#ages[@]} ]; do
+    subject=${subjects[$i]}
+    case "$subject" in
+      [0-9]*" "*)
+        t=plain
+        if [ -n "${idlists[$i]}" ]; then
+          _status_fit_ids $((room - ${#subject} - 2)) "${idlists[$i]}"
+          subject="$subject: $_STT_FIT"
+        fi
+        ;;
+      *) t=bold ;;
+    esac
+    out_row dim 6 "${ages[$i]}" plain "$cw" "${cmds[$i]}" "$t" 0 "$subject"
+    i=$((i + 1))
+  done
+  # Only the task is named: the record's command may be this very report,
+  # which refreshed it a moment ago.
+  if [ -n "$_STT_HEAD" ]; then
+    hold="task ${_STT_HEAD%% *} holds HEAD here"
+  else
+    hold="nothing here holds HEAD"
+  fi
+  [ -z "$_STT_UNSEEN" ] || hold=$(out_join "$hold" "sessions not observable")
+  out_row dim 6 "$OUT_MARK" plain 0 "$hold"
+}
+
+# _status_fit_ids <width> <ids> — as many of the comma-separated <ids> as fit
+# in <width> characters, whole, followed by "more" when any is left out; into
+# _STT_FIT. When not even the first fits, "more" alone.
+_STT_FIT=""
+_status_fit_ids() {
+  local room="$1" list="$2" more="$OUT_MORE" cut=0 id t need
+  case "$list" in *", $more") list=${list%, "$more"}; cut=1 ;; esac
+  _STT_FIT=""
+  while [ -n "$list" ]; do
+    id=${list%%, *}
+    if [ "$id" = "$list" ]; then list=""; else list=${list#*, }; fi
+    if [ -n "$_STT_FIT" ]; then t="$_STT_FIT, $id"; else t=$id; fi
+    need=${#t}
+    # Whatever is still left needs room for the "more" that says so.
+    if [ -n "$list" ] || [ "$cut" = 1 ]; then need=$((need + 2 + ${#more})); fi
+    if [ "$need" -gt "$room" ]; then
+      if [ -n "$_STT_FIT" ]; then _STT_FIT="$_STT_FIT, $more"; else _STT_FIT=$more; fi
+      return 0
+    fi
+    _STT_FIT=$t
+  done
+  if [ "$cut" = 1 ]; then _STT_FIT="$_STT_FIT, $more"; fi
+  return 0
+}
+
+# _status_activity_fold — "label<TAB>command<TAB>age" lines on stdin (age as
+# jig_checkout_ago prints it), folded into rows "age<TAB>subject<TAB>command<TAB>ids",
+# youngest first, then one "@oldest<TAB><age>" line. The latest record is a
+# row of its own; the rest are grouped by command and by the hour of their
+# age, a group's age being its youngest record's. A group of one names its
+# record; a larger one counts them ("6 tasks") and names up to three ids,
+# then "more".
+_status_activity_fold() {
+  awk -F '\t' '
+    {
+      a = $3; s = a + 0
+      if (a ~ /m$/) s *= 60; else if (a ~ /h$/) s *= 3600
+      printf "%010d\t%s\t%s\t%s\n", s, a, $1, $2
+    }' | sort | MORE="$OUT_MORE" awk -F '\t' '
+    function name(l) { sub(/^task /, "", l); return l }
+    {
+      s = $1 + 0; oldest = $2
+      if (NR == 1) { first = $2 "\t" name($3) "\t" $4 "\t"; next }
+      k = int(s / 3600) "\t" $4
+      if (!(k in c)) { order[++m] = k; age[k] = $2; cmd[k] = $4 }
+      c[k]++
+      if ($3 ~ /^task /) { t[k]++; if (t[k] <= 3) ids[k] = ids[k] (t[k] > 1 ? ", " : "") name($3); else more_[k] = 1 }
+      else o[k]++
+      one[k] = name($3)
+    }
+    END {
+      if (NR == 0) exit
+      print first
+      for (j = 1; j <= m; j++) {
+        k = order[j]
+        if (c[k] == 1) { print age[k] "\t" one[k] "\t" cmd[k] "\t"; continue }
+        if (!o[k]) subj = c[k] " tasks"; else if (!t[k]) subj = c[k] " sessions"; else subj = c[k] " records"
+        l = ids[k]; if (more_[k]) l = l ", " ENVIRON["MORE"]
+        print age[k] "\t" subj "\t" cmd[k] "\t" l
+      }
+      print "@oldest\t" oldest
+    }'
 }
 
 # The live tasks, read once per report and shared by the text report and the
