@@ -8,6 +8,62 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.22.0 — 2026-10-05
+
+At a terminal, `jig doctor`, `jig upgrade`, `jig status`, the installer and `jig-setup` now say what
+needs you first and group the rest, and an upgrade no longer refuses because of a session that only
+looked around.
+
+Everything below about a terminal is only the terminal. In a pipe, in CI and in an agent's shell the
+output of `doctor`, `upgrade`, `status` and the installer is what it was: tests compare the whole
+report of `doctor`, `upgrade` and `status` with the old text, and `install.sh`'s main runs (a
+successful run with the PATH advice, the other-checkout note, an error). `install.ps1`'s plain form
+is held by line-level assertions in every scenario, not by a whole-output comparison. `jig-setup` is
+the exception: it is a skill, and it speaks in blocks wherever it runs.
+
+- **`jig doctor` at a terminal lists what needs you first.** Failures, then warnings each with its
+  fix, then every passing check in one line (`ok    13 passed: git, ...`), then the tally. The exit
+  code does not depend on the form. The terminal form waits for the release check (up to 5 seconds)
+  before it prints; the piped form still streams each check as it runs.
+- **`jig upgrade` at a terminal says what changed, not every file.** Replacements are grouped into one
+  line per verb (`ok    replace 50 file(s): .ai/scripts (14), .claude/skills (17), ...`); installs,
+  deletions and links stay one line each, and every file the upgrade kept is a `warn` line. Measured
+  once, on a project installed from v0.18.0 and upgraded on a real pseudo-terminal, 58 files placed: 66
+  lines before, 17 after. A run that dies midway names none of the files it had replaced at a
+  terminal; the repeat that finishes it reports them as already placed.
+- **`jig status` at a terminal puts what needs you first.** Failures and warnings come first, each with
+  its `hint:`, `fix:` or `see:` line, then the rest grouped; with nothing to do the last line reads
+  `nothing needs you`. Measured once in this repository on a real pseudo-terminal: 31 lines before, 12
+  after. The status page, `jig doctor` and `status-counts` read the plain report and are unchanged.
+- **The installer speaks the same blocks.** `install.sh` and `install.ps1` print a level word
+  (`ok`, `warn`, `fail`, and `ask` for a question) padded to six columns, with the PATH advice and the
+  other notices before the closing `ok    jig installed: ...`; an error is a `fail` block. The
+  PowerShell installer colours through the console (`ok` green, `warn` yellow, `fail` red, `ask` cyan),
+  never through escape codes, and runs `jig doctor` in its grouped form without colour. `jig-setup`
+  asks and reports in the same form.
+- **Output switches.** `JIG_TERMINAL=1` forces the terminal form and `JIG_TERMINAL=0` the plain one;
+  `NO_COLOR` (any non-empty value) and `TERM=dumb` remove colour and keep the grouping. A reader that
+  needs the old text under a terminal sets `JIG_TERMINAL=0`.
+- **An upgrade refuses only where a started task holds this checkout's branch.** `jig upgrade` used to
+  refuse because another session had run `jig status` hours earlier, or `jig task show` on a task not
+  checked out here, and the only way out was deleting a file the message did not name. It now refuses
+  only when you are on the branch of a started, unfinished task (the upgrade would take the checkout
+  off it); the message names the task, its branch and the way on: `jig task start <id> --worktree`,
+  then the upgrade again, or, inside the task's own worktree, the upgrade in the main checkout. A
+  session that only looked around no longer stops it. `jig task start` and `jig upgrade` now answer
+  "who occupies this checkout" with one rule. `jig verify` running here still stops an upgrade.
+- **The upgrade's "run it in the main checkout" advice is right for a worktree of a bare repository.**
+  The upgrade asked Git directly whether it was in a linked worktree and, for a worktree of a bare
+  repository, pointed at a main checkout that does not exist; it now asks the way the rest of Jig does.
+
+What was proven where: by tests on throwaway repositories and in CI. The terminal forms of `status` and
+`upgrade` were measured on macOS and Linux pseudo-terminals; on Windows CI only proves that
+`JIG_TERMINAL=1 jig doctor` runs in Git Bash and that the shards pass (the byte-for-byte doctor test
+skips there). Not proven by anything kept: that the colours render in Windows Terminal or the Windows
+PowerShell 5.1 console, that `ask` and the typed answer share one line there, and that the
+home-folder refusal reads as an instruction. The Windows release checklist was not walked on a real
+machine for this release.
+
 ## 0.21.0 — 2026-10-05
 
 A task can no longer be finished past a stage its class asks for, an epic finishes without a push to
