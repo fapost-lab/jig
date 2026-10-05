@@ -1028,12 +1028,12 @@ test_spec_link_refuses_unknown_spec_and_task() {
 
 test_spec_link_refuses_a_borrowed_task_directory() {
   spec_link_fixture
-  mv .ai/workspace/tasks ../owner-tasks
-  plant_dir_link "$(cd .. && pwd -P)/owner-tasks" .ai/workspace/tasks
+  mv .ai/workspace/tasks "$TMPDIR/owner-tasks"
+  plant_dir_link "$(cd "$TMPDIR" && pwd -P)/owner-tasks" .ai/workspace/tasks
   run jig spec link rel T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "spec link: this checkout borrows its task workspaces"
-  assert_not_contains "$(cat ../owner-tasks/T-1/task.md)" "Spec:"
+  assert_not_contains "$(cat "$TMPDIR/owner-tasks/T-1/task.md")" "Spec:"
 }
 
 # A link one level above the tasks directory is not seen by the checks on the

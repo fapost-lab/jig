@@ -125,10 +125,10 @@ test_doctor_a_pipe_gets_the_report_byte_for_byte_as_before() {
     printf 'warn  directory links: task worktrees are unavailable\n'
     printf '      fix: enable Windows Developer Mode, or use a local NTFS or POSIX filesystem\n'
     printf 'doctor: 2 ok, 2 warn, 0 fail\n'
-  } > ../expected.txt
-  env PATH="$DOCTOR_PATH" "$JIG_BIN" doctor > ../actual.txt 2>&1
+  } > "$TMPDIR/expected.txt"
+  env PATH="$DOCTOR_PATH" "$JIG_BIN" doctor > "$TMPDIR/actual.txt" 2>&1
   assert_eq 0 "$?"
-  cmp ../expected.txt ../actual.txt || fail "piped report changed: $(diff ../expected.txt ../actual.txt)"
+  cmp "$TMPDIR/expected.txt" "$TMPDIR/actual.txt" || fail "piped report changed: $(diff "$TMPDIR/expected.txt" "$TMPDIR/actual.txt")"
 }
 
 test_doctor_a_terminal_gets_problems_first_and_the_passing_checks_in_one_line() {
@@ -139,10 +139,10 @@ test_doctor_a_terminal_gets_problems_first_and_the_passing_checks_in_one_line() 
     printf '\n'
     printf 'ok    2 passed: git, git identity\n'
     printf 'doctor: 2 ok, 2 warn, 0 fail\n'
-  } > ../expected.txt
-  env PATH="$DOCTOR_PATH" JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" doctor > ../actual.txt 2>&1
+  } > "$TMPDIR/expected.txt"
+  env PATH="$DOCTOR_PATH" JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" doctor > "$TMPDIR/actual.txt" 2>&1
   assert_eq 0 "$?"
-  cmp ../expected.txt ../actual.txt || fail "terminal report differs: $(diff ../expected.txt ../actual.txt)"
+  cmp "$TMPDIR/expected.txt" "$TMPDIR/actual.txt" || fail "terminal report differs: $(diff "$TMPDIR/expected.txt" "$TMPDIR/actual.txt")"
 }
 
 test_doctor_a_terminal_colours_the_level_words() {

@@ -1889,13 +1889,13 @@ test_upgrade_a_pipe_gets_the_report_byte_for_byte_as_before() {
     printf 'next: this upgrade is on branch %s; once it is merged into main, merge that into the branches still in progress\n' "$branch"
     # shellcheck disable=SC2016
     printf 'next: to go back to what you were doing: `git checkout main`\n'
-  } > ../expected.txt
+  } > "$TMPDIR/expected.txt"
   # The kept count moves with the number of files Jig ships, so it is the one
   # thing not pinned.
   jig upgrade --from "$src" 2>&1 \
-    | sed -E 's/^(jig upgrade: 6 placed, )[0-9]+( kept)/\1N\2/' > ../actual.txt
+    | sed -E 's/^(jig upgrade: 6 placed, )[0-9]+( kept)/\1N\2/' > "$TMPDIR/actual.txt"
   assert_eq 0 "${PIPESTATUS[0]}"
-  cmp ../expected.txt ../actual.txt || fail "piped report changed: $(diff ../expected.txt ../actual.txt)"
+  cmp "$TMPDIR/expected.txt" "$TMPDIR/actual.txt" || fail "piped report changed: $(diff "$TMPDIR/expected.txt" "$TMPDIR/actual.txt")"
   rm -rf "$src"
 }
 
