@@ -122,6 +122,48 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.20.0 to 0.21.0
+
+Nothing on the checklist the upgrade itself prints. The installer did not change. One thing is
+placed for you, two are yours to choose, and two change what Jig refuses.
+
+**Placed for you.** `jig upgrade` adds `skills/jig-task/references/delegation.md`, updates the skills
+that changed (`jig-autopilot`, `jig-implement`, `jig-review`, `jig-architecture-review`, `jig-verify`,
+`jig-task`, `jig-setup`, `jig-idea`, `jig-release`) under `.claude/skills/` and `.codex/skills/`.
+`.ai/config.yaml` is not touched; the comment in the template config only gains
+`release.merge`.
+
+**Finishing a task now needs its records.** From 0.21.0, `status ready`, `knowledge_consolidated true`
+and `jig task ship` refuse a task whose class asks for a stage that left no record (the approved design
+for T3 and T4, a review receipt for T2 and up, `status ready` before consolidation) and say which and
+how to write it. A task you filed before the upgrade has no `route_evidence` key and is judged as
+before: the same list is printed as a warning (`was filed before route evidence was checked, so this
+passes without: ...`) and the task passes. A task filed after the upgrade is refused. Two command
+forms changed for everyone, and a refusal names the new form: lowering a class is
+`jig task set <id> class <Tn> --reason <text>`, and `jig task autopilot <id> resume` takes
+`--answer <the human's answer>` and is refused in an unattended run. Where nobody answers (an
+unattended clone), `jig task gate <id> approved` is refused and an approval is given with `--by agent`;
+an attended clone is unchanged. A script or a skill of your own that calls these must use the new forms. Where a project's own tests
+or smoke steps jump a fresh task to its end, classify it and sign verification off first
+(`jig task set <id> class T0`, `status ready`, `knowledge_consolidated true`).
+
+**Yours to choose: `release.merge`.** Only for a project that releases through an epic. The default,
+`agent`, is the behaviour you had. To keep the merge of an epic's final pull request for yourself even
+when your agent may merge tasks, `jig config set release.merge human --local`; it is personal and is
+ignored in `.ai/config.yaml`. An epic already cut finishes on `finish/<id>` instead of on the epic
+itself; nothing to do beforehand.
+
+**Yours to choose: `claude.implement_model` and `claude.review_model`.** Unset by default, which keeps
+every stage with your agent. To have Claude Code hand writing the code, or reviewing it, to a helper on
+a cheaper model, answer the new question in `jig-setup`, or
+`jig config set claude.implement_model sonnet --local` (likewise `claude.review_model`). Read
+[Autopilot: helpers on another model](/autopilot#helpers-on-another-model) first.
+
+**A link in a task workspace is checked wherever it leads.** If your `.ai/workspace` or
+`.ai/workspace/tasks` is a link you made yourself to a folder outside the repository and its worktrees,
+the commands that write into a task workspace now refuse it. The links `jig task start --worktree`
+makes, and one from a worktree to its owner's workspace, are fine.
+
 ## From 0.19.0 to 0.20.0
 
 Nothing on the checklist the upgrade itself prints. Two things are placed for you, two are yours to
