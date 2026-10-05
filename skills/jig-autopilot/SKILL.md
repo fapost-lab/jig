@@ -19,7 +19,8 @@ Classify, file and start the task with `jig-task` (or resume one that is filed).
 
 It prints `autopilot: on (unattended)` when this clone set `autopilot.unattended: true`: then
 the run asks nothing, and §5 replaces §3. Say in one line what will happen: the class, the
-route and its depth as `jig task route <id>` names them, and where the run will end — merged with `agent.git: merge`, an open pull request with
+route and its depth as `jig task route <id>` names them, any stage its `delegate:` lines hand to
+a helper, and where the run will end — merged with `agent.git: merge`, an open pull request with
 `pr`, or "ready for your commit" with `none`. Offer to
 open the status page with `.ai/scripts/jig status --open`, where the human can watch the run
 and sees first what it needs from them.
@@ -35,6 +36,9 @@ Run each stage's skill in order, and mark it as you enter it:
 - **Review in a fresh context.** Hand review (and architecture review) to a subagent that has
   not seen the implementation, with the task id, the base and the skill to follow. It records
   findings and signs the receipt; you fix, set `fixed`, and send it back to re-review.
+- **A `delegate:` line hands a stage to a helper** on the model it names — implement, review or
+  both ([delegation](../jig-task/references/delegation.md)). Without one, you implement, and the
+  review subagent runs on the session's model.
 - **Each repair costs one attempt.** A repair is one loop of fixing after a blocking finding or
   a red verification, then reviewing or verifying again. Before starting one:
 

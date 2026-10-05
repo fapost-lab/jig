@@ -75,6 +75,16 @@ their own file is answered by `config unset` too — say that the key then answe
    `docker exec -i -w <dir> <container>`) and show it; never ask the person to type one. A PHP on
    this machine that is not first on `PATH` and was not detected (Herd's is) goes to `run.path`,
    the folder that holds it.
+10. **Helpers** (`claude.implement_model`, `claude.review_model`) — only in Claude Code. Explain:
+    the agent can hand writing the code, and reviewing it, to a helper on another model; what the
+    helper does is still checked — review findings block, the checks must pass — and the agent
+    keeps the design, the decisions and shipping. One review setting covers every review,
+    architecture review included. Ask: "Should helpers do the coding and the reviews, and on
+    which model?" Options: no helpers (default — the agent does every stage itself); one model for
+    both; a different one for each. Write the name as the person gives it — `sonnet`, `opus`,
+    `haiku` or a full model id: Jig passes it to Claude Code unchanged and checks nothing.
+    Recommend no helpers to someone unsure why they would want them; `sonnet` for both to someone
+    whose session runs on Opus and who wants their limits to last.
 
 Ask about no other key. If `jig config set` refuses a key as not local, this version of Jig
 does not have it: drop the question.

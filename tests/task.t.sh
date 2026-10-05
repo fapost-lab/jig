@@ -6065,6 +6065,50 @@ test_task_route_unknown_task_dies() {
   assert_contains "$OUT" "task route: unknown task: nope"
 }
 
+# --- delegation (adr-20261005-jig-names-the-roles-not-the-models) -------------
+
+test_task_route_names_no_delegate_when_no_model_is_set() {
+  task_setup
+  jig task new T-1 --class T3 >/dev/null
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "delegate:"
+}
+
+test_task_route_names_each_delegated_stage_with_the_model_as_written() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  jig task new T-3 --class T3 >/dev/null
+  jig config set claude.implement_model sonnet claude.review_model 'opus[1m]' --local >/dev/null
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "delegate: implement -> sonnet (claude.implement_model)"
+  assert_contains "$OUT" "delegate: review -> opus[1m] (claude.review_model)"
+  run jig task route T-3
+  assert_contains "$OUT" "delegate: review -> opus[1m] (claude.review_model)"
+}
+
+# A route with no review stage gets no review line; the implement line stays.
+test_task_route_names_no_review_delegate_for_a_class_without_review() {
+  task_setup
+  jig task new T-1 --class T1 >/dev/null
+  jig config set claude.implement_model haiku claude.review_model sonnet --local >/dev/null
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "delegate: implement -> haiku (claude.implement_model)"
+  assert_not_contains "$OUT" "delegate: review"
+}
+
+# Local-only: a model committed to the project's file delegates nothing.
+test_task_route_ignores_a_model_in_the_project_file() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  printf 'claude.review_model: opus\n' >> .ai/config.yaml
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "delegate:"
+}
+
 test_task_set_route_depth_refuses_anything_but_full_or_lean() {
   task_setup
   jig task new T-1 --class T2 >/dev/null

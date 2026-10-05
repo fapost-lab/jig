@@ -52,6 +52,26 @@ The same rules that stop an ordinary task stop a run: a serious review finding t
 a change made after its review, keeps the task from being finished ([Working with tasks](/working-with-tasks#review-findings)).
 Autopilot does not relax any of them.
 
+### Helpers on another model
+
+In Claude Code your agent can hand two stages to a helper on a model you choose: writing the code,
+and reviewing it. You choose in your own settings, `claude.implement_model` and
+`claude.review_model` ([Configuration](/configuration#let-the-agent-ask-you)),
+or by answering the question `jig-setup` asks. A common choice is `sonnet` for both while your own
+session runs on Opus: the helpers cost less, and the agent that classified the task, wrote the
+design and answers for the result stays the one you picked.
+
+The cheaper helper is safe because nothing it does is taken on its word. Its review findings go into
+the ledger and block the task until they are fixed, its review is pinned to what it read, and the
+checks still have to pass ([Working with tasks](/working-with-tasks#review-findings)). Classifying,
+the design and its approval, the checks, deciding what the project should remember and shipping stay
+with your agent.
+
+Jig never checks the name you write: it is Claude Code's word, and Jig passes it on as written. With
+nothing set — the default — nothing is handed over, and a review still goes to a second agent on
+your session's own model. In Codex the two settings are ignored. `jig task route <task-id>` prints a
+`delegate:` line for each stage that will be handed over.
+
 ## Where it stops
 
 A run stops only where a human is needed. The agent tells you in plain words what it needs; answer

@@ -6,7 +6,8 @@ description: Review a Jig task against the system's architecture — boundaries,
 # jig-architecture-review — does the system still hold its shape
 
 Code review asks whether the change is correct. This asks whether the system is still the
-system its documentation describes.
+system its documentation describes. When `jig task route <id>` prints `delegate: review`, this
+review goes to a helper on that model ([delegation](../jig-task/references/delegation.md)).
 
 ## 1. Load the shape
 

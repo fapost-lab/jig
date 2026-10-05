@@ -758,7 +758,10 @@ test_config_inventory_matches_the_schema_table() {
   local declared schema tab
   tab=$(printf '\t')
   declared=$(_config_declared)
-  schema=$(sed -n "s/^| \`\([a-z][A-Za-z0-9_.]*\)\` | \`\([^\`]*\)\` |.*/\1${tab}\2/p" \
+  # A key with no default — off until a person sets it — is tabled with a
+  # bare `-` in the default column, and reads as the empty default it is.
+  schema=$(sed -n -e "s/^| \`\([a-z][A-Za-z0-9_.]*\)\` | \`\([^\`]*\)\` |.*/\1${tab}\2/p" \
+    -e "s/^| \`\([a-z][A-Za-z0-9_.]*\)\` | - |.*/\1${tab}/p" \
     "$JIG_HOME/schemas/config.md" | _config_normalise)
   assert_eq "$declared" "$schema" \
     "jig_config_keys and the table in schemas/config.md disagree"
@@ -831,6 +834,35 @@ test_config_release_merge_is_local_only() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" \
     "config.local: release.merge in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+}
+
+# The model a stage is delegated to is the runtime's word, never Jig's
+# (adr-20261005-jig-names-the-roles-not-the-models): any value the file can
+# hold is accepted as written, and only what the file format cannot hold is
+# refused.
+test_config_set_model_keys_take_any_value_the_file_can_hold() {
+  fixture_jig_repo
+  _config_accepts claude.implement_model sonnet
+  _config_accepts claude.review_model claude-opus-4-1
+  _config_accepts claude.review_model 'opus[1m]'
+  _config_accepts claude.implement_model 'a model nobody has heard of'
+  assert_file_contains .ai/config.local.yaml "^claude.implement_model: a model nobody has heard of$"
+  assert_file_contains .ai/config.local.yaml "^claude.review_model: opus\\[1m\\]$"
+  _config_rejects claude.review_model 'opus#1'
+  _config_rejects claude.review_model ''
+}
+
+test_config_model_keys_are_local_only_and_off_by_default() {
+  fixture_jig_repo
+  printf 'claude.review_model: opus\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: claude.review_model in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+  run jig config keys
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "claude.implement_model"
+  assert_contains "$(printf '%s\n' "$OUT" | awk '$1 == "claude.review_model" { print $2, $3, $4 }')" "- local only"
 }
 
 test_config_route_depth_is_local_only() {

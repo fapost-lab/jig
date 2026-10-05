@@ -122,7 +122,8 @@ round, about a line in `.ai/config.yaml` that sets a key Jig does not read at al
 or a setting a later version dropped.
 
 Personal settings are left out of both: Jig never reads `agent.git`, `agent.ci_timeout`,
-`autopilot.unattended`, `autopilot.parallel`, `route.depth`, `release.merge`, `run.exec` or `run.path` from the project's file, so naming them there
+`autopilot.unattended`, `autopilot.parallel`, `route.depth`, `release.merge`, `run.exec`, `run.path`,
+`claude.implement_model` or `claude.review_model` from the project's file, so naming them there
 would only invite you to write a line that does nothing.
 
 ## Personal settings — `.ai/config.local.yaml`
@@ -162,6 +163,14 @@ Some settings are a matter of personal taste rather than project policy. Put the
 - `run.path` — a folder put first on `PATH` for the checks when they run on this machine (a PHP
   that is not first there, such as Laravel Herd's); `auto` (the default) uses what Jig detected.
   Local only.
+- `claude.implement_model`, `claude.review_model` — in Claude Code, the model your agent hands
+  writing the code, and reviewing it, to: a helper agent (a subagent) on that model does the stage,
+  and your agent checks what it reports. Write the name the way Claude Code understands it —
+  `sonnet`, `opus`, `haiku` or a full model id; Jig passes it on as written and never checks it.
+  The review key covers every review of a route, the architecture review of a risky task included.
+  Not set (the default), nothing is handed over and your agent does the stage itself. Local only:
+  which model is worth its cost depends on your plan and your budget. See
+  [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
 
 Any other key in it is ignored — no reader answers from it — but it is not silently lost: `jig
 config show --local` prints the file and names the keys nothing reads, and `jig config unset`
@@ -173,7 +182,7 @@ and warns if Git does not ignore it.
 You do not need to know the keys. Say *"set up Jig for me"* (or name the skill: `/jig-setup` in
 Claude Code, `$jig-setup` in Codex). The agent asks one question at a time, in plain words, each with
 its recommendation: how far it may take a finished task, whether it may merge, whether autopilot may
-go on without asking you, how long to wait for CI, how much process your tasks get, how long to keep finished work, and where your project's checks run. It explains
+go on without asking you, how long to wait for CI, how much process your tasks get, which model its helpers use, how long to keep finished work, and where your project's checks run. It explains
 merging and running without questions before it asks about them, and never switches either on
 without your clear yes. Then it shows you the whole file it is about to write, and writes it only
 after you agree. `jig init` offers this at the end of its output.
@@ -193,7 +202,7 @@ is already there and adds one that is not. It accepts only the personal settings
 only values Jig reads the way you mean them: whole days for `housekeeping.cadence`, a duration such
 as `7d` or `12h` for the other housekeeping settings, `true` or `false`, a level for `agent.git`,
 whole minutes for `agent.ci_timeout`, a count from 1 to 16 for `autopilot.parallel`, `full` or
-`lean` for `route.depth`, `auto`,
+`lean` for `route.depth`, any name for the two `claude.*_model` settings, `auto`,
 `host` or a command of plain words — no quotes, `$` or backslashes — for `run.exec`, `auto` or a
 folder for `run.path`. Anything else is refused and nothing is written, not even the
 other settings of the same command. `--dry-run` prints the file it would write. It refuses to work

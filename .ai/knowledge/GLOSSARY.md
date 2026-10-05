@@ -248,6 +248,15 @@ session is where a stopped task of the phase is answered
 (adr-20260922-a-phase-run-is-coordinated). Informal synonyms: the coordinating session, the
 orchestrator.
 
+## Delegation
+
+Handing one stage of a task's route to a subagent on a model the person chose: `implement`, or
+`review` — every review stage of the route. The model is the value of a local-only key
+(`claude.implement_model`, `claude.review_model`), carried as an opaque string; `jig task route`
+prints a `delegate:` line for each one set, and with none set nothing is handed over. The route,
+its gates and its records do not change (adr-20261005-jig-names-the-roles-not-the-models).
+Informal synonyms: helper, stage subagent.
+
 ## Status Page
 
 `.ai/runtime/status.html`: one self-contained page written by `jig status --html` or

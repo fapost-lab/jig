@@ -2657,6 +2657,31 @@ _task_route_lean_note() {
   esac
 }
 
+# _task_route_delegates <class> — one `delegate: <stage> -> <model> (<key>)`
+# line per stage of <class>'s route that the person handed to a model, and
+# nothing when they set none. The model is the value of a local-only key,
+# carried as it is written: Jig never interprets or validates it, and no gate
+# reads it — delegation changes who does a stage, never the route or its
+# records (adr-20261005-jig-names-the-roles-not-the-models). Review covers
+# every review stage of a route — review, independent review, architecture
+# review — so a class without one (T0, T1) gets no review line.
+_task_route_delegates() {
+  local class="$1" model
+  model=$(cfg claude.implement_model "")
+  if [ -n "$model" ]; then
+    printf 'delegate: implement -> %s (claude.implement_model)\n' "$model"
+  fi
+  case "$class" in
+    T2 | T3 | T4) ;;
+    *) return 0 ;;
+  esac
+  model=$(cfg claude.review_model "")
+  if [ -n "$model" ]; then
+    printf 'delegate: review -> %s (claude.review_model)\n' "$model"
+  fi
+  return 0
+}
+
 # task_route <id> — the task's class, depth and route, for the skills to name.
 task_route() {
   jig_require_init
@@ -2678,6 +2703,7 @@ EOF
     printf 'lean: %s\n' "$(_task_route_lean_note "$class")"
   fi
   printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
+  _task_route_delegates "$class"
   local from
   from=$(task_state_get "$id" class_lowered_from)
   if [ -n "$from" ]; then
