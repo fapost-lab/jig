@@ -2521,3 +2521,258 @@ test_status_html_badges_a_lean_task() {
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$(cat .ai/runtime/status.html)" '<td>T2 <span class="badge">lean</span></td>'
 }
+
+# --- the terminal form (adr-20261005-output-is-decorated-only-on-a-terminal) --
+
+# _status_form_scenario <stub-root> <stub-bin> — a project whose report has a
+# line of nearly every shape: a version mismatch and a newer release, local
+# config in effect and ignored, drift, a task in flight, a paused one and a
+# finished one. Prints the PATH to run it under; the caller removes the stubs.
+_status_form_scenario() {
+  local path_dir
+  fixture_jig_repo
+  path_dir=$(_status_make_stub_global "$1" "$2" 'JIG_VERSION="0.1.0"')
+  mkdir -p .ai/runtime
+  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+  printf 'housekeeping.cadence: 3d\ngit.base_branch: other\n' > .ai/config.local.yaml
+  printf 'edited\n' >> .claude/skills/jig-task/SKILL.md
+  rm -f .codex/skills/jig-review/SKILL.md
+  fixture_task t-a task/t-a active "class:T2"
+  fixture_task t-b task/t-b active "class:T1" "paused:true" "paused_reason:waiting for a decision"
+  fixture_task t-c task/t-c consolidated "class:T1"
+  printf '2026-09-10T00:00:00Z task=t-n status=active remote=merged via=ancestry action=preserve flags=needs-consolidation\n' \
+    > .ai/runtime/housekeeping.log
+  _status_path_without_jig "$path_dir"
+}
+
+# The byte-for-byte proof: the expected text is the report as status printed
+# it before the output layer, and the same test passes on the commit before it.
+test_status_a_pipe_gets_the_report_byte_for_byte_as_before() {
+  local stub_root stub_bin path v
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path=$(_status_form_scenario "$stub_root" "$stub_bin")
+  v=$(_status_project_version)
+  {
+    printf 'jig %s\n' "$v"
+    printf 'initialised: yes\n'
+    printf 'config.local: housekeeping.cadence=3d\n'
+    printf 'config.local: ignored git.base_branch (not a local key)\n'
+    printf 'agent.git: none (review queue: uncommitted files)\n'
+    printf 'manifest: version=%s mode=copy source=%s\n' "$v" "$JIG_HOME"
+    printf 'framework versions: project=%s global=0.1.0 mismatch\n' "$v"
+    # shellcheck disable=SC2016
+    printf 'hint: the project is newer than the global framework; run `jig self-update`\n'
+    # shellcheck disable=SC2016
+    printf 'hint: jig v0.2.0 is out; run `jig self-update`, then `jig upgrade`\n'
+    printf 'drift: 1 modified, 1 missing, 1 pending\n'
+    printf 'modified:\n'
+    printf '  .claude/skills/jig-task/SKILL.md\n'
+    printf 'missing:\n'
+    printf '  .codex/skills/jig-review/SKILL.md\n'
+    printf 'proposals: none\n'
+    printf 'specs: none\n'
+    printf 'task t-a class=T2 status=active\n'
+    printf 'task t-b class=T1 status=active paused (waiting for a decision)\n'
+    printf '(1 finished; jig task list --all)\n'
+    printf 'current task: none\n'
+    printf 'sessions: not observable (no active runtime names its sessions here)\n'
+    printf 'housekeeping: never\n'
+    printf 'needs consolidation: 1 task(s) (see .ai/runtime/housekeeping.log)\n'
+    printf 'session hook (claude): not installed\n'
+    printf 'instructions (claude): ok\n'
+    printf 'instructions (codex): ok\n'
+  } > "$TMPDIR/expected.txt"
+  env PATH="$path" "$JIG_BIN" status > "$TMPDIR/actual.txt" 2>&1
+  assert_eq 0 "$?"
+  cmp "$TMPDIR/expected.txt" "$TMPDIR/actual.txt" || fail "piped report changed: $(diff "$TMPDIR/expected.txt" "$TMPDIR/actual.txt")"
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_a_terminal_puts_what_needs_you_first_and_groups_the_rest() {
+  local stub_root stub_bin path v
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path=$(_status_form_scenario "$stub_root" "$stub_bin")
+  v=$(_status_project_version)
+  {
+    printf 'warn  config.local: ignored git.base_branch (not a local key)\n'
+    printf 'warn  framework versions: project=%s global=0.1.0 mismatch\n' "$v"
+    # shellcheck disable=SC2016
+    printf '      hint: the project is newer than the global framework; run `jig self-update`\n'
+    printf 'warn  jig v0.2.0 is out\n'
+    # shellcheck disable=SC2016
+    printf '      hint: run `jig self-update`, then `jig upgrade`\n'
+    printf 'warn  drift: 1 modified, 1 missing, 1 pending\n'
+    printf '      modified: .claude/skills/jig-task/SKILL.md\n'
+    printf '      missing: .codex/skills/jig-review/SKILL.md\n'
+    printf 'warn  task t-b class=T1 status=active paused (waiting for a decision)\n'
+    printf 'warn  needs consolidation: 1 task(s)\n'
+    printf '      see: .ai/runtime/housekeeping.log\n'
+    printf 'warn  session hook (claude): not installed\n'
+    printf '\n'
+    printf 'ok    2 active task(s), 1 finished (jig task list --all)\n'
+    printf '      task: t-a class=T2 status=active\n'
+    printf 'ok    this checkout: current task none, sessions not observable, housekeeping never\n'
+    printf 'ok    install: manifest %s (copy), instructions (claude), instructions (codex)\n' "$v"
+    printf 'ok    knowledge: no proposals, no specs\n'
+    printf 'ok    agent.git: none (review queue: uncommitted files)\n'
+    printf 'ok    config.local: housekeeping.cadence=3d\n'
+    printf 'jig %s: 7 item(s) need you\n' "$v"
+  } > "$TMPDIR/expected.txt"
+  env PATH="$path" JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status > "$TMPDIR/actual.txt" 2>&1
+  assert_eq 0 "$?"
+  cmp "$TMPDIR/expected.txt" "$TMPDIR/actual.txt" || fail "terminal report differs: $(diff "$TMPDIR/expected.txt" "$TMPDIR/actual.txt")"
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_a_terminal_says_nothing_needs_you_when_nothing_does() {
+  fixture_jig_repo
+  local v
+  v=$(_status_project_version)
+  mkdir -p .claude
+  printf '{ "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": ".ai/scripts/jig-session-hook" } ] } ] } }\n' \
+    > .claude/settings.json
+  run env PATH="$(_status_path_without_jig)" JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "warn  "
+  assert_contains "$OUT" "ok    no active tasks"
+  assert_contains "$OUT" "ok    install: manifest $v (copy), global jig unavailable, no drift, "
+  assert_eq "jig $v: nothing needs you" "$(printf '%s\n' "$OUT" | tail -n 1)"
+}
+
+test_status_a_terminal_on_an_uninitialised_project_says_what_to_run() {
+  fixture_repo
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  # shellcheck disable=SC2016
+  assert_eq "$(printf 'warn  initialised: no\n      hint: run `jig init` to bootstrap this project\n\njig %s: 1 item(s) need you' "$(_status_project_version)")" "$OUT"
+}
+
+test_status_a_terminal_colours_the_level_words() {
+  local stub_root stub_bin path esc
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path=$(_status_form_scenario "$stub_root" "$stub_bin")
+  esc=$(printf '\033')
+  run env -u NO_COLOR PATH="$path" TERM=xterm JIG_TERMINAL=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "${esc}[33mwarn${esc}[0m  jig v0.2.0 is out"
+  assert_contains "$OUT" "${esc}[32mok${esc}[0m    2 active task(s)"
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+# A refusal comes before every warning, wherever the report printed it.
+test_status_a_terminal_puts_an_invalid_agent_git_first() {
+  fixture_jig_repo
+  printf 'agent.git: sometimes\n' > .ai/config.local.yaml
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_eq "fail  agent.git: invalid value sometimes (expected none|commit|push|pr|merge)" \
+    "$(printf '%s\n' "$OUT" | sed -n 1p)"
+}
+
+# The readers inside jig: the status page carries the whole plain report, and
+# it is drawn by `jig status --html`, by every command's redraw
+# (jig_status_page_touch) and from a worktree. None of them may get the
+# terminal form, whatever the person's JIG_TERMINAL says.
+_status_assert_page_is_plain() {
+  local page esc
+  esc=$(printf '\033')
+  page=$(cat "$1")
+  assert_contains "$page" "task t-a class=T2 status=active"
+  assert_contains "$page" "drift: 0 modified, 0 missing"
+  assert_not_contains "$page" "active task(s)"
+  assert_not_contains "$page" "nothing needs you"
+  assert_not_contains "$page" "$esc"
+}
+
+test_status_page_keeps_the_plain_report_for_a_terminal_reader() {
+  fixture_jig_repo
+  fixture_task t-a task/t-a active "class:T2"
+  run env JIG_TERMINAL=1 TERM=xterm "$JIG_BIN" status --html
+  assert_eq 0 "$RC"
+  _status_assert_page_is_plain .ai/runtime/status.html
+}
+
+test_status_page_redraw_keeps_the_plain_report_for_a_terminal_reader() {
+  fixture_jig_repo
+  fixture_task t-a task/t-a active "class:T2"
+  jig status --html >/dev/null
+  run env JIG_TERMINAL=1 TERM=xterm "$JIG_BIN" task new t-d --class T1
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" "task t-d class=T1 status=active"
+  _status_assert_page_is_plain .ai/runtime/status.html
+}
+
+test_status_page_from_a_worktree_keeps_the_plain_report_for_a_terminal_reader() {
+  mkdir repo || return 1
+  cd repo || return 1
+  fixture_jig_repo
+  fixture_task t-a task/t-a active "class:T2"
+  git add -A
+  git commit -q -m "jig init snapshot"
+  jig task new T-1 >/dev/null
+  local wt main
+  main=$(pwd -P)
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  cd "$wt" || return 1
+  run env JIG_TERMINAL=1 TERM=xterm "$JIG_BIN" status --html
+  assert_eq 0 "$RC"
+  _status_assert_page_is_plain "$main/.ai/runtime/status.html"
+}
+
+# At a terminal the report is still taken in cmd_status' own shell, so the
+# counts it took are the ones saved for the page's next redraw.
+test_status_a_terminal_still_refreshes_the_pages_counts() {
+  fixture_jig_repo
+  jig status --html >/dev/null
+  printf 'at: 2000-01-01T00:00:00Z\nproposals: 9\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/status-counts "proposals: 0"
+  assert_not_contains "$(cat .ai/runtime/status-counts)" "2000-01-01"
+}
+
+# A section someone edited is kept by every upgrade: nothing for them to do.
+test_status_a_terminal_counts_a_changed_section_as_fine() {
+  fixture_jig_repo
+  sed 's/^## Read first$/## Read first (our version)/' AGENTS.md > AGENTS.md.new
+  mv AGENTS.md.new AGENTS.md
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "instructions (codex) (section changed here)"
+  assert_not_contains "$OUT" "warn  instructions"
+}
+
+# A task line is judged by the words the line builder writes, never by a
+# worktree path or a pause reason, which a person chose.
+test_status_a_terminal_judges_a_task_by_its_own_words_only() {
+  local f
+  f=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/status.sh"
+    for l in \
+      'task a class=T2 status=active' \
+      'task a class=T2 status=active worktree=/x/is paused uncommitted=0' \
+      'task a class=T2 status=active worktree=/x lowered=T3 uncommitted=0 autopilot=on' \
+      'task a class=T2 status=active paused (see blocking=2 and review=stale)' \
+      'task a class=T2 status=active paused' \
+      'task a class=T2 status=active lowered=T3' \
+      'task a class=T2 status=active worktree=/x uncommitted=1 blocking=2' \
+      'task a class=T2 status=active review=stale autopilot=on' \
+      'task a class=T2 status=active autopilot=stopped'; do
+      if _status_task_needs "$l"; then printf 'need\n'; else printf 'fine\n'; fi
+    done
+  )
+  assert_eq "$(printf 'fine\nfine\nfine\nneed\nneed\nneed\nneed\nneed\nneed')" "$f"
+}
+
+test_status_a_terminal_keeps_a_pause_reason_whole() {
+  fixture_jig_repo
+  fixture_task t-p task/t-p active "class:T1" "paused:true" "paused_reason:waiting (fix: CI)"
+  run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  task t-p class=T1 status=active paused (waiting (fix: CI))"
+  assert_not_contains "$OUT" "      fix: "
+}

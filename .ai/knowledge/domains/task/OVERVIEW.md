@@ -12,7 +12,7 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-10-04
+reviewed_at: 2026-10-05
 ---
 # Task
 
@@ -186,7 +186,11 @@ lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`c
 and the run's phase — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
 (`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
 gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
-awk pass (`_status_task_rows`), so a renamed key empties a column there too.
+awk pass (`_status_task_rows`), so a renamed key empties a column there too. At a terminal
+`jig status` also reads its own `task …` lines back (`_status_task_needs`): a task is listed first,
+as needing the person, by the words the line builder writes — `paused`, `blocking=`,
+`review=stale`, `autopilot=stopped`, `lowered=` — so a new word that asks for the person is added
+there too (adr-20261005-output-is-decorated-only-on-a-terminal).
 
 **A card goes when what it asks for has been done and the page can see that for free.** Both
 halves decide it, and neither is about the kind of card. A task's own `status`, and whether a
