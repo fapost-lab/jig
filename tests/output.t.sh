@@ -122,6 +122,7 @@ test_output_colour_marks_the_level_word_and_keeps_the_alignment() {
     out_status ok "a: b"
     out_status warn "c: d"
     out_status fail "e: f"
+    out_status ask "g?"
     out_detail fix "g"
     out_summary "h"
   ) > color.txt
@@ -129,6 +130,7 @@ test_output_colour_marks_the_level_word_and_keeps_the_alignment() {
     printf '%s[32mok%s[0m    a: b\n' "$ESC" "$ESC"
     printf '%s[33mwarn%s[0m  c: d\n' "$ESC" "$ESC"
     printf '%s[1;31mfail%s[0m  e: f\n' "$ESC" "$ESC"
+    printf '%s[36mask%s[0m   g?\n' "$ESC" "$ESC"
     printf '      %s[1mfix:%s[0m g\n' "$ESC" "$ESC"
     printf '%s[1mh%s[0m\n' "$ESC" "$ESC"
   } > expected.txt

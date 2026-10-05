@@ -10,6 +10,24 @@ checks and writes (ADR-0001). The file is theirs alone: it changes what **their*
 in **this** clone, never a colleague's. Never write `.ai/config.yaml` — the team's file, edited
 by hand.
 
+## Speak in blocks
+
+Say each message in the form Jig's reports and its installer use
+(adr-20261005-the-installer-speaks-one-form-in-two-shells), in a code block so the columns
+survive: a level word padded to six columns, then the first line; every further line indented
+six columns. `ask` is a question, with the options and your recommendation on the lines under
+it; `ok` is what is now set; `warn` is what needs the person (an `ignored:` key, a file git does
+not ignore); `fail` is a refusal. One question per message stays the rule. For example:
+
+```
+ask   When the agent finishes a task, how far should it take the change?
+      none    leave the change for you to commit (default)
+      pr      commit, push and open the pull request
+      I recommend pr: gh is installed and signed in.
+```
+
+`jig config set --dry-run` output is shown verbatim, as below, never re-laid-out: it is the file.
+
 ## 1. Start from what is set
 
 ```

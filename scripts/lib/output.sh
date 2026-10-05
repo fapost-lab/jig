@@ -28,6 +28,7 @@ _OUT_BOLD=$'\033[1m'
 _OUT_GREEN=$'\033[32m'
 _OUT_YELLOW=$'\033[33m'
 _OUT_RED_BOLD=$'\033[1;31m'
+_OUT_CYAN=$'\033[36m'
 
 # The width the level word is padded to: the widest word plus one space.
 _OUT_PAD='      '
@@ -66,11 +67,12 @@ _out_level_color() {
     ok) printf '%s' "$_OUT_GREEN" ;;
     warn) printf '%s' "$_OUT_YELLOW" ;;
     fail) printf '%s' "$_OUT_RED_BOLD" ;;
+    ask) printf '%s' "$_OUT_CYAN" ;;
   esac
 }
 
-# out_status <level> <text> — one status line: the level word (ok, warn, fail)
-# padded to six columns, then the text. Plain form: printf '%-6s%s\n'.
+# out_status <level> <text> — one status line: the level word (ok, warn, fail,
+# or ask for a question; the answer is typed after it) padded to six columns, then the text. Plain form: printf '%-6s%s\n'.
 out_status() {
   local level="$1" text="$2" color
   if [ "$_OUT_COLOR" = 1 ]; then
