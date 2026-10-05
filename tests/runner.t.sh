@@ -348,7 +348,8 @@ EOF
     "$PWD/root/tests/run.sh" >/dev/null 2>&1 &
   local pid=$!
   set +m
-  local until=$((SECONDS + 60))
+  # A wait for the run to be alive, not a speed check: a loaded Windows runner needs minutes.
+  local until=$((SECONDS + 180))
   while [ -z "$(find scratch -name '*.started' 2>/dev/null)" ] && [ "$SECONDS" -lt "$until" ]; do sleep 0.2; done
   [ -n "$(find scratch -name '*.started')" ] || fail "the test never started"
   kill -TERM "$pid"
