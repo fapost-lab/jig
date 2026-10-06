@@ -132,21 +132,24 @@ Nothing on the checklist the upgrade itself prints, and nothing to do by hand. T
 (see below); `.ai/config.yaml` is not touched.
 
 **Placed for you.** `jig upgrade` adds `.ai/scripts/lib/output.sh`, the shared output layer, updates
-the scripts that use it (`doctor`, `upgrade`, `status`, `checkout`, `task`) and the `jig-setup` skill under
-`.claude/skills/` and `.codex/skills/`.
+the scripts that use it (`doctor`, `upgrade`, `status`, `checkout`, `task`) and the `jig-setup`
+skill under `.claude/skills/` and `.codex/skills/`.
 
-**What you will see at a terminal.** `jig doctor`, `jig upgrade` and `jig status` print what needs you
-first (failures, then warnings, each with its fix), group the rest, and end with a short summary; the
-installer and `jig-setup` use the same layout, with `ask` before a question. The facts are the
-same; the order, the grouping and the closing summary line are new.
+**What you will see at a terminal.** `jig doctor` and `jig upgrade` print what needs you first
+(failures, then warnings, each with its fix), group the rest, and end with a short summary. `jig status`
+reads by section (Needs you, Install, Settings, Tasks, Knowledge & specs, Recent activity here) under a
+heading that ends in the verdict, and groups tasks by epic and spec with each one's progress; its
+rules and marks use `─`, `·` and `…` where the locale is UTF-8 and plain ASCII where it is not. The installer and
+`jig-setup` use the same level words, with `ask` before a question. The facts are the same; the
+order, the grouping and the closing lines are new.
 
 **Pipes, CI and agents get the same bytes as before** from `doctor`, `upgrade`, `status` and the
-installer (`jig-setup` is a skill and speaks in blocks wherever it runs). The terminal form is chosen once per run, only
-when standard output is a terminal. Anything that reads the output through a pipe, a file or an
-agent's shell gets the report you had in 0.21.0, byte for byte; a script that parses it keeps working.
-`JIG_TERMINAL=0` asks for the plain form under a terminal and `JIG_TERMINAL=1` for the terminal form
-under a pipe. `NO_COLOR` set to anything non-empty, or `TERM=dumb`, removes colour and keeps the
-grouping. The PowerShell installer colours through the console, never with escape codes.
+installer (`jig-setup` is a skill and speaks in blocks wherever it runs). The terminal form is chosen
+once per run, only when standard output is a terminal. Anything that reads the output through a pipe,
+a file or an agent's shell gets the report you had in 0.21.0, byte for byte; a script that parses it
+keeps working. `JIG_TERMINAL=0` asks for the plain form under a terminal and `JIG_TERMINAL=1` for the
+terminal form under a pipe. `NO_COLOR` set to anything non-empty, or `TERM=dumb`, removes colour and
+keeps the grouping. The PowerShell installer colours through the console, never with escape codes.
 
 **An upgrade no longer refuses because of a session that only looked around.** In 0.21.0 an upgrade
 stopped when another agent session had run any Jig command in the checkout within the last hours.
@@ -157,8 +160,8 @@ inside the task's own worktree, run it in the main checkout). This holds when th
 hands the run to the newer Jig. A project with `git.branch_per_task: false` is not asked at all.
 
 **The installer changed.** `install.sh` and `install.ps1` speak the new layout at a terminal and
-print what they printed before elsewhere (for `install.ps1`, held by line-level checks). If you run the installer again on a machine you keep up to
-date, nothing else changes; the Windows release checklist was not walked on a real machine for this
+print what they printed before elsewhere (for `install.ps1`, held by line-level checks). If you
+run the installer again on a machine you keep up to date, nothing else changes; the Windows release checklist was not walked on a real machine for this
 release (see the changelog).
 
 ## From 0.20.0 to 0.21.0

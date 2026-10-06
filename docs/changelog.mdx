@@ -8,10 +8,10 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
-## 0.22.0 — 2026-10-05
+## 0.22.0 — 2026-10-06
 
 At a terminal, `jig doctor`, `jig upgrade`, `jig status`, the installer and `jig-setup` now say what
-needs you first and group the rest, and an upgrade no longer refuses because of a session that only
+needs you first and group the rest, `jig status` reads by section and groups tasks by spec, and an upgrade no longer refuses because of a session that only
 looked around.
 
 Everything below about a terminal is only the terminal. In a pipe, in CI and in an agent's shell the
@@ -31,10 +31,28 @@ the exception: it is a skill, and it speaks in blocks wherever it runs.
   once, on a project installed from v0.18.0 and upgraded on a real pseudo-terminal, 58 files placed: 66
   lines before, 17 after. A run that dies midway names none of the files it had replaced at a
   terminal; the repeat that finishes it reports them as already placed.
-- **`jig status` at a terminal puts what needs you first.** Failures and warnings come first, each with
-  its `hint:`, `fix:` or `see:` line, then the rest grouped; with nothing to do the last line reads
-  `nothing needs you`. Measured once in this repository on a real pseudo-terminal: 31 lines before, 12
-  after. The status page, `jig doctor` and `status-counts` read the plain report and are unchanged.
+- **`jig status` at a terminal reads by section.** A heading that ends in the verdict, then **Needs you**
+  (only when something does, each item with its `hint:`, `fix:` or `see:` line), **Install**,
+  **Settings**, **Tasks**, **Knowledge & specs** and **Recent activity here**, one row per item in
+  aligned columns, none wider than 80 columns (a longer row continues on the next line). Related
+  settings share one row, activity is folded by command and hour, and the last row says which task
+  holds HEAD here, or that nothing does. The rules and marks are drawn with `─`, `·` and `…` on a terminal
+  whose locale is UTF-8 and with `-`, `|`, `.` and `...` otherwise; titles are bold cyan, the verdict is green, yellow
+  or red, and `NO_COLOR` or `TERM=dumb` removes colour and keeps the sections. Measured once, on a
+  fixture shaped like a busy project (10 active and 12 finished tasks, 24 activity records, 11
+  settings): the plain report is 59 lines; an intermediate grouped form
+  of this release was 18 lines that wrapped to 31 rows at 80 columns, and the sectioned form is 41
+  rows, none wider than 80. `jig doctor`
+  and the counts the status page caches (`status-counts`) are unchanged.
+- **Tasks in `jig status` are grouped by epic and spec.** At a terminal each epic comes first, then each
+  spec without an epic, with the progress of its roadmap (`Release 0.20.0  (epic · 3/5 done)`) and the
+  tasks hung under it as a tree; tasks that belong to no spec come last under "Other tasks". A task
+  linked to two specs, or to a spec that is not here, is listed under "Other tasks"; when no task belongs to a
+  spec the section stays flat, as before, and a spec with no task is not drawn. The tree uses `├─` and
+  `└─` (`|-` and `` `- `` in ASCII). For an epic that is not checked out here the progress is read from the
+  epic's branch, and shown as just "epic" when that branch is not here. The status page groups its
+  "Running now" tasks the same way, each group with its spec, a kind badge and a progress bar. The
+  piped report is unchanged.
 - **The installer speaks the same blocks.** `install.sh` and `install.ps1` print a level word
   (`ok`, `warn`, `fail`, and `ask` for a question) padded to six columns, with the PATH advice and the
   other notices before the closing `ok    jig installed: ...`; an error is a `fail` block. The
@@ -56,8 +74,8 @@ the exception: it is a skill, and it speaks in blocks wherever it runs.
   The upgrade asked Git directly whether it was in a linked worktree and, for a worktree of a bare
   repository, pointed at a main checkout that does not exist; it now asks the way the rest of Jig does.
 
-What was proven where: by tests on throwaway repositories and in CI. The terminal forms of `status` and
-`upgrade` were measured on macOS and Linux pseudo-terminals; on Windows CI only proves that
+What was proven where: by tests on throwaway repositories and in CI. The terminal form of `upgrade` was
+measured on a real pseudo-terminal, and that of `status` on a fixture, a stand-in for a busy project; on Windows CI only proves that
 `JIG_TERMINAL=1 jig doctor` runs in Git Bash and that the shards pass (the byte-for-byte doctor test
 skips there). Not proven by anything kept: that the colours render in Windows Terminal or the Windows
 PowerShell 5.1 console, that `ask` and the typed answer share one line there, and that the
