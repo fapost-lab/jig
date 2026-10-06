@@ -163,6 +163,7 @@ test_output_section_blocks_are_ascii_without_a_utf8_locale() {
     out_row dim 4 T2 bold 8 a-long-id plain 0 ""
     out_row dim 4 "$OUT_MARK" plain 0 "current task: none"
     printf '%s\n' "$OUT_MORE"
+    printf '%s %s\n' "$OUT_TREE" "$OUT_TREE_LAST"
   ) > ascii.txt
   {
     printf 'jig 1.0 | demo%66s\n' "nothing needs you"
@@ -171,6 +172,7 @@ test_output_section_blocks_are_ascii_without_a_utf8_locale() {
     printf '  T2  a-long-id\n'
     printf '  .   current task: none\n'
     printf '...\n'
+    printf '%s\n' '|- `-'
   } > expected.txt
   cmp expected.txt ascii.txt || fail "ascii sections differ: $(diff expected.txt ascii.txt)"
 }
@@ -184,10 +186,10 @@ test_output_section_marks_are_utf8_only_on_a_utf8_terminal() {
   (
     unset LC_ALL LC_CTYPE; LANG=en_US.UTF-8; NO_COLOR=1; JIG_TERMINAL=1; out_init
     out_section "Install"
-    printf '%s|%s|%s\n' "$(out_join a b)" "$OUT_MARK" "$OUT_MORE"
+    printf '%s|%s|%s|%s|%s\n' "$(out_join a b)" "$OUT_MARK" "$OUT_MORE" "$OUT_TREE" "$OUT_TREE_LAST"
     JIG_TERMINAL=0; out_init
     out_section "Install"
-    printf '%s|%s|%s\n' "$(out_join a b)" "$OUT_MARK" "$OUT_MORE"
+    printf '%s|%s|%s|%s|%s\n' "$(out_join a b)" "$OUT_MARK" "$OUT_MORE" "$OUT_TREE" "$OUT_TREE_LAST"
     unset LANG; LC_CTYPE=en_US.UTF-8; JIG_TERMINAL=1; out_init
     printf '%s\n' "$OUT_MARK"
     # A locale this shell cannot take is not UTF-8, whatever its name says.
@@ -198,9 +200,9 @@ test_output_section_marks_are_utf8_only_on_a_utf8_terminal() {
   r=$(printf '\342\224\200')
   d=$(printf '\302\267')
   assert_contains "$(cat marks.txt)" "$r$r Install $r$r$r"
-  assert_contains "$(cat marks.txt)" "a $d b|$d|$(printf '\342\200\246')"
+  assert_contains "$(cat marks.txt)" "a $d b|$d|$(printf '\342\200\246')|$(printf '\342\224\234\342\224\200')|$(printf '\342\224\224\342\224\200')"
   assert_contains "$(cat marks.txt)" "-- Install ---"
-  assert_contains "$(cat marks.txt)" "a | b|.|..."
+  assert_contains "$(cat marks.txt)" "a | b|.|...||-|\`-"
   assert_eq "$d" "$(tail -n 2 marks.txt | sed -n 1p)"
   assert_eq "." "$(sed -n '$p' marks.txt)"
 }

@@ -2962,3 +2962,133 @@ test_status_a_terminal_keeps_a_pause_reason_whole() {
   assert_not_contains "$OUT" "      fix: "
 }
 
+
+# --- tasks grouped by epic and spec ---------------------------------------------
+
+# _status_groups_fixture — an epic whose progress is made on its branch, a spec
+# without an epic, tasks of each, a task with no spec and one linked to a spec
+# that is not here.
+_status_groups_fixture() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/rel .ai/specs/term
+  printf '# Release 0.20.0\n' > .ai/specs/rel/spec.md
+  printf '%s\n' '# Roadmap' '' 'Epic: epic/rel' '' '## Phase 1 — All' '' \
+    '- [ ] one' '- [ ] two' '- [ ] three' '- [ ] four' '- [ ] five' > .ai/specs/rel/roadmap.md
+  printf '# Terminal output people can read\n' > .ai/specs/term/spec.md
+  printf '%s\n' '## Phase 1 — One' '' '- [x] a' '- [ ] b' '- [ ] c' '- [ ] d' '- [ ] e' \
+    > .ai/specs/term/roadmap.md
+  git add -A
+  git commit -q -m "specs"
+  git checkout -q -b epic/rel
+  printf '%s\n' '# Roadmap' '' 'Epic: epic/rel' '' '## Phase 1 — All' '' \
+    '- [x] one' '- [x] two' '- [x] three' '- [ ] four' '- [ ] five' > .ai/specs/rel/roadmap.md
+  git commit -q -am "progress on the epic"
+  git checkout -q main
+  fixture_task a-loose task/a-loose active "class:T2"
+  fixture_task b-rel task/b-rel active "class:T3"
+  fixture_task c-term task/c-term active "class:T2"
+  fixture_task d-rel task/d-rel active "class:T2"
+  fixture_task e-gone task/e-gone active "class:T0"
+  printf '\nSpec: .ai/specs/rel/ — Phase 1\n' >> .ai/workspace/tasks/b-rel/task.md
+  printf '\nSpec: .ai/specs/term/\n' >> .ai/workspace/tasks/c-term/task.md
+  printf '\nSpec: .ai/specs/rel/ — Phase 1\n' >> .ai/workspace/tasks/d-rel/task.md
+  printf '\nSpec: .ai/specs/gone/\n' >> .ai/workspace/tasks/e-gone/task.md
+}
+
+# _status_tasks_section <report> — the Tasks section of a terminal report.
+_status_tasks_section() {
+  printf '%s\n' "$1" | awk '/^-- Tasks|^── Tasks/ { on = 1 } on && $0 == "" { on = 0; done = 1 } on && !done { print }'
+}
+
+test_status_a_terminal_groups_tasks_by_epic_and_spec() {
+  _status_groups_fixture
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_eq "$(printf '%s\n' \
+    '-- Tasks  (5 active) -----------------------------------------------------------' \
+    '  Release 0.20.0  (epic | 3/5 done)' \
+    '  |- T3  b-rel' \
+    '  `- T2  d-rel' \
+    '  Terminal output people can read  (spec | 1/5 done)' \
+    '  `- T2  c-term' \
+    '  Other tasks' \
+    '  |- T2  a-loose' \
+    '  `- T0  e-gone' \
+    '  .   current task: none')" "$(_status_tasks_section "$OUT")"
+}
+
+test_status_a_terminal_draws_the_groups_tree_in_utf8_and_colour() {
+  local e mid end dot
+  skip_unless_utf8_locale
+  _status_groups_fixture
+  e=$(printf '\033')
+  mid=$(printf '\342\224\234\342\224\200')
+  end=$(printf '\342\224\224\342\224\200')
+  dot=$(printf '\302\267')
+  run env -u LC_ALL -u LC_CTYPE LANG=en_US.UTF-8 JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "  Release 0.20.0  (epic $dot 3/5 done)"
+  assert_contains "$OUT" "  $mid T3  b-rel"
+  assert_contains "$OUT" "  $end T2  d-rel"
+  run env -u NO_COLOR LC_ALL=C TERM=xterm JIG_TERMINAL=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "  ${e}[1mRelease 0.20.0${e}[0m  ${e}[2m(epic | 3/5 done)${e}[0m"
+  assert_contains "$OUT" "  ${e}[2m|-${e}[0m ${e}[33mT3${e}[0m  ${e}[1mb-rel${e}[0m"
+  assert_contains "$OUT" "  ${e}[1mOther tasks${e}[0m"
+}
+
+# A task that needs the reader is under "Needs you", and a group left with
+# none of its tasks is not drawn; with no task of a spec left, no group is.
+test_status_a_terminal_draws_only_groups_that_have_rows() {
+  _status_groups_fixture
+  fixture_task c-term task/c-term active "class:T2" "paused:true"
+  printf '\nSpec: .ai/specs/term/\n' >> .ai/workspace/tasks/c-term/task.md
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$(_status_tasks_section "$OUT")" "Terminal output"
+  assert_contains "$OUT" "  warn  task c-term class=T2 status=active paused"
+  rm .ai/workspace/tasks/b-rel/task.md .ai/workspace/tasks/d-rel/task.md
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_not_contains "$OUT" "Other tasks"
+  assert_contains "$(_status_tasks_section "$OUT")" "$(printf '%s\n' '  T2  a-loose' '  T3  b-rel')"
+}
+
+# The plain report keeps its `task ...` lines, in their order, ungrouped.
+test_status_a_pipe_does_not_group_tasks() {
+  _status_groups_fixture
+  run env JIG_TERMINAL=0 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "Other tasks"
+  assert_not_contains "$OUT" "Release 0.20.0"
+  assert_eq "$(printf '%s\n' \
+    'task a-loose class=T2 status=active' 'task b-rel class=T3 status=active' \
+    'task c-term class=T2 status=active' 'task d-rel class=T2 status=active' \
+    'task e-gone class=T0 status=active')" "$(printf '%s\n' "$OUT" | grep '^task ')"
+}
+
+test_status_page_groups_running_tasks_by_epic_and_spec() {
+  _status_groups_fixture
+  run jig status --html
+  assert_eq 0 "$RC"
+  local tasks order
+  tasks=$(status_page_section "$(cat .ai/runtime/status.html)" tasks)
+  assert_contains "$tasks" '<h3><code>rel</code> Release 0.20.0 <span class="badge">epic</span> <span class="muted"><span class="bar"><span style="width: 60%"></span></span>3/5 done</span></h3>'
+  assert_contains "$tasks" '<h3><code>term</code> Terminal output people can read <span class="badge">spec</span> <span class="muted"><span class="bar"><span style="width: 20%"></span></span>1/5 done</span></h3>'
+  order=$(printf '%s\n' "$tasks" | sed -n \
+    -e 's/^<h3><code>\([^<]*\)<.*/[\1]/p' -e 's/^<h3>Other tasks<\/h3>$/[other]/p' \
+    -e 's/^<tr><td class="id"><code>\([^<]*\)<.*/\1/p' | tr '\n' ' ')
+  assert_eq "[rel] b-rel d-rel [term] c-term [other] a-loose e-gone " "$order"
+}
+
+# An epic whose branch is not here has no progress to show, only its kind; a
+# task linked to two specs belongs to neither.
+test_status_a_terminal_groups_without_a_count_or_a_guess() {
+  _status_groups_fixture
+  git branch -q -D epic/rel
+  printf '\nSpec: .ai/specs/rel/\n' >> .ai/workspace/tasks/c-term/task.md
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "$(printf '%s\n' '  Release 0.20.0  (epic)' '  |- T3  b-rel' '  `- T2  d-rel' \
+    '  Other tasks' '  |- T2  a-loose' '  |- T2  c-term' '  `- T0  e-gone')"
+  assert_not_contains "$OUT" "Terminal output people can read"
+}

@@ -12,7 +12,7 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/status.sh
 summary: A report is grouped and coloured only when stdout is a terminal, decided once in scripts/lib/output.sh; a pipe, CI and an agent get the bytes printed before the layer existed.
-reviewed_at: 2026-10-05
+reviewed_at: 2026-10-06
 ---
 # A command's report is decorated only when stdout is a terminal, through one output layer
 
@@ -139,6 +139,25 @@ owner asked for it to be read by section, with a rule between sections and one r
   records, 11 `config.local` keys) the plain report is 59 lines; the grouped terminal form of
   #195 was 18 lines that wrapped to 31 rows at 80 columns; the sectioned form is 41 lines, none
   wider than 80 columns (a settings row too long for one goes on under itself).
+
+## Amendment — tasks are grouped by epic and spec (2026-10-06)
+
+The owner asked for the tasks of one epic to be read together, on the status page and at a
+terminal.
+
+- **Grouping.** The Tasks section groups its rows when any of them belongs to a spec: a line per
+  epic (a spec whose roadmap has an `Epic:` line), then per spec without an epic, each as the
+  spec's title in bold and `(epic · 3/5 done)` dim; its tasks under it on the branches of a tree;
+  `Other tasks` last. With no task of a spec, the rows stay flat. The page's "Running now" groups
+  the same way, a heading and a table per group.
+- **One more fact asked beyond the plain report.** Which spec a task belongs to, by
+  `jig_spec_link` and `jig_spec_epic` — the reading `task start` and the spec commands use — and
+  the spec's progress, `spec_phase_rows` summed, read from the epic's branch when progress is
+  made there (ADR-0040). With who holds HEAD and the project's name, these are what the terminal
+  form asks for beyond the plain report; the plain report's `task …` lines do not change.
+- **Two more marks.** `├─` (U+251C U+2500) and `└─` (U+2514 U+2500), the branch to a row of a
+  group and to its last row, drawn under the same rule as the other marks; `|-` and `` `- `` in
+  ASCII. A branch is dim.
 
 ## Consequences
 
