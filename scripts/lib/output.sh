@@ -16,7 +16,7 @@
 # Words carry the meaning in both forms; colour only reinforces it, because a
 # monochrome terminal, a colour-blind reader and a copy into a chat all lose
 # it. ASCII, except the few marks a section is drawn with (a rule, a middle
-# dot, an ellipsis), which are UTF-8 only when the locale says UTF-8 and ASCII
+# dot, an ellipsis, the branches of a tree), which are UTF-8 only when the locale says UTF-8 and ASCII
 # otherwise: a console code page may not have anything else. No tput: it is an
 # external program with its own terminfo (ADR-0002), and these few SGR codes
 # are understood by every terminal Jig targets, Git Bash's included.
@@ -52,6 +52,10 @@ OUT_SEP=' | '
 OUT_MARK='.'
 # shellcheck disable=SC2034 # read by the commands that source this layer
 OUT_MORE='...'
+# shellcheck disable=SC2034 # read by the commands that source this layer
+OUT_TREE='|-'
+# shellcheck disable=SC2034 # read by the commands that source this layer
+OUT_TREE_LAST='`-'
 
 # One two-byte character: one in a shell whose locale is UTF-8, two otherwise.
 _OUT_UTF8_PROBE=$'\xc2\xb7'
@@ -81,7 +85,7 @@ out_init() {
   # first of LC_ALL, LC_CTYPE and LANG that is set. Only a terminal gets
   # anything but ASCII.
   _OUT_UTF8=0
-  _OUT_RULE='-' OUT_SEP=' | ' OUT_MARK='.' OUT_MORE='...'
+  _OUT_RULE='-' OUT_SEP=' | ' OUT_MARK='.' OUT_MORE='...' OUT_TREE='|-' OUT_TREE_LAST='`-'
   if [ "$_OUT_TERMINAL" = 1 ]; then
     case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
       *[Uu][Tt][Ff]-8* | *[Uu][Tt][Ff]8*)
@@ -89,8 +93,10 @@ out_init() {
         # counts bytes, and every column after a mark would be off.
         if [ ${#_OUT_UTF8_PROBE} = 1 ]; then
           _OUT_UTF8=1
-          # shellcheck disable=SC2034 # OUT_MARK, OUT_MORE: read by the commands
+          # shellcheck disable=SC2034 # OUT_MARK, OUT_MORE, OUT_TREE*: read by the commands
           _OUT_RULE=$'\xe2\x94\x80' OUT_SEP=$' \xc2\xb7 ' OUT_MARK=$'\xc2\xb7' OUT_MORE=$'\xe2\x80\xa6'
+          # shellcheck disable=SC2034
+          OUT_TREE=$'\xe2\x94\x9c\xe2\x94\x80' OUT_TREE_LAST=$'\xe2\x94\x94\xe2\x94\x80'
         fi
         ;;
     esac

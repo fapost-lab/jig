@@ -755,12 +755,116 @@ _status_terminal_settings() {
   done
 }
 
+# --- tasks grouped by the spec they belong to ------------------------------------
+#
+# A task belongs to the spec its task.md links to (jig_spec_link, the reading
+# `task start` and every spec command use). A spec whose roadmap declares an
+# epic (jig_spec_epic) is that epic's group; any other spec is a group of its
+# own; a task that links to no spec here, or to two, is under "Other tasks".
+# Epics come first, then specs, each in `spec list`'s order. The grouping is
+# drawn by the terminal form and the page only: the plain report a pipe reads
+# keeps its `task ...` lines as they were.
+
+_STG_IDS=()      # the task ids asked about
+_STG_SIDS=()     # the spec each belongs to, empty for none
+_STG_KEYS=()     # the groups that have tasks, in order: spec ids
+_STG_TITLE=()    # each group's title: the spec's first heading, or its id
+_STG_KIND=()     # epic | spec
+_STG_DONE=()     # roadmap items done, empty when the roadmap was not read
+_STG_TOTAL=()    # roadmap items in all, empty likewise
+_STG_SID=""      # _status_group_of's answer
+
+# _status_task_groups <id>... — fill the _STG_* globals for these task ids.
+# _STG_KEYS stays empty when none of them belongs to a spec. Progress is
+# spec_phase_rows summed — the counts `jig spec list` and the page's phases
+# show, read from the epic's branch when progress is made there (ADR-0040).
+_status_task_groups() {
+  local id sid root ws file used=" " sums s d t kind title pass
+  _STG_IDS=() _STG_SIDS=() _STG_KEYS=() _STG_TITLE=() _STG_KIND=() _STG_DONE=() _STG_TOTAL=()
+  root=$(spec_dir)
+  ws="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  for id in "$@"; do
+    sid=""
+    file="$ws/$id/task.md"
+    if [ -f "$file" ]; then sid=$(jig_spec_link "$file" 2>/dev/null) || sid=""; fi
+    if [ -n "$sid" ] && [ ! -d "$root/$sid" ]; then sid=""; fi
+    _STG_IDS+=("$id")
+    _STG_SIDS+=("$sid")
+    [ -z "$sid" ] || used="$used$sid "
+  done
+  [ "$used" != " " ] || return 0
+  [ -n "$_STATUS_PHASE_READY" ] || _status_phase_rows_collect
+  sums=$(printf '%s\n' "$_STATUS_PHASE_ROWS" | awk -F '\t' '
+    NF >= 5 { if (!($1 in d)) o[++n] = $1; d[$1] += $4; t[$1] += $5 }
+    END { for (i = 1; i <= n; i++) printf "%s\t%d\t%d\n", o[i], d[o[i]], t[o[i]] }')
+  for pass in epic spec; do
+    while IFS= read -r sid; do
+      [ -n "$sid" ] || continue
+      case "$used" in *" $sid "*) ;; *) continue ;; esac
+      kind=spec
+      if [ -f "$root/$sid/roadmap.md" ] \
+         && [ -n "$(jig_spec_epic "$root/$sid/roadmap.md" 2>/dev/null || true)" ]; then
+        kind=epic
+      fi
+      [ "$kind" = "$pass" ] || continue
+      title=""
+      [ ! -f "$root/$sid/spec.md" ] || title=$(spec_title "$root/$sid/spec.md")
+      d="" t=""
+      while IFS=$'\t' read -r s id; do
+        if [ "$s" = "$sid" ]; then d=${id%%$'\t'*} t=${id#*$'\t'}; fi
+      done <<SUMS
+$sums
+SUMS
+      _STG_KEYS+=("$sid")
+      _STG_TITLE+=("${title:-$sid}")
+      _STG_KIND+=("$kind")
+      _STG_DONE+=("$d")
+      _STG_TOTAL+=("$t")
+    done < <(spec_ids)
+  done
+}
+
+# spec_phase_rows, asked once per report: the page shows it twice, in "Running
+# now" and under Specifications, and each call reads every open epic's roadmap
+# from its branch.
+_STATUS_PHASE_ROWS=""
+_STATUS_PHASE_READY=""
+_status_phase_rows_collect() {
+  _STATUS_PHASE_ROWS=$(spec_phase_rows)
+  _STATUS_PHASE_READY=1
+}
+
+# _status_group_of <task-id> — the spec the task belongs to, into _STG_SID;
+# empty for "Other tasks".
+_status_group_of() {
+  local i=0
+  _STG_SID=""
+  while [ "$i" -lt ${#_STG_IDS[@]} ]; do
+    if [ "${_STG_IDS[$i]}" = "$1" ]; then _STG_SID=${_STG_SIDS[$i]}; return 0; fi
+    i=$((i + 1))
+  done
+}
+
+# _status_group_label <index> — "epic · 3/5 done" for the group at <index>
+# of _STG_KEYS, without the count when the roadmap was not read; into
+# _STG_LABEL.
+_STG_LABEL=""
+_status_group_label() {
+  _STG_LABEL=${_STG_KIND[$1]}
+  if [ -n "${_STG_TOTAL[$1]}" ]; then
+    _STG_LABEL="$_STG_LABEL$OUT_SEP${_STG_DONE[$1]}/${_STG_TOTAL[$1]} done"
+  fi
+}
+
 # _status_terminal_tasks <tasks> <finished> — one row per task that needs
 # nothing (a task that does is under "Needs you"): its class, its id, and
 # what differs from a task on its branch here — its own worktree and the files
 # waiting there, a base of its own, a lighter route, a running autopilot.
+# When any of them belongs to a spec, the rows are grouped
+# (_status_task_groups): a line per epic or spec with its progress, its tasks
+# under it on the branches of a tree, and "Other tasks" last.
 _status_terminal_tasks() {
-  local ntasks="$1" finished="$2" t id rest words w class cstyle wd counts
+  local ntasks="$1" finished="$2" t id rest words w class wd counts
   local -a ids=() classes=() notes=() note=()
   if [ "$ntasks" -gt 0 ]; then counts="$ntasks active"; else counts="no active tasks"; fi
   [ -z "$finished" ] || counts=$(out_join "$counts" "$finished finished")
@@ -809,17 +913,60 @@ _status_terminal_tasks() {
   for id in "${ids[@]+"${ids[@]}"}"; do
     [ $((${#id} + 3)) -le "$w" ] || w=$((${#id} + 3))
   done
-  local i=0
-  while [ "$i" -lt ${#ids[@]} ]; do
-    case "${classes[$i]}" in
-      T3 | T4) cstyle=warn ;;
-      T0 | T1) cstyle=dim ;;
-      *) cstyle=plain ;;
-    esac
-    out_row "$cstyle" 4 "${classes[$i]}" bold "$w" "${ids[$i]}" warn 0 "${notes[$i]}"
-    i=$((i + 1))
+  _STG_KEYS=()
+  if [ ${#ids[@]} -gt 0 ]; then _status_task_groups "${ids[@]}"; fi
+  local i=0 g key title text last
+  local -a members=()
+  if [ ${#_STG_KEYS[@]} -eq 0 ]; then
+    while [ "$i" -lt ${#ids[@]} ]; do
+      _status_terminal_task_row "" "${classes[$i]}" "$w" "${ids[$i]}" "${notes[$i]}"
+      i=$((i + 1))
+    done
+  fi
+  # One pass per group, and one more for "Other tasks".
+  g=0
+  while [ ${#_STG_KEYS[@]} -gt 0 ] && [ "$g" -le ${#_STG_KEYS[@]} ]; do
+    if [ "$g" -lt ${#_STG_KEYS[@]} ]; then
+      key=${_STG_KEYS[$g]}
+      title=${_STG_TITLE[$g]}
+      _status_group_label "$g"
+      text="($_STG_LABEL)"
+    else
+      key="" title="Other tasks" text=""
+    fi
+    g=$((g + 1))
+    members=()
+    i=0
+    while [ "$i" -lt ${#ids[@]} ]; do
+      _status_group_of "${ids[$i]}"
+      if [ "$_STG_SID" = "$key" ]; then members+=("$i"); fi
+      i=$((i + 1))
+    done
+    [ ${#members[@]} -gt 0 ] || continue
+    out_row bold $((${#title} + 2)) "$title" dim 0 "$text"
+    last=${members[$((${#members[@]} - 1))]}
+    for i in "${members[@]}"; do
+      if [ "$i" = "$last" ]; then t=$OUT_TREE_LAST; else t=$OUT_TREE; fi
+      _status_terminal_task_row "$t" "${classes[$i]}" "$w" "${ids[$i]}" "${notes[$i]}"
+    done
   done
   [ -z "$_STT_CURRENT" ] || out_row dim 4 "$OUT_MARK" plain 0 "current task: $_STT_CURRENT"
+}
+
+# _status_terminal_task_row <branch> <class> <width> <id> <notes> — one task's
+# row, on <branch> of a group's tree, or flat when <branch> is empty.
+_status_terminal_task_row() {
+  local cstyle
+  case "$2" in
+    T3 | T4) cstyle=warn ;;
+    T0 | T1) cstyle=dim ;;
+    *) cstyle=plain ;;
+  esac
+  if [ -n "$1" ]; then
+    out_row dim 3 "$1" "$cstyle" 4 "$2" bold "$3" "$4" warn 0 "$5"
+  else
+    out_row "$cstyle" 4 "$2" bold "$3" "$4" warn 0 "$5"
+  fi
 }
 
 # _status_terminal_activity — what was recorded in this checkout lately
@@ -2031,9 +2178,12 @@ _status_phase_slots() {
 # started tasks, then ready ones, then tasks filed but not started; paused
 # tasks fold away below. The receipt is what `task receipt --check` answers
 # (task_receipt_check) and the blocking findings are _task_blocking_findings'
-# own lines.
+# own lines. When any of these tasks belongs to a spec, the rows are grouped as
+# the terminal groups them (_status_task_groups): a heading per epic or spec
+# with its progress, its own table under it, and "Other tasks" last.
 _status_html_tasks() {
   local rec rows="" paused_rows="" rank row tab
+  local -a ids=()
   tab=$(printf '\t')
   printf '<section id="tasks">\n<h2>Running now</h2>\n'
   while IFS= read -r rec; do
@@ -2051,16 +2201,21 @@ _status_html_tasks() {
     elif [ "$_ST_STATUS" = ready ]; then rank=3
     else rank=2
     fi
-    rows="$rows$rank$tab$row
+    ids+=("$_ST_ID")
+    rows="$rows$rank$tab$_ST_ID$tab$row
 "
   done <<EOF
 $_STATUS_LIVE
 EOF
-  if [ -n "$rows" ]; then
-    _status_html_task_table "$(printf '%s' "$rows" | sort -s -t "$tab" -k 1,1 | cut -f 2-)
+  _STG_KEYS=()
+  if [ ${#ids[@]} -gt 0 ]; then _status_task_groups "${ids[@]}"; fi
+  if [ -z "$rows" ]; then
+    printf '<p class="empty">Nothing is running.</p>\n'
+  elif [ ${#_STG_KEYS[@]} -eq 0 ]; then
+    _status_html_task_table "$(printf '%s' "$rows" | sort -s -t "$tab" -k 1,1 | cut -f 3-)
 "
   else
-    printf '<p class="empty">Nothing is running.</p>\n'
+    _status_html_task_groups "$(printf '%s' "$rows" | sort -s -t "$tab" -k 1,1 | cut -f 2-)"
   fi
   if [ -n "$paused_rows" ]; then
     printf '<details id="paused"><summary>Paused</summary>\n'
@@ -2071,6 +2226,47 @@ EOF
     printf '<p class="muted">%d finished, not listed (<code>jig task list --all</code>).</p>\n' "$_STATUS_FINISHED"
   fi
   printf '</section>\n'
+}
+
+# _status_html_task_groups <rows> — "<id><TAB><row>" lines, already in the
+# order "Running now" shows them, as one heading and table per group of
+# _STG_KEYS, then "Other tasks". A group's heading names its spec as the
+# specifications below do, says whether it is an epic, and draws its progress
+# with the phases' bar.
+_status_html_task_groups() {
+  local g=0 key id row body pct heading
+  while [ "$g" -le ${#_STG_KEYS[@]} ]; do
+    if [ "$g" -lt ${#_STG_KEYS[@]} ]; then
+      key=${_STG_KEYS[$g]}
+      heading="<h3><code>$(_status_h "$key")</code>"
+      # A spec with no heading of its own is titled by its id: said once.
+      [ "${_STG_TITLE[$g]}" = "$key" ] || heading="$heading $(_status_h "${_STG_TITLE[$g]}")"
+      heading="$heading <span class=\"badge\">$(_status_h "${_STG_KIND[$g]}")</span>"
+      if [ -n "${_STG_TOTAL[$g]}" ]; then
+        pct=0
+        [ "${_STG_TOTAL[$g]}" -eq 0 ] || pct=$((${_STG_DONE[$g]} * 100 / ${_STG_TOTAL[$g]}))
+        heading="$heading$(printf ' <span class="muted"><span class="bar"><span style="width: %d%%"></span></span>%s/%s done</span>' \
+          "$pct" "$(_status_h "${_STG_DONE[$g]}")" "$(_status_h "${_STG_TOTAL[$g]}")")"
+      fi
+      heading="$heading</h3>"
+    else
+      key="" heading="<h3>Other tasks</h3>"
+    fi
+    g=$((g + 1))
+    body=""
+    while IFS=$'\t' read -r id row; do
+      [ -n "$id" ] || continue
+      _status_group_of "$id"
+      [ "$_STG_SID" = "$key" ] || continue
+      body="$body$row
+"
+    done <<EOF
+$1
+EOF
+    [ -n "$body" ] || continue
+    printf '%s\n' "$heading"
+    _status_html_task_table "$body"
+  done
 }
 
 _status_html_task_table() {
@@ -2190,7 +2386,8 @@ _status_html_specs() {
   done < <(printf '%s\n' "$rows")
   printf '</tbody>\n</table></div>\n'
 
-  phases=$(spec_phase_rows)
+  [ -n "$_STATUS_PHASE_READY" ] || _status_phase_rows_collect
+  phases=$_STATUS_PHASE_ROWS
   while IFS="$(printf '\t')" read -r id title state; do
     [ -n "$id" ] || continue
     _status_html_phases "$id" "$title" "$phases"
