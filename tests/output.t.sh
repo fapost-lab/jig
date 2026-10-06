@@ -150,3 +150,70 @@ test_output_without_colour_the_terminal_form_has_no_escape() {
   assert_not_contains "$(cat nocolor.txt)" "$ESC"
   assert_contains "$(cat nocolor.txt)" "warn  c: d"
 }
+
+# --- sections ---------------------------------------------------------------------
+
+test_output_section_blocks_are_ascii_without_a_utf8_locale() {
+  _output_lib
+  (
+    LC_ALL=C; NO_COLOR=1; JIG_TERMINAL=1; out_init
+    out_heading "jig 1.0 | demo" ok "nothing needs you"
+    out_section "Tasks" "$(out_join "2 active" "1 finished")"
+    out_row dim 4 T1 bold 8 t-a warn 0 "$(out_join worktree "3 uncommitted")"
+    out_row dim 4 T2 bold 8 a-long-id plain 0 ""
+    out_row dim 4 "$OUT_MARK" plain 0 "current task: none"
+    printf '%s\n' "$OUT_MORE"
+  ) > ascii.txt
+  {
+    printf 'jig 1.0 | demo%66s\n' "nothing needs you"
+    printf '\n-- Tasks  (2 active | 1 finished) %s\n' "----------------------------------------------"
+    printf '  T1  t-a     worktree | 3 uncommitted\n'
+    printf '  T2  a-long-id\n'
+    printf '  .   current task: none\n'
+    printf '...\n'
+  } > expected.txt
+  cmp expected.txt ascii.txt || fail "ascii sections differ: $(diff expected.txt ascii.txt)"
+}
+
+# The plain form never draws anything but ASCII, whatever the locale says.
+test_output_section_marks_are_utf8_only_on_a_utf8_terminal() {
+  local n
+  n=$(LC_ALL=en_US.UTF-8 bash -c 'x=$(printf "\302\267"); printf %s "${#x}"' 2>/dev/null)
+  [ "$n" = 1 ] || skip "en_US.UTF-8 is not available here"
+  _output_lib
+  (
+    unset LC_ALL LC_CTYPE; LANG=en_US.UTF-8; NO_COLOR=1; JIG_TERMINAL=1; out_init
+    out_section "Install"
+    printf '%s|%s|%s\n' "$(out_join a b)" "$OUT_MARK" "$OUT_MORE"
+    JIG_TERMINAL=0; out_init
+    out_section "Install"
+    printf '%s|%s|%s\n' "$(out_join a b)" "$OUT_MARK" "$OUT_MORE"
+    unset LANG; LC_CTYPE=en_US.UTF-8; JIG_TERMINAL=1; out_init
+    printf '%s\n' "$OUT_MARK"
+    # A locale this shell cannot take is not UTF-8, whatever its name says.
+    LC_CTYPE=C; LC_CTYPE=xx_XX.UTF-8; out_init
+    printf '%s\n' "$OUT_MARK"
+  ) > marks.txt 2>/dev/null
+  local r d
+  r=$(printf '\342\224\200')
+  d=$(printf '\302\267')
+  assert_contains "$(cat marks.txt)" "$r$r Install $r$r$r"
+  assert_contains "$(cat marks.txt)" "a $d b|$d|$(printf '\342\200\246')"
+  assert_contains "$(cat marks.txt)" "-- Install ---"
+  assert_contains "$(cat marks.txt)" "a | b|.|..."
+  assert_eq "$d" "$(tail -n 2 marks.txt | sed -n 1p)"
+  assert_eq "." "$(sed -n '$p' marks.txt)"
+}
+
+test_output_section_colours_the_title_and_dims_the_rule() {
+  _output_lib
+  (
+    unset NO_COLOR; LC_ALL=C; TERM=xterm; JIG_TERMINAL=1; out_init
+    out_heading "jig" warn "2 items need you"
+    out_section "Tasks" "2 active"
+    out_row ok 6 ok warn 0 "x"
+  ) > color.txt
+  assert_contains "$(cat color.txt)" "${ESC}[33m2 items need you${ESC}[0m"
+  assert_contains "$(cat color.txt)" "${ESC}[2m--${ESC}[0m ${ESC}[1;36mTasks${ESC}[0m  (2 active) ${ESC}[2m---"
+  assert_contains "$(cat color.txt)" "  ${ESC}[32mok${ESC}[0m    ${ESC}[33mx${ESC}[0m"
+}
