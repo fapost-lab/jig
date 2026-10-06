@@ -332,8 +332,10 @@ It answers four questions, in this order:
 2. **Running now.** Every task in progress: its class, status, the branch it lands on, the worktree
    it runs in, whether its review still holds (current, stale, or none yet — and whether a T4 task
    still needs one), and each finding that stops it. For a task on autopilot it also shows the stage
-   it is in, for how long, and how many of its two fixing attempts it used. Paused tasks are folded
-   away below.
+   it is in, for how long, and how many of its two fixing attempts it used. Tasks of a specification
+   are grouped under it — epics first, with how far the roadmap has got — and tasks of no
+   specification come last, under *Other tasks*; `jig status` at a terminal groups its Tasks section
+   the same way. Paused tasks are folded away below.
 3. **Specifications.** How far every roadmap has got, phase by phase. For a specification built on
    its own branch, the progress is read from that branch as your copy of it last saw it.
 4. **Details.** The counts at a glance, and the complete `jig status` text, folded away at the bottom.

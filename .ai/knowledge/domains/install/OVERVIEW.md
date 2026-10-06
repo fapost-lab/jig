@@ -227,7 +227,9 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
   summary in plain words, for the report and the commit message alike).
 - `scripts/lib/output.sh` — the output layer: `out_init` decides plain or terminal form once,
   `out_status`, `out_detail`, `out_group`, `out_gap`, `out_summary` are the blocks a report is
-  built from; `tests/output.t.sh` pins their bytes.
+  built from, and `out_heading`, `out_section`, `out_row`, `out_join` (with `OUT_WIDTH`,
+  `OUT_SEP`, `OUT_MARK`, `OUT_MORE`) draw a report read by section, as `jig status` is at a
+  terminal; `tests/output.t.sh` pins their bytes.
 - `scripts/jig.cmd` — the PowerShell entry; `.github/WINDOWS_RELEASE_CHECKLIST.md` — what CI cannot
   check before a release that changes installation on Windows.
 - `scripts/lib/self-update.sh` — `cmd_self_update`.
