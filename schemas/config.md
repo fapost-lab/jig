@@ -12,6 +12,7 @@ Absent keys take the default. Paths are not configurable.
 | `git.branch_per_task` | `true` | | `jig task start` creates and checks out a branch |
 | `git.branch_template` | `task/{id}` | | branch name; `{id}` is the task id |
 | `git.worktree_root` | `../<project>.worktrees` | yes | where `jig task start --worktree` puts worktrees |
+| `git.delete_merged_branches` | `true` | yes | a branch Jig made goes once its work has landed: right after a merge Jig made (back on the base branch, then `git branch -d` and origin's copy), and in housekeeping once its task is purged (origin's copy there only at `agent.git` `push` or above); `false` keeps every branch (adr-20261007-a-merged-branch-leaves-with-its-work) |
 | `worktree.carry` | `[]` | | extra paths this project needs copied into a new worktree, beyond what the active profiles already declare (`vendor`, `node_modules`, `.env`) |
 | `worktree.share` | `[]` | | directories a new worktree shares with this checkout rather than copies — each given as a real directory whose entries link to this checkout's, for separate repositories under edit such as `packages/` |
 | `forge` | `auto` | | `auto`, `github`, `gitlab`, `none` |
@@ -61,7 +62,7 @@ Values `set` accepts, per key:
 |---|---|
 | `housekeeping.cadence` | whole days (`3d` or `3`) |
 | `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after`, `checkout.busy_ttl`, `verify.busy_ttl` | `<n>[dhms]`; `verify.busy_ttl` also takes `0` |
-| `housekeeping.fetch`, `autopilot.unattended` | `true` or `false` |
+| `housekeeping.fetch`, `git.delete_merged_branches`, `autopilot.unattended` | `true` or `false` |
 | `agent.git` | `none`, `commit`, `push`, `pr`, `merge` |
 | `agent.ci_timeout` | whole minutes, 0 to 9999 |
 | `autopilot.parallel` | a whole number, 1 to 16 |

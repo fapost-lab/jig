@@ -11,7 +11,9 @@
 # disk. Everything else — base branch, profiles, forge — must be the same for
 # every contributor and for CI, so a local value for it is ignored and
 # reported by `jig status`. Adding a key here is a decision about that test,
-# not a convenience; record it in schemas/config.md.
+# not a convenience; record it in schemas/config.md. `git.delete_merged_branches`
+# is one: which of its own branches a clone keeps is that clone's business
+# (adr-20261007-a-merged-branch-leaves-with-its-work).
 #
 # `agent.git`, `agent.ci_timeout`, `autopilot.unattended`,
 # `autopilot.parallel` and `route.depth` are also in JIG_CFG_LOCAL_ONLY_KEYS
@@ -19,7 +21,7 @@
 # answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -143,6 +145,7 @@ git.base_branch main
 git.branch_per_task true
 git.branch_template task/{id}
 git.worktree_root ../<project>.worktrees
+git.delete_merged_branches true
 worktree.carry []
 worktree.share []
 forge auto
@@ -478,7 +481,8 @@ _cfg_parallel() {
 # - the other housekeeping durations, checkout.busy_ttl and verify.busy_ttl:
 #   `<n>[dhms]`, `jig_duration_seconds` — `0` is a legal value for
 #   verify.busy_ttl and means "never wait";
-# - housekeeping.fetch and autopilot.unattended: `true` or `false` — cfg_bool
+# - housekeeping.fetch, git.delete_merged_branches and autopilot.unattended:
+#   `true` or `false` — cfg_bool
 #   would take yes/1/on too, jig_unattended only `true`; the one spelling
 #   both read alike;
 # - agent.git and agent.ci_timeout: the checks of jig_agent_git and
@@ -520,7 +524,7 @@ jig_config_value_problem() {
         '' | *[!0-9]* | ?????????*) printf 'not a duration (e.g. 7d, 12h, 30m, 90s)\n'; return 1 ;;
       esac
       ;;
-    housekeeping.fetch | autopilot.unattended)
+    housekeeping.fetch | git.delete_merged_branches | autopilot.unattended)
       case "$value" in
         true | false) ;;
         *) printf 'not true or false\n'; return 1 ;;

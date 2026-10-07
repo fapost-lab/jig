@@ -3689,5 +3689,11 @@ task_ship() {
       return 0
     fi
   fi
-  jig_ship_merge "task ship" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" any
+  local sha
+  sha=$(git -C "$JIG_PROJECT" rev-parse HEAD)
+  jig_ship_merge "task ship" "$JIG_SHIP_URL" "$sha" any
+  # Merged here, so this checkout goes back to the base and the branch goes;
+  # from the task's own worktree it stays for housekeeping
+  # (adr-20261007-a-merged-branch-leaves-with-its-work).
+  jig_ship_leave "task ship" "$branch" "$base" "$sha"
 }

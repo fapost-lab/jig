@@ -1356,6 +1356,155 @@ _jig_pr_state_gitlab() {
   esac
 }
 
+# --- merged branches ---------------------------------------------------------
+#
+# A branch whose work has landed leaves with it
+# (adr-20261007-a-merged-branch-leaves-with-its-work): right after a merge Jig
+# made itself (jig_ship_leave), and in housekeeping once the task it belonged
+# to is purged (_hk_branch_sweep). This is the one place a branch is deleted,
+# and git does the deleting: `git branch -d`, never `-D`, so git itself refuses
+# a branch whose commits are on neither its upstream nor HEAD; and on origin a
+# push with a lease at the merged commit, so a branch somebody pushed to after
+# the merge stays. RULES.md names this site in its deletion paragraph.
+
+# jig_branch_is_jigs <branch> — exit 0 when <branch> is a name Jig gives its
+# own branches: `jig/upgrade-*` (jig upgrade), `finish/<id>` (spec ship's
+# finish) or the name `git.branch_template` gives a valid task id. A template
+# with no literal text before `{id}` names no branch as Jig's: every branch
+# whose name is a valid id would match it. Never an epic (`epic/*`, ADR-0040)
+# or a spec branch (`spec/*`): those are the bases tasks are judged against,
+# and never the project's base branch, whatever it is called.
+jig_branch_is_jigs() {
+  local b="$1" template prefix suffix mid
+  [ -n "$b" ] || return 1
+  [ "$b" != "$(cfg git.base_branch main)" ] || return 1
+  case "$b" in
+    epic/* | spec/*) return 1 ;;
+    jig/upgrade-?*) return 0 ;;
+    finish/*) jig_valid_id "${b#finish/}"; return ;;
+  esac
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    *'{id}'*) ;;
+    *) return 1 ;;
+  esac
+  prefix=${template%%'{id}'*}
+  suffix=${template#*'{id}'}
+  [ -n "$prefix" ] || return 1
+  case "$b" in
+    "$prefix"*"$suffix") ;;
+    *) return 1 ;;
+  esac
+  mid=${b#"$prefix"}
+  mid=${mid%"$suffix"}
+  jig_valid_id "$mid"
+}
+
+# jig_branch_checked_out <branch> — exit 0 when <branch> is checked out in any
+# worktree of this clone, this checkout included; also when git cannot list
+# them: an unanswered question keeps the branch.
+jig_branch_checked_out() {
+  local list
+  list=$(git -C "$JIG_PROJECT" worktree list --porcelain 2>/dev/null) || return 0
+  jig_has_line "branch refs/heads/$1" "$list"
+}
+
+# jig_branch_leave <who> <branch> <remote-sha> — delete <branch> here, then on
+# origin, and say so; or keep it and say why. <remote-sha> is the head of the
+# pull request the forge reported merged, or empty: without one, origin is
+# never touched. One line per outcome, prefixed with <who>:
+#   deleted branch <b> | deleted branch <b> on origin | kept branch <b>: <why>
+#
+# The order is the safety. The local branch goes first, while origin/<b> — its
+# upstream, at the commit that was pushed — still exists: `git branch -d`
+# checks a branch against its upstream when it has one, so a squash-merged
+# branch passes, and a branch with a commit origin never saw is refused. A
+# refusal keeps origin's copy too. Only then origin: `--force-with-lease` at
+# <remote-sha> deletes the branch only while it is still at the commit the
+# forge merged. When the forge already deleted it (GitHub's "automatically
+# delete head branches"), the lease fails; `ls-remote` confirms the branch is
+# gone, and only then the stale origin/<b> is dropped — a cache, not work.
+#
+# Off with `git.delete_merged_branches: false`. Returns 0 always: keeping a
+# branch is an outcome, never a failure of the command that called this.
+jig_branch_leave() {
+  local who="$1" b="$2" sha="$3" ssh out
+  cfg_bool git.delete_merged_branches true || return 0
+  jig_branch_is_jigs "$b" || return 0
+  if jig_branch_checked_out "$b"; then
+    printf '%s: kept branch %s: it is checked out in a worktree\n' "$who" "$b"
+    return 0
+  fi
+  if git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/heads/$b"; then
+    if ! git -C "$JIG_PROJECT" branch -q -d "$b" >/dev/null 2>&1; then
+      printf '%s: kept branch %s: git does not see all of its commits merged\n' "$who" "$b"
+      return 0
+    fi
+    printf '%s: deleted branch %s\n' "$who" "$b"
+  fi
+  [ -n "$sha" ] || return 0
+  git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 || return 0
+  ssh=$(jig_git_batch_ssh)
+  if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh" git -C "$JIG_PROJECT" push --quiet \
+       "--force-with-lease=refs/heads/$b:$sha" origin ":refs/heads/$b" >/dev/null 2>&1; then
+    printf '%s: deleted branch %s on origin\n' "$who" "$b"
+    return 0
+  fi
+  if out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh" \
+       git -C "$JIG_PROJECT" ls-remote --heads origin "refs/heads/$b" 2>/dev/null) && [ -z "$out" ]; then
+    git -C "$JIG_PROJECT" branch -q -d -r "origin/$b" >/dev/null 2>&1 || true
+    return 0
+  fi
+  printf '%s: kept branch %s on origin: it is no longer at the merged commit, or origin refused\n' "$who" "$b"
+  return 0
+}
+
+# Set by jig_ship_leave: the branch this checkout was moved to, or empty.
+# shellcheck disable=SC2034 # read by the callers (upgrade.sh)
+JIG_SHIP_BACK_ON=""
+
+# jig_ship_leave <who> <branch> <base> <sha> — after a merge this run made
+# (JIG_SHIP_MERGED=1), put this checkout back on <base>, bring <base> up to
+# origin's by fast-forward, and let <branch> go (jig_branch_leave) with <sha>,
+# the commit the forge merged at (`--match-head-commit`, `--sha`). Where this
+# checkout cannot leave the branch — <base> is checked out in another worktree,
+# or this checkout is a linked worktree, as it is when a task ships from its
+# own — the branch stays, local and remote, for housekeeping to take once the
+# task is purged: deleting origin's copy first would leave a squash-merged
+# local branch that `-d` refuses.
+jig_ship_leave() {
+  local who="$1" b="$2" base="$3" sha="$4" cur
+  JIG_SHIP_BACK_ON=""
+  [ "$JIG_SHIP_MERGED" = 1 ] || return 0
+  cfg_bool git.delete_merged_branches true || return 0
+  jig_branch_is_jigs "$b" || return 0
+  [ "$b" != "$base" ] || return 0
+  cur=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ "$cur" = "$b" ]; then
+    # A linked worktree is never moved: housekeeping finds a task's worktree
+    # by the branch git lists in it, and one switched to the base would be
+    # found by nothing and stay for good. Its branch waits for that cleanup.
+    if [ "$(jig_config_clone_root)" != "$JIG_PROJECT" ]; then
+      printf '%s: kept branch %s: it is checked out in this worktree; housekeeping deletes both once its task is closed\n' "$who" "$b"
+      return 0
+    fi
+    if ! git -C "$JIG_PROJECT" checkout -q "$base" >/dev/null 2>&1; then
+      printf '%s: kept branch %s: this checkout cannot switch to %s; housekeeping deletes it once its task is closed\n' "$who" "$b" "$base"
+      return 0
+    fi
+    # shellcheck disable=SC2034 # read by the callers (upgrade.sh)
+    JIG_SHIP_BACK_ON="$base"
+    jig_fetch_branches "$who" "$base"
+    if git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$base" >/dev/null 2>&1 \
+       && ! git -C "$JIG_PROJECT" merge --ff-only -q "refs/remotes/origin/$base" >/dev/null 2>&1; then
+      printf '%s: back on %s, which could not be fast-forwarded to origin/%s\n' "$who" "$base" "$base"
+    else
+      printf '%s: back on %s\n' "$who" "$base"
+    fi
+  fi
+  jig_branch_leave "$who" "$b" "$sha"
+}
+
 # --- specification links ------------------------------------------------------
 
 # jig_spec_link <task.md> — the spec id a task links to, or nothing.

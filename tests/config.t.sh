@@ -263,6 +263,8 @@ test_config_set_boolean_keys_validation() {
   _config_rejects housekeeping.fetch 1
   _config_rejects housekeeping.fetch on
   _config_rejects housekeeping.fetch TRUE
+  _config_accepts git.delete_merged_branches false
+  _config_rejects git.delete_merged_branches no
 
   _config_accepts autopilot.unattended true
   _config_accepts autopilot.unattended false

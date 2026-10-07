@@ -48,7 +48,22 @@
   mirror is built and taken back by the same steps, so what is deleted is a directory of links in
   the staging directory, and deleting a link — a symlink, or a junction under Git Bash — never
   touches the owner's entry it points at.
-  (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it) `jig verify`'s run record is the
+  (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it) A branch is the other thing git
+  deletes for jig, through `jig_branch_leave` (common.sh): one jig made
+  (`jig_branch_is_jigs` — `jig/upgrade-*`, `finish/<id>`, the name `git.branch_template` gives a
+  valid id after a non-empty prefix; never the base branch, `epic/*` or `spec/*`), checked out in
+  no worktree, whose work landed, with `git.delete_merged_branches` not `false`. Locally `git
+  branch -d`, never `-D`, run before origin is touched so that `-d` still compares the branch
+  with its upstream. On origin a push with `--force-with-lease` at the head of a pull request
+  the forge reported merged, so a branch that moved after the merge stays; when origin no longer
+  has it, `git branch -d -r` drops the stale `origin/` ref once the local branch is gone — there,
+  or in `_hk_branch_sweep` for an `origin/` ref with no local branch, checked by one `ls-remote`
+  per run. Two callers: `jig_ship_leave`, right after a merge `jig upgrade`, `jig task ship` or `jig spec
+  ship` made, in the main checkout only; and housekeeping's `_hk_branch_sweep`, which leaves the
+  branch of every workspace it keeps, touches origin only at `agent.git` `push` or above, and
+  fetches with `--no-prune` so the upstream `-d` needs is still there.
+  (adr-20261007-a-merged-branch-leaves-with-its-work)
+  `jig verify`'s run record is the
   sixth, and it is the shape ADR-0035 already allows rather than a new one: the directory
   `<clone root>/.ai/runtime/verify/busy/` is created by a plain `mkdir` — the atomic claim
   itself, so making it and finding it taken are one act — and given back by removing the one

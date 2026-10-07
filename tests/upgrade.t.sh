@@ -1664,6 +1664,100 @@ test_upgrade_at_agent_git_pr_pushes_its_branch() {
   rm -rf "$src" "$remote"
 }
 
+# _upgrade_merge_project <remote-var> — _unit_project with an origin, GitHub
+# as the forge (committed, as a project setting is) and agent.git merge, with
+# a fake `gh` in stub-bin/ that opens, checks green and merges whatever is
+# shipped. Prints the bare remote's path; the caller removes it, and puts
+# stub-bin/ on PATH itself, since a `$(...)` would lose the change.
+_upgrade_merge_project() {
+  local remote dir
+  _unit_project
+  sed 's|^forge:.*|forge: github|' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git commit -q -am "fixture: github is the forge"
+  remote=$(mktemp -d "${TMPDIR:-/tmp}/jig-remote.XXXXXX")
+  git init -q --bare "$remote"
+  git remote add origin "$remote"
+  git push -q origin main
+  git fetch -q origin
+  jig config set --local agent.git merge agent.ci_timeout 0 >/dev/null
+  dir="$PWD"
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create") printf 'https://github.com/example/example/pull/7\n' ;;
+  "pr view") printf 'false %s\n' "\$(git rev-parse HEAD)" ;;
+  "repo view") printf 'true true true\n' ;;
+  "pr checks") printf 'pass\n' ;;
+  "pr merge") printf '%s\n' "\$*" > "$dir/stub-bin/merged" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  printf 'stub-bin/\n' >> .git/info/exclude
+  printf '%s\n' "$remote"
+}
+
+# Merged by the upgrade itself: no branch is left behind, here or on origin,
+# and the person is back on main (adr-20261007-a-merged-branch-leaves-with-its-work).
+test_upgrade_merged_leaves_no_branch_and_puts_the_checkout_on_main() {
+  local src remote
+  remote=$(_upgrade_merge_project)
+  PATH="$PWD/stub-bin:$PATH"
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/7"
+  assert_contains "$OUT" "upgrade: back on main"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9 on origin"
+  assert_not_contains "$OUT" "once it is merged"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  if git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the local branch is still here"; fi
+  if git -C "$remote" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the branch is still on origin"; fi
+
+  rm -rf "$src" "$remote"
+}
+
+# Started on another branch: back on main after the merge, the run names the
+# way back and the merge that brings the upgrade there.
+test_upgrade_merged_from_another_branch_names_the_way_back() {
+  local src remote
+  remote=$(_upgrade_merge_project)
+  PATH="$PWD/stub-bin:$PATH"
+  src=$(_unit_source)
+  git checkout -q -b task/elsewhere
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "upgrade: back on main"
+  assert_contains "$OUT" "git checkout task/elsewhere\`, then \`git merge main\`"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/task/elsewhere || fail "a branch that is not Jig's was deleted"
+
+  rm -rf "$src" "$remote"
+}
+
+test_upgrade_merged_keeps_its_branch_when_the_key_is_off() {
+  local src remote
+  remote=$(_upgrade_merge_project)
+  PATH="$PWD/stub-bin:$PATH"
+  jig config set --local git.delete_merged_branches false >/dev/null
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/7"
+  assert_not_contains "$OUT" "deleted branch"
+  assert_eq jig/upgrade-9.9.9 "$(git symbolic-ref --short HEAD)"
+  git -C "$remote" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "origin's branch was deleted"
+
+  rm -rf "$src" "$remote"
+}
+
 # An upgrade to this version already waiting on its own branch is not started
 # a second time on another one: that could only become a second pull request.
 test_upgrade_refuses_a_second_branch_for_an_unmerged_upgrade() {

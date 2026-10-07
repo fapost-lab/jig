@@ -1120,7 +1120,7 @@ _upgrade_message() {
 # self-check, then one commit and whatever `agent.git` allows beyond it. Never
 # commits an install the self-check did not confirm.
 _upgrade_finish() {
-  local from="$1" to="$2" summary="$3" level rc=0 base msg rel
+  local from="$1" to="$2" summary="$3" level rc=0 base msg rel sha
   level=$(jig_agent_git) || level=none
   _upgrade_self_check 0 || rc=$?
   _upgrade_config_note 0
@@ -1189,7 +1189,11 @@ _upgrade_finish() {
   # jig_ship_pr registers the body it cuts with the same exit cleanup.
   jig_ship_pr "upgrade" "$_UPGRADE_BRANCH" "$base" "$msg"
   if [ "$level" = merge ] && [ -n "$JIG_SHIP_URL" ]; then
-    jig_ship_merge "upgrade" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" any
+    sha=$(git -C "$JIG_PROJECT" rev-parse HEAD)
+    jig_ship_merge "upgrade" "$JIG_SHIP_URL" "$sha" any
+    # A merged upgrade leaves no branch behind: back on the base, the branch
+    # deleted here and on origin (adr-20261007-a-merged-branch-leaves-with-its-work).
+    jig_ship_leave "upgrade" "$_UPGRADE_BRANCH" "$base" "$sha"
   fi
   _upgrade_next
 }
@@ -1198,8 +1202,23 @@ _upgrade_finish() {
 # branch and a pull request must not become a new dead end for somebody who
 # has never used git beyond what jig does for them.
 _upgrade_next() {
+  local base
   [ -n "$_UPGRADE_BRANCH" ] || return 0
-  _upgrade_out "next: this upgrade is on branch $_UPGRADE_BRANCH; once it is merged into $(cfg git.base_branch main), merge that into the branches still in progress"
+  base=$(cfg git.base_branch main)
+  if [ "$JIG_SHIP_MERGED" = 1 ]; then
+    if [ -n "$JIG_SHIP_BACK_ON" ]; then
+      # Back on the base already: the one way left to go is back to a branch
+      # the person was on before, which does not have the upgrade yet.
+      if [ -n "$_UPGRADE_PREV" ] && [ "$_UPGRADE_PREV" != "$JIG_SHIP_BACK_ON" ] \
+         && [ "$_UPGRADE_PREV" != "$_UPGRADE_BRANCH" ]; then
+        _upgrade_out "next: to go back to what you were doing: \`git checkout $_UPGRADE_PREV\`, then \`git merge $base\` to bring the upgrade into it"
+      fi
+      return 0
+    fi
+    _upgrade_out "next: this upgrade is merged into $base; merge that into the branches still in progress"
+  else
+    _upgrade_out "next: this upgrade is on branch $_UPGRADE_BRANCH; once it is merged into $base, merge that into the branches still in progress"
+  fi
   if [ -n "$_UPGRADE_PREV" ] && [ "$_UPGRADE_PREV" != "$_UPGRADE_BRANCH" ]; then
     _upgrade_out "next: to go back to what you were doing: \`git checkout $_UPGRADE_PREV\`"
   fi

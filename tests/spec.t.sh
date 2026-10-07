@@ -3238,8 +3238,17 @@ test_spec_ship_final_merges_in_an_unattended_run_with_a_merge_commit_only() {
   assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
   local argv
   argv=$(cat gh-merge.argv)
-  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  # The shipped commit from HEAD's reflog: after the merge this checkout is
+  # back on main and the finish branch is gone.
+  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git log -g -1 --format=%H --grep='^Release idea-x' HEAD)")"
   assert_contains "$argv" "--merge"
+  # The finish branch leaves with the release; the epic is never Jig's to
+  # delete (adr-20261007-a-merged-branch-leaves-with-its-work).
+  assert_contains "$OUT" "spec ship: back on main"
+  assert_contains "$OUT" "spec ship: deleted branch finish/idea-x"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  if git show-ref --verify --quiet refs/heads/finish/idea-x; then fail "the finish branch is still here"; fi
+  git show-ref --verify --quiet refs/heads/epic/idea-x || fail "the epic branch was deleted"
   assert_not_contains "$(cat gh.log)" "--admin"
   assert_not_contains "$(cat gh.log)" "--auto"
   assert_not_contains "$(cat gh-create.argv)" "--draft"
