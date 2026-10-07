@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-09-30
+reviewed_at: 2026-10-07
 ---
 # Housekeeping
 
@@ -44,12 +44,22 @@ evidence it inferred itself.
   the run.
 - Removing a **Task Worktree** once the task is closed and its branch landed on its own
   base, or when its workspace is purged, whichever comes first (ADR-0029 as amended
-  2026-09-22). This is the one deletion outside `.ai/`, and git performs it: `git worktree
-  remove`, never with `--force`. A worktree that has to stay is flagged `worktree-kept`, and
+  2026-09-22). This is one of the two deletions outside `.ai/`, and git performs it: `git
+  worktree remove`, never with `--force`. A worktree that has to stay is flagged `worktree-kept`, and
   `jig status` counts it; at a purge it keeps the workspace with it, and beside
   `base-unreleased` the workspace is kept anyway. When git succeeds but the directory remains —
   Windows leaves the Directory Links in it — only links and empty directories are removed
   there; anything else is reason `leftover` (ADR-0037).
+- Deleting the **branches Jig made** once their work landed — the other deletion outside
+  `.ai/`, and git performs it too (`_hk_branch_sweep`,
+  adr-20261007-a-merged-branch-leaves-with-its-work). After the task loop, in the main checkout
+  only: a local branch or `origin/` ref that `jig_branch_is_jigs` calls Jig's (`jig/upgrade-*`,
+  `finish/<id>`, the task template's name), that no workspace left in place holds and no
+  worktree has checked out, and that landed — a merged pull request, or ancestry into the
+  default branch. `git branch -d` first, against the upstream still there, which is what lets a
+  squash merge through (hence `fetch --no-prune`); origin only at `agent.git` `push` or above,
+  with a merged pull request whose head is where origin's branch still is, by a lease push. A purged task's branch goes in the run that purged it, as
+  its worktree does. Lines `branch=<b> where=local|origin action=delete|keep`, without `task=`.
 - Judging each task against **its own base** (`jig_task_base`, ADR-0039): ancestry, the
   "branch is the base" rule, the unknown reason and the reflog of own work all use it, bases
   resolved origin first. Work merged into another branch is flagged `wrong-base` beside
@@ -164,7 +174,8 @@ an LLM (ADR-0001).
 
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
   `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
-  `_hk_worktree_retire` and `_hk_worktree_leftover`, `_hk_record` and `_hk_print_report` (the grouped report),
+  `_hk_worktree_retire` and `_hk_worktree_leftover`, `_hk_branch_sweep` (with
+  `jig_branch_leave` and `jig_branch_is_jigs` in common.sh), `_hk_record` and `_hk_print_report` (the grouped report),
   `_hk_unknown_reason`, `_hk_released`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.
 - `tests/housekeeping.t.sh`; `fixture_merge_repo` in `tests/lib/assert.sh` builds the six

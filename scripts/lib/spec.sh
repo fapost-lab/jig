@@ -1526,7 +1526,12 @@ spec_ship_final() {
     printf 'not merged: %s\n' "$left"
     return 0
   fi
-  jig_ship_merge "spec ship" "$JIG_SHIP_URL" "$(git -C "$JIG_PROJECT" rev-parse HEAD)" merge-commit
+  local sha
+  sha=$(git -C "$JIG_PROJECT" rev-parse HEAD)
+  jig_ship_merge "spec ship" "$JIG_SHIP_URL" "$sha" merge-commit
+  # The finish branch goes with the release; the epic is never Jig's to delete
+  # (jig_branch_is_jigs, adr-20261007-a-merged-branch-leaves-with-its-work).
+  jig_ship_leave "spec ship" "$head" "$default" "$sha"
 }
 
 # spec_ship_final_ready <id> <branch> <default> <src> — what still stands in

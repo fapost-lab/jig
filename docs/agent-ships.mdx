@@ -145,7 +145,16 @@ not merged: the forge refused: At least 1 approving review is required
 ```
 
 That is not an error: protection on your main branch is the limit your team keeps over one person's
-setting. The level works the same with GitLab. Together with `autopilot.unattended: true` it is how a
+setting. The level works the same with GitLab.
+
+Once it has merged, the branch goes with its work. Shipped from your main checkout, `ship` switches
+you back to the main branch, brings it up to date and deletes the task's branch, here and on the
+remote. Shipped from the task's own worktree, the branch stays until housekeeping removes the
+worktree after the task is closed, and deletes the branch then (on the remote too, at `push` or
+higher). Only Jig's own branches are ever
+deleted, only with `git branch -d` — Git itself refuses one holding a commit that is nowhere else —
+and on the remote only while it is still at the commit that was merged. Set
+`git.delete_merged_branches: false` in `.ai/config.local.yaml` to keep every branch. Together with `autopilot.unattended: true` it is how a
 run finishes without you ([Autopilot: without stops](/autopilot#without-stops)).
 </Accordion>
 

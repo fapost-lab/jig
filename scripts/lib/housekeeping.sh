@@ -97,7 +97,7 @@ cmd_housekeeping() {
     _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ) forge=$_HK_FORGE_TOKEN"
   fi
 
-  local needs_consolidation=0 wrong_base=0 found=0
+  local needs_consolidation=0 wrong_base=0 found=0 keep_branches=""
   local state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
 
   # Worktrees tasks were started in, from git's own list, read once per run.
@@ -221,6 +221,17 @@ EOF
         fi
       fi
 
+      # A workspace that stays keeps its branch: ancestry, the epic's final
+      # review and the person still read it. It keeps its base too, which may
+      # be another task's branch (ADR-0026). One the run purged lets its branch
+      # go (_hk_branch_sweep, adr-20261007-a-merged-branch-leaves-with-its-work).
+      if [ "$action" != "purge" ]; then
+        keep_branches="$keep_branches$branch
+$(_hk_task_branch_name "$tid")
+$task_base
+"
+      fi
+
       _hk_report "$dry" "$tid" "$st" "$remote" "$action" "$flags" "$dest" "$facts"
       _hk_record "$tid" "$st" "$remote" "$action" "$flags" "$age" \
         "$abandoned_ttl_days" "$branch" "$base_commit" "$task_base"
@@ -233,6 +244,8 @@ EOF
   _hk_print_report "$dry" "$trash_ttl_days" \
     || jig_warn "housekeeping: could not print the report; the decisions are in .ai/runtime/housekeeping.log"
   [ "$found" = 1 ] || printf 'no task workspaces\n'
+
+  _hk_branch_sweep "$dry" "$keep_branches"
 
   _hk_trash_expire "$dry" "$trash_ttl_days"
 
@@ -493,7 +506,10 @@ _hk_lock_release() {
   return 0
 }
 
-# _hk_fetch <dry> — refresh remote refs once per run when allowed. A failure
+# _hk_fetch <dry> — refresh remote refs once per run when allowed.
+# `--no-prune`, whatever fetch.prune says: an origin/ ref is the upstream
+# `git branch -d` compares a squash-merged branch against, so it stays until
+# the branch sweep has used it (adr-20261007-a-merged-branch-leaves-with-its-work). A failure
 # is not fatal: the run continues on local state and says so (domains/housekeeping).
 #
 # GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh, common.sh):
@@ -516,7 +532,7 @@ _hk_fetch() {
     return 0
   fi
   if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-       git -C "$JIG_PROJECT" fetch --quiet origin >/dev/null 2>&1; then
+       git -C "$JIG_PROJECT" fetch --quiet --no-prune origin >/dev/null 2>&1; then
     _HK_STALE_REMOTE=1
   fi
   return 0
@@ -569,6 +585,11 @@ _hk_check_latest_release() {
 # and pull every pull request in one call (alternatives.md C1). One network
 # call per run, not per task: this command may fire at the start of every
 # agent session.
+#
+# One row per pull request: `<head>\t<base>\t<state>\t<head-commit>`. The
+# fourth column is read only by the branch sweep (_hk_branch_sweep), as the
+# commit a merged branch may be deleted at on origin; a row without it never
+# deletes anything there.
 _hk_forge_init() {
   _HK_FORGE_PRS=""
   _HK_FORGE_KIND=$(jig_forge_kind) || exit 1
@@ -577,14 +598,14 @@ _hk_forge_init() {
   case "$_HK_FORGE_KIND" in
     github)
       _HK_FORGE_PRS=$(gh pr list --state all --limit 200 \
-        --json headRefName,baseRefName,state \
-        --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)"' 2>/dev/null || printf '__failed__')
+        --json headRefName,baseRefName,state,headRefOid \
+        --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)\t\(.headRefOid)"' 2>/dev/null || printf '__failed__')
       ;;
     gitlab)
       # A row needs a branch and a state; jig_glab_fields (common.sh) splits
       # glab's compact array and drops objects without a source branch.
       _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
-        | jig_glab_fields source_branch target_branch state \
+        | jig_glab_fields source_branch target_branch state sha \
         | awk -F '\t' '$3 != ""' \
         || printf '__failed__')
       ;;
@@ -868,6 +889,137 @@ _hk_resolve_ref() {
     printf '%s\n' "refs/remotes/origin/$name"
     return 0
   fi
+  return 0
+}
+
+# --- merged branches -----------------------------------------------------------
+
+# _hk_task_branch_name <task-id> — the branch git.branch_template names for
+# <task-id>, whether or not it exists; nothing for a template without {id}.
+_hk_task_branch_name() {
+  local template
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    *'{id}'*) printf '%s\n' "${template%%'{id}'*}$1${template#*'{id}'}" ;;
+  esac
+}
+
+# _hk_branch_forge_merged <branch> — the head commit of a merged pull request
+# from <branch>, printed (empty when the forge did not say), exit 0; exit 1
+# when the forge knows of none, or of one still open. Merged means into the
+# default branch, or into a branch whose own pull request into the default
+# branch is merged: a phase of an epic that has been released (ADR-0040). A
+# branch with an open pull request is in use, whatever an older one says — as
+# its head, or as the base another one is stacked on.
+_hk_branch_forge_merged() {
+  local b="$1"
+  [ "$_HK_FORGE_KIND" != none ] && [ -n "$_HK_FORGE_PRS" ] || return 1
+  printf '%s\n' "$_HK_FORGE_PRS" | awk -F '\t' -v h="$b" -v d="$_HK_DEFAULT_BASE" '
+    { s = tolower($3) }
+    s == "merged" && $2 == d { released[$1] = 1 }
+    ($1 == h || $2 == h) && (s == "open" || s == "opened") { open = 1 }
+    $1 == h && s == "merged" { n++; base[n] = $2; head[n] = $4 }
+    END {
+      if (open) exit 1
+      for (i = 1; i <= n; i++)
+        if (base[i] == d || released[base[i]]) { print head[i]; exit 0 }
+      exit 1
+    }'
+}
+
+# _hk_branch_sweep <dry> <keep> — delete the branches Jig made whose work has
+# landed and that nothing here still needs (adr-20261007-a-merged-branch-
+# leaves-with-its-work). <keep> lists the branches of the workspaces this run
+# leaves in place, one per line. A candidate is a local branch or an origin/
+# ref that jig_branch_is_jigs (common.sh) calls Jig's, is in <keep> under
+# neither name, and is checked out in no worktree. It has landed when the
+# forge reports its pull request merged (_hk_branch_forge_merged) — the only
+# way a squash merge shows — or when its tip is an ancestor of the default
+# branch. The deleting is jig_branch_leave's, with git's own `-d` as the last
+# word; origin is touched only with a merged pull request whose head is
+# where origin's branch still is, and an origin/ ref whose branch origin no
+# longer has (one `ls-remote` per run) is dropped after the local branch.
+#
+# Only in the clone's main checkout: a worktree borrows `tasks/`, finds no
+# workspace of its own, and would take every task's branch for an orphan.
+# Off with git.delete_merged_branches: false; nothing remote below agent.git
+# push, without housekeeping.fetch, on a dry run, or without origin.
+_hk_branch_sweep() {
+  local dry="$1" keep="$2" def_ref remote_ok=0 remote_rights=0 heads="" b tip sha landed have_local have_track rsha line
+  cfg_bool git.delete_merged_branches true || return 0
+  [ "$(jig_config_clone_root)" = "$JIG_PROJECT" ] || return 0
+  def_ref=$(jig_base_ref "$_HK_DEFAULT_BASE")
+  [ -n "$def_ref" ] || return 0
+  # origin is shared: housekeeping writes to it only for a person whose own
+  # agent may push (agent.git push or above, a local-only key), the same right
+  # `task ship` needs to put the branch there in the first place.
+  case "$(jig_agent_git 2>/dev/null || true)" in
+    push | pr | merge) remote_rights=1 ;;
+  esac
+  if [ "$dry" != 1 ] && [ "$remote_rights" = 1 ] && cfg_bool housekeeping.fetch true \
+     && git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    if heads=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+         git -C "$JIG_PROJECT" ls-remote --heads origin 2>/dev/null); then
+      remote_ok=1
+    fi
+  fi
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    jig_branch_is_jigs "$b" || continue
+    ! jig_has_line "$b" "$keep" || continue
+    ! jig_branch_checked_out "$b" || continue
+    landed=0
+    if sha=$(_hk_branch_forge_merged "$b"); then
+      landed=1
+    else
+      sha=""
+      tip=$(_hk_resolve_ref "$b")
+      if [ -n "$tip" ] && git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$def_ref" 2>/dev/null; then
+        landed=1
+      fi
+    fi
+    [ "$landed" = 1 ] || continue
+    have_local=0
+    have_track=0
+    git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/heads/$b" && have_local=1
+    git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/remotes/origin/$b" && have_track=1
+    if [ "$dry" = 1 ]; then
+      [ "$have_local" = 0 ] || printf 'would delete branch %s\n' "$b"
+      if [ -n "$sha" ] && [ "$have_track" = 1 ] && [ "$remote_rights" = 1 ] \
+         && cfg_bool housekeeping.fetch true; then
+        printf 'would delete branch %s on origin, if it is still at the merged commit\n' "$b"
+      fi
+      continue
+    fi
+    # origin is asked only with a merged pull request, and only at the commit
+    # origin's branch is still at: ls-remote's answer, not the local ref's.
+    rsha=""
+    if [ "$remote_ok" = 1 ]; then
+      rsha=$(printf '%s\n' "$heads" | awk -v r="refs/heads/$b" '$2 == r { print $1; exit }')
+    fi
+    if [ -z "$sha" ] || [ -z "$rsha" ] || [ "$sha" != "$rsha" ]; then
+      sha=""
+    fi
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      printf '%s\n' "$line"
+      case "$line" in
+        *": deleted branch $b on origin") _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=delete" ;;
+        *": deleted branch $b") _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=delete" ;;
+        *": kept branch $b on origin"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=keep" ;;
+        *": kept branch $b"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=keep" ;;
+      esac
+    done < <(jig_branch_leave housekeeping "$b" "$sha")
+    # A cache of a branch origin no longer has, dropped once the local branch
+    # is gone (it was what `-d` compared that branch against).
+    if [ "$remote_ok" = 1 ] && [ "$have_track" = 1 ] && [ -z "$rsha" ] \
+       && ! git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/heads/$b"; then
+      git -C "$JIG_PROJECT" branch -q -d -r "origin/$b" >/dev/null 2>&1 || true
+    fi
+  done < <( {
+      git -C "$JIG_PROJECT" for-each-ref --format='%(refname:strip=2)' refs/heads/ 2>/dev/null
+      git -C "$JIG_PROJECT" for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/ 2>/dev/null
+    } | grep -vx 'HEAD' | LC_ALL=C sort -u)
   return 0
 }
 

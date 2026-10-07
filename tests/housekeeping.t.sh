@@ -453,8 +453,8 @@ test_housekeeping_fetch_never_waits_for_a_prompt() {
   assert_eq 0 "$RC"
   assert_file "$log"
   local fetch_line
-  fetch_line=$(grep 'ARGS=.*fetch --quiet origin' "$log") \
-    || fail "no logged git fetch --quiet origin call: $(cat "$log")"
+  fetch_line=$(grep 'ARGS=.*fetch --quiet --no-prune origin' "$log") \
+    || fail "no logged git fetch --quiet --no-prune origin call: $(cat "$log")"
   assert_contains "$fetch_line" "TERMINAL_PROMPT=0" \
     "housekeeping's fetch must set GIT_TERMINAL_PROMPT=0"
   assert_contains "$fetch_line" "SSH_COMMAND=" \
@@ -1733,9 +1733,25 @@ test_housekeeping_removes_the_worktree_of_a_purged_task() {
   assert_contains "$OUT" "T-1 status=consolidated remote=merged via=ancestry action=purge"
   assert_no_file "$wt"
   assert_no_file .ai/workspace/tasks/T-1
-  # The commits outlive the worktree: the branch is not housekeeping's.
-  git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null || fail "the task branch was deleted"
   assert_file_contains .ai/runtime/housekeeping.log "task=T-1 worktree=$wt action=remove"
+  # The branch leaves with the workspace and the worktree; its commits are on
+  # main (adr-20261007-a-merged-branch-leaves-with-its-work).
+  assert_contains "$OUT" "housekeeping: deleted branch task/T-1"
+  if git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null; then fail "the task branch is still here"; fi
+  assert_file_contains .ai/runtime/housekeeping.log "branch=task/T-1 where=local action=delete"
+}
+
+test_housekeeping_keeps_the_branch_of_a_purged_task_when_the_key_is_off() {
+  hk_worktree_setup
+  hk_cfg_local git.delete_merged_branches false
+  local wt
+  wt=$(hk_worktree_task T-1)
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_no_file "$wt"
+  assert_not_contains "$OUT" "deleted branch"
+  git rev-parse --verify --quiet refs/heads/task/T-1 >/dev/null || fail "the task branch was deleted"
 }
 
 test_housekeeping_keeps_a_worktree_with_uncommitted_work_and_its_workspace() {
@@ -2808,4 +2824,309 @@ test_housekeeping_latest_release_makes_no_request_when_fetch_is_false() {
   assert_no_file .ai/runtime/latest-release
 
   rm -rf "$src" "$bin"
+}
+
+# --- merged branches (adr-20261007-a-merged-branch-leaves-with-its-work) -----
+
+# hk_branch <name> [merge|none] — a branch off main with one commit of its own,
+# merged back into main by a merge commit unless `none`; this checkout stays
+# on main.
+hk_branch() {
+  local name="$1" how="${2:-merge}" file
+  file=$(printf '%s' "$name" | tr '/' '-').txt
+  hk_tick
+  git checkout -q -b "$name" main
+  printf '%s\n' "$name" > "$file"
+  git add "$file"
+  git commit -q -m "work on $name"
+  git checkout -q main
+  if [ "$how" = merge ]; then
+    hk_tick
+    git merge -q --no-ff -m "merge $name" "$name"
+  fi
+}
+
+test_housekeeping_deletes_merged_jig_branches_and_nothing_else() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  hk_branch jig/upgrade-1.0.0
+  hk_branch finish/rel
+  hk_branch task/old-1
+  hk_branch task/live
+  fixture_task live task/live active
+  hk_branch task/unmerged none
+  hk_branch feature/x
+  hk_branch epic/e
+  hk_branch spec/s
+  hk_branch jig/upgrade-2.0.0
+  git worktree add -q "$PWD/hk-wt-busy" jig/upgrade-2.0.0
+  printf 'hk-wt-busy/\n' >> .git/info/exclude
+
+  run jig housekeeping
+  # 3: task `live` is merged and not consolidated, which is exactly why its
+  # branch has to stay.
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch jig/upgrade-1.0.0"
+  assert_contains "$OUT" "housekeeping: deleted branch finish/rel"
+  assert_contains "$OUT" "housekeeping: deleted branch task/old-1"
+  local b
+  for b in jig/upgrade-1.0.0 finish/rel task/old-1; do
+    if git show-ref --verify --quiet "refs/heads/$b"; then fail "$b is still here"; fi
+  done
+  # A task still here, work not merged, a branch that is not Jig's, an epic,
+  # a spec, the base, and a branch checked out in a worktree all stay.
+  for b in task/live task/unmerged feature/x epic/e spec/s main jig/upgrade-2.0.0; do
+    git show-ref --verify --quiet "refs/heads/$b" || fail "$b was deleted"
+  done
+  git worktree remove --force "$PWD/hk-wt-busy"
+}
+
+test_housekeeping_dry_run_names_the_branches_and_deletes_none() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  hk_branch jig/upgrade-1.0.0
+
+  run jig housekeeping --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "would delete branch jig/upgrade-1.0.0"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-1.0.0 || fail "a dry run deleted a branch"
+}
+
+# hk_squash_origin <branch> — a local bare origin; <branch> is pushed with an
+# upstream, then squash-merged into main and main pushed, so no ancestry
+# shows the landing. GitHub is the forge, fetch is on, and this person's agent
+# may push (agent.git push), which origin is touched only for. Prints the bare
+# repository's path.
+hk_squash_origin() {
+  local b="$1" remote
+  # Inside the test's own directory: `..` is shared by tests running at once.
+  remote="$PWD/hk-origin.git"
+  printf 'hk-origin.git/\n' >> .git/info/exclude
+  git init -q --bare "$remote"
+  git remote add origin "$remote"
+  git push -q origin main
+  hk_tick
+  git checkout -q -b "$b" main
+  printf 'sq\n' > sq.txt
+  git add sq.txt
+  git commit -q -m "squash work"
+  git push -q -u origin "$b" 2>/dev/null
+  git checkout -q main
+  hk_tick
+  git merge --squash "$b" >/dev/null
+  git commit -q -m "squashed $b"
+  git push -q origin main
+  hk_cfg forge github
+  hk_cfg housekeeping.fetch true
+  hk_cfg_local agent.git push
+  git add -A
+  git commit -q -m "fixture: github, fetch on"
+  git push -q origin main
+  printf '%s\n' "$remote"
+}
+
+hk_stub_gh_rows() {
+  mkdir -p stub-bin
+  printf '%s\n' "$1" > stub-bin/rows
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  pr) cat "$PWD/stub-bin/rows" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  printf 'stub-bin/\n' >> .git/info/exclude
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# Squash-merged: only the forge can say so. The local branch goes first,
+# against its upstream, then origin's at the merged head.
+test_housekeeping_deletes_a_squash_merged_branch_the_forge_reports_merged() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq on origin"
+  if git show-ref --verify --quiet refs/heads/task/sq; then fail "the local branch is still here"; fi
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's branch is still there"; fi
+  assert_file_contains .ai/runtime/housekeeping.log "branch=task/sq where=origin action=delete"
+  rm -rf "$remote"
+}
+
+# Pushed to after the merge: origin's branch is no longer at the merged head,
+# so it stays; nothing local is lost either, since `-d` saw it in upstream.
+test_housekeeping_keeps_origins_branch_that_moved_after_the_merge() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+  hk_tick
+  git checkout -q task/sq
+  printf 'more\n' >> sq.txt
+  git commit -q -am "after the merge"
+  git push -q origin task/sq
+  git checkout -q main
+  git reset -q --hard
+  git branch -q -f task/sq "$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "origin's moved branch was deleted"
+  assert_not_contains "$OUT" "deleted branch task/sq on origin"
+  rm -rf "$remote"
+}
+
+# An open pull request from the same branch means it is in use, whatever an
+# earlier merged one says.
+test_housekeeping_keeps_a_branch_with_an_open_pull_request() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip nl
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  nl=$(printf '\nx'); nl=${nl%x}
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')OPEN$(printf '\t')$tip${nl}task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  git show-ref --verify --quiet refs/heads/task/sq || fail "a branch with an open pull request was deleted"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "origin's branch was deleted"
+  rm -rf "$remote"
+}
+
+# hk_is_jigs <branch> — call jig_branch_is_jigs (common.sh) directly.
+hk_is_jigs() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    JIG_PROJECT="$PWD"
+    jig_branch_is_jigs "$1"
+  ' _ "$1"
+}
+
+test_jig_branch_is_jigs_names_only_jigs_own_branches() {
+  hk_setup
+  local b
+  for b in task/T-1 jig/upgrade-0.23.0 jig/upgrade-0.23.0-2 finish/idea-x; do
+    hk_is_jigs "$b" || fail "$b should be Jig's"
+  done
+  for b in main epic/idea-x spec/idea-x feature/x task/ task/a/b finish/ jig/upgrade- T-1; do
+    if hk_is_jigs "$b"; then fail "$b should not be Jig's"; fi
+  done
+  # The template decides a task branch's name; one with nothing before {id}
+  # would call every id-shaped branch Jig's, so it names none.
+  hk_cfg git.branch_template 'work/{id}-x'
+  hk_is_jigs work/T-1-x || fail "work/T-1-x should be Jig's under work/{id}-x"
+  if hk_is_jigs task/T-1; then fail "task/T-1 is not Jig's under work/{id}-x"; fi
+  hk_cfg git.branch_template '{id}'
+  if hk_is_jigs T-1; then fail "a template without a prefix names no branch as Jig's"; fi
+}
+
+# origin is shared: below agent.git push housekeeping never writes to it, and
+# the local branch still goes.
+test_housekeeping_leaves_origin_alone_below_agent_git_push() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  hk_cfg_local agent.git none
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq"
+  assert_not_contains "$OUT" "on origin"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "origin's branch was deleted below agent.git push"
+  rm -rf "$remote"
+}
+
+# A pull request stacked on the branch is open: the branch is its base, and
+# stays.
+test_housekeeping_keeps_a_branch_another_open_pull_request_is_stacked_on() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip nl
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  nl=$(printf '\nx'); nl=${nl%x}
+  hk_stub_gh_rows "task/next$(printf '\t')task/sq$(printf '\t')OPEN$(printf '\t')abc${nl}task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  git show-ref --verify --quiet refs/heads/task/sq || fail "the base of an open pull request was deleted"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "origin's branch was deleted"
+  rm -rf "$remote"
+}
+
+# A user's fetch.prune must not take the upstream `-d` needs before the sweep.
+test_housekeeping_fetch_never_prunes() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  git config fetch.prune true
+  tip=$(git rev-parse task/sq)
+  git -C "$remote" update-ref -d refs/heads/task/sq
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq"
+  if git show-ref --verify --quiet refs/remotes/origin/task/sq; then fail "the stale origin/ ref was left behind"; fi
+  rm -rf "$remote"
+}
+
+# A task cut from another task's branch (ADR-0026) keeps that branch as its
+# base, merged or not.
+test_housekeeping_keeps_the_branch_a_kept_task_is_based_on() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  hk_branch task/a
+  hk_branch task/b none
+  fixture_task b task/b active base_branch:task/a
+
+  run jig housekeeping
+  git show-ref --verify --quiet refs/heads/task/a || fail "the base of a kept task was deleted"
+}
+
+test_housekeeping_dry_run_names_the_origin_deletion_only_where_a_run_would_make_it() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping --dry-run
+  assert_contains "$OUT" "would delete branch task/sq"
+  assert_contains "$OUT" "would delete branch task/sq on origin"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "a dry run deleted origin's branch"
+
+  hk_cfg_local housekeeping.fetch false
+  run jig housekeeping --dry-run
+  assert_contains "$OUT" "would delete branch task/sq"
+  assert_not_contains "$OUT" "on origin"
+  rm -rf "$remote"
 }

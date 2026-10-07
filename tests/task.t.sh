@@ -3603,7 +3603,8 @@ test_task_ship_unknown_task_dies() {
 # directory, so each test sets only what differs:
 #   gh-checks    the pull request's check buckets, one per line (default: pass)
 #   gh-draft     `true`|`false` for `pr view` (default: false)
-#   gh-head      the head `pr view` reports (default: HEAD of this repository)
+#   gh-head      the head `pr view` reports (default: HEAD where gh runs, so a
+#                ship from a worktree reads that worktree's)
 #   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
 #   gh-merge.rc  the exit code of `pr merge` (default: 0)
 # `pr create` and `pr merge` record their arguments in gh-create.argv and
@@ -3620,7 +3621,7 @@ case "\$1 \$2" in
   "auth status") exit 0 ;;
   "pr list") printf 'null\n' ;;
   "pr create") shift 2; printf '%s\n' "\$@" > "\$d/gh-create.argv"; printf 'https://github.com/example/example/pull/99\n' ;;
-  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git -C "\$d" rev-parse HEAD)")" ;;
+  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
   "repo view") val gh-repo "true true true" ;;
   "pr checks") val gh-checks pass ;;
   "pr merge")
@@ -3711,7 +3712,9 @@ test_task_ship_merge_level_merges_on_green_checks_at_the_shipped_commit() {
   local argv
   argv=$(cat gh-merge.argv)
   assert_contains "$argv" "https://github.com/example/example/pull/99"
-  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git rev-parse HEAD)")"
+  # The shipped commit by its message: after the merge this checkout is back
+  # on main and the task's branch is gone.
+  assert_contains "$argv" "$(printf -- '--match-head-commit\n%s' "$(git log -g -1 --format=%H --grep='^Ship T-1' HEAD)")"
   assert_contains "$argv" "--merge"
   assert_no_override gh.log
 }
@@ -3725,6 +3728,104 @@ test_task_ship_merge_level_takes_squash_when_merge_commits_are_not_allowed() {
   assert_contains "$OUT" "merged "
   assert_contains "$(cat gh-merge.argv)" "--squash"
   assert_not_contains "$(cat gh-merge.argv)" "--merge"
+}
+
+# --- a merged branch leaves with its work (adr-20261007-a-merged-branch-leaves-with-its-work)
+
+# assert_branch_gone <branch> — no such branch here, on origin.git, or as an
+# origin/ ref.
+assert_branch_gone() {
+  if git show-ref --verify --quiet "refs/heads/$1"; then fail "branch $1 is still here"; fi
+  if git show-ref --verify --quiet "refs/remotes/origin/$1"; then fail "origin/$1 is still here"; fi
+  if git --git-dir=origin.git show-ref --verify --quiet "refs/heads/$1"; then fail "branch $1 is still on origin"; fi
+}
+
+test_task_ship_merge_puts_the_checkout_back_on_main_and_deletes_the_branch() {
+  mship_setup github
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "task ship: back on main"
+  assert_contains "$OUT" "task ship: deleted branch task/T-1"
+  assert_contains "$OUT" "task ship: deleted branch task/T-1 on origin"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_branch_gone task/T-1
+}
+
+# A squash leaves the branch's commits off main; `git branch -d` still takes
+# it, against its upstream, because the local branch goes before origin's.
+test_task_ship_squash_merge_still_deletes_the_branch() {
+  mship_setup github
+  printf 'false true true\n' > gh-repo
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$(cat gh-merge.argv)" "--squash"
+  assert_contains "$OUT" "task ship: deleted branch task/T-1 on origin"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_branch_gone task/T-1
+}
+
+test_task_ship_gitlab_merge_deletes_the_branch() {
+  mship_setup gitlab
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: deleted branch task/T-1 on origin"
+  assert_branch_gone task/T-1
+}
+
+test_task_ship_merge_keeps_the_branch_when_the_key_is_off() {
+  mship_setup github
+  ship_cfg_local git.delete_merged_branches false
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged "
+  assert_not_contains "$OUT" "deleted branch"
+  assert_eq task/T-1 "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/task/T-1 || fail "the local branch was deleted"
+  git --git-dir=origin.git show-ref --verify --quiet refs/heads/task/T-1 || fail "origin's branch was deleted"
+}
+
+test_task_ship_without_a_merge_keeps_the_branch() {
+  mship_setup github
+  printf 'fail\n' > gh-checks
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a check failed"
+  assert_not_contains "$OUT" "deleted branch"
+  assert_eq task/T-1 "$(git symbolic-ref --short HEAD)"
+  git --git-dir=origin.git show-ref --verify --quiet refs/heads/task/T-1 || fail "origin's branch was deleted"
+}
+
+# Shipped from the task's own worktree: the base is checked out in the main
+# checkout, and a worktree is never moved, so both copies of the branch stay
+# for housekeeping.
+test_task_ship_merge_from_a_worktree_keeps_the_branch() {
+  mship_setup github
+  git reset -q
+  rm -f ship.txt
+  # The forge setting mship_setup wrote is tracked; committed on the task's
+  # branch, it moves to the worktree with it.
+  git commit -q -am "fixture: github is the forge"
+  run jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt here="$PWD"
+  wt=$(printf '%s\n' "$OUT" | tail -n 1)
+  [ -d "$wt" ] || fail "no worktree at: $wt"
+  cd "$wt" || fail "cannot enter $wt"
+  printf 'ship change\n' > ship.txt
+  git add ship.txt
+  run jig task ship T-1 --message-file "$here/msg.txt"
+  cd "$here" || fail "cannot go back"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged "
+  assert_contains "$OUT" "task ship: kept branch task/T-1: it is checked out in this worktree"
+  git show-ref --verify --quiet refs/heads/task/T-1 || fail "the local branch was deleted"
+  git --git-dir=origin.git show-ref --verify --quiet refs/heads/task/T-1 || fail "origin's branch was deleted"
 }
 
 test_task_ship_merge_level_does_not_merge_without_any_check() {
@@ -3928,7 +4029,7 @@ test_task_ship_merge_level_gitlab_merges_on_a_green_pipeline() {
   assert_contains "$OUT" "merged https://gitlab.example/example/example/-/merge_requests/99"
   local argv
   argv=$(cat glab-merge.argv)
-  assert_contains "$argv" "$(printf '99\n--sha\n%s' "$(git rev-parse HEAD)")"
+  assert_contains "$argv" "$(printf '99\n--sha\n%s' "$(git log -g -1 --format=%H --grep='^Ship T-1' HEAD)")"
   assert_contains "$argv" "--yes"
   assert_contains "$argv" "--auto-merge=false"
   assert_not_contains "$argv" "--squash"
