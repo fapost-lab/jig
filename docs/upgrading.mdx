@@ -24,6 +24,210 @@ a day (`housekeeping.cadence`) as part of its own fetch, and `jig status` — pl
 fix. It says nothing when there is nothing to say: no check yet, the last one could not reach the
 origin, or this is already the newest.
 
+## After an upgrade: what to do, in order
+
+This is the whole list, from the moment you decide to upgrade to the moment the project is back at
+work. Every step says what to do and what you should see. If you skipped several releases, the
+order does not change: do it once, and read every release between yours and the new one in step 5.
+
+<Steps>
+  <Step title="Update the tool on your machine (once per machine)">
+    ```bash
+    jig self-update
+    ```
+
+    You should see one line that starts with `self-update:`, such as
+    `self-update: updated 0.21.0 -> 0.22.0 (…)`, or `self-update: already current at 0.22.0 (…)`
+    when there is nothing newer. It refuses, and
+    changes nothing, when Jig's own checkout on your machine has uncommitted changes. This step
+    changes no project.
+  </Step>
+
+  <Step title="In each project: start clean, look, then upgrade">
+    Open a terminal in the project and make sure of two things:
+
+    - **No uncommitted changes to files git already tracks.** Commit them, stash them with
+      `git stash`, or finish the work they belong to. New files git does not track yet do not count.
+    - **You are not on the branch of a task that is still in progress.** The upgrade works on a
+      branch of its own and would take your checkout off the task's branch. Go to your base branch
+      (usually `main`) first. If a task has a worktree of its own, run the upgrade in the main
+      checkout, not inside that worktree.
+
+    Then ask what would change, without changing anything:
+
+    ```bash
+    jig upgrade --dry-run
+    ```
+
+    It lists what would be placed, replaced, removed or kept. If something would stop a real run it
+    says so in lines that start `note: a real upgrade would stop:`; deal with those first. Then run
+    it for real:
+
+    ```bash
+    jig upgrade
+    ```
+
+    A real run that is refused changes nothing and says why; the usual refusals are
+    [listed below](#when-the-upgrade-refuses).
+  </Step>
+
+  <Step title="See how far the upgrade went on its own, and finish the rest">
+    The upgrade is a change of its own: it creates the branch `jig/upgrade-<version>` from your base
+    branch and makes one commit titled `Upgrade Jig <from> -> <to>`. How much more it does depends on
+    `agent.git`, the setting that says how far your agent may go with git on your behalf (run
+    `jig config keys` to see where yours comes from). Find your level:
+
+    **`none`** — the change is staged and nothing is committed. The run prints the one command that
+    commits it:
+
+    ```text
+    upgrade: the change is staged; commit it with `git commit -F .ai/runtime/upgrade/message`
+    ```
+
+    Run exactly that command. Then push the branch and open a pull request the way you usually do,
+    or, if your project does not use pull requests, merge the branch into your base branch yourself.
+
+    **`commit`** — the change is committed on `jig/upgrade-<version>`. Nothing leaves your machine.
+    Push the branch and open a pull request yourself, or merge it into your base branch.
+
+    **`push`** — committed and pushed to `origin`. (A repository with no remote named `origin` gets
+    `upgrade: no remote named origin, so nothing is pushed` at this level and above; the commit is
+    still made.) Open the pull request yourself on your hosting
+    site (GitHub, GitLab), or merge the branch into your base branch.
+
+    **`pr`** — committed, pushed, and a pull request opened; the run prints its address. Nobody has
+    merged it yet. Whoever may merge in your project (you, or a colleague) reviews it, waits for its
+    checks to pass, and merges it.
+
+    **`merge`** — as `pr`, then the run waits for the checks and merges the pull request itself once
+    they are green. It prints `merged <address>`. When it cannot, it prints `not merged: <reason>`
+    instead — checks red, or still running after `agent.ci_timeout` minutes, no checks at all, the
+    repository refusing the merge, no hosting site available. That is a finished run, not a failure:
+    the pull request is open, so merge it yourself once the reason is dealt with.
+
+    Whatever the level, the upgrade leaves your checkout **on the upgrade branch**, not on the
+    branch you started from, and it ends with two lines that say where you are:
+
+    ```text
+    next: this upgrade is on branch jig/upgrade-0.22.0; once it is merged into main, merge that into the branches still in progress
+    next: to go back to what you were doing: `git checkout task/my-feature`
+    ```
+
+    Once the pull request is merged (by you, a colleague, or the run itself), come back to your base
+    branch and take the merge in. These are three separate commands; run them one after the other.
+
+    ```bash
+    git switch main
+    ```
+
+    Git says `Switched to branch 'main'`. Use your own base branch name if it is not `main`
+    (`git.base_branch` in `.ai/config.yaml`).
+
+    ```bash
+    git pull
+    ```
+
+    Git lists the files the upgrade changed. This brings the merged upgrade onto your machine. If you
+    merged the branch on your own machine instead of on the hosting site, you already have it and can
+    skip this command.
+
+    ```bash
+    git branch -d jig/upgrade-0.22.0
+    ```
+
+    Git says `Deleted branch jig/upgrade-0.22.0`. Write the version you upgraded to. This form of
+    the command is the safe one: it refuses to delete a branch whose work is not in your base
+    branch, so it cannot lose the upgrade. One case to know about: when your repository merges pull
+    requests by *squashing* them, git cannot see that the branch's work arrived and answers
+    `not fully merged`, although it did. If the pull request shows as merged on your hosting site
+    and the upgrade is in your base branch after `git pull`, the branch has done its job, and you can
+    remove it with `git branch -D jig/upgrade-0.22.0`.
+
+    Today the upgrade does not switch you back to your base branch after the merge and does not
+    delete its branch; the commands above do that. The copy of the branch on your hosting site stays
+    there too, unless the repository has **Automatically delete head branches** switched on (on
+    GitHub: Settings, General, Pull Requests). Switching that on makes GitHub remove each branch the
+    moment its pull request is merged. A later release will do this cleanup itself; until then, the
+    steps above are the way.
+
+    Two cases have no branch to clean up. A project that works on a single branch
+    (`git.branch_per_task: false`) gets the commit on the branch it is on, and nothing is pushed. And
+    when the upgrade changed nothing, it removes the branch it made and puts you back where you were,
+    saying `upgrade: nothing changed; back on <branch>`.
+  </Step>
+
+  <Step title="Do the manual steps">
+    The commit message, and the pull request built from it, end with a `Manual steps:` list and a
+    link to this page. Those are the things the upgrade could not do for you and your project would
+    otherwise miss. Read the list and do each item once. An empty list means there is nothing to do.
+    The release sections below describe each release in more words.
+  </Step>
+
+  <Step title="If you skipped releases, read every section in between">
+    Below there is one section per release, newest first, named "From X to Y". If you upgraded from
+    0.20.0 to 0.22.0, read "From 0.21.0 to 0.22.0" and then "From 0.20.0 to 0.21.0", and do what each
+    marks as yours to do, oldest first. A section that says "nothing to do by hand" is an answer too.
+  </Step>
+
+  <Step title="Bring work in progress up to date">
+    A branch that was already in progress gets the upgrade only when the base branch is merged into
+    it, and only after the upgrade itself is merged into the base. For every branch or worktree with
+    work in progress, switch to it and run:
+
+    ```bash
+    git merge main
+    ```
+
+    Git reports the files it brought in; if a file you changed was also changed by the upgrade, it
+    asks you to resolve that. Use your own base branch name if it is not `main`.
+  </Step>
+
+  <Step title="Restart your agent's sessions">
+    Close and reopen the agent (Claude Code, Codex, or whichever you use) in the project. It reads
+    Jig's skills and your `AGENTS.md` when a session starts, so a session that was open during the
+    upgrade keeps working from the old text until it is restarted.
+  </Step>
+
+  <Step title="Check that it took">
+    ```bash
+    jig doctor
+    ```
+
+    The last line is a count, and you want `0 fail`: `doctor: <n> ok, <n> warn, 0 fail`. Its
+    `upgrade check` line reads `up to date`.
+
+    ```bash
+    jig status
+    ```
+
+    You want the heading to end in `nothing needs you`. If it names something, it names the command
+    that deals with it. More on both [at the end of this page](#checking-that-it-took).
+  </Step>
+
+  <Step title="Colleagues need only the first step">
+    A colleague who works in the same repository runs `jig self-update` on their own machine, and
+    nothing else. The upgrade lives in the repository: once its pull request is merged, `git pull`
+    gives them the upgraded project. `jig upgrade` is done once per repository, by one person.
+  </Step>
+</Steps>
+
+### When the upgrade refuses
+
+A refusal lists all its reasons at once, before anything is touched, and the fix is in the message.
+The usual ones:
+
+| The message says | What it means and what to do |
+|---|---|
+| `the working tree has uncommitted changes; commit them, stash them …` | Tracked files have changes. Commit them, run `git stash`, or finish the work, then run `jig upgrade` again. |
+| `task <id> is started and its branch … is checked out here` | You are on the branch of a task in progress. Run `jig task start <id> --worktree` (it gives the task a folder of its own and puts this checkout back on your base branch), then `jig upgrade` again. If this is already a worktree of its own, run the upgrade in the main checkout. If another session is still working on the task, wait until it has finished. |
+| `core.autocrlf is true here and Jig's files are not pinned to LF …` | Git would convert Jig's files to CRLF line endings, as it does by default on Windows, and every file would look changed. The message lists the lines to add to `.gitattributes`; add them, commit, and run again. |
+| `` `jig verify` is running in this checkout `` | A verification is in progress, and replacing its scripts would break it. Run the upgrade when it has finished. |
+| `the upgrade to <version> is already on branch <name>, which has not been merged into <base> yet` | An earlier run's branch is still waiting for its merge. Merge it, or `git checkout <name>` and run `jig upgrade` there to carry it on; a second branch would only become a second pull request. |
+| `upgrade: not committed, because the install is not complete …` | The self-check did not confirm the install, so nothing was committed. Run `jig upgrade` again on the same branch; it carries on. |
+
+`jig upgrade --dry-run` never refuses; it prints the same reasons as `note:` lines, so you can see
+them before you try.
+
 ## What the upgrade does, and what it leaves alone
 
 `jig upgrade` copies from the Jig on your machine. It replaces the files Jig installed and you did
