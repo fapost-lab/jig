@@ -8,6 +8,58 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.23.0 — 2026-10-07
+
+A branch Jig made no longer stays behind once its work has landed: Jig deletes it, here and on the
+remote, right after a merge it made itself and in housekeeping. **The first housekeeping run after
+this upgrade may delete many branches at once**, so read [From 0.22.0 to 0.23.0](/upgrading#from-0220-to-0230)
+before you upgrade a clone that has collected them.
+
+- **Jig deletes the branches it made once their work has landed.** Which are its own: `jig/upgrade-*`,
+  `finish/<id>`, and the name `git.branch_template` gives a task id (when the template has literal
+  text before `{id}`); never the base branch, `epic/*`, `spec/*` or a branch you made yourself. It
+  deletes locally with `git branch -d`, never `-D`, so Git itself refuses a branch holding a commit
+  that is nowhere else; on the remote it pushes the deletion with a lease at the commit that was
+  merged, so a branch somebody pushed to afterwards stays. A branch with an open pull request, as its
+  head or as the base of another, a branch checked out in any worktree, and the branch of a task
+  workspace that is still in place are kept.
+- **After a merge Jig made, you are back on the base branch and the branch is gone.** `jig upgrade`
+  and `jig task ship` at `agent.git: merge`, and the final merge of `jig spec ship`, now switch the
+  main checkout back to the base branch, fast-forward it to `origin`, and delete the branch here and
+  on `origin` (`upgrade: back on main`, `upgrade: deleted branch jig/upgrade-0.23.0`, `upgrade: deleted
+  branch jig/upgrade-0.23.0 on origin`). If you started from another branch, one more line says how to
+  go back to it. A task shipped from its own worktree keeps its branch until housekeeping removes
+  the worktree after the task is closed, and takes the branch with it then. When Jig cannot delete a
+  branch it says `kept branch <name>: <why>` and leaves it to you. Without a hosting site Jig does not
+  merge, so it does not delete.
+- **Housekeeping deletes the branches of finished work.** After its task loop, in the clone's main
+  checkout, it removes the branches Jig made whose work has landed: a merged pull request (the
+  hosting site's answer, the only way a squash merge shows) or the branch being contained in the
+  base branch. On `origin` it deletes only for a person whose `agent.git` is `push` or higher, only
+  with a merged pull request, only while the branch is still at that pull request's head, with `housekeeping.fetch`
+  not `false`, and (on GitHub) the pull request has to be among the last 200 it lists. `jig housekeeping --dry-run`
+  prints what it would delete as `would delete branch <name>`. Its fetch now passes `--no-prune`, whatever your
+  `fetch.prune` says: the copy of a branch on `origin` is what `git branch -d` compares a
+  squash-merged branch against, so it is dropped only after its local branch is gone and `origin` no
+  longer has it.
+- **`git.delete_merged_branches` turns it off.** New key, `true` by default, a local key, so your own
+  `.ai/config.local.yaml` overrides the project file: `jig config set git.delete_merged_branches false --local` keeps every
+  branch and leaves you on the upgrade or task branch after a merge Jig made.
+- **The upgrading page has a step-by-step "After an upgrade" section.** From `jig self-update` to a
+  project back at work, in order: the clean start, what each `agent.git` level leaves to you, the
+  manual steps, skipped releases, branches in progress, restarting your agent's sessions, the
+  `jig doctor` and `jig status` checks, and what colleagues do. It also lists the refusals an upgrade
+  can end in and what to do.
+
+What was proven where: by tests on throwaway repositories and in CI, with the hosting site's `gh` and
+`glab` answers played by stand-ins. The tests cover deletion where it must happen (an upgrade, a
+task ship that merged and one that squashed, GitLab, a spec's finish branch, housekeeping by
+containment and by a squash merge on the hosting site) and keeping where it must not (the key off, not
+merged, shipped from a worktree, not a Jig branch, the base, an epic, a spec, a live task and its
+base, an open pull request, `origin` moved after the merge, `agent.git` below `push`). Not run against
+a real GitHub or GitLab repository. The installer did not change since 0.22.0, so the Windows release
+checklist does not apply to this release.
+
 ## 0.22.0 — 2026-10-06
 
 At a terminal, `jig doctor`, `jig upgrade`, `jig status`, the installer and `jig-setup` now say what

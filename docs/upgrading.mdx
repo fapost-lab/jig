@@ -37,7 +37,7 @@ order does not change: do it once, and read every release between yours and the 
     ```
 
     You should see one line that starts with `self-update:`, such as
-    `self-update: updated 0.21.0 -> 0.22.0 (…)`, or `self-update: already current at 0.22.0 (…)`
+    `self-update: updated 0.22.0 -> 0.23.0 (…)`, or `self-update: already current at 0.23.0 (…)`
     when there is nothing newer. It refuses, and
     changes nothing, when Jig's own checkout on your machine has uncommitted changes. This step
     changes no project.
@@ -112,8 +112,8 @@ order does not change: do it once, and read every release between yours and the 
     ```text
     merged https://github.com/acme/app/pull/42
     upgrade: back on main
-    upgrade: deleted branch jig/upgrade-0.22.0
-    upgrade: deleted branch jig/upgrade-0.22.0 on origin
+    upgrade: deleted branch jig/upgrade-0.23.0
+    upgrade: deleted branch jig/upgrade-0.23.0 on origin
     ```
 
     If you started from another branch, one more line names the way back to it:
@@ -134,7 +134,7 @@ order does not change: do it once, and read every release between yours and the 
     say where you are:
 
     ```text
-    next: this upgrade is on branch jig/upgrade-0.22.0; once it is merged into main, merge that into the branches still in progress
+    next: this upgrade is on branch jig/upgrade-0.23.0; once it is merged into main, merge that into the branches still in progress
     next: to go back to what you were doing: `git checkout task/my-feature`
     ```
 
@@ -162,10 +162,10 @@ order does not change: do it once, and read every release between yours and the 
     higher and the hosting site reports the pull request merged. To remove it at once instead:
 
     ```bash
-    git branch -d jig/upgrade-0.22.0
+    git branch -d jig/upgrade-0.23.0
     ```
 
-    Git says `Deleted branch jig/upgrade-0.22.0`. Write the version you upgraded to. This form of
+    Git says `Deleted branch jig/upgrade-0.23.0`. Write the version you upgraded to. This form of
     the command is the safe one: it refuses to delete a branch whose work is not in your base
     branch, so it cannot lose the upgrade.
 
@@ -176,7 +176,7 @@ order does not change: do it once, and read every release between yours and the 
     deleting it by hand:
 
     <Warning>
-      Run `git branch -D jig/upgrade-0.22.0` only if **all** of these hold: the pull request is shown
+      Run `git branch -D jig/upgrade-0.23.0` only if **all** of these hold: the pull request is shown
       as **Merged** (not Closed) on your hosting site, and after `git pull` your base branch contains
       the upgrade (`jig doctor` shows the new version). `-D` deletes without checking anything; if
       either is not true, do not run it — ask, or leave the branch.
@@ -197,7 +197,7 @@ order does not change: do it once, and read every release between yours and the 
 
   <Step title="If you skipped releases, read every section in between">
     Below there is one section per release, newest first, named "From X to Y". If you upgraded from
-    0.20.0 to 0.22.0, read "From 0.21.0 to 0.22.0" and then "From 0.20.0 to 0.21.0", and do what each
+    0.21.0 to 0.23.0, read "From 0.22.0 to 0.23.0" and then "From 0.21.0 to 0.22.0", and do what each
     marks as yours to do, oldest first. A section that says "nothing to do by hand" is an answer too.
   </Step>
 
@@ -361,6 +361,67 @@ Two kinds of project work differently. One that uses a single branch
 (`git.branch_per_task: false`) gets the commit on the branch it is on, and nothing is pushed. One
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
+
+## From 0.22.0 to 0.23.0
+
+Nothing on the checklist the upgrade itself prints, and nothing to do by hand. The installer did not
+change; `.ai/config.yaml` is not touched. One thing deserves a look before you upgrade a clone that
+has been used for a while:
+
+**The first housekeeping run after the upgrade deletes the merged Jig branches it can, all at
+once.** Branches Jig made (`jig/upgrade-*`, `finish/<id>`, the task branches `git.branch_template`
+names) whose work has landed are deleted from your clone, and the first run is the one that meets all
+the ones collected so far; on a clone that has been through dozens of tasks that is dozens of
+branches. Housekeeping starts on its own with your agent's session, by default at most once a day, once the
+project carries the 0.23.0 scripts. On `origin` it deletes only when your `agent.git` is `push` or
+higher with `housekeeping.fetch` not `false`, only for a branch whose pull request the hosting site
+reports merged (on GitHub, among the last 200 pull requests it lists), and only while the branch is still at the commit that was merged. An older squash-merged
+branch is not recognised and stays, as does one whose copy on `origin` is already gone (Jig then
+says `kept branch <name>: git does not see all of its commits merged`).
+
+To see what it would delete, before it does, in the project's main checkout:
+
+```bash
+jig housekeeping --dry-run
+```
+
+It prints `would delete branch <name>` for each branch in your clone it would delete, and
+`would delete branch <name> on origin, if it is still at the merged commit` where it would also
+touch `origin`, and changes nothing. A branch you want to keep
+is safe if it is checked out in a worktree or its name is not one Jig gives.
+
+To turn the deleting off for good in this clone:
+
+```bash
+jig config set git.delete_merged_branches false --local
+```
+
+That writes `.ai/config.local.yaml`, which is yours alone and not committed. It is a local key: your file overrides the project's `.ai/config.yaml`, per clone; set it in each clone where you want the branches kept.
+
+**What is never deleted.** The base branch, `epic/*` and `spec/*`, and any branch whose name is not
+one Jig gives its own: your own feature branches stay, whatever their state. A branch checked out in
+any worktree. The branch of a task whose workspace is still in place, and the branch it was cut from.
+A branch with an open pull request, as its head or as the base another one is stacked on. A branch
+holding a commit that is nowhere else: Jig deletes with `git branch -d`, never `-D`, and Git
+refuses; Jig then says `kept branch <name>: git does not see all of its commits merged`. Housekeeping's
+sweep runs only in the clone's main checkout, and nothing is deleted when
+`git.delete_merged_branches` is `false`.
+
+**What you will see after a merge Jig made.** When `jig upgrade` or `jig task ship` merges the pull
+request itself (`agent.git: merge`), the run puts you back on your base branch, brings it up to date
+and deletes the branch here and on `origin`; the steps under
+[After an upgrade](#after-an-upgrade-what-to-do-in-order) show the lines. A task shipped from its own
+worktree keeps its branch until the task is closed. An upgrade that was not merged, or ran at a lower
+level, still leaves the checkout on the upgrade branch, as before.
+
+**Which copy runs.** These runs follow whichever copy of Jig runs them. `jig upgrade` started by the
+project's older copy (0.22.0) hands the run to the newer Jig after `jig self-update`; a merged
+upgrade run entirely by 0.22.0 leaves its branch behind, and the 0.23.0 housekeeping deletes it
+afterwards. Housekeeping's sweep runs from the project's own scripts, so it starts once the upgrade is
+in your checkout.
+
+**Placed for you.** `jig upgrade` updates the scripts that carry this (`common`, `config`,
+`housekeeping`, `task`, `spec` and `upgrade` under `.ai/scripts/lib`).
 
 ## From 0.21.0 to 0.22.0
 
