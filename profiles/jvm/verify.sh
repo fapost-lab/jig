@@ -145,7 +145,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   elif [ ! -f ./gradlew ] && ! jp_have gradle; then
     jp_plan check skip "gradlew not found and gradle not found on PATH"
   else
-    filters=$(jp_decide _jvm_gradle_builtin)
+    jp_select _jvm_gradle_builtin
+    filters=$JP_SELECTION
     if [ -n "$filters" ] && [ "$filters" != ALL ]; then
       while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -154,14 +155,15 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $filters
 EOF
     fi
-    jp_plan_selection check "$filters" "Gradle subprojects"
+    jp_plan_select check "$filters" "Gradle subprojects"
   fi
   if [ "$HAS_MAVEN" = 0 ]; then
     jp_plan test skip "no root pom.xml"
   elif [ ! -f ./mvnw ] && ! jp_have mvn; then
     jp_plan test skip "mvnw not found and mvn not found on PATH"
   else
-    filters=$(jp_decide _jvm_maven_builtin)
+    jp_select _jvm_maven_builtin
+    filters=$JP_SELECTION
     if [ -n "$filters" ] && [ "$filters" != ALL ]; then
       while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -170,7 +172,7 @@ EOF
 $filters
 EOF
     fi
-    jp_plan_selection test "$filters" "Maven modules"
+    jp_plan_select test "$filters" "Maven modules"
   fi
   exit 0
 fi
@@ -221,11 +223,13 @@ if [ "$HAS_GRADLE" = 1 ]; then
     if ! jp_scoped; then
       _jvm_gradle_run "$gv"
     else
-      filters=$(jp_decide _jvm_gradle_builtin)
+      jp_select _jvm_gradle_builtin
+      filters=$JP_SELECTION
       if [ -z "$filters" ]; then
         jp_skip "check" "scope: no changed file maps to a subproject"
       elif [ "$filters" = ALL ]; then
-        _jvm_gradle_run "$gv, scope: not narrowable, ran full set"
+        jp_full_left_to_ci "check" "not narrowable" \
+          || _jvm_gradle_run "$gv, scope: not narrowable, ran full set"
       else
         IFS='
 '
@@ -235,7 +239,8 @@ if [ "$HAS_GRADLE" = 1 ]; then
         set +f
         IFS=$' \t\n'
         if missing=$(jp_first_missing "$@"); then
-          _jvm_gradle_run "$gv, scope: filter '$missing' selects no tests, ran full set"
+          jp_full_left_to_ci "check" "filter '$missing' selects no tests" \
+            || _jvm_gradle_run "$gv, scope: filter '$missing' selects no tests, ran full set"
         else
           n=$#
           # One subproject directory per line -> one Gradle task per line,
@@ -251,7 +256,7 @@ if [ "$HAS_GRADLE" = 1 ]; then
           set -- $tasks
           set +f
           IFS=$' \t\n'
-          _jvm_gradle_run "$gv, scope: $n subprojects" "$@"
+          _jvm_gradle_run "$gv, scope: $n subprojects$JP_SELECTION_NOTE" "$@"
         fi
       fi
     fi
@@ -292,11 +297,13 @@ if [ "$HAS_MAVEN" = 1 ]; then
     if ! jp_scoped; then
       _jvm_maven_run "$mv_"
     else
-      filters=$(jp_decide _jvm_maven_builtin)
+      jp_select _jvm_maven_builtin
+      filters=$JP_SELECTION
       if [ -z "$filters" ]; then
         jp_skip "test" "scope: no changed file maps to a module"
       elif [ "$filters" = ALL ]; then
-        _jvm_maven_run "$mv_, scope: not narrowable, ran full set"
+        jp_full_left_to_ci "test" "not narrowable" \
+          || _jvm_maven_run "$mv_, scope: not narrowable, ran full set"
       else
         IFS='
 '
@@ -306,11 +313,12 @@ if [ "$HAS_MAVEN" = 1 ]; then
         set +f
         IFS=$' \t\n'
         if missing=$(jp_first_missing "$@"); then
-          _jvm_maven_run "$mv_, scope: filter '$missing' selects no tests, ran full set"
+          jp_full_left_to_ci "test" "filter '$missing' selects no tests" \
+            || _jvm_maven_run "$mv_, scope: filter '$missing' selects no tests, ran full set"
         else
           n=$#
           joined=$(_jvm_join , "$@")
-          _jvm_maven_run "$mv_, scope: $n modules" -pl "$joined" -am
+          _jvm_maven_run "$mv_, scope: $n modules$JP_SELECTION_NOTE" -pl "$joined" -am
         fi
       fi
     fi

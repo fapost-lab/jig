@@ -544,3 +544,113 @@ test_profile_laravel_explain_says_no_test_is_named_after_the_file() {
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "PLAN laravel: artisan test: full (no test is named after app/Orphan.php)"
 }
+
+# --- verify.full_run: ci leaves the full set to CI (adr-0041, 2026-10-08) ---
+#
+# The owner's Laravel project declares `verify.full_run: ci`, and a change to
+# routes/ or database/ still ran the whole suite locally. Under `ci` a narrowed
+# run never starts the full set: what it can name it runs, the rest is CI's.
+
+# _laravel_ci_project — an installed laravel project that declares
+# `verify.full_run: ci`, committed, with the artisan stub logging to
+# artisan.log.
+_laravel_ci_project() {
+  _laravel_install
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "laravel project, CI runs the full set"
+  _artisan_stub 0 artisan.log
+}
+
+test_profile_laravel_full_run_ci_leaves_a_routes_change_to_ci() {
+  _laravel_ci_project
+  mkdir -p routes
+  printf '<?php\n' > routes/web.php
+
+  run jig verify --profile laravel
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "laravel: artisan test: skip (scope: routes/web.php can affect any test, full set left to CI)"
+  assert_contains "$OUT" "verify: 1 check(s) left their full set to CI (verify.full_run: ci); jig verify --full runs it here"
+  assert_contains "$OUT" "left its full set to CI, so this run verified nothing here"
+  assert_no_file artisan.log
+}
+
+test_profile_laravel_full_run_ci_runs_the_named_tests_beside_a_migration() {
+  _laravel_ci_project
+  mkdir -p app tests database/migrations
+  : > tests/FooTest.php
+  git add -A
+  git commit -q -m "a test"
+  printf '<?php\n' > app/Foo.php
+  printf '<?php\n' > database/migrations/2024_01_01_create_foo_table.php
+
+  run jig verify --profile laravel
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "laravel: artisan test: pass (PHP 8.3.0, scope: 1 test files, full set left to CI)"
+  assert_contains "$OUT" "verify: 1 check(s) left their full set to CI (verify.full_run: ci); jig verify --full runs it here"
+  assert_eq "tests/FooTest.php" "$(cat artisan.log)"
+}
+
+test_profile_laravel_full_run_ci_leaves_a_filter_that_selects_nothing_to_ci() {
+  _laravel_install
+  mkdir -p app
+  : > app/Foo.php
+  _artisan_stub 0 artisan.log
+  files=$(_files_list app/Foo.php)
+  mapped=$(_mapped_file "$(printf 'app/Foo.php\ttests/GoneTest.php')")
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _laravel_scoped "$files" "$mapped"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "laravel: artisan test: skip (scope: filter 'tests/GoneTest.php' selects no tests, full set left to CI)"
+  assert_no_file artisan.log
+}
+
+test_profile_laravel_full_run_ci_full_flag_runs_the_full_set() {
+  _laravel_ci_project
+  mkdir -p routes
+  printf '<?php\n' > routes/web.php
+
+  run jig verify --full --profile laravel
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "verify: full run (--full)"
+  assert_contains "$OUT" "laravel: artisan test: pass (PHP 8.3.0)"
+  assert_not_contains "$OUT" "left to CI"
+  assert_file_contains artisan.log '^$'
+}
+
+test_profile_laravel_full_run_local_still_runs_the_full_set() {
+  _laravel_install
+  git add -A
+  git commit -q -m "laravel project"
+  _artisan_stub 0 artisan.log
+  mkdir -p routes
+  printf '<?php\n' > routes/web.php
+
+  run jig verify --changed --profile laravel
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "laravel: artisan test: pass (PHP 8.3.0, scope: routes/web.php can affect any test, ran full set)"
+  assert_not_contains "$OUT" "left to CI"
+  assert_file_contains artisan.log '^$'
+}
+
+test_profile_laravel_full_run_ci_explain_says_the_full_set_is_left_to_ci() {
+  _laravel_install
+  _artisan_stub 0 artisan.log
+  files=$(_files_list routes/web.php)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _laravel_explain "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "PLAN laravel: artisan test: skip (scope: routes/web.php can affect any test, full set left to CI)"
+  assert_no_file artisan.log
+}

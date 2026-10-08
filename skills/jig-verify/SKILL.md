@@ -25,7 +25,10 @@ With `verify.full_run: ci` — the project's claim that CI runs every check on e
 request — it narrows itself to what changed since `git.base_branch` and prints a header
 naming the mode; that narrowed report is sufficient evidence here as long as it names the
 mode, because the full set is proven by CI on the pull request, and a red CI sends the
-task back to verify.
+task back to verify. A check that says `full set left to CI` is that, not a gap to fill: under
+`ci` never run the full set yourself — not `jig verify --full`, not the stack's runner without a
+filter (`php artisan test`, `phpunit`, `pytest`, `npm test`, `tests/run.sh`) — unless the person
+asks for it.
 
 `jig verify --changed` stays the tool for iteration: it narrows the run to what the diff
 touches regardless of `verify.full_run`, and each profile reports whether it honoured the

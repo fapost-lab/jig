@@ -233,7 +233,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
         jp_plan ruff full "full scope"
       fi
     else
-      filters=$(jp_decide _py_builtin)
+      jp_select _py_builtin
+      filters=$JP_SELECTION
       if [ -n "$filters" ] && [ "$filters" != ALL ]; then
         while IFS= read -r f; do
           [ -n "$f" ] || continue
@@ -247,7 +248,7 @@ EOF
       else
         why=
       fi
-      jp_plan_selection pytest "$filters" "test files" "$why"
+      jp_plan_select pytest "$filters" "test files" "$why"
     fi
   done
   exit 0
@@ -323,12 +324,14 @@ else
   if ! jp_scoped; then
     _py_pytest "$v"
   else
-    filters=$(jp_decide _py_builtin)
+    jp_select _py_builtin
+    filters=$JP_SELECTION
     if [ -z "$filters" ]; then
       jp_skip "pytest" "scope: no changed file maps to a test"
     elif [ "$filters" = ALL ]; then
       why=$(_py_all_reason "$(jp_decide_cause _py_builtin)")
-      _py_pytest "$v, scope: $why, ran full set"
+      jp_full_left_to_ci "pytest" "$why" \
+        || _py_pytest "$v, scope: $why, ran full set"
     else
       IFS='
 '
@@ -338,9 +341,10 @@ else
       set +f
       IFS=$' \t\n'
       if missing=$(jp_first_missing "$@"); then
-        _py_pytest "$v, scope: filter '$missing' selects no tests, ran full set"
+        jp_full_left_to_ci "pytest" "filter '$missing' selects no tests" \
+          || _py_pytest "$v, scope: filter '$missing' selects no tests, ran full set"
       else
-        _py_pytest "$v, scope: $# test files" "$@"
+        _py_pytest "$v, scope: $# test files$JP_SELECTION_NOTE" "$@"
       fi
     fi
   fi

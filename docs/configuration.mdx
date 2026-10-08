@@ -90,6 +90,16 @@ The full set still runs whenever it should:
   command runs everything there;
 - **on request** — `jig verify --full`.
 
+A narrowed run never starts the full set on its own. When a change touches something that can
+affect any test — `routes/` or `composer.json` in Laravel, a lock file, a test helper — or a file no
+test is named after, the profile runs the tests it can name and leaves the full set to CI, and the
+check's line says so:
+
+```text
+laravel: artisan test: skip (scope: routes/web.php can affect any test, full set left to CI)
+verify: 1 check(s) left their full set to CI (verify.full_run: ci); jig verify --full runs it here
+```
+
 This saves the agent from running the whole suite after every small change, while CI still proves
 everything before a merge. A red CI run sends the task back to verification.
 

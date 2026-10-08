@@ -164,11 +164,17 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   caller, or a fixpoint that does not settle is ALL: a name that did not exist before has
   callers nobody can list. The proof is by damage (`conventions/detectors.md`): break the
   function and watch the red land in the selected tests.
-- **Under `verify.full_run: ci`, an ALL beside filters is left to CI.** The key is the project's
-  claim that CI runs the full set, so the profile runs the filters and the result line says
-  `full set left to CI`. ALL alone stays a full run: a narrowed run that selected nothing would
-  be a pass nothing produced. Without the key nothing changes. The profile unsets
-  `JIG_VERIFY_FULL_RUN`, `JIG_VERIFY_BASE` and `JIG_VERIFY_MAPPED_ALL` before the suite starts.
+- **Under `verify.full_run: ci`, a narrowed run never starts a full set.** The key is the
+  project's claim that CI runs the full set, and the full set runs there or on `--full`, never
+  because a narrowed run decided it needed one (adr-0041, amendment 2026-10-08). Every built-in
+  profile, through `profile.sh`'s `jp_select`, `jp_full_left_to_ci` and `jp_plan_full`/
+  `jp_plan_select`, never runs it: an ALL beside filters is dropped and the filters run; an ALL
+  alone, a filter that selects nothing (the whole check, as before) and a runner that cannot
+  narrow leave the check to CI. The
+  check's line is `skip (scope: <why>, full set left to CI)`, a scope skip by the rule of #141, and
+  `cmd_verify` counts those lines into its own summary line naming `--full`. Without the key
+  nothing changes. The shell profile unsets `JIG_VERIFY_FULL_RUN`, `JIG_VERIFY_BASE` and
+  `JIG_VERIFY_MAPPED_ALL` before the suite starts, and `tests/run.sh` clears them for every test.
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.

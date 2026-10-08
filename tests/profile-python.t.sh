@@ -891,3 +891,42 @@ test_profile_python_nested_app_static_asset_runs_full_tests() {
   assert_contains "$OUT" \
     "scope: the profile cannot map myapp/static/myapp/app.js to tests, ran full set"
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_python_full_run_ci_leaves_a_forced_full_set_to_ci() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  printf '{}\n' > package.json
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "package.json"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN
+  _py_unscope
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "python: pytest: skip (scope: package.json changes the asset build, which browser tests load, full set left to CI)"
+  assert_no_file .venv/bin/pytest.log
+}
+
+test_profile_python_full_run_ci_runs_the_named_tests_beside_a_forced_full_set() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  mkdir -p tests
+  printf 'a=1\n' > foo.py
+  printf 'def test_a(): pass\n' > tests/test_foo.py
+  printf '{}\n' > package.json
+  _py_stub "$PWD/.venv/bin/pytest" "pytest 7.0.0"
+  _py_scope "package.json" "foo.py"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" \
+    "python: pytest: pass (pytest 7.0.0, scope: 1 test files, full set left to CI)"
+  assert_file_contains .venv/bin/pytest.log tests/test_foo.py
+}

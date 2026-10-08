@@ -109,3 +109,7 @@ gap to be hidden.
 > changed since the merge base, and CI proves the full set. Profiles gain a second capability, `map`,
 > and a project-owned map decides paths a shipped profile cannot know. The shell profile's table no
 > longer carries this repository's layout. See ADR-0041.
+
+> **Amendment (2026-10-08).** Under `verify.full_run: ci` a profile that cannot map a changed path
+> no longer runs its full set: it leaves it to CI and its check's line says
+> `full set left to CI`. See ADR-0041, amendment 2026-10-08.

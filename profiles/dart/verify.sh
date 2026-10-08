@@ -125,7 +125,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if ! jp_have "$DART_RUNNER"; then
     jp_plan test skip "$DART_RUNNER not found on PATH"
   else
-    filters=$(jp_decide _dart_builtin_test)
+    jp_select _dart_builtin_test
+    filters=$JP_SELECTION
     if [ -n "$filters" ] && [ "$filters" != ALL ]; then
       while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -139,7 +140,7 @@ EOF
     else
       why=
     fi
-    jp_plan_selection test "$filters" "test files" "$why"
+    jp_plan_select test "$filters" "test files" "$why"
   fi
   exit 0
 fi
@@ -214,12 +215,14 @@ else
   if ! jp_scoped; then
     jp_run test "$v" "$DART_RUNNER" test
   else
-    filters=$(jp_decide _dart_builtin_test)
+    jp_select _dart_builtin_test
+    filters=$JP_SELECTION
     if [ -z "$filters" ]; then
       jp_skip test "scope: no changed file maps to a test"
     elif [ "$filters" = ALL ]; then
       why=$(_dart_all_reason "$(jp_decide_cause _dart_builtin_test)")
-      jp_run test "$v, scope: $why, ran full set" "$DART_RUNNER" test
+      jp_full_left_to_ci test "$why" \
+        || jp_run test "$v, scope: $why, ran full set" "$DART_RUNNER" test
     else
       IFS='
 '
@@ -228,14 +231,15 @@ else
       if missing=$(jp_first_missing $filters); then
         set +f
         IFS=$' \t\n'
-        jp_run test "$v, scope: filter '$missing' selects no tests, ran full set" "$DART_RUNNER" test
+        jp_full_left_to_ci test "filter '$missing' selects no tests" \
+          || jp_run test "$v, scope: filter '$missing' selects no tests, ran full set" "$DART_RUNNER" test
       else
         n=$(printf '%s\n' "$filters" | grep -c .)
         # shellcheck disable=SC2086
         set -- $filters
         set +f
         IFS=$' \t\n'
-        jp_run test "$v, scope: $n test files" "$DART_RUNNER" test "$@"
+        jp_run test "$v, scope: $n test files$JP_SELECTION_NOTE" "$DART_RUNNER" test "$@"
       fi
     fi
   fi

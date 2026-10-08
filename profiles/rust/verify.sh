@@ -144,23 +144,37 @@ _rust_first_unknown() {
 # (empty for an unscoped run) and $RUST_ARGS holds the `-p <crate>` pairs to
 # pass, one token per line (empty for a full run — the caller then runs
 # cargo with no extra flags). On return 1 nothing changed maps to this
-# check at all; $RUST_SKIP_REASON says why.
+# check at all; $RUST_SKIP_REASON says why. $RUST_FULL_WHY is non-empty when
+# a narrowed run lands on the full crate set, and says why.
+#
+# `_rust_scope test` is the test check's own scope: under `verify.full_run: ci`
+# an ALL beside crates is dropped there (jp_select), so the crates run and the
+# full set is left to CI. fmt and clippy keep the plain decision.
 RUST_NOTE=""
 RUST_ARGS=""
 RUST_SKIP_REASON=""
+RUST_FULL_WHY=""
 _rust_scope() {
   RUST_NOTE=""
   RUST_ARGS=""
   RUST_SKIP_REASON=""
+  RUST_FULL_WHY=""
   jp_scoped || return 0
-  local sel crates missing c
-  sel=$(jp_decide _rust_builtin)
+  local sel crates missing c select_note=""
+  if [ "${1:-}" = test ]; then
+    jp_select _rust_builtin
+    sel=$JP_SELECTION
+    select_note=$JP_SELECTION_NOTE
+  else
+    sel=$(jp_decide _rust_builtin)
+  fi
   if [ -z "$sel" ]; then
     RUST_SKIP_REASON="scope: no changed file affects this check"
     return 1
   fi
   if [ "$sel" = ALL ]; then
-    RUST_NOTE=", scope: full (root manifest, lockfile, toolchain pin or a file outside any crate changed)"
+    RUST_FULL_WHY="full (root manifest, lockfile, toolchain pin or a file outside any crate changed)"
+    RUST_NOTE=", scope: $RUST_FULL_WHY"
     return 0
   fi
   crates="$sel"
@@ -172,10 +186,11 @@ _rust_scope() {
   set -- $crates
   set +f
   if missing=$(_rust_first_unknown "$@"); then
-    RUST_NOTE=", scope: crate '$missing' not declared, ran full set"
+    RUST_FULL_WHY="crate '$missing' not declared"
+    RUST_NOTE=", scope: $RUST_FULL_WHY, ran full set"
     return 0
   fi
-  RUST_NOTE=", scope: crates $(printf '%s,' "$@" | sed 's/,$//')"
+  RUST_NOTE=", scope: crates $(printf '%s,' "$@" | sed 's/,$//')$select_note"
   for c in "$@"; do
     RUST_ARGS="$RUST_ARGS-p
 $c
@@ -207,7 +222,16 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     fi
     jp_plan fmt conditional "$scope_state if rustfmt is installed; otherwise skip; component probe not run"
     jp_plan clippy conditional "$scope_state if clippy is installed; otherwise skip; component probe not run"
-    jp_plan test "$scope_state" "$scope_reason"
+    # The test line has its own scope: under `ci` it can differ from the
+    # one fmt and clippy share.
+    _rust_scope test || true
+    if [ -n "$RUST_FULL_WHY" ]; then
+      jp_plan_full test "full crate set"
+    elif [ -n "$RUST_ARGS" ]; then
+      jp_plan test filtered "crates $(printf '%s\n' "$RUST_ARGS" | paste -sd, -)$JP_SELECTION_NOTE"
+    else
+      jp_plan test "$scope_state" "$scope_reason"
+    fi
   fi
   exit 0
 fi
@@ -253,7 +277,7 @@ fi
 # --- cargo test ---------------------------------------------------------------
 
 v=$(jp_version cargo --version)
-if _rust_scope; then
+if _rust_scope test; then
   IFS='
 '
   set -f
@@ -261,7 +285,9 @@ if _rust_scope; then
   set -- $RUST_ARGS
   set +f
   IFS=$' \t\n'
-  jp_run "test" "$v$RUST_NOTE" cargo test "$@"
+  if [ -z "$RUST_FULL_WHY" ] || ! jp_full_left_to_ci "test" "$RUST_FULL_WHY"; then
+    jp_run "test" "$v$RUST_NOTE" cargo test "$@"
+  fi
 else
   jp_skip "test" "$RUST_SKIP_REASON"
 fi

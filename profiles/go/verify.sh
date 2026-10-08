@@ -231,6 +231,33 @@ $(_go_reverse_dependents "$targets" "$depmap")"
   return 0
 }
 
+# _go_plan_test <patterns> — the explain line for `test` in a scoped run with
+# something to run: the patterns jp_select made for it, which under `ci` can be
+# the filters alone while vet still sees the ALL beside them.
+_go_plan_test() {
+  local patterns="$1" missing="" pattern dir
+  if [ "$patterns" = ALL ]; then
+    jp_plan_full test "module-wide change"
+    return 0
+  fi
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    dir=$(_go_dir_of_pattern "$pattern")
+    if ! _go_pkg_has_go_files "$dir"; then
+      missing="$pattern"
+      break
+    fi
+  done <<EOF
+$patterns
+EOF
+  if [ -n "$missing" ]; then
+    jp_plan_full test "package $missing has no .go files"
+  else
+    jp_plan test conditional "changed packages: $(printf '%s\n' "$patterns" | paste -sd, -)$JP_SELECTION_NOTE; importers require go list; full set possible"
+  fi
+  return 0
+}
+
 # --- tool --------------------------------------------------------------------
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
@@ -240,6 +267,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     exit 0
   fi
   pkg_patterns=$(jp_decide _go_builtin)
+  jp_select _go_builtin
+  test_patterns=$JP_SELECTION
   if ! jp_scoped; then
     jp_plan vet full "full scope"
     jp_plan test full "full scope"
@@ -248,7 +277,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan test skip "no changed file maps to a package"
   elif [ "$pkg_patterns" = ALL ]; then
     jp_plan vet full "module-wide change"
-    jp_plan test full "module-wide change"
+    _go_plan_test "$test_patterns"
   else
     missing=""
     while IFS= read -r pattern; do
@@ -263,10 +292,10 @@ $pkg_patterns
 EOF
     if [ -n "$missing" ]; then
       jp_plan vet full "package $missing has no .go files"
-      jp_plan test full "package $missing has no .go files"
+      _go_plan_test "$test_patterns"
     else
       jp_plan_selection vet "$pkg_patterns" "packages"
-      jp_plan test conditional "changed packages: $(printf '%s\n' "$pkg_patterns" | paste -sd, -); importers require go list; full set possible"
+      _go_plan_test "$test_patterns"
     fi
   fi
   exit 0
@@ -327,11 +356,17 @@ if ! jp_scoped; then
   _go_test_run "$v"
 elif [ -z "$pkg_patterns" ]; then
   jp_skip "test" "scope: no changed file maps to a package"
-elif [ "$pkg_patterns" = ALL ]; then
-  _go_test_run "$v, scope: module-wide file changed, whole project"
 else
-  if ! expanded=$(_go_test_packages "$pkg_patterns"); then
-    _go_test_run "$v, scope: go list failed, ran full set"
+  # Not pkg_patterns: under `ci` an ALL beside packages is dropped for test
+  # only; vet above keeps the whole project.
+  jp_select _go_builtin
+  test_patterns=$JP_SELECTION
+  if [ "$test_patterns" = ALL ]; then
+    jp_full_left_to_ci "test" "module-wide file changed, whole project" \
+      || _go_test_run "$v, scope: module-wide file changed, whole project"
+  elif ! expanded=$(_go_test_packages "$test_patterns"); then
+    jp_full_left_to_ci "test" "go list failed" \
+      || _go_test_run "$v, scope: go list failed, ran full set"
   else
     IFS='
 '
@@ -341,10 +376,11 @@ else
     set +f
     IFS=$' \t\n'
     if missing=$(_go_first_missing_pkg "$@"); then
-      _go_test_run "$v, scope: package '$missing' has no .go files, ran full set"
+      jp_full_left_to_ci "test" "package '$missing' has no .go files" \
+        || _go_test_run "$v, scope: package '$missing' has no .go files, ran full set"
     else
       n=$#
-      _go_test_run "$v, scope: $n packages" "$@"
+      _go_test_run "$v, scope: $n packages$JP_SELECTION_NOTE" "$@"
     fi
   fi
 fi
