@@ -930,3 +930,97 @@ test_profile_python_full_run_ci_runs_the_named_tests_beside_a_forced_full_set() 
     "python: pytest: pass (pytest 7.0.0, scope: 1 test files, full set left to CI)"
   assert_file_contains .venv/bin/pytest.log tests/test_foo.py
 }
+
+# --- verify.full_run: ci leaves whole-tree linters to CI ---------------------
+
+test_profile_python_full_run_ci_leaves_a_ruff_config_change_to_ci() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  _py_stub "$PWD/.venv/bin/ruff" "ruff 0.1.0"
+  _py_scope "ruff.toml"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN
+  _py_unscope
+  assert_contains "$OUT" "python: ruff: skip (scope: ruff configuration changed, full set left to CI)"
+  assert_no_file .venv/bin/ruff.log
+}
+
+test_profile_python_full_run_ci_narrows_mypy_to_the_changed_files() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  _py_stub "$PWD/.venv/bin/mypy" "mypy 1.0.0"
+  printf '[mypy]\n' > mypy.ini
+  printf 'a=1\n' > foo.py
+  _py_scope "foo.py"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN
+  _py_unscope
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "python: mypy: pass (mypy 1.0.0, scope: 1 files, full set left to CI)"
+  assert_eq "$(printf 'foo.py\n---')" "$(cat .venv/bin/mypy.log)"
+}
+
+test_profile_python_full_run_ci_skips_mypy_when_no_python_file_changed() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  _py_stub "$PWD/.venv/bin/mypy" "mypy 1.0.0"
+  printf '[mypy]\n' > mypy.ini
+  _py_scope "README.md"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN
+  _py_unscope
+  assert_contains "$OUT" "python: mypy: skip (scope: no changed .py files)"
+  assert_no_file .venv/bin/mypy.log
+}
+
+test_profile_python_full_run_ci_leaves_a_mypy_config_change_to_ci() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  _py_stub "$PWD/.venv/bin/mypy" "mypy 1.0.0"
+  printf '[mypy]\n' > mypy.ini
+  printf 'a=1\n' > foo.py
+  _py_scope "mypy.ini" "foo.py"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN
+  _py_unscope
+  assert_contains "$OUT" "python: mypy: skip (scope: mypy configuration changed, full set left to CI)"
+  assert_no_file .venv/bin/mypy.log
+}
+
+test_profile_python_full_run_ci_explain_names_the_mypy_files() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  _py_stub "$PWD/.venv/bin/mypy" "mypy 1.0.0"
+  printf '[mypy]\n' > mypy.ini
+  printf 'a=1\n' > foo.py
+  _py_scope "foo.py"
+  JIG_VERIFY_FULL_RUN=ci JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN
+  _py_unscope
+  assert_contains "$OUT" "PLAN python: mypy: filtered (changed .py files: foo.py, full set left to CI)"
+}
+
+test_profile_python_full_run_ci_explain_poetry_does_not_promise_a_full_set() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  printf 'poetry.lock\n' > poetry.lock
+  _py_poetry_stub "$PWD/poetryenv"
+  _py_scope "foo.py"
+  JIG_VERIFY_FULL_RUN=ci JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN
+  _py_verify
+  unset JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN
+  _py_unscope
+  assert_contains "$OUT" "PLAN python: ruff: conditional (poetry environment needs a tool query)"
+  assert_not_contains "$OUT" "full set possible"
+}

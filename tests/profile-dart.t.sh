@@ -444,8 +444,9 @@ test_profile_dart_full_run_ci_leaves_a_pubspec_change_to_ci() {
   export JIG_VERIFY_FULL_RUN
   dart_verify
   unset JIG_VERIFY_FULL_RUN
-  assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "dart: test: skip (scope: pubspec.yaml can affect any test, full set left to CI)"
+  assert_contains "$OUT" "dart: analyze: skip (scope: pubspec or analysis options changed, full set left to CI)"
+  assert_contains "$OUT" "dart: format: skip (scope: pubspec or analysis options changed, full set left to CI)"
   assert_no_file dart-test.args
 }
 

@@ -714,3 +714,67 @@ test_profile_node_full_run_ci_runs_a_changed_vitest_file_beside_a_lock_file_chan
   assert_file_contains vitest-invoked.log "run a.test.ts"
   assert_no_file npm-invoked.log
 }
+
+# --- verify.full_run: ci leaves whole-tree lint and typecheck to CI ----------
+
+test_profile_node_full_run_ci_leaves_a_lint_script_that_is_not_eslint_to_ci() {
+  fixture_repo
+  _node_pkg '{"lint": "prettier --check ."}'
+  _node_mgr_stub npm 10.0.0 0
+  printf 'x\n' > a.ts
+  files=$(_node_files a.ts)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "node: npm run lint: skip (scope: not narrowable, full set left to CI)"
+  assert_no_file npm-invoked.log
+}
+
+test_profile_node_full_run_ci_leaves_a_lint_config_change_to_ci() {
+  fixture_repo
+  _node_pkg '{"lint": "eslint ."}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_local_tool_stub eslint 8.5.0 0
+  files=$(_node_files package.json)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "node: npm run lint: skip (scope: project configuration changed, full set left to CI)"
+  assert_no_file eslint-invoked.log
+  assert_no_file npm-invoked.log
+}
+
+test_profile_node_full_run_ci_still_lints_the_changed_files() {
+  fixture_repo
+  _node_pkg '{"lint": "eslint ."}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_local_tool_stub eslint 8.5.0 0
+  printf 'x\n' > a.ts
+  files=$(_node_files a.ts)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "node: npm run lint: pass (8.5.0, scope: eslint, 1 files)"
+  assert_file_contains eslint-invoked.log "a.ts"
+}
+
+test_profile_node_full_run_ci_leaves_typecheck_to_ci() {
+  fixture_repo
+  _node_pkg '{"typecheck": "tsc --noEmit"}'
+  _node_mgr_stub npm 10.0.0 0
+  printf 'x\n' > a.ts
+  files=$(_node_files a.ts)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "node: npm run typecheck: skip (scope: not narrowable, full set left to CI)"
+  assert_no_file npm-invoked.log
+}

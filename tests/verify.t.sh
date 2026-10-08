@@ -2894,3 +2894,77 @@ STUB
   assert_file_contains gnu-out.log "verify: waited"
   wait 2>/dev/null || true
 }
+
+# --- shell profile: shellcheck under verify.full_run: ci ---------------------
+
+test_verify_shell_full_run_ci_leaves_the_whole_tree_shellcheck_to_ci() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  printf '#!/usr/bin/env bash\necho tracked\n' > tracked.sh
+  chmod +x tracked.sh
+  printf '# shellcheck config\n' > .shellcheckrc
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "baseline with a tracked script and .shellcheckrc"
+
+  printf '# widened\n' >> .shellcheckrc
+  sc_stub_logging 1.0.0
+
+  run jig verify --changed --profile shell
+  assert_contains "$OUT" "shell: shellcheck: skip (scope: .shellcheckrc changed; whole script set, full set left to CI)"
+  assert_contains "$OUT" "check(s) left their full set to CI"
+  assert_no_file sc-linted.log
+}
+
+test_verify_shell_full_run_ci_still_lints_the_changed_script() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  printf '#!/usr/bin/env bash\necho tracked\n' > tracked.sh
+  chmod +x tracked.sh
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "baseline"
+
+  printf 'echo more\n' >> tracked.sh
+  sc_stub_logging 1.0.0
+
+  run jig verify --changed --profile shell
+  assert_contains "$OUT" "shell: shellcheck: pass (shellcheck 1.0.0, scope: "
+  assert_not_contains "$OUT" "left to CI"
+  assert_file_contains sc-linted.log tracked.sh
+}
+
+test_verify_shell_full_run_ci_full_flag_lints_the_whole_tree() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  printf '#!/usr/bin/env bash\necho tracked\n' > tracked.sh
+  chmod +x tracked.sh
+  printf '# shellcheck config\n' > .shellcheckrc
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "baseline"
+
+  printf '# widened\n' >> .shellcheckrc
+  sc_stub_logging 1.0.0
+
+  run jig verify --full --profile shell
+  assert_not_contains "$OUT" "left to CI"
+  assert_file_contains sc-linted.log tracked.sh
+}
+
+test_verify_shell_full_run_ci_explain_leaves_shellcheck_to_ci() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles shell >/dev/null
+  printf '#!/usr/bin/env bash\necho tracked\n' > tracked.sh
+  chmod +x tracked.sh
+  printf '# shellcheck config\n' > .shellcheckrc
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "baseline"
+
+  printf '# widened\n' >> .shellcheckrc
+  sc_stub_logging 1.0.0
+
+  run jig verify --changed --explain --profile shell
+  assert_contains "$OUT" "PLAN shell: shellcheck: skip (scope: .shellcheckrc changed; whole script set, full set left to CI)"
+}

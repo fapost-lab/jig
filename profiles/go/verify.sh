@@ -15,7 +15,8 @@
 # one of them, directly or through another package -- `go list`'s own
 # `.Deps` is already the transitive closure, so one pass finds every
 # affected importer. A changed go.mod, go.sum, go.work or go.work.sum
-# affects the whole module and sends both checks to their full set; so does
+# affects the whole module and sends both checks to their full set (left to CI
+# under `verify.full_run: ci`, where a package list beside it still runs); so does
 # a package directory that no longer has any .go file (a deleted package),
 # a filter naming one (built in or from the project map), or `go list`
 # itself failing to answer.
@@ -233,7 +234,7 @@ $(_go_reverse_dependents "$targets" "$depmap")"
 
 # _go_plan_test <patterns> — the explain line for `test` in a scoped run with
 # something to run: the patterns jp_select made for it, which under `ci` can be
-# the filters alone while vet still sees the ALL beside them.
+# the filters alone, as vet's.
 _go_plan_test() {
   local patterns="$1" missing="" pattern dir possible
   if [ "$patterns" = ALL ]; then
@@ -269,8 +270,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan test skip "go not found in PATH"
     exit 0
   fi
-  pkg_patterns=$(jp_decide _go_builtin)
   jp_select _go_builtin
+  pkg_patterns=$JP_SELECTION
   test_patterns=$JP_SELECTION
   if ! jp_scoped; then
     jp_plan vet full "full scope"
@@ -279,7 +280,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan vet skip "no changed file maps to a package"
     jp_plan test skip "no changed file maps to a package"
   elif [ "$pkg_patterns" = ALL ]; then
-    jp_plan vet full "module-wide change"
+    jp_plan_full vet "module-wide change"
     _go_plan_test "$test_patterns"
   else
     missing=""
@@ -294,10 +295,10 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $pkg_patterns
 EOF
     if [ -n "$missing" ]; then
-      jp_plan vet full "package $missing has no .go files"
+      jp_plan_full vet "package $missing has no .go files"
       _go_plan_test "$test_patterns"
     else
-      jp_plan_selection vet "$pkg_patterns" "packages"
+      jp_plan_select vet "$pkg_patterns" "packages"
       _go_plan_test "$test_patterns"
     fi
   fi
@@ -314,8 +315,12 @@ v=$(jp_version go version)
 
 # The packages the changed files affect directly (D4); shared by vet, which
 # runs on exactly them, and test, which adds their importers. Empty and
-# unused outside a scoped run (jp_decide already returns nothing then).
-pkg_patterns=$(jp_decide _go_builtin)
+# unused outside a scoped run (jp_select already returns nothing then). Under
+# `verify.full_run: ci` an ALL beside packages is dropped: the packages run and
+# the whole module is left to CI, for vet as for test.
+jp_select _go_builtin
+pkg_patterns=$JP_SELECTION
+pkg_note=$JP_SELECTION_NOTE
 
 # --- go vet --------------------------------------------------------------------
 
@@ -324,7 +329,8 @@ if ! jp_scoped; then
 elif [ -z "$pkg_patterns" ]; then
   jp_skip "vet" "scope: no changed file maps to a package"
 elif [ "$pkg_patterns" = ALL ]; then
-  jp_run "vet" "$v, scope: module-wide file changed, whole project" go vet ./...
+  jp_full_left_to_ci "vet" "module-wide file changed, whole project" \
+    || jp_run "vet" "$v, scope: module-wide file changed, whole project" go vet ./...
 else
   IFS='
 '
@@ -334,10 +340,11 @@ else
   set +f
   IFS=$' \t\n'
   if missing=$(_go_first_missing_pkg "$@"); then
-    jp_run "vet" "$v, scope: package '$missing' has no .go files, ran full set" go vet ./...
+    jp_full_left_to_ci "vet" "package '$missing' has no .go files" \
+      || jp_run "vet" "$v, scope: package '$missing' has no .go files, ran full set" go vet ./...
   else
     n=$#
-    jp_run "vet" "$v, scope: $n packages" go vet "$@"
+    jp_run "vet" "$v, scope: $n packages$pkg_note" go vet "$@"
   fi
 fi
 
@@ -360,10 +367,7 @@ if ! jp_scoped; then
 elif [ -z "$pkg_patterns" ]; then
   jp_skip "test" "scope: no changed file maps to a package"
 else
-  # Not pkg_patterns: under `ci` an ALL beside packages is dropped for test
-  # only; vet above keeps the whole project.
-  jp_select _go_builtin
-  test_patterns=$JP_SELECTION
+  test_patterns=$pkg_patterns
   if [ "$test_patterns" = ALL ]; then
     jp_full_left_to_ci "test" "module-wide file changed, whole project" \
       || _go_test_run "$v, scope: module-wide file changed, whole project"
@@ -383,7 +387,7 @@ else
         || _go_test_run "$v, scope: package '$missing' has no .go files, ran full set"
     else
       n=$#
-      _go_test_run "$v, scope: $n packages$JP_SELECTION_NOTE" "$@"
+      _go_test_run "$v, scope: $n packages$pkg_note" "$@"
     fi
   fi
 fi

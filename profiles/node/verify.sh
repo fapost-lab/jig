@@ -33,10 +33,12 @@
 #   (*.test.*/*.spec.*), run directly. Any other changed source file, or no
 #   runner found, sends test to the full script.
 # - typecheck never narrows: a per-file check cannot see the errors a
-#   changed file introduces in code that calls it, unnarrowed like mypy.
+#   changed file introduces in code that calls it. In a narrowed run it
+#   runs the whole project, or under `verify.full_run: ci` is left to CI.
 # - package.json, any lock file, tsconfig*, and the eslint/vite/vitest/jest
 #   configs affect the whole project and send lint and test to their full
-#   set.
+#   set. Under `verify.full_run: ci` a lint that would run the full script is
+#   left to CI as well (`skip (scope: ..., full set left to CI)`).
 # Where a check bypasses the project's own script to call a runner
 # directly, the note names that runner (`scope: vitest related, 3 files`).
 #
@@ -457,7 +459,7 @@ EOF
     eslint_bin=""
     if _node_lint_uses_eslint; then eslint_bin=$(_node_local_bin eslint); fi
     if [ -z "$eslint_bin" ] || ! jp_scoped || _node_all_glob_changed; then
-      jp_plan "$LINT_LABEL" full "lint script or project configuration requires full set"
+      jp_plan_full "$LINT_LABEL" "lint script or project configuration requires full set"
     else
       # shellcheck disable=SC2086
       files=$(jp_changed $NODE_TEST_EXTS)
@@ -472,7 +474,7 @@ EOF
   if ! _node_has_script typecheck || [ -z "$MGR_BIN" ]; then
     jp_plan "$TYPECHECK_LABEL" skip "no typecheck script or $MGR not found"
   else
-    jp_plan "$TYPECHECK_LABEL" full "typecheck cannot narrow by file"
+    jp_plan_full "$TYPECHECK_LABEL" "typecheck cannot narrow by file"
   fi
   exit 0
 fi
@@ -512,11 +514,12 @@ else
   if [ -z "$eslint_bin" ]; then
     note="$mgr_v"
     if jp_scoped; then note="$mgr_v, scope: not narrowable, ran full set"; fi
-    _node_full_lint "$note"
+    jp_full_left_to_ci "$LINT_LABEL" "not narrowable" || _node_full_lint "$note"
   elif ! jp_scoped; then
     _node_full_lint "$mgr_v"
   elif _node_all_glob_changed; then
-    _node_full_lint "$mgr_v, scope: project configuration changed, whole project"
+    jp_full_left_to_ci "$LINT_LABEL" "project configuration changed" \
+      || _node_full_lint "$mgr_v, scope: project configuration changed, whole project"
   else
     # shellcheck disable=SC2086
     files=$(jp_changed $NODE_TEST_EXTS)
@@ -545,7 +548,7 @@ else
   mgr_v=$(jp_version "$MGR_BIN" --version)
   note="$mgr_v"
   if jp_scoped; then note="$mgr_v, scope: not narrowable, ran full set"; fi
-  _node_full_typecheck "$note"
+  jp_full_left_to_ci "$TYPECHECK_LABEL" "not narrowable" || _node_full_typecheck "$note"
 fi
 
 jp_end

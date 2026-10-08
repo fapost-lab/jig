@@ -18,8 +18,10 @@
 # otherwise from the environment's own PATH.
 #
 # Narrowing (ADR-0041, adr-20260918-profiles-narrow-per-check-with-project-tools), per check: ruff lints the changed .py
-# files; mypy always runs in full, because checking a file alone misses
-# errors in the unchanged code that calls it; pytest runs the test files the
+# files; mypy runs in full, because checking a file alone misses
+# errors in the unchanged code that calls it — except under
+# `verify.full_run: ci`, where it checks the changed files and leaves the
+# whole tree to CI; pytest runs the test files the
 # changed paths map to — a changed test file itself, or test_<stem>.py /
 # <stem>_test.py for a changed <stem>.py — and everything when a path maps
 # to nothing or a project-wide file changed.
@@ -207,7 +209,10 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     tool=$(_py_tool "$check")
     if [ -z "$tool" ]; then
       if [ -z "${JIG_RUN_EXEC:-}" ] && [ -f poetry.lock ] && command -v poetry >/dev/null 2>&1; then
-        jp_plan "$check" conditional "poetry environment needs a tool query; full set possible"
+        # Under `ci` no check here can run a full set: nothing to be possible.
+        possible="; full set possible"
+        if jp_ci_runs_full; then possible=""; fi
+        jp_plan "$check" conditional "poetry environment needs a tool query$possible"
       else
         jp_plan "$check" skip "$PY_WHERE"
       fi
@@ -215,13 +220,23 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     fi
     if [ "$check" = mypy ]; then
       if _py_mypy_configured; then
-        jp_plan mypy full "mypy is not narrowed by file"
+        if jp_ci_runs_full; then
+          if jp_changed_any mypy.ini .mypy.ini pyproject.toml setup.cfg; then
+            jp_plan_full mypy "mypy configuration changed"
+          elif [ -z "$(jp_changed py)" ]; then
+            jp_plan mypy skip "no changed .py files"
+          else
+            jp_plan mypy filtered "changed .py files: $(jp_changed py | paste -sd, -), full set left to CI"
+          fi
+        else
+          jp_plan mypy full "mypy is not narrowed by file"
+        fi
       else
         jp_plan mypy skip "mypy not configured"
       fi
     elif [ "$check" = ruff ]; then
       if jp_scoped && jp_changed_any pyproject.toml ruff.toml .ruff.toml; then
-        jp_plan ruff full "ruff configuration changed"
+        jp_plan_full ruff "ruff configuration changed"
       elif jp_scoped; then
         files=$(jp_changed py)
         if [ -z "$files" ]; then
@@ -278,7 +293,8 @@ else
       jp_run "ruff" "$v, scope: $n files" "$ruff" check "$@"
     fi
   elif jp_scoped; then
-    jp_run "ruff" "$v, scope: ruff configuration changed, whole project" "$ruff" check .
+    jp_full_left_to_ci "ruff" "ruff configuration changed" \
+      || jp_run "ruff" "$v, scope: ruff configuration changed, whole project" "$ruff" check .
   else
     jp_run "ruff" "$v" "$ruff" check .
   fi
@@ -297,8 +313,29 @@ else
   v=$(jp_version "$mypy" --version)
   note="$v"
   if jp_scoped; then note="$v, scope: not narrowable, ran full set"; fi
-  # The virtualenv lives inside the project; mypy would otherwise walk it.
-  jp_run "mypy" "$note" "$mypy" . --exclude '(^|/)(\.venv|venv)/'
+  if jp_ci_runs_full && jp_changed_any mypy.ini .mypy.ini pyproject.toml setup.cfg; then
+    jp_full_left_to_ci "mypy" "mypy configuration changed"
+  elif jp_ci_runs_full; then
+    # Under `ci` mypy checks the changed files and leaves the whole tree to CI:
+    # what a changed file breaks in code that calls it is CI's to find.
+    files=$(jp_changed py)
+    if [ -z "$files" ]; then
+      jp_skip "mypy" "scope: no changed .py files"
+    else
+      n=$(printf '%s\n' "$files" | grep -c .)
+      IFS='
+'
+      set -f
+      # shellcheck disable=SC2086
+      set -- $files
+      set +f
+      IFS=$' \t\n'
+      jp_run "mypy" "$v, scope: $n files, full set left to CI" "$mypy" "$@"
+    fi
+  else
+    # The virtualenv lives inside the project; mypy would otherwise walk it.
+    jp_run "mypy" "$note" "$mypy" . --exclude '(^|/)(\.venv|venv)/'
+  fi
 fi
 
 # --- pytest ------------------------------------------------------------------

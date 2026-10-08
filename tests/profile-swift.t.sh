@@ -294,10 +294,11 @@ test_profile_swift_full_run_ci_leaves_a_code_change_to_ci() {
   export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
   _swift_run
   unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
-  assert_eq 0 "$RC" "$OUT"
-  # build is a compile check: it keeps its whole-project run.
-  assert_contains "$OUT" "swift: build: pass (Swift version 5.9 (swift-5.9-RELEASE), scope: not narrowable, ran full set)"
+  # Nothing ran, so the profile exits 2.
+  assert_eq 2 "$RC" "$OUT"
+  # build is a whole-project compile check: left to CI as well.
+  assert_contains "$OUT" "swift: build: skip (scope: not narrowable, full set left to CI)"
   assert_contains "$OUT" "swift: test: skip (scope: not narrowable, full set left to CI)"
-  assert_file_contains swift.log "^build\$"
+  assert_not_contains "$(cat swift.log)" "build"
   assert_not_contains "$(cat swift.log)" "test"
 }

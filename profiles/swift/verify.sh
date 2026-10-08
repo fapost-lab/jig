@@ -46,7 +46,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
       jp_plan build skip "only documentation changed"
       jp_plan test skip "only documentation changed"
     else
-      jp_plan build full "swift checks cannot narrow by file"
+      jp_plan_full build "swift checks cannot narrow by file"
       jp_plan_full test "swift checks cannot narrow by file"
     fi
   fi
@@ -82,7 +82,8 @@ if [ "$SWIFT_SKIP" = 1 ]; then
   jp_skip "build" "$SWIFT_SKIP_REASON"
   jp_skip "test" "$SWIFT_SKIP_REASON"
 else
-  jp_run "build" "$v$SWIFT_NOTE" swift build
+  jp_full_left_to_ci "build" "not narrowable" \
+    || jp_run "build" "$v$SWIFT_NOTE" swift build
   jp_full_left_to_ci "test" "not narrowable" \
     || jp_run "test" "$v$SWIFT_NOTE" swift test
 fi

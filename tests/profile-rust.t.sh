@@ -474,12 +474,14 @@ test_profile_rust_full_run_ci_leaves_a_cargo_lock_change_to_ci() {
   export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
   _rust_run
   unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
-  assert_eq 0 "$RC" "$OUT"
+  # Nothing ran, so the profile exits 2.
+  assert_eq 2 "$RC" "$OUT"
   assert_contains "$OUT" "rust: test: skip (scope: full (root manifest, lockfile, toolchain pin or a file outside any crate changed), full set left to CI)"
-  # fmt and clippy are linters: they keep their whole-project run.
-  assert_contains "$OUT" "rust: fmt: pass"
-  assert_contains "$OUT" "rust: clippy: pass"
-  assert_file_contains cargo.log "fmt --check"
+  # fmt and clippy are left to CI as well.
+  assert_contains "$OUT" "rust: fmt: skip (scope: full (root manifest, lockfile, toolchain pin or a file outside any crate changed), full set left to CI)"
+  assert_contains "$OUT" "rust: clippy: skip (scope: full (root manifest, lockfile, toolchain pin or a file outside any crate changed), full set left to CI)"
+  assert_not_contains "$(cat cargo.log)" "--check"
+  assert_not_contains "$(cat cargo.log)" "--all-targets"
   assert_not_contains "$(cat cargo.log)" "test"
 }
 
@@ -497,4 +499,20 @@ test_profile_rust_full_run_ci_runs_the_named_crate_beside_a_cargo_lock_change() 
   assert_contains "$OUT" "rust: test: pass (cargo 1.77.0 (abc 2024-01-01), scope: crates crate-a, full set left to CI)"
   assert_file_contains cargo.log "test -p crate-a"
   assert_not_contains "$(cat cargo.log)" "crate-b"
+}
+
+test_profile_rust_full_run_ci_runs_fmt_and_clippy_on_the_named_crate_beside_a_cargo_lock_change() {
+  _rust_workspace
+  : > Cargo.lock
+  _rust_stub 1 0 1 0 0
+  printf 'crates/a/src/lib.rs\nCargo.lock\n' > "$JIG_TEST_TMP.files"
+  JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_TEST_TMP.files"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  _rust_run
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "scope: crates crate-a, full set left to CI)"
+  assert_file_contains cargo.log "fmt --check -p crate-a"
+  assert_file_contains cargo.log "clippy --all-targets -p crate-a"
 }
