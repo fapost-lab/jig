@@ -708,3 +708,58 @@ test_profile_php_full_run_ci_leaves_an_unmapped_source_change_to_ci() {
   assert_contains "$OUT" "php: phpunit: skip (scope: no test is named after src/Orphan.php, full set left to CI)"
   assert_no_file phpunit.log
 }
+
+# --- verify.full_run: ci leaves a whole-tree phpstan to CI -------------------
+
+test_profile_php_full_run_ci_leaves_a_phpstan_config_change_to_ci() {
+  _php_install
+  _php_stub_tool phpstan 1.10.0 0 phpstan.log
+  files=$(_files_list phpstan.neon)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _php_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "php: phpstan: skip (scope: phpstan configuration changed, full set left to CI)"
+  assert_no_file phpstan.log
+}
+
+test_profile_php_full_run_ci_still_runs_phpstan_and_pint_on_changed_files() {
+  _php_install
+  mkdir -p src
+  : > src/Foo.php
+  _php_stub_tool phpstan 1.10.0 0 phpstan.log
+  _php_stub_tool pint 1.0.0 0 pint.log
+  files=$(_files_list src/Foo.php)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _php_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "php: phpstan: pass (1.10.0, scope: 1 files)"
+  assert_contains "$OUT" "php: pint: pass (1.0.0, scope: 1 files)"
+  assert_file_contains phpstan.log "src/Foo.php"
+  assert_file_contains pint.log "--test src/Foo.php"
+}
+
+test_profile_php_full_run_ci_explain_leaves_a_phpstan_config_change_to_ci() {
+  _php_install
+  _php_stub_tool phpstan 1.10.0 0 phpstan.log
+  files=$(_files_list phpstan.neon)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _php_explain "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "PLAN php: phpstan: skip (scope: phpstan configuration changed, full set left to CI)"
+  assert_no_file phpstan.log
+}
+
+test_profile_php_without_full_run_ci_explain_keeps_phpstan_full() {
+  _php_install
+  _php_stub_tool phpstan 1.10.0 0 phpstan.log
+  files=$(_files_list phpstan.neon)
+
+  _php_explain "$files"
+  assert_contains "$OUT" "PLAN php: phpstan: full (phpstan configuration changed)"
+}

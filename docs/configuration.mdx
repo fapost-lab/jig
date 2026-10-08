@@ -100,6 +100,16 @@ laravel: artisan test: skip (scope: routes/web.php can affect any test, full set
 verify: 1 check(s) left their full set to CI (verify.full_run: ci); jig verify --full runs it here
 ```
 
+Linters and static analysis follow the same rule. A tool that takes files or packages (`phpstan`,
+`pint`, `ruff`, `mypy`, `eslint`, `rubocop`, `shellcheck`, `go vet`, `cargo clippy`, `dart analyze`)
+checks only the changed ones. When the whole tree would be checked — the tool's own configuration
+changed, or it cannot narrow (`tsc` and `swift build` never do) — the check is left to CI and says so:
+
+```text
+node: npm run typecheck: skip (scope: not narrowable, full set left to CI)
+php: phpstan: skip (scope: phpstan configuration changed, full set left to CI)
+```
+
 This saves the agent from running the whole suite after every small change, while CI still proves
 everything before a merge. A red CI run sends the task back to verification.
 

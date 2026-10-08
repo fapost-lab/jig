@@ -596,3 +596,14 @@ test_profile_ruby_full_run_ci_leaves_minitest_via_rake_to_ci() {
   assert_contains "$OUT" "ruby: minitest: skip (scope: not narrowable, full set left to CI)"
   assert_no_file rake.args
 }
+
+test_profile_ruby_full_run_ci_leaves_a_rubocop_config_change_to_ci() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  rb_scope ".rubocop.yml"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  rb_verify
+  unset JIG_VERIFY_FULL_RUN
+  assert_contains "$OUT" "ruby: rubocop: skip (scope: .rubocop.yml changed, full set left to CI)"
+}

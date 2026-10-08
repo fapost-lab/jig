@@ -109,7 +109,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if [ ! -f Gemfile.lock ] || ! _rb_gem_locked rubocop; then
     jp_plan rubocop skip "rubocop not listed in Gemfile.lock"
   elif jp_scoped && jp_changed_any .rubocop.yml; then
-    jp_plan rubocop full ".rubocop.yml changed"
+    jp_plan_full rubocop ".rubocop.yml changed"
   elif jp_scoped; then
     files=$(jp_changed rb rake)
     if [ -z "$files" ]; then
@@ -145,7 +145,8 @@ else
       jp_run rubocop "$v, scope: $n files" bundle exec rubocop "$@"
     fi
   elif jp_scoped; then
-    jp_run rubocop "$v, scope: .rubocop.yml changed, whole project" bundle exec rubocop
+    jp_full_left_to_ci rubocop ".rubocop.yml changed" \
+      || jp_run rubocop "$v, scope: .rubocop.yml changed, whole project" bundle exec rubocop
   else
     jp_run rubocop "$v" bundle exec rubocop
   fi

@@ -406,7 +406,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     if [ -z "$scripts" ]; then
       jp_plan shellcheck skip "no shell scripts found"
     else
-      jp_plan shellcheck full ".shellcheckrc changed; whole script set"
+      jp_plan_full shellcheck ".shellcheckrc changed; whole script set"
     fi
   elif [ "$scoped" = 1 ]; then
     scripts=$(_shell_changed_scripts)
@@ -483,7 +483,13 @@ if jp_have shellcheck; then
     sc_wide=1
   fi
 
-  if [ "$scoped" = 1 ] && [ "$sc_wide" = 0 ]; then
+  # Under `verify.full_run: ci` the whole script set is CI's, as the full set
+  # of tests is: nothing is linted here and the line says so.
+  sc_ci=0
+  if [ "$sc_wide" = 1 ] && [ "${JIG_VERIFY_FULL_RUN:-}" = ci ]; then
+    sc_ci=1
+    : > "$list"
+  elif [ "$scoped" = 1 ] && [ "$sc_wide" = 0 ]; then
     _shell_changed_scripts > "$list"
   else
     _shell_all_scripts > "$list"
@@ -504,7 +510,9 @@ if jp_have shellcheck; then
   rm -f "$list"
   trap - EXIT INT TERM
 
-  if [ "$sc_checked" -eq 0 ]; then
+  if [ "$sc_ci" = 1 ]; then
+    echo "shell: shellcheck: skip (scope: .shellcheckrc changed; whole script set, full set left to CI)"
+  elif [ "$sc_checked" -eq 0 ]; then
     if [ "$scoped" = 1 ] && [ "$sc_wide" = 0 ]; then
       echo "shell: shellcheck: skip (scope: no changed shell scripts)"
     else

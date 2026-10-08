@@ -10,7 +10,8 @@
 #
 # Narrowing (ADR-0041, adr-20260918-profiles-narrow-per-check-with-project-tools), per check: phpstan and pint each lint the
 # changed .php files; phpstan runs in full when its own configuration
-# changed. phpunit/pest run the test files the changed paths map to — a
+# changed, or under `verify.full_run: ci` leaves that to CI. phpunit/pest run
+# the test files the changed paths map to — a
 # changed *Test.php itself, or any FooTest.php under tests/ for a changed
 # Foo.php — and everything when a path maps to nothing or a file that can
 # affect any test (composer.json/lock, phpunit.xml*) changed. composer
@@ -192,7 +193,7 @@ EOF
     if [ -z "$tool" ]; then
       jp_plan "$check" skip "$PHP_WHERE"
     elif [ "$check" = phpstan ] && jp_scoped && jp_changed_any phpstan.neon phpstan.neon.dist; then
-      jp_plan "$check" full "phpstan configuration changed"
+      jp_plan_full "$check" "phpstan configuration changed"
     elif jp_scoped; then
       files=$(jp_changed php)
       if [ -z "$files" ]; then
@@ -279,7 +280,8 @@ else
       jp_run "phpstan" "$v, scope: $n files" "$phpstan" analyse --no-progress "$@"
     fi
   elif jp_scoped; then
-    jp_run "phpstan" "$v, scope: phpstan configuration changed, whole project" "$phpstan" analyse --no-progress
+    jp_full_left_to_ci "phpstan" "phpstan configuration changed" \
+      || jp_run "phpstan" "$v, scope: phpstan configuration changed, whole project" "$phpstan" analyse --no-progress
   else
     jp_run "phpstan" "$v" "$phpstan" analyse --no-progress
   fi

@@ -410,11 +410,12 @@ test_profile_go_full_run_ci_leaves_a_gomod_change_to_ci() {
   export JIG_VERIFY_FULL_RUN
   run bash "$JIG_HOME/profiles/go/verify.sh"
   unset JIG_VERIFY_FULL_RUN
-  assert_eq 0 "$RC" "$OUT"
-  # vet is a linter: it keeps its whole-project run.
-  assert_contains "$OUT" "go: vet: pass (go version go1.22.1 darwin/arm64, scope: module-wide file changed, whole project)"
+  # Nothing ran, so the profile exits 2.
+  assert_eq 2 "$RC" "$OUT"
+  # vet is left to CI like the tests.
+  assert_contains "$OUT" "go: vet: skip (scope: module-wide file changed, whole project, full set left to CI)"
   assert_contains "$OUT" "go: test: skip (scope: module-wide file changed, whole project, full set left to CI)"
-  assert_file_contains go-calls.log "vet ./..."
+  assert_not_contains "$(cat go-calls.log)" "vet"
   assert_not_contains "$(cat go-calls.log)" "test"
 }
 
@@ -434,7 +435,8 @@ test_profile_go_full_run_ci_runs_the_named_packages_beside_a_gomod_change() {
   run bash "$JIG_HOME/profiles/go/verify.sh"
   unset JIG_VERIFY_FULL_RUN
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "go: vet: pass (go version go1.22.1 darwin/arm64, scope: module-wide file changed, whole project)"
+  assert_contains "$OUT" "go: vet: pass (go version go1.22.1 darwin/arm64, scope: 1 packages, full set left to CI)"
   assert_contains "$OUT" "go: test: pass (go version go1.22.1 darwin/arm64, scope: 1 packages, full set left to CI)"
+  assert_file_contains go-calls.log "vet ./internal/foo"
   assert_file_contains go-calls.log "test ./internal/foo"
 }

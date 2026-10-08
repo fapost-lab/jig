@@ -153,3 +153,12 @@ never be checked on `main` (it happened on the first day, to the change that int
 > full set is CI's, on the pull request, which is what `ci` claims. `--full` and a non-empty `CI`
 > run profiles unnarrowed, unchanged. A profile a user edited (keep-modified) keeps running the
 > full set until it adopts the helpers: the existing `jp_*` functions keep their meanings.
+>
+> The same holds for linters and static analysis (same day, the owner's answer after the tests): a
+> linter that can take files or packages runs on the changed ones (phpstan, pint, ruff, mypy,
+> eslint, rubocop, shellcheck, `go vet`, `cargo fmt`/`clippy`, `dart analyze`/`format`); where it
+> would run the whole tree — its configuration changed, or it cannot narrow (`tsc`, `swift build`) —
+> the check is left to CI the same way. `mypy` is the one tool that narrows only under `ci`: checked
+> alone, a file misses what it breaks in code that calls it, which CI finds; files named on its
+> command line also bypass its `exclude`, so a changed file in an excluded directory is checked
+> there. `tsc` (the `typecheck` script) is always left to CI in a narrowed run.

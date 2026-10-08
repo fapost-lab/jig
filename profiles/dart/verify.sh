@@ -110,7 +110,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     if ! jp_have "$tool"; then
       jp_plan "$check" skip "$tool not found on PATH"
     elif jp_scoped && jp_changed_any pubspec.yaml pubspec.lock analysis_options.yaml; then
-      jp_plan "$check" full "pubspec or analysis options changed"
+      jp_plan_full "$check" "pubspec or analysis options changed"
     elif jp_scoped; then
       files=$(jp_changed dart)
       if [ -z "$files" ]; then
@@ -168,7 +168,8 @@ else
       jp_run analyze "$v, scope: $n files" "$DART_RUNNER" analyze "$@"
     fi
   elif jp_scoped; then
-    jp_run analyze "$v, scope: pubspec or analysis options changed, whole project" "$DART_RUNNER" analyze
+    jp_full_left_to_ci analyze "pubspec or analysis options changed" \
+      || jp_run analyze "$v, scope: pubspec or analysis options changed, whole project" "$DART_RUNNER" analyze
   else
     jp_run analyze "$v" "$DART_RUNNER" analyze
   fi
@@ -200,7 +201,8 @@ else
       jp_run format "$v, scope: $n files" dart format --output=none --set-exit-if-changed "$@"
     fi
   elif jp_scoped; then
-    jp_run format "$v, scope: pubspec or analysis options changed, whole project" dart format --output=none --set-exit-if-changed .
+    jp_full_left_to_ci format "pubspec or analysis options changed" \
+      || jp_run format "$v, scope: pubspec or analysis options changed, whole project" dart format --output=none --set-exit-if-changed .
   else
     jp_run format "$v" dart format --output=none --set-exit-if-changed .
   fi

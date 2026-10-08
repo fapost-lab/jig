@@ -91,7 +91,8 @@ if jp_scoped && ! _dotnet_always_all_changed; then
     jp_run "format" "$v, scope: $n files" dotnet format --verify-no-changes --include "$@"
   fi
 elif jp_scoped; then
-  jp_run "format" "$v, scope: sln/build config changed, whole project" dotnet format --verify-no-changes
+  jp_full_left_to_ci "format" "sln/build config changed" \
+    || jp_run "format" "$v, scope: sln/build config changed, whole project" dotnet format --verify-no-changes
 else
   jp_run "format" "$v" dotnet format --verify-no-changes
 fi
@@ -195,7 +196,7 @@ _dotnet_test() {
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if jp_scoped && _dotnet_always_all_changed; then
-    jp_plan format full "solution or build configuration changed"
+    jp_plan_full format "solution or build configuration changed"
   elif jp_scoped; then
     files=$(jp_changed cs fs vb)
     if [ -z "$files" ]; then

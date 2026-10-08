@@ -442,9 +442,11 @@ test_profile_dotnet_full_run_ci_leaves_a_sln_change_to_ci() {
   export JIG_VERIFY_FULL_RUN
   _dotnet_scoped "$files"
   unset JIG_VERIFY_FULL_RUN
-  assert_eq 0 "$RC" "$OUT"
+  # Nothing ran, so the profile exits 2.
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "dotnet: format: skip (scope: sln/build config changed, full set left to CI)"
   assert_contains "$OUT" "dotnet: test: skip (scope: not narrowable, full set left to CI)"
-  assert_file_contains dotnet.log "^format --verify-no-changes$"
+  assert_not_contains "$(cat dotnet.log)" "format"
   assert_not_contains "$(cat dotnet.log)" "test"
 }
 
