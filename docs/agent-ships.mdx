@@ -198,6 +198,43 @@ of a specification released at once ([New project](/greenfield)). You do not hav
 
 <span id="specs-and-epics" />
 
+<span id="autopilot-has-its-own-level" />
+
+## A different choice for autopilot
+
+You can trust a task the agent runs on [autopilot](/autopilot) further than the work you follow
+step by step, or less far. A common choice: the tasks you go through with the agent, answering its
+questions, end on a review page you merge yourself; the tasks you hand to autopilot are added to
+the project on their own once the automatic checks pass. Say so:
+
+```text Send to your agent
+When you work on autopilot, add the change to the project once the checks pass.
+When we work together step by step, leave it on a review page for me.
+```
+
+Without this choice, autopilot goes exactly as far as everything else.
+
+<Accordion title="For developers: autopilot.git">
+`autopilot.git` takes the same five levels as `agent.git` and is read the same way — only from
+`.ai/config.local.yaml`. It decides how far `jig task ship` goes for a task whose autopilot run is
+going (`jig task autopilot <id> start` until `end`, a [phase run](/autopilot#running-a-whole-phase)'s
+tasks included; a run stopped to ask you is yours again, and goes by `agent.git`), and how far `jig spec ship` goes when `autopilot.unattended` is `true`. Everything
+else — a task shipped outside a run, `jig upgrade` — goes by `agent.git`. Not set, it is `agent.git`.
+
+```bash
+jig config set agent.git pr autopilot.git merge --local
+```
+
+With that, a task you ship yourself stops at an open pull request, and a run merges its own once CI
+passed. The other way round (`agent.git: merge`, `autopilot.git: pr`) a run stops at the pull
+request. `release.merge: human` still keeps an epic's final merge yours.
+
+You can see which one decides: `jig status` prints `autopilot.git: merge (from autopilot.git)` or
+`(from agent.git)`, `jig task route <id>` and `jig task autopilot <id> start` print
+`autopilot git: <level> (<key>)`, and `jig task ship` names the key it went by:
+`task ship: git level merge (autopilot.git)`.
+</Accordion>
+
 ## When a project takes several tasks
 
 You may want to collect several completed parts before releasing the whole feature. Tell the
@@ -226,7 +263,7 @@ What stays yours at every level:
   agent raises the version by that choice, or proposes one and waits for your yes when none was
   recorded.
 - **Merging.** Merging the epic's final pull request is the release. Only an unattended run at
-  `merge` does it — with a merge commit, once CI passed and every roadmap item is done — and never
+  `merge` (`autopilot.git`, or `agent.git` when that is not set) does it — with a merge commit, once CI passed and every roadmap item is done — and never
   for a `major` release, which it opens as a draft for you. Set `release.merge: human` in
   `.ai/config.local.yaml` and even that run leaves the merge to you.
 - **Protected epic branches.** The epic is never pushed to after it is cut: the finish goes on a
@@ -319,6 +356,6 @@ jig config unset agent.git --local
 
 That removes the line, so the default — `none` — applies again; setting `agent.git: none` explicitly
 does the same thing. The next task ends in your working tree again. The same command takes back
-`autopilot.unattended`, and `jig config show --local` prints what is left
+`autopilot.git` and `autopilot.unattended`, and `jig config show --local` prints what is left
 ([Configuration](/configuration#or-set-a-value-yourself)).
 </Accordion>

@@ -4021,6 +4021,144 @@ test_task_ship_merge_level_ignores_agent_git_merge_in_the_project_config() {
   assert_eq 3 "$RC"
 }
 
+# --- autopilot.git (adr-20260921-agent-git-rights-are-a-local-setting, amended 2026-10-08)
+
+test_task_ship_without_autopilot_git_a_run_ships_at_agent_git() {
+  mship_setup github
+  jig task autopilot T-1 start >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level merge (agent.git)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+test_task_ship_autopilot_git_merge_merges_a_run_over_agent_git_pr() {
+  mship_setup github
+  ship_cfg_local agent.git pr
+  ship_cfg_local autopilot.git merge
+  jig task autopilot T-1 start >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level merge (autopilot.git)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+test_task_ship_autopilot_git_does_not_reach_a_ship_outside_a_run() {
+  mship_setup github
+  ship_cfg_local agent.git pr
+  ship_cfg_local autopilot.git merge
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_not_contains "$OUT" "merged "
+  assert_no_file gh-merge.argv
+}
+
+# A run that has ended ships like any other work.
+test_task_ship_after_the_run_ended_goes_by_agent_git() {
+  mship_setup github
+  ship_cfg_local agent.git pr
+  ship_cfg_local autopilot.git merge
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 end >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_no_file gh-merge.argv
+}
+
+# An attended run that stopped waits for its person, who may finish the task
+# by hand: their ship goes by their own level.
+test_task_ship_an_attended_stopped_run_goes_by_agent_git() {
+  mship_setup github
+  ship_cfg_local agent.git pr
+  ship_cfg_local autopilot.git merge
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "the gate" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level pr (agent.git)"
+  assert_not_contains "$OUT" "merged "
+  assert_no_file gh-merge.argv
+}
+
+# An unattended run whose repairs ran out is stopped and ships its draft at
+# the run's level.
+test_task_ship_an_unattended_stopped_run_ships_its_draft_at_autopilot_git() {
+  mship_setup github
+  ship_cfg_local agent.git none
+  ship_cfg_local autopilot.git pr
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason r3 >/dev/null 2>&1
+  assert_eq stopped "$(sed -n 's/^autopilot: //p' .ai/workspace/tasks/T-1/state)"
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level pr (autopilot.git)"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+}
+
+test_task_ship_autopilot_git_pr_stops_a_run_at_the_pr_over_agent_git_merge() {
+  mship_setup github
+  ship_cfg_local autopilot.git pr
+  jig task autopilot T-1 start >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: git level pr (autopilot.git)"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_not_contains "$OUT" "merged "
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_autopilot_git_none_hands_a_run_to_the_human() {
+  mship_setup github
+  ship_cfg_local autopilot.git none
+  jig task autopilot T-1 start >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task ship: autopilot.git is none in this clone; the human commits"
+}
+
+test_task_ship_invalid_autopilot_git_refuses_a_run_and_never_falls_back() {
+  mship_setup github
+  ship_cfg_local autopilot.git yolo
+  jig task autopilot T-1 start >/dev/null
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task ship: invalid autopilot.git: yolo (expected none|commit|push|pr|merge)"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
+test_task_route_and_autopilot_start_name_the_runs_git_level() {
+  task_setup
+  task_started T-1
+  jig task set T-1 class T1 >/dev/null
+  run jig task route T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot git: none (agent.git)"
+
+  printf 'agent.git: pr\nautopilot.git: merge\n' > .ai/config.local.yaml
+  run jig task route T-1
+  assert_contains "$OUT" "autopilot git: merge (autopilot.git)"
+  run jig task autopilot T-1 start
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot git: merge (autopilot.git)"
+}
+
 test_task_ship_merge_level_gitlab_merges_on_a_green_pipeline() {
   mship_setup gitlab
 
@@ -5103,7 +5241,7 @@ test_task_autopilot_start_writes_state_and_journal() {
   task_started T-1
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)')" "$OUT"
+  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)\nautopilot git: none (agent.git)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\t')"
@@ -5183,7 +5321,7 @@ test_task_autopilot_start_after_done_starts_a_fresh_run() {
   jig task autopilot T-1 end >/dev/null
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)')" "$OUT"
+  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)\nautopilot git: none (agent.git)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 0"
 }
 
@@ -5851,7 +5989,7 @@ test_task_autopilot_start_records_the_attended_mode_by_default() {
   task_started T-1
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)')" "$OUT"
+  assert_eq "$(printf 'autopilot: on\ndepth: full (route.depth)\nautopilot git: none (agent.git)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: attended"
 }
 
@@ -5861,7 +5999,7 @@ test_task_autopilot_start_records_the_unattended_mode() {
   unattended_local
   run jig task autopilot T-1 start
   assert_eq 0 "$RC"
-  assert_eq "$(printf 'autopilot: on (unattended)\ndepth: full (route.depth)')" "$OUT"
+  assert_eq "$(printf 'autopilot: on (unattended)\ndepth: full (route.depth)\nautopilot git: none (agent.git)')" "$OUT"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstart\tunattended')"
 }

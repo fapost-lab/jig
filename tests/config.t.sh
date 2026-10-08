@@ -281,6 +281,10 @@ test_config_set_agent_git_validation() {
   _config_accepts agent.git push
   _config_accepts agent.git pr
   _config_accepts agent.git merge
+  _config_accepts autopilot.git pr
+  _config_accepts autopilot.git merge
+  _config_rejects autopilot.git yolo
+  _config_rejects autopilot.git MERGE
   _config_rejects agent.git yolo
   _config_rejects agent.git PR
 }

@@ -158,8 +158,9 @@ workspace and not in a shared directory), and run:
 .ai/scripts/jig task ship <id> --message-file <the path it printed>
 ```
 
-It commits, pushes and opens the pull request into the task's base as far as `agent.git` in
-this clone allows, and says where it stopped. At `merge` it then waits for CI and prints
+It commits, pushes and opens the pull request into the task's base as far as this clone allows —
+`agent.git`, or `autopilot.git` for a task in an autopilot run — names the key on its
+`git level` line, and says where it stopped. At `merge` it then waits for CI and prints
 `merged <url>` or `not merged: <why>`; a pull request left open is an ordinary end — say why.
 Exit 3 means `none`: tell the human the change is ready for their review and commit. The step it stopped at is the human's; never finish
 it by hand with git. The first line of the message is the pull request's title, the rest its

@@ -195,6 +195,39 @@ order does not change: do it once, and read every release between yours and the 
     The release sections below describe each release in more words.
   </Step>
 
+  <Step title="Look at the new settings">
+    A release can add settings. Nothing about your project changes until you set one — each starts
+    on its default — but you only learn a setting exists if you look. Two places show them:
+
+    - The upgrade itself ends with a line such as
+      `.ai/config.yaml does not mention 2 key(s) this version reads, each on its default: …`. That
+      file is the team's, shared through Git: change it by hand and review it like code, or leave it.
+    - `jig config keys` lists every setting this version reads, its default, and which file answers
+      for it. The ones marked `local only` are personal: they are never read from `.ai/config.yaml`,
+      so the upgrade line never names them. The release's section below says which ones are new.
+
+    A personal setting goes into your own `.ai/config.local.yaml`, which Git ignores. Either ask your
+    agent — *"set up Jig for me"* ([jig-setup](/configuration#let-the-agent-ask-you)) asks one question
+    at a time and writes the file after your yes — or set it yourself:
+
+    ```bash
+    jig config set <key> <value> --local
+    ```
+
+    For example, `autopilot.git` lets [autopilot](/autopilot) runs go further with Git than the work
+    you follow step by step. With `agent.git` left at `pr`:
+
+    ```bash
+    jig config set autopilot.git merge --local
+    ```
+
+    `agent.git: pr` keeps every task you ship yourself at an open pull request that you review and
+    merge; `autopilot.git: merge` lets a task run on autopilot merge its own pull request once CI
+    passed. `jig config set` prints `config: autopilot.git: merge (.ai/config.local.yaml)`, refuses a
+    value Jig would not understand and writes nothing then, and `jig status` shows
+    `autopilot.git: merge (from autopilot.git)`. `jig config unset autopilot.git --local` takes it back.
+  </Step>
+
   <Step title="If you skipped releases, read every section in between">
     Below there is one section per release, newest first, named "From X to Y". If you upgraded from
     0.21.0 to 0.23.0, read "From 0.22.0 to 0.23.0" and then "From 0.21.0 to 0.22.0", and do what each

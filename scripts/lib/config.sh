@@ -15,13 +15,13 @@
 # is one: which of its own branches a clone keeps is that clone's business
 # (adr-20261007-a-merged-branch-leaves-with-its-work).
 #
-# `agent.git`, `agent.ci_timeout`, `autopilot.unattended`,
+# `agent.git`, `autopilot.git`, `agent.ci_timeout`, `autopilot.unattended`,
 # `autopilot.parallel` and `route.depth` are also in JIG_CFG_LOCAL_ONLY_KEYS
 # below (with `run.exec`, `run.path` and the two `claude.*_model` keys): they
 # answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -29,7 +29,9 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # every contributor the same thing a local key exists to keep personal —
 # `agent.git` grants an agent git rights, and a project-wide grant would make
 # every contributor's agent commit, whether that contributor agreed to it or
-# not (spec: .ai/specs/autopilot/). `autopilot.unattended` lets a run ask
+# not (spec: .ai/specs/autopilot/). `autopilot.git` is the same grant for the
+# shipping an autopilot run does, so a person can trust a run further, or less
+# far, than the work they watch. `autopilot.unattended` lets a run ask
 # nothing and `agent.ci_timeout` bounds how long a merge waits for CI: both
 # decide what one person's agent does on their behalf, for the same reason
 # (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
@@ -57,7 +59,7 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # (adr-20261005-jig-names-the-roles-not-the-models).
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -156,6 +158,7 @@ housekeeping.abandoned_ttl 14d
 housekeeping.stale_after 60d
 checkout.busy_ttl 12h
 agent.git none
+autopilot.git
 agent.ci_timeout 30
 autopilot.unattended false
 autopilot.parallel 2
@@ -360,6 +363,27 @@ jig_agent_git() {
   _cfg_agent_git_level "$value"
 }
 
+# jig_autopilot_git — `<level><TAB><key>`: the git level an autopilot run
+# ships at, and the key it came from. `autopilot.git` when this clone sets it,
+# else `agent.git`: nothing has to be filled in, and a clone without the key
+# ships a run exactly as it ships everything else. Exit 1, still printing the
+# value read and its key, when the level is not one of
+# none|commit|push|pr|merge, like jig_agent_git: a set but invalid
+# autopilot.git never falls back to agent.git, because the person who set it
+# did not mean agent.git.
+jig_autopilot_git() {
+  local value
+  value=$(cfg autopilot.git "")
+  if [ -n "$value" ]; then
+    printf '%s\tautopilot.git\n' "$value"
+    _cfg_agent_git_level "$value"
+    return
+  fi
+  value=$(cfg agent.git none)
+  printf '%s\tagent.git\n' "$value"
+  _cfg_agent_git_level "$value"
+}
+
 # _cfg_agent_git_level <value> — exit 0 when <value> is an agent.git level.
 # Shared by the reader above and `jig config set`, so the two cannot disagree.
 _cfg_agent_git_level() {
@@ -485,7 +509,7 @@ _cfg_parallel() {
 #   `true` or `false` — cfg_bool
 #   would take yes/1/on too, jig_unattended only `true`; the one spelling
 #   both read alike;
-# - agent.git and agent.ci_timeout: the checks of jig_agent_git and
+# - agent.git, autopilot.git and agent.ci_timeout: the checks of jig_agent_git and
 #   jig_ci_timeout;
 # - autopilot.parallel: the check of jig_autopilot_parallel;
 # - route.depth: the check of jig_route_depth;
@@ -530,7 +554,7 @@ jig_config_value_problem() {
         *) printf 'not true or false\n'; return 1 ;;
       esac
       ;;
-    agent.git)
+    agent.git | autopilot.git)
       _cfg_agent_git_level "$value" \
         || { printf 'not a level: none, commit, push, pr or merge\n'; return 1; }
       ;;
