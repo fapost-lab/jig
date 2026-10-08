@@ -430,3 +430,34 @@ test_profile_dotnet_map_question_mark_falls_back_to_builtin() {
   assert_eq 0 "$RC" "$OUT"
   assert_file_contains dotnet.log "test tests/App.Tests/App.Tests.csproj"
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_dotnet_full_run_ci_leaves_a_sln_change_to_ci() {
+  _dotnet_install
+  _dotnet_stub 8.0.100 0 0 dotnet.log
+  files=$(_files_list App.sln)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _dotnet_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "dotnet: test: skip (scope: not narrowable, full set left to CI)"
+  assert_file_contains dotnet.log "^format --verify-no-changes$"
+  assert_not_contains "$(cat dotnet.log)" "test"
+}
+
+test_profile_dotnet_full_run_ci_runs_the_named_project_beside_a_sln_change() {
+  _dotnet_install
+  _dotnet_stub 8.0.100 0 0 dotnet.log
+  files=$(_files_list App.sln tests/App.Tests/FooTests.cs)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _dotnet_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "dotnet: test: pass (8.0.100, scope: 1 test projects, full set left to CI)"
+  assert_file_contains dotnet.log "test tests/App.Tests/App.Tests.csproj"
+}

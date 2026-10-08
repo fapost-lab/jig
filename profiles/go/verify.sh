@@ -235,7 +235,7 @@ $(_go_reverse_dependents "$targets" "$depmap")"
 # something to run: the patterns jp_select made for it, which under `ci` can be
 # the filters alone while vet still sees the ALL beside them.
 _go_plan_test() {
-  local patterns="$1" missing="" pattern dir
+  local patterns="$1" missing="" pattern dir possible
   if [ "$patterns" = ALL ]; then
     jp_plan_full test "module-wide change"
     return 0
@@ -253,7 +253,10 @@ EOF
   if [ -n "$missing" ]; then
     jp_plan_full test "package $missing has no .go files"
   else
-    jp_plan test conditional "changed packages: $(printf '%s\n' "$patterns" | paste -sd, -)$JP_SELECTION_NOTE; importers require go list; full set possible"
+    # Under `ci` a full set is never run here: the cases that would are skips.
+    possible="; full set possible"
+    if jp_ci_runs_full; then possible=""; fi
+    jp_plan test conditional "changed packages: $(printf '%s\n' "$patterns" | paste -sd, -)$JP_SELECTION_NOTE; importers require go list$possible"
   fi
   return 0
 }

@@ -1039,6 +1039,36 @@ test_verify_explain_go_and_jest_name_possible_full_run() {
   assert_no_file tool-called
 }
 
+test_verify_explain_go_and_jest_under_ci_do_not_name_a_possible_full_set() {
+  fixture_repo
+  mkdir -p fake-bin pkg node_modules/.bin
+  for tool in go npm; do
+    printf '#!/bin/sh\nprintf called >> "%s"\nexit 98\n' "$PWD/tool-called" > "fake-bin/$tool"
+    chmod +x "fake-bin/$tool"
+  done
+  cp fake-bin/go node_modules/.bin/jest
+  printf 'module example.com/sample\n' > go.mod
+  printf 'package pkg\n' > pkg/sample.go
+  printf 'pkg/sample.go\n' > changed
+  run env JIG_VERIFY_FULL_RUN=ci PATH="$PWD/fake-bin:$PATH" JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+    JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/go/verify.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN go: vet: filtered"
+  assert_contains "$OUT" "PLAN go: test: conditional"
+  assert_not_contains "$OUT" "full set possible"
+  assert_no_file tool-called
+
+  printf '{"scripts":{"test":"jest"},"devDependencies":{"jest":"*"}}\n' > package.json
+  printf 'export const answer = 42;\n' > source.js
+  printf 'source.js\n' > changed
+  run env JIG_VERIFY_FULL_RUN=ci PATH="$PWD/fake-bin:$PATH" JIG_VERIFY_EXPLAIN=1 JIG_VERIFY_SCOPE=changed \
+    JIG_VERIFY_FILES="$PWD/changed" bash "$JIG_HOME/profiles/node/verify.sh"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "PLAN node: npm test: conditional"
+  assert_not_contains "$OUT" "full set possible"
+  assert_no_file tool-called
+}
+
 test_verify_explain_empty_changed_scope_names_each_skipped_check() {
   fixture_repo
   : > changed

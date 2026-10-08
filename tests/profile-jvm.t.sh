@@ -557,3 +557,63 @@ test_profile_jvm_maven_map_question_mark_falls_back_to_builtin() {
   assert_eq 0 "$RC" "$OUT"
   assert_file_contains mvn.log "-pl module-a -am test"
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_jvm_full_run_ci_leaves_a_gradle_root_build_file_to_ci() {
+  _jvm_install_gradle
+  _gradle_stub 8.5 0 gradle.log
+  files=$(_files_list build.gradle.kts)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _jvm_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  # every check skipped: the run reports 2
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "jvm: check: skip (scope: not narrowable, full set left to CI)"
+  assert_no_file gradle.log
+}
+
+test_profile_jvm_full_run_ci_runs_the_named_subproject_beside_a_gradle_root_build_file() {
+  _jvm_install_gradle
+  _gradle_stub 8.5 0 gradle.log
+  files=$(_files_list build.gradle.kts app/Foo.kt)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _jvm_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "jvm: check: pass (8.5, scope: 1 subprojects, full set left to CI)"
+  assert_file_contains gradle.log ":app:check"
+}
+
+test_profile_jvm_full_run_ci_leaves_a_maven_root_pom_to_ci() {
+  _jvm_install_maven
+  _mvn_stub "Apache Maven 3.9.6" 0 mvn.log
+  files=$(_files_list pom.xml)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _jvm_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  # every check skipped: the run reports 2
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "jvm: test: skip (scope: not narrowable, full set left to CI)"
+  assert_no_file mvn.log
+}
+
+test_profile_jvm_full_run_ci_runs_the_named_module_beside_a_maven_root_pom() {
+  _jvm_install_maven
+  _mvn_stub "Apache Maven 3.9.6" 0 mvn.log
+  files=$(_files_list pom.xml module-a/A.java)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _jvm_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "jvm: test: pass (Apache Maven 3.9.6, scope: 1 modules, full set left to CI)"
+  assert_file_contains mvn.log "-pl module-a -am test"
+}

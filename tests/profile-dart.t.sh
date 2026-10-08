@@ -433,3 +433,33 @@ test_profile_dart_explain_names_the_path_that_forces_the_full_set() {
   assert_no_file dart-test.args
   assert_no_file flutter-test.args
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_dart_full_run_ci_leaves_a_pubspec_change_to_ci() {
+  dart_fixture
+  dart_stub_tool dart 0 0 0
+  dart_scope "pubspec.yaml"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  dart_verify
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "dart: test: skip (scope: pubspec.yaml can affect any test, full set left to CI)"
+  assert_no_file dart-test.args
+}
+
+test_profile_dart_full_run_ci_runs_the_named_test_beside_a_pubspec_change() {
+  dart_fixture
+  dart_stub_tool dart 0 0 0
+  printf 'int add(int a, int b) => a + b;\n' > lib/math.dart
+  printf 'void main() {}\n' > test/math_test.dart
+  dart_scope "$(printf 'pubspec.yaml\nlib/math.dart\n')"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  dart_verify
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "dart: test: pass (dart stub-version, scope: 1 test files, full set left to CI)"
+  assert_eq "test/math_test.dart" "$(cat dart-test.args)"
+}

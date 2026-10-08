@@ -280,3 +280,24 @@ STUB
   assert_not_contains "$(cat swift.log)" "build"
   assert_not_contains "$(cat swift.log)" "test"
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+# swift never narrows (D4), so a code change is always ALL: there is no
+# narrow-filter case to pair it with.
+test_profile_swift_full_run_ci_leaves_a_code_change_to_ci() {
+  _swift_package
+  _swift_stub 0 0
+  printf 'Sources/App/main.swift\n' > "$JIG_TEST_TMP.files"
+  JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_TEST_TMP.files"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  _swift_run
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  # build is a compile check: it keeps its whole-project run.
+  assert_contains "$OUT" "swift: build: pass (Swift version 5.9 (swift-5.9-RELEASE), scope: not narrowable, ran full set)"
+  assert_contains "$OUT" "swift: test: skip (scope: not narrowable, full set left to CI)"
+  assert_file_contains swift.log "^build\$"
+  assert_not_contains "$(cat swift.log)" "test"
+}

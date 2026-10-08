@@ -658,3 +658,59 @@ test_profile_node_explain_names_the_path_that_forces_the_full_set() {
   assert_contains "$OUT" "PLAN node: npm test: full (package-lock.json can affect any test)"
   assert_no_file jest-invoked.log
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_node_full_run_ci_leaves_a_lock_file_change_to_ci() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 3 0
+  files=$(_node_files package-lock.json)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  # Nothing ran, so the profile exits 2 ("verified nothing"), as for any all-skip run.
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: skip (scope: package-lock.json can affect any test, full set left to CI)"
+  assert_no_file jest-invoked.log
+  assert_no_file npm-invoked.log
+}
+
+test_profile_node_full_run_ci_runs_the_related_tests_beside_a_lock_file_change() {
+  fixture_repo
+  _node_pkg '{"test": "jest"}' '{"jest": "^29.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_jest_stub 29.0.0 2 0
+  printf 'x\n' > a.ts
+  files=$(_node_files a.ts package-lock.json)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: pass (29.0.0, scope: jest related, 2 files, full set left to CI)"
+  assert_file_contains jest-invoked.log "--findRelatedTests a.ts"
+  assert_no_file npm-invoked.log
+}
+
+test_profile_node_full_run_ci_runs_a_changed_vitest_file_beside_a_lock_file_change() {
+  fixture_repo
+  _node_pkg '{"test": "vitest run"}' '{"vitest": "^1.0.0"}'
+  _node_mgr_stub npm 10.0.0 0
+  _node_local_tool_stub vitest 1.4.0 0
+  printf 'x\n' > a.test.ts
+  files=$(_node_files a.test.ts package-lock.json)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _node_scope "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: pass (1.4.0, scope: vitest related, 1 files, full set left to CI)"
+  assert_file_contains vitest-invoked.log "run a.test.ts"
+  assert_no_file npm-invoked.log
+}

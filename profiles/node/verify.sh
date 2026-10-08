@@ -421,7 +421,10 @@ $filters
 EOF
       fi
       if [ -n "$filters" ] && [ "$filters" != ALL ]; then
-        jp_plan "$TEST_LABEL" conditional "related tests for $(printf '%s\n' "$filters" | paste -sd, -) require jest --listTests; full set possible"
+        # Under `ci` a full set is never run here: the cases that would are skips.
+        possible="; full set possible"
+        if jp_ci_runs_full; then possible=""; fi
+        jp_plan "$TEST_LABEL" conditional "related tests for $(printf '%s\n' "$filters" | paste -sd, -) require jest --listTests$JP_SELECTION_NOTE$possible"
       elif [ "$filters" = ALL ]; then
         jp_plan_select "$TEST_LABEL" "$filters" "test files" \
           "$(_node_all_reason "$(jp_decide_cause _node_builtin_jest)")"
