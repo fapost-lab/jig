@@ -552,3 +552,47 @@ test_profile_ruby_explain_names_the_path_that_forces_the_full_set() {
     "PLAN ruby: rspec: full (package.json changes the asset build, which browser tests load)"
   assert_no_file rspec.args
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_ruby_full_run_ci_leaves_a_gemfile_lock_change_to_ci() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  rb_scope "Gemfile.lock"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  rb_verify
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "ruby: rspec: skip (scope: Gemfile.lock can affect any test, full set left to CI)"
+  assert_no_file rspec.args
+}
+
+test_profile_ruby_full_run_ci_runs_the_named_spec_beside_a_gemfile_lock_change() {
+  rb_fixture rubocop rspec-core rspec
+  rb_stub_bundle 0 0 0
+  printf 'RSpec.describe "Other" do\nend\n' > spec/other_spec.rb
+  rb_scope "$(printf 'Gemfile.lock\nspec/other_spec.rb\n')"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  rb_verify
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "ruby: rspec: pass (rspec stub-version, scope: 1 test files, full set left to CI)"
+  assert_eq "spec/other_spec.rb" "$(cat rspec.args)"
+}
+
+test_profile_ruby_full_run_ci_leaves_minitest_via_rake_to_ci() {
+  rb_fixture minitest rake
+  rb_stub_bundle 0 0 0
+  : > Rakefile
+  printf 'require "minitest/autorun"\n' > test/foo_test.rb
+  rb_scope "test/foo_test.rb"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  rb_verify
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "ruby: minitest: skip (scope: not narrowable, full set left to CI)"
+  assert_no_file rake.args
+}

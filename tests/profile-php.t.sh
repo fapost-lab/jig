@@ -660,3 +660,51 @@ test_profile_php_explain_says_no_test_is_named_after_the_file() {
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "PLAN php: phpunit: full (no test is named after src/Orphan.php)"
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_php_full_run_ci_leaves_a_phpunit_xml_change_to_ci() {
+  _php_install
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list phpunit.xml.dist)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _php_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: skip (scope: phpunit.xml.dist can affect any test, full set left to CI)"
+  assert_no_file phpunit.log
+}
+
+test_profile_php_full_run_ci_runs_the_named_test_beside_a_phpunit_xml_change() {
+  _php_install
+  mkdir -p tests
+  : > tests/FooTest.php
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list tests/FooTest.php phpunit.xml.dist)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _php_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9, scope: 1 test files, full set left to CI)"
+  assert_eq "tests/FooTest.php" "$(cat phpunit.log)"
+}
+
+test_profile_php_full_run_ci_leaves_an_unmapped_source_change_to_ci() {
+  _php_install
+  mkdir -p src
+  : > src/Orphan.php
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  files=$(_files_list src/Orphan.php)
+
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_FULL_RUN
+  _php_scoped "$files"
+  unset JIG_VERIFY_FULL_RUN
+  assert_eq 2 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: skip (scope: no test is named after src/Orphan.php, full set left to CI)"
+  assert_no_file phpunit.log
+}

@@ -461,3 +461,40 @@ STUB
   assert_contains "$OUT" "scope: crates crate-b"
   assert_file_contains cargo.log "test -p crate-b"
 }
+
+# --- verify.full_run: ci leaves the full set to CI ---------------------------
+
+test_profile_rust_full_run_ci_leaves_a_cargo_lock_change_to_ci() {
+  _rust_workspace
+  : > Cargo.lock
+  _rust_stub 1 0 1 0 0
+  printf 'Cargo.lock\n' > "$JIG_TEST_TMP.files"
+  JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_TEST_TMP.files"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  _rust_run
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "rust: test: skip (scope: full (root manifest, lockfile, toolchain pin or a file outside any crate changed), full set left to CI)"
+  # fmt and clippy are linters: they keep their whole-project run.
+  assert_contains "$OUT" "rust: fmt: pass"
+  assert_contains "$OUT" "rust: clippy: pass"
+  assert_file_contains cargo.log "fmt --check"
+  assert_not_contains "$(cat cargo.log)" "test"
+}
+
+test_profile_rust_full_run_ci_runs_the_named_crate_beside_a_cargo_lock_change() {
+  _rust_workspace
+  : > Cargo.lock
+  _rust_stub 1 0 1 0 0
+  printf 'crates/a/src/lib.rs\nCargo.lock\n' > "$JIG_TEST_TMP.files"
+  JIG_VERIFY_SCOPE=changed JIG_VERIFY_FILES="$JIG_TEST_TMP.files"
+  JIG_VERIFY_FULL_RUN=ci
+  export JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  _rust_run
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_FULL_RUN
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "rust: test: pass (cargo 1.77.0 (abc 2024-01-01), scope: crates crate-a, full set left to CI)"
+  assert_file_contains cargo.log "test -p crate-a"
+  assert_not_contains "$(cat cargo.log)" "crate-b"
+}
