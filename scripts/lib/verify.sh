@@ -284,6 +284,23 @@ EOF
   [ "$any" = 1 ]
 }
 
+# _verify_count_left_to_ci <output> — how many of a profile's check lines say
+# a narrowed run left the full set to CI: a skip `<check>: skip (scope: …, full
+# set left to CI)` as jp_full_left_to_ci prints it, and a check that ran its
+# filters after an ALL beside them was dropped (`pass (…, full set left to CI)`).
+_verify_count_left_to_ci() {
+  local line n=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      RESULT\ *) ;;
+      *": "*" ("*", full set left to CI)") n=$((n + 1)) ;;
+    esac
+  done <<EOF
+$1
+EOF
+  printf '%s\n' "$n"
+}
+
 # _verify_cleanup — the one EXIT trap: temporary files and the run record. Its
 # variables are script-global, never `local`, because the trap runs after the
 # function that set them has returned (conventions/shell.md).
@@ -316,7 +333,7 @@ cmd_verify() {
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
   local header="" base_branch base_ref mb map map_ok map_err
   local incomplete=0 covered=0 explained=0 unknown=0 plan_output plan_bad hr_state hr_rt hr_text
-  local covered_needs_install=0 is_fallback=0 run_output
+  local covered_needs_install=0 is_fallback=0 run_output ci_left=0
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
   JIG_VERIFY_MAP_ALL_TMP=""
@@ -702,6 +719,11 @@ cmd_verify() {
       continue
     fi
 
+    # A check whose full set a narrowed run left to CI (verify.full_run: ci,
+    # adr-0041 amendment 2026-10-08) is counted, so the summary can say the
+    # full set ran nowhere here and how to run it.
+    ci_left=$((ci_left + $(_verify_count_left_to_ci "$run_output")))
+
     # A run that died is neither a pass nor a fail. Exit code 3 is a profile
     # saying so; 128+N is the profile itself killed by a signal, which no
     # profile has to be taught — `Killed: 9` and `Terminated: 15` reach every
@@ -746,6 +768,10 @@ cmd_verify() {
 
   printf 'verify: %d profiles, %d pass, %d fail, %d skip, %d incomplete\n' \
     "$total" "$pass" "$failn" "$skip" "$incomplete"
+  if [ "$ci_left" -gt 0 ]; then
+    printf 'verify: %d check(s) left their full set to CI (verify.full_run: ci); jig verify --full runs it here\n' \
+      "$ci_left"
+  fi
   # Incomplete outranks fail: a run something was killed in is not evidence, so
   # the failures in it cannot be trusted either. Nothing is lost — a real
   # failure comes back on the next run, and an artefact of an overloaded
@@ -792,6 +818,10 @@ cmd_verify() {
     if [ "$covered" = 1 ] && [ "$covered_needs_install" -gt 0 ]; then
       printf 'verify: nothing was checked, so this is not a pass — install the project'"'"'s tools so its profile can run\n'
       return 3
+    fi
+    if [ "$covered" = 1 ] && [ "$ci_left" -gt 0 ]; then
+      printf 'verify: every check in scope skipped or left its full set to CI, so this run verified nothing here\n'
+      return 0
     fi
     if [ "$covered" = 1 ]; then
       printf 'verify: every check in scope skipped — this change touches nothing any profile covers, so this run verified nothing\n'

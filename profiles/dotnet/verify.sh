@@ -206,7 +206,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   else
     jp_plan format full "full scope"
   fi
-  filters=$(jp_decide _dotnet_builtin)
+  jp_select _dotnet_builtin
+  filters=$JP_SELECTION
   if [ -n "$filters" ] && [ "$filters" != ALL ]; then
     while IFS= read -r f; do
       [ -n "$f" ] || continue
@@ -215,18 +216,20 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
 $filters
 EOF
   fi
-  jp_plan_selection test "$filters" "test projects"
+  jp_plan_select test "$filters" "test projects"
   exit 0
 fi
 
 if ! jp_scoped; then
   _dotnet_test "$v"
 else
-  filters=$(jp_decide _dotnet_builtin)
+  jp_select _dotnet_builtin
+  filters=$JP_SELECTION
   if [ -z "$filters" ]; then
     jp_skip "test" "scope: no changed file maps to a test project"
   elif [ "$filters" = ALL ]; then
-    _dotnet_test "$v, scope: not narrowable, ran full set"
+    jp_full_left_to_ci test "not narrowable" \
+      || _dotnet_test "$v, scope: not narrowable, ran full set"
   else
     IFS='
 '
@@ -236,9 +239,10 @@ else
     set +f
     IFS=$' \t\n'
     if missing=$(jp_first_missing "$@"); then
-      _dotnet_test "$v, scope: filter '$missing' selects no tests, ran full set"
+      jp_full_left_to_ci test "filter '$missing' selects no tests" \
+        || _dotnet_test "$v, scope: filter '$missing' selects no tests, ran full set"
     else
-      _dotnet_test "$v, scope: $# test projects" "$@"
+      _dotnet_test "$v, scope: $# test projects$JP_SELECTION_NOTE" "$@"
     fi
   fi
 fi

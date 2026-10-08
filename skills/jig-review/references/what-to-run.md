@@ -12,9 +12,12 @@ their time, in this order.
 - **Revert the code and watch the new tests go red.** A test that passes against the fix
   and against its absence tests nothing, and nobody after the reviewer is positioned to
   notice. This is the check that finds real defects.
-- **Not the project's raw runner over everything.** It reads no configuration: it does not
-  know `verify.full_run`, so it walks straight past the project's own setting, and it
-  cannot name the mode it ran in, which is what makes a narrowed report count as evidence.
+- **Not the project's raw runner over everything** — `php artisan test`, `phpunit`, `pytest`,
+  `npm test` or `tests/run.sh` without a filter. A `jig verify` line that says `full set left to
+  CI` is the project's setting at work, not a gap for the reviewer to fill. The runner reads
+  no configuration: it does not know `verify.full_run`, so it walks straight past the
+  project's own setting, and it cannot name the mode it ran in, which is what makes a
+  narrowed report count as evidence.
   The full set belongs to CI, where it runs once per pull request and in parallel across
   platforms.
 

@@ -253,12 +253,14 @@ _rb_run_narrowed() {
     jp_run "$check" "$note" "$@"
     return 0
   fi
-  filters=$(jp_decide _rb_builtin_test)
+  jp_select _rb_builtin_test
+  filters=$JP_SELECTION
   if [ -z "$filters" ]; then
     jp_skip "$check" "scope: no changed file maps to a test"
   elif [ "$filters" = ALL ]; then
     why=$(_rb_all_reason "$(jp_decide_cause _rb_builtin_test)")
-    jp_run "$check" "$note, scope: $why, ran full set" "$@"
+    jp_full_left_to_ci "$check" "$why" \
+      || jp_run "$check" "$note, scope: $why, ran full set" "$@"
   else
     IFS='
 '
@@ -267,14 +269,15 @@ _rb_run_narrowed() {
     if missing=$(jp_first_missing $filters); then
       set +f
       IFS=$' \t\n'
-      jp_run "$check" "$note, scope: filter '$missing' selects no tests, ran full set" "$@"
+      jp_full_left_to_ci "$check" "filter '$missing' selects no tests" \
+        || jp_run "$check" "$note, scope: filter '$missing' selects no tests, ran full set" "$@"
     else
       n=$(printf '%s\n' "$filters" | grep -c .)
       # shellcheck disable=SC2086
       set -- "$@" $filters
       set +f
       IFS=$' \t\n'
-      jp_run "$check" "$note, scope: $n test files" "$@"
+      jp_run "$check" "$note, scope: $n test files$JP_SELECTION_NOTE" "$@"
     fi
   fi
   return 0
@@ -283,14 +286,16 @@ _rb_run_narrowed() {
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   case "$RB_TEST" in
     rspec)
-      filters=$(jp_decide _rb_builtin_test)
+      jp_select _rb_builtin_test
+      filters=$JP_SELECTION
       ;;
     minitest)
       if _rb_minitest_via_rake && ! _rb_minitest_via_rails; then
-        jp_plan minitest full "rake test cannot narrow by file"
+        jp_plan_full minitest "rake test cannot narrow by file"
         exit 0
       fi
-      filters=$(jp_decide _rb_builtin_test)
+      jp_select _rb_builtin_test
+      filters=$JP_SELECTION
       ;;
     *)
       jp_plan test skip "no rspec or minitest runner found"
@@ -310,7 +315,7 @@ EOF
   else
     why=
   fi
-  jp_plan_selection "$RB_TEST" "$filters" "test files" "$why"
+  jp_plan_select "$RB_TEST" "$filters" "test files" "$why"
   exit 0
 fi
 
@@ -329,7 +334,12 @@ case "$RB_TEST" in
       v=$(jp_version bundle exec rake --version)
       note="$v"
       if jp_scoped; then note="$v, scope: not narrowable, ran full set"; fi
-      jp_run minitest "$note" bundle exec rake test
+      if jp_scoped; then
+        jp_full_left_to_ci minitest "not narrowable" \
+          || jp_run minitest "$note" bundle exec rake test
+      else
+        jp_run minitest "$note" bundle exec rake test
+      fi
     fi
     ;;
   *)

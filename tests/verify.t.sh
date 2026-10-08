@@ -2095,7 +2095,9 @@ test_verify_shell_full_run_ci_leaves_the_full_set_to_ci_beside_filters() {
   assert_file_contains run-log "two::"
 }
 
-test_verify_shell_full_run_ci_alone_still_runs_the_full_set() {
+# Reversed on 2026-10-08 (adr-0041 amendment): under `ci` an ALL alone is left
+# to CI as well; only --full runs the full set here.
+test_verify_shell_full_run_ci_alone_leaves_the_full_set_to_ci() {
   _fixture_shell_lib_project
   printf '\nverify.full_run: ci\n' >> .ai/config.yaml
   git add -A
@@ -2104,9 +2106,37 @@ test_verify_shell_full_run_ci_alone_still_runs_the_full_set() {
   mv shared.new scripts/lib/shared.sh
 
   run jig verify --changed --profile shell
-  assert_eq 0 "$RC"
-  assert_contains "$OUT" "shell: tests/run.sh: pass (scope: not narrowable, ran full set)"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "shell: tests/run.sh: skip (scope: not narrowable, full set left to CI)"
+  assert_contains "$OUT" "verify: 1 check(s) left their full set to CI (verify.full_run: ci); jig verify --full runs it here"
+  assert_no_file run-log
+}
+
+test_verify_shell_full_run_ci_full_flag_runs_the_full_set() {
+  _fixture_shell_lib_project
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "ci"
+  sed 's/^SHARED_GLOBAL=1$/SHARED_GLOBAL=2/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+
+  run jig verify --full --profile shell
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "left to CI"
   assert_file_contains run-log "(full)"
+}
+
+test_verify_shell_full_run_ci_explain_says_the_full_set_is_left_to_ci() {
+  _fixture_shell_lib_project
+  printf '\nverify.full_run: ci\n' >> .ai/config.yaml
+  git add -A
+  git commit -q -m "ci"
+  sed 's/^SHARED_GLOBAL=1$/SHARED_GLOBAL=2/' scripts/lib/shared.sh > shared.new
+  mv shared.new scripts/lib/shared.sh
+
+  run jig verify --changed --explain --profile shell
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN shell: tests/run.sh: skip (scope: changed paths require the full set, full set left to CI)"
 }
 
 test_verify_shell_full_run_local_keeps_all_beside_filters() {

@@ -133,3 +133,23 @@ never be checked on `main` (it happened on the first day, to the change that int
 > not `paths-ignore`, so a required check reads them as passed. A nightly full run on `main` catches a
 > map line that let a change skip the tests it needed. It was a pull request deleting two spec files
 > that ran the whole suite on three platforms.
+
+> **Amendment (2026-10-08): under `ci` a narrowed run never starts a full set.** The owner found
+> that in his Laravel project, which declares `verify.full_run: ci`, an agent's `jig verify` still
+> ran the whole suite locally whenever a change touched `routes/`, `config/`, `database/`, a
+> manifest or a path no test is named after — the laravel profile answered ALL and ran it, and only
+> the shell profile read `JIG_VERIFY_FULL_RUN` at all. His decision: the full set runs in CI and
+> locally only when someone asks for it. So, for every built-in profile, through
+> `scripts/lib/profile.sh` (`jp_select`, `jp_full_left_to_ci`, `jp_plan_full`, `jp_plan_select`):
+> where a narrowed run under `ci` would start a check's full set, it does not: an ALL beside filters
+> is dropped and the filters run; an ALL alone, a filter that selects nothing (the whole check, as
+> a missing filter always widened it) and a runner that cannot narrow leave the check to CI, the
+> check's line saying so (`skip (scope: <why>, full set left to CI)`). An ALL alone is
+> left to CI as well. This reverses the shell profile's rule of 2026-10-01 (#155) that "ALL alone stays a full
+> run, because a narrowed run that selected nothing would be a pass nothing produced": that
+> argument is answered by the run not being a pass — the check is a skip with a `scope:` reason, the
+> summary counts it (`verify: N check(s) left their full set to CI …; jig verify --full runs it
+> here`), and a run where nothing else ran says it verified nothing here. The decision about the
+> full set is CI's, on the pull request, which is what `ci` claims. `--full` and a non-empty `CI`
+> run profiles unnarrowed, unchanged. A profile a user edited (keep-modified) keeps running the
+> full set until it adopts the helpers: the existing `jp_*` functions keep their meanings.

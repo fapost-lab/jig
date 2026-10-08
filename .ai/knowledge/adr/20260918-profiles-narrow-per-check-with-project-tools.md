@@ -110,3 +110,8 @@ with different versions and plugins. And the scope logic the shell profile carri
 > The exception does not extend to renaming, to arguments, or to a state that an old consumer
 > would read as *more* permissive than before. Those remain what this ADR says they are: a new
 > function, never an edit.
+
+> **Amendment (2026-10-08).** Under `verify.full_run: ci` the full set a narrowing falls back to is
+> not run here: built-in profiles leave it to CI through the new `jp_select`,
+> `jp_full_left_to_ci`, `jp_plan_full` and `jp_plan_select` — new functions, as this ADR requires,
+> so the existing `jp_*` keep their meanings. See ADR-0041, amendment 2026-10-08.

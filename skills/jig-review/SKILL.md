@@ -51,7 +51,8 @@ A check belongs to a review when it tests a finding. Run `jig verify` once witho
 the project's setting decides how wide it goes, so it needs none — and targeted filters on
 the files a finding names. The run that earns its time is reverting the fix and watching the
 new test go red: a test that passes either way proves nothing. Never `jig verify --full` and
-never the raw runner over everything; the full set is CI's job, and a rerun of a suite that
+never the raw runner over everything (`php artisan test`, `phpunit`, `pytest`, `npm test`
+without a filter); the full set is CI's job, and a rerun of a suite that
 already passed cannot see the two things that actually get through it
 ([what a reviewer runs](references/what-to-run.md)).
 

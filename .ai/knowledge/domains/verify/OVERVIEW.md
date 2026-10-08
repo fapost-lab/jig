@@ -45,7 +45,9 @@ it actually did.
   (ADR-0013).
 - The CI-backed mode (ADR-0041): with `verify.full_run: ci` a flag-less run narrows to what
   changed since the merge base with `git.base_branch`, and `--full` or a non-empty `CI`
-  restore the full set. The mode and its reason are printed in a header line.
+  restore the full set. The mode and its reason are printed in a header line. A narrowed run
+  under `ci` never starts a check's full set: profiles run what they can name and print
+  `full set left to CI`, and the summary counts those checks (adr-0041, amendment 2026-10-08).
 - The project map `.ai/verify/<profile>.map` (`schemas/verify-map.md`): parsed and validated
   here, handed as `JIG_VERIFY_MAPPED` to profiles declaring `scope: [changed, map]`.
 - Where the project's checks run (adr-20261001-checks-run-where-the-project-runs):
@@ -84,7 +86,8 @@ contract. A change to how profiles are *copied* still belongs to `install`.
   `_verify_map_apply`.
 - `scripts/lib/profile.sh` — `jp_begin`, `jp_changed`, `jp_changed_any`, `jp_decide`,
   `jp_path_matches`, `jp_is_doc`, `jp_first_missing`, `jp_files`, `jp_version`, `jp_run`,
-  `jp_exec`, `jp_have`, `jp_skip`, `jp_end`.
+  `jp_exec`, `jp_have`, `jp_skip`, `jp_end`; under `verify.full_run: ci`, `jp_select`,
+  `jp_full_left_to_ci`, `jp_plan_full`, `jp_plan_select`.
 - `scripts/lib/runenv.sh` — `runenv_resolve`, `_runenv_detect`, `_runenv_signs`,
   `_runenv_probe`.
 - `scripts/lib/hostruntime.sh` — `hostruntime_report`, `_hr_satisfies`, `_hostruntime_version`.

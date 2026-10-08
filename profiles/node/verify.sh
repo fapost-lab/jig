@@ -329,15 +329,18 @@ _node_all_reason() {
 
 # _node_test_via_jest <jest-bin> <manager-version-note>
 _node_test_via_jest() {
-  local jest="$1" mv="$2" v filters n listing missing
+  local jest="$1" mv="$2" v filters n listing missing why
   v=$(jp_version "$jest" --version)
-  filters=$(jp_decide _node_builtin_jest)
+  jp_select _node_builtin_jest
+  filters=$JP_SELECTION
   if [ -z "$filters" ]; then
     jp_skip "$TEST_LABEL" "scope: no changed file maps to a test"
     return 0
   fi
   if [ "$filters" = ALL ]; then
-    _node_full_test "$mv, scope: $(_node_all_reason "$(jp_decide_cause _node_builtin_jest)"), ran full set"
+    why=$(_node_all_reason "$(jp_decide_cause _node_builtin_jest)")
+    jp_full_left_to_ci "$TEST_LABEL" "$why" \
+      || _node_full_test "$mv, scope: $why, ran full set"
     return 0
   fi
   IFS='
@@ -348,7 +351,8 @@ _node_test_via_jest() {
   set +f
   IFS=$' \t\n'
   if missing=$(jp_first_missing "$@"); then
-    _node_full_test "$mv, scope: filter '$missing' selects no tests, ran full set"
+    jp_full_left_to_ci "$TEST_LABEL" "filter '$missing' selects no tests" \
+      || _node_full_test "$mv, scope: filter '$missing' selects no tests, ran full set"
     return 0
   fi
   # --listTests only lists and exits; it never runs a test, so this is safe
@@ -356,23 +360,27 @@ _node_test_via_jest() {
   listing=$("$jest" --listTests --findRelatedTests "$@" 2>/dev/null) || listing=""
   n=$(printf '%s\n' "$listing" | grep -c . || true)
   if [ "$n" -eq 0 ]; then
-    _node_full_test "$mv, scope: jest finds no related tests, ran full set"
+    jp_full_left_to_ci "$TEST_LABEL" "jest finds no related tests" \
+      || _node_full_test "$mv, scope: jest finds no related tests, ran full set"
   else
-    jp_run "$TEST_LABEL" "$v, scope: jest related, $n files" "$jest" --findRelatedTests "$@"
+    jp_run "$TEST_LABEL" "$v, scope: jest related, $n files$JP_SELECTION_NOTE" "$jest" --findRelatedTests "$@"
   fi
 }
 
 # _node_test_via_vitest <vitest-bin> <manager-version-note>
 _node_test_via_vitest() {
-  local vitest="$1" mv="$2" v filters missing
+  local vitest="$1" mv="$2" v filters missing why
   v=$(jp_version "$vitest" --version)
-  filters=$(jp_decide _node_builtin_vitest)
+  jp_select _node_builtin_vitest
+  filters=$JP_SELECTION
   if [ -z "$filters" ]; then
     jp_skip "$TEST_LABEL" "scope: no changed file maps to a test"
     return 0
   fi
   if [ "$filters" = ALL ]; then
-    _node_full_test "$mv, scope: $(_node_all_reason "$(jp_decide_cause _node_builtin_vitest)"), ran full set"
+    why=$(_node_all_reason "$(jp_decide_cause _node_builtin_vitest)")
+    jp_full_left_to_ci "$TEST_LABEL" "$why" \
+      || _node_full_test "$mv, scope: $why, ran full set"
     return 0
   fi
   IFS='
@@ -383,10 +391,11 @@ _node_test_via_vitest() {
   set +f
   IFS=$' \t\n'
   if missing=$(jp_first_missing "$@"); then
-    _node_full_test "$mv, scope: filter '$missing' selects no tests, ran full set"
+    jp_full_left_to_ci "$TEST_LABEL" "filter '$missing' selects no tests" \
+      || _node_full_test "$mv, scope: filter '$missing' selects no tests, ran full set"
     return 0
   fi
-  jp_run "$TEST_LABEL" "$v, scope: vitest related, $# files" "$vitest" run "$@"
+  jp_run "$TEST_LABEL" "$v, scope: vitest related, $# files$JP_SELECTION_NOTE" "$vitest" run "$@"
 }
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
@@ -399,9 +408,10 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     runner_bin=""
     if [ -n "$runner" ]; then runner_bin=$(_node_local_bin "$runner"); fi
     if [ -z "$runner_bin" ]; then
-      jp_plan "$TEST_LABEL" full "no local supported runner for narrowing"
+      jp_plan_full "$TEST_LABEL" "no local supported runner for narrowing"
     elif [ "$runner" = jest ]; then
-      filters=$(jp_decide _node_builtin_jest)
+      jp_select _node_builtin_jest
+      filters=$JP_SELECTION
       if [ -n "$filters" ] && [ "$filters" != ALL ]; then
         while IFS= read -r f; do
           [ -n "$f" ] || continue
@@ -413,13 +423,14 @@ EOF
       if [ -n "$filters" ] && [ "$filters" != ALL ]; then
         jp_plan "$TEST_LABEL" conditional "related tests for $(printf '%s\n' "$filters" | paste -sd, -) require jest --listTests; full set possible"
       elif [ "$filters" = ALL ]; then
-        jp_plan_selection "$TEST_LABEL" "$filters" "test files" \
+        jp_plan_select "$TEST_LABEL" "$filters" "test files" \
           "$(_node_all_reason "$(jp_decide_cause _node_builtin_jest)")"
       else
-        jp_plan_selection "$TEST_LABEL" "$filters" "test files"
+        jp_plan_select "$TEST_LABEL" "$filters" "test files"
       fi
     else
-      filters=$(jp_decide _node_builtin_vitest)
+      jp_select _node_builtin_vitest
+      filters=$JP_SELECTION
       if [ -n "$filters" ] && [ "$filters" != ALL ]; then
         while IFS= read -r f; do
           [ -n "$f" ] || continue
@@ -433,7 +444,7 @@ EOF
       else
         why=
       fi
-      jp_plan_selection "$TEST_LABEL" "$filters" "test files" "$why"
+      jp_plan_select "$TEST_LABEL" "$filters" "test files" "$why"
     fi
   fi
 
@@ -474,7 +485,8 @@ else
     runner_bin=""
     [ -z "$runner" ] || runner_bin=$(_node_local_bin "$runner")
     if [ -z "$runner" ] || [ -z "$runner_bin" ]; then
-      _node_full_test "$mgr_v, scope: not narrowable, ran full set"
+      jp_full_left_to_ci "$TEST_LABEL" "not narrowable" \
+        || _node_full_test "$mgr_v, scope: not narrowable, ran full set"
     else
       case "$runner" in
         jest) _node_test_via_jest "$runner_bin" "$mgr_v" ;;

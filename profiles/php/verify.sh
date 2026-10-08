@@ -169,7 +169,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if [ -z "$test_bin" ]; then
     jp_plan phpunit skip "$PHP_WHERE"
   else
-    filters=$(jp_decide _php_builtin)
+    jp_select _php_builtin
+    filters=$JP_SELECTION
     if [ -n "$filters" ] && [ "$filters" != ALL ]; then
       while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -183,7 +184,7 @@ EOF
     else
       why=
     fi
-    jp_plan_selection "$test_check" "$filters" "test files" "$why"
+    jp_plan_select "$test_check" "$filters" "test files" "$why"
   fi
 
   for check in phpstan pint; do
@@ -228,12 +229,14 @@ else
   if ! jp_scoped; then
     jp_run "$test_check" "$v" "$test_bin"
   else
-    filters=$(jp_decide _php_builtin)
+    jp_select _php_builtin
+    filters=$JP_SELECTION
     if [ -z "$filters" ]; then
       jp_skip "$test_check" "scope: no changed file maps to a test"
     elif [ "$filters" = ALL ]; then
       why=$(_php_all_reason "$(jp_decide_cause _php_builtin)")
-      jp_run "$test_check" "$v, scope: $why, ran full set" "$test_bin"
+      jp_full_left_to_ci "$test_check" "$why" \
+        || jp_run "$test_check" "$v, scope: $why, ran full set" "$test_bin"
     else
       IFS='
 '
@@ -243,9 +246,10 @@ else
       set +f
       IFS=$' \t\n'
       if missing=$(jp_first_missing "$@"); then
-        jp_run "$test_check" "$v, scope: filter '$missing' selects no tests, ran full set" "$test_bin"
+        jp_full_left_to_ci "$test_check" "filter '$missing' selects no tests" \
+          || jp_run "$test_check" "$v, scope: filter '$missing' selects no tests, ran full set" "$test_bin"
       else
-        jp_run "$test_check" "$v, scope: $# test files" "$test_bin" "$@"
+        jp_run "$test_check" "$v, scope: $# test files$JP_SELECTION_NOTE" "$test_bin" "$@"
       fi
     fi
   fi

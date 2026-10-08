@@ -146,7 +146,8 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   if [ ! -f artisan ] || ! jp_have php; then
     jp_plan "artisan test" skip "artisan or php not found"
   else
-    filters=$(jp_decide _laravel_builtin)
+    jp_select _laravel_builtin
+    filters=$JP_SELECTION
     if [ -n "$filters" ] && [ "$filters" != ALL ]; then
       if missing=$(printf '%s\n' "$filters" | while IFS= read -r f; do
         if [ ! -e "$f" ]; then printf '%s\n' "$f"; break; fi
@@ -161,7 +162,7 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     else
       why=
     fi
-    jp_plan_selection "artisan test" "$filters" "test files" "$why"
+    jp_plan_select "artisan test" "$filters" "test files" "$why"
   fi
   exit 0
 fi
@@ -176,12 +177,14 @@ v=$(jp_version php --version)
 if ! jp_scoped; then
   jp_run "artisan test" "$v" php artisan test
 else
-  filters=$(jp_decide _laravel_builtin)
+  jp_select _laravel_builtin
+  filters=$JP_SELECTION
   if [ -z "$filters" ]; then
     jp_skip "artisan test" "scope: no changed file maps to a test"
   elif [ "$filters" = ALL ]; then
     why=$(_laravel_all_reason "$(jp_decide_cause _laravel_builtin)")
-    jp_run "artisan test" "$v, scope: $why, ran full set" php artisan test
+    jp_full_left_to_ci "artisan test" "$why" \
+      || jp_run "artisan test" "$v, scope: $why, ran full set" php artisan test
   else
     IFS='
 '
@@ -191,9 +194,10 @@ else
     set +f
     IFS=$' \t\n'
     if missing=$(jp_first_missing "$@"); then
-      jp_run "artisan test" "$v, scope: filter '$missing' selects no tests, ran full set" php artisan test
+      jp_full_left_to_ci "artisan test" "filter '$missing' selects no tests" \
+        || jp_run "artisan test" "$v, scope: filter '$missing' selects no tests, ran full set" php artisan test
     else
-      jp_run "artisan test" "$v, scope: $# test files" php artisan test "$@"
+      jp_run "artisan test" "$v, scope: $# test files$JP_SELECTION_NOTE" php artisan test "$@"
     fi
   fi
 fi

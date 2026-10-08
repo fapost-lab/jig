@@ -39,6 +39,8 @@ Run each stage's skill in order, and mark it as you enter it:
 - **A `delegate:` line hands a stage to a helper** on the model it names — implement, review or
   both ([delegation](../jig-task/references/delegation.md)). Without one, you implement, and the
   review subagent runs on the session's model.
+- **The full set is CI's under `verify.full_run: ci`.** Verify with `jig verify`, never with
+  `--full` or the stack's runner unfiltered; `full set left to CI` is not a gap to fill.
 - **Each repair costs one attempt.** A repair is one loop of fixing after a blocking finding or
   a red verification, then reviewing or verifying again. Before starting one:
 
