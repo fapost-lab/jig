@@ -3058,6 +3058,44 @@ test_housekeeping_leaves_origin_alone_below_agent_git_push() {
   rm -rf "$remote"
 }
 
+# autopilot.git is a push right of its own: an unattended run that pushed under
+# it leaves a branch on origin that agent.git alone would never sweep.
+test_housekeeping_deletes_on_origin_when_autopilot_git_may_push() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  hk_cfg_local agent.git commit
+  hk_cfg_local autopilot.git push
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "on origin"
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's branch stayed with autopilot.git push"; fi
+  rm -rf "$remote"
+}
+
+test_housekeeping_leaves_origin_alone_when_neither_git_level_may_push() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  hk_cfg_local agent.git commit
+  hk_cfg_local autopilot.git commit
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "on origin"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "origin's branch was deleted below push"
+  rm -rf "$remote"
+}
+
 # A pull request stacked on the branch is open: the branch is its base, and
 # stays.
 test_housekeeping_keeps_a_branch_another_open_pull_request_is_stacked_on() {

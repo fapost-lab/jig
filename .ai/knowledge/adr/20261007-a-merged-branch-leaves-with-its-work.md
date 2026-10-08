@@ -51,8 +51,8 @@ On by default; `git.delete_merged_branches: false` (a local key) keeps every bra
   pull request is stacked on.
 - **Origin is shared.** Right after its own merge Jig already holds the right to push (the
   merge needs `agent.git: merge`). Housekeeping runs for every contributor at session start, so
-  it writes to origin only for a person whose `agent.git` is `push` or above — the local-only
-  key that grants an agent the right to put a branch there in the first place
+  it writes to origin only for a person whose `agent.git` or `autopilot.git` is `push` or above — the local-only
+  keys that grant an agent the right to put a branch there in the first place
   (adr-20260921-agent-git-rights-are-a-local-setting). Below that it deletes local branches only.
   It may then delete a colleague's merged Jig branch on origin: one whose pull request the forge
   reports merged, still at the merged head, with no open pull request on it — exactly what the
