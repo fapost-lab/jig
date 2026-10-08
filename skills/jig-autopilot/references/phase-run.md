@@ -13,7 +13,7 @@ Refuse the phase run, in one sentence naming what is missing, when:
 
 | Missing | Why | Offer instead |
 |---|---|---|
-| `agent.git` below `pr` | the run would end as N worktrees nobody committed | the phase's tasks one at a time, as ordinary autopilot runs |
+| the run's level (`autopilot.git`, else `agent.git`) below `pr` | the run would end as N worktrees nobody committed | the phase's tasks one at a time, as ordinary autopilot runs |
 | the spec has no epic (`Epic:` in its roadmap) | a wave is filed by one commit on the epic; on a protected default branch there is nowhere to put it | the same: one task at a time |
 
 Then: the checkout is on the epic, clean, and the epic has not diverged from `origin` (`git
@@ -85,9 +85,9 @@ became ready. For the head of the queue, from its worktree:
 
 Pass `--body-file` when the task agent wrote a `pr-body.md`; without it the body is the rest of the commit message.
 
-- `agent.git: pr` — the pull request is open. Wait for CI (`gh pr checks`) and only with it
+- level `pr` (the `task ship: git level` line) — the pull request is open. Wait for CI (`gh pr checks`) and only with it
   green tell the person it is ready. They merge, in any order; you see it by `git fetch`.
-- `agent.git: merge` — `ship` waits for CI and merges, or prints `not merged: <why>`; then see
+- level `merge` — `ship` waits for CI and merges, or prints `not merged: <why>`; then see
   the table below.
 
 After each merge: `jig task set <id> status consolidated`, `jig spec done <id>` **in the epic

@@ -12,8 +12,9 @@ paths:
   - scripts/lib/task.sh
   - skills/jig-consolidate/SKILL.md
   - scripts/lib/common.sh
-summary: Why agent.git (none|commit|push|pr, later merge) is read only from the clone's local config, and why jig task ship does the git work up to that level.
-reviewed_at: 2026-10-05
+  - scripts/lib/spec.sh
+summary: Why agent.git (none|commit|push|pr|merge) and autopilot.git, its level for autopilot runs, are read only from the clone's local config, and why jig task ship does the git work up to that level.
+reviewed_at: 2026-10-08
 ---
 # Whether an agent commits, pushes or opens a pull request is a per-clone setting, and a script ships the change
 
@@ -110,3 +111,21 @@ contributor's agent starts committing.
 > They are personal for the same reason — which model is worth its cost is one person's budget, not
 > the project's call — and unlike every key before them their value is never checked: it is the
 > runtime's word, carried as written (adr-20261005-jig-names-the-roles-not-the-models).
+
+> **Amendment (2026-10-08).** One more local-only key: `autopilot.git`, the same five levels for
+> what an autopilot run ships, so a person can trust a run further — or less far — than the work
+> they follow step by step (`agent.git: pr` with `autopilot.git: merge` is the case that asked for
+> it). Not set, it is `agent.git`: nothing has to be filled in, and a clone without it ships exactly
+> as before. It decides `jig task ship` for a task whose run is going (`autopilot: on`, or
+> `stopped` in an unattended run, which ships its draft from there; an attended run that stopped
+> waits for its person, whose own ship goes by `agent.git`), a phase run's tasks included, and
+> `jig spec ship` in a clone with `autopilot.unattended: true`, the one case in which an epic's
+> finish merges, so `autopilot.git: pr` is never merged past by an `agent.git: merge` meant for
+> other work. `jig upgrade`, housekeeping's remote sweep and every ship outside a run keep
+> `agent.git`. It is read when the ship runs, not recorded at `start`, so lowering it halfway is
+> obeyed at once; a set but invalid value refuses rather than falling back to `agent.git`.
+> `release.merge: human` still keeps an epic's final merge the person's. `task ship`, `spec ship`,
+> `jig task route`, `jig task autopilot start` and `jig status` name the level and the key it came
+> from. Rejected: a `--level` flag on `ship` (the agent would choose its own rights) and recording
+> the level in the task's state at `start` (a person could not take a right back from a run in
+> flight).

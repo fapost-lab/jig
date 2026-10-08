@@ -24,6 +24,7 @@ Absent keys take the default. Paths are not configurable.
 | `checkout.busy_ttl` | `12h` | yes | how long a checkout's record of work in progress still counts as a live session (adr-20260924-a-checkout-records-what-is-happening-in-it) |
 | `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr`, `merge` — `merge` also merges the pull request once CI passed, never past branch protection; an epic's only in an unattended run (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level, adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |
+| `autopilot.git` | - | only | the git level of an autopilot run, same values as `agent.git`: `jig task ship` of a task whose run is `on` (or `stopped`, unattended), and `jig spec ship` when `autopilot.unattended` is `true`; not set, `agent.git` answers. `jig upgrade` and every other ship keep `agent.git`; `release.merge: human` still wins for an epic's final merge (adr-20260921-agent-git-rights-are-a-local-setting, amended 2026-10-08) |
 | `autopilot.unattended` | `false` | only | `true`: an autopilot run asks nothing — each stop becomes a safe default recorded in the pull request — and an epic's final pull request may be merged (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `autopilot.parallel` | `2` | only | how many tasks of a roadmap phase a phase run has agents building at once, 1 to 16; a task whose work is consolidated and waiting its turn to ship holds no slot, and the agents that repair the merge queue are outside the limit (adr-20260922-a-phase-run-is-coordinated) |
 | `route.depth` | `full` | only | how much of its class's route a task runs: `full`, or `lean`, which trims the analysis, the plan and a second review round where the class allows it and never below the class's floor — tests on changed files, CI before a merge, consolidation, and a T3/T4 gate and architecture review stay. A task's own `route_depth` (`jig task new --lean`, `jig task set`) wins over it; `jig task route <id>` names the result (adr-20261002-route-depth-is-a-personal-choice) |
@@ -63,7 +64,7 @@ Values `set` accepts, per key:
 | `housekeeping.cadence` | whole days (`3d` or `3`) |
 | `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after`, `checkout.busy_ttl`, `verify.busy_ttl` | `<n>[dhms]`; `verify.busy_ttl` also takes `0` |
 | `housekeeping.fetch`, `git.delete_merged_branches`, `autopilot.unattended` | `true` or `false` |
-| `agent.git` | `none`, `commit`, `push`, `pr`, `merge` |
+| `agent.git`, `autopilot.git` | `none`, `commit`, `push`, `pr`, `merge` |
 | `agent.ci_timeout` | whole minutes, 0 to 9999 |
 | `autopilot.parallel` | a whole number, 1 to 16 |
 | `route.depth` | `full` or `lean` |

@@ -1630,6 +1630,7 @@ _task_autopilot_start() {
   fi
   [ -z "$phase" ] || printf 'phase: %s\n' "$phase"
   _task_autopilot_depth_line "$id"
+  _task_autopilot_git_line
 }
 
 # _task_autopilot_depth_line <id> — `depth: <depth> (<source>)`, the route
@@ -2692,6 +2693,7 @@ EOF
     printf 'lean: %s\n' "$(_task_route_lean_note "$class")"
   fi
   printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
+  _task_autopilot_git_line
   _task_route_delegates "$class"
   local from
   from=$(task_state_get "$id" class_lowered_from)
@@ -3550,6 +3552,52 @@ _task_ship_unverified_notice() {
   return 0
 }
 
+# _task_ship_git <id> — `<level><TAB><key>`: the git level `task ship` uses
+# for <id>, and the key it came from. A task whose autopilot run is `on`, or
+# `stopped` in an unattended run (whose repairs ran out: it ships its draft
+# from there), ships at the run's level, jig_autopilot_git; every other ship
+# at `agent.git`. An attended run that stopped is waiting for its person, who
+# may well finish the task by hand: that ship is theirs, at their level. Read when it ships, not recorded at `start`: a person
+# who lowers either key halfway through a run is obeyed at once. Exit 1 when
+# the level is invalid, like jig_agent_git.
+_task_ship_git() {
+  local value
+  case "$(task_state_get "$1" autopilot)" in
+    on)
+      jig_autopilot_git
+      return
+      ;;
+    stopped)
+      if [ "$(_task_autopilot_mode "$1")" = unattended ]; then
+        jig_autopilot_git
+        return
+      fi
+      ;;
+  esac
+  if value=$(jig_agent_git); then
+    printf '%s\tagent.git\n' "$value"
+  else
+    printf '%s\tagent.git\n' "$value"
+    return 1
+  fi
+}
+
+# _task_autopilot_git_line — `autopilot git: <level> (<key>)`, the level an
+# autopilot run ships at and where it comes from, as `task autopilot start`
+# and `task route` print it. An invalid value is named, never guessed.
+_task_autopilot_git_line() {
+  local line level key rc=0
+  line=$(jig_autopilot_git) || rc=$?
+  IFS=$'\t' read -r level key <<EOF
+$line
+EOF
+  if [ "$rc" -eq 0 ]; then
+    printf 'autopilot git: %s (%s)\n' "$level" "$key"
+  else
+    printf 'autopilot git: invalid %s %s (expected none|commit|push|pr|merge)\n' "$key" "$level"
+  fi
+}
+
 task_ship() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
@@ -3587,13 +3635,17 @@ task_ship() {
 
   # Level first, before anything else changes: an invalid value must refuse
   # exactly like every other check here, not read as "none" by accident.
-  local level
-  level=$(jig_agent_git) || jig_die "task ship: invalid agent.git: $level (expected none|commit|push|pr|merge)"
+  local level key line rc=0
+  line=$(_task_ship_git "$id") || rc=$?
+  IFS=$'\t' read -r level key <<EOF
+$line
+EOF
+  [ "$rc" -eq 0 ] || jig_die "task ship: invalid $key: $level (expected none|commit|push|pr|merge)"
 
   if [ "$level" = none ]; then
     # To stderr and exit 3, not `jig_die` (exit 1): a skill reads 3 as "hand
     # this over to the human", not as a command that failed.
-    printf 'task ship: agent.git is none in this clone; the human commits\n' >&2
+    printf 'task ship: %s is none in this clone; the human commits\n' "$key" >&2
     exit 3
   fi
 
@@ -3633,6 +3685,9 @@ task_ship() {
   [ "$branch" != "$base" ] || jig_die "task ship: $id's branch is its own base ($base); nothing task-specific to ship"
 
   _task_ship_unverified_notice
+  # Which key decided how far this goes: with autopilot.git and agent.git
+  # apart, "stopped at push" alone would not say whose setting stopped it.
+  printf 'task ship: git level %s (%s)\n' "$level" "$key"
 
   jig_ship_check_staged "task ship"
   jig_ship_commit "task ship" "$message_file"

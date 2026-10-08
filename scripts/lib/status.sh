@@ -153,6 +153,7 @@ _status_report() {
   [ -n "$_SC_READY" ] || _status_counts
   _status_config_local
   _status_agent_git
+  _status_autopilot_git
 
   if manifest_exists; then
     local proj_version
@@ -371,6 +372,7 @@ _STT_HOOKS=()        # session hooks installed, "session hook (claude)"
 _STT_INSTR=()        # runtimes whose instructions are fine
 _STT_INSTR_OWN=()    # runtimes whose Jig section was changed here
 _STT_AGENT=""        # the agent.git line's value, when it is valid
+_STT_AUTOPILOT=""    # the autopilot.git line's value, when it is valid
 _STT_CURRENT=""      # the current task, when it is not ambiguous
 _STT_UNSEEN=""       # 1 when the runtime does not name its sessions
 _STT_MODE=""         # the install's mode (copy, link)
@@ -495,6 +497,8 @@ _status_terminal() {
       "config.local: "*) _STT_CFG+=("${l#config.local: }") ;;
       "agent.git: invalid value "*) _status_need fail "$l" ;;
       "agent.git: "*) _STT_AGENT=${l#agent.git: } ;;
+      "autopilot.git: invalid value "*) _status_need fail "$l" ;;
+      "autopilot.git: "*) _STT_AUTOPILOT=${l#autopilot.git: } ;;
       "manifest: version="*)
         t=${l#manifest: version=}
         v=${t%% mode=*}
@@ -692,9 +696,15 @@ _status_terminal_settings() {
     labels+=("agent.git")
     texts+=("$(out_join "${_STT_AGENT%% (*}" "${t%)}")")
   fi
+  if [ -n "$_STT_AUTOPILOT" ]; then
+    t=${_STT_AUTOPILOT#* (}
+    labels+=("autopilot.git")
+    texts+=("$(out_join "${_STT_AUTOPILOT%% (*}" "${t%)}")")
+  fi
   if [ ${#_STT_CFG[@]} -gt 0 ]; then
     for t in "${_STT_CFG[@]}"; do
       [ "${t%%=*}" != agent.git ] || continue
+      [ "${t%%=*}" != autopilot.git ] || continue
       keys+=("${t%%=*}")
       vals+=("${t#*=}")
     done
@@ -2443,6 +2453,8 @@ _status_html_summary() {
   local agent_git
   agent_git=$(_status_agent_git)
   _status_html_item "agent.git" "${agent_git#agent.git: }" 0
+  agent_git=$(_status_autopilot_git)
+  [ -z "$agent_git" ] || _status_html_item "autopilot.git" "${agent_git#autopilot.git: }" 0
   printf '</dl>\n</section>\n'
 }
 
@@ -2701,6 +2713,26 @@ _status_agent_git() {
   else
     printf 'agent.git: invalid value %s (expected none|commit|push|pr|merge)\n' "$level"
   fi
+}
+
+# _status_autopilot_git — one line naming the level an autopilot run ships
+# at and the key it comes from (jig_autopilot_git, config.sh): `autopilot.git`
+# when this clone sets it, else `agent.git`. Always printed, like the
+# agent.git line: "a run ships the same as everything else" is the state a
+# person most needs to see before trusting a run further.
+_status_autopilot_git() {
+  local line level key rc=0
+  line=$(jig_autopilot_git) || rc=$?
+  level=${line%%$'\t'*}
+  key=${line#*$'\t'}
+  if [ "$rc" -eq 0 ]; then
+    printf 'autopilot.git: %s (from %s)\n' "$level" "$key"
+  elif [ "$key" = autopilot.git ]; then
+    printf 'autopilot.git: invalid value %s (expected none|commit|push|pr|merge)\n' "$level"
+  fi
+  # Nothing when it answers from an invalid agent.git: the agent.git line
+  # already names that, and a second failure for one mistake reads as two.
+  return 0
 }
 
 # Whether the housekeeping trigger is wired up for the installed runtimes.

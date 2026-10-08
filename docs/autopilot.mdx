@@ -26,12 +26,19 @@ Asking for autopilot covers that one task only.
 
 Where the run ends depends on [Letting the agent ship](/agent-ships):
 
-| `agent.git` in your `.ai/config.local.yaml` | The run ends with |
+| The run's level in your `.ai/config.local.yaml` | The run ends with |
 |---|---|
 | `merge` | the pull request merged once its checks passed — or left open, with the reason |
 | `pr` | an open pull request for you to review and merge |
 | `push` or `commit` | the task's branch pushed or committed; the rest is yours |
 | `none` (default) | the change in your working tree, ready for your review and commit |
+
+The run's level is `autopilot.git` when you set it, and `agent.git` when you did not — so with
+nothing extra set a run goes exactly as far as the rest of your work. Set `autopilot.git` to let a
+run go further or less far than the tasks you follow step by step; for example `agent.git: pr` with
+`autopilot.git: merge` merges what autopilot builds and leaves everything else to you
+([A different choice for autopilot](/agent-ships#autopilot-has-its-own-level)). The agent names the
+level and where it comes from when the run starts (`autopilot git: merge (autopilot.git)`).
 
 Below `merge` the agent never merges, and the pull request is where you look at the result. If you
 cannot answer the questions a run stops on, read [Without stops](#without-stops).
@@ -94,7 +101,7 @@ resumed itself.
 
 At the end — or at a stop — the agent shows the run's report: which stages it went through, each
 fixing attempt and why, each stop and its reason, the route's depth (`full` or
-[`lean`](/concepts#a-lighter-route)), and how it ended. With `agent.git: pr` the report
+[`lean`](/concepts#a-lighter-route)), and how it ended. At the `pr` level or above the report
 is also in the pull request's description. You can see it any time with:
 
 ```bash
@@ -122,6 +129,9 @@ two lines to `.ai/config.local.yaml` in your project (create the file if it is n
 agent.git: merge
 autopilot.unattended: true
 ```
+
+(`autopilot.git: merge` in place of the first line lets only autopilot runs merge, and leaves the
+rest of your work at `agent.git`.)
 
 Or ask your agent to *"set up Jig for me"*: it explains both before asking, and writes them only
 after your yes. Both are personal: they change what **your** agent does, never a colleague's, and they do nothing in
@@ -214,7 +224,8 @@ records of the whole phase are kept where the coordinator started them, and that
 of the epic works too when the main checkout is busy with other work — the phase's tasks then belong
 to that worktree, so ask there for the status of the run as well.
 
-For this it needs two things: permission to open pull requests (`agent.git: pr` or `merge`) and
+For this it needs two things: permission to open pull requests (the run's level — `autopilot.git`,
+else `agent.git` — at `pr` or `merge`) and
 a specification built on [an epic branch](/agent-ships#specs-and-epics). Without either it says
 so and offers to run the phase's tasks one at a time instead.
 

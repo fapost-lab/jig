@@ -248,7 +248,7 @@ item is checked later by `jig spec done`, called from consolidation — never by
   finished" and stop there. Drop fog, open questions and untested assumptions with
   `--leftovers-handled`, and quote each one verbatim in the pull request body under
   `## Dropped without you`. Raise the version by the recorded level, `minor` when none was
-  recorded. At `agent.git: merge`, `spec ship` merges with a merge commit once CI passed — unless
+  recorded. At level `merge` (`autopilot.git`, else `agent.git`), `spec ship` merges with a merge commit once CI passed — unless
   `release.merge` is `human` in this clone, which leaves every release to the person — and
   opens a `major` release as a draft that needs a human instead; `not merged: <why>` leaves the
   pull request open — say why.

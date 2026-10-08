@@ -3285,6 +3285,44 @@ test_spec_ship_final_unattended_leaves_the_merge_to_the_person_when_release_merg
   assert_no_file gh-merge.argv
 }
 
+# autopilot.git (adr-20260921-agent-git-rights-are-a-local-setting, amended
+# 2026-10-08): in an unattended clone `spec ship` goes by the run's level, so
+# a person who held their runs to `pr` is not merged past by `agent.git: merge`.
+test_spec_ship_final_unattended_stops_at_the_pr_when_autopilot_git_is_pr() {
+  mfin_finished idea-x
+  sship_cfg_local autopilot.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec ship: git level pr (autopilot.git)"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_not_contains "$OUT" "merged "
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_unattended_merges_at_autopilot_git_merge_over_agent_git_pr() {
+  mfin_finished idea-x
+  sship_cfg_local agent.git pr
+  sship_cfg_local autopilot.git merge
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec ship: git level merge (autopilot.git)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+}
+
+test_spec_ship_outside_an_unattended_clone_goes_by_agent_git() {
+  mfin_finished idea-x
+  sship_cfg_local autopilot.unattended false
+  sship_cfg_local agent.git pr
+  sship_cfg_local autopilot.git none
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec ship: git level pr (agent.git)"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+}
+
 test_spec_ship_final_unattended_in_the_project_config_does_not_merge() {
   mfin_finished idea-x
   sed '/^autopilot.unattended:/d' .ai/config.local.yaml > .ai/config.local.yaml.tmp

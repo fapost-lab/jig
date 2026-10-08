@@ -7,7 +7,8 @@ description: Run one Jig task through its whole route without waiting between st
 
 The route is the same as without autopilot. What changes: you go from stage to stage without
 asking "shall I continue?", and you stop only where this skill says. Asking for autopilot is
-the human's consent for this one task; how far you may go with git is `agent.git`, as always.
+the human's consent for this one task; how far you may go with git is the run's level —
+`autopilot.git` when the clone sets it, else `agent.git` — and `task ship` reads it itself.
 
 ## 1. Start
 
@@ -20,8 +21,8 @@ Classify, file and start the task with `jig-task` (or resume one that is filed).
 It prints `autopilot: on (unattended)` when this clone set `autopilot.unattended: true`: then
 the run asks nothing, and §5 replaces §3. Say in one line what will happen: the class, the
 route and its depth as `jig task route <id>` names them, any stage its `delegate:` lines hand to
-a helper, and where the run will end — merged with `agent.git: merge`, an open pull request with
-`pr`, or "ready for your commit" with `none`. Offer to
+a helper, and where the run will end by the `autopilot git:` line `start` printed — merged at
+`merge`, an open pull request at `pr`, or "ready for your commit" at `none`. Offer to
 open the status page with `.ai/scripts/jig status --open`, where the human can watch the run
 and sees first what it needs from them.
 
@@ -90,7 +91,7 @@ report, so never resume without one. Continue from the stage you stopped in.
 ## 4. End
 
 Finish with `jig-consolidate`: it records the knowledge decision and ships the change as far
-as `agent.git` allows. Then:
+as the run's level allows. Then:
 
 ```
 .ai/scripts/jig task autopilot <id> end
@@ -117,7 +118,7 @@ default below, recorded so they read it in the pull request, in plain words, not
 What never changes: a P0/P1 is never dismissed, the gates are never worked around, and nothing
 is merged but by `task ship`. Before shipping, put `jig task autopilot <id> report`'s
 **Decided without you** and **Approved by the agent, not a human** blocks in the pull request
-body as they are. At `agent.git: merge`, `task ship` merges once CI passed or prints
+body as they are. At the run's level `merge`, `task ship` merges once CI passed or prints
 `not merged: <why>` — both are a finished run; say which. After `merged`, close the task
 (`jig-consolidate` §6) without asking, then `end`.
 
@@ -136,5 +137,6 @@ mechanics — the loop, the prompt each task agent gets, what to do when one fai
 - **A stop holds the next wave, not this one.** The wave in flight finishes; the question goes
   to the person in one message, in your session, and the wave after it waits for the answer.
 
-It needs `agent.git` at `pr` or better and a spec built on an epic. Without either, refuse the
+It needs the run's level (`autopilot.git:` in `jig status`) at `pr` or better and a spec
+built on an epic. Without either, refuse the
 phase run, say which is missing, and offer to run the phase's tasks one at a time instead.

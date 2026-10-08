@@ -59,32 +59,37 @@ their own file is answered by `config unset` too — say that the key then answe
    agent also merges its own pull request once CI ran and every check passed, never past
    branch protection or a required review, never a draft; the change then goes wherever the
    main branch goes — a deploy included. Set `merge` only on an explicit yes to that.
-3. **Asking** (`autopilot.unattended`). Before asking, explain: on autopilot the agent stops to
+3. **Autopilot's git** (`autopilot.git`). "When the agent runs a task on autopilot, should it
+   take the change as far as that too?" Default: the same — say so, and write nothing. Offer a
+   different level for runs only: the usual case is `pr` for their own work and `merge` for
+   autopilot, which merges what autopilot builds and leaves the rest to them. `merge` here needs
+   the same explanation and the same explicit yes as question 2.
+4. **Asking** (`autopilot.unattended`). Before asking, explain: on autopilot the agent stops to
    ask at a design approval, an unmade decision, a destructive step or a problem it could not
    fix; with `true` it asks nothing — it approves its own design, picks the most reversible
    option, never destroys anything, opens a draft when fixing fails, and writes every such
    choice into the pull request. Recommend `false` for a developer who can answer those
    questions, `true` only for someone who cannot and would rather have the change delivered.
    Set `true` only on an explicit yes.
-4. **CI wait** (`agent.ci_timeout`) — only with `merge`. "How many minutes should it wait for
+5. **CI wait** (`agent.ci_timeout`) — only with `merge` at either level. "How many minutes should it wait for
    the checks before leaving the pull request open for you?" Default 30.
-5. **At once** (`autopilot.parallel`). "When a whole roadmap phase runs, how many of its tasks
+6. **At once** (`autopilot.parallel`). "When a whole roadmap phase runs, how many of its tasks
    may agents work on at the same time?" Each one gets its own folder and its own agent, so
    more means more of the machine and more to read when they finish. Default 2, at most 16.
    Recommend 2, or 1 for someone who wants to watch every change.
-6. **Process** (`route.depth`). "How much process should your tasks get?" `full` — each risk
+7. **Process** (`route.depth`). "How much process should your tasks get?" `full` — each risk
    class's whole route (default); `lean` — a shorter analysis, the plan folded into it, one
    review round where the class allows it. Say what never changes: tests on changed files, CI
    before a merge, the design approval and architecture review of risky work. Recommend `full`;
    `lean` for someone who would rather trade a little review depth for time and tokens. One
    task can always differ.
-7. **Cleanup** (`housekeeping.*`) — one question, offer to skip: how long an abandoned task is
+8. **Cleanup** (`housekeeping.*`) — one question, offer to skip: how long an abandoned task is
    kept (`abandoned_ttl`, 14d), how long the trash is kept (`trash_ttl`, 7d), when an idle task
    is called stale (`stale_after`, 60d), how often cleanup runs (`cadence`, whole days, 1d),
    whether it may `git fetch` (`fetch`, true). Recommend the defaults.
-8. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
+9. **Worktrees** (`git.worktree_root`) — only if they run several agents at once and want the
    task folders somewhere other than `../<project>.worktrees`.
-9. **Where the checks run** (`run.exec`). First run `.ai/scripts/jig verify --explain` and read
+10. **Where the checks run** (`run.exec`). First run `.ai/scripts/jig verify --explain` and read
    its `verify: checks run in …` or `verify: refused: …` line: it names what Jig detected, or
    the signs of a container it could not place. Ask: "Where do this project's tests run — here,
    or in a container?" With a detection that is right, nothing needs writing (`auto` keeps
@@ -93,7 +98,7 @@ their own file is answered by `config unset` too — say that the key then answe
    `docker exec -i -w <dir> <container>`) and show it; never ask the person to type one. A PHP on
    this machine that is not first on `PATH` and was not detected (Herd's is) goes to `run.path`,
    the folder that holds it.
-10. **Helpers** (`claude.implement_model`, `claude.review_model`) — only in Claude Code. Explain:
+11. **Helpers** (`claude.implement_model`, `claude.review_model`) — only in Claude Code. Explain:
     the agent can hand writing the code, and reviewing it, to a helper on another model; what the
     helper does is still checked — review findings block, the checks must pass — and the agent
     keeps the design, the decisions and shipping. One review setting covers every review,

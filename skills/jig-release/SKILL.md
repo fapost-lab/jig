@@ -65,7 +65,8 @@ pull request, so its merge is where a person agrees.
 
 ## 5. Go through the list
 
-A phase run (`jig-autopilot` §6) when `agent.git` is `pr` or more; otherwise each task through
+A phase run (`jig-autopilot` §6) when the run's level (`autopilot.git:` in `jig status`) is `pr`
+or more; otherwise each task through
 `jig-task`, cut from the epic by `jig task start`. The notes task starts after every other item
 is merged into the epic and the latest default branch was merged in: it writes the notes as
 [release notes](references/release-notes.md) says. It never edits the spec: when the diffs
@@ -82,7 +83,7 @@ Finish the epic as `jig-idea` §11 says: merge the latest default branch in, `--
 version by the recorded level, `jig spec ship`. The epic is never pushed to for this: `spec ship`
 carries the finish on `finish/<id>`, cut from it, and opens the pull request from there, so an
 epic protected like the default branch needs no bypass. Who merges is unchanged: the person —
-except an unattended run at `agent.git: merge` with `release.merge: agent` (the default), which
+except an unattended run at level `merge` (`autopilot.git`, else `agent.git`) with `release.merge: agent` (the default), which
 merges on green CI; `release.merge: human` leaves it to the person; a `major` release is always a
 draft for a person.
 

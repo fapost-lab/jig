@@ -122,6 +122,23 @@ test_status_reports_agent_git_invalid_value() {
   assert_contains "$OUT" "agent.git: invalid value yolo (expected none|commit|push|pr|merge)"
 }
 
+# autopilot.git (adr-20260921-agent-git-rights-are-a-local-setting, amended
+# 2026-10-08): always named, with the key it comes from.
+test_status_reports_the_autopilot_git_level_and_its_source() {
+  fixture_jig_repo
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "autopilot.git: none (from agent.git)"
+
+  printf 'agent.git: pr\nautopilot.git: merge\n' > .ai/config.local.yaml
+  run jig status
+  assert_contains "$OUT" "autopilot.git: merge (from autopilot.git)"
+
+  printf 'autopilot.git: yolo\n' > .ai/config.local.yaml
+  run jig status
+  assert_contains "$OUT" "autopilot.git: invalid value yolo (expected none|commit|push|pr|merge)"
+}
+
 # A value committed to .ai/config.yaml would hand every contributor's agent
 # the same git rights (JIG_CFG_LOCAL_ONLY_KEYS, config.sh); `jig status` must
 # say so rather than silently do nothing.
@@ -1662,7 +1679,9 @@ test_status_html_shows_the_autopilot_state_the_text_report_shows() {
   jig task new TASK-1 --class T2 >/dev/null
   jig task start TASK-1 >/dev/null
   run jig status --html
-  assert_not_contains "$(cat .ai/runtime/status.html)" ">autopilot"
+  # The badge, not the autopilot.git line every page carries.
+  assert_not_contains "$(cat .ai/runtime/status.html)" "badge\">autopilot"
+  assert_not_contains "$(cat .ai/runtime/status.html)" "badge warn\">autopilot"
 
   jig task autopilot TASK-1 start >/dev/null
   run jig status --html
@@ -2559,6 +2578,7 @@ test_status_a_pipe_gets_the_report_byte_for_byte_as_before() {
     printf 'config.local: housekeeping.cadence=3d\n'
     printf 'config.local: ignored git.base_branch (not a local key)\n'
     printf 'agent.git: none (review queue: uncommitted files)\n'
+    printf 'autopilot.git: none (from agent.git)\n'
     printf 'manifest: version=%s mode=copy source=%s\n' "$v" "$JIG_HOME"
     printf 'framework versions: project=%s global=0.1.0 mismatch\n' "$v"
     # shellcheck disable=SC2016
@@ -2627,6 +2647,7 @@ test_status_a_terminal_reads_in_sections() {
     printf '\n'
     printf -- '-- Settings  (config.local) ----------------------------------------------------\n'
     printf '  agent.git              none | review queue: uncommitted files\n'
+    printf '  autopilot.git          none | from agent.git\n'
     printf '  housekeeping.cadence   3d\n'
     printf '\n'
     printf -- '-- Tasks  (2 active | 1 finished) ----------------------------------------------\n'
@@ -2777,7 +2798,8 @@ test_status_a_terminal_wraps_a_long_settings_row() {
     > .ai/config.local.yaml
   run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "$(printf '  housekeeping   cadence 1d | fetch true | trash_ttl 0d | abandoned_ttl 7d\n                 stale_after 30d')"
+  # The column is as wide as the longest label, autopilot.git.
+  assert_contains "$OUT" "$(printf '  housekeeping    cadence 1d | fetch true | trash_ttl 0d | abandoned_ttl 7d\n                  stale_after 30d')"
 }
 
 # What the folded records look like in the report.

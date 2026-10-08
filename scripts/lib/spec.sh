@@ -1182,12 +1182,37 @@ spec_release_check() {
 
 # --- shipping spec work (adr-20260922-spec-work-ships-by-the-agent-git-level) -----
 
-# spec_ship_level — agent.git for the next-step lines `spec epic` prints: an
-# invalid value reads as `none` here, because only `spec ship` may refuse it.
+# spec_ship_git — `<level><TAB><key>`: the git level `spec ship` uses, and
+# the key it came from. In a clone set to `autopilot.unattended: true` it is
+# the run's level (jig_autopilot_git): `spec ship` keeps no run of its own,
+# and an unattended clone is already what lets its epic finish merge, so a
+# person who held their runs to `autopilot.git: pr` is not merged past by an
+# `agent.git: merge` meant for their own work. Everywhere else `agent.git`.
+# Exit 1 when the level is invalid, like jig_agent_git.
+spec_ship_git() {
+  local value
+  if jig_unattended; then
+    jig_autopilot_git
+    return
+  fi
+  if value=$(jig_agent_git); then
+    printf '%s\tagent.git\n' "$value"
+  else
+    printf '%s\tagent.git\n' "$value"
+    return 1
+  fi
+}
+
+# spec_ship_level — spec_ship_git's level for the next-step lines `spec epic`
+# prints: an invalid value reads as `none` here, because only `spec ship` may
+# refuse it.
 spec_ship_level() {
-  local level
-  level=$(jig_agent_git 2>/dev/null) || level=none
-  printf '%s\n' "$level"
+  local line
+  if line=$(spec_ship_git 2>/dev/null); then
+    printf '%s\n' "${line%%$'\t'*}"
+  else
+    printf 'none\n'
+  fi
 }
 
 # spec_ship_hint declare|cut|finish <id> <branch> <rel> — the step after
@@ -1280,10 +1305,13 @@ spec_ship() {
   [ -z "$body_file" ] || [ -f "$body_file" ] || jig_die "spec ship: --body-file: no such file: $body_file"
 
   # Level first, before anything else changes (as `task ship`).
-  local level
-  level=$(jig_agent_git) || jig_die "spec ship: invalid agent.git: $level (expected none|commit|push|pr|merge)"
+  local level key line lrc=0
+  line=$(spec_ship_git) || lrc=$?
+  level=${line%%$'\t'*}
+  key=${line#*$'\t'}
+  [ "$lrc" -eq 0 ] || jig_die "spec ship: invalid $key: $level (expected none|commit|push|pr|merge)"
   if [ "$level" = none ]; then
-    printf "spec ship: agent.git is none in this clone; committing, pushing and the pull request are the human's\n" >&2
+    printf "spec ship: %s is none in this clone; committing, pushing and the pull request are the human's\n" "$key" >&2
     exit 3
   fi
 
@@ -1325,6 +1353,7 @@ spec_ship() {
   fi
 
   printf 'mode: %s\n' "$mode"
+  printf 'spec ship: git level %s (%s)\n' "$level" "$key"
   case "$mode" in
     declare) spec_ship_declare "$id" "$level" "$here" "$default" "$message_file" "$title" "$body_file" "$line" ;;
     epic) spec_ship_epic "$id" "$level" "$branch" ;;
