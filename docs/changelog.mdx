@@ -8,6 +8,58 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.24.0 — 2026-10-08
+
+Two things change what Jig does on your machine. Autopilot runs can ship at a Git level of their
+own, and a project that declares `verify.full_run: ci` no longer runs its full test set or lints
+its whole tree locally, in any profile. Read [From 0.23.0 to 0.24.0](/upgrading#from-0230-to-0240)
+before you upgrade a project that sets `verify.full_run: ci`.
+
+- **`autopilot.git` gives autopilot runs a Git level of their own.** New key, with the same levels
+  as `agent.git` (`none`, `commit`, `push`, `pr`, `merge`) and local only: it is read from your own
+  `.ai/config.local.yaml`. Not set, it is `agent.git`, so nothing changes until you set it. With
+  `agent.git: pr` and `autopilot.git: merge` the tasks you take step by step stop at a pull request
+  for you, and a task on autopilot merges its own. `jig task ship` goes by it for a task whose
+  autopilot run is on, or was stopped in an unattended run (its draft); an attended run that stopped,
+  and every ship outside a run, go by `agent.git`. `jig spec ship` goes by it when
+  `autopilot.unattended` is true, the one case an epic's finish merges, and `release.merge: human`
+  still wins. `jig upgrade` and `jig doctor` keep `agent.git`; housekeeping reads both keys (next entry).
+- **Jig says which level it went by.** `jig task ship` and `jig spec ship` print
+  `git level <level> (<key>)`, `jig task route` and `jig task autopilot start` print
+  `autopilot git: <level> (<key>)`, and `jig status` prints `autopilot.git: <level> (from <key>)`.
+  A value Jig does not understand is refused by `jig config set`, `jig task ship` and `jig spec ship`,
+  and named as invalid by `jig task route`, `jig task autopilot start` and `jig status`; it never falls
+  back to another level. `jig-setup` asks about it, after the question about merging.
+- **Housekeeping deletes a merged branch on `origin` under `autopilot.git` too.** It used to do so
+  only for a person whose `agent.git` was `push` or higher, so a run that pushed under `autopilot.git`
+  (with `agent.git` at `none` or `commit`) left its branch on `origin` for good. Now `agent.git` or
+  `autopilot.git` at `push` or higher is enough; every other condition for deleting on `origin` is
+  unchanged.
+- **Under `verify.full_run: ci`, a narrowed `jig verify` never starts the full test set, in any
+  profile.** Before, only the shell profile read the setting, and even it ran the full set for a
+  change that selected everything. Now every built-in profile runs the tests it can name and says what
+  it left out: `laravel: artisan test: skip (scope: routes/web.php can affect any test, full set left
+  to CI)`, then `verify: 1 check(s) left their full set to CI (verify.full_run: ci); jig verify --full
+  runs it here`. A run where nothing else ran says `this run verified nothing here`. `jig verify
+  --full` and a non-empty `CI` environment variable run everything, as before. `--explain` no longer
+  promises a full set under `ci` in the go, node and python lines.
+- **Under `verify.full_run: ci`, the linters and static analysis check the changed files too.**
+  `phpstan`, `pint`, `ruff`, `eslint`, `rubocop`, `shellcheck`, `go vet`, `cargo clippy` and
+  `dart analyze` check only what changed. Where the whole tree would be checked, the check is left to
+  CI with `skip (scope: …, full set left to CI)`: when the tool's configuration changed (`phpstan`,
+  `ruff`, `rubocop`, `eslint`, `mypy`, `shellcheck` on `.shellcheckrc`), when pubspec or the solution
+  changed (`dart analyze` and `format`, `dotnet format`), on a workspace-wide or module-wide change
+  (`cargo fmt` and `clippy`, `go vet`), and always for `tsc` and `swift build`, which cannot narrow. `mypy` now checks the changed files, where it checked the
+  whole tree; checked alone, a file can miss what it breaks elsewhere (CI finds that), and a file named
+  on the command line bypasses mypy's `exclude`. Without `verify.full_run: ci` nothing changes.
+
+What was proven where: by tests on throwaway repositories and in CI, with the project tools (`artisan`,
+`mypy`, `go`, `cargo`, `npm` and the others) played by stand-ins; they were not run against a real
+Laravel, Python, Go, Node or other project. The `ci` decisions are tested for the laravel, python, go,
+node, php, ruby, rust, dart, dotnet, jvm, swift and shell profiles. Not run against a real GitHub or
+GitLab repository. The installer did not change since 0.23.0, so the Windows release checklist does
+not apply to this release.
+
 ## 0.23.0 — 2026-10-07
 
 A branch Jig made no longer stays behind once its work has landed: Jig deletes it, here and on the
