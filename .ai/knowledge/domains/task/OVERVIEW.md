@@ -12,7 +12,8 @@ paths:
   - scripts/lib/status.sh
   - schemas/state.md
   - templates/task.md
-reviewed_at: 2026-10-05
+  - scripts/lib/notify.sh
+reviewed_at: 2026-10-09
 ---
 # Task
 
@@ -260,4 +261,13 @@ so an agent cannot check its own roadmap item. And the status page turns the sto
 one card per phase that sends the person to the coordinator's session instead of the task's — the
 same "one message for the wave" the coordinator gives in chat. The key is never cleared: it is what
 the run was.
+
+**A run's stops and ends leave the machine, but never through the journal**
+(adr-20261009-autopilot-stops-reach-telegram). `stop`, `end`, and an unattended run's `approve` and
+`decide` call `_task_autopilot_notify` after their journal line, and `notify.sh` sends a Telegram
+message from a detached process when the person set the local keys. Two things here are easy to
+undo by accident: the sender records its outcome in the task's `notify` file, never in `autopilot`,
+because the journal is written by copy and `mv` with no lock and a second writer loses a line; and
+nothing it does may change the command's output or exit status — `repair`'s exit 3 included. The
+token's value is printed by nothing: a new reader of a local value goes through `_cfg_secret_key`.
 

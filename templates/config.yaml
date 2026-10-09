@@ -13,7 +13,9 @@
 # autopilot.git (the same for an autopilot run; agent.git when not set), agent.ci_timeout,
 # autopilot.unattended, autopilot.parallel, route.depth (full or lean: how
 # much of a class's route your tasks run) and release.merge (agent or human: who
-# merges an epic's final pull request, which is the release).
+# merges an epic's final pull request, which is the release). The same holds for
+# notify.telegram.token, notify.telegram.chat_id and notify.autopilot: where your
+# autopilot runs' Telegram messages go — a bot token committed here is anyone's.
 #
 # `jig config keys` lists every key this version reads, its default, and which
 # of the two files answers for it. Run it after an upgrade: nothing edits this

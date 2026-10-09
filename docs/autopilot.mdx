@@ -119,6 +119,66 @@ While the run goes on, the page shows the stage it is in, for how long, and how 
 fixing attempts it used. When it stops, a card at the top says so, with the agent's question and
 when it was asked. The page keeps itself up to date: leave it open.
 
+## Messages in Telegram
+
+With several runs going at once, the status page still needs you to look. Jig can tell you
+instead: when a run stops, ends, or — in a run [without stops](#without-stops) — approves its own
+design or decides something for you, a short message reaches your Telegram within seconds:
+
+```
+⏸ shop · fix-login-redirect
+Login redirect loses the return URL
+Needs you: Google or GitHub as the OAuth provider?
+```
+
+The first line names the project and the task, the second is the task's own short description, the
+third is what the agent needs, chose, or how the run ended. The mark says which:
+
+| Mark | What happened |
+|---|---|
+| `⏸` | The run stopped and is waiting for your answer |
+| `⛔` | A run without stops stopped — nothing waits for you; it ends as a draft pull request |
+| `✅` | The run ended: merged, not merged and why, or ready for your commit — with the pull request link when there is one |
+| `🤖` | A run without stops approved its own design, or decided something for you |
+
+Nothing is sent when the run starts, moves to the next stage or fixes something: those need nothing
+from you.
+
+To set it up, make a bot with [@BotFather](https://t.me/BotFather) in Telegram (it gives you the
+bot's token), and send your bot any message. Your chat id is the `chat` → `id` of that message,
+which Telegram's `https://api.telegram.org/bot<token>/getUpdates` shows in a browser. Then put the
+token into `.ai/config.local.yaml` yourself, in your editor, as one line:
+
+```yaml
+notify.telegram.token: 123456789:AAE...
+```
+
+and the chat id with Jig:
+
+```bash
+jig config set notify.telegram.chat_id 987654321 --local
+```
+
+Jig refuses the token on a command line — a command line is kept by your shell's history, by the
+list of running processes, and by your agent's transcript — and never prints it back:
+`jig config show --local` and `jig status` show `********` in its place. Never put the token in
+`.ai/config.yaml`: that file is committed, and a token in it is anyone's once pushed. Jig ignores it
+there, and `jig status` tells you to revoke it with @BotFather.
+
+Sending never slows a run down or breaks it: the message goes in the background, and a run on a
+machine without `curl` simply sends nothing. When a message cannot be delivered — a wrong token or
+chat id, or an agent whose sandbox has no network — `jig status` says so until the next message gets
+through:
+
+```
+notify: Telegram messages are failing: HTTP 401: Unauthorized (task fix-login-redirect, 2026-10-09T10:52:17Z)
+```
+
+To pause the messages without removing the settings, set `notify.autopilot` to `false`.
+
+Silence is not "still working". A session that dies — closed, out of context, the computer asleep —
+records no stop, and so sends nothing.
+
 ## Without stops
 
 The stops above ask for decisions a developer makes. If you build through the agent without being
