@@ -48,7 +48,9 @@ while [ \$# -gt 0 ]; do
   shift
 done
 cat > "\$d/stdin"
-ps -o pgid= -p \$\$ | tr -d ' ' > "\$d/pgid"
+# Silenced: Git Bash's ps has no -o, and its complaint would become the
+# sender's failure reason, read from this stub's stderr.
+ps -o pgid= -p \$\$ 2>/dev/null | tr -d ' ' > "\$d/pgid"
 [ ! -f "\$d/stderr" ] || cat "\$d/stderr" >&2
 [ ! -f "\$d/sleep" ] || sleep "\$(cat "\$d/sleep")"
 if [ -f "\$d/response" ]; then cat "\$d/response" > "\$out"; else printf '{"ok":true,"result":{}}' > "\$out"; fi
@@ -201,7 +203,10 @@ test_notify_the_sender_runs_in_a_process_group_of_its_own() {
   run jig task autopilot T-1 stop --reason r
   nt_wait
   local mine
-  mine=$(ps -o pgid= -p $$ | tr -d ' ')
+  mine=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || mine=""
+  # Git Bash's ps (MSYS) has no -o: there is no portable way to read a process
+  # group, so the platform cannot answer the question this test asks.
+  [ -n "$mine" ] || skip "ps cannot report a process group here (no ps -o)"
   [ -s "$NT_STUB/pgid" ] || fail "the stub recorded no process group"
   [ "$(cat "$NT_STUB/pgid")" != "$mine" ] || fail "the sender shares the command's process group $mine"
 }
@@ -214,7 +219,7 @@ test_notify_the_token_never_reaches_the_failure_record() {
   run jig task autopilot T-1 stop --reason r
   nt_wait failed
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/notify)" "$NT_TOKEN"
-  assert_file_contains .ai/workspace/tasks/T-1/notify "bot\*\*\*\*\*\*\*\*/sendMessage"
+  assert_file_contains .ai/workspace/tasks/T-1/notify "failed: curl: (7) Failed to connect to api.telegram.org/bot\*\*\*\*\*\*\*\*/sendMessage"
   run jig status
   assert_contains "$OUT" "notify: Telegram messages are failing: curl: (7)"
   assert_not_contains "$OUT" "$NT_TOKEN"
@@ -230,10 +235,13 @@ test_notify_status_follows_the_latest_send_across_tasks() {
   printf '2026-01-01T00:00:09Z\tstop\tfailed: new\n' > .ai/workspace/tasks/T-1/notify
   run jig status
   assert_contains "$OUT" "notify: Telegram messages are failing: new (task T-1, 2026-01-01T00:00:09Z)"
-  # A failure and a success in the same second: the failure is shown.
-  printf '2026-01-01T00:00:09Z\tend\tok\n' > .ai/workspace/tasks/T-2/notify
+  # A failure and a success in the same second: the failure is shown. The
+  # success is in T-1, which the walk reads first, so only the tie-break can
+  # put the failure in front of it.
+  printf '2026-01-01T00:00:20Z\tend\tok\n' > .ai/workspace/tasks/T-1/notify
+  printf '2026-01-01T00:00:20Z\tstop\tfailed: tied\n' > .ai/workspace/tasks/T-2/notify
   run jig status
-  assert_contains "$OUT" "notify: Telegram messages are failing: new"
+  assert_contains "$OUT" "notify: Telegram messages are failing: tied (task T-2, 2026-01-01T00:00:20Z)"
 }
 
 test_notify_description_falls_back_to_the_goal_and_project_to_the_clone() {
