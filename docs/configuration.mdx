@@ -199,8 +199,10 @@ Some settings are a matter of personal taste rather than project policy. Put the
   which model is worth its cost depends on your plan and your budget. See
   [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
 - `notify.telegram.token`, `notify.telegram.chat_id` — where an autopilot run's messages go: your
-  Telegram bot's token and your chat id. Nothing is sent until both are set. Write the token into
-  the file yourself — `jig config set` refuses it, and Jig shows it only as `********`. Local only.
+  Telegram bot's token and your chat id. Nothing is sent until both are set. Set both with
+  `jig notify setup` in your own terminal, or write the token into the file yourself — `jig config
+  set` refuses it, and Jig shows it only as `********`. `jig notify test` sends a test message.
+  Local only.
   See [Autopilot: messages in Telegram](/autopilot#messages-in-telegram).
 - `notify.autopilot` — `false` pauses those messages and keeps the settings (default `true`); local
   only.
