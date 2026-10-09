@@ -389,3 +389,266 @@ test_notify_config_set_refuses_the_token_and_checks_the_rest() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "not true or false"
 }
+
+# --- jig notify test ---------------------------------------------------------
+
+test_notify_test_sends_one_message_through_the_autopilot_path() {
+  nt_setup
+  git remote add origin https://github.com/example/shop.git
+  run jig notify test
+  assert_eq 0 "$RC"
+  assert_eq "notify: test message sent to chat -100123" "$OUT"
+  assert_eq "🔔 shop · notifications work" "$(cat "$NT_STUB/text")"
+  assert_eq 1 "$(cat "$NT_STUB/calls")"
+  assert_file_contains "$NT_STUB/stdin" "https://api.telegram.org/bot$NT_TOKEN/sendMessage"
+  assert_not_contains "$(cat "$NT_STUB/argv")" "$NT_TOKEN"
+  assert_contains "$(cat "$NT_STUB/argv")" "chat_id=-100123"
+  # Synchronous, and no task's record: the test is not an autopilot event.
+  assert_no_file .ai/workspace/tasks/T-1/notify "the test wrote a task's send record"
+  # The checkout record holds the command line, and the command line no token.
+  assert_not_contains "$(cat .ai/runtime/checkout 2>/dev/null)" "$NT_TOKEN"
+}
+
+test_notify_test_prints_telegrams_answer_and_fails() {
+  nt_setup
+  printf '{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}' > "$NT_STUB/response"
+  printf 400 > "$NT_STUB/code"
+  run jig notify test
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify test: Telegram did not take the message: HTTP 400: Bad Request: chat not found"
+}
+
+test_notify_test_masks_the_token_in_curls_complaint() {
+  nt_setup
+  printf 'curl: (6) Could not resolve host: api.telegram.org/bot%s/sendMessage\n' "$NT_TOKEN" > "$NT_STUB/stderr"
+  printf 6 > "$NT_STUB/exit"
+  printf '' > "$NT_STUB/code"
+  run jig notify test
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "Telegram did not take the message: curl: (6) Could not resolve host: api.telegram.org/bot********/sendMessage"
+  assert_not_contains "$OUT" "$NT_TOKEN"
+}
+
+test_notify_test_says_which_key_is_missing() {
+  nt_setup
+  jig config unset notify.telegram.token --local >/dev/null
+  run jig notify test
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify test: notify.telegram.token is not set; run .ai/scripts/jig notify setup in your own terminal"
+  printf 'notify.telegram.token: %s\n' "$NT_TOKEN" >> .ai/config.local.yaml
+  jig config unset notify.telegram.chat_id --local >/dev/null
+  run jig notify test
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify test: notify.telegram.chat_id is not set"
+  assert_no_file "$NT_STUB/calls" "curl was called with a key missing"
+}
+
+test_notify_test_refuses_a_token_of_the_wrong_shape_without_sending() {
+  nt_setup
+  jig config unset notify.telegram.token --local >/dev/null
+  printf 'notify.telegram.token: abc"def\n' >> .ai/config.local.yaml
+  run jig notify test
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify.telegram.token is not a bot token"
+  assert_no_file "$NT_STUB/calls" "curl was called with a malformed token"
+}
+
+test_notify_test_says_curl_is_missing() {
+  nt_setup
+  rm -f "$NT_STUB/bin/curl"
+  local bin t p
+  bin=$(_run_out .nocurl)
+  mkdir -p "$bin"
+  for t in bash sh git sed awk grep find mktemp cat cp mv rm mkdir sort tr head tail \
+           wc chmod ls date dirname basename cmp paste stat readlink diff env cut \
+           uname sleep tee touch xargs id hostname ps od expr printf test; do
+    p=$(env -i PATH="$PATH" /bin/sh -c "command -v $t" 2>/dev/null) || continue
+    case "$p" in
+      /*) printf '#!/bin/sh\nexec %s "$@"\n' "$p" > "$bin/$t"; chmod +x "$bin/$t" ;;
+    esac
+  done
+  PATH="$bin" run bash .ai/scripts/jig notify test
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify test: curl is not installed or not on PATH"
+}
+
+test_notify_test_names_what_still_holds_messages_back() {
+  nt_setup
+  jig config set notify.autopilot false --local >/dev/null
+  printf '2026-01-01T00:00:00Z\tstop\tfailed: old\n' > .ai/workspace/tasks/T-1/notify
+  run jig notify test
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "notify: notify.autopilot is false, so autopilot runs send nothing"
+  assert_contains "$OUT" "notify: jig status still reports the failure of task T-1"
+}
+
+test_notify_usage_and_unknown_subcommands() {
+  fixture_jig_repo
+  run jig notify
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify: missing subcommand"
+  run jig notify send
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify: unknown subcommand: send"
+  run jig notify test extra
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify test: unknown argument: extra"
+  run jig notify help
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "jig notify setup"
+  run jig help
+  assert_contains "$OUT" "notify test"
+}
+
+# --- jig notify setup --------------------------------------------------------
+
+# nt_session <input> — `jig notify setup` as if run in a terminal: the
+# libraries sourced the way the dispatcher sources them, _notify_terminal
+# standing in for a terminal the test does not have, and <input> on stdin.
+nt_session() {
+  local in
+  in=$(_run_out .stdin)
+  printf '%s\n' "$1" > "$in"
+  run bash -c '
+    set -eu
+    set -o pipefail
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"; . "$JIG_LIB/notify.sh"
+    _notify_terminal() { return 0; }
+    _NOTIFY_ASK_SECONDS=${NT_ASK_SECONDS:-300}
+    cmd_notify setup
+  ' < "$in"
+  rm -f "$in"
+}
+
+test_notify_setup_refuses_at_once_without_a_terminal() {
+  nt_setup
+  local t0=$SECONDS
+  # stdin is a pipe that stays open for 30 s: a setup that read from it would
+  # still be waiting.
+  run jig notify setup < <(sleep 30)
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: asks for the bot token without showing it, so it needs your terminal; run it yourself there: .ai/scripts/jig notify setup"
+  [ $((SECONDS - t0)) -lt 15 ] || fail "setup waited for input: $((SECONDS - t0)) s"
+  assert_no_file "$NT_STUB/calls" "curl was called"
+}
+
+test_notify_setup_writes_both_keys_and_sends_the_test() {
+  fixture_jig_repo
+  NT_STUB=$(_run_out .stub)
+  mkdir -p "$NT_STUB/bin"
+  _nt_write_stub "$NT_STUB"
+  PATH="$NT_STUB/bin:$PATH"
+  export PATH NT_STUB
+  # A pasted token: blanks around it and a Windows line end.
+  nt_session "$(printf '  %s\r\n987654321' "$NT_TOKEN")"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config: notify.telegram.token: ******** (.ai/config.local.yaml)"
+  assert_contains "$OUT" "config: notify.telegram.chat_id: 987654321 (.ai/config.local.yaml)"
+  assert_contains "$OUT" "notify: test message sent to chat 987654321"
+  assert_not_contains "$OUT" "$NT_TOKEN"
+  assert_file_contains .ai/config.local.yaml "notify.telegram.token: $NT_TOKEN"
+  assert_file_contains .ai/config.local.yaml "notify.telegram.chat_id: 987654321"
+  assert_file_contains "$NT_STUB/stdin" "bot$NT_TOKEN/sendMessage"
+  assert_not_contains "$(cat "$NT_STUB/argv")" "$NT_TOKEN"
+  assert_eq "" "$(find .ai -name 'config.local.yaml.tmp*')"
+}
+
+test_notify_setup_leaves_the_token_readable_by_its_owner_only() {
+  # The question is whether this filesystem keeps a file's mode at all; the
+  # read-only directory probe answers it (Git Bash on Windows does not).
+  skip_unless_readonly_dirs
+  fixture_jig_repo
+  NT_STUB=$(_run_out .stub)
+  mkdir -p "$NT_STUB/bin"
+  _nt_write_stub "$NT_STUB"
+  PATH="$NT_STUB/bin:$PATH"
+  export PATH NT_STUB
+  nt_session "$(printf '%s\n1' "$NT_TOKEN")"
+  assert_eq 0 "$RC"
+  assert_eq .ai/config.local.yaml "$(find .ai/config.local.yaml -perm 600)" "the file holding the token is not mode 600"
+}
+
+test_notify_setup_keeps_what_is_set_on_enter() {
+  nt_setup
+  nt_session "$(printf '\n')"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "config: notify.telegram.chat_id: -100123"
+  assert_file_contains .ai/config.local.yaml "notify.telegram.token: $NT_TOKEN"
+  assert_eq 1 "$(grep -c '^notify.telegram.token:' .ai/config.local.yaml)"
+  assert_eq 1 "$(cat "$NT_STUB/calls")"
+}
+
+test_notify_setup_writes_nothing_for_a_wrong_token_or_chat_id() {
+  fixture_jig_repo
+  local before
+  before=$(cat .ai/config.local.yaml 2>/dev/null || true)
+  nt_session "$(printf 'not-a-token\n123')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: that is not a bot token (<digits>:<letters>); nothing written"
+  assert_not_contains "$OUT" "not-a-token"
+  nt_session "$(printf '%s\n12x' "$NT_TOKEN")"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: not a chat id"
+  nt_session ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: no token entered; nothing written"
+  assert_eq "$before" "$(cat .ai/config.local.yaml 2>/dev/null || true)"
+}
+
+test_notify_setup_keeps_the_settings_when_the_test_fails() {
+  nt_setup
+  printf '{"ok":false,"error_code":401,"description":"Unauthorized"}' > "$NT_STUB/response"
+  printf 401 > "$NT_STUB/code"
+  nt_session "$(printf '\n555')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: Telegram did not take the message: HTTP 401: Unauthorized"
+  assert_file_contains .ai/config.local.yaml "notify.telegram.chat_id: 555"
+}
+
+test_notify_setup_refuses_a_local_file_git_does_not_ignore() {
+  nt_setup
+  : > .gitignore
+  if git check-ignore -q .ai/config.local.yaml 2>/dev/null; then
+    skip "config.local.yaml is ignored by something other than .gitignore here"
+  fi
+  nt_session "$(printf '%s\n1' "$NT_TOKEN")"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: .ai/config.local.yaml is not ignored by git"
+  assert_contains "$OUT" "fix: jig init"
+  assert_no_file "$NT_STUB/calls" "curl was called"
+}
+
+test_notify_setup_gives_up_when_nobody_types() {
+  fixture_jig_repo
+  local t0=$SECONDS
+  # A runtime that hands commands a pseudo-terminal passes the terminal check;
+  # an input that stays open and silent stands in for it.
+  NT_ASK_SECONDS=1 run bash -c '
+    set -eu
+    set -o pipefail
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"; . "$JIG_LIB/notify.sh"
+    _notify_terminal() { return 0; }
+    _NOTIFY_ASK_SECONDS=$NT_ASK_SECONDS
+    cmd_notify setup
+  ' < <(sleep 30)
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: nothing typed for 1 s; run it yourself in your own terminal"
+  [ $((SECONDS - t0)) -lt 15 ] || fail "setup waited: $((SECONDS - t0)) s"
+}
+
+test_notify_setup_refuses_an_argument_and_a_missing_chat_id() {
+  fixture_jig_repo
+  run jig notify setup "$NT_TOKEN"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: takes no arguments; it asks for the token itself"
+  assert_not_contains "$OUT" "$NT_TOKEN"
+  nt_session "$(printf '%s\n' "$NT_TOKEN")"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notify setup: no chat id entered; nothing written"
+  assert_no_file .ai/config.local.yaml.tmp.x
+  case "$(cat .ai/config.local.yaml 2>/dev/null || true)" in
+    *notify.telegram*) fail "setup wrote a key without a chat id" ;;
+  esac
+}

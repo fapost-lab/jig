@@ -81,24 +81,42 @@ jig_notify_autopilot() {
 _notify_send() {
   set +e
   set +o pipefail
-  local id="$1" event="$2" text="$3" token="$4" chat="$5" dir msg resp err code detail
+  local id="$1" event="$2" text="$3" token="$4" chat="$5" dir msg outcome
   dir=$(task_dir "$id") || return 0
   [ -d "$dir" ] || return 0
-  if ! jig_notify_token_ok "$token"; then
-    _notify_record "$id" "$event" "failed: notify.telegram.token is not a bot token (<digits>:<letters>)"
-    return 0
-  fi
-  if ! _cfg_chat_id "$chat"; then
-    _notify_record "$id" "$event" "failed: notify.telegram.chat_id is not a chat id (digits, or @name)"
-    return 0
-  fi
   msg=$(mktemp "$dir/notify.text.XXXXXX") || return 0
   jig_cleanup_add "$msg"
-  resp=$(mktemp "$dir/notify.resp.XXXXXX") || return 0
-  jig_cleanup_add "$resp"
-  err=$(mktemp "$dir/notify.err.XXXXXX") || return 0
-  jig_cleanup_add "$err"
   _notify_message "$id" "$event" "$text" > "$msg"
+  outcome=$(_notify_post "$token" "$chat" "$msg" "$dir")
+  _notify_record "$id" "$event" "${outcome:-failed: no answer}"
+  return 0
+}
+
+# _notify_post <token> <chat> <text-file> <work-dir> — send <text-file> to
+# <chat>, and print the outcome as one line: `ok`, or `failed: <why>` with the
+# token cut out, no tab or line break, at most 200 characters. Exit 0 on `ok`,
+# 1 otherwise. The one place Jig calls Telegram: the autopilot's detached
+# sender and `jig notify test` both go through it, so a test that passes has
+# taken the path a real message takes. <work-dir> holds curl's answer while
+# it is read; the files are removed before this returns.
+#
+# The shapes are checked before anything is sent: a token is written into
+# curl's config line, so a quote or a line break in a hand-edited file must
+# never reach it.
+_notify_post() {
+  local token="$1" chat="$2" msg="$3" dir="$4" resp err code detail
+  if ! jig_notify_token_ok "$token"; then
+    printf 'failed: notify.telegram.token is not a bot token (<digits>:<letters>)\n'
+    return 1
+  fi
+  if ! _cfg_chat_id "$chat"; then
+    printf 'failed: notify.telegram.chat_id is not a chat id (digits, or @name)\n'
+    return 1
+  fi
+  # Removed on every path below, not registered for exit: both callers run
+  # this inside `$(...)`, whose exit list is not theirs (conventions/shell.md).
+  resp=$(mktemp "$dir/notify.resp.XXXXXX") || { printf 'failed: cannot write to %s\n' "$dir"; return 1; }
+  err=$(mktemp "$dir/notify.err.XXXXXX") || { rm -f "$resp"; printf 'failed: cannot write to %s\n' "$dir"; return 1; }
 
   code=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$token" \
     | curl -q --config - -sS --max-time 10 --connect-timeout 5 \
@@ -106,7 +124,8 @@ _notify_send() {
         --data-urlencode "chat_id=$chat" \
         --data-urlencode "text@$msg" 2>"$err")
   if [ "$code" = 200 ] && grep -q '"ok":[[:space:]]*true' "$resp" 2>/dev/null; then
-    _notify_record "$id" "$event" ok
+    rm -f "$resp" "$err"
+    printf 'ok\n'
     return 0
   fi
   detail=$(sed -n 's/.*"description":[[:space:]]*"\([^"]*\)".*/\1/p' "$resp" 2>/dev/null | sed -n 1p)
@@ -116,8 +135,9 @@ _notify_send() {
     '' | 000) ;;
     *) case "$detail" in "HTTP $code"*) ;; *) detail="HTTP $code: $detail" ;; esac ;;
   esac
-  _notify_record "$id" "$event" "failed: $detail" "$token"
-  return 0
+  rm -f "$resp" "$err"
+  _notify_outcome "failed: $detail" "$token"
+  return 1
 }
 
 # _notify_message <id> <event> <text> — the message text, lines joined by a
@@ -241,20 +261,28 @@ _notify_cut() {
   fi
 }
 
-# _notify_record <id> <event> <outcome> [<token>] — the task's `notify` file:
-# one line, `<UTC time>\t<event>\t<ok | failed: why>`, the latest send only,
-# replaced atomically. The reason is made one line with no tab, the token cut
-# out of it, and kept to 200 characters.
-_notify_record() {
-  local id="$1" event="$2" outcome="$3" token="${4:-}" dir file tmp
-  dir=$(task_dir "$id") || return 0
-  [ -d "$dir" ] || return 0
-  file="$dir/notify"
+# _notify_outcome <outcome> [<token>] — <outcome> as one line with no tab,
+# the token cut out of it, kept to 200 characters: what `notify` records and
+# `jig notify test` prints.
+_notify_outcome() {
+  local outcome="$1" token="${2:-}"
   outcome=$(printf '%s' "$outcome" | tr '\t\r\n' '   ')
   if [ -n "$token" ]; then
     outcome=${outcome//"$token"/$JIG_CFG_MASK}
   fi
-  outcome=$(_notify_cut "$outcome" 200)
+  _notify_cut "$outcome" 200
+}
+
+# _notify_record <id> <event> <outcome> — the task's `notify` file: one line,
+# `<UTC time>\t<event>\t<ok | failed: why>`, the latest send only, replaced
+# atomically. <outcome> comes from _notify_post, already one masked line; it
+# is passed through _notify_outcome again so nothing else can break the line.
+_notify_record() {
+  local id="$1" event="$2" outcome dir file tmp
+  dir=$(task_dir "$id") || return 0
+  [ -d "$dir" ] || return 0
+  file="$dir/notify"
+  outcome=$(_notify_outcome "$3")
   tmp=$(mktemp "$dir/notify.tmp.XXXXXX") || return 0
   jig_cleanup_add "$tmp"
   printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event" "$outcome" > "$tmp" \
@@ -292,4 +320,209 @@ EOF
     "failed: "*) printf '%s\t%s\t%s\n' "$best_ts" "${best%%$'\t'*}" "${best#*$'\t'failed: }" ;;
   esac
   return 0
+}
+
+# --- jig notify ---------------------------------------------------------------
+# `jig notify setup` and `jig notify test` (spec: notifications, phase 1;
+# adr-20261009-autopilot-stops-reach-telegram).
+#
+# `setup` is the person's: it asks for the bot token without showing it, so it
+# runs only with a terminal on stdin and refuses at once without one — the
+# agent's shell has none, which is what keeps the token out of the agent's
+# transcript. No piped token is accepted for the same reason. `test` is
+# anybody's, and is meant to run from the agent's own session: a sandbox that
+# keeps the agent off the network keeps the autopilot's messages off it too.
+
+cmd_notify() {
+  local sub="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    setup) _notify_setup "$@" ;;
+    test) _notify_test "$@" ;;
+    help | -h | --help)
+      printf 'usage: jig notify setup    ask for the Telegram bot token (hidden) and chat id in your\n'
+      printf '                           own terminal, write them to %s/config.local.yaml, send a test\n' "$JIG_AI_DIR"
+      printf '       jig notify test     send one test message now, the way autopilot sends its own\n'
+      ;;
+    '') jig_die "notify: missing subcommand (usage: jig notify setup|test)" ;;
+    *) jig_die "notify: unknown subcommand: $sub (usage: jig notify setup|test)" ;;
+  esac
+}
+
+# _notify_terminal — exit 0 when stdin is a terminal. A function of its own so
+# the tests, which have no terminal, can stand in for one; production code
+# never overrides it.
+_notify_terminal() {
+  [ -t 0 ]
+}
+
+# _notify_test — `jig notify test`. Exit 0 when Telegram took the message.
+_notify_test() {
+  [ $# -eq 0 ] || jig_die "notify test: unknown argument: $1 (usage: jig notify test)"
+  jig_require_repo
+  _notify_test_send "notify test"
+}
+
+# _notify_test_send <label> — send `🔔 <project> · notifications work` through
+# _notify_post, synchronously, and report: one stdout line on success, jig_die
+# with Telegram's answer (token masked) otherwise. <label> prefixes errors.
+_notify_test_send() {
+  local label="$1" token chat dir msg outcome failing failing_id
+  token=$(cfg notify.telegram.token "")
+  chat=$(cfg notify.telegram.chat_id "")
+  [ -n "$token" ] \
+    || jig_die "$label: notify.telegram.token is not set; run .ai/scripts/jig notify setup in your own terminal"
+  [ -n "$chat" ] \
+    || jig_die "$label: notify.telegram.chat_id is not set; run .ai/scripts/jig notify setup in your own terminal"
+  command -v curl >/dev/null 2>&1 \
+    || jig_die "$label: curl is not installed or not on PATH; Jig sends Telegram messages with curl"
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-notify.XXXXXX") \
+    || jig_die "$label: cannot create a temporary directory"
+  jig_cleanup_add -d "$dir"
+  msg="$dir/text"
+  printf '🔔 %s · notifications work' "$(_notify_project)" > "$msg"
+  if ! outcome=$(_notify_post "$token" "$chat" "$msg" "$dir"); then
+    jig_die "$label: Telegram did not take the message: ${outcome#failed: }"
+  fi
+  printf 'notify: test message sent to chat %s\n' "$chat"
+  case "$(cfg notify.autopilot true)" in
+    false | no | 0 | off)
+      printf 'notify: notify.autopilot is false, so autopilot runs send nothing until it is true\n' ;;
+  esac
+  failing=$(jig_notify_failing)
+  if [ -n "$failing" ]; then
+    failing_id=${failing#*$'\t'}
+    failing_id=${failing_id%%$'\t'*}
+    printf 'notify: jig status still reports the failure of task %s; it clears with the next autopilot message\n' \
+      "$failing_id"
+  fi
+  return 0
+}
+
+# _notify_setup — `jig notify setup`. Asks for the token (hidden) and the chat
+# id, checks both, writes them to the local file, then sends the test. Exit
+# status is the test's: the settings stay written when it fails, so the person
+# sees Telegram's answer and runs setup again to correct them.
+_notify_setup() {
+  # The argument is never echoed: the one a person is likeliest to pass here
+  # is the token.
+  [ $# -eq 0 ] || jig_die "notify setup: takes no arguments; it asks for the token itself, without showing it (usage: jig notify setup)"
+  _notify_terminal \
+    || jig_die "notify setup: asks for the bot token without showing it, so it needs your terminal; run it yourself there: .ai/scripts/jig notify setup"
+  jig_require_repo
+  local file dir shown token chat old_token old_chat prompt
+  file=$(jig_config_local_file)
+  dir=${file%/*}
+  shown=$(_config_display_path "$file")
+  [ -d "$dir" ] || jig_die "notify setup: no $JIG_AI_DIR/ directory at ${dir%/*}; run jig init there first"
+  # A secret goes only into a file git will never commit.
+  jig_config_local_ignored \
+    || jig_die "notify setup: $shown is not ignored by git, and the token would be one commit away from being anyone's (fix: jig init)"
+
+  old_token=$(cfg notify.telegram.token "")
+  old_chat=$(cfg notify.telegram.chat_id "")
+
+  printf 'The bot token comes from @BotFather in Telegram (/newbot). It is not shown as you type.\n' >&2
+  prompt='Bot token: '
+  [ -z "$old_token" ] || prompt='Bot token (Enter keeps the one set): '
+  printf '%s' "$prompt" >&2
+  _notify_ask hidden
+  printf '\n' >&2
+  token=$(_notify_trim "$_NOTIFY_ANSWER")
+  [ -n "$token" ] || token=$old_token
+  [ -n "$token" ] || jig_die "notify setup: no token entered; nothing written"
+  jig_notify_token_ok "$token" \
+    || jig_die "notify setup: that is not a bot token (<digits>:<letters>); nothing written"
+
+  printf 'Your chat id: send your bot any message, then open\n' >&2
+  printf 'https://api.telegram.org/bot<token>/getUpdates and take "chat":{"id": ...}.\n' >&2
+  prompt='Chat id: '
+  [ -z "$old_chat" ] || prompt="Chat id [$old_chat]: "
+  printf '%s' "$prompt" >&2
+  _notify_ask shown
+  chat=$(_notify_trim "$_NOTIFY_ANSWER")
+  [ -n "$chat" ] || chat=$old_chat
+  [ -n "$chat" ] || jig_die "notify setup: no chat id entered; nothing written"
+  _cfg_chat_id "$chat" \
+    || jig_die "notify setup: not a chat id: digits (a group starts with -), or @name; nothing written"
+
+  _notify_write_local "$file" "$token" "$chat"
+  printf 'config: notify.telegram.token: %s (%s)\n' "$JIG_CFG_MASK" "$shown"
+  printf 'config: notify.telegram.chat_id: %s (%s)\n' "$chat" "$shown"
+  _notify_test_send "notify setup"
+}
+
+# _notify_ask hidden|shown — read one line from stdin into _NOTIFY_ANSWER (a
+# global: the read must run in this shell, not in a `$(...)`, for the terminal
+# restore below to belong to it). A hidden read turns the terminal's echo off;
+# its state is saved first and put back on every exit, Ctrl-C included — bash
+# leaves echo off when the INT trap exits in the middle of `read -s`. Both
+# reads are bounded: a runtime that hands commands a pseudo-terminal passes
+# the terminal check, and nobody there will ever type, so the wait ends with
+# the same refusal rather than lasting for ever.
+_NOTIFY_ANSWER=""
+_NOTIFY_STTY=""
+_NOTIFY_ASK_SECONDS=300
+_notify_ask() {
+  local rc=0 start=$SECONDS
+  _NOTIFY_ANSWER=""
+  if [ "$1" = hidden ]; then
+    if [ -t 0 ] && _NOTIFY_STTY=$(stty -g 2>/dev/null) && [ -n "$_NOTIFY_STTY" ]; then
+      jig_on_exit _notify_restore_tty
+    fi
+    IFS= read -r -s -t "$_NOTIFY_ASK_SECONDS" _NOTIFY_ANSWER || rc=$?
+    _notify_restore_tty
+  else
+    IFS= read -r -t "$_NOTIFY_ASK_SECONDS" _NOTIFY_ANSWER || rc=$?
+  fi
+  # A failed read is the end of input — a last line with no line break still
+  # counts — or the timeout. bash 4 reports the timeout above 128; bash 3.2
+  # reports it as 1, like the end of input, so the clock tells them apart.
+  if [ "$rc" -gt 128 ] || { [ "$rc" -ne 0 ] && [ $((SECONDS - start)) -ge "$_NOTIFY_ASK_SECONDS" ]; }; then
+    printf '\n' >&2
+    jig_die "notify setup: nothing typed for $_NOTIFY_ASK_SECONDS s; run it yourself in your own terminal: .ai/scripts/jig notify setup"
+  fi
+  return 0
+}
+
+# _notify_restore_tty — put the terminal back as _notify_ask found it. From
+# /dev/tty, not stdin: on exit this runs inside the exit list's loop, whose
+# stdin is a here-document (common.sh, _jig_exit_run).
+_notify_restore_tty() {
+  [ -z "$_NOTIFY_STTY" ] || stty "$_NOTIFY_STTY" </dev/tty 2>/dev/null || true
+}
+
+# _notify_trim <text> — <text> without surrounding blanks or carriage returns:
+# a token pasted from a Windows clipboard or with a stray space still counts.
+_notify_trim() {
+  local s="$1"
+  s=${s//$'\r'/}
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s\n' "$s"
+}
+
+# _notify_write_local <file> <token> <chat> — <file> with both keys set, the
+# way `jig config set` writes (_config_apply), replaced in one `mv`. Written
+# under umask 077: the file now holds a secret, so it ends up readable by its
+# owner only (Windows ignores the mode).
+_notify_write_local() {
+  local file="$1" tmp
+  tmp="$file.tmp.$$"
+  jig_cleanup_add "$tmp"
+  jig_cleanup_add "$tmp.next"
+  (
+    umask 077
+    if [ -f "$file" ]; then
+      cat "$file" > "$tmp"
+    else
+      printf '%s\n' \
+        "# Your own Jig settings for this clone: gitignored, never committed." \
+        "# Only local keys are read from here (jig config set --local)." > "$tmp"
+    fi
+    _config_apply "$tmp" "$tmp.next" notify.telegram.token "$2" && mv "$tmp.next" "$tmp" \
+      && _config_apply "$tmp" "$tmp.next" notify.telegram.chat_id "$3" && mv "$tmp.next" "$tmp" \
+      && { chmod 600 "$tmp" 2>/dev/null || true; } \
+      && mv "$tmp" "$file"
+  ) || jig_die "notify setup: could not write $file"
 }

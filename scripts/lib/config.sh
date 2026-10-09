@@ -633,7 +633,7 @@ jig_config_value_problem() {
         || { printf 'not a chat id: digits (a group starts with -), or @name\n'; return 1; }
       ;;
     notify.telegram.token)
-      printf 'a bot token is never set on a command line, where ps, the shell history and the transcript keep it; write the line notify.telegram.token: <token> into %s/config.local.yaml yourself\n' "$JIG_AI_DIR"
+      printf 'a bot token is never set on a command line, where ps, the shell history and the transcript keep it; run %s/scripts/jig notify setup in your own terminal, or write the line notify.telegram.token: <token> into %s/config.local.yaml yourself\n' "$JIG_AI_DIR" "$JIG_AI_DIR"
       return 1
       ;;
     *) printf 'not a local key\n'; return 1 ;;
