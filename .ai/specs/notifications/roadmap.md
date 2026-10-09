@@ -18,12 +18,12 @@ false` or no `curl` nothing is sent and nothing fails; a failed send leaves a li
 journal and a `jig status` line that a later success clears; a token in `.ai/config.yaml` is
 ignored and reported; `jig config show --local` masks the token.
 
-- [ ] `autopilot-telegram-messages` — autopilot messages: the local-only keys (token, chat id, `notify.autopilot`), the message
+- [x] `autopilot-telegram-messages` — autopilot messages: the local-only keys (token, chat id, `notify.autopilot`), the message
   (project, description, reason, marks), the detached sender with the token off the command line
   and the text form-encoded from a file, the failure record and its status line, masking and the
   committed-token warning, the phone-sized `--reason` rule in `jig-autopilot`, docs and an ADR (a
   first outbound network call)
-- [ ] notify test and setup — `jig notify setup` (hidden token input), `jig notify test` and the
+- [ ] `notify-setup-and-test` — notify test and setup: `jig notify setup` (hidden token input), `jig notify test` and the
   Telegram question in `jig-setup`, which runs the test from the agent's own session (after: autopilot messages — the test sends through the
   same sender and keys)
 
@@ -39,7 +39,7 @@ also sends a message. Done when: decided once the fog lifts.
 ## Waves
 
 1. autopilot-telegram-messages
-2. notify test and setup
+2. notify-setup-and-test
 3. Notification hook
 
 <!--
