@@ -152,8 +152,7 @@ chat. The token and chat id settings can be kept in config.local.
   `jig notify test` from its own session — the sandbox real sends run in — rejected: the token
   pasted into chat and written with `jig config set --local`, because it then sits in the
   session's transcript, `ps` and shell history; no test command, because a wrong setting would
-  show only after the first real stop. (Taken as the recommended default when the person moved
-  the spec to autopilot without answering, 2026-10-09.)
+  show only after the first real stop.
 - On `end`, the third line is the journal's text and a fourth is the pull request URL when the
   task has one: the text says what actually happened (merged, not merged and why, ready for the
   person's commit), the link is what the person opens next — rejected: the URL instead of the
