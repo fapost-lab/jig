@@ -1,6 +1,6 @@
 ---
 name: jig-setup
-description: Ask a person, one question at a time in plain words, how far their agent may go on its own — git rights, autopilot without questions, CI wait, cleanup — and write their answers to their personal `.ai/config.local.yaml` after a yes. Use after `jig init`, or when the user says "set up Jig for me", "configure my settings", "change my personal settings", "let the agent merge".
+description: Ask a person, one question at a time in plain words, how far their agent may go on its own — git rights, autopilot without questions, CI wait, cleanup, Telegram messages — and write their answers to their personal `.ai/config.local.yaml` after a yes. Use after `jig init`, or when the user says "set up Jig for me", "configure my settings", "change my personal settings", "let the agent merge".
 ---
 
 # jig-setup — personal settings, asked for in plain words
@@ -108,6 +108,17 @@ their own file is answered by `config unset` too — say that the key then answe
     `haiku` or a full model id: Jig passes it to Claude Code unchanged and checks nothing.
     Recommend no helpers to someone unsure why they would want them; `sonnet` for both to someone
     whose session runs on Opus and who wants their limits to last.
+
+12. **Telegram** (`notify.telegram.*`). "Should Jig message your Telegram when an autopilot run
+    stops, ends or chooses for you?" On a yes, explain where the two values come from: a bot made
+    with @BotFather (`/newbot`) gives the token; they send that bot any message, and their chat id
+    is `chat` → `id` on `https://api.telegram.org/bot<token>/getUpdates`. **Never ask for the
+    token in chat** — the transcript keeps it. Ask them to run `.ai/scripts/jig notify setup` in
+    their own terminal (it asks for the token without showing it, writes both, sends a test).
+    When they say it is done, run `.ai/scripts/jig notify test` here and show its output: your
+    session is where autopilot's messages are sent from. A failure that names the network means
+    this session's sandbox keeps the agent off `api.telegram.org`, and autopilot's messages will
+    not arrive either until it is allowed. Not part of the dry run below.
 
 Ask about no other key. If `jig config set` refuses a key as not local, this version of Jig
 does not have it: drop the question.

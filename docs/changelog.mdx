@@ -8,6 +8,31 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.25.0 — 2026-10-09
+
+Autopilot can tell you, in Telegram, when a run needs you or is done. Nothing changes until you set
+it up: with no token and chat id, no message is sent and no command behaves differently.
+
+- **Messages in Telegram on autopilot stops and ends.** A run that stops, ends, or — unattended —
+  approves its own design or decides something for you sends one short plain-text message: a mark
+  (`⏸` waiting for you, `⛔` stopped unattended, `✅` ended, `🤖` chose for you), the project and the
+  task id, the task's description, the reason, and on `end` the pull request link. Sending runs in
+  the background with a ten-second limit and never holds up or fails the command; with no `curl` it is
+  skipped. See [Messages in Telegram](/autopilot#messages-in-telegram).
+- **`jig notify setup` and `jig notify test`.** `setup` is run by you, in your own terminal: it asks
+  for the bot token with hidden input and for the chat id, writes them to your gitignored
+  `.ai/config.local.yaml` and sends a test, so the agent never sees the token. `test` sends one
+  message and prints Telegram's answer when it fails; `jig-setup` asks whether you want messages and
+  runs the test from the agent's own session.
+- **New local keys** `notify.telegram.token`, `notify.telegram.chat_id` and `notify.autopilot`
+  (`false` pauses the messages). The token is shown as `********` by `jig config show`, `jig notify`
+  and `jig status`; `jig config set` refuses it and points at `jig notify setup`. A token found in the
+  committed `.ai/config.yaml` is ignored, and `jig status` tells you to revoke it.
+- **`jig status` reports failing messages.** A `notify:` line names the reason and the task while the
+  latest send failed; a later successful message clears it.
+- **`jig task autopilot <id> end` takes an optional `--reason`,** which becomes the message's text;
+  without it the message says the run ended, never that it merged.
+
 ## 0.24.0 — 2026-10-08
 
 Two things change what Jig does on your machine. Autopilot runs can ship at a Git level of their

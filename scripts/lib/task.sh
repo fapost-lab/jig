@@ -94,7 +94,7 @@ _task_usage() {
       printf '       jig task autopilot <id> approve --reason <text>\n'
       printf '       jig task autopilot <id> decide --reason <text>\n'
       printf '       jig task autopilot <id> resume --answer <the human'"'"'s answer>\n'
-      printf '       jig task autopilot <id> end\n'
+      printf '       jig task autopilot <id> end [--reason <how it ended>]\n'
       printf '       jig task autopilot <id> report\n'
       ;;
     gate) printf 'usage: jig task gate <id> approved [--by human|agent]\n' ;;
@@ -1718,6 +1718,7 @@ _task_autopilot_repair() {
   # already reached, and the run stops instead.
   _task_rewrite_state "$dir" autopilot stopped
   _task_autopilot_log "$id" stop "repair limit reached (2): $reason"
+  _task_autopilot_notify "$id" stop "repair limit reached (2): $reason"
   printf 'stop: repair limit reached (2)\n'
   # `return 3` ends the command under errexit before cmd_task's own flush.
   jig_status_page_flush
@@ -1752,6 +1753,7 @@ _task_autopilot_stop() {
 
   _task_rewrite_state "$dir" autopilot stopped
   _task_autopilot_log "$id" stop "$reason"
+  _task_autopilot_notify "$id" stop "$reason"
   printf 'autopilot: stopped\n'
 }
 
@@ -1786,6 +1788,7 @@ _task_autopilot_unattended_event() {
     || jig_die "task autopilot $event: $id's run is attended; stop and ask the human instead: jig task autopilot $id stop --reason <text>"
 
   _task_autopilot_log "$id" "$event" "$reason"
+  _task_autopilot_notify "$id" "$event" "$reason"
   printf '%s: %s\n' "$event" "$reason"
 }
 
@@ -1829,15 +1832,31 @@ _task_autopilot_resume() {
   printf 'autopilot: on\n'
 }
 
-# end: the run reached the end of its route (design §1 step 5, after
-# consolidation). Requires an active run. An unattended run ends only once the
-# knowledge decision is recorded: `end` then `start` is a fresh run with a
-# fresh repair count, and nobody there would have answered for it
+# end [--reason <text>]: the run reached the end of its route (design §1 step
+# 5, after consolidation). Requires an active run. An unattended run ends only
+# once the knowledge decision is recorded: `end` then `start` is a fresh run
+# with a fresh repair count, and nobody there would have answered for it
 # (adr-20261004-a-route-stage-is-proven-by-its-record).
+#
+# The reason says how the run ended — merged, not merged and why, ready for
+# the person's commit — and is the text of the end's Telegram message
+# (adr-20261009-autopilot-stops-reach-telegram). Optional: without it the
+# journal line stays empty, as before, and the message says only that the run
+# ended, never that anything merged.
 _task_autopilot_end() {
   local id="$1"
   shift
-  [ $# -eq 0 ] || jig_die "task autopilot end: unknown argument: $1"
+  local reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task autopilot end: --reason requires a value"
+        reason="$2"; shift 2 ;;
+      *) jig_die "task autopilot end: unknown argument: $1" ;;
+    esac
+  done
+  _task_finding_valid_field "$reason" \
+    || jig_die "task autopilot end: --reason must be a single line with no tab"
   local dir
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task autopilot end"
@@ -1848,8 +1867,20 @@ _task_autopilot_end() {
   fi
 
   _task_rewrite_state "$dir" autopilot "done"
-  _task_autopilot_log "$id" end ""
+  _task_autopilot_log "$id" end "$reason"
+  _task_autopilot_notify "$id" end "$reason"
   printf 'autopilot: done\n'
+}
+
+# _task_autopilot_notify <id> <event> <text> — the event's Telegram message,
+# detached; never fails and prints nothing (notify.sh). Called after the
+# journal line, so a message never reports an event that was not recorded.
+_task_autopilot_notify() {
+  if ! command -v jig_notify_autopilot >/dev/null 2>&1; then
+    # shellcheck source=lib/notify.sh
+    . "$JIG_LIB/notify.sh" 2>/dev/null || return 0
+  fi
+  jig_notify_autopilot "$@" || true
 }
 
 # report: the journal in readable form, then a final summary line. A task

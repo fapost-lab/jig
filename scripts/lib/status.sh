@@ -135,6 +135,8 @@ _status_load() {
   . "$JIG_LIB/spec.sh"
   # shellcheck source=lib/task.sh
   . "$JIG_LIB/task.sh"
+  # shellcheck source=lib/notify.sh
+  . "$JIG_LIB/notify.sh"
 }
 
 # _status_report — the plain-text report `jig status` prints. At a terminal
@@ -154,6 +156,7 @@ _status_report() {
   _status_config_local
   _status_agent_git
   _status_autopilot_git
+  _status_notify
 
   if manifest_exists; then
     local proj_version
@@ -495,6 +498,7 @@ _status_terminal() {
         _status_need warn "$l"
         ;;
       "config.local: "*) _STT_CFG+=("${l#config.local: }") ;;
+      "notify: "*) _status_need warn "$l" ;;
       "agent.git: invalid value "*) _status_need fail "$l" ;;
       "agent.git: "*) _STT_AGENT=${l#agent.git: } ;;
       "autopilot.git: invalid value "*) _status_need fail "$l" ;;
@@ -2668,6 +2672,9 @@ _status_config_local() {
   if [ -f "$file" ]; then
     while IFS="$(printf '\t')" read -r key value kind; do
       if [ "$kind" = local ]; then
+        # A secret's value lands in the transcript of the agent that runs
+        # this, so it is named and never shown (_cfg_secret_key, config.sh).
+        if _cfg_secret_key "$key"; then value=$JIG_CFG_MASK; fi
         printf 'config.local: %s=%s\n' "$key" "$value"
       else
         printf 'config.local: ignored %s (not a local key)\n' "$key"
@@ -2690,9 +2697,29 @@ _status_config_local() {
   # jig_config_project_ignored's two columns; the message names the key only.
   while IFS="$t" read -r pkey pvalue; do
     [ -n "$pkey" ] || continue
+    # A secret there is worse than a no-op: once pushed it is anyone's, and
+    # moving it to the local file does not take it back
+    # (adr-20261009-autopilot-stops-reach-telegram).
+    if _cfg_secret_key "$pkey"; then
+      printf 'config.local: %s in %s is ignored (set it in %s; a token in a committed file is anyone'"'"'s once pushed: revoke it with @BotFather)\n' \
+        "$pkey" "$JIG_AI_DIR/config.yaml" "$JIG_AI_DIR/config.local.yaml"
+      continue
+    fi
     printf 'config.local: %s in %s is ignored (set it in %s)\n' \
       "$pkey" "$JIG_AI_DIR/config.yaml" "$JIG_AI_DIR/config.local.yaml"
   done < <(jig_config_project_ignored)
+}
+
+# _status_notify — one line while the latest Telegram message failed
+# (jig_notify_failing, notify.sh): a wrong token or chat id, or a sandbox with
+# no network, would otherwise stay silent forever. A later success clears it.
+_status_notify() {
+  local at id why
+  IFS=$'\t' read -r at id why <<EOF
+$(jig_notify_failing)
+EOF
+  [ -n "$at" ] || return 0
+  printf 'notify: Telegram messages are failing: %s (task %s, %s)\n' "$why" "$id" "$at"
 }
 
 # _status_agent_git — one line naming the review queue `agent.git`'s level

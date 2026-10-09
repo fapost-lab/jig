@@ -105,6 +105,9 @@ Usage: jig <command> [args]
                                  that no reader answers from
   config keys                    every key jig reads, its default, which file
                                  answers for it, and what .ai/config.yaml omits
+  notify setup                   in your own terminal: ask for the Telegram bot token
+                                 (hidden) and chat id, write them, send a test message
+  notify test                    send one Telegram test message now, as autopilot would
   measure                        knowledge quality, process weight, change size
   doctor                         check the local environment jig runs in
   self-update                    move the global framework checkout to the newest release
@@ -118,7 +121,7 @@ main() {
   case "$cmd" in
     help|-h|--help) jig_usage ;;
     version|--version) printf 'jig %s\n' "$JIG_VERSION" ;;
-    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure|doctor|config)
+    init|upgrade|status|task|context|verify|knowledge|spec|housekeeping|measure|doctor|config|notify)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi
