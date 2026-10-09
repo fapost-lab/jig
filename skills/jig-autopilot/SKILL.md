@@ -71,7 +71,10 @@ In an unattended run there are no stops: §5. Otherwise, on a stop, record it, t
 | A decision nobody made | The decision: a product choice not settled in `task.md`, the spec or knowledge. Never guess one |
 | A destructive operation | Permission, or another way |
 
-A reason says **what you need from the human**, and nothing about the state of the task.
+A reason says **what you need from the human**, and nothing about the state of the task. It is
+read on a phone: when the person set up Telegram messages, `stop`, `approve`, `decide` and `end`
+send their `--reason` there as it is. One short sentence — what is needed, what was chosen, how it
+ended — never a log line like `repair limit reached`.
 It is written once and never rechecked, while the task moves on: a reason that reported
 "no pull request" or "verify has not been run" was still saying it hours after both had
 happened. The state the page derives itself, fresh, in the cards around the stop.
@@ -96,7 +99,7 @@ Finish with `jig-consolidate`: it records the knowledge decision and ships the c
 as the run's level allows. Then:
 
 ```
-.ai/scripts/jig task autopilot <id> end
+.ai/scripts/jig task autopilot <id> end --reason "<how it ended: merged, not merged: <why>, ready for your commit>"
 .ai/scripts/jig task autopilot <id> report
 ```
 
@@ -107,7 +110,8 @@ in the pull request body when you write it. Closing the task after the merge sta
 ## 5. Unattended: ask nothing
 
 The person who set `autopilot.unattended` cannot answer a stop. Each one becomes the safe
-default below, recorded so they read it in the pull request, in plain words, not in jargon:
+default below, recorded so they read it in the pull request, in plain words, not in jargon —
+and on their phone as it happens, when they set up Telegram messages: one short sentence (§3):
 
 | Stop | Instead |
 |---|---|

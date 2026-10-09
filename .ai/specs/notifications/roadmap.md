@@ -18,7 +18,7 @@ false` or no `curl` nothing is sent and nothing fails; a failed send leaves a li
 journal and a `jig status` line that a later success clears; a token in `.ai/config.yaml` is
 ignored and reported; `jig config show --local` masks the token.
 
-- [ ] autopilot messages — the local-only keys (token, chat id, `notify.autopilot`), the message
+- [ ] `autopilot-telegram-messages` — autopilot messages: the local-only keys (token, chat id, `notify.autopilot`), the message
   (project, description, reason, marks), the detached sender with the token off the command line
   and the text form-encoded from a file, the failure record and its status line, masking and the
   committed-token warning, the phone-sized `--reason` rule in `jig-autopilot`, docs and an ADR (a
@@ -38,7 +38,7 @@ also sends a message. Done when: decided once the fog lifts.
 
 ## Waves
 
-1. autopilot messages
+1. autopilot-telegram-messages
 2. notify test and setup
 3. Notification hook
 

@@ -36,6 +36,9 @@ Absent keys take the default. Paths are not configurable.
 | `run.path` | `auto` | only | a directory put first on `PATH` for the checks when they run on this machine — a host runtime that is not first there; `auto` takes the Laravel Herd detector's answer, nothing otherwise (adr-20261001-checks-run-where-the-project-runs) |
 | `claude.implement_model` | - | only | the model Claude Code hands the implement stage to, as a subagent: any value the runtime understands (`sonnet`, `opus`, `haiku`, a full model id), carried as written and never checked by Jig. Unset, nobody is handed the stage and the agent implements it itself; `jig task route <id>` prints a `delegate:` line when it is set (adr-20261005-jig-names-the-roles-not-the-models) |
 | `claude.review_model` | - | only | the same for every review stage of a route — review, a T4's independent review, a T3/T4's architecture review; unset, a review still runs in a fresh context where the skill asks for one, on the session's own model. No line for a route without a review (T0, T1) |
+| `notify.telegram.token` | - | only | the Telegram bot token autopilot messages are sent with; never printed (`********`), refused by `jig config set` — written into the file by hand. With it or the chat id missing nothing is sent (adr-20261009-autopilot-stops-reach-telegram) |
+| `notify.telegram.chat_id` | - | only | the chat the messages go to: digits (a group's start with `-`) or `@name` |
+| `notify.autopilot` | `true` | only | `false` stops autopilot runs' messages — a stop, an end, and an unattended run's approve and decide — while the token and chat id stay set |
 
 Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 
@@ -54,7 +57,7 @@ team edits by hand. The `jig-setup` skill asks for the values and runs it.
 |---|---|
 | `jig config set <key> <value> [...] --local [--dry-run]` | sets local keys only, to values the readers accept; every pair is checked before any is written, the file is replaced atomically, and a key is replaced at its first line (the one `cfg` reads) or appended |
 | `jig config unset <key> [...] --local [--dry-run]` | removes every line setting each key — any key the file holds, ignored ones included, which is how a person clears out what no reader answers from; a key the file does not hold is reported and nothing is written |
-| `jig config show --local` | prints the file, then an `ignored:` line for each key in it that no reader answers from |
+| `jig config show --local` | prints the file — the token's value as `********` — then an `ignored:` line for each key in it that no reader answers from |
 | `jig config keys` | prints every key jig reads, its default and which file answers for it, marking each key the project's `.ai/config.yaml` does not mention; writes nothing and takes no `--local` |
 
 Values `set` accepts, per key:
@@ -63,7 +66,7 @@ Values `set` accepts, per key:
 |---|---|
 | `housekeeping.cadence` | whole days (`3d` or `3`) |
 | `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after`, `checkout.busy_ttl`, `verify.busy_ttl` | `<n>[dhms]`; `verify.busy_ttl` also takes `0` |
-| `housekeeping.fetch`, `git.delete_merged_branches`, `autopilot.unattended` | `true` or `false` |
+| `housekeeping.fetch`, `git.delete_merged_branches`, `autopilot.unattended`, `notify.autopilot` | `true` or `false` |
 | `agent.git`, `autopilot.git` | `none`, `commit`, `push`, `pr`, `merge` |
 | `agent.ci_timeout` | whole minutes, 0 to 9999 |
 | `autopilot.parallel` | a whole number, 1 to 16 |
@@ -73,6 +76,8 @@ Values `set` accepts, per key:
 | `run.exec` | `auto`, `host`, or a command of plain words: no quote, `$`, backtick or backslash |
 | `run.path` | `auto` or the absolute path of a directory, unquoted; blanks inside it are kept |
 | `claude.implement_model`, `claude.review_model` | anything the file can hold: the value is the runtime's to understand, not Jig's |
+| `notify.telegram.chat_id` | digits, with a leading `-` for a group, or `@name` |
+| `notify.telegram.token` | nothing: a token on a command line is kept by `ps`, the shell history and the agent's transcript, so `set` refuses it and you write the line yourself |
 
 No value may hold a line break, a `#` (the file reads one as the start of a comment) or
 surrounding blanks.
