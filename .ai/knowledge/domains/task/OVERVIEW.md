@@ -279,3 +279,14 @@ A session waiting for the person sends through it too, from `.ai/scripts/jig-not
 checkout's `.ai/runtime/notify`, which `jig_notify_failing` reads as `a waiting session`. That hook
 never goes through the dispatcher, because a dispatcher run would record the checkout as busy.
 
+
+**`autopilot report` asks the knowledge domain for one block, as a process.** Its
+"Changed linked sources — need your review" block is what `jig knowledge changed --base <base_commit>
+--to-review` prints, run in the checkout that has the task's branch — this one or the task's worktree,
+since `knowledge` takes the project from the directory it runs in. That block is `km_changed`'s
+`source of` lines minus stubs whose source `km_source_states` calls `ok` or that are retired, so the
+wording of those lines is a contract with it: reword them and the block silently empties. A branch
+checked out nowhere in the clone is said (`not checked`), never left out, because a missing block
+reads as "nothing changed". Nothing in it stops a run, a ship or a merge: the person reads it in the
+pull request and decides in `jig-accept`, and a manual ship pastes the same command's output
+(`jig-consolidate` §5).

@@ -3575,6 +3575,52 @@ EOF
   assert_contains "$OUT" ", 1 source edits"
 }
 
+# --to-review: the block a pull request carries (linked-sources-in-pr-body).
+test_knowledge_changed_to_review_prints_only_the_block() {
+  kmc_setup
+  km_track_file docs/style.md "line one"
+  jig knowledge new convention style --source docs/style.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-style >/dev/null
+  git add -A
+  git commit -q -m "link docs/style.md"
+  printf 'line two\n' >> docs/style.md
+
+  run jig knowledge changed --base HEAD --to-review
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 'Changed linked sources — need your review (jig-accept):\n- convention-style: docs/style.md (modified, +1 -0) — jig knowledge sources --diff convention-style')" "$OUT"
+}
+
+test_knowledge_changed_to_review_prints_nothing_without_a_source_edit() {
+  kmc_setup
+  km_track_file docs/style.md "line one"
+  printf 'x\n' > .ai/knowledge/adr/0001-base.md
+
+  run jig knowledge changed --base HEAD --to-review
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+# A source not tracked yet has no diff to count; its size is its lines.
+test_knowledge_changed_to_review_sizes_an_untracked_source_by_its_lines() {
+  kmc_setup
+  mkdir -p .ai/knowledge/sources docs
+  cat > .ai/knowledge/sources/newsrc.md <<'EOF'
+---
+id: convention-newsrc
+type: convention
+status: proposed
+source: docs/new.md
+domains: [a]
+---
+# New source stub
+EOF
+  printf 'one\ntwo\n' > docs/new.md
+
+  run jig knowledge changed --base HEAD --to-review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "- convention-newsrc: docs/new.md (created, +2) — jig knowledge sources --diff convention-newsrc"
+}
+
 test_knowledge_changed_marks_an_adr_source_as_a_decision_record() {
   kmc_setup
   km_track_file docs/adr/0009-thing.md

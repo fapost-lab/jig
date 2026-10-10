@@ -6086,6 +6086,110 @@ test_task_autopilot_report_has_no_blocks_for_an_attended_run() {
   assert_not_contains "$OUT" "unattended"
 }
 
+# --- autopilot report: changed linked sources (linked-sources-in-pr-body) ------
+
+# A clean jig repository with an accepted stub linking <source> (type <type>,
+# default convention), committed, so a task started next forks after it.
+_task_linked_source() {
+  local src="$1" type="${2:-convention}" slug="${3:-style}"
+  task_setup_clean
+  mkdir -p "$(dirname "$src")"
+  printf 'line one\n' > "$src"
+  git add "$src"
+  git commit -q -m "add $src"
+  jig knowledge new "$type" "$slug" --source "$src" --proposed --domains a >/dev/null
+  jig knowledge accept "$type-$slug" >/dev/null
+  git add -A
+  git commit -q -m "link $src"
+}
+
+test_task_autopilot_report_lists_a_changed_linked_source() {
+  _task_linked_source docs/style.md
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  printf 'line two\nline three\n' >> docs/style.md
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  # One line per stub, with the size of the edit and the command to read it;
+  # it sits with the other blocks, before the summary lines.
+  assert_contains "$OUT" "$(printf '\nChanged linked sources — need your review (jig-accept):\n- convention-style: docs/style.md (modified, +2 -0) — jig knowledge sources --diff convention-style\ndepth: ')"
+}
+
+test_task_autopilot_report_has_no_linked_sources_block_without_an_edit() {
+  _task_linked_source docs/style.md
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  printf 'unrelated\n' > other.md
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "Changed linked sources"
+}
+
+test_task_autopilot_report_leaves_out_a_source_a_human_approved() {
+  _task_linked_source docs/style.md
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  printf 'line two\n' >> docs/style.md
+  jig knowledge reviewed convention-style >/dev/null
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "Changed linked sources"
+}
+
+test_task_autopilot_report_marks_a_changed_decision_record() {
+  _task_linked_source docs/adr/0009-thing.md adr thing
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  printf 'amended\n' >> docs/adr/0009-thing.md
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "- adr-thing: docs/adr/0009-thing.md (modified, +1 -0, a decision record) — jig knowledge sources --diff adr-thing"
+}
+
+test_task_autopilot_report_lists_a_deleted_linked_source_without_a_size() {
+  _task_linked_source docs/style.md
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  git rm -q docs/style.md
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "- convention-style: docs/style.md (deleted) — jig knowledge sources --diff convention-style"
+}
+
+# A branch checked out nowhere in this clone cannot be read; the report says
+# so rather than leave the block out, which would read as "nothing changed".
+test_task_autopilot_report_says_when_linked_sources_were_not_checked() {
+  _task_linked_source docs/style.md
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  git checkout -q main
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "Changed linked sources: not checked, task/T-1 is not checked out in this clone"
+}
+
+# Asked for from the main checkout, the report reads the edits where the
+# task's branch is: its worktree, not the checkout the command runs in.
+test_task_autopilot_report_reads_linked_sources_in_the_task_worktree() {
+  # Nested, as task_setup_nested is: the worktree is created beside the repo.
+  mkdir repo && cd repo || return 1
+  _task_linked_source docs/style.md
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  (cd "$wt" && jig task autopilot T-1 start >/dev/null && printf 'line two\n' >> docs/style.md)
+
+  run jig task autopilot T-1 report
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "- convention-style: docs/style.md (modified, +1 -0) — jig knowledge sources --diff convention-style"
+}
+
 test_task_autopilot_unattended_repair_limit_still_stops_with_exit_3() {
   task_setup
   task_started T-1

@@ -117,7 +117,9 @@ sure of.
 document tied to parts of the code arrives when those files are touched. A project-wide one —
 your team's ADRs, general conventions — is listed to every agent as a one-line entry it can open.
 Later, when someone edits a linked file, `jig status` reports it on its `sources changed:` line
-until a human has looked at the change; agents read the new text meanwhile.
+until a human has looked at the change; agents read the new text meanwhile. When an agent's task
+made the edit, its pull request says so before the merge, under **Changed linked sources — need
+your review**.
 
 <Note>
   **What adoption does not do yet.** A rule that lives in a *section* of a larger file — the

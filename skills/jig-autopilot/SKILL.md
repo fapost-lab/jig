@@ -104,7 +104,9 @@ as the run's level allows. Then:
 ```
 
 Hand back the pull request link (or "ready for your commit") and the report, and put the report
-in the pull request body when you write it. Closing the task after the merge stays as
+in the pull request body when you write it. Its **Changed linked sources — need your review** block,
+when there is one, goes into the body as it is: a file a stub links was edited, and only a human
+approves the new text (`jig-accept`). It never stops the run. Closing the task after the merge stays as
 `jig-consolidate` §6 says.
 
 ## 5. Unattended: ask nothing
@@ -123,8 +125,8 @@ and on their phone as it happens, when they set up Telegram messages: one short 
 
 What never changes: a P0/P1 is never dismissed, the gates are never worked around, and nothing
 is merged but by `task ship`. Before shipping, put `jig task autopilot <id> report`'s
-**Decided without you** and **Approved by the agent, not a human** blocks in the pull request
-body as they are. At the run's level `merge`, `task ship` merges once CI passed or prints
+**Decided without you**, **Approved by the agent, not a human** and **Changed linked sources —
+need your review** blocks in the pull request body as they are. At the run's level `merge`, `task ship` merges once CI passed or prints
 `not merged: <why>` — both are a finished run; say which. After `merged`, close the task
 (`jig-consolidate` §6) without asking, then `end`.
 
