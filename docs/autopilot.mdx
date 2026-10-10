@@ -202,12 +202,55 @@ through:
 notify: Telegram messages are failing: HTTP 401: Unauthorized (task fix-login-redirect, 2026-10-09T10:52:17Z)
 ```
 
-A phase's message that failed is named by its specification there: `(spec release-1-2, …)`.
+A phase's message that failed is named by its specification there: `(spec release-1-2, …)`, and a
+waiting session's ([below](#when-an-ordinary-session-waits-for-you)) by its task, or as
+`(a waiting session, …)` when its branch has none.
 
-To pause the messages without removing the settings, set `notify.autopilot` to `false`.
+To pause the autopilot's messages without removing the settings, set `notify.autopilot` to `false`;
+a waiting session's messages follow `notify.interactive` alone.
 
 Silence is not "still working". A session that dies — closed, out of context, the computer asleep —
 records no stop, and so sends nothing.
+
+### When an ordinary session waits for you
+
+The same message can reach you from a session that is not on autopilot, when it waits for your
+permission or your answer — so you can walk away from the screen and still be told. It is off by
+default, so that "message me about autopilot, not while I sit at the computer" stays possible; turn
+it on with:
+
+```bash
+.ai/scripts/jig config set notify.interactive true --local
+```
+
+```
+⏸ shop · fix-login-redirect
+Login redirect loses the return URL
+Waiting for your permission
+```
+
+The second line is there only when the branch belongs to a task; without one, the first line names
+the branch. The last line is `Waiting for your permission` or `Waiting for your answer`.
+
+The session decides when it waits, so Jig needs its runtime's hook: in Claude Code, the
+`Notification` hook calling `.ai/scripts/jig-notify-hook`. Jig never edits your runtime's settings;
+`jig doctor` prints the lines to add to your own `.claude/settings.local.json`, and `jig status`
+says `notify hook (claude): connected` once they are there. The `jig-setup` skill can add them for
+you after your yes.
+
+How often it writes depends on where Claude Code runs. In the terminal, Claude Code calls the hook
+only when you seem to be away: a permission prompt that waited about six seconds, or a minute with
+nothing typed after its answer. **In the desktop app and in the IDE extensions a permission prompt
+calls it after about six seconds even while you are sitting there**, so with `notify.interactive`
+on you get a message for every permission you take longer than that to give.
+
+While the branch's task has an autopilot run going or stopped, "waiting for your answer" sends
+nothing — the run's own message already said it stopped. A permission prompt is sent all the same:
+the run cannot report it.
+
+Codex is not supported: it has no event for a session that waits for you. Its `notify` program is
+called at the end of every turn, and its `PermissionRequest` hook at once on every approval,
+whether you are there or not.
 
 ## Without stops
 

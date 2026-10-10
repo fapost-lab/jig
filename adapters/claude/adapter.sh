@@ -193,6 +193,43 @@ adapter_claude_session_hook_hint() {
   printf '    { "type": "command", "command": ".ai/scripts/jig-session-hook" } ] } ] }\n'
 }
 
+# adapter_claude_notify_hook_hint <project-root>
+# Advisory only, like the session hook hint: prints how to connect Claude
+# Code's `Notification` hook to .ai/scripts/jig-notify-hook, or nothing when
+# one of the settings files already names it. Writes no file (ADR-0024).
+#
+# The snippet points at `.claude/settings.local.json`: the messages go to one
+# person's Telegram, so the hook is theirs, not the team's — the file Claude
+# Code reads for one person's settings. The command is spelled with
+# "$CLAUDE_PROJECT_DIR", which Claude Code exports to every hook and which
+# still names the project root when the session has entered a worktree; the
+# script then finds the checkout from the session's `cwd`
+# (adr-20261010-a-waiting-session-reaches-telegram).
+#
+# The noise is stated where the person decides: in the terminal the waits
+# reach a hook only when the person seems away, but in the desktop app and
+# the IDE extensions a permission prompt reaches it after about six seconds
+# even while they sit there.
+adapter_claude_notify_hook_hint() {
+  local project="$1" f
+  for f in "$project/.claude/settings.json" "$project/.claude/settings.local.json"; do
+    if [ -f "$f" ] && grep -q 'jig-notify-hook' "$f"; then
+      return 0
+    fi
+  done
+  cat <<'HINT'
+notify hook: not connected. To have a waiting session message you, add to
+  .claude/settings.local.json (your own settings file; keep it out of git):
+  "hooks": { "Notification": [
+    { "matcher": "permission_prompt", "hooks": [ { "type": "command",
+      "command": "bash \"$CLAUDE_PROJECT_DIR\"/.ai/scripts/jig-notify-hook permission", "async": true } ] },
+    { "matcher": "idle_prompt|elicitation_dialog|elicitation_url_dialog", "hooks": [ { "type": "command",
+      "command": "bash \"$CLAUDE_PROJECT_DIR\"/.ai/scripts/jig-notify-hook input", "async": true } ] } ] }
+  In the terminal Claude Code calls it only when you seem away; in the desktop app and
+  the IDE a permission prompt calls it after about 6 s even while you are there.
+HINT
+}
+
 # adapter_claude_session_id
 # Prints an identifier for the agent session running this command, or exits 2
 # when the runtime gives none (the skip code the session hook hint already
