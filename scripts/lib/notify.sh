@@ -28,8 +28,9 @@
 # with no lock, and a sender writing there at the moment the agent records the
 # next event would lose one of the two lines.
 #
-# Requires task.sh (task_dir, task_state_get, _task_autopilot_mode) and
-# config.sh (cfg, jig_config_clone_root, _cfg_chat_id, JIG_CFG_MASK).
+# Requires config.sh (cfg, jig_config_clone_root, jig_unattended, _cfg_chat_id,
+# JIG_CFG_MASK), and task.sh (task_dir, task_state_get, _task_autopilot_mode)
+# for a task's messages; a phase run's (jig_notify_phase) need no task.sh.
 
 # jig_notify_token_ok <token> — exit 0 when <token> has a bot token's shape,
 # `<digits>:<letters, digits, _ and ->`. Checked before the token is written
@@ -278,8 +279,16 @@ _notify_outcome() {
 # atomically. <outcome> comes from _notify_post, already one masked line; it
 # is passed through _notify_outcome again so nothing else can break the line.
 _notify_record() {
-  local id="$1" event="$2" outcome dir file tmp
-  dir=$(task_dir "$id") || return 0
+  local dir
+  dir=$(task_dir "$1") || return 0
+  _notify_record_in "$dir" "$2" "$3"
+}
+
+# _notify_record_in <dir> <event> <outcome> — the `notify` file in <dir>, as
+# _notify_record describes it: a task's workspace, or a phase run's
+# (_notify_phase_dir).
+_notify_record_in() {
+  local dir="$1" event="$2" outcome file tmp
   [ -d "$dir" ] || return 0
   file="$dir/notify"
   outcome=$(_notify_outcome "$3")
@@ -289,19 +298,24 @@ _notify_record() {
     && mv "$tmp" "$file"
 }
 
-# jig_notify_failing — `<time>\t<task id>\t<why>` when the latest send of all
-# tasks failed; nothing otherwise. A later success anywhere clears it, so a
-# warning that stays is one that is still true. A directory whose name is not
-# a valid id is skipped, never handed to a path builder.
+# jig_notify_failing — `<time>\t<who>\t<why>` when the latest send of all
+# tasks and phase runs failed; nothing otherwise. <who> is `task <id>` or
+# `spec <id>`. A later success anywhere clears it, so a warning that stays is
+# one that is still true. A directory whose name is not a valid id is skipped,
+# never handed to a path builder.
 jig_notify_failing() {
-  local root f name line ts outcome best_ts="" best=""
-  root="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  [ -d "$root" ] || return 0
-  for f in "$root"/*/notify; do
+  local ws f name who line ts outcome best_ts="" best=""
+  ws="$JIG_PROJECT/$JIG_AI_DIR/workspace"
+  for f in "$ws"/tasks/*/notify "$ws"/specs/*/notify; do
     [ -f "$f" ] || continue
     name=${f%/notify}
+    who=${name%/*}
     name=${name##*/}
     jig_valid_id "$name" || continue
+    case "$who" in
+      */specs) who="spec $name" ;;
+      *) who="task $name" ;;
+    esac
     IFS= read -r line < "$f" || [ -n "$line" ] || continue
     IFS=$'\t' read -r ts _ outcome <<EOF
 $line
@@ -312,7 +326,7 @@ EOF
     if [ -z "$best_ts" ] || [[ "$ts" > "$best_ts" ]] \
       || { [ "$ts" = "$best_ts" ] && [ "${outcome#failed: }" != "$outcome" ]; }; then
       best_ts=$ts
-      best="$name"$'\t'"$outcome"
+      best="$who"$'\t'"$outcome"
     fi
   done
   [ -n "$best" ] || return 0
@@ -320,6 +334,75 @@ EOF
     "failed: "*) printf '%s\t%s\t%s\n' "$best_ts" "${best%%$'\t'*}" "${best#*$'\t'failed: }" ;;
   esac
   return 0
+}
+
+# --- a phase run's stop -------------------------------------------------------
+# `jig spec stop` (spec.sh): the coordinator of a phase run stops for the
+# person — a wave waiting for an answer, or, unattended, a draft or a problem
+# ending the run. A phase run has no journal (adr-20260922-a-phase-run-is-
+# coordinated), so the command is the record, and the message goes as a task's
+# stop does, under the same keys, checks and detached sender:
+#
+#   ⏸ <project> · <spec-id> · phase <n>
+#   <the spec's title>
+#   <the reason>
+#
+# The outcome is the `notify` file of `.ai/workspace/specs/<spec-id>/`, which
+# jig_notify_failing reads beside the tasks'.
+
+# jig_notify_phase <spec-id> <phase> <title> <text> — send the stop of phase
+# <phase> of <spec-id>, detached. <title> is the spec's (spec.sh reads it: this
+# file reads no spec). Always exits 0 and prints nothing.
+jig_notify_phase() {
+  local spec="$1" phase="$2" title="$3" text="$4" token chat
+  case "$(cfg notify.autopilot true)" in
+    false | no | 0 | off) return 0 ;;
+  esac
+  token=$(cfg notify.telegram.token "")
+  chat=$(cfg notify.telegram.chat_id "")
+  if [ -z "$token" ] || [ -z "$chat" ]; then return 0; fi
+  command -v curl >/dev/null 2>&1 || return 0
+  # Detached as jig_notify_autopilot's sender is, for the same reasons.
+  (
+    set -m
+    { _notify_phase_send "$spec" "$phase" "$title" "$text" "$token" "$chat"; exit 0; } \
+      </dev/null >/dev/null 2>&1 &
+  ) </dev/null >/dev/null 2>&1
+  return 0
+}
+
+# _notify_phase_dir <spec-id> — `.ai/workspace/specs/<spec-id>`, from an id the
+# caller validated; refused here too, as every path builder does.
+_notify_phase_dir() {
+  jig_valid_id "$1" || return 1
+  printf '%s/%s/workspace/specs/%s\n' "$JIG_PROJECT" "$JIG_AI_DIR" "$1"
+}
+
+# _notify_phase_send <spec-id> <phase> <title> <text> <token> <chat> — the
+# detached half of jig_notify_phase. Never dies.
+_notify_phase_send() {
+  set +e
+  set +o pipefail
+  local spec="$1" phase="$2" title="$3" text="$4" token="$5" chat="$6" dir msg outcome
+  dir=$(_notify_phase_dir "$spec") || return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  msg=$(mktemp "$dir/notify.text.XXXXXX") || return 0
+  jig_cleanup_add "$msg"
+  _notify_phase_message "$spec" "$phase" "$title" "$text" > "$msg"
+  outcome=$(_notify_post "$token" "$chat" "$msg" "$dir")
+  _notify_record_in "$dir" stop "${outcome:-failed: no answer}"
+  return 0
+}
+
+# _notify_phase_message <spec-id> <phase> <title> <text> — the message text,
+# no trailing newline. `⛔` when this clone runs unattended: nobody is asked,
+# the run has ended; `⏸` when the wave waits for the person's answer.
+_notify_phase_message() {
+  local mark='⏸'
+  if jig_unattended; then mark='⛔'; fi
+  printf '%s %s · %s · phase %s' "$mark" "$(_notify_project)" "$1" "$2"
+  [ -z "$3" ] || printf '\n%s' "$(_notify_cut "$3" 80)"
+  [ -z "$4" ] || printf '\n%s' "$(_notify_cut "$4" 300)"
 }
 
 # --- jig notify ---------------------------------------------------------------
@@ -367,7 +450,7 @@ _notify_test() {
 # _notify_post, synchronously, and report: one stdout line on success, jig_die
 # with Telegram's answer (token masked) otherwise. <label> prefixes errors.
 _notify_test_send() {
-  local label="$1" token chat dir msg outcome failing failing_id
+  local label="$1" token chat dir msg outcome failing failing_who
   token=$(cfg notify.telegram.token "")
   chat=$(cfg notify.telegram.chat_id "")
   [ -n "$token" ] \
@@ -391,10 +474,10 @@ _notify_test_send() {
   esac
   failing=$(jig_notify_failing)
   if [ -n "$failing" ]; then
-    failing_id=${failing#*$'\t'}
-    failing_id=${failing_id%%$'\t'*}
-    printf 'notify: jig status still reports the failure of task %s; it clears with the next autopilot message\n' \
-      "$failing_id"
+    failing_who=${failing#*$'\t'}
+    failing_who=${failing_who%%$'\t'*}
+    printf 'notify: jig status still reports the failure of %s; it clears with the next autopilot message\n' \
+      "$failing_who"
   fi
   return 0
 }

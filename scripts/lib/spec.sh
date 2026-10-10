@@ -8,6 +8,7 @@
 # A task links to a spec through one `Spec: .ai/specs/<id>/ — Phase <n>` line in
 # its task.md. `new` creates a spec, `done` checks a linked task's roadmap
 # items, `link` writes a filed task's `Spec:` line, `remove` unlinks a spec's open tasks and moves the spec to trash,
+# `stop` records a phase run's stop by sending it to the person's Telegram,
 # `close` removes a spec whose roadmap is complete, `epic` declares, cuts,
 # finishes and reopens a spec's epic branch (ADR-0035, ADR-0040 as amended),
 # and `ship` carries a declaration, an epic or an epic's final pull request as
@@ -15,7 +16,7 @@
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -27,6 +28,7 @@ cmd_spec() {
     resume) spec_resume "$@"; jig_status_page_touch ;;
     list) spec_list "$@" ;;
     plan) spec_plan "$@" ;;
+    stop) spec_stop "$@" ;;
     done) spec_done "$@"; jig_status_page_touch ;;
     link) spec_link "$@" ;;
     remove) spec_remove "$@"; jig_status_page_touch ;;
@@ -609,6 +611,72 @@ LOC
     return 0
   fi
   printf '%s\n' "$rows" | JIG_SP_PHASE="$phase" JIG_SP_TITLE="$title" JIG_SP_SOURCE="$source" _spec_plan_text
+}
+
+# spec_stop <id> --phase <n> --reason <text> — `jig spec stop`: the coordinator
+# of a phase run stops for the person — a wave waiting for an answer, or,
+# unattended, a draft or a problem ending the run. A phase run keeps no journal
+# (adr-20260922-a-phase-run-is-coordinated), so this command is its record: it
+# sends <text> to the person's Telegram when they set it up (jig_notify_phase,
+# notify.sh), detached, and prints one line either way. Never fails on the
+# message; refuses only its own arguments. The phase is checked in this
+# checkout's roadmap, not the epic's ref as `spec plan` may read it: the
+# coordinator runs in the epic's checkout, where the two are the same.
+spec_stop() {
+  local id="" phase="" reason="" has_reason=0 roadmap title="" n found=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --phase)
+        [ $# -ge 2 ] || jig_die "spec stop: --phase requires a value"
+        phase="$2"
+        shift 2
+        ;;
+      --reason)
+        [ $# -ge 2 ] || jig_die "spec stop: --reason requires a value"
+        reason="$2"
+        has_reason=1
+        shift 2
+        ;;
+      -*) jig_die "spec stop: unknown argument: $1" ;;
+      *)
+        [ -z "$id" ] || jig_die "spec stop: unexpected argument: $1"
+        id="$1"
+        shift
+        ;;
+    esac
+  done
+  [ -n "$id" ] || jig_die "spec stop: missing spec id (usage: jig spec stop <id> --phase <n> --reason <text>)"
+  spec_valid_id "$id" || jig_die "spec stop: invalid spec id: $id"
+  [ -n "$phase" ] || jig_die "spec stop: missing --phase <n>"
+  case "$phase" in
+    *[!0-9]*) jig_die "spec stop: --phase takes a phase number: $phase" ;;
+  esac
+  phase=$((10#$phase))
+  [ "$has_reason" -eq 1 ] || jig_die "spec stop: --reason is required"
+  [ -n "$reason" ] || jig_die "spec stop: --reason must not be empty"
+  case "$reason" in
+    *$'\t'* | *$'\n'* | *$'\r'*) jig_die "spec stop: --reason must be a single line with no tab" ;;
+  esac
+  jig_require_init
+  roadmap="$(spec_dir)/$id/roadmap.md"
+  [ -d "$(spec_dir)/$id" ] || jig_die "spec stop: no such spec in this checkout: $JIG_AI_DIR/specs/$id"
+  [ -f "$roadmap" ] || jig_die "spec stop: $JIG_AI_DIR/specs/$id has no roadmap.md"
+  while IFS=$'\t' read -r n _; do
+    case "$n" in
+      '' | *[!0-9]*) continue ;;
+    esac
+    if [ "$((10#$n))" = "$phase" ]; then found=1; fi
+  done < <(spec_phase_counts "$roadmap")
+  [ "$found" -eq 1 ] || jig_die "spec stop: $JIG_AI_DIR/specs/$id/roadmap.md has no Phase $phase"
+  [ ! -f "$(spec_dir)/$id/spec.md" ] || title=$(spec_title "$(spec_dir)/$id/spec.md")
+  if ! command -v jig_notify_phase >/dev/null 2>&1; then
+    # shellcheck source=lib/notify.sh
+    . "$JIG_LIB/notify.sh" 2>/dev/null || true
+  fi
+  if command -v jig_notify_phase >/dev/null 2>&1; then
+    jig_notify_phase "$id" "$phase" "$title" "$reason" || true
+  fi
+  printf 'spec stop: %s phase %s\n' "$id" "$phase"
 }
 
 # _spec_plan_parse — the roadmap on stdin as rows, all phases:
