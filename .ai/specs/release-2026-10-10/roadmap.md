@@ -12,7 +12,7 @@ Goal: the picked tasks are on the epic and described. Done when: every item belo
 the epic and the notes describe them against their diffs.
 
 - [x] `phase-run-stops-notify` — a phase run's coordinator stop reaches Telegram
-- [ ] `notification-hook-for-sessions` — an ordinary session waiting for the person sends a Telegram message, behind `notify.interactive`
+- [x] `notification-hook-for-sessions` — an ordinary session waiting for the person sends a Telegram message, behind `notify.interactive`
 - [ ] `tracker-issue-id` — a task carries its tracker issue id, read from the task id by a project pattern, and ship puts it into the commit and the pull request title
 - [ ] `linked-sources-in-pr-body` — the autopilot report and the pull request body name changed linked knowledge sources that wait for the person's review
 - [ ] `release-2026-10-10-notes` — the changelog section for 0.26.0, written against the diffs (after: every other item — the notes describe what merged)
