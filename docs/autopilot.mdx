@@ -144,6 +144,18 @@ third is what the agent needs, chose, or how the run ended. The mark says which:
 Nothing is sent when the run starts, moves to the next stage or fixes something: those need nothing
 from you.
 
+A [whole phase](#running-a-whole-phase) sends one too, when its coordinator stops — a wave waiting
+for your answers, or, without stops, a draft that ended the run. It names the specification and the
+phase instead of a task:
+
+```
+⏸ shop · release-1-2 · phase 1
+Release 1.2.0
+Wave 1 waits for you: two questions in the coordinator's session
+```
+
+`⛔` there means the phase run ended and nothing waits for you; the next wave is yours to start.
+
 To set it up, make a bot with [@BotFather](https://t.me/BotFather) in Telegram (`/newbot` gives you
 the bot's token), and send your bot any message. Your chat id is the `chat` → `id` of that message,
 which Telegram's `https://api.telegram.org/bot<token>/getUpdates` shows in a browser. Then run, in
@@ -189,6 +201,8 @@ through:
 ```
 notify: Telegram messages are failing: HTTP 401: Unauthorized (task fix-login-redirect, 2026-10-09T10:52:17Z)
 ```
+
+A phase's message that failed is named by its specification there: `(spec release-1-2, …)`.
 
 To pause the messages without removing the settings, set `notify.autopilot` to `false`.
 
@@ -319,7 +333,8 @@ its waves and its free places while the run goes on.
 
 **Where you answer.** A question from any task of the phase comes to you in the coordinator's
 session, not the task's — the status page says so too. Questions from one wave arrive together,
-in a single message. The wave being worked on finishes either way; it is the **next** wave that
+in a single message — and when you set up [Telegram messages](#messages-in-telegram), a short one
+reaches your phone too. The wave being worked on finishes either way; it is the **next** wave that
 waits for your answer. Without stops ([above](#without-stops)) nothing is asked: a task that
 could not be finished becomes a draft pull request, and the phase run ends there with a report,
 leaving the next wave to you.

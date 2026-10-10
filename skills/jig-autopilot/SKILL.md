@@ -142,6 +142,8 @@ mechanics — the loop, the prompt each task agent gets, what to do when one fai
   ends at consolidation, with the change staged and its commit message written.
 - **A stop holds the next wave, not this one.** The wave in flight finishes; the question goes
   to the person in one message, in your session, and the wave after it waits for the answer.
+  Record it with `jig spec stop <spec> --phase <n> --reason "<what is needed>"`: a phase run
+  has no journal, and this is what reaches the person's Telegram (§3's one short sentence).
 
 It needs the run's level (`autopilot.git:` in `jig status`) at `pr` or better and a spec
 built on an epic. Without either, refuse the

@@ -67,7 +67,13 @@ STUB
 # (conventions/shell.md, Testing): a passing test leaves at the first poll that
 # sees it.
 nt_wait() {
-  local f=.ai/workspace/tasks/T-1/notify deadline=$((SECONDS + 60))
+  nt_wait_in .ai/workspace/tasks/T-1/notify "${1:-}"
+}
+
+# nt_wait_in <notify file> [<text>] — nt_wait for any sender's outcome file.
+nt_wait_in() {
+  local f="$1" deadline=$((SECONDS + 60))
+  shift
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ -f "$f" ]; then
       case "$(cat "$f")" in *"${1:-}"*) return 0 ;; esac
@@ -124,6 +130,71 @@ test_notify_approve_and_decide_send_in_an_unattended_run() {
   nt_wait
   assert_contains "$(sed -n 1p "$NT_STUB/text")" "🤖"
   assert_contains "$(cat "$NT_STUB/text")" "Kept the old endpoint: easier to undo"
+}
+
+# nt_spec — spec `rel` in this checkout, phase 1 of its roadmap, for the
+# phase run's stop (`jig spec stop`).
+nt_spec() {
+  mkdir -p .ai/specs/rel
+  printf '# Release 1.2.0\n' > .ai/specs/rel/spec.md
+  printf '%s\n' '# Roadmap' '' '## Phase 1 — Release' '' '- [ ] T-1 — a thing' > .ai/specs/rel/roadmap.md
+}
+
+test_notify_a_phase_runs_stop_names_the_spec_the_phase_and_the_need() {
+  nt_setup
+  nt_spec
+  git remote add origin git@github.com:example/shop.git
+  run jig spec stop rel --phase 1 --reason 'Wave 1 waits for you: OAuth provider for T-1?'
+  assert_eq 0 "$RC"
+  assert_eq "spec stop: rel phase 1" "$OUT"
+  nt_wait_in .ai/workspace/specs/rel/notify
+  assert_eq "$(printf '⏸ shop · rel · phase 1\nRelease 1.2.0\nWave 1 waits for you: OAuth provider for T-1?')" \
+    "$(cat "$NT_STUB/text")"
+  assert_file_contains "$NT_STUB/stdin" "https://api.telegram.org/bot$NT_TOKEN/sendMessage"
+  assert_not_contains "$(cat "$NT_STUB/argv")" "$NT_TOKEN"
+  assert_file_contains .ai/workspace/specs/rel/notify "$(printf '\tstop\tok')"
+  assert_eq "" "$(find .ai/workspace/specs/rel -name 'notify.*')"
+  # Nothing of the task's is touched: a phase's stop is not a task's.
+  assert_no_file .ai/workspace/tasks/T-1/notify "the task recorded a send"
+  assert_eq 1 "$(wc -l < .ai/workspace/tasks/T-1/autopilot | tr -d ' ')"
+}
+
+test_notify_an_unattended_phase_runs_stop_asks_for_nothing() {
+  nt_setup unattended
+  nt_spec
+  run jig spec stop rel --phase 1 --reason 'Wave 1 ended with a draft: T-1, tests still red'
+  assert_eq 0 "$RC"
+  nt_wait_in .ai/workspace/specs/rel/notify
+  assert_contains "$(sed -n 1p "$NT_STUB/text")" "⛔"
+}
+
+test_notify_a_phase_runs_failed_send_shows_in_status_by_spec() {
+  nt_setup
+  nt_spec
+  printf '{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}' > "$NT_STUB/response"
+  printf 400 > "$NT_STUB/code"
+  run jig spec stop rel --phase 1 --reason 'Wave 1 waits for you'
+  assert_eq 0 "$RC"
+  nt_wait_in .ai/workspace/specs/rel/notify failed
+  run jig status
+  assert_contains "$OUT" "notify: Telegram messages are failing: HTTP 400: Bad Request: chat not found (spec rel,"
+}
+
+test_notify_a_phase_runs_stop_sends_nothing_when_turned_off_or_without_a_key() {
+  nt_setup
+  nt_spec
+  printf 'notify.autopilot: false\n' >> .ai/config.local.yaml
+  run jig spec stop rel --phase 1 --reason 'Wave 1 waits for you'
+  assert_eq 0 "$RC"
+  assert_eq "spec stop: rel phase 1" "$OUT"
+  sed -i.bak -e '/^notify\.autopilot:/d' -e '/^notify\.telegram\.token:/d' .ai/config.local.yaml
+  rm -f .ai/config.local.yaml.bak
+  run jig spec stop rel --phase 1 --reason 'Wave 1 waits for you'
+  assert_eq 0 "$RC"
+  assert_eq "spec stop: rel phase 1" "$OUT"
+  sleep 1
+  assert_no_file "$NT_STUB/calls" "curl was called"
+  assert_no_file .ai/workspace/specs/rel/notify "a send was recorded"
 }
 
 test_notify_start_stage_repair_and_resume_send_nothing() {

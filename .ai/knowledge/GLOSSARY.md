@@ -245,7 +245,8 @@ The session that runs a Phase Run, in the checkout of the Epic Branch. It writes
 each wave's tasks in one unpushed commit on the epic, starts an Agent per task, ships every task
 with `jig task ship`, keeps the merge queue and checks the roadmap items after each merge. Its
 session is where a stopped task of the phase is answered
-(adr-20260922-a-phase-run-is-coordinated). Informal synonyms: the coordinating session, the
+(adr-20260922-a-phase-run-is-coordinated), and its own stops are recorded with `jig spec stop`
+(adr-20261010-a-phase-run-stop-is-sent-by-spec-stop). Informal synonyms: the coordinating session, the
 orchestrator.
 
 ## Delegation

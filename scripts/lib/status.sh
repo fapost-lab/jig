@@ -2714,12 +2714,12 @@ _status_config_local() {
 # (jig_notify_failing, notify.sh): a wrong token or chat id, or a sandbox with
 # no network, would otherwise stay silent forever. A later success clears it.
 _status_notify() {
-  local at id why
-  IFS=$'\t' read -r at id why <<EOF
+  local at who why
+  IFS=$'\t' read -r at who why <<EOF
 $(jig_notify_failing)
 EOF
   [ -n "$at" ] || return 0
-  printf 'notify: Telegram messages are failing: %s (task %s, %s)\n' "$why" "$id" "$at"
+  printf 'notify: Telegram messages are failing: %s (%s, %s)\n' "$why" "$who" "$at"
 }
 
 # _status_agent_git — one line naming the review queue `agent.git`'s level
