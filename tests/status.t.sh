@@ -3114,3 +3114,17 @@ test_status_a_terminal_groups_without_a_count_or_a_guess() {
     '  Other tasks' '  |- T2  a-loose' '  |- T2  c-term' '  `- T0  e-gone')"
   assert_not_contains "$OUT" "Terminal output people can read"
 }
+
+# --- tracker issue (adr-20261010-a-task-carries-its-tracker-issue) -------------
+
+test_status_names_a_tasks_tracker_issue() {
+  fixture_jig_repo
+  printf 'task.issue_pattern: [A-Z]+-[0-9]+\n' >> .ai/config.yaml
+  jig task new SRD-9-fix --class T1 >/dev/null
+  jig task new other --class T1 >/dev/null
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task SRD-9-fix class=T1 status=active issue=SRD-9"
+  assert_contains "$OUT" "task other class=T1 status=active"
+  assert_not_contains "$OUT" "task other class=T1 status=active issue"
+}

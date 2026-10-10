@@ -195,6 +195,90 @@ _task_finding_valid_field() {
   return 0
 }
 
+# --- tracker issue (adr-20261010-a-task-carries-its-tracker-issue) -------------
+#
+# A project whose tasks live in a tracker names a task after its issue
+# (`SRD-2455-fix-login`, `123-fix-login`). Jig reads the issue from the id, and
+# only by the project's own `task.issue_pattern`: with no pattern nothing is
+# read, so `release-0-25-1` can never turn into an issue `release-0`. There is
+# no flag to give one by hand — the id is the one place it is written.
+
+# _task_issue_pattern — task.issue_pattern with one pair of surrounding quotes
+# removed, or nothing when the project sets none.
+_task_issue_pattern() {
+  local pattern
+  pattern=$(cfg task.issue_pattern "")
+  case "$pattern" in
+    \'*\') pattern=${pattern#\'}; pattern=${pattern%\'} ;;
+    \"*\") pattern=${pattern#\"}; pattern=${pattern%\"} ;;
+  esac
+  printf '%s\n' "$pattern"
+}
+
+# _task_issue_from_id <id> — the tracker issue at the start of <id>, or
+# nothing. The pattern is anchored at the first character, takes awk's longest
+# match, and counts only when that match ends at the end of the id or before a
+# `-`, `_` or `.`: `SRD-2455x-y` names no issue, `SRD-2455-y` names SRD-2455.
+# Exit 2, printing nothing, when awk cannot read the pattern.
+_task_issue_from_id() {
+  local pattern
+  pattern=$(_task_issue_pattern)
+  [ -n "$pattern" ] || return 0
+  JIG_I_ID="$1" JIG_I_PAT="$pattern" awk 'BEGIN {
+    id = ENVIRON["JIG_I_ID"]
+    if (!match(id, "^(" ENVIRON["JIG_I_PAT"] ")") || RLENGTH < 1) exit 0
+    after = substr(id, RLENGTH + 1, 1)
+    if (after == "" || after == "-" || after == "_" || after == ".") print substr(id, 1, RLENGTH)
+  }' 2>/dev/null || return 2
+}
+
+# _task_issue_ref <issue> — how a commit and a pull request title name the
+# issue: as it is (`SRD-2455`), or `#123` for an issue of digits only, the form
+# GitHub, GitLab and Redmine link.
+_task_issue_ref() {
+  case "$1" in
+    *[!0-9]*) printf '%s\n' "$1" ;;
+    *) printf '#%s\n' "$1" ;;
+  esac
+}
+
+# _task_issue_in_line <line> <ref> — exit 0 when <ref> is a word of <line>:
+# no letter, digit or `_` right before or after it. `SRD-24550` does not hold
+# SRD-2455, and `#1234` does not hold #123.
+_task_issue_in_line() {
+  JIG_I_LINE="$1" JIG_I_REF="$2" awk 'BEGIN {
+    line = ENVIRON["JIG_I_LINE"]; ref = ENVIRON["JIG_I_REF"]; n = length(ref)
+    pos = 0; rest = line; found = 0
+    while (!found && n > 0 && (i = index(rest, ref)) > 0) {
+      p = pos + i
+      before = (p > 1) ? substr(line, p - 1, 1) : ""
+      after = substr(line, p + n, 1)
+      if (before !~ /[A-Za-z0-9_]/ && after !~ /[A-Za-z0-9_]/) found = 1
+      pos = p
+      rest = substr(line, p + 1)
+    }
+    exit found ? 0 : 1
+  }'
+}
+
+# _task_issue_subject <line> <issue> — <line> naming <issue>: unchanged when it
+# already does, or is empty; otherwise `SRD-2455 <line>`, and `<line> (#123)`
+# for an issue of digits — a first line that starts with `#` is a comment to
+# git under `commit.cleanup=strip`, and the subject would be thrown away.
+_task_issue_subject() {
+  local line="$1" ref
+  ref=$(_task_issue_ref "$2")
+  line=${line%$'\r'}
+  if [ -z "$line" ] || _task_issue_in_line "$line" "$ref"; then
+    printf '%s\n' "$1"
+    return 0
+  fi
+  case "$ref" in
+    \#*) printf '%s (%s)\n' "$line" "$ref" ;;
+    *) printf '%s %s\n' "$ref" "$line" ;;
+  esac
+}
+
 # --- branch -------------------------------------------------------------------
 
 # Current branch of the checkout, or "detached" (ADR-0008: a workspace
@@ -811,6 +895,14 @@ task_new() {
     [ -r "$from" ] || jig_die "task new: --from: file not readable: $from"
   fi
 
+  # The tracker issue, read from the id by the project's pattern before the
+  # workspace exists. A pattern awk cannot read files the task without one: a
+  # typo in the project's config is not a reason to refuse the work.
+  local issue="" issue_rc=0
+  issue=$(_task_issue_from_id "$id") || issue_rc=$?
+  [ "$issue_rc" -eq 0 ] \
+    || jig_warn "task new: task.issue_pattern is not a pattern awk can read; no issue recorded"
+
   # No dirty-tree check here: filing touches neither the checkout nor the
   # branch, so there is nothing for uncommitted work to leak into. The check
   # lives in `task start`, and filing a task for later in the middle of other
@@ -828,6 +920,7 @@ task_new() {
   jig_cleanup_add "$tmp"
   {
     printf 'task_id: %s\n' "$id"
+    [ -z "$issue" ] || printf 'issue: %s\n' "$issue"
     [ -z "$class" ] || printf 'class: %s\n' "$class"
     printf 'status: active\n'
     printf 'knowledge_consolidated: false\n'
@@ -1266,7 +1359,7 @@ task_set() {
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     route_depth) _cfg_route_depth "$value" || jig_die "task set: invalid route_depth: $value (full or lean)" ;;
-    task_id | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
+    task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
       | route_evidence | class_lowered_from | class_lowered_reason)
       jig_die "task set: key is not writable: $key" ;;
@@ -3069,7 +3162,7 @@ task_list() {
   done
 
   local base="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  local dir id class status branch base_branch default_base paused line lines="" hidden=0 worktrees wt
+  local dir id class status branch base_branch default_base paused issue line lines="" hidden=0 worktrees wt
   worktrees=$(_task_worktrees)
   # The base is shown only where it is not the project's: a listing where
   # every line says base=main says nothing.
@@ -3091,15 +3184,18 @@ task_list() {
       continue
     fi
     [ -n "$class" ] || class="-"
+    line="$id class=$class status=$status"
+    issue=$(task_state_get "$id" issue)
+    [ -z "$issue" ] || line="$line issue=$issue"
     # A task with no branch has not been started. Saying so is the whole
     # point of representing "not started" as an absence: without a marker the
     # listing shows it as indistinguishable from work in progress.
     if [ -n "$branch" ]; then
-      line="$id class=$class status=$status branch=$branch"
+      line="$line branch=$branch"
       wt=$(_task_worktree_for "$branch" "$worktrees")
       [ -z "$wt" ] || line="$line $(_task_worktree_note "$wt")"
     else
-      line="$id class=$class status=$status not-started"
+      line="$line not-started"
     fi
     base_branch=$(task_state_get "$id" base_branch)
     if [ -n "$base_branch" ] && [ "$base_branch" != "$default_base" ]; then
@@ -3714,6 +3810,24 @@ EOF
   [ -n "$branch" ] || jig_die "task ship: $id has not been started (no branch); run \`jig task start $id\` first"
   [ "$cur" = "$branch" ] || jig_die "task ship: current branch is $cur, but $id is on $branch; switch branches first"
   [ "$branch" != "$base" ] || jig_die "task ship: $id's branch is its own base ($base); nothing task-specific to ship"
+
+  # The tracker issue into the commit's first line and the pull request's
+  # title, where trackers' VCS integrations look for it — written to a copy,
+  # so the task's own commit-message artifact stays as its author wrote it.
+  local issue subject named msg_tmp
+  issue=$(task_state_get "$id" issue)
+  if [ -n "$issue" ]; then
+    subject=$(head -n 1 "$message_file")
+    named=$(_task_issue_subject "$subject" "$issue")
+    if [ "$named" != "$subject" ]; then
+      msg_tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-msg.XXXXXX")
+      jig_cleanup_add "$msg_tmp"
+      { printf '%s\n' "$named"; tail -n +2 "$message_file"; } > "$msg_tmp"
+      message_file="$msg_tmp"
+      printf "task ship: issue %s added to the message's first line\n" "$issue"
+    fi
+    [ -z "$title" ] || title=$(_task_issue_subject "$title" "$issue")
+  fi
 
   _task_ship_unverified_notice
   # Which key decided how far this goes: with autopilot.git and agent.git

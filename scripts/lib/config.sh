@@ -158,6 +158,7 @@ git.delete_merged_branches true
 worktree.carry []
 worktree.share []
 forge auto
+task.issue_pattern
 housekeeping.cadence 1d
 housekeeping.fetch true
 housekeeping.trash_ttl 7d

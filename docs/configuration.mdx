@@ -42,6 +42,17 @@ selected.
 | `worktree.share` | `[]` | Folders a new worktree shares with this checkout instead of copying — for separate repositories you edit, such as `packages/`. Each entry becomes a link to this checkout's, so there is one copy of the work. See [sharing a folder of packages](/working-with-tasks#sharing-a-folder-of-packages-you-edit). |
 | `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address. Without the tool, or with `none`, Jig falls back to what Git itself can show. |
 
+### Tracker issues
+
+| Setting | Default | What it does |
+|---|---|---|
+| `task.issue_pattern` | not set | What an issue of your tracker looks like at the start of a task's id: `[A-Z][A-Z0-9]*-[0-9]+` for YouTrack, Jira or Linear (`SRD-2455-fix-login`), `[0-9]+` for GitHub or GitLab issues (`123-fix-login`). Jig keeps the issue with the task, shows it, and puts it in the commit's first line and the pull request title when it ships. Not set, no issue is read from any id. See [tasks from a tracker](/working-with-tasks#tasks-from-a-tracker). |
+
+The pattern is a regular expression that must match from the id's first character up to its end or
+to a `-`, `_` or `.`: with `[0-9]+`, `123-fix-login` names issue `123`, while `release-0-25-1` and
+`123abc-fix` name none. Pick one that only your issues match — `[0-9]+` also reads `2026` from a
+task called `2026-10-notes`.
+
 ### Housekeeping
 
 | Setting | Default | What it does |
