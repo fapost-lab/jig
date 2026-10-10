@@ -164,7 +164,9 @@ It commits, pushes and opens the pull request into the task's base as far as thi
 `merged <url>` or `not merged: <why>`; a pull request left open is an ordinary end — say why.
 Exit 3 means `none`: tell the human the change is ready for their review and commit. The step it stopped at is the human's; never finish
 it by hand with git. The first line of the message is the pull request's title, the rest its
-body: the task's goal and what verified it.
+body: the task's goal and what verified it. When the task edited a file a stub links, the body carries
+the block `jig knowledge changed --task <id> --to-review` prints, as it is (an autopilot run's
+report holds the same block): only a human approves the new text, in `jig-accept`.
 
 The status stays `ready`: the task is still current, and fixes from review of the commit
 or PR continue in it — stage the fix and run `task ship` again. If review changes the implementation, update the same documents; do

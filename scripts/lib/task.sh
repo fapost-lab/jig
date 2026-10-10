@@ -2017,6 +2017,25 @@ _task_autopilot_report() {
   if [ -n "$from" ]; then
     printf '\nClass lowered:\n- from %s to %s: %s\n' "$from" "$(task_state_get "$id" class)" "$(task_state_get "$id" class_lowered_reason)"
   fi
+  # A linked source the task edited waits for a human's review (jig-accept),
+  # and without this they would learn of it only after the merge, from
+  # `jig status`. Informational: nothing here stops the run or the ship.
+  # Read where the task's branch is checked out — this checkout, or the task's
+  # own worktree — by a `knowledge changed` process run there: one command
+  # library never sources another (ARCHITECTURE.md, Scripts layout).
+  local base branch where="$JIG_PROJECT" sources
+  base=$(task_state_get "$id" base_commit)
+  branch=$(task_state_get "$id" branch)
+  if [ -n "$base" ] && [ -n "$branch" ] && [ "$branch" != "$(_task_current_branch)" ]; then
+    where=$(_task_worktree_for "$branch" "$(_task_worktrees)")
+  fi
+  if [ -n "$base" ] && [ -z "$where" ]; then
+    # Said, not left out: an absent block would read as "nothing changed".
+    printf '\nChanged linked sources: not checked, %s is not checked out in this clone\n' "$branch"
+  elif [ -n "$base" ]; then
+    sources=$(cd "$where" 2>/dev/null && "$JIG_SELF" knowledge changed --base "$base" --to-review 2>/dev/null) || sources=""
+    [ -z "$sources" ] || printf '\n%s\n' "$sources"
+  fi
 
   local facts state repairs mode=""
   facts=$(_task_autopilot_facts "$id")

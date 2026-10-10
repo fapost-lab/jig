@@ -108,6 +108,12 @@ is also in the pull request's description. You can see it any time with:
 jig task autopilot <task-id> report
 ```
 
+When the task edited a file one of your adopted rules links to — a document in your `docs/`, an
+ADR — the report lists it under **Changed linked sources — need your review**, one line per rule
+with the size of the edit and the command that shows it, and the pull request carries the same
+block. The agent never approves its own edit, so the new text waits for you in `jig-accept`; the
+block does not stop the run or the merge.
+
 `jig status` marks a task that is running with `autopilot=on`, and one waiting for you with
 `autopilot=stopped`.
 
