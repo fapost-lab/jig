@@ -13,7 +13,7 @@ paths:
   - schemas/state.md
   - templates/task.md
   - scripts/lib/notify.sh
-reviewed_at: 2026-10-09
+reviewed_at: 2026-10-10
 ---
 # Task
 
@@ -270,4 +270,7 @@ undo by accident: the sender records its outcome in the task's `notify` file, ne
 because the journal is written by copy and `mv` with no lock and a second writer loses a line; and
 nothing it does may change the command's output or exit status — `repair`'s exit 3 included. The
 token's value is printed by nothing: a new reader of a local value goes through `_cfg_secret_key`.
+A phase run's coordinator sends through the same sender with `jig spec stop`, which has no journal
+and keeps its outcome in `.ai/workspace/specs/<id>/notify`; `jig_notify_failing` reads both kinds
+and names its owner `task <id>` or `spec <id>` (adr-20261010-a-phase-run-stop-is-sent-by-spec-stop).
 

@@ -30,7 +30,8 @@ fetch`, fast-forward it). Read the limit — `jig spec plan` prints it, below.
 Rows: `parallel <limit> <building>`, `wave <n> <merged|open|waiting>`,
 `item <wave> <task-id> <state> <merged> <paused> <autopilot> <next> <title>`,
 `blocker <wave> <task-id> <state> <title>`, `problem …`. A `problem` row means the waves list
-and the items disagree: stop and ask (unattended: end the run with a report). No open wave with
+and the items disagree: stop and ask (unattended: end the run with a report) — a stop of the
+run, recorded as below. No open wave with
 items of this phase means the phase is waiting on an earlier wave, or is done.
 
 **2. File the wave, in one commit.** For every `item … file` of the open wave, follow
@@ -72,7 +73,15 @@ you look:
 An agent that reports "done" while the ledger has an open P0/P1, or the receipt is stale, is
 not done: send it back. Attended, questions accumulate: when no agent of the wave is still
 working (or sooner, if the person is there), send **one** message with every question, each
-carrying its document whole, plus the pull requests that are ready and their CI state.
+carrying its document whole, plus the pull requests that are ready and their CI state. Then
+record the stop — the run has no journal, and this is what reaches the person's Telegram:
+
+```
+.ai/scripts/jig spec stop <spec> --phase <n> --reason "<what is needed, one short sentence>"
+```
+
+Every end of the loop that waits for the person is such a stop: questions, a `problem` row, the
+forge unreachable, and — unattended — a draft ending the run.
 An answer goes back as `jig task autopilot <id> resume --answer "<the person's answer>"` and an agent — the same one, or a new
 one told to continue task X from stage Y.
 
@@ -163,7 +172,7 @@ rules verbatim:
 | The epic diverged from origin | `jig task start` dies with "diverged" | `git merge origin/<epic>` into the local epic — never rebase — and carry on |
 
 Unattended, a draft ends the phase run: report what landed, what is a draft and why, and leave
-the next wave to a person.
+the next wave to a person — and record it with `jig spec stop`, the reason naming the draft.
 
 ## A runtime without subagents
 
