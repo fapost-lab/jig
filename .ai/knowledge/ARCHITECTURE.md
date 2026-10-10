@@ -114,6 +114,12 @@ and version.
   file already exists there or the runtime has no hook. It never edits an existing file:
   creating one parses nothing, editing one would need a JSON parser the framework does
   not have (ADR-0024, ADR-0002).
+- `adapter_<name>_notify_hook_hint <project-root>` — advisory only, writes nothing:
+  prints the snippet that connects the runtime's notification hook to
+  `.ai/scripts/jig-notify-hook`, prints nothing when a settings file already names it,
+  and **exits 2 when the runtime has no event for a session that waits for the person**
+  (Codex). `status` and `doctor` ask it only while `notify.interactive` is true
+  (adr-20261010-a-waiting-session-reaches-telegram).
 
 Adapters contain no SDLC logic; the only transform today is Codex's invocation syntax
 (`/jig-x` → `$jig-x`).

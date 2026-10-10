@@ -39,6 +39,7 @@ Absent keys take the default. Paths are not configurable.
 | `notify.telegram.token` | - | only | the Telegram bot token autopilot messages are sent with; never printed (`********`), refused by `jig config set` — written into the file by hand. With it or the chat id missing nothing is sent (adr-20261009-autopilot-stops-reach-telegram) |
 | `notify.telegram.chat_id` | - | only | the chat the messages go to: digits (a group's start with `-`) or `@name` |
 | `notify.autopilot` | `true` | only | `false` stops autopilot runs' messages — a stop, an end, and an unattended run's approve and decide — while the token and chat id stay set |
+| `notify.interactive` | `false` | only | `true` also sends the message when an ordinary session waits for the person's permission or answer, through the runtime hook they connected to `.ai/scripts/jig-notify-hook` (adr-20261010-a-waiting-session-reaches-telegram) |
 
 Durations: `<n>d`, `<n>h`, `<n>m`, `<n>s`.
 
@@ -66,7 +67,7 @@ Values `set` accepts, per key:
 |---|---|
 | `housekeeping.cadence` | whole days (`3d` or `3`) |
 | `housekeeping.trash_ttl`, `housekeeping.abandoned_ttl`, `housekeeping.stale_after`, `checkout.busy_ttl`, `verify.busy_ttl` | `<n>[dhms]`; `verify.busy_ttl` also takes `0` |
-| `housekeeping.fetch`, `git.delete_merged_branches`, `autopilot.unattended`, `notify.autopilot` | `true` or `false` |
+| `housekeeping.fetch`, `git.delete_merged_branches`, `autopilot.unattended`, `notify.autopilot`, `notify.interactive` | `true` or `false` |
 | `agent.git`, `autopilot.git` | `none`, `commit`, `push`, `pr`, `merge` |
 | `agent.ci_timeout` | whole minutes, 0 to 9999 |
 | `autopilot.parallel` | a whole number, 1 to 16 |

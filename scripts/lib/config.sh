@@ -21,7 +21,7 @@
 # answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -61,10 +61,12 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # Telegram messages go, and `notify.autopilot` whether their autopilot runs
 # send any: a committed token is a bot anyone can use once it is pushed, and a
 # committed chat id would send every contributor's stops to one person
-# (adr-20261009-autopilot-stops-reach-telegram).
+# (adr-20261009-autopilot-stops-reach-telegram). `notify.interactive` says
+# whether an ordinary session that waits for them sends one too, through the
+# hook they opted into (adr-20261010-a-waiting-session-reaches-telegram).
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -179,6 +181,7 @@ claude.review_model
 notify.telegram.token
 notify.telegram.chat_id
 notify.autopilot true
+notify.interactive false
 EOF
 }
 
@@ -554,7 +557,7 @@ _cfg_parallel() {
 #   the runtime's to understand, never Jig's
 #   (adr-20261005-jig-names-the-roles-not-the-models);
 # - notify.telegram.chat_id: a chat id, digits with an optional `-`, or an
-#   `@name`; notify.autopilot: `true` or `false`;
+#   `@name`; notify.autopilot and notify.interactive: `true` or `false`;
 # - notify.telegram.token: never — a token on a command line is in `ps`, the
 #   shell's history and the agent's transcript, so it is written into the file
 #   by hand (adr-20261009-autopilot-stops-reach-telegram).
@@ -582,7 +585,8 @@ jig_config_value_problem() {
         '' | *[!0-9]* | ?????????*) printf 'not a duration (e.g. 7d, 12h, 30m, 90s)\n'; return 1 ;;
       esac
       ;;
-    housekeeping.fetch | git.delete_merged_branches | autopilot.unattended | notify.autopilot)
+    housekeeping.fetch | git.delete_merged_branches | autopilot.unattended | notify.autopilot \
+      | notify.interactive)
       case "$value" in
         true | false) ;;
         *) printf 'not true or false\n'; return 1 ;;

@@ -29,8 +29,9 @@
 # next event would lose one of the two lines.
 #
 # Requires config.sh (cfg, jig_config_clone_root, jig_unattended, _cfg_chat_id,
-# JIG_CFG_MASK), and task.sh (task_dir, task_state_get, _task_autopilot_mode)
-# for a task's messages; a phase run's (jig_notify_phase) need no task.sh.
+# JIG_CFG_MASK), and task.sh (task_dir, task_state_get, _task_autopilot_mode,
+# _task_likely_owner) for a task's messages and a waiting session's; a phase
+# run's (jig_notify_phase) need no task.sh.
 
 # jig_notify_token_ok <token> — exit 0 when <token> has a bot token's shape,
 # `<digits>:<letters, digits, _ and ->`. Checked before the token is written
@@ -285,8 +286,9 @@ _notify_record() {
 }
 
 # _notify_record_in <dir> <event> <outcome> — the `notify` file in <dir>, as
-# _notify_record describes it: a task's workspace, or a phase run's
-# (_notify_phase_dir).
+# _notify_record describes it: a task's workspace, a phase run's
+# (_notify_phase_dir), or the checkout's runtime directory for a waiting
+# session with no task (_notify_session_send).
 _notify_record_in() {
   local dir="$1" event="$2" outcome file tmp
   [ -d "$dir" ] || return 0
@@ -299,23 +301,30 @@ _notify_record_in() {
 }
 
 # jig_notify_failing — `<time>\t<who>\t<why>` when the latest send of all
-# tasks and phase runs failed; nothing otherwise. <who> is `task <id>` or
-# `spec <id>`. A later success anywhere clears it, so a warning that stays is
-# one that is still true. A directory whose name is not a valid id is skipped,
-# never handed to a path builder.
+# tasks, phase runs and waiting sessions failed; nothing otherwise. <who> is
+# `task <id>`, `spec <id>`, or `a waiting session` for the checkout's own
+# `runtime/notify` — a waiting session with no task (jig_notify_session). A
+# later success anywhere clears it, so a warning that stays is one that is
+# still true. A directory whose name is not a valid id is skipped, never
+# handed to a path builder.
 jig_notify_failing() {
-  local ws f name who line ts outcome best_ts="" best=""
+  local ws session f name who line ts outcome best_ts="" best=""
   ws="$JIG_PROJECT/$JIG_AI_DIR/workspace"
-  for f in "$ws"/tasks/*/notify "$ws"/specs/*/notify; do
+  session="$JIG_PROJECT/$JIG_AI_DIR/runtime/notify"
+  for f in "$ws"/tasks/*/notify "$ws"/specs/*/notify "$session"; do
     [ -f "$f" ] || continue
-    name=${f%/notify}
-    who=${name%/*}
-    name=${name##*/}
-    jig_valid_id "$name" || continue
-    case "$who" in
-      */specs) who="spec $name" ;;
-      *) who="task $name" ;;
-    esac
+    if [ "$f" = "$session" ]; then
+      who="a waiting session"
+    else
+      name=${f%/notify}
+      who=${name%/*}
+      name=${name##*/}
+      jig_valid_id "$name" || continue
+      case "$who" in
+        */specs) who="spec $name" ;;
+        *) who="task $name" ;;
+      esac
+    fi
     IFS= read -r line < "$f" || [ -n "$line" ] || continue
     IFS=$'\t' read -r ts _ outcome <<EOF
 $line
@@ -476,7 +485,7 @@ _notify_test_send() {
   if [ -n "$failing" ]; then
     failing_who=${failing#*$'\t'}
     failing_who=${failing_who%%$'\t'*}
-    printf 'notify: jig status still reports the failure of %s; it clears with the next autopilot message\n' \
+    printf 'notify: jig status still reports the failure of %s; it clears with the next message that gets through\n' \
       "$failing_who"
   fi
   return 0
@@ -608,4 +617,98 @@ _notify_write_local() {
       && { chmod 600 "$tmp" 2>/dev/null || true; } \
       && mv "$tmp" "$file"
   ) || jig_die "notify setup: could not write $file"
+}
+
+# --- a waiting session --------------------------------------------------------
+# An ordinary session — no autopilot run behind it — that waits for the
+# person's permission or answer sends the same short message as an autopilot
+# stop, when they asked for it with `notify.interactive: true` and connected
+# the runtime's hook to `.ai/scripts/jig-notify-hook` themselves
+# (adr-20261010-a-waiting-session-reaches-telegram; ADR-0024: Jig prints the
+# snippet and never edits the runtime's config):
+#
+#   ⏸ <project> · <task-id>          (no task: the branch; detached: nothing)
+#   <the task's short description>   (with a task only)
+#   Waiting for your permission      (permission) | Waiting for your answer (input)
+#
+# The runtime decides when a session waits; Jig only forwards it. Everything
+# the autopilot's sender guarantees holds here too, because this goes through
+# the same _notify_post and the same detached launch.
+
+# jig_notify_session <permission|input> — send the message for one wait of the
+# session in $JIG_PROJECT, detached. Always exits 0 and prints nothing. The
+# cheap checks run here; finding the task, building the text and curl run in
+# the detached sender.
+jig_notify_session() {
+  local kind="$1" token chat
+  case "$kind" in
+    permission | input) ;;
+    *) return 0 ;;
+  esac
+  [ "$(cfg notify.interactive false)" = true ] || return 0
+  token=$(cfg notify.telegram.token "")
+  chat=$(cfg notify.telegram.chat_id "")
+  if [ -z "$token" ] || [ -z "$chat" ]; then return 0; fi
+  command -v curl >/dev/null 2>&1 || return 0
+  # The same launch as jig_notify_autopilot, for the same reasons.
+  (
+    set -m
+    { _notify_session_send "$kind" "$token" "$chat"; exit 0; } \
+      </dev/null >/dev/null 2>&1 &
+  ) </dev/null >/dev/null 2>&1
+  return 0
+}
+
+# _notify_session_send <kind> <token> <chat> — the detached half. The task is
+# the one `task current` would name for this branch; zero or several name
+# none. A wait for an answer while that task's autopilot run is `on` or
+# `stopped` sends nothing: the run's own journal has already said it stopped,
+# and the runtime's "waiting for input" a minute later would say it twice.
+# A permission prompt the journal never sees, so it is sent whatever the run.
+_notify_session_send() {
+  set +e
+  set +o pipefail
+  local kind="$1" token="$2" chat="$3" branch id="" dir msg outcome
+  branch=$(git -C "$JIG_PROJECT" symbolic-ref --short HEAD 2>/dev/null) || branch=""
+  if [ -n "$branch" ]; then
+    id=$(_task_likely_owner "$branch" 2>/dev/null) || id=""
+  fi
+  if [ -n "$id" ] && [ "$kind" = input ]; then
+    case "$(task_state_get "$id" autopilot)" in
+      on | stopped) return 0 ;;
+    esac
+  fi
+  if [ -n "$id" ]; then
+    dir=$(task_dir "$id") || return 0
+  else
+    dir="$JIG_PROJECT/$JIG_AI_DIR/runtime"
+    mkdir -p "$dir" 2>/dev/null || return 0
+  fi
+  [ -d "$dir" ] || return 0
+  msg=$(mktemp "$dir/notify.text.XXXXXX") || return 0
+  jig_cleanup_add "$msg"
+  _notify_session_message "$kind" "$id" "$branch" > "$msg"
+  outcome=$(_notify_post "$token" "$chat" "$msg" "$dir")
+  _notify_record_in "$dir" wait "${outcome:-failed: no answer}"
+  return 0
+}
+
+# _notify_session_message <kind> <id> <branch> — the text, lines joined by a
+# newline, no trailing one. <id> and <branch> may be empty.
+_notify_session_message() {
+  local kind="$1" id="$2" branch="$3" desc
+  printf '⏸ %s' "$(_notify_project)"
+  if [ -n "$id" ]; then
+    printf ' · %s' "$id"
+  elif [ -n "$branch" ]; then
+    printf ' · %s' "$(_notify_cut "$branch" 80)"
+  fi
+  if [ -n "$id" ]; then
+    desc=$(_notify_description "$id")
+    [ -z "$desc" ] || printf '\n%s' "$(_notify_cut "$desc" 80)"
+  fi
+  case "$kind" in
+    permission) printf '\nWaiting for your permission' ;;
+    *) printf '\nWaiting for your answer' ;;
+  esac
 }

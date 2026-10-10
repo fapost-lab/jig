@@ -418,6 +418,40 @@ _doctor_check_session_hooks() {
   done
 }
 
+# The notification hook, checked only while `notify.interactive` is true
+# (status.sh, _status_notify_hook, says why). The snippet is printed here,
+# where the reader asked for a diagnosis; Jig never writes it into the
+# runtime's settings (ADR-0024).
+_doctor_check_notify_hooks() {
+  local source a adir hint rc
+  [ "$(cfg notify.interactive false)" = true ] || return 0
+  source=$(manifest_source 2>/dev/null) || return 0
+  [ -n "$source" ] || return 0
+  [ -d "$source/adapters" ] || return 0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+
+  for a in $(_doctor_bracket_list "$(manifest_header_get adapters)"); do
+    adir=$(adapters_dir "$source/adapters" "$a") || continue
+    [ -f "$adir/adapter.sh" ] || continue
+    # shellcheck disable=SC1090
+    . "$adir/adapter.sh"
+    command -v "adapter_${a}_notify_hook_hint" >/dev/null 2>&1 || continue
+    rc=0
+    hint=$("adapter_${a}_notify_hook_hint" "$JIG_PROJECT") || rc=$?
+    if [ "$rc" = 2 ]; then
+      _doctor_ok "notify hook ($a)" "not applicable to this runtime"
+      continue
+    fi
+    if [ -n "$hint" ]; then
+      printf '%s\n' "$hint"
+      _doctor_warn "notify hook ($a)" "not connected" "add the snippet above to your own settings"
+    else
+      _doctor_ok "notify hook ($a)" "connected"
+    fi
+  done
+}
+
 # Whether each installed runtime's instruction file carries Jig's workflow; the
 # adapter answers, as for the session hook. A warn, not a fail: jig itself
 # works, but the agent will not follow its routes until the section is merged.
@@ -597,6 +631,7 @@ cmd_doctor() {
       _doctor_check_executable_bits
       _doctor_check_jigcmd_project
       _doctor_check_session_hooks
+      _doctor_check_notify_hooks
       _doctor_check_instructions
       _doctor_check_config_local
       _doctor_check_config_keys

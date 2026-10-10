@@ -273,4 +273,9 @@ token's value is printed by nothing: a new reader of a local value goes through 
 A phase run's coordinator sends through the same sender with `jig spec stop`, which has no journal
 and keeps its outcome in `.ai/workspace/specs/<id>/notify`; `jig_notify_failing` reads both kinds
 and names its owner `task <id>` or `spec <id>` (adr-20261010-a-phase-run-stop-is-sent-by-spec-stop).
+A session waiting for the person sends through it too, from `.ai/scripts/jig-notify-hook`, behind
+`notify.interactive` (adr-20261010-a-waiting-session-reaches-telegram). It writes the task's
+`notify` file as a second writer (event `wait`, atomic, the last one wins), or without a task the
+checkout's `.ai/runtime/notify`, which `jig_notify_failing` reads as `a waiting session`. That hook
+never goes through the dispatcher, because a dispatcher run would record the checkout as busy.
 
