@@ -8,6 +8,15 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.25.1 — 2026-10-10
+
+- **A merged branch whose remote copy someone else removed is deleted too.** When the hosting site
+  deletes a branch on merge and another tool — an editor's background `git fetch --prune` — then
+  removes its `origin/` copy, `git branch -d` refused the squash-merged branch and housekeeping kept
+  it (`kept branch <name>: git does not see all of its commits merged`). Now such a branch goes when
+  its last commit is the one the hosting site merged, or an earlier one; a branch with anything newer
+  stays, as before.
+
 ## 0.25.0 — 2026-10-09
 
 Autopilot can tell you, in Telegram, when a run needs you or is done. Nothing changes until you set
