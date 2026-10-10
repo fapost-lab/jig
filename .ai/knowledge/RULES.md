@@ -54,7 +54,9 @@
   valid id after a non-empty prefix; never the base branch, `epic/*` or `spec/*`), checked out in
   no worktree, whose work landed, with `git.delete_merged_branches` not `false`. Locally `git
   branch -d`, never `-D`, run before origin is touched so that `-d` still compares the branch
-  with its upstream. On origin a push with `--force-with-lease` at the head of a pull request
+  with its upstream; past a refusal of `-d` only a branch whose tip is the head of a pull
+  request the forge reported merged, or an ancestor of it, by `git update-ref -d` at that tip
+  (adr-20261010-a-gone-upstream-defers-to-the-merged-head). On origin a push with `--force-with-lease` at the head of a pull request
   the forge reported merged, so a branch that moved after the merge stays; when origin no longer
   has it, `git branch -d -r` drops the stale `origin/` ref once the local branch is gone — there,
   or in `_hk_branch_sweep` for an `origin/` ref with no local branch, checked by one `ls-remote`

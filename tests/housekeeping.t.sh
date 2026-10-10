@@ -2964,6 +2964,100 @@ test_housekeeping_deletes_a_squash_merged_branch_the_forge_reports_merged() {
   rm -rf "$remote"
 }
 
+# The forge deleted the head branch and somebody else's `fetch --prune` took
+# origin/<b> with it, so `-d` compares with HEAD and refuses. The tip is the
+# merged head, so the branch goes anyway
+# (adr-20261010-a-gone-upstream-defers-to-the-merged-head).
+test_housekeeping_deletes_a_squash_merged_branch_whose_upstream_is_gone() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  git -C "$remote" branch -q -D task/sq
+  git fetch -q --prune origin
+  if git show-ref --verify --quiet refs/remotes/origin/task/sq; then fail "fixture: origin/task/sq survived the prune"; fi
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq"
+  if git show-ref --verify --quiet refs/heads/task/sq; then fail "the local branch is still here"; fi
+  if git config --get branch.task/sq.remote >/dev/null; then fail "the branch's config section is still here"; fi
+  assert_file_contains .ai/runtime/housekeeping.log "branch=task/sq where=local action=delete"
+  rm -rf "$remote"
+}
+
+# The same, but with a commit past the merged head: that commit is in no pull
+# request, so the branch stays.
+test_housekeeping_keeps_a_gone_upstream_branch_with_work_past_the_merged_head() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  git -C "$remote" branch -q -D task/sq
+  git fetch -q --prune origin
+  hk_tick
+  git checkout -q task/sq
+  printf 'more\n' >> sq.txt
+  git commit -q -am "after the merge"
+  git checkout -q main
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: kept branch task/sq: git does not see all of its commits merged"
+  git show-ref --verify --quiet refs/heads/task/sq || fail "a branch with unmerged work was deleted"
+  rm -rf "$remote"
+}
+
+# The merged head is past the local tip (the last push never reached this
+# clone's branch): every local commit is in it, so the branch goes.
+test_housekeeping_deletes_a_gone_upstream_branch_behind_the_merged_head() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote head
+  remote=$(hk_squash_origin task/sq)
+  head=$(git rev-parse task/sq)
+  git branch -q -f task/sq "$head~1"
+  git -C "$remote" branch -q -D task/sq
+  git fetch -q --prune origin
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$head"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq"
+  if git show-ref --verify --quiet refs/heads/task/sq; then fail "the local branch is still here"; fi
+  rm -rf "$remote"
+}
+
+# A merged head the branch is not in — another commit, or one this clone has
+# never seen — vouches for nothing.
+test_housekeeping_keeps_a_gone_upstream_branch_outside_the_merged_head() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote other
+  remote=$(hk_squash_origin task/sq)
+  other=$(git rev-parse main)
+  git -C "$remote" branch -q -D task/sq
+  git fetch -q --prune origin
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$other"
+  run jig housekeeping
+  assert_contains "$OUT" "housekeeping: kept branch task/sq: git does not see all of its commits merged"
+  git show-ref --verify --quiet refs/heads/task/sq || fail "a branch outside the merged head was deleted"
+
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')0123456789abcdef0123456789abcdef01234567"
+  run jig housekeeping
+  assert_contains "$OUT" "housekeeping: kept branch task/sq: git does not see all of its commits merged"
+  git show-ref --verify --quiet refs/heads/task/sq || fail "a branch was deleted on a head this clone lacks"
+  rm -rf "$remote"
+}
+
 # Pushed to after the merge: origin's branch is no longer at the merged head,
 # so it stays; nothing local is lost either, since `-d` saw it in upstream.
 test_housekeeping_keeps_origins_branch_that_moved_after_the_merge() {

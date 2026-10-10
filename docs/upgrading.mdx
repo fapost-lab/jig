@@ -122,7 +122,7 @@ order does not change: do it once, and read every release between yours and the 
     next: to go back to what you were doing: `git checkout task/my-feature`, then `git merge main` to bring the upgrade into it
     ```
 
-    It deletes only its own branch, only with `git branch -d` (git itself refuses to delete a branch
+    It deletes only its own branch, with `git branch -d` (git itself refuses to delete a branch
     whose work is nowhere else), and on `origin` only while the branch is still at the commit that
     was merged. When it cannot — the branch is checked out in another worktree, or git refuses — it
     says `upgrade: kept branch <name>: <why>` and leaves it for you. To keep every branch, set
@@ -170,16 +170,19 @@ order does not change: do it once, and read every release between yours and the 
     branch, so it cannot lose the upgrade.
 
     A pull request merged by *squashing* is recognised too: Jig asks the hosting site whether it was
-    merged, and git checks the branch against its copy on `origin`. Only when that copy is already
-    gone from your machine does git answer `not fully merged`, and then Jig keeps the branch and
-    says `kept branch <name>: git does not see all of its commits merged`. That is the one case for
-    deleting it by hand:
+    merged, and git checks the branch against its copy on `origin`. When that copy is already gone
+    from your machine (your editor's background `fetch --prune` removes it once the hosting site
+    deletes the branch), git answers `not fully merged`; Jig then deletes the branch anyway if its
+    last commit is the one the hosting site merged, or an earlier one. A branch with a commit added
+    after that stays, and Jig says `kept branch <name>: git does not see all of its commits merged`.
+    That is the one case for deleting it by hand:
 
     <Warning>
       Run `git branch -D jig/upgrade-0.24.0` only if **all** of these hold: the pull request is shown
-      as **Merged** (not Closed) on your hosting site, and after `git pull` your base branch contains
-      the upgrade (`jig doctor` shows the new version). `-D` deletes without checking anything; if
-      either is not true, do not run it — ask, or leave the branch.
+      as **Merged** (not Closed) on your hosting site, after `git pull` your base branch contains
+      the upgrade (`jig doctor` shows the new version), and the commit added after the merge is one
+      you do not need. `-D` deletes without checking anything; if any of these is not true, do not
+      run it — ask, or leave the branch.
     </Warning>
 
     Two cases have no branch to clean up. A project that works on a single branch
@@ -471,8 +474,9 @@ branches. Housekeeping starts on its own with your agent's session, by default a
 project carries the 0.23.0 scripts. On `origin` it deletes only when your `agent.git` is `push` or
 higher with `housekeeping.fetch` not `false`, only for a branch whose pull request the hosting site
 reports merged (on GitHub, among the last 200 pull requests it lists), and only while the branch is still at the commit that was merged. An older squash-merged
-branch is not recognised and stays, as does one whose copy on `origin` is already gone (Jig then
-says `kept branch <name>: git does not see all of its commits merged`).
+branch is not recognised and stays. One whose copy on `origin` is already gone goes only when its
+last commit is the one the hosting site merged, or an earlier one; otherwise Jig says
+`kept branch <name>: git does not see all of its commits merged`.
 
 To see what it would delete, before it does, in the project's main checkout:
 
@@ -497,8 +501,9 @@ That writes `.ai/config.local.yaml`, which is yours alone and not committed. It 
 one Jig gives its own: your own feature branches stay, whatever their state. A branch checked out in
 any worktree. The branch of a task whose workspace is still in place, and the branch it was cut from.
 A branch with an open pull request, as its head or as the base another one is stacked on. A branch
-holding a commit that is nowhere else: Jig deletes with `git branch -d`, never `-D`, and Git
-refuses; Jig then says `kept branch <name>: git does not see all of its commits merged`. Housekeeping's
+holding a commit that is nowhere else: Jig deletes with `git branch -d`, and past Git's refusal only
+a branch whose last commit is in a pull request the hosting site reports merged; anything else Jig
+keeps and says `kept branch <name>: git does not see all of its commits merged`. Housekeeping's
 sweep runs only in the clone's main checkout, and nothing is deleted when
 `git.delete_merged_branches` is `false`.
 

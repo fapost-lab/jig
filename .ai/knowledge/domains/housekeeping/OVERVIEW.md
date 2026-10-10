@@ -57,7 +57,9 @@ evidence it inferred itself.
   `finish/<id>`, the task template's name), that no workspace left in place holds and no
   worktree has checked out, and that landed — a merged pull request, or ancestry into the
   default branch. `git branch -d` first, against the upstream still there, which is what lets a
-  squash merge through (hence `fetch --no-prune`); origin only at `agent.git` `push` or above,
+  squash merge through (hence `fetch --no-prune`); when somebody else's prune took that upstream
+  and `-d` refuses, the forge's merged head vouches for a tip that is it or its ancestor
+  (`update-ref -d` at that tip, adr-20261010-a-gone-upstream-defers-to-the-merged-head); origin only at `agent.git` `push` or above,
   with a merged pull request whose head is where origin's branch still is, by a lease push. A purged task's branch goes in the run that purged it, as
   its worktree does. Lines `branch=<b> where=local|origin action=delete|keep`, without `task=`.
 - Judging each task against **its own base** (`jig_task_base`, ADR-0039): ancestry, the

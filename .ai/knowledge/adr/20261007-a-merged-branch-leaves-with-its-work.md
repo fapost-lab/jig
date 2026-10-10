@@ -34,7 +34,8 @@ On by default; `git.delete_merged_branches: false` (a local key) keeps every bra
 - **Jig's** (`jig_branch_is_jigs`, common.sh): `jig/upgrade-*`, `finish/<id>`, or the name
   `git.branch_template` gives a valid task id, when the template has literal text before `{id}`.
   Never the base branch, `epic/*` or `spec/*`, and never a branch checked out in any worktree.
-- **Git deletes, never the script.** Locally `git branch -d`, never `-D`. On origin
+- **Git deletes, never the script.** Locally `git branch -d`, never `-D` (amended 2026-10-10:
+  past a refusal, a ref update guarded by the merged head — see the amendment below). On origin
   `git push --force-with-lease=refs/heads/<b>:<merged head> origin :refs/heads/<b>`, so a branch
   somebody pushed to after the merge stays.
 - **Local first, then origin.** `git branch -d` checks a branch against its upstream when it has
@@ -75,7 +76,7 @@ On by default; `git.delete_merged_branches: false` (a local key) keeps every bra
   is remote-only. One git path serves both forges and is testable without one.
 - **`git update-ref -d` guarded by the merged head.** Would take a squash-merged branch whose
   upstream is gone, but it is `-D` with a precondition; refused in favour of git's own check.
-  Such a branch is reported kept instead.
+  Such a branch is reported kept instead. (Reversed 2026-10-10 — see the amendment below.)
 - **Delete at `task ship` from a worktree.** The worktree would have to be moved off the branch
   (and housekeeping would then never find it) or the remote deleted alone (and a squash-merged
   local branch would then never pass `-d`).
@@ -90,5 +91,11 @@ On by default; `git.delete_merged_branches: false` (a local key) keeps every bra
   Without a forge Jig does not merge, so it does not delete either.
 - A squash-merged branch whose upstream ref is already gone is kept and reported:
   `kept branch <b>: git does not see all of its commits merged`. The person deletes it.
+  (Superseded 2026-10-10 for a tip inside the merged head — see the amendment below.)
 - RULES.md's deletion paragraph names this site; the change that adds or re-guards a branch
   deletion re-reads it.
+
+> **Amendment (2026-10-10).** The rejected `git update-ref -d` guarded by the merged head is now
+> the fallback past a refusal of `-d`: a branch whose upstream someone else pruned goes when its tip
+> is in the head of the pull request the forge reported merged, and the consequence "the person
+> deletes it" no longer holds for it. (adr-20261010-a-gone-upstream-defers-to-the-merged-head)

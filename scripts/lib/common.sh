@@ -1362,8 +1362,11 @@ _jig_pr_state_gitlab() {
 # (adr-20261007-a-merged-branch-leaves-with-its-work): right after a merge Jig
 # made itself (jig_ship_leave), and in housekeeping once the task it belonged
 # to is purged (_hk_branch_sweep). This is the one place a branch is deleted,
-# and git does the deleting: `git branch -d`, never `-D`, so git itself refuses
-# a branch whose commits are on neither its upstream nor HEAD; and on origin a
+# and git does the deleting: `git branch -d` first, so git itself refuses a
+# branch whose commits are on neither its upstream nor HEAD; past a refusal
+# only a branch whose tip is in the head of a pull request the forge reported
+# merged, by a ref update guarded by that tip
+# (adr-20261010-a-gone-upstream-defers-to-the-merged-head); and on origin a
 # push with a lease at the merged commit, so a branch somebody pushed to after
 # the merge stays. RULES.md names this site in its deletion paragraph.
 
@@ -1409,10 +1412,13 @@ jig_branch_checked_out() {
   jig_has_line "branch refs/heads/$1" "$list"
 }
 
-# jig_branch_leave <who> <branch> <remote-sha> — delete <branch> here, then on
-# origin, and say so; or keep it and say why. <remote-sha> is the head of the
-# pull request the forge reported merged, or empty: without one, origin is
-# never touched. One line per outcome, prefixed with <who>:
+# jig_branch_leave <who> <branch> <remote-sha> [<merged-head>] — delete
+# <branch> here, then on origin, and say so; or keep it and say why.
+# <remote-sha> is the head of the pull request the forge reported merged, or
+# empty: without one, origin is never touched. <merged-head> is that head again
+# for the local branch alone (default: <remote-sha>); housekeeping passes it
+# when origin no longer has the branch and <remote-sha> is therefore empty.
+# One line per outcome, prefixed with <who>:
 #   deleted branch <b> | deleted branch <b> on origin | kept branch <b>: <why>
 #
 # The order is the safety. The local branch goes first, while origin/<b> — its
@@ -1425,10 +1431,18 @@ jig_branch_checked_out() {
 # delete head branches"), the lease fails; `ls-remote` confirms the branch is
 # gone, and only then the stale origin/<b> is dropped — a cache, not work.
 #
+# When origin/<b> is already gone — somebody else's `fetch --prune` took it
+# after the forge deleted the branch — `-d` compares with HEAD and refuses a
+# squash-merged branch. Then, and only with <merged-head>, a branch whose tip
+# is that head or an ancestor of it goes anyway: every commit on it is in the
+# pull request that was merged. `update-ref -d` with the tip as the old value
+# deletes it only while it is still there; a tip with a commit past the head
+# is kept.
+#
 # Off with `git.delete_merged_branches: false`. Returns 0 always: keeping a
 # branch is an outcome, never a failure of the command that called this.
 jig_branch_leave() {
-  local who="$1" b="$2" sha="$3" ssh out
+  local who="$1" b="$2" sha="$3" merged="${4-$3}" ssh out tip
   cfg_bool git.delete_merged_branches true || return 0
   jig_branch_is_jigs "$b" || return 0
   if jig_branch_checked_out "$b"; then
@@ -1437,8 +1451,18 @@ jig_branch_leave() {
   fi
   if git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/heads/$b"; then
     if ! git -C "$JIG_PROJECT" branch -q -d "$b" >/dev/null 2>&1; then
-      printf '%s: kept branch %s: git does not see all of its commits merged\n' "$who" "$b"
-      return 0
+      tip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$b^{commit}" 2>/dev/null || true)
+      case "$merged" in
+        *[!0-9a-f]*) merged="" ;;
+      esac
+      # `-d` refuses a checked-out branch; update-ref would not, so ask again.
+      if [ -z "$merged" ] || [ -z "$tip" ] || jig_branch_checked_out "$b" \
+         || ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$merged" >/dev/null 2>&1 \
+         || ! git -C "$JIG_PROJECT" update-ref -d "refs/heads/$b" "$tip" >/dev/null 2>&1; then
+        printf '%s: kept branch %s: git does not see all of its commits merged\n' "$who" "$b"
+        return 0
+      fi
+      git -C "$JIG_PROJECT" config --remove-section "branch.$b" >/dev/null 2>&1 || true
     fi
     printf '%s: deleted branch %s\n' "$who" "$b"
   fi
