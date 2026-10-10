@@ -206,6 +206,10 @@ Some settings are a matter of personal taste rather than project policy. Put the
   See [Autopilot: messages in Telegram](/autopilot#messages-in-telegram).
 - `notify.autopilot` — `false` pauses those messages and keeps the settings (default `true`); local
   only.
+- `notify.interactive` — `true` also sends the message when an ordinary session waits for your
+  permission or your answer (default `false`). It needs your runtime's notification hook, which Jig
+  never adds itself; local only. See
+  [Autopilot: when an ordinary session waits for you](/autopilot#when-an-ordinary-session-waits-for-you).
 
 Any other key in it is ignored — no reader answers from it — but it is not silently lost: `jig
 config show --local` prints the file and names the keys nothing reads, and `jig config unset`

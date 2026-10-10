@@ -345,6 +345,7 @@ EOF
   fi
 
   _status_session_hook
+  _status_notify_hook
   _status_instructions
 }
 
@@ -578,6 +579,8 @@ _status_terminal() {
         ;;
       "session hook ("*"): installed") _STT_HOOKS+=("${l%: installed}") ;;
       "session hook ("*) _status_need warn "$l" ;;
+      "notify hook ("*"): connected") _STT_HOOKS+=("${l%: connected}") ;;
+      "notify hook ("*) _status_need warn "$l" ;;
       "instructions ("*"): ok")
         t=${l#instructions (}
         _STT_INSTR+=("${t%%)*}")
@@ -2794,6 +2797,37 @@ _status_session_hook() {
       printf 'session hook (%s): not installed\n' "$a"
     else
       printf 'session hook (%s): installed\n' "$a"
+    fi
+  done
+}
+
+# Whether the runtime's notification hook reaches .ai/scripts/jig-notify-hook,
+# printed only while `notify.interactive` is true: before that the hook would
+# send nothing anyway, and a "not connected" line the reader never asked for
+# is one they cannot clear (adr-20261010-a-waiting-session-reaches-telegram).
+# The same adapter lookup as _status_session_hook; exit 2 — Codex — prints
+# nothing.
+_status_notify_hook() {
+  local source a adir hint rc
+  [ "$(cfg notify.interactive false)" = true ] || return 0
+  source=$(manifest_source 2>/dev/null) || return 0
+  [ -n "$source" ] || return 0
+  [ -d "$source/adapters" ] || return 0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+  for a in $(cfg_list adapters "claude codex"); do
+    adir=$(adapters_dir "$source/adapters" "$a") || continue
+    [ -f "$adir/adapter.sh" ] || continue
+    # shellcheck disable=SC1090
+    . "$adir/adapter.sh"
+    command -v "adapter_${a}_notify_hook_hint" >/dev/null 2>&1 || continue
+    rc=0
+    hint=$("adapter_${a}_notify_hook_hint" "$JIG_PROJECT") || rc=$?
+    [ "$rc" = 2 ] && continue
+    if [ -n "$hint" ]; then
+      printf 'notify hook (%s): not connected (jig doctor shows the snippet)\n' "$a"
+    else
+      printf 'notify hook (%s): connected\n' "$a"
     fi
   done
 }

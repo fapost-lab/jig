@@ -723,3 +723,209 @@ test_notify_setup_refuses_an_argument_and_a_missing_chat_id() {
     *notify.telegram*) fail "setup wrote a key without a chat id" ;;
   esac
 }
+
+# --- a waiting session (jig-notify-hook) ---------------------------------------
+# adr-20261010-a-waiting-session-reaches-telegram. The hook is run the way
+# the runtime runs it: `bash <script> <kind>` with the runtime's JSON on stdin.
+
+# nh_setup — an installed repository on task T-1's branch, no autopilot run,
+# the Telegram keys set, `notify.interactive: true`, the stub curl on PATH.
+nh_setup() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  printf '# Login redirect loses the return URL\n' > .ai/workspace/tasks/T-1/task.md
+  NT_STUB=$(_run_out .stub)
+  mkdir -p "$NT_STUB/bin"
+  _nt_write_stub "$NT_STUB"
+  PATH="$NT_STUB/bin:$PATH"
+  export PATH NT_STUB
+  {
+    printf 'notify.telegram.token: %s\n' "$NT_TOKEN"
+    printf 'notify.telegram.chat_id: -100123\n'
+    printf 'notify.interactive: true\n'
+  } >> .ai/config.local.yaml
+  git remote add origin git@github.com:example/shop.git
+}
+
+# nh_hook [<kind> [<payload>]] — run the hook as the runtime does; RC and OUT
+# hold what the runtime would see.
+nh_hook() {
+  local payload="${2:-}" in
+  in=$(_run_out .stdin)
+  printf '%s' "$payload" > "$in"
+  run bash "$NH_HOOK" ${1+"$1"} < "$in"
+  rm -f "$in"
+}
+
+# nh_wait <file> [<text>] — wait for the sender's record in <file>.
+nh_wait() {
+  local f="$1" deadline=$((SECONDS + 60))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -f "$f" ]; then
+      case "$(cat "$f")" in *"${2:-}"*) return 0 ;; esac
+    fi
+    sleep 0.1
+  done
+  fail "the sender recorded nothing${2:+ with [$2]} in $f"
+}
+
+# nh_quiet — nothing was sent and nothing recorded.
+nh_quiet() {
+  sleep 1
+  assert_no_file "$NT_STUB/calls" "curl was called"
+  assert_no_file .ai/workspace/tasks/T-1/notify "a send was recorded"
+  assert_no_file .ai/runtime/notify "a session send was recorded"
+}
+
+NH_HOOK=.ai/scripts/jig-notify-hook
+
+test_notify_hook_sends_a_waiting_tasks_message_and_prints_nothing() {
+  nh_setup
+  local before
+  before=$(ls .ai/runtime/working 2>/dev/null || true)
+  nh_hook permission '{"session_id":"abc","cwd":"'"$(pwd -P)"'","hook_event_name":"Notification","message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  nh_wait .ai/workspace/tasks/T-1/notify "$(printf '\twait\tok')"
+  assert_eq "$(printf '⏸ shop · T-1\nLogin redirect loses the return URL\nWaiting for your permission')" \
+    "$(cat "$NT_STUB/text")"
+  assert_file_contains "$NT_STUB/stdin" "https://api.telegram.org/bot$NT_TOKEN/sendMessage"
+  assert_not_contains "$(cat "$NT_STUB/argv")" "$NT_TOKEN"
+  # A notification is not work going on in the checkout.
+  assert_eq "$before" "$(ls .ai/runtime/working 2>/dev/null || true)"
+  assert_eq "" "$(find .ai/workspace/tasks/T-1 -name 'notify.*')"
+}
+
+test_notify_hook_sends_nothing_unless_interactive_is_true() {
+  nh_setup
+  jig config unset notify.interactive --local >/dev/null
+  nh_hook permission '{}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  nh_quiet
+  jig config set notify.interactive false --local >/dev/null
+  nh_hook input '{}'
+  nh_quiet
+}
+
+test_notify_hook_without_a_task_names_the_branch_and_status_sees_a_failure() {
+  nh_setup
+  git checkout -q -b scratch
+  printf '{"ok":false,"description":"Bad Request: chat not found"}' > "$NT_STUB/response"
+  printf 400 > "$NT_STUB/code"
+  nh_hook input '{}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  nh_wait .ai/runtime/notify "chat not found"
+  assert_eq "$(printf '⏸ shop · scratch\nWaiting for your answer')" "$(cat "$NT_STUB/text")"
+  assert_eq "" "$(find .ai/runtime -name 'notify.*')"
+  run jig status
+  assert_contains "$OUT" "notify: Telegram messages are failing: HTTP 400: Bad Request: chat not found (a waiting session,"
+}
+
+test_notify_hook_input_is_silent_during_an_autopilot_run_and_permission_is_not() {
+  nh_setup
+  jig task autopilot T-1 start >/dev/null
+  nh_hook input '{}'
+  nh_quiet
+  jig config set notify.autopilot false --local >/dev/null
+  jig task autopilot T-1 stop --reason 'Which provider?' >/dev/null
+  nh_hook input '{}'
+  nh_quiet
+  nh_hook permission '{}'
+  nh_wait .ai/workspace/tasks/T-1/notify "$(printf '\twait\tok')"
+  assert_contains "$(cat "$NT_STUB/text")" "Waiting for your permission"
+}
+
+test_notify_hook_finds_the_checkout_from_the_payloads_cwd() {
+  nh_setup
+  local repo
+  repo=$(pwd -P)
+  mkdir -p "$repo/../elsewhere"
+  (
+    cd "$repo/../elsewhere" || exit 1
+    printf '{"session_id":"x", "cwd" : "%s", "message":"m"}' "$repo" \
+      | bash "$repo/$NH_HOOK" permission
+  )
+  nh_wait .ai/workspace/tasks/T-1/notify "$(printf '\twait\tok')"
+  assert_contains "$(sed -n 1p "$NT_STUB/text")" "· T-1"
+}
+
+test_notify_hook_falls_back_to_its_directory_for_an_escaped_cwd() {
+  nh_setup
+  nh_hook permission '{"cwd":"C:\\Users\\me\\shop","notification_type":"permission_prompt"}'
+  assert_eq 0 "$RC"
+  nh_wait .ai/workspace/tasks/T-1/notify "$(printf '\twait\tok')"
+}
+
+test_notify_hook_exits_0_and_prints_nothing_whatever_goes_wrong() {
+  nh_setup
+  local repo
+  repo=$(pwd -P)
+  nh_hook bogus '{}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  nh_hook
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  # Not a Jig project.
+  mkdir -p "$repo/../plain"
+  git -C "$repo/../plain" init -q
+  nh_hook permission '{"cwd":"'"$repo/../plain"'"}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  # A directory that does not exist.
+  nh_hook permission '{"cwd":"/nonexistent/jig"}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  nh_quiet
+  # curl itself failing.
+  printf 7 > "$NT_STUB/exit"
+  printf 000 > "$NT_STUB/code"
+  printf '' > "$NT_STUB/response"
+  printf 'curl: (7) Failed to connect\n' > "$NT_STUB/stderr"
+  nh_hook permission '{}'
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  nh_wait .ai/workspace/tasks/T-1/notify "failed: curl: (7) Failed to connect"
+}
+
+test_notify_hook_status_and_doctor_name_the_hook_only_when_asked_for() {
+  nh_setup
+  run jig status
+  assert_contains "$OUT" "notify hook (claude): not connected"
+  assert_not_contains "$OUT" "notify hook (codex)"
+  run jig doctor
+  assert_contains "$OUT" "notify hook (claude): not connected"
+  assert_contains "$OUT" "jig-notify-hook permission"
+  # At a terminal, a hook that is not connected is something that needs you.
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_contains "$OUT" "notify hook (claude): not connected"
+  assert_not_contains "$OUT" "nothing needs you"
+  mkdir -p .claude
+  # shellcheck disable=SC2016  # the settings file names the variable literally
+  printf '{ "hooks": { "Notification": [ { "hooks": [ { "type": "command", "command": "bash \\"$CLAUDE_PROJECT_DIR\\"/.ai/scripts/jig-notify-hook input" } ] } ] } }\n' \
+    > .claude/settings.local.json
+  run jig status
+  assert_contains "$OUT" "notify hook (claude): connected"
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_contains "$OUT" "notify hook (claude)"
+  assert_not_contains "$OUT" "not connected"
+  jig config set notify.interactive false --local >/dev/null
+  run jig status
+  assert_not_contains "$OUT" "notify hook"
+  run jig doctor
+  assert_not_contains "$OUT" "notify hook"
+}
+
+test_notify_interactive_is_a_local_boolean() {
+  fixture_jig_repo
+  run jig config set notify.interactive maybe --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not true or false"
+  run jig config set notify.interactive true --local
+  assert_eq 0 "$RC"
+  run jig config set notify.interactive true
+  assert_eq 1 "$RC"
+}

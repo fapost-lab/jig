@@ -55,6 +55,15 @@ for "the framework owns four lines inside a file the project owns".
   > starts a background process at every session start. The created file is project-owned
   > under the existing `_init_place_if_absent` rule (ADR-0003): absent from the manifest,
   > never overwritten, and never restored by `upgrade` once removed.
+
+  > **Amendment (2026-10-10, task `notification-hook-for-sessions`).** "A human pastes it"
+  > binds the framework's scripts, not the person's own agent. The notification hook
+  > (adr-20261010-a-waiting-session-reaches-telegram) goes into the person's own
+  > `.claude/settings.local.json`, and the `jig-setup` skill may have the agent write it there
+  > after it has shown the lines and the resulting file and the person has said yes. The agent
+  > reads the JSON it edits and the person sees the result, which is not what the rejected
+  > shell merge did. No script of Jig's writes into that file or any other runtime config
+  > that exists.
 - Detection is a **read-only substring test** for the command string, which is safe on
   arbitrary JSON in a way that editing is not. `jig status` uses it to report
   `session hook (<runtime>): installed | not installed`.

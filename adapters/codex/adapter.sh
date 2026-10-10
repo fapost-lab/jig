@@ -122,6 +122,20 @@ adapter_codex_session_hook_hint() {
   return 2
 }
 
+# adapter_codex_notify_hook_hint <project-root>
+# Exits 2: not applicable to this runtime
+# (adr-20261010-a-waiting-session-reaches-telegram).
+#
+# Codex has no event for "the session waits for you". Its `notify` program is
+# called only on `agent-turn-complete`, every turn — the noise the runtime
+# `Stop` hook was rejected for — and its `PermissionRequest` hook fires the
+# moment it asks for approval, with no sign of whether anyone is there, so
+# every approval would reach the phone while the person sits at the screen.
+adapter_codex_notify_hook_hint() {
+  printf 'notify hook: Codex has no event for a session that waits for you\n'
+  return 2
+}
+
 # adapter_codex_session_id
 # Exits 2: not answered for this runtime.
 #

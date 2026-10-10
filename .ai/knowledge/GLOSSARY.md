@@ -117,6 +117,14 @@ semantic lifecycle has priority over TTL (domains/housekeeping). Informal synony
 start. The framework owns the script and only *offers* the line that enables it; it never
 edits the Runtime's own config file (ADR-0024). Codex has no equivalent.
 
+## Notify Hook
+
+`.ai/scripts/jig-notify-hook <permission|input>`: the script a Runtime's notification hook
+calls when a session waits for the person. With `notify.interactive: true` it sends the same
+Telegram message as an autopilot stop. The person connects it in their own settings; Jig only
+offers the lines (ADR-0024, adr-20261010-a-waiting-session-reaches-telegram). Codex has no
+equivalent.
+
 ## Domain Pack
 
 The three documents a domain may keep under `.ai/knowledge/domains/<domain>/`:
