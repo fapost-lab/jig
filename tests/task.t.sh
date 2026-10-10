@@ -6799,3 +6799,170 @@ test_route_evidence_ignores_the_persons_depth() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "review (no review receipt"
 }
+
+# --- tracker issue (adr-20261010-a-task-carries-its-tracker-issue) -------------
+
+# issue_cfg <pattern> — set the project's task.issue_pattern, written exactly
+# as given (quotes included).
+issue_cfg() {
+  printf 'task.issue_pattern: %s\n' "$1" >> .ai/config.yaml
+}
+
+# issue_of <id> — the task's recorded issue, or nothing.
+issue_of() {
+  sed -n 's/^issue: //p' ".ai/workspace/tasks/$1/state"
+}
+
+test_task_new_reads_no_issue_without_a_pattern() {
+  task_setup
+  jig task new PROJ-12-fix-login >/dev/null
+  jig task new release-0-25-1 >/dev/null
+  assert_eq "" "$(issue_of PROJ-12-fix-login)"
+  assert_eq "" "$(issue_of release-0-25-1)"
+}
+
+test_task_new_reads_an_alphanumeric_issue_from_the_start_of_the_id() {
+  task_setup
+  issue_cfg "'[A-Z][A-Z0-9]*-[0-9]+'"
+  jig task new SRD-2455-fix-login >/dev/null
+  jig task new SRD-77 >/dev/null
+  jig task new SRD-2455x-fix >/dev/null
+  jig task new release-0-25-1 >/dev/null
+  jig task new fix-SRD-1 >/dev/null
+  assert_eq "SRD-2455" "$(issue_of SRD-2455-fix-login)"
+  assert_eq "SRD-77" "$(issue_of SRD-77)"
+  assert_eq "" "$(issue_of SRD-2455x-fix)"
+  assert_eq "" "$(issue_of release-0-25-1)"
+  assert_eq "" "$(issue_of fix-SRD-1)"
+}
+
+test_task_new_reads_a_numeric_issue() {
+  task_setup
+  issue_cfg '[0-9]+'
+  jig task new 123-fix-login >/dev/null
+  jig task new 45_cache >/dev/null
+  jig task new release-0-25-1 >/dev/null
+  jig task new 123abc-fix >/dev/null
+  assert_eq "123" "$(issue_of 123-fix-login)"
+  assert_eq "45" "$(issue_of 45_cache)"
+  assert_eq "" "$(issue_of release-0-25-1)"
+  assert_eq "" "$(issue_of 123abc-fix)"
+}
+
+test_task_new_with_an_unreadable_pattern_files_the_task_without_an_issue() {
+  task_setup
+  issue_cfg '[0-9'
+  run jig task new 123-fix
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task.issue_pattern is not a pattern awk can read"
+  assert_file .ai/workspace/tasks/123-fix/state
+  assert_eq "" "$(issue_of 123-fix)"
+}
+
+test_task_set_refuses_the_issue() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 issue PROJ-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "key is not writable: issue"
+}
+
+test_task_list_and_show_name_the_issue() {
+  task_setup
+  issue_cfg '[A-Z]+-[0-9]+'
+  jig task new SRD-9-fix --class T1 >/dev/null
+  jig task new other --class T1 >/dev/null
+  run jig task list
+  assert_contains "$OUT" "SRD-9-fix class=T1 status=active issue=SRD-9 not-started"
+  assert_contains "$OUT" "other class=T1 status=active not-started"
+  run jig task show SRD-9-fix
+  assert_contains "$OUT" "issue: SRD-9"
+}
+
+# issue_ship_setup <pattern> <id> — ship_setup for a task named after an
+# issue, with the pattern committed on the base branch first, so that it is
+# fixture and not an unstaged change the ship refuses to go past.
+issue_ship_setup() {
+  task_setup_clean
+  issue_cfg "$1"
+  git add .ai/config.yaml
+  git commit -q -m "fixture: tracker issues"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new "$2" >/dev/null
+  jig task start "$2" >/dev/null
+  printf 'Fix the login form\n\nBody line one.\n' > msg.txt
+  task_route_done "$2"
+  jig task set "$2" knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+test_task_ship_puts_the_issue_before_the_commit_subject() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-2455-fix-login
+  ship_cfg_local agent.git commit
+  run jig task ship SRD-2455-fix-login --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: issue SRD-2455 added to the message's first line"
+  assert_eq "SRD-2455 Fix the login form" "$(git log -1 --format=%s)"
+  assert_eq "Body line one." "$(git log -1 --format=%b | sed '/^$/d')"
+  # The task's own message file is left as its author wrote it.
+  assert_eq "Fix the login form" "$(head -n 1 msg.txt)"
+}
+
+test_task_ship_puts_a_numeric_issue_after_the_commit_subject() {
+  issue_ship_setup '[0-9]+' 123-fix-login
+  ship_cfg_local agent.git commit
+  run jig task ship 123-fix-login --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Fix the login form (#123)" "$(git log -1 --format=%s)"
+}
+
+test_task_ship_does_not_repeat_an_issue_the_subject_names() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-2455-fix-login
+  ship_cfg_local agent.git commit
+  printf 'Fix the login form for SRD-2455\n\nBody.\n' > msg.txt
+  run jig task ship SRD-2455-fix-login --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "added to the message"
+  assert_eq "Fix the login form for SRD-2455" "$(git log -1 --format=%s)"
+}
+
+test_task_ship_counts_only_the_issue_as_a_whole_word() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-245-fix
+  ship_cfg_local agent.git commit
+  printf 'Follow up on SRD-2450\n' > msg.txt
+  run jig task ship SRD-245-fix --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "SRD-245 Follow up on SRD-2450" "$(git log -1 --format=%s)"
+}
+
+test_task_ship_names_the_issue_in_the_pull_request_title() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-2455-fix-login
+  ship_cfg forge github
+  git add .ai/config.yaml
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  run jig task ship SRD-2455-fix-login --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--title\nSRD-2455 Fix the login form')"
+}
+
+test_task_ship_names_the_issue_in_a_given_title_once() {
+  issue_ship_setup '[0-9]+' 77-fix
+  ship_cfg forge github
+  git add .ai/config.yaml
+  ship_stub_gh ""
+  ship_cfg_local agent.git pr
+  run jig task ship 77-fix --message-file msg.txt --title "Fix it"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--title\nFix it (#77)')"
+}
+
+test_task_ship_without_an_issue_keeps_the_subject() {
+  issue_ship_setup '[A-Z]+-[0-9]+' fix-login
+  ship_cfg_local agent.git commit
+  run jig task ship fix-login --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Fix the login form" "$(git log -1 --format=%s)"
+}

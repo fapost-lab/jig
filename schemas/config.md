@@ -16,6 +16,7 @@ Absent keys take the default. Paths are not configurable.
 | `worktree.carry` | `[]` | | extra paths this project needs copied into a new worktree, beyond what the active profiles already declare (`vendor`, `node_modules`, `.env`) |
 | `worktree.share` | `[]` | | directories a new worktree shares with this checkout rather than copies — each given as a real directory whose entries link to this checkout's, for separate repositories under edit such as `packages/` |
 | `forge` | `auto` | | `auto`, `github`, `gitlab`, `none` |
+| `task.issue_pattern` | - | | the tracker issue at the start of a task id, as an extended regular expression awk reads (one pair of surrounding quotes is removed): `[A-Z][A-Z0-9]*-[0-9]+` for YouTrack, Jira or Linear, `[0-9]+` for GitHub or GitLab issues. Anchored at the id's first character, it counts only when its longest match ends at the end of the id or before `-`, `_` or `.`. `jig task new` writes the match to the task's `issue`, and `jig task ship` names it in the commit's first line and the pull request title. Unset, no issue is read from any id (adr-20261010-a-task-carries-its-tracker-issue) |
 | `housekeeping.cadence` | `1d` | yes | session hook runs housekeeping when the last run is older |
 | `housekeeping.fetch` | `true` | yes | allow `git fetch` during housekeeping |
 | `housekeeping.trash_ttl` | `7d` | yes | trash entries older than this are deleted |
