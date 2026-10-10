@@ -14,11 +14,16 @@ Planned with the owner on 2026-10-10 (jig-release); the owner approved this docu
    task id by a project-level pattern (alphanumeric `PROJ-123` or numeric `123`), stored as a
    field of its own, shown by `task show`/`status`, and put into the commit's first line and the
    pull request title by `task ship`. No pattern configured, no issue read.
-4. `release-2026-10-10-notes` (T2) — the release notes, written against the merged pull
+4. `linked-sources-in-pr-body` (T2) — `jig task autopilot <id> report` and the pull request
+   body name the changed linked knowledge sources that wait for the person's review
+   (`jig-accept`), so a person sees it before the merge, not after `git pull`. Added by the owner
+   on 2026-10-10 after the plan was approved.
+5. `release-2026-10-10-notes` (T2) — the release notes, written against the merged pull
    requests' diffs; the version raised by the recorded level.
 
 Order: the first two make stops visible that today slow work down silently, the narrower and
-costlier one first; the tracker link is new capability and goes after them.
+costlier one first; the tracker link and the linked-sources block are new capability and go
+after them.
 
 ## What stays out
 
