@@ -152,8 +152,11 @@ you back to the main branch, brings it up to date and deletes the task's branch,
 remote. Shipped from the task's own worktree, the branch stays until housekeeping removes the
 worktree after the task is closed, and deletes the branch then (on the remote too, at `push` or
 higher). Only Jig's own branches are ever
-deleted, only with `git branch -d` — Git itself refuses one holding a commit that is nowhere else —
-and on the remote only while it is still at the commit that was merged. Set
+deleted, with `git branch -d` — Git itself refuses one holding a commit that is nowhere else. When
+another tool (an IDE's background `fetch --prune`) already removed the branch's remote copy and Git
+refuses, the branch still goes if its last commit is exactly the one the
+hosting site merged, or an earlier one; a branch with anything newer stays. On the remote a branch
+is deleted only while it is still at the commit that was merged. Set
 `git.delete_merged_branches: false` in `.ai/config.local.yaml` to keep every branch. Together with `autopilot.unattended: true` it is how a
 run finishes without you ([Autopilot: without stops](/autopilot#without-stops)).
 </Accordion>

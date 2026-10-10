@@ -935,17 +935,18 @@ _hk_branch_forge_merged() {
 # neither name, and is checked out in no worktree. It has landed when the
 # forge reports its pull request merged (_hk_branch_forge_merged) — the only
 # way a squash merge shows — or when its tip is an ancestor of the default
-# branch. The deleting is jig_branch_leave's, with git's own `-d` as the last
-# word; origin is touched only with a merged pull request whose head is
-# where origin's branch still is, and an origin/ ref whose branch origin no
-# longer has (one `ls-remote` per run) is dropped after the local branch.
+# branch. The deleting is jig_branch_leave's, with git's own `-d` first and,
+# past its refusal, only a tip inside the merged pull request's head; origin
+# is touched only with a merged pull request whose head is where origin's
+# branch still is, and an origin/ ref whose branch origin no longer has (one
+# `ls-remote` per run) is dropped after the local branch.
 #
 # Only in the clone's main checkout: a worktree borrows `tasks/`, finds no
 # workspace of its own, and would take every task's branch for an orphan.
 # Off with git.delete_merged_branches: false; nothing remote below agent.git
 # or autopilot.git push, without housekeeping.fetch, on a dry run, or without origin.
 _hk_branch_sweep() {
-  local dry="$1" keep="$2" lvl def_ref remote_ok=0 remote_rights=0 heads="" b tip sha landed have_local have_track rsha line
+  local dry="$1" keep="$2" lvl def_ref remote_ok=0 remote_rights=0 heads="" b tip sha merged landed have_local have_track rsha line
   cfg_bool git.delete_merged_branches true || return 0
   [ "$(jig_config_clone_root)" = "$JIG_PROJECT" ] || return 0
   def_ref=$(jig_base_ref "$_HK_DEFAULT_BASE")
@@ -1001,6 +1002,10 @@ _hk_branch_sweep() {
     if [ "$remote_ok" = 1 ]; then
       rsha=$(printf '%s\n' "$heads" | awk -v r="refs/heads/$b" '$2 == r { print $1; exit }')
     fi
+    # The merged head still vouches for the local branch when origin's copy
+    # is gone or moved: its upstream ref may be gone with it, and then `-d`
+    # alone refuses a squash-merged branch.
+    merged="$sha"
     if [ -z "$sha" ] || [ -z "$rsha" ] || [ "$sha" != "$rsha" ]; then
       sha=""
     fi
@@ -1013,7 +1018,7 @@ _hk_branch_sweep() {
         *": kept branch $b on origin"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=keep" ;;
         *": kept branch $b"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=keep" ;;
       esac
-    done < <(jig_branch_leave housekeeping "$b" "$sha")
+    done < <(jig_branch_leave housekeeping "$b" "$sha" "$merged")
     # A cache of a branch origin no longer has, dropped once the local branch
     # is gone (it was what `-d` compared that branch against).
     if [ "$remote_ok" = 1 ] && [ "$have_track" = 1 ] && [ -z "$rsha" ] \
