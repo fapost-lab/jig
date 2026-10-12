@@ -61,9 +61,9 @@ Autopilot does not relax any of them.
 
 ### Helpers on another model
 
-In Claude Code your agent can hand two stages to a helper on a model you choose: writing the code,
-and reviewing it. You choose in your own settings, `claude.implement_model` and
-`claude.review_model` ([Configuration](/configuration#let-the-agent-ask-you)),
+In Claude Code or Codex your agent can hand two stages to a helper on a model you choose: writing
+the code, and reviewing it. Set `claude.implement_model` and `claude.review_model` in Claude Code,
+or `codex.implement_model` and `codex.review_model` in Codex ([Configuration](/configuration#let-the-agent-ask-you)),
 or by answering the question `jig-setup` asks. A common choice is `sonnet` for both while your own
 session runs on Opus: the helpers cost less, and the agent that classified the task, wrote the
 design and answers for the result stays the one you picked.
@@ -74,10 +74,11 @@ checks still have to pass ([Working with tasks](/working-with-tasks#review-findi
 the design and its approval, the checks, deciding what the project should remember and shipping stay
 with your agent.
 
-Jig never checks the name you write: it is Claude Code's word, and Jig passes it on as written. With
+Jig never checks the name you write: the selected runtime interprets it. With
 nothing set — the default — nothing is handed over, and a review still goes to a second agent on
-your session's own model. In Codex the two settings are ignored. `jig task route <task-id>` prints a
-`delegate:` line for each stage that will be handed over.
+your session's own model. Codex uses its own two settings. A requested Codex helper that cannot start stops the stage
+instead of silently changing the chosen executor. `jig task route <task-id>` prints a
+`delegate:` line for each configured runtime and stage; the session follows its own runtime's lines.
 
 ## Where it stops
 

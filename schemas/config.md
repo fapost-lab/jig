@@ -37,6 +37,8 @@ Absent keys take the default. Paths are not configurable.
 | `run.path` | `auto` | only | a directory put first on `PATH` for the checks when they run on this machine — a host runtime that is not first there; `auto` takes the Laravel Herd detector's answer, nothing otherwise (adr-20261001-checks-run-where-the-project-runs) |
 | `claude.implement_model` | - | only | the model Claude Code hands the implement stage to, as a subagent: any value the runtime understands (`sonnet`, `opus`, `haiku`, a full model id), carried as written and never checked by Jig. Unset, nobody is handed the stage and the agent implements it itself; `jig task route <id>` prints a `delegate:` line when it is set (adr-20261005-jig-names-the-roles-not-the-models) |
 | `claude.review_model` | - | only | the same for every review stage of a route — review, a T4's independent review, a T3/T4's architecture review; unset, a review still runs in a fresh context where the skill asks for one, on the session's own model. No line for a route without a review (T0, T1) |
+| `codex.implement_model` | - | only | the model a Codex subagent uses for implementation; a configured but unavailable subagent stops the stage instead of silently replacing it |
+| `codex.review_model` | - | only | the model a fresh Codex subagent uses for every review stage; a configured but unavailable subagent stops the stage |
 | `notify.telegram.token` | - | only | the Telegram bot token autopilot messages are sent with; never printed (`********`), refused by `jig config set` — written into the file by hand. With it or the chat id missing nothing is sent (adr-20261009-autopilot-stops-reach-telegram) |
 | `notify.telegram.chat_id` | - | only | the chat the messages go to: digits (a group's start with `-`) or `@name` |
 | `notify.autopilot` | `true` | only | `false` stops autopilot runs' messages — a stop, an end, and an unattended run's approve and decide — while the token and chat id stay set |
@@ -77,7 +79,7 @@ Values `set` accepts, per key:
 | `git.worktree_root` | a path, unquoted |
 | `run.exec` | `auto`, `host`, or a command of plain words: no quote, `$`, backtick or backslash |
 | `run.path` | `auto` or the absolute path of a directory, unquoted; blanks inside it are kept |
-| `claude.implement_model`, `claude.review_model` | anything the file can hold: the value is the runtime's to understand, not Jig's |
+| `claude.implement_model`, `claude.review_model`, `codex.implement_model`, `codex.review_model` | anything the file can hold: the value is the runtime's to understand, not Jig's |
 | `notify.telegram.chat_id` | digits, with a leading `-` for a group, or `@name` |
 | `notify.telegram.token` | nothing: a token on a command line is kept by `ps`, the shell history and the agent's transcript, so `set` refuses it and you write the line yourself |
 

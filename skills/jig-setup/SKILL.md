@@ -98,16 +98,15 @@ their own file is answered by `config unset` too — say that the key then answe
    `docker exec -i -w <dir> <container>`) and show it; never ask the person to type one. A PHP on
    this machine that is not first on `PATH` and was not detected (Herd's is) goes to `run.path`,
    the folder that holds it.
-11. **Helpers** (`claude.implement_model`, `claude.review_model`) — only in Claude Code. Explain:
-    the agent can hand writing the code, and reviewing it, to a helper on another model; what the
-    helper does is still checked — review findings block, the checks must pass — and the agent
-    keeps the design, the decisions and shipping. One review setting covers every review,
-    architecture review included. Ask: "Should helpers do the coding and the reviews, and on
-    which model?" Options: no helpers (default — the agent does every stage itself); one model for
-    both; a different one for each. Write the name as the person gives it — `sonnet`, `opus`,
-    `haiku` or a full model id: Jig passes it to Claude Code unchanged and checks nothing.
-    Recommend no helpers to someone unsure why they would want them; `sonnet` for both to someone
-    whose session runs on Opus and who wants their limits to last.
+11. **Helpers** (`claude.*_model`, `codex.*_model`) — ask only about the runtime this
+    session uses. Explain that the agent can hand implementation and review to a helper
+    on a chosen model; Jig still checks findings, the review receipt and verification.
+    One review setting covers every review, including architecture review. Ask: "Should
+    helpers do the coding and reviews, and on which model?" Options: no helpers (default),
+    one model for both, or a different model for each. Write the name exactly as the person
+    gives it: Jig does not validate vendor model names. In Codex, if a chosen helper cannot
+    start, the stage stops and reports why. Recommend no helpers to someone unsure why
+    they would want them. Never set the other runtime's keys from this session.
 
 12. **Telegram** (`notify.telegram.*`). "Should Jig message your Telegram when an autopilot run
     stops, ends or chooses for you?" On a yes, explain where the two values come from: a bot made

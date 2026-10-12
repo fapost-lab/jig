@@ -5,8 +5,8 @@ description: Implement a Jig task — write the change against the project's rul
 
 # jig-implement — make the change
 
-When `jig task route <id>` prints `delegate: implement`, a helper on that model does this stage
-and follows this skill; you hand it over and check its report
+When `jig task route <id>` prints `delegate: implement` for this session's runtime, a helper
+on that model does this stage and follows this skill; you hand it over and check its report
 ([delegation](../jig-task/references/delegation.md)).
 
 ## 1. Know what binds you
