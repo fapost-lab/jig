@@ -2790,16 +2790,26 @@ _task_route_lean_note() {
   esac
 }
 
-# _task_route_delegates <class> — one `delegate: <stage> -> <model> (<key>)`
-# line per stage of <class>'s route that the person handed to a model, and
-# nothing when they set none. The model is the value of a local-only key,
+# _task_route_delegates <class> — `executor:` lines for a chosen runtime and
+# `delegate:` lines for a chosen in-runtime subagent model, only for stages
+# in <class>'s route. Empty settings print nothing. The model is local-only,
 # carried as it is written: Jig never interprets or validates it, and no gate
 # reads it — delegation changes who does a stage, never the route or its
 # records (adr-20261005-jig-names-the-roles-not-the-models). Review covers
 # every review stage of a route — review, independent review, architecture
 # review — so a class without one (T0, T1) gets no review line.
+# The output carries no paths through Git Bash on Windows; the agent owns
+# that boundary when it launches an external CLI.
 _task_route_delegates() {
-  local class="$1" model
+  local class="$1" model runtime
+  runtime=$(cfg executor.implement_runtime "")
+  if [ -n "$runtime" ]; then
+    printf 'executor: implement -> %s (executor.implement_runtime)\n' "$runtime"
+    model=$(cfg executor.implement_model "")
+    if [ -n "$model" ]; then
+      printf 'executor model: implement -> %s (executor.implement_model)\n' "$model"
+    fi
+  fi
   model=$(cfg claude.implement_model "")
   if [ -n "$model" ]; then
     printf 'delegate: implement -> %s (claude.implement_model)\n' "$model"
@@ -2812,6 +2822,14 @@ _task_route_delegates() {
     T2 | T3 | T4) ;;
     *) return 0 ;;
   esac
+  runtime=$(cfg executor.review_runtime "")
+  if [ -n "$runtime" ]; then
+    printf 'executor: review -> %s (executor.review_runtime)\n' "$runtime"
+    model=$(cfg executor.review_model "")
+    if [ -n "$model" ]; then
+      printf 'executor model: review -> %s (executor.review_model)\n' "$model"
+    fi
+  fi
   model=$(cfg claude.review_model "")
   if [ -n "$model" ]; then
     printf 'delegate: review -> %s (claude.review_model)\n' "$model"

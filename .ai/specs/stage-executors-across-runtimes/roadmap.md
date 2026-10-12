@@ -13,9 +13,9 @@ Goal: A Codex session can delegate implementation and review to a chosen Codex s
 
 Goal: A stage can run under a selected other runtime. Done when: a Claude Code session can hand a stage to Codex and a Codex session can hand one to Claude Code, and the coordinator verifies task files before continuing.
 
-- [ ] A selected external runtime can implement a task stage — launch from the task worktree with bounded permissions, preserve the diff and workspace, and report missing CLI/auth, interruption, or partial output.
-- [ ] A selected external runtime can review independently — give it a fresh context and explicit review scope, then check the findings ledger and current receipt; require a new review after implementation changes.
-- [ ] Cross-runtime delegation works on supported hosts — verify both launch directions, Windows/Git Bash behavior, sandbox and approval settings, and the no-configuration path.
+- [ ] `cross-runtime-stage-handoff` — A selected external runtime can implement a task stage — launch from the task worktree with bounded permissions, preserve the diff and workspace, and report missing CLI/auth, interruption, or partial output.
+- [ ] `cross-runtime-stage-handoff` — A selected external runtime can review independently — give it a fresh context and explicit review scope, then check the findings ledger and current receipt; require a new review after implementation changes.
+- [ ] `cross-runtime-stage-handoff` — Cross-runtime delegation works on supported hosts — verify both launch directions, Windows/Git Bash behavior, sandbox and approval settings, and the no-configuration path.
 
 ## Phase 3 — Several agents under one route
 
@@ -26,13 +26,10 @@ Goal: Jig can coordinate multiple chosen agents without losing task ownership or
 
 ## Waves
 
-Wave 2 follows wave 1 because failure behavior must exercise the actual Codex handoff. Wave 3 follows phase 1 because it extends the established executor contract. Wave 4 follows wave 3 because review needs the external launch path and file checks. Wave 5 follows wave 4 because host-level verification needs both external roles.
+Phase 2's three items share one T4 task because its executor and permission boundary must be reviewed as one change. Its internal delivery order is implementation, independent review, then host checks. This follows phase 1's Codex subagent contract.
 
-1. Codex model choice works for implementation and review
-2. A failed Codex delegation has an explicit outcome
-3. A selected external runtime can implement a task stage
-4. A selected external runtime can review independently
-5. Cross-runtime delegation works on supported hosts
+1. Codex model choice works for implementation and review; A failed Codex delegation has an explicit outcome
+2. A selected external runtime can implement a task stage; A selected external runtime can review independently; Cross-runtime delegation works on supported hosts
 
 <!--
 Rules (jig-idea §8):
