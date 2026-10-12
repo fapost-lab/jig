@@ -8,6 +8,27 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.26.0 — 2026-10-10
+
+More waits reach your Telegram, a task can carry its tracker issue, and a pull request names the
+linked rules a task edited. The two new keys are off until you set them; phase-run stops and the
+linked-sources block need no setting.
+
+- **A phase run's stop reaches Telegram.** New `jig spec stop <spec> --phase <n> --reason <text>`,
+  which a phase run's coordinator runs when a wave waits for you; it uses your existing Telegram setup.
+  See [Messages in Telegram](/autopilot#messages-in-telegram).
+- **An ordinary session waiting for you can message you.** New local key `notify.interactive` and
+  `.ai/scripts/jig-notify-hook` for Claude Code's `Notification` hook; with the key on, `jig doctor`
+  prints the lines for your `.claude/settings.local.json`. Codex is not supported; in the desktop app
+  and IDE a permission prompt sends after about 6 s even while you are there; `$CLAUDE_PROJECT_DIR` in
+  a real hook is unmeasured. See [When an ordinary session waits for you](/autopilot#when-an-ordinary-session-waits-for-you).
+- **A task carries its tracker issue.** New project key `task.issue_pattern` (`[A-Z][A-Z0-9]*-[0-9]+`,
+  or `[0-9]+`) reads the issue from the start of a task id; `jig task ship` puts it into the commit's
+  first line and the pull request title. See [Tasks from a tracker](/working-with-tasks#tasks-from-a-tracker).
+- **The pull request names the linked sources a task edited.** The autopilot report and its pull
+  request carry a **Changed linked sources — need your review** block, also printed by
+  `jig knowledge changed --to-review` (a new flag); it stops nothing. See [The report](/autopilot#the-report).
+
 ## 0.25.1 — 2026-10-10
 
 - **A merged branch whose remote copy someone else removed is deleted too.** When the hosting site
