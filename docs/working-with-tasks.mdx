@@ -33,6 +33,26 @@ You do not need commands; these are the kinds of things you say:
 | *"Drop the caching task."* | Abandons it. |
 | *"Close what's merged."* | Asks you about each merged task, then closes the ones you confirm. |
 
+## Tasks from a tracker
+
+If your project keeps its tasks in a tracker — YouTrack, Jira, Linear, GitHub or GitLab issues —
+start a task's id with the issue it belongs to: `SRD-2455-fix-login`, or `123-fix-login`. Tell Jig
+what an issue looks like in `.ai/config.yaml`:
+
+```yaml .ai/config.yaml
+task.issue_pattern: '[A-Z][A-Z0-9]*-[0-9]+'   # SRD-2455; use '[0-9]+' for GitHub or GitLab issues
+```
+
+Jig then reads the issue from the start of each new task's id and keeps it with the task:
+`jig task list` and `jig status` show `issue=SRD-2455`, and `jig task show` its `issue:` line. When the agent ships the
+task, the issue goes into the commit's first line and the pull request's title — `SRD-2455 Fix the
+login form`, or `Fix the login form (#123)` for a numbered issue — which is where a tracker's Git
+integration looks for it. A title that already names the issue is left as it is.
+
+Without the setting no issue is read from any id, so a task called `release-0-25-1` never becomes
+issue `release-0`. A task filed before you added it keeps no issue. To have the agent create the
+issue first and name the task after it, write that down as a rule in your project's `AGENTS.md`.
+
 ## What to do when the agent needs you
 
 | The agent says | Your next step |

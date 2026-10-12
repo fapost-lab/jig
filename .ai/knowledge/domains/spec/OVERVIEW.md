@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
   - "skills/jig-release/**"
-reviewed_at: 2026-09-30
+reviewed_at: 2026-10-10
 ---
 # Spec
 
@@ -45,6 +45,9 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
 - The phase plan (`jig spec plan <id> --phase <n>`): each wave of a phase with its items, their tasks
   and states, what earlier waves still hold, and which tasks may start under the strict-wave rule a
   phase run follows. The waves grammar and the matching rule are in `schemas/spec.md`.
+- A phase run's stop (`jig spec stop <id> --phase <n> --reason`): the coordinator's record of a
+  wave waiting for the person or a run ended unattended, sent to Telegram through `notify.sh`
+  (adr-20261010-a-phase-run-stop-is-sent-by-spec-stop). It writes nothing under `.ai/specs/`.
 - The link between a task and its spec: the `Spec:` line in the task's `task.md`, written for a
   task filed earlier by `jig spec link` (never for a started one), checking its roadmap items at
   the knowledge decision (`jig spec done`), and taking a spec out with its links

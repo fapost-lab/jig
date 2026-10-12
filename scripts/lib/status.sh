@@ -269,6 +269,8 @@ $rel"
     _status_rec "$rec"
     found=1
     line="task $_ST_ID class=$_ST_CLASS status=$_ST_STATUS"
+    # Where `jig task list` shows it (adr-20261010-a-task-carries-its-tracker-issue).
+    [ -z "$_ST_ISSUE" ] || line="$line issue=$_ST_ISSUE"
     # A lighter route than the class's own is worth a word; `full`, the
     # default, adds none (adr-20261002-route-depth-is-a-personal-choice).
     [ "$_ST_DEPTH" != lean ] || line="$line depth=lean"
@@ -345,6 +347,7 @@ EOF
   fi
 
   _status_session_hook
+  _status_notify_hook
   _status_instructions
 }
 
@@ -578,6 +581,8 @@ _status_terminal() {
         ;;
       "session hook ("*"): installed") _STT_HOOKS+=("${l%: installed}") ;;
       "session hook ("*) _status_need warn "$l" ;;
+      "notify hook ("*"): connected") _STT_HOOKS+=("${l%: connected}") ;;
+      "notify hook ("*) _status_need warn "$l" ;;
       "instructions ("*"): ok")
         t=${l#instructions (}
         _STT_INSTR+=("${t%%)*}")
@@ -1126,7 +1131,7 @@ _STATUS_US=$(printf '\037')
 # sed per key per task: the page is redrawn after every task command, and a
 # process per value made ten tasks cost seconds. One line per state file,
 # <task_id> <class> <status> <paused> <paused_reason> <branch> <base_branch>
-# <autopilot> <pr_url> <knowledge_consolidated> <route_depth> <class_lowered_from>, joined by \037; each value is
+# <autopilot> <pr_url> <knowledge_consolidated> <route_depth> <class_lowered_from> <issue>, joined by \037; each value is
 # what `sed -n 's/^<key>:[[:space:]]*//p' | head -n 1` gave, the first match.
 _status_task_rows() {
   local f
@@ -1138,10 +1143,10 @@ _status_task_rows() {
   awk '
     function out() {
       if (have)
-        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
+        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
           v["task_id"], v["class"], v["status"], v["paused"], v["paused_reason"],
           v["branch"], v["base_branch"], v["autopilot"], v["pr_url"], v["knowledge_consolidated"],
-          v["route_depth"], v["class_lowered_from"]
+          v["route_depth"], v["class_lowered_from"], v["issue"]
     }
     FNR == 1 { out(); split("", v); split("", seen); have = 1 }
     /^[^:]+:/ {
@@ -1162,7 +1167,7 @@ _status_task_rows() {
 # `page`, also the answers only the page shows: the gate of a T3/T4 design
 # (_task_gate_state) and the autopilot run (_task_autopilot_facts).
 _status_live_collect() {
-  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered
+  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered issue
   local wt wt_note receipt gate facts depth setting us="$_STATUS_US"
   _STATUS_FINISHED=0
   _STATUS_LIVE=""
@@ -1171,7 +1176,7 @@ _status_live_collect() {
   setting=$(_task_route_setting)
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc own_depth lowered <<EOF
+    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc own_depth lowered issue <<EOF
 $row
 EOF
     case "$status" in
@@ -1199,7 +1204,7 @@ EOF
     # person's route.depth, read once above.
     depth=$(_task_route_depth_of "$own_depth" "$setting")
     depth=${depth%%$'\t'*}
-    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$depth$us$lowered$us$facts
+    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$depth$us$lowered$us$issue$us$facts
 "
   done <<EOF
 $(_status_task_rows)
@@ -1212,9 +1217,11 @@ EOF
 # the last field because it is the one holding tabs. _ST_DEPTH is the task's
 # route depth (_task_route_depth): `full` or `lean`. _ST_LOWERED is the class
 # the task was lowered from (`class_lowered_from`), empty when it never was.
+# _ST_ISSUE is the task's tracker issue (`issue`), empty when it has none.
 _status_rec() {
   IFS="$_STATUS_US" read -r _ST_ID _ST_CLASS _ST_STATUS _ST_PAUSED _ST_REASON _ST_BRANCH _ST_BASE \
-    _ST_AUTOPILOT _ST_PR_URL _ST_KC _ST_WT _ST_WT_NOTE _ST_RECEIPT _ST_GATE _ST_DEPTH _ST_LOWERED _ST_APFACTS <<EOF
+    _ST_AUTOPILOT _ST_PR_URL _ST_KC _ST_WT _ST_WT_NOTE _ST_RECEIPT _ST_GATE _ST_DEPTH _ST_LOWERED _ST_ISSUE \
+    _ST_APFACTS <<EOF
 $1
 EOF
 }
@@ -2714,12 +2721,12 @@ _status_config_local() {
 # (jig_notify_failing, notify.sh): a wrong token or chat id, or a sandbox with
 # no network, would otherwise stay silent forever. A later success clears it.
 _status_notify() {
-  local at id why
-  IFS=$'\t' read -r at id why <<EOF
+  local at who why
+  IFS=$'\t' read -r at who why <<EOF
 $(jig_notify_failing)
 EOF
   [ -n "$at" ] || return 0
-  printf 'notify: Telegram messages are failing: %s (task %s, %s)\n' "$why" "$id" "$at"
+  printf 'notify: Telegram messages are failing: %s (%s, %s)\n' "$why" "$who" "$at"
 }
 
 # _status_agent_git — one line naming the review queue `agent.git`'s level
@@ -2794,6 +2801,37 @@ _status_session_hook() {
       printf 'session hook (%s): not installed\n' "$a"
     else
       printf 'session hook (%s): installed\n' "$a"
+    fi
+  done
+}
+
+# Whether the runtime's notification hook reaches .ai/scripts/jig-notify-hook,
+# printed only while `notify.interactive` is true: before that the hook would
+# send nothing anyway, and a "not connected" line the reader never asked for
+# is one they cannot clear (adr-20261010-a-waiting-session-reaches-telegram).
+# The same adapter lookup as _status_session_hook; exit 2 — Codex — prints
+# nothing.
+_status_notify_hook() {
+  local source a adir hint rc
+  [ "$(cfg notify.interactive false)" = true ] || return 0
+  source=$(manifest_source 2>/dev/null) || return 0
+  [ -n "$source" ] || return 0
+  [ -d "$source/adapters" ] || return 0
+  # shellcheck source=lib/profiles.sh
+  . "$JIG_LIB/profiles.sh"
+  for a in $(cfg_list adapters "claude codex"); do
+    adir=$(adapters_dir "$source/adapters" "$a") || continue
+    [ -f "$adir/adapter.sh" ] || continue
+    # shellcheck disable=SC1090
+    . "$adir/adapter.sh"
+    command -v "adapter_${a}_notify_hook_hint" >/dev/null 2>&1 || continue
+    rc=0
+    hint=$("adapter_${a}_notify_hook_hint" "$JIG_PROJECT") || rc=$?
+    [ "$rc" = 2 ] && continue
+    if [ -n "$hint" ]; then
+      printf 'notify hook (%s): not connected (jig doctor shows the snippet)\n' "$a"
+    else
+      printf 'notify hook (%s): connected\n' "$a"
     fi
   done
 }

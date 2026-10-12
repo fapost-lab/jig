@@ -297,3 +297,46 @@ test_template_agents_md_carries_a_well_formed_section() {
   assert_eq ok "$(jig_section_state "$JIG_HOME/templates/AGENTS.md")"
   assert_contains "$(jig_section_read "$JIG_HOME/templates/AGENTS.md")" "jig-task"
 }
+
+# The notification hook (adr-20261010-a-waiting-session-reaches-telegram):
+# the claude hint prints a snippet for the person's own settings file, spelled
+# with $CLAUDE_PROJECT_DIR, says how noisy it is, and goes quiet once either
+# settings file names the script; codex has nothing to connect.
+test_adapter_claude_notify_hook_hint_prints_the_snippet() {
+  fixture_repo
+  adapters_source claude
+  run adapter_claude_notify_hook_hint "$PWD"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".claude/settings.local.json"
+  assert_contains "$OUT" '"matcher": "permission_prompt"'
+  assert_contains "$OUT" '"matcher": "idle_prompt|elicitation_dialog|elicitation_url_dialog"'
+  # shellcheck disable=SC2016  # the snippet names the variable; it is not expanded here
+  assert_contains "$OUT" 'bash \"$CLAUDE_PROJECT_DIR\"/.ai/scripts/jig-notify-hook permission'
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'bash \"$CLAUDE_PROJECT_DIR\"/.ai/scripts/jig-notify-hook input'
+  assert_contains "$OUT" '"async": true'
+  assert_contains "$OUT" "after about 6 s even while you are there"
+  assert_no_file .claude/settings.local.json "the hint wrote a file"
+}
+
+test_adapter_claude_notify_hook_hint_is_quiet_once_connected() {
+  fixture_repo
+  adapters_source claude
+  mkdir -p .claude
+  printf '{ "hooks": { "Notification": [ { "hooks": [ { "type": "command", "command": "bash x/.ai/scripts/jig-notify-hook input" } ] } ] } }\n' \
+    > .claude/settings.local.json
+  run adapter_claude_notify_hook_hint "$PWD"
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+  mv .claude/settings.local.json .claude/settings.json
+  run adapter_claude_notify_hook_hint "$PWD"
+  assert_eq "" "$OUT"
+}
+
+test_adapter_codex_notify_hook_hint_is_not_applicable() {
+  fixture_repo
+  adapters_source codex
+  run adapter_codex_notify_hook_hint "$PWD"
+  assert_eq 2 "$RC"
+  assert_contains "$OUT" "Codex has no event for a session that waits for you"
+}

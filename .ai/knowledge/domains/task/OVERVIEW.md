@@ -13,7 +13,7 @@ paths:
   - schemas/state.md
   - templates/task.md
   - scripts/lib/notify.sh
-reviewed_at: 2026-10-09
+reviewed_at: 2026-10-10
 ---
 # Task
 
@@ -270,4 +270,23 @@ undo by accident: the sender records its outcome in the task's `notify` file, ne
 because the journal is written by copy and `mv` with no lock and a second writer loses a line; and
 nothing it does may change the command's output or exit status — `repair`'s exit 3 included. The
 token's value is printed by nothing: a new reader of a local value goes through `_cfg_secret_key`.
+A phase run's coordinator sends through the same sender with `jig spec stop`, which has no journal
+and keeps its outcome in `.ai/workspace/specs/<id>/notify`; `jig_notify_failing` reads both kinds
+and names its owner `task <id>` or `spec <id>` (adr-20261010-a-phase-run-stop-is-sent-by-spec-stop).
+A session waiting for the person sends through it too, from `.ai/scripts/jig-notify-hook`, behind
+`notify.interactive` (adr-20261010-a-waiting-session-reaches-telegram). It writes the task's
+`notify` file as a second writer (event `wait`, atomic, the last one wins), or without a task the
+checkout's `.ai/runtime/notify`, which `jig_notify_failing` reads as `a waiting session`. That hook
+never goes through the dispatcher, because a dispatcher run would record the checkout as busy.
 
+
+**`autopilot report` asks the knowledge domain for one block, as a process.** Its
+"Changed linked sources — need your review" block is what `jig knowledge changed --base <base_commit>
+--to-review` prints, run in the checkout that has the task's branch — this one or the task's worktree,
+since `knowledge` takes the project from the directory it runs in. That block is `km_changed`'s
+`source of` lines minus stubs whose source `km_source_states` calls `ok` or that are retired, so the
+wording of those lines is a contract with it: reword them and the block silently empties. A branch
+checked out nowhere in the clone is said (`not checked`), never left out, because a missing block
+reads as "nothing changed". Nothing in it stops a run, a ship or a merge: the person reads it in the
+pull request and decides in `jig-accept`, and a manual ship pastes the same command's output
+(`jig-consolidate` §5).

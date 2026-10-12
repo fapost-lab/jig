@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -2456,6 +2456,56 @@ test_spec_plan_argument_errors() {
   run jig spec plan alpha --phase 7
   assert_eq 1 "$RC"
   assert_contains "$OUT" "spec plan: .ai/specs/alpha/roadmap.md has no Phase 7"
+}
+
+# `jig spec stop`'s refusals; what it sends is tests/notify.t.sh's.
+test_spec_stop_argument_errors() {
+  fixture_jig_repo
+  plan_roadmap | plan_spec alpha
+
+  run jig spec stop
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: missing spec id"
+  run jig spec stop alpha --reason 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: missing --phase <n>"
+  run jig spec stop alpha --phase
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: --phase requires a value"
+  run jig spec stop alpha --phase one --reason 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: --phase takes a phase number: one"
+  run jig spec stop alpha --phase 1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: --reason is required"
+  run jig spec stop alpha --phase 1 --reason
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: --reason requires a value"
+  run jig spec stop alpha --phase 1 --reason ''
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: --reason must not be empty"
+  run jig spec stop alpha --phase 1 --reason "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: --reason must be a single line with no tab"
+  run jig spec stop alpha --phase 1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: unknown argument: --bogus"
+  run jig spec stop alpha beta --phase 1 --reason 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: unexpected argument: beta"
+  run jig spec stop .bad --phase 1 --reason 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: invalid spec id: .bad"
+  run jig spec stop nope --phase 1 --reason 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: no such spec in this checkout: .ai/specs/nope"
+  run jig spec stop alpha --phase 7 --reason 'x'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec stop: .ai/specs/alpha/roadmap.md has no Phase 7"
+  # Without Telegram set up the stop is still taken, and says so.
+  run jig spec stop alpha --phase 01 --reason 'Wave 1 waits for you'
+  assert_eq 0 "$RC"
+  assert_eq "spec stop: alpha phase 1" "$OUT"
 }
 
 test_spec_plan_refuses_a_roadmap_without_waves() {

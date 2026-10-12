@@ -120,6 +120,15 @@ their own file is answered by `config unset` too — say that the key then answe
     this session's sandbox keeps the agent off `api.telegram.org`, and autopilot's messages will
     not arrive either until it is allowed. Not part of the dry run below.
 
+13. **Messages from ordinary sessions** (`notify.interactive`), only after a yes to 12. "Should it
+    also message you when an ordinary session waits for your permission or answer?" Default no:
+    it is for walking away from the screen. Say that in the desktop app and the IDE a permission
+    prompt messages them after about six seconds even while they are there. On a yes, the value
+    goes into the dry run, and the hook goes into their own `.claude/settings.local.json`: show
+    the lines `.ai/scripts/jig doctor` prints for `notify hook (claude)` and the file as it would
+    be, and write it only after their yes — Jig itself never edits that file. Codex has no such
+    hook; say so instead.
+
 Ask about no other key. If `jig config set` refuses a key as not local, this version of Jig
 does not have it: drop the question.
 

@@ -20,7 +20,7 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge reviewed <id> [--date YYYY-MM-DD]
        jig knowledge sources [--diff <id>]
        jig knowledge adr-convention
-       jig knowledge changed --base <ref> | --task <id>"
+       jig knowledge changed --base <ref> | --task <id> [--to-review]"
 
 # Directory holding the project's knowledge; set once by cmd_knowledge so
 # every subcommand and the path builder below agree on the root.
@@ -1142,16 +1142,22 @@ km_doc_by_id() {
 # `--base` is required, following `task changes` (ADR-0022): where to count
 # from is a decision, not something a command may guess. `--task` supplies it
 # from the task's own fork point when that exists.
+#
+# `--to-review` prints only the linked sources that wait for a human, as the
+# block a pull request carries (km_changed_sources_block) — what `task
+# autopilot report` runs as a process and `jig-consolidate` pastes for a ship
+# outside autopilot.
 km_changed() {
   jig_require_init
-  local base="" task_id="" line status rel old_rel seen=""
+  local base="" task_id="" to_review=0 line status rel old_rel seen=""
   local created=0 modified=0 deleted=0 renamed=0
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) [ $# -ge 2 ] || jig_die "knowledge changed: --base requires a value"; base="$2"; shift 2 ;;
       --task) [ $# -ge 2 ] || jig_die "knowledge changed: --task requires a value"; task_id="$2"; shift 2 ;;
-      *) jig_die "usage: jig knowledge changed --base <ref> | --task <id>" ;;
+      --to-review) to_review=1; shift ;;
+      *) jig_die "usage: jig knowledge changed --base <ref> | --task <id> [--to-review]" ;;
     esac
   done
 
@@ -1164,8 +1170,12 @@ km_changed() {
     [ -n "$base" ] \
       || jig_die "knowledge changed: task $task_id has no base_commit; pass --base <ref>"
   fi
-  [ -n "$base" ] || jig_die "usage: jig knowledge changed --base <ref> | --task <id>"
+  [ -n "$base" ] || jig_die "usage: jig knowledge changed --base <ref> | --task <id> [--to-review]"
   base=$(jig_review_commit "$base" "knowledge changed")
+  if [ "$to_review" -eq 1 ]; then
+    km_changed_sources_block "$base"
+    return 0
+  fi
 
   local kdir="$JIG_AI_DIR/knowledge"
 
@@ -1288,6 +1298,55 @@ km_stub_sources() {
 km_source_note() {
   printf '%s\n' "$2" | awk -F '\t' -v s="$1" '$1 == s {
     printf "source of %s%s\n", $2, ($3 == "adr" ? ", a decision record" : ""); exit }'
+}
+
+# km_changed_sources_block <base> — `knowledge changed --to-review`: the
+# "Changed linked sources" block that `jig task autopilot <id> report` shows
+# and the skills copy into the pull request, so a human sees before the merge
+# that a file a stub links was edited and waits for them (`jig-accept`).
+# Nothing at all when no linked source changed since <base>, or when the
+# changes cannot be read: the block informs and never blocks.
+#
+# The edits are km_changed's `source of` lines, not a second diff. One line per
+# stub, since one file may be linked by several; a stub whose source is `ok`
+# in km_source_states was approved since the edit and needs nobody, and a
+# retired stub (rejected, superseded) asks nothing of anyone.
+km_changed_sources_block() {
+  local base="$1" edits states status src state doc id size added removed rest note out="" t
+  t=$(printf '\t')
+  edits=$(km_changed --base "$base" 2>/dev/null) || return 0
+  edits=$(printf '%s\n' "$edits" | awk -v t="$t" '/  \(source of / {
+    r = $0; sub(/^[a-z]+ +/, "", r); sub(/  \(source of .*$/, "", r); print $1 t r }')
+  [ -n "$edits" ] || return 0
+  states=$(km_source_states 2>/dev/null) || return 0
+  while IFS="$t" read -r status src; do
+    [ -n "$src" ] || continue
+    while IFS="$t" read -r state doc rest; do
+      [ "$rest" = "$src" ] || continue
+      case "$state" in changed | unrecorded | missing | proposed) ;; *) continue ;; esac
+      id=$(fm_get "$doc" id)
+      size=""
+      if [ "$status" = deleted ]; then
+        :
+      elif git -C "$JIG_PROJECT" ls-files --error-unmatch -- ":(literal)$src" >/dev/null 2>&1; then
+        added="" removed=""
+        IFS="$t" read -r added removed _ < <(git -C "$JIG_PROJECT" diff --numstat "$base" -- ":(literal)$src" 2>/dev/null)
+        case "$added" in '' | -) ;; *) size=", +$added -$removed" ;; esac
+      elif [ -f "$JIG_PROJECT/$src" ]; then
+        size=", +$(wc -l < "$JIG_PROJECT/$src" | tr -d ' ')"
+      fi
+      note=""
+      [ "$(fm_get "$doc" type)" != adr ] || note=", a decision record"
+      out="$out
+- $id: $src ($status$size$note) — jig knowledge sources --diff $id"
+    done <<EOF
+$states
+EOF
+  done <<EOF
+$edits
+EOF
+  [ -n "$out" ] || return 0
+  printf 'Changed linked sources — need your review (jig-accept):%s\n' "$out"
 }
 
 # km_adr_convention — where a project keeps its own decision records, and how it
