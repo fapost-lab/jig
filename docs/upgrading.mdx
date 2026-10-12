@@ -598,6 +598,11 @@ a cheaper model, answer the new question in `jig-setup`, or
 `jig config set claude.implement_model sonnet --local` (likewise `claude.review_model`). Read
 [Autopilot: helpers on another model](/autopilot#helpers-on-another-model) first.
 
+**Yours to choose: `codex.implement_model` and `codex.review_model`.** These local-only
+keys let a Codex session hand an entire stage to a subagent on the named model. They are
+unset by default. If Codex cannot start a helper you explicitly selected, it stops the
+stage and reports why. Existing `claude.*` values remain specific to Claude Code.
+
 **A link in a task workspace is checked wherever it leads.** If your `.ai/workspace` or
 `.ai/workspace/tasks` is a link you made yourself to a folder outside the repository and its worktrees,
 the commands that write into a task workspace now refuse it. The links `jig task start --worktree`

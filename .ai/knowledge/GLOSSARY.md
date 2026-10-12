@@ -260,10 +260,13 @@ orchestrator.
 ## Delegation
 
 Handing one stage of a task's route to a subagent on a model the person chose: `implement`, or
-`review` — every review stage of the route. The model is the value of a local-only key
-(`claude.implement_model`, `claude.review_model`), carried as an opaque string; `jig task route`
-prints a `delegate:` line for each one set, and with none set nothing is handed over. The route,
-its gates and its records do not change (adr-20261005-jig-names-the-roles-not-the-models).
+`review` — every review stage of the route. The model is the value of a local-only key for
+the session's runtime (`claude.implement_model`, `claude.review_model`,
+`codex.implement_model`, or `codex.review_model`), carried as an opaque string; `jig task
+route` prints a `delegate:` line for each one set. A session follows only its runtime's
+lines, and with none set nothing is handed over. The route, its gates and its records do
+not change (adr-20261005-jig-names-the-roles-not-the-models,
+adr-20261012-codex-subagents-use-runtime-models).
 Informal synonyms: helper, stage subagent.
 
 ## Status Page

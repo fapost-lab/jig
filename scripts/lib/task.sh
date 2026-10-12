@@ -2804,6 +2804,10 @@ _task_route_delegates() {
   if [ -n "$model" ]; then
     printf 'delegate: implement -> %s (claude.implement_model)\n' "$model"
   fi
+  model=$(cfg codex.implement_model "")
+  if [ -n "$model" ]; then
+    printf 'delegate: implement -> %s (codex.implement_model)\n' "$model"
+  fi
   case "$class" in
     T2 | T3 | T4) ;;
     *) return 0 ;;
@@ -2811,6 +2815,10 @@ _task_route_delegates() {
   model=$(cfg claude.review_model "")
   if [ -n "$model" ]; then
     printf 'delegate: review -> %s (claude.review_model)\n' "$model"
+  fi
+  model=$(cfg codex.review_model "")
+  if [ -n "$model" ]; then
+    printf 'delegate: review -> %s (codex.review_model)\n' "$model"
   fi
   return 0
 }

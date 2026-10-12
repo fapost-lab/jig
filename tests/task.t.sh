@@ -6452,6 +6452,40 @@ test_task_route_ignores_a_model_in_the_project_file() {
   assert_not_contains "$OUT" "delegate:"
 }
 
+test_task_route_names_codex_model_for_matching_stage() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  jig task new T-1 --class T1 >/dev/null
+  jig config set codex.implement_model gpt-6-luna codex.review_model gpt-6.1-sol --local >/dev/null
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "delegate: implement -> gpt-6-luna (codex.implement_model)"
+  assert_contains "$OUT" "delegate: review -> gpt-6.1-sol (codex.review_model)"
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "delegate: implement -> gpt-6-luna (codex.implement_model)"
+  assert_not_contains "$OUT" "delegate: review"
+}
+
+test_task_route_keeps_runtime_specific_model_lines_separate() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  jig config set claude.review_model opus codex.review_model gpt-6.1-sol --local >/dev/null
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "delegate: review -> opus (claude.review_model)"
+  assert_contains "$OUT" "delegate: review -> gpt-6.1-sol (codex.review_model)"
+}
+
+test_task_route_ignores_codex_model_in_project_file() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  printf 'codex.review_model: gpt-6.1-sol\n' >> .ai/config.yaml
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "delegate:"
+}
+
 test_task_set_route_depth_refuses_anything_but_full_or_lean() {
   task_setup
   jig task new T-1 --class T2 >/dev/null

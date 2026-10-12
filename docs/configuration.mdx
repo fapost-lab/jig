@@ -155,7 +155,8 @@ or a setting a later version dropped.
 
 Personal settings are left out of both: Jig never reads `agent.git`, `autopilot.git`, `agent.ci_timeout`,
 `autopilot.unattended`, `autopilot.parallel`, `route.depth`, `release.merge`, `run.exec`, `run.path`,
-`claude.implement_model` or `claude.review_model` from the project's file, so naming them there
+`claude.implement_model`, `claude.review_model`, `codex.implement_model`, or
+`codex.review_model` from the project's file, so naming them there
 would only invite you to write a line that does nothing.
 
 ## Personal settings — `.ai/config.local.yaml`
@@ -209,6 +210,12 @@ Some settings are a matter of personal taste rather than project policy. Put the
   Not set (the default), nothing is handed over and your agent does the stage itself. Local only:
   which model is worth its cost depends on your plan and your budget. See
   [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
+- `codex.implement_model`, `codex.review_model` — in Codex, the model of the subagent that
+  runs implementation or any review stage. Set either with `jig config set <key> <model> --local`.
+  Jig passes the model name to Codex without checking a model list. With no value, the current
+  session handles the stage as usual. If a chosen Codex subagent cannot start, the stage stops
+  with the reason; it is not silently completed by the current session. The reviewer starts
+  with a fresh context. Local only. See [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
 - `notify.telegram.token`, `notify.telegram.chat_id` — where an autopilot run's messages go: your
   Telegram bot's token and your chat id. Nothing is sent until both are set. Set both with
   `jig notify setup` in your own terminal, or write the token into the file yourself — `jig config
@@ -252,7 +259,7 @@ is already there and adds one that is not. It accepts only the personal settings
 only values Jig reads the way you mean them: whole days for `housekeeping.cadence`, a duration such
 as `7d` or `12h` for the other housekeeping settings, `true` or `false`, a level for `agent.git` and `autopilot.git`,
 whole minutes for `agent.ci_timeout`, a count from 1 to 16 for `autopilot.parallel`, `full` or
-`lean` for `route.depth`, any name for the two `claude.*_model` settings, `auto`,
+`lean` for `route.depth`, any name for the four `claude.*_model` and `codex.*_model` settings, `auto`,
 `host` or a command of plain words — no quotes, `$` or backslashes — for `run.exec`, `auto` or a
 folder for `run.path`. Anything else is refused and nothing is written, not even the
 other settings of the same command. `--dry-run` prints the file it would write. It refuses to work

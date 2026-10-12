@@ -871,6 +871,24 @@ test_config_model_keys_are_local_only_and_off_by_default() {
   assert_contains "$(printf '%s\n' "$OUT" | awk '$1 == "claude.review_model" { print $2, $3, $4 }')" "- local only"
 }
 
+test_config_codex_model_keys_are_opaque_local_only_and_off_by_default() {
+  fixture_jig_repo
+  _config_accepts codex.implement_model gpt-6-luna
+  _config_accepts codex.review_model 'a model nobody has heard of'
+  assert_file_contains .ai/config.local.yaml "^codex.implement_model: gpt-6-luna$"
+  assert_file_contains .ai/config.local.yaml "^codex.review_model: a model nobody has heard of$"
+  _config_rejects codex.review_model 'gpt#6'
+  _config_rejects codex.implement_model ''
+  printf 'codex.review_model: gpt-6.1-sol\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: codex.review_model in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+  run jig config keys
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(printf '%s\n' "$OUT" | awk '$1 == "codex.review_model" { print $2, $3, $4 }')" "- local only"
+}
+
 test_config_route_depth_is_local_only() {
   fixture_jig_repo
   printf 'route.depth: lean\n' >> .ai/config.yaml

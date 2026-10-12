@@ -37,7 +37,7 @@ Run each stage's skill in order, and mark it as you enter it:
 - **Review in a fresh context.** Hand review (and architecture review) to a subagent that has
   not seen the implementation, with the task id, the base and the skill to follow. It records
   findings and signs the receipt; you fix, set `fixed`, and send it back to re-review.
-- **A `delegate:` line hands a stage to a helper** on the model it names — implement, review or
+- **A `delegate:` line for this session's runtime hands a stage to a helper** on the model it names — implement, review or
   both ([delegation](../jig-task/references/delegation.md)). Without one, you implement, and the
   review subagent runs on the session's model.
 - **The full set is CI's under `verify.full_run: ci`.** Verify with `jig verify`, never with

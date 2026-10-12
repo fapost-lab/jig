@@ -1,39 +1,54 @@
 # Handing a stage to a helper
 
-Jig names the roles; the person names the model. `jig task route <id>` prints a line for each
-stage they chose to hand over:
+Jig names the stages. The person chooses a model in their local settings. `jig task route <id>`
+prints the choices for each configured runtime:
 
 ```
 delegate: implement -> sonnet (claude.implement_model)
-delegate: review -> sonnet (claude.review_model)
+delegate: review -> gpt-6.1-sol (codex.review_model)
 ```
 
-`review` covers every review of the route: review, a T4's independent review and a T3/T4's
-architecture review. The value is the person's, written for their runtime; Jig never reads it.
+Use only lines whose key names the **current session's runtime**. A Claude Code session reads
+`claude.*`; a Codex session reads `codex.*`. Lines for another runtime do not ask this session
+to launch it. Cross-runtime handoff is a separate capability. `review` covers every review in
+the route: T2 review, T4 independent review, and T3/T4 architecture review.
 
-## With a `delegate:` line, in Claude Code
+## With a matching line
 
-Start a subagent for that stage with the value as the `model` of the call, exactly as printed —
-never a name you prefer, never a corrected spelling. Give it the task id, the worktree, the base,
-the stage's skill to follow, and the design or plan it implements against. It runs the skill
-whole: it acknowledges what it read, enters findings and writes the receipt itself. You read its
-report, check the ledger with `jig task findings <id>`, and carry the route on.
+Start a new subagent for the entire stage, with the value exactly as printed as its model.
+Give it the task id, worktree path, base, stage skill, and approved design or plan. It runs
+the skill itself, reads the relevant knowledge, records findings and the review receipt, and
+returns a report. The coordinator checks `jig task findings <id>` and the receipt before
+continuing. Never treat the subagent's final message alone as stage evidence.
 
-- The implementer and the reviewer are never the same subagent, and the reviewer never sees the
-  implementer's conversation.
-- A fix after review goes back to an implementer; the re-review is a new reviewer.
-- If the runtime refuses the model, say so in one line and do the stage without it. Choosing
-  another model is the person's decision, not yours.
+The implementer and reviewer are different subagents. A reviewer starts with a fresh context
+that does not include the implementation conversation. A fix after review goes to the
+implementer; a re-review uses a new reviewer.
 
-## Without one
+### In Codex
 
-No line, another runtime, or no way to start a subagent (you are one): do the stage yourself, as
-before. Where a skill asks for a review in a fresh context, that still holds — a subagent on the
-session's own model, or, where none can start, the same session saying so in the pull request.
+Request a Codex subagent explicitly with the printed model and a fresh context. Put the task
+id, worktree, base, skill and necessary design or plan in its initial brief; do not rely on
+inherited conversation. Wait for its result and check Jig's files. Do not silently choose a
+replacement model. If subagent tools are disabled, the model is refused, or creation fails,
+**stop this stage and report the reason**. The current session must not complete a stage for
+which a Codex model was explicitly selected. In particular, it must not sign its own review
+as if an independent reviewer ran.
 
-## What is never handed over
+### In Claude Code
 
-Classification, discovery and design, the human gate, decisions nobody made, `jig verify` and
-the task's sign-off, consolidation and `jig task ship` stay with you. A helper changes who does a
-stage, never the route: findings still block, a receipt still goes stale, verify still asks for
-evidence. That is what makes a cheaper model safe to hand a stage to.
+Start a subagent with the printed model. If Claude Code refuses the model, say so in one line
+and follow the existing Claude fallback: do the stage without that model. Choosing a different
+model remains the person's decision.
+
+## Without a matching line
+
+The current session does the stage as before. Where the route asks for a review in a fresh
+context, use a subagent on the session's model; if none can start, say so in the pull request.
+No setting is required for a normal Jig route.
+
+## What stays with the coordinator
+
+Classification, discovery and design, the human gate, undecided choices, `jig verify` and
+the task's sign-off, consolidation and `jig task ship` stay with the coordinator. A helper
+changes who does a stage, not the route or its records.

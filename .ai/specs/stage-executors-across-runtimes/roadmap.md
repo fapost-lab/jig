@@ -6,8 +6,8 @@ Destination: A person can choose a stage executor at the session, same-runtime s
 
 Goal: A Codex session can delegate implementation and review to a chosen Codex subagent model. Done when: a T2 task can be implemented and reviewed by separate Codex contexts, with the configured model used or an explicit stop, and its findings and receipt pass the ordinary gates.
 
-- [ ] Codex model choice works for implementation and review — add local-only `codex.*` settings, route output, skill behavior, and focused tests for configured and unconfigured Codex sessions.
-- [ ] A failed Codex delegation has an explicit outcome — test disabled subagents, an unsupported model, missing fresh context, and the chosen fallback or stop rule without claiming a delegated review occurred.
+- [x] `codex-stage-delegation` — Codex model choice works for implementation and review — add local-only `codex.*` settings, route output, skill behavior, and focused tests for configured and unconfigured Codex sessions.
+- [x] `codex-stage-delegation` — A failed Codex delegation has an explicit outcome — test disabled subagents, an unsupported model, missing fresh context, and the chosen fallback or stop rule without claiming a delegated review occurred.
 
 ## Phase 2 — Cross-runtime stage handoff
 
