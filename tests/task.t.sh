@@ -6839,11 +6839,55 @@ test_route_resume_is_refused_in_an_unattended_run() {
   jig task autopilot T-1 repair --reason r1 >/dev/null
   jig task autopilot T-1 repair --reason r2 >/dev/null
   jig task autopilot T-1 repair --reason r3 >/dev/null
-  run jig task autopilot T-1 resume --answer "try again"
+  run jig task autopilot T-1 resume --answer "try again" --by human
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "is unattended, and nobody answers there"
+  assert_contains "$OUT" "exhausted its unattended repair limit"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+}
+
+test_route_unattended_manual_stop_resumes_only_on_human_answer_without_reset() {
+  route_task --class T1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 stop --reason "ask the owner" >/dev/null
+
+  run jig task autopilot T-1 resume --answer "use CI as evidence"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "needs an actual human answer and --by human"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+
+  run jig task autopilot T-1 resume --answer "use CI as evidence" --by human
+  assert_eq 0 "$RC"
+  assert_eq "autopilot: on" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 1"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tresume\thuman: use CI as evidence')"
+  run jig task autopilot T-1 repair --reason r2
+  assert_eq 0 "$RC"
+  assert_eq "repair 2/2" "$OUT"
+  run jig task autopilot T-1 repair --reason r3
+  assert_eq 3 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+}
+
+test_route_unattended_gate_after_human_answer_stays_agent_approved() {
+  route_task --class T3
+  printf '# Design\n' > .ai/workspace/tasks/T-1/design.md
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "owner answered in chat" >/dev/null
+
+  run jig task gate T-1 approved --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "resume --answer <text> --by human"
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  run jig task autopilot T-1 resume --answer "approve the narrower scope" --by human
+  assert_eq 0 "$RC"
+  run jig task gate T-1 approved --by agent
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: agent"
 }
 
 test_route_lowering_out_of_the_gate_is_refused_after_an_unattended_run_stopped() {
@@ -6900,8 +6944,7 @@ test_route_gate_in_an_unattended_clone_is_refused_before_a_run_starts() {
   route_design
   run jig task gate T-1 approved
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "its run is not on"
-  assert_contains "$OUT" "jig task autopilot T-1 start"
+  assert_contains "$OUT" "start its run and approve with --by agent"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
 }
 
@@ -6916,7 +6959,7 @@ test_route_gate_in_an_unattended_clone_is_refused_when_the_run_is_stopped() {
   assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
   run jig task gate T-1 approved
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "its run is not on"
+  assert_contains "$OUT" "exhausted its unattended repair limit; ship a draft"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
 }
 
