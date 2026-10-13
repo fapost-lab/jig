@@ -30,6 +30,8 @@ For T4 the review is independent: run it in a fresh context, or delegate it to a
 subagent that has not seen the implementation being defended. When `jig task route <id>`
 prints `delegate: review` for this session's runtime, that subagent runs on the model it names
 ([delegation](../jig-task/references/delegation.md)).
+An `executor: review` line selecting another runtime takes precedence: run the external
+review in a fresh process, then record its checked findings and receipt here.
 
 ## 2. Look for these, in order
 
