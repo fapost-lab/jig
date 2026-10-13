@@ -1028,6 +1028,7 @@ task_start() {
   _task_rewrite_state "$dir" branch "$branch"
   _task_rewrite_state "$dir" base_commit "$base_commit"
   _task_rewrite_state "$dir" base_branch "$base"
+  _task_executor_freeze "$id" "$dir"
   _task_base_hint "$id" "$base"
   _task_paused_hint "$id" ""
   printf '%s\n' "$branch"
@@ -1084,6 +1085,7 @@ _task_start_in_worktree() {
   _task_rewrite_state "$dir" branch "$branch"
   _task_rewrite_state "$dir" base_commit "$base_commit"
   _task_rewrite_state "$dir" base_branch "$base"
+  _task_executor_freeze "$id" "$dir"
 
   # Only now, with the task started and its workspace linked, is the state git
   # does not track carried over. Last, and never fatal: a tree missing a
@@ -1359,9 +1361,21 @@ task_set() {
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     route_depth) _cfg_route_depth "$value" || jig_die "task set: invalid route_depth: $value (full or lean)" ;;
+    executor_implement_runtime | executor_review_runtime | executor_implement_model | executor_review_model)
+      [ -z "$(task_state_get "$id" branch)" ] \
+        || jig_die "task set: executor choice is fixed when $id starts; stop this task and file a new one to change the stage executor"
+      if [ "$value" != inherit ]; then
+        local config_key problem
+        config_key="executor.${key#executor_}"
+        problem=$(jig_config_value_problem "$config_key" "$value") \
+          || jig_die "task set: invalid $key: $problem"
+      fi
+      ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
-      | route_evidence | class_lowered_from | class_lowered_reason)
+      | route_evidence | class_lowered_from | class_lowered_reason \
+      | executor_implement_runtime_source | executor_review_runtime_source \
+      | executor_implement_model_source | executor_review_model_source)
       jig_die "task set: key is not writable: $key" ;;
     *) jig_die "task set: unknown key: $key" ;;
   esac
@@ -1441,7 +1455,11 @@ task_set() {
   fi
   [ "$has_reason" -eq 0 ] || jig_die "task set: --reason is only for lowering a class"
 
-  _task_rewrite_state "$dir" "$key" "$value"
+  if [ "$value" = inherit ]; then
+    _task_rewrite_state_remove "$dir" "$key"
+  else
+    _task_rewrite_state "$dir" "$key" "$value"
+  fi
 }
 
 # _task_nobody_answers <id> — exit 0 when no human answers for <id>: this
@@ -2790,7 +2808,26 @@ _task_route_lean_note() {
   esac
 }
 
-# _task_route_delegates <class> — `executor:` lines for a chosen runtime and
+# _task_executor_freeze <id> <dir> — snapshot each effective executor field at
+# task start, including an empty value. The source marker distinguishes an
+# empty frozen choice from a pre-start task that still inherits local config.
+# A changed clone-local setting cannot redirect a task already in flight.
+_task_executor_freeze() {
+  local id="$1" dir="$2" key value source
+  for key in implement_runtime review_runtime implement_model review_model; do
+    value=$(task_state_get "$id" "executor_$key")
+    source=task
+    if [ -z "$value" ]; then
+      value=$(cfg "executor.$key" "")
+      source='local config'
+      [ -n "$value" ] || source=default
+    fi
+    _task_rewrite_state "$dir" "executor_$key" "$value"
+    _task_rewrite_state "$dir" "executor_${key}_source" "$source"
+  done
+}
+
+# _task_route_delegates <id> <class> — `executor:` lines for a chosen runtime and
 # `delegate:` lines for a chosen in-runtime subagent model, only for stages
 # in <class>'s route. Empty settings print nothing. The model is local-only,
 # carried as it is written: Jig never interprets or validates it, and no gate
@@ -2801,13 +2838,27 @@ _task_route_lean_note() {
 # The output carries no paths through Git Bash on Windows; the agent owns
 # that boundary when it launches an external CLI.
 _task_route_delegates() {
-  local class="$1" model runtime
-  runtime=$(cfg executor.implement_runtime "")
+  local id="$1" class="$2" model runtime source
+  runtime=$(task_state_get "$id" executor_implement_runtime)
+  source=$(task_state_get "$id" executor_implement_runtime_source)
+  if [ -z "$source" ]; then
+    source=task
+  fi
+  if [ -z "$runtime" ] && [ "$source" = task ]; then
+    runtime=$(cfg executor.implement_runtime "")
+    source='local config'
+  fi
   if [ -n "$runtime" ]; then
-    printf 'executor: implement -> %s (executor.implement_runtime)\n' "$runtime"
-    model=$(cfg executor.implement_model "")
+    printf 'executor: implement -> %s (executor.implement_runtime; %s)\n' "$runtime" "$source"
+    model=$(task_state_get "$id" executor_implement_model)
+    source=$(task_state_get "$id" executor_implement_model_source)
+    if [ -z "$source" ]; then source=task; fi
+    if [ -z "$model" ] && [ "$source" = task ]; then
+      model=$(cfg executor.implement_model "")
+      source='local config'
+    fi
     if [ -n "$model" ]; then
-      printf 'executor model: implement -> %s (executor.implement_model)\n' "$model"
+      printf 'executor model: implement -> %s (executor.implement_model; %s)\n' "$model" "$source"
     fi
   fi
   model=$(cfg claude.implement_model "")
@@ -2822,12 +2873,24 @@ _task_route_delegates() {
     T2 | T3 | T4) ;;
     *) return 0 ;;
   esac
-  runtime=$(cfg executor.review_runtime "")
+  runtime=$(task_state_get "$id" executor_review_runtime)
+  source=$(task_state_get "$id" executor_review_runtime_source)
+  if [ -z "$source" ]; then source=task; fi
+  if [ -z "$runtime" ] && [ "$source" = task ]; then
+    runtime=$(cfg executor.review_runtime "")
+    source='local config'
+  fi
   if [ -n "$runtime" ]; then
-    printf 'executor: review -> %s (executor.review_runtime)\n' "$runtime"
-    model=$(cfg executor.review_model "")
+    printf 'executor: review -> %s (executor.review_runtime; %s)\n' "$runtime" "$source"
+    model=$(task_state_get "$id" executor_review_model)
+    source=$(task_state_get "$id" executor_review_model_source)
+    if [ -z "$source" ]; then source=task; fi
+    if [ -z "$model" ] && [ "$source" = task ]; then
+      model=$(cfg executor.review_model "")
+      source='local config'
+    fi
     if [ -n "$model" ]; then
-      printf 'executor model: review -> %s (executor.review_model)\n' "$model"
+      printf 'executor model: review -> %s (executor.review_model; %s)\n' "$model" "$source"
     fi
   fi
   model=$(cfg claude.review_model "")
@@ -2863,7 +2926,7 @@ EOF
   fi
   printf 'never trimmed: tests on changed files, CI before a merge, consolidation\n'
   _task_autopilot_git_line
-  _task_route_delegates "$class"
+  _task_route_delegates "$id" "$class"
   local from
   from=$(task_state_get "$id" class_lowered_from)
   if [ -n "$from" ]; then

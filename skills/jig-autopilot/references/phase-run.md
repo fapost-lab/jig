@@ -49,6 +49,17 @@ git commit -m "File wave <n> of <spec>"
 conflict over neighbouring roadmap lines, and `jig spec plan` sees the tasks from the first
 minute. It reaches `origin` with the wave's first merged pull request.
 
+Before starting each filed task, set its optional executor choices with
+`jig task set <id> executor_implement_runtime claude|codex` and the matching
+`executor_review_runtime`, `executor_implement_model` or `executor_review_model`
+keys. Task state is gitignored and isolated by id: two tasks can choose different
+runtimes without changing the clone's shared `config.local.yaml`.
+`jig task route <id>` shows each effective choice and its source. `task start`
+snapshots all four effective choices, including absent ones, so later changes
+to shared local config do not redirect a task. Stop a task with a wrong
+assignment and file a corrected one instead of changing the executor under a
+running agent. `inherit` removes an override before start.
+
 **3. Start agents up to the limit.** For each `item … start` of the open wave, while
 `parallel`'s row leaves a slot free:
 

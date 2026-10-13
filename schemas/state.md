@@ -11,6 +11,9 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `branch` | `jig task start` | the branch the task was started on. **Absent means the task has not been started** — it is listed as `not-started` and never becomes a `task current` candidate. Present *without* `base_commit` means an older `task new` recorded the checkout's branch at filing; `task start` treats such a task as unstarted and rewrites both keys |
 | `base_commit` | `jig task start` | 40-hex commit the task's branch forked from, resolved when work began rather than when the task was filed. Absent while the task is unstarted, and in workspaces predating the field. Housekeeping treats an absent fork point as "ask the old question", so such a task is also without the protection the field provides |
 | `base_branch` | `jig task start` | the branch the task was cut from and has to land on: `git.base_branch`, or the open epic of the spec the task links to (ADR-0039, ADR-0040). Checked with `git check-ref-format --branch` before it is written. Absent while the task is unstarted and in workspaces predating the field; every reader then uses `git.base_branch` (`jig_task_base`) |
+| `executor_implement_runtime`, `executor_review_runtime` | `jig task set` before start; `jig task start` snapshots | optional `claude` or `codex` choice for this task; each overrides the matching `executor.*_runtime` value in the clone's local config. `inherit` removes the key before start. Start writes the effective value, including an empty value, so later local changes cannot redirect the stage |
+| `executor_implement_model`, `executor_review_model` | `jig task set` before start; `jig task start` snapshots | optional opaque nonempty model name for this task; each overrides the matching `executor.*_model` local value. It has no effect without a selected external runtime. `inherit` removes the key before start. Start writes the effective value |
+| `executor_implement_runtime_source`, `executor_review_runtime_source`, `executor_implement_model_source`, `executor_review_model_source` | `jig task start` | `task`, `local config`, or `default`: provenance of the effective snapshot. `default` marks an empty frozen choice; no later local value is inherited. `task set` refuses these derived keys |
 | `class` | skill via `jig task set` | `T0` … `T4`. A lower class than the current one needs `--reason <text>` and writes the two `class_lowered_*` keys below |
 | `class_lowered_from` | `jig task set <id> class <Tn> --reason` | the highest class the task was lowered from; removed when the class is raised back to it or above. Shown by `jig task route`, `jig status` (`lowered=Tn`), the status page and the autopilot report. `task set` refuses it (adr-20261004-a-route-stage-is-proven-by-its-record) |
 | `class_lowered_reason` | same | the one-line reason given with the latest lowering. `task set` refuses it |
@@ -35,7 +38,7 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `updated_at` | every `jig task set` | `YYYY-MM-DD` |
 
 `jig task set` accepts only `class`, `status`, `knowledge_consolidated`, `domains`,
-`route_depth` and validates the value; every other key is refused, the four `paused*` keys included:
+`route_depth` and the four `executor_*` keys above, and validates the value; every other key is refused, the four `paused*` keys included:
 they are written only by `jig task pause` and `jig task resume` (ADR-0012).
 Two values are refused on top of validation, to keep the order of ADR-0030: `status
 consolidated` while `knowledge_consolidated` is not `true`, and `knowledge_consolidated
