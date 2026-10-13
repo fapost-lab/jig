@@ -13,9 +13,9 @@ Goal: A Codex session can delegate implementation and review to a chosen Codex s
 
 Goal: A stage can run under a selected other runtime. Done when: a Claude Code session can hand a stage to Codex and a Codex session can hand one to Claude Code, and the coordinator verifies task files before continuing.
 
-- [ ] `cross-runtime-stage-handoff` — A selected external runtime can implement a task stage — launch from the task worktree with bounded permissions, preserve the diff and workspace, and report missing CLI/auth, interruption, or partial output.
-- [ ] `cross-runtime-stage-handoff` — A selected external runtime can review independently — give it a fresh context and explicit review scope, then check the findings ledger and current receipt; require a new review after implementation changes.
-- [ ] `cross-runtime-stage-handoff` — Cross-runtime delegation works on supported hosts — verify both launch directions, Windows/Git Bash behavior, sandbox and approval settings, and the no-configuration path.
+- [x] `cross-runtime-stage-handoff` — A selected external runtime can implement a task stage — launch from the task worktree with bounded permissions, preserve the diff and workspace, and report missing CLI/auth, interruption, or partial output.
+- [x] `cross-runtime-stage-handoff` — A selected external runtime can review independently — give it a fresh context and explicit review scope, then check the findings ledger and current receipt; require a new review after implementation changes.
+- [x] `cross-runtime-stage-handoff` — Cross-runtime delegation works on supported hosts — verify both launch directions, Windows/Git Bash behavior, sandbox and approval settings, and the no-configuration path.
 
 ## Phase 3 — Several agents under one route
 
@@ -35,7 +35,7 @@ Phase 2's three items share one T4 task because its executor and permission boun
 Rules (jig-idea §8):
 - An item is a finished slice that makes the product noticeably better, never a layer.
 - A dependency without a one-line reason is not a dependency.
-- A `task-id` appears when the item's task is filed; `[x]` is set when that task is closed.
+- A `task-id` appears when the item's task is filed; `jig spec done` sets `[x]` during task consolidation, before the task is shipped.
 - `fog:` items are not split or sized; they become real items once the fog lifts.
 - No dates, no point estimates: order is the priority.
 - `jig spec list` counts checkbox lines only: `[x]` done, a leading backticked task id
