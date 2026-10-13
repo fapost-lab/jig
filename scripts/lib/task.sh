@@ -1703,7 +1703,14 @@ _task_autopilot_start() {
   _task_guard_write "$id" "task autopilot start"
   case "$(task_state_get "$id" autopilot)" in
     on) jig_die "task autopilot start: already running: $id" ;;
-    stopped) jig_die "task autopilot start: $id is stopped; run: jig task autopilot $id resume" ;;
+    stopped)
+      if [ "$(_task_autopilot_mode "$id")" = unattended ]; then
+        if [ "$(_task_autopilot_repairs "$id")" -ge 2 ]; then
+          jig_die "task autopilot start: $id exhausted its unattended repair limit; ship a draft"
+        fi
+        jig_die "task autopilot start: $id is stopped; if a human answered, run: jig task autopilot $id resume --answer <text> --by human"
+      fi
+      jig_die "task autopilot start: $id is stopped; run: jig task autopilot $id resume" ;;
   esac
   local mode=attended
   if jig_unattended; then mode=unattended; fi
@@ -1885,24 +1892,25 @@ _task_autopilot_unattended_event() {
   printf '%s: %s\n' "$event" "$reason"
 }
 
-# resume --answer <text>: after the human answers a stop. Requires `stopped`
-# and resets the repair count to 0 — the human just gave the run a new
-# direction, so the two repairs already spent no longer count against it
-# (task.md human gate). The answer is required and journaled, and `report`
-# prints it for the pull request: the script cannot tell who answered, but a
-# run that resumed itself now quotes an answer nobody gave, where the person
-# reads it, instead of resetting its limit in silence. An unattended run is
-# never resumed: nobody answers there, and its repair-limit stop ends the run
-# in a draft (adr-20261004-a-route-stage-is-proven-by-its-record).
+# resume --answer <text> [--by human]: after the human answers a stop.
+# An attended run resets its repair count. A stopped unattended run can resume
+# only on an explicit human answer while it has fewer than two repairs; its
+# count is preserved, so neither a manual stop nor the repair-limit stop can
+# buy another repair attempt. The script cannot authenticate the answer. The
+# journal quotes the claim where the person can check it.
 _task_autopilot_resume() {
   local id="$1"
   shift
-  local answer="" has_answer=0
+  local answer="" has_answer=0 by="" mode count
   while [ $# -gt 0 ]; do
     case "$1" in
       --answer)
         [ $# -ge 2 ] || jig_die "task autopilot resume: --answer requires a value"
         answer="$2"; has_answer=1; shift 2 ;;
+      --by)
+        [ $# -ge 2 ] || jig_die "task autopilot resume: --by requires human"
+        [ "$2" = human ] || jig_die "task autopilot resume: --by accepts human only"
+        by=human; shift 2 ;;
       *) jig_die "task autopilot resume: unknown argument: $1" ;;
     esac
   done
@@ -1911,17 +1919,27 @@ _task_autopilot_resume() {
   _task_guard_write "$id" "task autopilot resume"
   [ "$(task_state_get "$id" autopilot)" = "stopped" ] \
     || jig_die "task autopilot resume: not stopped: $id"
-  [ "$(_task_autopilot_mode "$id")" != unattended ] \
-    || jig_die "task autopilot resume: $id's run is unattended, and nobody answers there: its stop is its end; ship what there is as a draft: jig task ship $id --message-file <file> --draft"
   [ "$has_answer" -eq 1 ] \
     || jig_die "task autopilot resume: --answer is required: the human's answer to the stop, in their words: jig task autopilot $id resume --answer <text>"
   [ -n "$answer" ] || jig_die "task autopilot resume: --answer must not be empty"
   _task_finding_valid_field "$answer" \
     || jig_die "task autopilot resume: --answer must be a single line with no tab"
 
-  _task_rewrite_state "$dir" autopilot on
-  _task_rewrite_state "$dir" autopilot_repairs 0
-  _task_autopilot_log "$id" resume "$answer"
+  mode=$(_task_autopilot_mode "$id")
+  if [ "$mode" = unattended ]; then
+    [ "$by" = human ] \
+      || jig_die "task autopilot resume: an unattended run needs an actual human answer and --by human; otherwise ship a draft"
+    count=$(_task_autopilot_repairs "$id")
+    [ "$count" -lt 2 ] \
+      || jig_die "task autopilot resume: $id exhausted its unattended repair limit; ship a draft"
+    _task_rewrite_state "$dir" autopilot on
+    _task_autopilot_log "$id" resume "human: $answer"
+  else
+    [ -z "$by" ] || jig_die "task autopilot resume: --by human is only for an unattended run"
+    _task_rewrite_state "$dir" autopilot on
+    _task_rewrite_state "$dir" autopilot_repairs 0
+    _task_autopilot_log "$id" resume "$answer"
+  fi
   printf 'autopilot: on\n'
 }
 
@@ -2993,7 +3011,13 @@ task_gate() {
     if [ "$(task_state_get "$id" autopilot)" = on ]; then
       jig_die "task gate: $id's run is unattended, so this approval is the agent's: jig task gate $id approved --by agent"
     fi
-    jig_die "task gate: nobody answers for $id (unattended) and its run is not on, so there is no approval to give here; an unattended run approves with --by agent once it is on: jig task autopilot $id start"
+    if [ "$(task_state_get "$id" autopilot)" = stopped ]; then
+      if [ "$(_task_autopilot_repairs "$id")" -ge 2 ]; then
+        jig_die "task gate: $id exhausted its unattended repair limit; ship a draft"
+      fi
+      jig_die "task gate: $id is stopped; if a human answered, run: jig task autopilot $id resume --answer <text> --by human; then approve with --by agent"
+    fi
+    jig_die "task gate: nobody answers for $id (unattended); start its run and approve with --by agent"
   fi
   class=$(task_state_get "$id" class)
   case "$class" in
