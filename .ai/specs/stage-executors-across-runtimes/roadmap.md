@@ -13,32 +13,31 @@ Goal: A Codex session can delegate implementation and review to a chosen Codex s
 
 Goal: A stage can run under a selected other runtime. Done when: a Claude Code session can hand a stage to Codex and a Codex session can hand one to Claude Code, and the coordinator verifies task files before continuing.
 
-- [ ] A selected external runtime can implement a task stage — launch from the task worktree with bounded permissions, preserve the diff and workspace, and report missing CLI/auth, interruption, or partial output.
-- [ ] A selected external runtime can review independently — give it a fresh context and explicit review scope, then check the findings ledger and current receipt; require a new review after implementation changes.
-- [ ] Cross-runtime delegation works on supported hosts — verify both launch directions, Windows/Git Bash behavior, sandbox and approval settings, and the no-configuration path.
+- [x] `cross-runtime-stage-handoff` — A selected external runtime can implement a task stage — launch from the task worktree with bounded permissions, preserve the diff and workspace, and report missing CLI/auth, interruption, or partial output.
+- [x] `cross-runtime-stage-handoff` — A selected external runtime can review independently — give it a fresh context and explicit review scope, then check the findings ledger and current receipt; require a new review after implementation changes.
+- [x] `cross-runtime-stage-handoff` — Cross-runtime delegation works on supported hosts — verify both launch directions, Windows/Git Bash behavior, sandbox and approval settings, and the no-configuration path.
 
 ## Phase 3 — Several agents under one route
 
 Goal: Jig can coordinate multiple chosen agents without losing task ownership or stage evidence. Done when: a defined multi-agent scenario completes with deterministic ownership, conflict handling, and one checkable route outcome.
 
-- [ ] fog: Define the multi-agent scenario — decide what the existing phase-run coordinator does not cover and which simultaneous executors produce a user-visible benefit.
-- [ ] fog: Define write ownership and merge order — settle whether agents share a task worktree or require separate worktrees before splitting this phase into tasks.
+- [x] `multi-agent-stage-executors` — Choose different executors per task in one wave — record task-local runtime and model choices before start, show their sources, and keep parallel agents independent of shared personal config.
+- [x] `multi-agent-stage-executors` — Preserve one owner and one merge queue — verify isolated worktrees, fresh reviews, receipt freshness after an earlier merge, and a blocked next wave when one task stops.
 
 ## Waves
 
-Wave 2 follows wave 1 because failure behavior must exercise the actual Codex handoff. Wave 3 follows phase 1 because it extends the established executor contract. Wave 4 follows wave 3 because review needs the external launch path and file checks. Wave 5 follows wave 4 because host-level verification needs both external roles.
+Phase 2's three items share one T4 task because its executor and permission boundary must be reviewed as one change. Its internal delivery order is implementation, independent review, then host checks. This follows phase 1's Codex subagent contract.
+Phase 3's two items share one T4 task because the per-task choice and wave ownership must be checked together. It extends phase 2's external executor contract.
 
-1. Codex model choice works for implementation and review
-2. A failed Codex delegation has an explicit outcome
-3. A selected external runtime can implement a task stage
-4. A selected external runtime can review independently
-5. Cross-runtime delegation works on supported hosts
+1. Codex model choice works for implementation and review; A failed Codex delegation has an explicit outcome
+2. A selected external runtime can implement a task stage; A selected external runtime can review independently; Cross-runtime delegation works on supported hosts
+3. Choose different executors per task in one wave; Preserve one owner and one merge queue
 
 <!--
 Rules (jig-idea §8):
 - An item is a finished slice that makes the product noticeably better, never a layer.
 - A dependency without a one-line reason is not a dependency.
-- A `task-id` appears when the item's task is filed; `[x]` is set when that task is closed.
+- A `task-id` appears when the item's task is filed; `jig spec done` sets `[x]` during task consolidation, before the task is shipped.
 - `fog:` items are not split or sized; they become real items once the fog lifts.
 - No dates, no point estimates: order is the priority.
 - `jig spec list` counts checkbox lines only: `[x]` done, a leading backticked task id

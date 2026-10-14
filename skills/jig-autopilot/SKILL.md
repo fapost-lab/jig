@@ -40,6 +40,10 @@ Run each stage's skill in order, and mark it as you enter it:
 - **A `delegate:` line for this session's runtime hands a stage to a helper** on the model it names — implement, review or
   both ([delegation](../jig-task/references/delegation.md)). Without one, you implement, and the
   review subagent runs on the session's model.
+- **An `executor:` line choosing another runtime takes precedence** for its stage. Start
+  its CLI from the task worktree under the bounded permissions in the same reference,
+  then check the diff, findings and receipt before moving on. A failed selected process
+  stops that stage; do not replace it with this session.
 - **The full set is CI's under `verify.full_run: ci`.** Verify with `jig verify`, never with
   `--full` or the stack's runner unfiltered; `full set left to CI` is not a gap to fill.
 - **Each repair costs one attempt.** A repair is one loop of fixing after a blocking finding or

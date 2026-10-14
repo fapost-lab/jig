@@ -2082,8 +2082,8 @@ test_task_start_picks_up_a_remote_only_epic_without_manual_fetch() {
   # fetches on its own rather than trusting whatever refs this checkout
   # happened to have last time it looked (decided 2026-09-16: always).
   task_setup_clean
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git push -q origin main
   jig spec new idea-x >/dev/null
   git checkout -q main
@@ -2526,8 +2526,8 @@ test_task_start_worktree_carries_an_unpushed_epic_commit_into_every_branch() {
   task_setup_nested
   git add -A
   git commit -q -m "jig init snapshot"
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git fetch -q origin
 
   mkdir -p .ai/specs/alpha
@@ -3254,8 +3254,8 @@ test_task_ship_wrong_branch_refuses() {
 
 test_task_ship_on_base_branch_refuses() {
   task_setup_clean
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git fetch -q origin
   _task_share_one_branch
   git add -A
@@ -6416,6 +6416,7 @@ test_task_route_names_no_delegate_when_no_model_is_set() {
   run jig task route T-1
   assert_eq 0 "$RC" "$OUT"
   assert_not_contains "$OUT" "delegate:"
+  assert_not_contains "$OUT" "executor:"
 }
 
 test_task_route_names_each_delegated_stage_with_the_model_as_written() {
@@ -6484,6 +6485,157 @@ test_task_route_ignores_codex_model_in_project_file() {
   run jig task route T-2
   assert_eq 0 "$RC" "$OUT"
   assert_not_contains "$OUT" "delegate:"
+}
+
+test_task_route_names_external_executor_without_changing_stage_evidence() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  jig task new T-1 --class T1 >/dev/null
+  jig config set executor.implement_runtime claude executor.review_runtime codex \
+    executor.implement_model sonnet executor.review_model gpt-6.1-sol --local >/dev/null
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime; local config)"
+  assert_contains "$OUT" "executor model: implement -> sonnet (executor.implement_model; local config)"
+  assert_contains "$OUT" "executor: review -> codex (executor.review_runtime; local config)"
+  assert_contains "$OUT" "executor model: review -> gpt-6.1-sol (executor.review_model; local config)"
+  assert_contains "$OUT" "route: analyze, plan, implement, review, verify, consolidate"
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime; local config)"
+  assert_not_contains "$OUT" "executor: review"
+}
+
+test_task_route_ignores_external_executor_in_project_config() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  printf 'executor.review_runtime: codex\n' >> .ai/config.yaml
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "executor:"
+}
+
+test_task_executor_choices_are_isolated_by_task_and_frozen_at_start() {
+  task_setup_clean
+  jig task new T-a --class T2 >/dev/null
+  jig task new T-b --class T2 >/dev/null
+  jig config set executor.implement_runtime claude executor.review_runtime claude \
+    executor.review_model sonnet --local >/dev/null
+  jig task set T-a executor_implement_runtime codex
+  jig task set T-a executor_implement_model gpt-6.1-sol
+  jig task set T-b executor_review_runtime codex
+  run jig task route T-a
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "executor: implement -> codex (executor.implement_runtime; task)"
+  assert_contains "$OUT" "executor model: implement -> gpt-6.1-sol (executor.implement_model; task)"
+  assert_contains "$OUT" "executor: review -> claude (executor.review_runtime; local config)"
+  run jig task route T-b
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime; local config)"
+  assert_contains "$OUT" "executor: review -> codex (executor.review_runtime; task)"
+  assert_contains "$OUT" "executor model: review -> sonnet (executor.review_model; local config)"
+  jig task start T-a >/dev/null
+  local second_tree
+  second_tree=$(jig task start T-b --worktree)
+  OUT=$(cd "$second_tree" && jig task route T-b)
+  assert_contains "$OUT" "executor: review -> codex (executor.review_runtime; task)"
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime; local config)"
+  jig config set executor.implement_runtime codex executor.review_runtime codex \
+    executor.review_model opus --local >/dev/null
+  OUT=$(cd "$second_tree" && jig task route T-b)
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime; local config)"
+  assert_contains "$OUT" "executor model: review -> sonnet (executor.review_model; local config)"
+  run jig task set T-a executor_review_runtime codex
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'executor choice is fixed'
+  run jig task route T-a
+  assert_contains "$OUT" "executor: review -> claude (executor.review_runtime; local config)"
+  run jig task route T-b
+  assert_contains "$OUT" "executor: review -> codex (executor.review_runtime; task)"
+}
+
+test_task_start_freezes_an_unset_executor_against_later_local_settings() {
+  task_setup_clean
+  jig task new T-2 --class T2 >/dev/null
+  jig task start T-2 >/dev/null
+  jig config set executor.implement_runtime codex --local >/dev/null
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" 'executor:'
+  assert_contains "$(cat .ai/workspace/tasks/T-2/state)" 'executor_implement_runtime_source: default'
+}
+
+test_task_executor_wave_keeps_diffs_and_receipts_separate_after_first_merge() {
+  task_setup_clean
+  mkdir -p .ai/specs/two
+  cat > .ai/specs/two/roadmap.md <<'RM'
+# Two-task wave
+
+## Phase 1 — Two executors
+
+- [ ] `T-a` — Alpha — first task
+- [ ] `T-b` — Bravo — second task
+- [ ] `T-next` — Next — later task
+
+## Waves
+
+1. Alpha; Bravo
+2. Next
+RM
+  git add .ai/specs/two/roadmap.md
+  git commit -q -m 'file two-task wave'
+  jig task new T-a --class T2 >/dev/null
+  jig task new T-b --class T2 >/dev/null
+  jig task new T-next --class T2 >/dev/null
+  local a b
+  for a in T-a T-b; do
+    printf 'Spec: .ai/specs/two/ — Phase 1\n' >> ".ai/workspace/tasks/$a/task.md"
+  done
+  jig task set T-a executor_implement_runtime claude
+  jig task set T-b executor_implement_runtime codex
+  a=$(jig task start T-a --worktree 2>/dev/null)
+  b=$(jig task start T-b --worktree 2>/dev/null)
+  assert_contains "$(cd "$a" && jig task route T-a)" 'executor: implement -> claude (executor.implement_runtime; task)'
+  assert_contains "$(cd "$b" && jig task route T-b)" 'executor: implement -> codex (executor.implement_runtime; task)'
+  printf 'owned by alpha\n' > "$a/alpha.txt"
+  git -C "$a" add alpha.txt
+  git -C "$a" commit -q -m alpha
+  printf 'owned by bravo\n' > "$b/bravo.txt"
+  git -C "$b" add bravo.txt
+  git -C "$b" commit -q -m bravo
+  assert_eq alpha.txt "$(git -C "$a" diff --name-only main...task/T-a)"
+  assert_eq bravo.txt "$(git -C "$b" diff --name-only main...task/T-b)"
+  jig task receipt T-b --stage review >/dev/null
+  git merge -q --no-ff --no-edit task/T-a
+  git -C "$b" merge -q --no-edit main
+  assert_eq bravo.txt "$(git -C "$b" diff --name-only main...task/T-b)"
+  run jig task receipt T-b --check
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq 'receipt: current' "$OUT"
+  (cd "$b" && jig task autopilot T-b start --phase two/1 >/dev/null)
+  (cd "$b" && jig task autopilot T-b stop --reason 'selected executor unavailable' >/dev/null)
+  run jig spec plan two --phase 1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" 'wave 2 — waiting'
+  assert_contains "$OUT" 'T-b'
+  assert_contains "$(cat .ai/workspace/tasks/T-b/state)" 'autopilot: stopped'
+}
+
+test_task_executor_choice_validates_and_inherit_removes_override() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  run jig task set T-2 executor_implement_runtime other
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'not a runtime: claude or codex'
+  run jig task set T-2 executor_review_model 'bad#model'
+  assert_eq 1 "$RC"
+  jig task set T-2 executor_implement_runtime codex
+  run jig task route T-2
+  assert_contains "$OUT" "executor: implement -> codex (executor.implement_runtime; task)"
+  jig task set T-2 executor_implement_runtime inherit
+  run jig task route T-2
+  assert_not_contains "$OUT" 'executor: implement'
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" 'executor_implement_runtime'
 }
 
 test_task_set_route_depth_refuses_anything_but_full_or_lean() {

@@ -8,6 +8,8 @@ description: Review a Jig task against the system's architecture — boundaries,
 Code review asks whether the change is correct. This asks whether the system is still the
 system its documentation describes. When `jig task route <id>` prints `delegate: review` for
 this session's runtime, this review goes to a helper on that model ([delegation](../jig-task/references/delegation.md)).
+An `executor: review` line selecting another runtime takes precedence: use the same
+reference's read-only external review contract and record its checked findings here.
 
 ## 1. Load the shape
 

@@ -53,12 +53,6 @@ by one command that refuses a stale write; what a person may do next with a task
 state; and what needs a person, as data rather than as a page. Each of these is useful without
 anything built on top — to CI, to a bot, to an agent choosing what to take next.
 
-**Stages handed to an agent in another runtime.** Writing the code and reviewing it can already go
-to a helper on a model you choose in Claude Code and in Codex
-([Autopilot](/autopilot#helpers-on-another-model)). What comes next is handing a stage across
-runtimes — a review by Codex of work done in Claude Code, or the reverse — and coordinating several
-agents on one stage.
-
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
 
@@ -82,7 +76,8 @@ of an existing file rather than a whole one.
 
 ## Beside Jig: Jig UI
 
-Jig UI is a separate, optional project, not published yet: a local page with a
-board across all your Jig projects, where tasks and epics are ordered and prioritised and new tasks
-are filed. It reads and changes your projects only through Jig's own commands and contracts, so Jig
+[Jig UI](https://github.com/fapost-lab/jig-ui) is a separate, optional project, in the making: a
+local page with a board across all your Jig projects, where tasks and epics are ordered and
+prioritised and new tasks are filed. It reads and changes your projects only through Jig's own
+commands and contracts — the ones described above under "Jig that a program can read" — so Jig
 works exactly as it does without it. Its plans live in its own repository.

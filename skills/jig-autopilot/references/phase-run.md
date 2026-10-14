@@ -49,6 +49,17 @@ git commit -m "File wave <n> of <spec>"
 conflict over neighbouring roadmap lines, and `jig spec plan` sees the tasks from the first
 minute. It reaches `origin` with the wave's first merged pull request.
 
+Before starting each filed task, set its optional executor choices with
+`jig task set <id> executor_implement_runtime claude|codex` and the matching
+`executor_review_runtime`, `executor_implement_model` or `executor_review_model`
+keys. Task state is gitignored and isolated by id: two tasks can choose different
+runtimes without changing the clone's shared `config.local.yaml`.
+`jig task route <id>` shows each effective choice and its source. `task start`
+snapshots all four effective choices, including absent ones, so later changes
+to shared local config do not redirect a task. Stop a task with a wrong
+assignment and file a corrected one instead of changing the executor under a
+running agent. `inherit` removes an override before start.
+
 **3. Start agents up to the limit.** For each `item … start` of the open wave, while
 `parallel`'s row leaves a slot free:
 
@@ -82,8 +93,10 @@ record the stop — the run has no journal, and this is what reaches the person'
 
 Every end of the loop that waits for the person is such a stop: questions, a `problem` row, the
 forge unreachable, and — unattended — a draft ending the run.
-An answer goes back as `jig task autopilot <id> resume --answer "<the person's answer>"` and an agent — the same one, or a new
-one told to continue task X from stage Y.
+After an answer, resume an attended task with `jig task autopilot <id> resume --answer "<the person's answer>"`.
+For an already stopped unattended task with repairs still available, quote the actual answer and add
+`--by human`; a repair-limit stop remains a draft and cannot resume. Then tell an agent — the same
+one, or a new one — to continue task X from stage Y.
 
 **5. Ship, one at a time.** Tasks with `knowledge_consolidated: true` queue in the order they
 became ready. For the head of the queue, from its worktree:

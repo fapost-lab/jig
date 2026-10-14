@@ -889,6 +889,27 @@ test_config_codex_model_keys_are_opaque_local_only_and_off_by_default() {
   assert_contains "$(printf '%s\n' "$OUT" | awk '$1 == "codex.review_model" { print $2, $3, $4 }')" "- local only"
 }
 
+test_config_executor_runtime_keys_accept_only_supported_local_runtimes() {
+  fixture_jig_repo
+  _config_accepts executor.implement_runtime claude
+  _config_accepts executor.review_runtime codex
+  _config_rejects executor.implement_runtime gemini
+  run jig config set executor.implement_runtime gemini --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a runtime: claude or codex"
+  _config_rejects executor.review_runtime ''
+  _config_accepts executor.implement_model 'a future model'
+  _config_accepts executor.review_model 'opus[1m]'
+  printf 'executor.review_runtime: claude\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: executor.review_runtime in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+  run jig config keys
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(printf '%s\n' "$OUT" | awk '$1 == "executor.review_runtime" { print $2, $3, $4 }')" "- local only"
+}
+
 test_config_route_depth_is_local_only() {
   fixture_jig_repo
   printf 'route.depth: lean\n' >> .ai/config.yaml
@@ -896,4 +917,21 @@ test_config_route_depth_is_local_only() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" \
     "config.local: route.depth in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+}
+
+# --- jig-setup covers every local key ----------------------------------------
+#
+# A key `jig config set --local` accepts but the `jig-setup` skill never names
+# is a setting no person is asked about: release.merge,
+# git.delete_merged_branches and notify.autopilot were lost that way. Every
+# local key appears in the skill, whether asked about or named as left out.
+
+test_jig_setup_names_every_local_key() {
+  local keys key missing=""
+  keys=$(sed -n 's/^JIG_CFG_LOCAL_KEYS="\(.*\)"$/\1/p' "$ROOT/scripts/lib/config.sh")
+  [ -n "$keys" ] || fail "JIG_CFG_LOCAL_KEYS not found in scripts/lib/config.sh"
+  for key in $keys; do
+    grep -qF "\`$key\`" "$ROOT/skills/jig-setup/SKILL.md" || missing="$missing $key"
+  done
+  assert_eq "" "$missing"
 }
