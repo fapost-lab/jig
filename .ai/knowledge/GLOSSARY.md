@@ -269,6 +269,14 @@ not change (adr-20261005-jig-names-the-roles-not-the-models,
 adr-20261012-codex-subagents-use-runtime-models).
 Informal synonyms: helper, stage subagent.
 
+## External Stage Executor
+
+A Runtime CLI started by the current Agent to perform one implementation or review
+stage in a different Runtime. Selected by local-only `executor.*_runtime` keys; an
+optional `executor.*_model` names that process's model. The current Agent remains
+the Coordinator for task files, verification and shipping. Scripts do not start
+the process (adr-20261012-cross-runtime-stage-executors).
+
 ## Status Page
 
 `.ai/runtime/status.html`: one self-contained page written by `jig status --html` or

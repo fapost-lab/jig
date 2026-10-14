@@ -18,11 +18,11 @@
 # `agent.git`, `autopilot.git`, `agent.ci_timeout`, `autopilot.unattended`,
 # `autopilot.parallel` and `route.depth` are also in JIG_CFG_LOCAL_ONLY_KEYS
 # below (with `run.exec`, `run.path` and the `claude.*_model` and
-# `codex.*_model` keys): they
+# `codex.*_model` and `executor.*` keys): they
 # answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model executor.implement_runtime executor.review_runtime executor.implement_model executor.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -58,6 +58,10 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # value would spend every contributor's. Jig carries the value as an opaque
 # string and never interprets it; empty means no delegation
 # (adr-20261005-jig-names-the-roles-not-the-models).
+# `executor.*_runtime` selects which installed runtime owns a stage. This is
+# personal because it chooses a process, account and permission boundary;
+# `executor.*_model` is an optional opaque model for that external process.
+# Neither setting grants the process a new permission in a project config.
 # `notify.telegram.token` and `notify.telegram.chat_id` say where one person's
 # Telegram messages go, and `notify.autopilot` whether their autopilot runs
 # send any: a committed token is a bot anyone can use once it is pushed, and a
@@ -67,7 +71,7 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # hook they opted into (adr-20261010-a-waiting-session-reaches-telegram).
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model executor.implement_runtime executor.review_runtime executor.implement_model executor.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -182,6 +186,10 @@ claude.implement_model
 claude.review_model
 codex.implement_model
 codex.review_model
+executor.implement_runtime
+executor.review_runtime
+executor.implement_model
+executor.review_model
 notify.telegram.token
 notify.telegram.chat_id
 notify.autopilot true
@@ -635,7 +643,13 @@ jig_config_value_problem() {
         \"* | \'*) printf 'quoted; write the path without quotes\n'; return 1 ;;
       esac
       ;;
-    claude.implement_model | claude.review_model | codex.implement_model | codex.review_model) ;;
+    executor.implement_runtime | executor.review_runtime)
+      case "$value" in
+        claude | codex) ;;
+        *) printf 'not a runtime: claude or codex\n'; return 1 ;;
+      esac
+      ;;
+    claude.implement_model | claude.review_model | codex.implement_model | codex.review_model | executor.implement_model | executor.review_model) ;;
     notify.telegram.chat_id)
       _cfg_chat_id "$value" \
         || { printf 'not a chat id: digits (a group starts with -), or @name\n'; return 1; }

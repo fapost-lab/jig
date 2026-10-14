@@ -80,6 +80,18 @@ your session's own model. Codex uses its own two settings. A requested Codex hel
 instead of silently changing the chosen executor. `jig task route <task-id>` prints a
 `delegate:` line for each configured runtime and stage; the session follows its own runtime's lines.
 
+### A stage in the other runtime
+
+Set `executor.implement_runtime` or `executor.review_runtime` to `claude` or `codex` in
+your local settings to choose which runtime does that stage. If you are already in the
+chosen runtime, it follows the in-runtime helper choice above. Otherwise your agent
+starts the other CLI in the task worktree with limited tools. You can also set
+`executor.implement_model` or `executor.review_model` for that external process. The
+review starts in a fresh process without the implementation conversation. The current
+agent checks the process result, task diff, findings and review receipt, and runs Jig's
+verification. A missing CLI, permission denial or interrupted run stops the stage with
+the reason. `jig task route <task-id>` shows the selected runtime.
+
 ## Where it stops
 
 A run stops only where a human is needed. The agent tells you in plain words what it needs; answer

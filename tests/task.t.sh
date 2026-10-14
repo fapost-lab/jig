@@ -3254,8 +3254,8 @@ test_task_ship_wrong_branch_refuses() {
 
 test_task_ship_on_base_branch_refuses() {
   task_setup_clean
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git fetch -q origin
   _task_share_one_branch
   git add -A
@@ -6416,6 +6416,7 @@ test_task_route_names_no_delegate_when_no_model_is_set() {
   run jig task route T-1
   assert_eq 0 "$RC" "$OUT"
   assert_not_contains "$OUT" "delegate:"
+  assert_not_contains "$OUT" "executor:"
 }
 
 test_task_route_names_each_delegated_stage_with_the_model_as_written() {
@@ -6484,6 +6485,34 @@ test_task_route_ignores_codex_model_in_project_file() {
   run jig task route T-2
   assert_eq 0 "$RC" "$OUT"
   assert_not_contains "$OUT" "delegate:"
+}
+
+test_task_route_names_external_executor_without_changing_stage_evidence() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  jig task new T-1 --class T1 >/dev/null
+  jig config set executor.implement_runtime claude executor.review_runtime codex \
+    executor.implement_model sonnet executor.review_model gpt-6.1-sol --local >/dev/null
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime)"
+  assert_contains "$OUT" "executor model: implement -> sonnet (executor.implement_model)"
+  assert_contains "$OUT" "executor: review -> codex (executor.review_runtime)"
+  assert_contains "$OUT" "executor model: review -> gpt-6.1-sol (executor.review_model)"
+  assert_contains "$OUT" "route: analyze, plan, implement, review, verify, consolidate"
+  run jig task route T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "executor: implement -> claude (executor.implement_runtime)"
+  assert_not_contains "$OUT" "executor: review"
+}
+
+test_task_route_ignores_external_executor_in_project_config() {
+  task_setup
+  jig task new T-2 --class T2 >/dev/null
+  printf 'executor.review_runtime: codex\n' >> .ai/config.yaml
+  run jig task route T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "executor:"
 }
 
 test_task_set_route_depth_refuses_anything_but_full_or_lean() {
