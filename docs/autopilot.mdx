@@ -83,7 +83,8 @@ instead of silently changing the chosen executor. `jig task route <task-id>` pri
 ### A stage in the other runtime
 
 Set `executor.implement_runtime` or `executor.review_runtime` to `claude` or `codex` in
-your local settings to choose which runtime does that stage. If you are already in the
+your local settings, or answer the question `jig-setup` asks when the other CLI is installed, to
+choose which runtime does that stage. If you are already in the
 chosen runtime, it follows the in-runtime helper choice above. Otherwise your agent
 starts the other CLI in the task worktree with limited tools. You can also set
 `executor.implement_model` or `executor.review_model` for that external process. The
