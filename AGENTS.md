@@ -129,7 +129,11 @@ new class requires.
 - A release is written down as it is made: the pull request that raises `JIG_VERSION` adds that
   version's section to `docs/changelog.mdx` — a line or two per user-visible change. CI's
   `changelog` job refuses a pull request that declares an unreleased version the page does not
-  describe.
+  describe. The changelog alone is not enough: the same pull request revises
+  `docs/known-issues.mdx` and `docs/roadmap.mdx` against the release — fixed entries out, narrowed
+  ones rewritten, faults the release introduced or uncovered in, what was done and what comes next
+  updated — and walks the other pages under `docs/` for anything the release made untrue or left
+  out.
 - Task-specific notes live in `.ai/workspace/tasks/<id>/` (gitignored), never in the repo.
 - Before finishing a task, ask: what here should survive the task? Update
   `.ai/knowledge/` accordingly, or state `NO_DURABLE_KNOWLEDGE` — and record the decision

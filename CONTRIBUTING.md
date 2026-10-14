@@ -236,6 +236,14 @@ per user-visible change: a new capability, a fix, a change someone has to act on
 moment anyone knows what the version contains, so CI asks for it: the `changelog` job refuses a pull
 request whose `JIG_VERSION` has no tag yet and no section on that page.
 
+The changelog is not the only page a release changes. The same pull request revises
+[`docs/known-issues.mdx`](docs/known-issues.mdx) and [`docs/roadmap.mdx`](docs/roadmap.mdx): an
+entry the release fixes is removed, one it only narrows is rewritten, a fault the release introduced
+or uncovered is added, and the roadmap says what is done and what comes next. Then it walks the
+other pages under `docs/`: a page that describes behaviour the release changed is corrected, and a
+capability the release added gets a place where a user will look for it — a line removed is as
+welcome as a line added.
+
 Raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request that should become the release:
 `major.minor.patch` without leading zeros — patch for a fix, minor for a new capability, major for a
 change that breaks commands, the `.ai/` layout, `init`/`upgrade` or the installer (before `1.0.0`,
