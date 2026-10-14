@@ -129,17 +129,30 @@ order does not change: do it once, and read every release between yours and the 
     `git.delete_merged_branches: false` in `.ai/config.local.yaml`; the run then also leaves you on
     the upgrade branch, with a `next:` line saying it is merged.
 
-    **At every other level, or when the run printed `not merged:`**, the upgrade leaves your checkout
-    **on the upgrade branch**, not on the branch you started from, and it ends with two lines that
-    say where you are:
+    **At `push` and `pr`, or when the run printed `not merged:`**, the upgrade branch is on
+    `origin` and nothing more is needed on your machine, so the run puts you back on the branch you
+    started from, and says how to return to the upgrade if its pull request needs a fix:
+
+    ```text
+    upgrade: back on main; the upgrade waits on branch jig/upgrade-0.24.0
+    next: this upgrade is on branch jig/upgrade-0.24.0; once it is merged into main, merge that into the branches still in progress
+    next: to change the upgrade before it is merged: `git checkout jig/upgrade-0.24.0`
+    ```
+
+    Being off the upgrade branch is what lets it be deleted after the merge: a branch that is checked
+    out is never deleted. Inside a worktree of its own the run does not move the checkout.
+
+    **At `none` and `commit`** the upgrade exists only on your machine, so the run leaves your
+    checkout **on the upgrade branch**, and it ends with two lines that say where you are:
 
     ```text
     next: this upgrade is on branch jig/upgrade-0.24.0; once it is merged into main, merge that into the branches still in progress
     next: to go back to what you were doing: `git checkout task/my-feature`
     ```
 
-    Once the pull request is merged (by you or a colleague), come back to your base branch and take
-    the merge in. These are two separate commands; run them one after the other.
+    Once the pull request is merged (by you or a colleague), come back to your base branch, if you
+    are not on it already, and take the merge in. These are two separate commands; run them one
+    after the other.
 
     ```bash
     git switch main
