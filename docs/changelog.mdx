@@ -8,6 +8,42 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.27.0 — 2026-10-14
+
+A stage can go to a helper in Codex as well as in Claude Code, to the other runtime's CLI, and to a
+different executor for each task of a roadmap wave. Every new setting is unset by default, so a
+project that sets none of them works as before.
+
+- **Codex helpers for coding and review.** New local keys `codex.implement_model` and
+  `codex.review_model`, the Codex counterparts of `claude.*_model`. When a helper you chose cannot
+  start, your agent is instructed to stop the stage with the reason rather than do it silently
+  itself. See [Helpers on another model](/autopilot#helpers-on-another-model).
+- **A stage in the other runtime.** New local keys `executor.implement_runtime` and
+  `executor.review_runtime` (`claude` or `codex`), with `executor.implement_model` and
+  `executor.review_model` for that process. Your agent starts the other CLI in the task worktree
+  with limited tools, the review in a fresh process, then checks the diff, findings and receipt
+  itself; on a missing CLI, a refusal or an interrupted run it is instructed to stop the stage.
+  These are the agent's instructions; the scripts store and show the choice. Both directions were
+  run on macOS; on Windows only the Git Bash CI ran, not a signed-in CLI. `jig-setup` does not ask about
+  these keys yet. See [A stage in the other runtime](/autopilot#a-stage-in-the-other-runtime).
+- **Different executors in one roadmap wave.** `jig task set <id> executor_implement_runtime codex`
+  (and the other three `executor_*` keys) before `jig task start` overrides your local choice for
+  that task only (`inherit` removes the override); `jig task route` names where each value came
+  from, and the choice is fixed when the task starts. Two agents of different runtimes working at
+  once in one wave was not run. See
+  [Different executors in one roadmap wave](/autopilot#different-executors-in-one-roadmap-wave).
+- **Your answer resumes a stopped unattended run.** Answering a run that stopped for a decision
+  records your words (`jig task autopilot <id> resume --answer <text> --by human`) and carries on,
+  without giving it more attempts at a failing change: a run that used up its repairs still ends
+  in a draft. An approval the agent gives afterwards is still labelled as the agent's.
+- **The upgrade puts you back where you started.** At `agent.git: push` or `pr`, or `merge` when the
+  run printed `not merged:`, `jig upgrade` used to leave the checkout on `jig/upgrade-<version>`,
+  and housekeeping never deletes a branch that is checked out, so it outlived its merged pull
+  request. Now the run ends on the branch you started from; inside a worktree of its own it does
+  not move. See [Upgrading](/upgrading#from-0260-to-0270).
+- **`jig-setup` asks about two settings it skipped.** It now asks about `release.merge` and
+  `git.delete_merged_branches`, and names all four helper keys (not the `executor.*` ones yet).
+
 ## 0.26.0 — 2026-10-10
 
 More waits reach your Telegram, a task can carry its tracker issue, and a pull request names the

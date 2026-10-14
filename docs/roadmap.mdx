@@ -53,14 +53,6 @@ by one command that refuses a stale write; what a person may do next with a task
 state; and what needs a person, as data rather than as a page. Each of these is useful without
 anything built on top — to CI, to a bot, to an agent choosing what to take next.
 
-**Stages handed to an agent in another runtime.** Writing the code and reviewing it can go to a
-helper on a model you choose in Claude Code and in Codex
-([Autopilot](/autopilot#helpers-on-another-model)), and a selected other runtime can run an
-implementation or an independent review from the task worktree — a review by Codex of work done in
-Claude Code, or the reverse. Jig stops the stage if that handoff fails. A coordinator can also
-assign different runtimes and models to tasks in one wave: each task keeps its own worktree and
-evidence, while the coordinator owns the merge queue and holds the next wave when a task stops.
-
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
 
