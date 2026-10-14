@@ -1183,6 +1183,7 @@ _upgrade_finish() {
   jig_ship_require_commits "upgrade" "$_UPGRADE_BRANCH" "$base"
   jig_ship_push "upgrade" "$_UPGRADE_BRANCH"
   if [ "$level" = push ]; then
+    _upgrade_step_back "$base"
     _upgrade_next
     return 0
   fi
@@ -1195,7 +1196,34 @@ _upgrade_finish() {
     # deleted here and on origin (adr-20261007-a-merged-branch-leaves-with-its-work).
     jig_ship_leave "upgrade" "$_UPGRADE_BRANCH" "$base" "$sha"
   fi
+  [ "$JIG_SHIP_MERGED" = 1 ] || _upgrade_step_back "$base"
   _upgrade_next
+}
+
+# Set by _upgrade_step_back: the branch (or commit) this checkout went back
+# to after the push, or empty when it stayed on the upgrade's branch.
+_UPGRADE_BACK_ON=""
+
+# _upgrade_step_back <base> — once the upgrade's branch is on origin and Jig
+# did not merge it, put this checkout back where the run started (the base,
+# when the run started on the upgrade's own branch). Nothing is lost: the
+# commit is pushed. Left checked out, the branch could never be deleted after
+# the person merges its pull request — housekeeping never deletes a branch
+# checked out anywhere (adr-20261007-a-merged-branch-leaves-with-its-work). A
+# linked worktree is never moved, as in jig_ship_leave.
+_upgrade_step_back() {
+  local base="$1" to
+  [ -n "$_UPGRADE_BRANCH" ] || return 0
+  [ "$(_upgrade_current_branch)" = "$_UPGRADE_BRANCH" ] || return 0
+  [ "$(jig_config_clone_root)" = "$JIG_PROJECT" ] || return 0
+  to="$_UPGRADE_PREV"
+  if [ -z "$to" ] || [ "$to" = "$_UPGRADE_BRANCH" ]; then to="$base"; fi
+  if git -C "$JIG_PROJECT" checkout -q "$to" >/dev/null 2>&1; then
+    _UPGRADE_BACK_ON="$to"
+    _upgrade_out "upgrade: back on $to; the upgrade waits on branch $_UPGRADE_BRANCH"
+  else
+    _upgrade_out "upgrade: could not switch back to $to; you are on $_UPGRADE_BRANCH"
+  fi
 }
 
 # _upgrade_next — where the person stands now, and the way back, in words: a
@@ -1218,6 +1246,10 @@ _upgrade_next() {
     _upgrade_out "next: this upgrade is merged into $base; merge that into the branches still in progress"
   else
     _upgrade_out "next: this upgrade is on branch $_UPGRADE_BRANCH; once it is merged into $base, merge that into the branches still in progress"
+    if [ -n "$_UPGRADE_BACK_ON" ]; then
+      _upgrade_out "next: to change the upgrade before it is merged: \`git checkout $_UPGRADE_BRANCH\`"
+      return 0
+    fi
   fi
   if [ -n "$_UPGRADE_PREV" ] && [ "$_UPGRADE_PREV" != "$_UPGRADE_BRANCH" ]; then
     _upgrade_out "next: to go back to what you were doing: \`git checkout $_UPGRADE_PREV\`"
