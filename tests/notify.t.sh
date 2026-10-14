@@ -62,10 +62,21 @@ STUB
   chmod +x "$1/bin/curl"
 }
 
-# nt_wait [<text>] — wait for the sender to record its outcome, one that
+# The detached sender publishes its outcome before its EXIT cleanup removes
+# notify.* files. Wait for that cleanup before asserting the final workspace.
+nt_wait_cleanup() {
+  local dir="$1" deadline=$((SECONDS + 60))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    [ -n "$(find "$dir" -name 'notify.*' -print -quit)" ] || return 0
+    sleep 0.1
+  done
+  fail "the sender left temporary files in $dir"
+}
+
+# nt_wait [<text>] — wait for the sender's outcome and cleanup, one that
 # contains <text> when given. A deadline sized for a loaded machine
 # (conventions/shell.md, Testing): a passing test leaves at the first poll that
-# sees it.
+# sees the completed sender.
 nt_wait() {
   nt_wait_in .ai/workspace/tasks/T-1/notify "${1:-}"
 }
@@ -76,7 +87,7 @@ nt_wait_in() {
   shift
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ -f "$f" ]; then
-      case "$(cat "$f")" in *"${1:-}"*) return 0 ;; esac
+      case "$(cat "$f")" in *"${1:-}"*) nt_wait_cleanup "${f%/*}"; return 0 ;; esac
     fi
     sleep 0.1
   done
@@ -758,12 +769,12 @@ nh_hook() {
   rm -f "$in"
 }
 
-# nh_wait <file> [<text>] — wait for the sender's record in <file>.
+# nh_wait <file> [<text>] — wait for the sender's record and cleanup.
 nh_wait() {
   local f="$1" deadline=$((SECONDS + 60))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ -f "$f" ]; then
-      case "$(cat "$f")" in *"${2:-}"*) return 0 ;; esac
+      case "$(cat "$f")" in *"${2:-}"*) nt_wait_cleanup "${f%/*}"; return 0 ;; esac
     fi
     sleep 0.1
   done
