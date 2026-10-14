@@ -918,3 +918,20 @@ test_config_route_depth_is_local_only() {
   assert_contains "$OUT" \
     "config.local: route.depth in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
 }
+
+# --- jig-setup covers every local key ----------------------------------------
+#
+# A key `jig config set --local` accepts but the `jig-setup` skill never names
+# is a setting no person is asked about: release.merge,
+# git.delete_merged_branches and notify.autopilot were lost that way. Every
+# local key appears in the skill, whether asked about or named as left out.
+
+test_jig_setup_names_every_local_key() {
+  local keys key missing=""
+  keys=$(sed -n 's/^JIG_CFG_LOCAL_KEYS="\(.*\)"$/\1/p' "$ROOT/scripts/lib/config.sh")
+  [ -n "$keys" ] || fail "JIG_CFG_LOCAL_KEYS not found in scripts/lib/config.sh"
+  for key in $keys; do
+    grep -qF "\`$key\`" "$ROOT/skills/jig-setup/SKILL.md" || missing="$missing $key"
+  done
+  assert_eq "" "$missing"
+}
