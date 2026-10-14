@@ -119,7 +119,18 @@ their own file is answered by `config unset` too — say that the key then answe
     helpers to someone unsure why they would want them. Never set the other runtime's keys
     from this session.
 
-13. **Telegram** (`notify.telegram.token`, `notify.telegram.chat_id`). "Should Jig message your
+13. **The other runtime** (`executor.implement_runtime`, `executor.review_runtime`,
+    `executor.implement_model`, `executor.review_model`) — only when the other runtime's CLI
+    (`claude` or `codex`) is installed here (`command -v`). Explain that a stage can run in that
+    CLI instead of this session: the agent starts it in the task worktree with limited tools, a
+    review in a fresh process, and then checks the diff, findings and receipt itself; a CLI that
+    is missing, refuses or is interrupted stops the stage. It spends that runtime's account.
+    Ask: "Should coding or reviews run in <other runtime>, and on which model?" Options: neither
+    (default — nothing written), coding, reviews, or both; a model only if they name one, written
+    as given. Write the runtime as `claude` or `codex`, never this session's own (that is
+    question 12). Recommend reviews only to someone who wants a second vendor's eyes on the work.
+
+14. **Telegram** (`notify.telegram.token`, `notify.telegram.chat_id`). "Should Jig message your
     Telegram when an autopilot run stops, ends or chooses for you?" On a yes, explain where the
     two values come from: a bot made with @BotFather (`/newbot`) gives the token; they send that
     bot any message, and their chat id is `chat` → `id` on
@@ -135,7 +146,7 @@ their own file is answered by `config unset` too — say that the key then answe
     unattended run's choices — and keeps the bot and chat for later; `true` (default) needs
     nothing written.
 
-14. **Messages from ordinary sessions** (`notify.interactive`), only after a yes to 13 or with
+15. **Messages from ordinary sessions** (`notify.interactive`), only after a yes to 14 or with
     both values already set. "Should it also message you when an ordinary session waits for
     your permission or answer?" Default no: it is for walking away from the screen. Say that in
     the desktop app and the IDE a permission prompt messages them after about six seconds even
