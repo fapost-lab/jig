@@ -148,3 +148,11 @@ it counted every one of those, and excepted the one task whose HEAD it moves.
 **Consequences.** An upgrade from the base branch is no longer stopped by records at all; one run
 from a started task's branch always is, with the way out named. `jig upgrade --dry-run` on such a
 branch prints it as a note, as it prints every stop.
+
+> **Amendment (2026-10-14).** Step 7 now ends where the person started: once the upgrade's branch
+> is pushed (`push`, `pr`, or `merge` that printed `not merged:`), the run checks out the branch it
+> started from — the base when it started on the upgrade's own branch — and names
+> `git checkout jig/upgrade-<v>` for a fix before the merge. Left checked out, the branch outlived
+> its merge: housekeeping never deletes a branch checked out anywhere
+> (adr-20261007-a-merged-branch-leaves-with-its-work). `none` and `commit` stay on the branch,
+> which holds the only copy; a linked worktree is never moved.
