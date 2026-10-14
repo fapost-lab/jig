@@ -12,13 +12,13 @@ Goal: what a tool needs to know about a clone is available as data, with no text
 when each item below prints stable JSON in the shared envelope, the shapes are documented, and a
 contract test pins each one.
 
-- [ ] task list as JSON — every task of a clone in the shared envelope: class, status, gate, autopilot, branch, worktree, pull request, housekeeping flags
-- [ ] clone revision — every Jig write raises one per-clone counter, and every JSON read reports it (after: task list — the envelope it is reported in)
-- [ ] pull request and CI cache — housekeeping keeps what it already asks the forge, with `fetched_at`, and the task list reads it offline (after: task list — the fields it fills)
-- [ ] spec and epic list as JSON — specs with phases and items, progress, epic branch, release level (after: task list — same envelope and conventions)
-- [ ] attention items as data — what needs a person, from the logic behind the status page rather than a second copy of it (after: task list — same envelope)
-- [ ] legal human actions per task state — Jig says what a person may do next (after: task list — actions are read from a task's state)
-- [ ] stable failure codes — each refusal names a code that a tool can act on, in the envelope's `error` (after: task list — the envelope that carries it)
+- [ ] `json-task-list` — task list as JSON — every task of a clone in the shared envelope: class, status, gate, autopilot, branch, worktree, pull request, housekeeping flags
+- [ ] `clone-revision` — clone revision — every Jig write raises one per-clone counter, and every JSON read reports it (after: task list — the envelope it is reported in)
+- [ ] `forge-cache` — pull request and CI cache — housekeeping keeps what it already asks the forge, with `fetched_at`, and the task list reads it offline (after: task list — the fields it fills)
+- [ ] `json-spec-list` — spec and epic list as JSON — specs with phases and items, progress, epic branch, release level (after: task list — same envelope and conventions)
+- [ ] `json-attention` — attention items as data — what needs a person, from the logic behind the status page rather than a second copy of it (after: task list — same envelope)
+- [ ] `json-legal-actions` — legal human actions per task state — Jig says what a person may do next (after: task list — actions are read from a task's state)
+- [ ] `failure-codes` — stable failure codes — each refusal names a code that a tool can act on, in the envelope's `error` (after: task list — the envelope that carries it)
 - [ ] fog: registration hook in `jig init` for an installed UI
 
 ## Waves
