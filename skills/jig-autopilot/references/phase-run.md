@@ -93,8 +93,10 @@ record the stop — the run has no journal, and this is what reaches the person'
 
 Every end of the loop that waits for the person is such a stop: questions, a `problem` row, the
 forge unreachable, and — unattended — a draft ending the run.
-An answer goes back as `jig task autopilot <id> resume --answer "<the person's answer>"` and an agent — the same one, or a new
-one told to continue task X from stage Y.
+After an answer, resume an attended task with `jig task autopilot <id> resume --answer "<the person's answer>"`.
+For an already stopped unattended task with repairs still available, quote the actual answer and add
+`--by human`; a repair-limit stop remains a draft and cannot resume. Then tell an agent — the same
+one, or a new one — to continue task X from stage Y.
 
 **5. Ship, one at a time.** Tasks with `knowledge_consolidated: true` queue in the order they
 became ready. For the head of the queue, from its worktree:

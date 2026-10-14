@@ -72,8 +72,9 @@ One capability is being built in phases alongside the list above.
 reviewing it can go to a helper on a model you choose
 ([Autopilot](/autopilot#helpers-on-another-model)). A selected other runtime can run an
 implementation or independent review from the task worktree when its CLI and permissions are
-available. Jig stops the stage if that handoff fails. Coordination of several agents is the
-next phase of the stage executors specification.
+available. Jig stops the stage if that handoff fails. A coordinator can also assign different
+runtimes and models to tasks in one wave: each task keeps its own worktree and evidence, while the
+coordinator owns the merge queue and holds the next wave when a task stops.
 
 Beyond that, two ideas have written plans and no start date: knowledge that lives in a section of
 an existing file rather than a whole one, and project hooks — a way for a project to bind its own
