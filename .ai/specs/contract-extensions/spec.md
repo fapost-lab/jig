@@ -76,6 +76,18 @@ request.
 - Whether `jig init` gets a hook that lets an installed UI register the project, without making
   the UI a dependency of Jig.
 
+Raised by Jig UI's spec (fapost-lab/jig-ui, `.ai/specs/jig-ui/`, failure hunt of 2026-10-14):
+
+- Does reading Jig's JSON stay offline, with pull request and CI state refreshed by housekeeping
+  and reported with its age? A consumer that re-reads on every file change, in several projects,
+  must never call the network; otherwise it runs into `gh` rate limits.
+- A revision per clone in every JSON read, which a consumer carries in its change signals and
+  sends back with every write. Without it a consumer has no stale-write guard and invents one
+  from file times. One revision for the queue alone does not cover a task changed by an agent.
+- A reorder is one command that moves one item (sparse position), never a renumbering a
+  consumer issues as several commands: those are not atomic, and an agent can read a
+  half-applied order between them.
+
 ## Assumptions left untested
 
 - That a running autopilot or agent reads a pause request at its next stage boundary — to check
