@@ -3254,8 +3254,8 @@ test_task_ship_wrong_branch_refuses() {
 
 test_task_ship_on_base_branch_refuses() {
   task_setup_clean
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git fetch -q origin
   _task_share_one_branch
   git add -A
