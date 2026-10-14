@@ -226,6 +226,23 @@ Some settings are a matter of personal taste rather than project policy. Put the
   selected **external** runtime. These are distinct from `claude.*_model` and
   `codex.*_model`, which choose subagents inside the current runtime. With no external
   runtime selected, these values have no effect. Local only.
+
+For different executors in the same roadmap wave, set a task's own values before
+`jig task start <id>`:
+
+```bash
+jig task set <id> executor_implement_runtime codex
+jig task set <id> executor_review_runtime claude
+jig task set <id> executor_implement_model gpt-6.1-sol
+```
+
+The four task keys match the four `executor.*` settings above. Each overrides only
+its matching local value; the others still inherit. `jig task route <id>` names the
+effective value and whether it came from task state or local config. Use `inherit`
+as the value to remove an override before start. At start Jig saves all four
+effective values and their sources, including empty choices. Later edits to the
+shared local config cannot switch a running task's executor or model. Jig also
+refuses changes to the task's choices after start.
 - `notify.telegram.token`, `notify.telegram.chat_id` — where an autopilot run's messages go: your
   Telegram bot's token and your chat id. Nothing is sent until both are set. Set both with
   `jig notify setup` in your own terminal, or write the token into the file yourself — `jig config

@@ -57,8 +57,9 @@ anything built on top — to CI, to a bot, to an agent choosing what to take nex
 helper on a model you choose in Claude Code and in Codex
 ([Autopilot](/autopilot#helpers-on-another-model)), and a selected other runtime can run an
 implementation or an independent review from the task worktree — a review by Codex of work done in
-Claude Code, or the reverse. Jig stops the stage if that handoff fails. What comes next is
-coordinating several agents under one route.
+Claude Code, or the reverse. Jig stops the stage if that handoff fails. A coordinator can also
+assign different runtimes and models to tasks in one wave: each task keeps its own worktree and
+evidence, while the coordinator owns the merge queue and holds the next wave when a task stops.
 
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.

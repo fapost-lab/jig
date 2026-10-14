@@ -21,15 +21,17 @@ Goal: A stage can run under a selected other runtime. Done when: a Claude Code s
 
 Goal: Jig can coordinate multiple chosen agents without losing task ownership or stage evidence. Done when: a defined multi-agent scenario completes with deterministic ownership, conflict handling, and one checkable route outcome.
 
-- [ ] fog: Define the multi-agent scenario — decide what the existing phase-run coordinator does not cover and which simultaneous executors produce a user-visible benefit.
-- [ ] fog: Define write ownership and merge order — settle whether agents share a task worktree or require separate worktrees before splitting this phase into tasks.
+- [x] `multi-agent-stage-executors` — Choose different executors per task in one wave — record task-local runtime and model choices before start, show their sources, and keep parallel agents independent of shared personal config.
+- [x] `multi-agent-stage-executors` — Preserve one owner and one merge queue — verify isolated worktrees, fresh reviews, receipt freshness after an earlier merge, and a blocked next wave when one task stops.
 
 ## Waves
 
 Phase 2's three items share one T4 task because its executor and permission boundary must be reviewed as one change. Its internal delivery order is implementation, independent review, then host checks. This follows phase 1's Codex subagent contract.
+Phase 3's two items share one T4 task because the per-task choice and wave ownership must be checked together. It extends phase 2's external executor contract.
 
 1. Codex model choice works for implementation and review; A failed Codex delegation has an explicit outcome
 2. A selected external runtime can implement a task stage; A selected external runtime can review independently; Cross-runtime delegation works on supported hosts
+3. Choose different executors per task in one wave; Preserve one owner and one merge queue
 
 <!--
 Rules (jig-idea §8):

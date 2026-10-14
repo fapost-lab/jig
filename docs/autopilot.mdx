@@ -92,6 +92,24 @@ agent checks the process result, task diff, findings and review receipt, and run
 verification. A missing CLI, permission denial or interrupted run stops the stage with
 the reason. `jig task route <task-id>` shows the selected runtime.
 
+### Different executors in one roadmap wave
+
+Before starting each task, the coordinator can set its own runtime and model:
+
+```bash
+jig task set task-a executor_implement_runtime claude
+jig task set task-b executor_implement_runtime codex
+jig task set task-b executor_review_model gpt-6.1-sol
+```
+
+Each value overrides the matching personal setting for that task only.
+`jig task route <task-id>` shows whether a value came from the task or your local config. An unset
+value inherits your local choice; `inherit` removes a task value before start. Jig
+records the effective choices when the task starts, so a later personal-settings
+change cannot silently switch a running agent's executor or model.
+The existing phase coordinator gives each task its own worktree, checks its
+review and verification, and merges finished tasks one at a time.
+
 ## Where it stops
 
 A run stops only where a human is needed. The agent tells you in plain words what it needs; answer

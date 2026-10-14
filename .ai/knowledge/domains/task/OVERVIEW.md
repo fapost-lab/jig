@@ -13,7 +13,7 @@ paths:
   - schemas/state.md
   - templates/task.md
   - scripts/lib/notify.sh
-reviewed_at: 2026-10-10
+reviewed_at: 2026-10-13
 ---
 # Task
 
@@ -63,9 +63,11 @@ tasks. Rename a field here and `spec.sh` changes with it.
 (ADR-0030). `knowledge_consolidated: true` is written at the end of every route, before the
 commit; `status: consolidated` closes the task after its change has landed, prompted by
 housekeeping's `needs-consolidation`. `task set` refuses the status while the flag is not
-`true`, and refuses `false` on a closed task. Apart from the findings gates below and the route
-evidence, this is the only cross-key rule in `task_set`: every other key is validated on its own
-value alone.
+`true`, and refuses `false` on a closed task. Executor choices add another cross-key
+rule: `task start` snapshots the four effective executor fields and their
+sources, and `task set` refuses edits to them once `branch` exists. An agent
+therefore cannot see its assignment change after it starts
+(adr-20261013-task-scoped-stage-executors).
 
 **The route is enforced by its records** (adr-20261004-a-route-stage-is-proven-by-its-record).
 `_task_route_evidence_missing` walks `_task_route_stages` for the class's full route (never the depth) and asks
