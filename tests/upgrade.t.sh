@@ -1660,8 +1660,52 @@ test_upgrade_at_agent_git_pr_pushes_its_branch() {
   assert_contains "$OUT" "pushed jig/upgrade-9.9.9"
   git -C "$remote" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 \
     || fail "the upgrade branch did not reach origin"
+  # Pushed and not merged by Jig: the checkout goes back, so the branch is
+  # checked out nowhere and housekeeping can delete it once it is merged.
+  assert_contains "$OUT" "upgrade: back on main; the upgrade waits on branch jig/upgrade-9.9.9"
+  assert_contains "$OUT" "git checkout jig/upgrade-9.9.9"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the local upgrade branch was deleted"
 
   rm -rf "$src" "$remote"
+}
+
+# Started on another branch, pushed at agent.git push: the checkout goes back
+# to that branch, not to the base.
+test_upgrade_pushed_goes_back_to_the_branch_it_started_on() {
+  _unit_project
+  local src remote
+  remote=$(mktemp -d "${TMPDIR:-/tmp}/jig-remote.XXXXXX")
+  git init -q --bare "$remote"
+  git remote add origin "$remote"
+  git push -q origin main
+  jig config set --local agent.git push >/dev/null
+  src=$(_unit_source)
+  git checkout -q -b task/elsewhere
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pushed jig/upgrade-9.9.9"
+  assert_contains "$OUT" "upgrade: back on task/elsewhere"
+  assert_eq task/elsewhere "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src" "$remote"
+}
+
+# Committed only, nothing pushed: the run stays on its branch, which holds the
+# one copy of the upgrade.
+test_upgrade_committed_only_stays_on_its_branch() {
+  _unit_project
+  jig config set --local agent.git commit >/dev/null
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "back on"
+  assert_eq jig/upgrade-9.9.9 "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src"
 }
 
 # _upgrade_merge_project <remote-var> — _unit_project with an origin, GitHub

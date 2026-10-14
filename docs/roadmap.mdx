@@ -18,64 +18,73 @@ what to do instead until each one is fixed.
 
 ## First: what takes work away from you
 
-**A task must not be closed while its work is unmerged.** Ending an autopilot run marks the task
-finished without anyone asking whether its pull request landed. The task then disappears from
-`jig status` at exactly the moment it needed watching. Neither the automatic path nor the manual
-one asks the question today, so the fix is to put the question where both of them pass.
-
-**Housekeeping must never wait for a password nobody will type.** A fetch against a remote that
-asks for credentials hangs, and because housekeeping records that it ran only after finishing, the
-next session starts another one. The count grows per session. Both halves get fixed: the fetch
-learns that no one is at the keyboard, and the record stops depending on reaching the end.
-
-**What you type must be stored exactly as you typed it.** A reason or a note containing a backslash
-is reinterpreted on its way into a task's state, so a Windows path like `C:\temp` is silently
-mangled — and a value carrying the right two characters can write a second line into the state
-file, which is enough to make a task that never started look started. The correct mechanism is
-already used elsewhere in Jig; this puts it everywhere a value is written.
+Nothing known today. When something is found, it goes here, ahead of everything below.
 
 ## Then: what tells you something untrue
 
-**Redrawing the status page must not impersonate a session.** The page refreshes itself by running
-Jig again, through the same path an ordinary command takes. So the refresh overwrites the checkout's
-record of what is actually happening in it, and it can swallow the "HEAD moved underneath you"
-warning that was meant for the session working next to you — the one case that warning exists for.
-
-**A Jig project cloned on Windows must upgrade like the original.** With Git's default settings on
-Windows, a clone or a task worktree gets Jig's files with Windows line endings, its manifest among
-them. Jig then reads the manifest as empty, stops placing updates there, and `jig status` reports
-nothing wrong. The line endings of all of Jig's files get pinned, and projects that already have
-the problem have to receive the fix through the very upgrade it breaks — which is the hard part.
+**A green verify must belong to the files it checked.** A review already records what it read, and
+says so when the code moves on underneath it. A verify result does not: once the checks pass, the
+task reads as verified even if files changed afterwards, and a change can be shipped under a result
+that was earned by a different tree. The result gets pinned to its inputs, the way the review is,
+and a moved tree asks for a new run.
 
 ## Then: what costs you time
 
-**Resolving knowledge must cost one walk of your repository.** Working out which knowledge
-documents apply to a set of files currently walks the whole tree once per path pattern instead of
-once in total — tens of seconds on a small project, minutes on a large one, paid several times in
-an ordinary task. The measurements and the fix are both known; what matters is that this is the
-feature's condition for being used at all, since anyone meeting the cost switches the feature off.
+**The checks on a pull request must come back sooner.** Today the slowest platform takes the better
+part of forty minutes, and several pull requests at once wait for free machines on top of that. The
+full set stays, on every platform it runs on now; the work is in how it is split and queued.
 
-**The installer must accept a drive root that is already your repository.** Refusing the root of a
-drive was meant for a drive a repository would swallow whole. One that already is the top of a
-repository — a `subst` drive, a volume kept for one project — is refused too, although nothing of
-the kind can happen there, and you finish the setup by hand.
+**A second review round must not open a new front.** When the first round finds blockers and they
+are fixed, the next round checks those blockers, not the whole change again. A blocker that appears
+only in the second round goes to you instead of starting a third. Each extra round is where the time
+goes, and this bounds them.
 
-**Starting a task after a spec session must name the way on.** Discussing a spec changes files
-that are already committed, and starting the task that comes next refuses on exactly those changes
-without naming `jig spec ship`, the command that takes a spec where it belongs.
+**An uncertain finding gets a second opinion before anyone fixes it.** A review finding the reviewer
+is not sure of is handed to a fresh agent that has not seen the reasoning behind it, and is kept
+only if that agent confirms it. A wrong finding then costs one check instead of a round of fixes.
 
 ## After that: new capabilities
 
-One capability is being built in phases alongside the list above.
+**Jig that a program can read.** Today Jig answers in text written for a person, so every tool that
+wants to know the state of a project has to parse it. Commands that report state get a stable JSON
+form, and failures get stable codes, each pinned by a test. Beside it, Jig's contracts grow in the
+same direction: a queue that holds the priority, order and dependencies of tasks and epics, written
+by one command that refuses a stale write; what a person may do next with a task in its current
+state; and what needs a person, as data rather than as a page. Each of these is useful without
+anything built on top — to CI, to a bot, to an agent choosing what to take next.
 
-**Stages a task can hand to another agent.** In Claude Code and Codex, writing the code and
-reviewing it can go to a helper on a model you choose
-([Autopilot](/autopilot#helpers-on-another-model)). A selected other runtime can run an
-implementation or independent review from the task worktree when its CLI and permissions are
-available. Jig stops the stage if that handoff fails. A coordinator can also assign different
-runtimes and models to tasks in one wave: each task keeps its own worktree and evidence, while the
-coordinator owns the merge queue and holds the next wave when a task stops.
+**Stages handed to an agent in another runtime.** Writing the code and reviewing it can go to a
+helper on a model you choose in Claude Code and in Codex
+([Autopilot](/autopilot#helpers-on-another-model)), and a selected other runtime can run an
+implementation or an independent review from the task worktree — a review by Codex of work done in
+Claude Code, or the reverse. Jig stops the stage if that handoff fails. A coordinator can also
+assign different runtimes and models to tasks in one wave: each task keeps its own worktree and
+evidence, while the coordinator owns the merge queue and holds the next wave when a task stops.
 
-Beyond that, two ideas have written plans and no start date: knowledge that lives in a section of
-an existing file rather than a whole one, and project hooks — a way for a project to bind its own
-rules and its own checks to stages of the route.
+**Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
+route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
+
+**A bug fix starts from the failure.** For a task that fixes a defect, the route asks for the
+failure first — reproduced by a test or a written check — then the fix, then the same check again.
+
+**Defects leave a record, and records become rules.** A fixed defect leaves a short structured note:
+the cause, the kind of mistake, the files. A skill reads many of them and proposes project rules
+for what keeps recurring; a person accepts or rejects each one, as with any proposed knowledge. This
+needs a decision recorded first, because it is a new kind of record.
+
+**Knowledge documents that name each other.** An ADR that replaces another, a document that affects
+another — written as typed links and checked mechanically, so that a replaced decision cannot stay
+quietly in force.
+
+Beyond that, ideas with no start date: a link from each requirement in a specification to the check
+that proves it; accepting a known failure with a reason and an end date rather than switching the
+check off; a separate security pass for the riskiest tasks; noticing an unattended run that has
+gone silent; knowledge shared between several repositories; and knowledge that lives in a section
+of an existing file rather than a whole one.
+
+## Beside Jig: Jig UI
+
+Jig UI is a separate, optional project, not published yet: a local page with a
+board across all your Jig projects, where tasks and epics are ordered and prioritised and new tasks
+are filed. It reads and changes your projects only through Jig's own commands and contracts, so Jig
+works exactly as it does without it. Its plans live in its own repository.
