@@ -411,6 +411,30 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.26.0 to 0.27.0
+
+Nothing on the checklist the upgrade itself prints. The installer did not change, and
+`.ai/config.yaml` is not touched. Everything new is a personal setting, unset by default, so a
+project that sets none of them works as before.
+
+**Yours to choose: `codex.implement_model` and `codex.review_model`.** These local-only
+keys let a Codex session hand an entire stage to a subagent on the named model. They are
+unset by default. If Codex cannot start a helper you explicitly selected, your agent is
+instructed to stop the stage and report why. Existing `claude.*` values remain specific to Claude Code.
+
+**Yours to choose: `executor.implement_runtime` and `executor.review_runtime`.** Set either to
+`claude` or `codex` to have that stage run in the other runtime's CLI, started by your agent in the
+task worktree with limited tools; `executor.implement_model` and `executor.review_model` name its
+model. Local only. `jig-setup` asks about them when the other CLI is installed, or set them with
+`jig config set executor.review_runtime codex --local`. Read
+[Autopilot: a stage in the other runtime](/autopilot#a-stage-in-the-other-runtime) first.
+
+**The upgrade no longer leaves you on its branch.** At `agent.git: push` or `pr`, or `merge` when the
+run printed `not merged:`, the run now ends back on the branch you started from, with a `next:` line
+naming `git checkout jig/upgrade-<version>` should the pull request need a fix. A run inside a
+worktree of its own does not move. From 0.26.0 this already applies to the upgrade to 0.27.0
+itself: the older code hands the run to the newest code it can reach.
+
 ## From 0.23.0 to 0.24.0
 
 Nothing on the checklist the upgrade itself prints. The installer did not change, and
@@ -610,11 +634,6 @@ every stage with your agent. To have Claude Code hand writing the code, or revie
 a cheaper model, answer the new question in `jig-setup`, or
 `jig config set claude.implement_model sonnet --local` (likewise `claude.review_model`). Read
 [Autopilot: helpers on another model](/autopilot#helpers-on-another-model) first.
-
-**Yours to choose: `codex.implement_model` and `codex.review_model`.** These local-only
-keys let a Codex session hand an entire stage to a subagent on the named model. They are
-unset by default. If Codex cannot start a helper you explicitly selected, it stops the
-stage and reports why. Existing `claude.*` values remain specific to Claude Code.
 
 **A link in a task workspace is checked wherever it leads.** If your `.ai/workspace` or
 `.ai/workspace/tasks` is a link you made yourself to a folder outside the repository and its worktrees,
