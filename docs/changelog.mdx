@@ -24,8 +24,8 @@ project that sets none of them works as before.
   with limited tools, the review in a fresh process, then checks the diff, findings and receipt
   itself; on a missing CLI, a refusal or an interrupted run it is instructed to stop the stage.
   These are the agent's instructions; the scripts store and show the choice. Both directions were
-  run on macOS; on Windows only the Git Bash CI ran, not a signed-in CLI. `jig-setup` does not ask about
-  these keys yet. See [A stage in the other runtime](/autopilot#a-stage-in-the-other-runtime).
+  run on macOS; on Windows only the Git Bash CI ran, not a signed-in CLI. `jig-setup` asks about them when
+  the other CLI is installed. See [A stage in the other runtime](/autopilot#a-stage-in-the-other-runtime).
 - **Different executors in one roadmap wave.** `jig task set <id> executor_implement_runtime codex`
   (and the other three `executor_*` keys) before `jig task start` overrides your local choice for
   that task only (`inherit` removes the override); `jig task route` names where each value came
@@ -41,8 +41,8 @@ project that sets none of them works as before.
   and housekeeping never deletes a branch that is checked out, so it outlived its merged pull
   request. Now the run ends on the branch you started from; inside a worktree of its own it does
   not move. See [Upgrading](/upgrading#from-0260-to-0270).
-- **`jig-setup` asks about two settings it skipped.** It now asks about `release.merge` and
-  `git.delete_merged_branches`, and names all four helper keys (not the `executor.*` ones yet).
+- **`jig-setup` asks about every personal setting.** It now asks about `release.merge`,
+  `git.delete_merged_branches` and the `executor.*` keys, and names all four helper keys.
 
 ## 0.26.0 — 2026-10-10
 
