@@ -2082,8 +2082,8 @@ test_task_start_picks_up_a_remote_only_epic_without_manual_fetch() {
   # fetches on its own rather than trusting whatever refs this checkout
   # happened to have last time it looked (decided 2026-09-16: always).
   task_setup_clean
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git push -q origin main
   jig spec new idea-x >/dev/null
   git checkout -q main
@@ -2526,8 +2526,8 @@ test_task_start_worktree_carries_an_unpushed_epic_commit_into_every_branch() {
   task_setup_nested
   git add -A
   git commit -q -m "jig init snapshot"
-  git clone -q --bare . origin.git
-  git remote add origin "$PWD/origin.git"
+  git clone -q --bare . "${PWD}.origin.git"
+  git remote add origin "${PWD}.origin.git"
   git fetch -q origin
 
   mkdir -p .ai/specs/alpha
