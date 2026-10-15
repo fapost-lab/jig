@@ -1,16 +1,18 @@
 ---
 title: "Reading Jig as data"
-description: "Read your project's tasks from a script, a bot or a dashboard as JSON, without parsing text and without touching the network."
+description: "Read your project's tasks, specs and what needs you from a script, a bot or a dashboard as JSON, without parsing text and without touching the network."
 ---
 
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
-`--json`. Today `jig task list` and `jig spec list` offer it; more commands will, in the same form.
+`--json`. Today `jig task list`, `jig spec list` and `jig status` offer it; more commands will, in
+the same form.
 
 ```bash
 jig task list --json
 jig task list --json --all
 jig spec list --json
+jig status --json
 ```
 
 <Info>
@@ -126,6 +128,44 @@ A spec built on an epic branch keeps its roadmap there. When you read it from an
 phases come from the epic's branch as your repository last fetched it — `epic.ref` names it — and
 when that branch is nowhere on your disk, `epic.missing` is `true` and `progress` is `null`.
 `release` is the version level the epic will be released at, or `null` when none was recorded.
+
+## What needs you
+
+`jig status --json` lists what needs a person in the project — the same items, in the same order,
+as the "Needs you" cards on the status page (`jig status --open`), because both are built from one
+list. An empty `attention` means nothing needs you.
+
+```json
+{
+  "attention": [
+    {
+      "kind": "autopilot-stopped",
+      "subject": {"type": "task", "id": "booking-message"},
+      "tasks": ["booking-message"],
+      "title": "Autopilot stopped and is waiting for you",
+      "detail": "stopped 5 min ago: Which payment provider should the refund use?",
+      "todo": "Answer the agent in this task's session; it resumes the run.",
+      "url": null
+    }
+  ],
+  "housekeeping": {"ran_at": "2026-10-15T09:00:00Z", "forge": "github", "stale": false},
+  "knowledge_counts_at": "2026-10-15T08:00:00Z"
+}
+```
+
+A program acts on `kind` and `subject`; `title`, `detail` and `todo` are the words the page shows a
+person, and may be reworded. The kinds cover a stopped autopilot run (`autopilot-stopped`, or
+`phase-stopped` for a phase run, whose `tasks` lists every stopped task), a design at its gate
+(`gate-waiting`, `gate-changed`), a finished task waiting for your git step (`git-step`), pull
+requests to review, merge or close (`pull-request-waiting`, `pull-request-was-open`,
+`pull-request-of-abandoned-task`), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
+`closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
+and a newer jig (`release-available`).
+
+Pull request items are as old as the last `jig housekeeping` run; `housekeeping.stale` is `true`
+when that run is older than your housekeeping cadence or the forge did not answer, so one may be
+missing. The knowledge counts are the ones the last full `jig status` took for the page, at
+`knowledge_counts_at`.
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
