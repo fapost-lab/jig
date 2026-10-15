@@ -51,7 +51,7 @@ gitignored file of your own:
   Only the last level, `merge`, also merges, and only once your CI is green
   ([how](https://jig.fapost.in/agent-ships)).
 - **Autopilot** — ask for it on a task and the agent runs its whole route without waiting between
-  stages, has a second agent review the code, caps itself at two attempts to fix what the review or
+  stages, caps itself at two attempts to fix what the review or
   the checks found, and comes back with the change handed over and a report
   ([how](https://jig.fapost.in/autopilot)).
 - **`autopilot.unattended`** — for when the questions a run would ask are not yours to answer: it

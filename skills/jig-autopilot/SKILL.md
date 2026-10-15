@@ -34,9 +34,9 @@ Run each stage's skill in order, and mark it as you enter it:
 .ai/scripts/jig task autopilot <id> stage <analyze|plan|implement|review|verify|consolidate|...>
 ```
 
-- **Review in a fresh context.** Hand review (and architecture review) to a subagent that has
-  not seen the implementation, with the task id, the base and the skill to follow. It records
-  findings and signs the receipt; you fix, set `fixed`, and send it back to re-review.
+- **Review in a fresh context.** Review and architecture review go to a reader who has not seen
+  the implementation, briefed as [jig-review](../jig-review/SKILL.md) §1 says. It records findings
+  and signs the receipt; you fix, set `fixed`, and a new reviewer does the re-review.
 - **A `delegate:` line for this session's runtime hands a stage to a helper** on the model it names — implement, review or
   both ([delegation](../jig-task/references/delegation.md)). Without one, you implement, and the
   review subagent runs on the session's model.
