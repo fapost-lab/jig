@@ -11,6 +11,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/spec.sh
   - schemas/json.md
+  - scripts/lib/forgecache.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-10-15
 ---
@@ -45,7 +46,9 @@ MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote); pr
 calls `json_run _task_list "$@"`; `_task_list` parses the same flags as the text form, shares
 `_task_list_select` with it, and prints `{"tasks":[...],"hidden":n,"housekeeping":...}` built from
 `task_state_get`, `_task_gate_state`, `_task_autopilot_facts`, `_task_autopilot_mode` and
-`hklog_flagged_ids`. Its whole shape is compared in `tests/task.t.sh`.
+`hklog_flagged_ids`; a pull request's state and checks come from the forge cache housekeeping
+wrote (`forgecache_read`, `forgecache_entry`), never from the forge. Its whole shape is compared in
+`tests/task.t.sh`.
 
 ## Rationale
 

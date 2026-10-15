@@ -7339,11 +7339,12 @@ test_task_list_json_pins_a_task_with_every_fact() {
     printf -- '--- run 2026-10-02T12:00:00Z forge=github\n'
     printf '2026-10-02T12:00:00Z task=SRD-9-full status=active remote=unknown via=forge action=preserve flags=wrong-base,STALE_CANDIDATE\n'
   } > .ai/runtime/housekeeping.log
+  printf 'task/SRD-9-full\tmain\topen\tred\t2026-10-02T12:00:00Z\n' > .ai/runtime/forge-cache
   upd=$(sed -n 's/^updated_at: //p' "$dir/state")
 
   _tl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq "{\"schema\":1,\"revision\":null,\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":null,\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -7432,16 +7433,77 @@ test_task_list_json_never_reaches_the_network() {
   task_setup
   fixture_task t1 task/t1 active "pr_url:https://github.com/example/example/pull/7"
   git remote add origin https://example.invalid/repo.git
+  mkdir -p .ai/runtime
+  printf 'task/t1\tmain\topen\tpending\t2026-10-01T00:00:00Z\n' > .ai/runtime/forge-cache
   mkdir bin
   printf '#!/bin/sh\necho called >> "%s/gh.called"\nexit 1\n' "$PWD" > bin/gh
   chmod +x bin/gh
   PATH="$PWD/bin:$PATH" GIT_TRACE="$PWD/git.trace" run_split jig task list --json
   assert_eq 0 "$RC" "$ERR"
   assert_no_file gh.called
+  # An old cache is reported with its time, never refreshed by the read.
+  assert_contains "$OUT" '"state":"open","ci":"pending","fetched_at":"2026-10-01T00:00:00Z"'
   assert_file git.trace
   assert_not_contains "$(cat git.trace)" "fetch"
   assert_not_contains "$(cat git.trace)" "ls-remote"
   assert_not_contains "$(cat git.trace)" "remote-https"
+}
+
+# The pull request's state and checks come from the forge cache housekeeping
+# wrote (lib/forgecache.sh), joined by the task's branch and base; the newest
+# entry wins, an entry for another base is not the task's, and what the cache
+# does not say is null — with the time it was heard when it does.
+test_task_list_json_joins_the_pull_request_to_the_forge_cache() {
+  task_setup
+  fixture_task a-open task/a-open active "pr_url:https://github.com/example/example/pull/1"
+  fixture_task b-merged task/b-merged active "pr_url:https://github.com/example/example/pull/2" "base_branch:epic/x"
+  fixture_task c-unheard task/c-unheard active "pr_url:https://github.com/example/example/pull/3"
+  fixture_task d-no-pr task/d-no-pr active
+  mkdir -p .ai/runtime
+  {
+    printf '# jig forge cache\n'
+    printf 'task/a-open\tmain\topen\tpending\t2026-10-15T10:00:00Z\n'
+    printf 'task/a-open\tmain\tclosed\tred\t2026-10-01T10:00:00Z\n'
+    printf 'task/b-merged\tmain\tclosed\t-\t2026-10-15T10:00:00Z\n'
+    printf 'task/b-merged\tepic/x\tmerged\t-\t2026-10-14T10:00:00Z\n'
+    printf 'task/d-no-pr\tmain\topen\tgreen\t2026-10-15T10:00:00Z\n'
+  } > .ai/runtime/forge-cache
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/1","state":"open","ci":"pending","fetched_at":"2026-10-15T10:00:00Z"}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/2","state":"merged","ci":null,"fetched_at":"2026-10-14T10:00:00Z"}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/3","state":null,"ci":null,"fetched_at":null}'
+  # No pull request opened: the cache does not invent one.
+  assert_contains "$OUT" '"id":"d-no-pr",'
+  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[]}]'
+}
+
+# A worktree borrows the owner's task directory (ADR-0029), and so reads the
+# owner's forge cache; its own housekeeping never writes one.
+test_task_list_json_in_a_worktree_reads_the_owners_forge_cache() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'pr_url: https://github.com/example/example/pull/9\n' >> .ai/workspace/tasks/T-1/state
+  mkdir -p .ai/runtime
+  printf 'task/T-1\tmain\topen\tgreen\t2026-10-15T10:00:00Z\n' > .ai/runtime/forge-cache
+  OUT=$(cd "$wt" && jig task list --json 2>/dev/null)
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/9","state":"open","ci":"green","fetched_at":"2026-10-15T10:00:00Z"}'
+
+  local bin="$PWD/bin"
+  mkdir -p "$bin"
+  # shellcheck disable=SC2016 # the stub's own $1 and $*, expanded when it runs
+  printf '#!/bin/sh\necho "$*" >> "%s/calls"\ncase "$1" in auth) exit 0 ;; esac\nprintf "task/T-1\\tmain\\tMERGED\\tabc\\n"\n' "$bin" > "$bin/gh"
+  chmod +x "$bin/gh"
+  sed 's/^forge:.*/forge: github/; s/^housekeeping.fetch:.*/housekeeping.fetch: false/' \
+    .ai/config.yaml > "$wt/.ai/config.yaml"
+  git remote add origin https://github.com/example/example.git
+  (cd "$wt" && PATH="$bin:$PATH" jig housekeeping >/dev/null 2>&1) || true
+  # The forge was asked, and what it said went nowhere.
+  assert_contains "$(cat "$bin/calls")" "pr list"
+  assert_no_file "$wt/.ai/runtime/forge-cache"
+  assert_eq "$(printf 'task/T-1\tmain\topen\tgreen\t2026-10-15T10:00:00Z')" "$(cat .ai/runtime/forge-cache)"
 }
 
 # --json changes nothing for a reader of the text listing.

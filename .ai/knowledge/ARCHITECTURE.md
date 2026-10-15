@@ -36,7 +36,8 @@ builds every string with `json_quote` (adr-20261015-a-read-is-one-json-envelope;
 `conventions/json-output.md`). The housekeeping log is read through `lib/hklog.sh`, sourced by
 `status` and `task`: "which flags still stand" is decided there once. It is the one shared library
 that calls a command library's function — its rechecks ask `task_state_get` — so a reader sources
-`lib/task.sh` before it. A subject large enough to crowd out its command gets a library of its own even
+`lib/task.sh` before it. `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
+forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
 lifecycle.

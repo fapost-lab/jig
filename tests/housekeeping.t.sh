@@ -2676,6 +2676,148 @@ test_housekeeping_forge_token_is_failed_when_the_forge_does_not_answer() {
   assert_contains "$(cat .ai/runtime/housekeeping.log)" "forge=failed"
 }
 
+# --- the forge cache (lib/forgecache.sh; schemas/json.md) ---------------------
+#
+# What a run heard from the forge is kept for the reads that never ask it:
+# `<head> <base> <state> <ci> <fetched_at>` per pull request, CI only for the
+# open ones, asked in a second list call.
+
+# hk_stub_gh_lists <all-rows> <open-rows> — a fake `gh` that answers the list of
+# every pull request with <all-rows> and the open ones' checks with
+# <open-rows> (already the `<head>\t<base>\t<ci>` the --jq makes of them); an
+# <open-rows> of `FAIL` makes that second call fail. Every call is logged.
+hk_stub_gh_lists() {
+  mkdir -p stub-bin
+  printf '%s\n' "$1" > stub-bin/all
+  printf '%s\n' "$2" > stub-bin/open
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/stub-bin/calls"
+case "\$1" in
+  auth) exit 0 ;;
+esac
+case "\$*" in
+  *"--state open"*)
+    [ "\$(cat "$PWD/stub-bin/open")" != FAIL ] || exit 1
+    cat "$PWD/stub-bin/open" ;;
+  *) cat "$PWD/stub-bin/all" ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  printf 'stub-bin/\n' >> .git/info/exclude
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  git remote add origin https://github.com/example/example.git 2>/dev/null || true
+}
+
+# The cache's rows with fetched_at replaced by T once its form is checked.
+hk_cache_rows() {
+  local at
+  sed '/^#/d' .ai/runtime/forge-cache | while IFS= read -r line; do
+    at=${line##*"$(printf '\t')"}
+    case "$at" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+      *) printf 'bad fetched_at: %s\n' "$line"; continue ;;
+    esac
+    printf '%s\tT\n' "${line%"$(printf '\t')"*}"
+  done
+}
+
+test_housekeeping_keeps_the_forge_answer_in_the_forge_cache() {
+  local t
+  t=$(printf '\t')
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa
+task/b${t}epic/x${t}MERGED${t}bbb
+task/c${t}main${t}CLOSED${t}ccc
+task/d${t}main${t}OPEN${t}ddd" "task/a${t}main${t}green
+task/d${t}main${t}weird"
+
+  run jig housekeeping
+  assert_file .ai/runtime/forge-cache
+  # Normalised states; CI for open requests only, and `-` for a word the cache
+  # does not know rather than whatever the forge said.
+  assert_eq "task/a${t}main${t}open${t}green${t}T
+task/b${t}epic/x${t}merged${t}-${t}T
+task/c${t}main${t}closed${t}-${t}T
+task/d${t}main${t}open${t}-${t}T" "$(hk_cache_rows)"
+  # Two list calls for the run, whatever the number of tasks.
+  assert_eq 2 "$(grep -c '^pr list' stub-bin/calls)"
+  assert_contains "$(cat stub-bin/calls)" "--state open"
+  assert_contains "$(cat stub-bin/calls)" "statusCheckRollup"
+  assert_no_file .ai/runtime/forge-cache.tmp.*
+}
+
+# The checks failing to answer leave CI unknown, never the states unwritten.
+test_housekeeping_forge_cache_keeps_states_when_the_checks_do_not_answer() {
+  local t
+  t=$(printf '\t')
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa" FAIL
+  run jig housekeeping
+  assert_eq "task/a${t}main${t}open${t}-${t}T" "$(hk_cache_rows)"
+}
+
+# A run that heard nothing — the forge failed, there is none, or the run is
+# dry — leaves the last cache as it is, every entry with the time it was heard.
+test_housekeeping_forge_cache_is_kept_when_the_forge_does_not_answer() {
+  hk_setup
+  hk_cfg forge github
+  mkdir -p .ai/runtime
+  printf 'task/a\tmain\topen\tgreen\t2026-10-01T00:00:00Z\n' > .ai/runtime/forge-cache
+  hk_stub_gh_failing
+  jig housekeeping >/dev/null
+  assert_eq "$(printf 'task/a\tmain\topen\tgreen\t2026-10-01T00:00:00Z')" "$(cat .ai/runtime/forge-cache)"
+}
+
+test_housekeeping_forge_cache_is_not_written_without_a_forge() {
+  hk_setup
+  jig housekeeping >/dev/null
+  assert_no_file .ai/runtime/forge-cache
+}
+
+test_housekeeping_dry_run_writes_no_forge_cache() {
+  local t
+  t=$(printf '\t')
+  hk_setup
+  hk_cfg forge github
+  hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa" "task/a${t}main${t}green"
+  jig housekeeping --dry-run >/dev/null
+  assert_no_file .ai/runtime/forge-cache
+  # Nor are the checks asked for a cache that is not written.
+  assert_not_contains "$(cat stub-bin/calls)" "--state open"
+}
+
+# GitLab's list carries states and no pipeline: CI stays unknown, and no call
+# per merge request is made to learn it.
+test_housekeeping_forge_cache_from_gitlab_has_no_ci() {
+  local t
+  t=$(printf '\t')
+  hk_setup
+  hk_cfg forge gitlab
+  mkdir -p stub-bin
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$PWD/stub-bin/calls"
+case "\$1" in
+  auth) exit 0 ;;
+  mr) printf '[{"iid":1,"source_branch":"task/a","target_branch":"main","state":"opened","sha":"aaa"},{"iid":2,"source_branch":"task/b","target_branch":"main","state":"merged","sha":"bbb"}]\n' ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+  printf 'stub-bin/\n' >> .git/info/exclude
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  git remote add origin https://gitlab.com/example/example.git
+
+  run jig housekeeping
+  assert_eq "task/a${t}main${t}open${t}-${t}T
+task/b${t}main${t}merged${t}-${t}T" "$(hk_cache_rows)"
+  assert_eq 1 "$(grep -c '^mr ' stub-bin/calls)"
+}
+
 # --- the live status page (jig_status_page_touch, common.sh) ------------------
 #
 # A non-dry run does a full redraw (`status --html`) when the page exists;
