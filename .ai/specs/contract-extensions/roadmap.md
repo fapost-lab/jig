@@ -24,7 +24,7 @@ contract test pins each one.
 ## Waves
 
 1. Task list as JSON.
-2. Clone revision; pull request and CI cache; spec and epic list; attention items; legal actions; failure codes.
+2. Clone revision; pull request and CI cache; spec and epic list as JSON; attention items as data; legal human actions per task state; stable failure codes.
 
 <!--
 Rules (jig-idea §8):
