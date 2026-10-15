@@ -135,6 +135,9 @@ _status_load() {
   . "$JIG_LIB/spec.sh"
   # shellcheck source=lib/task.sh
   . "$JIG_LIB/task.sh"
+  # After task.sh: its rechecks ask task_state_get.
+  # shellcheck source=lib/hklog.sh
+  . "$JIG_LIB/hklog.sh"
   # shellcheck source=lib/notify.sh
   . "$JIG_LIB/notify.sh"
 }
@@ -1296,11 +1299,11 @@ _status_housekeeping_age() {
 # keeps that exit code around, and a flag nobody sees is the manual discipline
 # the framework exists to remove (RULES.md, Scope invariants).
 #
-# Counted from _status_flagged_ids, so this line and the page's cards name the
+# Counted from hklog_flagged_ids, so this line and the page's cards name the
 # same tasks: a count that said two while the cards showed one would send the
 # reader looking for a task that is not there.
 _status_hk_count() {
-  _status_flagged_ids "$1" | grep -c . || true
+  hklog_flagged_ids "$1" | grep -c . || true
 }
 
 # --- the status page (`jig status --html | --open`) ------------------------------
@@ -1507,49 +1510,6 @@ _status_ago() {
   fi
 }
 
-# _status_hk_ids <regex> — the tasks whose line in the last housekeeping run
-# matches <regex>, distinct and in log order; nothing when housekeeping has
-# never logged. The one reader of the log's task lines here; what the log said
-# is where a flag starts, not where it ends -- _status_flagged_ids asks this
-# disk whether the flag still stands.
-_status_hk_ids() {
-  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log"
-  [ -f "$hk_log" ] || return 0
-  _status_hk_ids_in "$hk_log" "$1"
-}
-
-_status_hk_ids_in() {
-  JIG_HK_RE="$2" awk '
-    # split("", seen) clears the array portably; `delete seen` is an
-    # extension not every awk on a supported machine has.
-    /^--- run / { split("", seen); n = 0; next }
-    $0 ~ ENVIRON["JIG_HK_RE"] {
-      for (i = 1; i <= NF; i++) {
-        if ($i ~ /^task=/) {
-          id = substr($i, 6)
-          if (!(id in seen)) { seen[id] = 1; ids[++n] = id }
-        }
-      }
-    }
-    END { for (i = 1; i <= n; i++) print ids[i] }
-  ' "$1"
-}
-
-# _status_hk_run — "<UTC time>\t<forge>" of the last housekeeping run, from its
-# `--- run` marker; <forge> is github|gitlab|none|failed, `-` when the marker
-# predates the field. Nothing when housekeeping has never logged a run.
-_status_hk_run() {
-  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log"
-  [ -f "$hk_log" ] || return 0
-  awk '
-    /^--- run / {
-      at = $3; forge = "-"
-      for (i = 4; i <= NF; i++) if ($i ~ /^forge=/) forge = substr($i, 7)
-    }
-    END { if (at != "") printf "%s\t%s\n", at, forge }
-  ' "$hk_log"
-}
-
 # _status_hk_stale <UTC time> <forge> — exit 0 when the pull request states of
 # that run cannot be trusted as current: the forge did not answer, or the run
 # is older than `housekeeping.cadence`, after which the session hook would
@@ -1584,7 +1544,7 @@ _status_html_page() {
   _status_live_collect page
   report=$(set -e; _status_report)
 
-  _STATUS_HK_RUN=$(_status_hk_run)
+  _STATUS_HK_RUN=$(hklog_last_run)
   _STATUS_HK_AT=$(printf '%s\n' "$_STATUS_HK_RUN" | cut -f 1)
   _STATUS_HK_FORGE=$(printf '%s\n' "$_STATUS_HK_RUN" | cut -f 2)
   _STATUS_HK_WHEN=""
@@ -1825,7 +1785,7 @@ _status_html_needs() {
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
-  settled=$(_status_hk_ids ' remote=(merged|closed) ')
+  settled=$(hklog_ids ' remote=(merged|closed) ')
 
   # 0. A new jig release is out (task status-says-a-newer-jig-exists): the
   # one card here that is about the framework itself rather than any task,
@@ -1926,7 +1886,7 @@ EOF
   # 4. A pull request waits for review or merge: one jig opened (pr_url), or
   # one the last housekeeping run saw open (a closed task's too).
   #
-  # Deliberately outside _status_flagged_ids, and "a closed task's too" is the
+  # Deliberately outside hklog_flagged_ids, and "a closed task's too" is the
   # reason: closing a task does not merge its pull request, so a consolidated
   # task with `remote=open` contradicts nothing and this card still asks for
   # something real. Only the forge can answer whether it is open, which is why
@@ -1935,7 +1895,7 @@ EOF
   # One live answer does reach it, in the loop below: a task the person
   # abandoned. That disproves no flag either -- it makes the card's ask wrong,
   # so the card changes what it asks instead of disappearing.
-  open=$(_status_hk_ids ' remote=open ')
+  open=$(hklog_ids ' remote=open ')
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     _status_in "$id" "$pr_ids" || pr_ids="$pr_ids$id
@@ -1945,7 +1905,7 @@ $open
 EOF
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    # Guarded for the same reason as in _status_hk_recheck: these ids include
+    # Guarded for the same reason as in _hklog_recheck: these ids include
     # the log's, and a malformed one would take task_dir into jig_die, which
     # redraws the page being drawn.
     url="" live=""
@@ -1992,13 +1952,13 @@ EOF
   # landed elsewhere, a pull request closed unmerged, a worktree left behind:
   # kept, and only a person can say what happens next.
   #
-  # Through _status_flagged_ids, so a flag this disk already disproves -- a
+  # Through hklog_flagged_ids, so a flag this disk already disproves -- a
   # task closed since the run, a worktree removed since it -- builds no card,
   # and the same four answers reach the counts.
-  nc=$(_status_flagged_ids needs-consolidation)
-  wrong=$(_status_flagged_ids wrong-base)
-  closed=$(_status_flagged_ids 'abandoned?')
-  kept=$(_status_flagged_ids worktree-kept)
+  nc=$(hklog_flagged_ids needs-consolidation)
+  wrong=$(hklog_flagged_ids wrong-base)
+  closed=$(hklog_flagged_ids 'abandoned?')
+  kept=$(hklog_flagged_ids worktree-kept)
   cards="$cards$(_status_cards "$nc" "Merged: the task can be closed" "$hk_note" \
     "Tell the agent to close this task (jig-consolidate).")"
   cards="$cards$(_status_cards "$wrong" "The work landed on a different branch than planned" "$hk_note" \
@@ -2552,118 +2512,6 @@ _status_new_release_hint() {
   local latest
   latest=$(_status_latest_release_available) || return 0
   printf '%s\n' "hint: jig v$latest is out; run \`jig self-update\`, then \`jig upgrade\`"
-}
-
-# _status_flagged_ids <flag> — the tasks <flag> still stands for: the ones the
-# last housekeeping run flagged with it, minus the ones a fact read from this
-# disk already contradicts. The one place that answer is decided; the page's
-# cards and the counts in both reports call it, so they cannot disagree.
-#
-# The cut is the cost of asking again, not the kind of card. What a task's own
-# state file says, and whether a worktree is still on disk, are read here for
-# nothing, and the page is redrawn after every command -- so a card those
-# facts contradict is not built at all. What the forge saw (merged, closed,
-# open, work that landed on another branch) costs a network request, which
-# this page never makes on the write path
-# (adr-20260924-the-status-page-keeps-the-readers-place): those stay borrowed
-# and keep saying "as of" the run that saw them.
-_status_flagged_ids() {
-  local flag="$1" re
-  case "$flag" in
-    # The one flag whose name is not a literal regex.
-    'abandoned?') re='flags=[^ ]*abandoned[?]' ;;
-    *) re="flags=[^ ]*$flag" ;;
-  esac
-  _status_hk_recheck "$flag" "$(_status_hk_ids "$re")"
-}
-
-# _status_hk_recheck <flag> <ids> — <ids> without those the live answer
-# contradicts.
-#
-# A recheck may only contradict, never invent. A task with no state file, and
-# a kept worktree the log recorded no path for, keep their card: absence of an
-# answer is not an answer, and a page that hid cards because it failed to look
-# would be worse than one a run behind.
-_status_hk_recheck() {
-  local flag="$1" id
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    # The log is a file, and a line edited by hand can carry an id no command
-    # would accept. Asking a peer about one dies in `task_dir` -- inside a
-    # report, which may not fail on a peer's data, and by way of `jig_die`,
-    # which redraws the very page being drawn. So it is not asked: an id
-    # there is no way to check keeps its card, like every other answer the
-    # page does not have.
-    jig_valid_id "$id" || { printf '%s\n' "$id"; continue; }
-    case "$flag" in
-      needs-consolidation)
-        # "Merged" is borrowed and stays so; "nobody has closed it yet" is
-        # free to ask again, and closing the task is exactly what the card
-        # asks for (ADR-0030).
-        case "$(task_state_get "$id" status)" in
-          consolidated | abandoned) continue ;;
-        esac
-        ;;
-      'abandoned?')
-        # housekeeping_decide drops this flag for a task already abandoned
-        # (abandoned:closed). The page says the same thing a run earlier,
-        # instead of asking a question that has been answered.
-        [ "$(task_state_get "$id" status)" != abandoned ] || continue
-        ;;
-      worktree-kept)
-        _status_worktree_kept "$id" || continue
-        ;;
-      # wrong-base and anything new: only the forge and the history know, so
-      # the flag stands until the next run.
-    esac
-    printf '%s\n' "$id"
-  done <<EOF
-$2
-EOF
-}
-
-# _status_worktree_kept <id> — false when the worktree housekeeping kept for
-# <id> is gone from disk.
-#
-# The path comes from housekeeping's own `worktree=<path> action=keep` line,
-# not from the task's branch. The flag has two shapes -- a worktree of its own
-# and this checkout with the branch in it (_hk_checkout_keep) -- and a branch
-# lookup sees neither the second nor a worktree the page is being drawn
-# inside, since _task_worktrees leaves out the current checkout.
-_status_worktree_kept() {
-  local path
-  path=$(_status_hk_worktree "$1")
-  # Nothing recorded (an older log, or the checkout shape before it was
-  # logged): no contradiction, so the card stands.
-  [ -n "$path" ] || return 0
-  [ -d "$path" ]
-}
-
-# _status_hk_worktree <id> — the path of the worktree the last housekeeping run
-# kept for <id>, from its `action=keep` line; nothing when there is none.
-#
-# The task id is matched on the whole `task=` field, never as a substring:
-# `task=wk` must not answer for `task=wk2`. The path is cut between
-# ` worktree=` and the ` action=keep` that follows it rather than read as a
-# field, because the log writes it unquoted and a worktree path may hold
-# spaces; read field-wise it would come back truncated, and a truncated path
-# is not a directory, which would drop exactly the card this function is
-# meant to keep.
-_status_hk_worktree() {
-  local hk_log="$JIG_PROJECT/$JIG_AI_DIR/runtime/housekeeping.log"
-  [ -f "$hk_log" ] || return 0
-  JIG_HK_ID="$1" awk '
-    /^--- run / { p = ""; next }
-    {
-      id = ""
-      for (i = 1; i <= NF; i++) if ($i ~ /^task=/) id = substr($i, 6)
-      if (id != ENVIRON["JIG_HK_ID"]) next
-      a = index($0, " worktree=")
-      b = index($0, " action=keep")
-      if (a > 0 && b > a) p = substr($0, a + 10, b - a - 10)
-    }
-    END { if (p != "") print p }
-  ' "$hk_log"
 }
 
 # What .ai/config.local.yaml changes, and why a value in it does nothing

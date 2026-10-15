@@ -1,0 +1,85 @@
+---
+title: "Reading Jig as data"
+description: "Read your project's tasks from a script, a bot or a dashboard as JSON, without parsing text and without touching the network."
+---
+
+Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
+[Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
+`--json`. Today `jig task list` offers it; more commands will, in the same form.
+
+```bash
+jig task list --json
+jig task list --json --all
+```
+
+<Info>
+  A `--json` read never touches the network. It reads files on your disk and asks Git about your
+  local repository; it never calls `gh` or fetches. You can run it as often as you like, in many
+  projects at once, without running into a forge's rate limits.
+</Info>
+
+## The envelope
+
+Every `--json` command prints exactly **one line**: a JSON object called the envelope. On success
+it carries the answer in `data`:
+
+```json
+{"schema":1,"revision":null,"generated_at":"2026-10-15T12:00:00Z","data":{"tasks":[...],"hidden":0,"housekeeping":null}}
+```
+
+When the command refuses — an unknown flag, a project without Jig — it still prints one line, with
+`error` in place of `data`, and exits with a non-zero status:
+
+```json
+{"schema":1,"revision":null,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
+```
+
+- `schema` is `1`. It changes only when a field is removed, renamed or changes type. New fields
+  can appear at any time without it changing, so ignore the fields you do not know.
+- `revision` is `null` for now. It will become a number that changes whenever Jig writes anything
+  in the project, so a program can tell whether what it showed is still current.
+- `generated_at` is when the read started, in UTC.
+- `error.code` is `failed` for every refusal for now; specific codes a program can act on will
+  follow. `error.message` is the same text the command prints after `jig: error:`.
+
+Warnings meant for a person still go to stderr, so stdout always holds just the envelope.
+
+## Tasks
+
+`jig task list --json` lists the same tasks as `jig task list` with the same flags: unfinished ones
+by default, everything with `--all`, one status with `--status <status>`. `data.hidden` says how many
+finished tasks were left out.
+
+Each task carries what Jig knows about it:
+
+```json
+{
+  "id": "booking-message",
+  "class": "T1",
+  "status": "active",
+  "issue": null,
+  "goal": "Show the booking reference in the confirmation message.",
+  "knowledge_consolidated": false,
+  "paused": false,
+  "created_at": "2026-10-14",
+  "updated_at": "2026-10-15",
+  "branch": "task/booking-message",
+  "base_branch": "main",
+  "worktree": {"path": "/home/me/shop.worktrees/booking-message", "uncommitted": 2},
+  "gate": null,
+  "autopilot": null,
+  "pull_request": {"url": "https://github.com/me/shop/pull/42"},
+  "housekeeping_flags": []
+}
+```
+
+A fact Jig does not have is `null`: `branch` is `null` for a task not started yet, `gate` for a task
+without a design approval step, `autopilot` for a task that never ran on autopilot. The flags are the
+ones the last `jig housekeeping` run raised and that still apply, for example `needs-consolidation`
+for merged work nobody has closed yet; `data.housekeeping` says when that run was.
+
+`pull_request` holds only the link for now. Whether it is open, merged or passing CI will be added
+from what housekeeping already learns from the forge, still without a network call on read.
+
+The full field list is in the repository, in
+[`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).

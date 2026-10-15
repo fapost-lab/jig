@@ -2099,7 +2099,7 @@ test_status_page_shows_what_housekeeping_left_for_a_person() {
   assert_not_contains "$needs" "<code>old</code>"
 }
 
-# --- a flag this disk disproves (_status_flagged_ids) ------------------------
+# --- a flag this disk disproves (hklog_flagged_ids) ------------------------
 #
 # The cut is the cost of asking again. A task's own status and a worktree's
 # existence are read for nothing while the page is drawn, so a card they
@@ -2264,7 +2264,7 @@ test_status_asks_you_to_close_the_pull_request_of_a_task_you_abandoned() {
 
 test_status_asks_nothing_about_a_bad_id_on_the_pull_request_path_either() {
   fixture_jig_repo
-  # The sister of the guard in _status_hk_recheck, and it needs its own stand:
+  # The sister of the guard in _hklog_recheck, and it needs its own stand:
   # that one is reached through `flags=`, this one through ` remote=open `,
   # and a test of the first says nothing about the second. Both readings here
   # -- pr_url and status -- run on ids that came out of the log.

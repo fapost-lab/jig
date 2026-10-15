@@ -66,7 +66,7 @@ _task_usage() {
     abandon) printf 'usage: jig task abandon <id>\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
     resume) printf 'usage: jig task resume <id>\n' ;;
-    list) printf 'usage: jig task list [--all] [--status <status>] [--goals]\n' ;;
+    list) printf 'usage: jig task list [--all] [--status <status>] [--goals] [--json]\n' ;;
     show) printf 'usage: jig task show <id>\n' ;;
     current) printf 'usage: jig task current\n' ;;
     changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
@@ -349,9 +349,14 @@ _task_worktree_for() {
 # commit, so that count is the whole review queue; at a higher level it is
 # whatever `jig task ship` has not carried further yet.
 _task_worktree_note() {
-  local n
-  n=$(_task_count_lines "$(git -C "$1" status --porcelain 2>/dev/null || true)")
-  printf 'worktree=%s uncommitted=%s\n' "$1" "$n"
+  printf 'worktree=%s uncommitted=%s\n' "$1" "$(_task_worktree_uncommitted "$1")"
+}
+
+# _task_worktree_uncommitted <path> — how many files in the worktree at <path>
+# differ from its HEAD, as `git status --porcelain` counts them: the number
+# _task_worktree_note shows and `task list --json` reports.
+_task_worktree_uncommitted() {
+  _task_count_lines "$(git -C "$1" status --porcelain 2>/dev/null || true)"
 }
 
 # _task_worktree_holds <physical-path> <relative> — zero when <physical-path>
@@ -3277,12 +3282,29 @@ _task_is_live() {
 }
 
 task_list() {
+  local arg
+  # `--json` anywhere asks for the same listing as data, in the envelope
+  # (lib/json.sh). It is looked for before anything else runs, so that a
+  # refusal — an unknown argument, a project without jig — is an envelope too.
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_list "$@"
+      return
+    fi
+  done
+  _task_list "$@"
+}
+
+_task_list() {
   jig_require_init
-  local show_all=0 want_status="" goals=0
+  local show_all=0 want_status="" goals=0 json=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --all) show_all=1; shift ;;
       --goals) goals=1; shift ;;
+      --json) json=1; shift ;;
       --status)
         [ $# -ge 2 ] || jig_die "task list: --status requires a value"
         _task_valid_status "$2" || jig_die "task list: invalid status: $2"
@@ -3293,28 +3315,26 @@ task_list() {
     esac
   done
 
+  _task_list_select "$show_all" "$want_status"
+  if [ "$json" -eq 1 ]; then
+    _task_list_json
+    return 0
+  fi
+
   local base="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  local dir id class status branch base_branch default_base paused issue line lines="" hidden=0 worktrees wt
+  local dir id class status branch base_branch default_base paused issue line lines="" hidden worktrees wt
+  hidden=$_TASK_LIST_HIDDEN
   worktrees=$(_task_worktrees)
   # The base is shown only where it is not the project's: a listing where
   # every line says base=main says nothing.
   default_base=$(cfg git.base_branch main)
-  for dir in "$base"/*/; do
-    [ -f "${dir}state" ] || continue
-    id=$(basename "$dir")
-    # Same rule as _task_candidates_for_branch: skip, never die on, a
-    # directory whose name is not a task id.
-    _task_valid_id "$id" || continue
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    dir="$base/$id/"
     class=$(task_state_get "$id" class)
     status=$(task_state_get "$id" status)
     branch=$(task_state_get "$id" branch)
     paused=$(task_state_get "$id" paused)
-    if [ -n "$want_status" ]; then
-      [ "$status" = "$want_status" ] || continue
-    elif [ "$show_all" -eq 0 ] && ! _task_is_live "$status"; then
-      hidden=$((hidden + 1))
-      continue
-    fi
     [ -n "$class" ] || class="-"
     line="$id class=$class status=$status"
     issue=$(task_state_get "$id" issue)
@@ -3339,7 +3359,9 @@ task_list() {
     [ "$goals" -eq 0 ] || line="$line"$'\037'"goal: $(_task_goal "${dir}task.md")"
     lines="$lines
 $line"
-  done
+  done <<EOF
+$_TASK_LIST_IDS
+EOF
   lines=$(printf '%s\n' "$lines" | sed '/^$/d')
   if [ -z "$lines" ]; then
     if [ "$hidden" -gt 0 ]; then
@@ -3352,6 +3374,195 @@ $line"
   printf '%s\n' "$lines" | sort | awk -F '\037' '{ print $1; if (NF > 1) print "  " $2 }'
   [ "$hidden" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$hidden"
   return 0
+}
+
+# _task_list_select <show_all> <want_status> — which tasks `task list` shows,
+# in the text and the JSON form alike: _TASK_LIST_IDS gets their ids, one per
+# line, and _TASK_LIST_HIDDEN how many finished tasks were left out. Called as
+# a plain command, never through $(...), so both globals reach the caller.
+_TASK_LIST_IDS=""
+_TASK_LIST_HIDDEN=0
+_task_list_select() {
+  local show_all="$1" want_status="$2" dir id status
+  _TASK_LIST_IDS=""
+  _TASK_LIST_HIDDEN=0
+  for dir in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/; do
+    [ -f "${dir}state" ] || continue
+    id=$(basename "$dir")
+    # Same rule as _task_candidates_for_branch: skip, never die on, a
+    # directory whose name is not a task id.
+    _task_valid_id "$id" || continue
+    status=$(task_state_get "$id" status)
+    if [ -n "$want_status" ]; then
+      [ "$status" = "$want_status" ] || continue
+    elif [ "$show_all" -eq 0 ] && ! _task_is_live "$status"; then
+      _TASK_LIST_HIDDEN=$((_TASK_LIST_HIDDEN + 1))
+      continue
+    fi
+    _TASK_LIST_IDS="$_TASK_LIST_IDS$id
+"
+  done
+  return 0
+}
+
+# The housekeeping flags `task list --json` reports, in the words the log
+# writes them (housekeeping_decide, _hk_report). Each is asked through
+# hklog_flagged_ids, so a flag this disk already disproves is dropped exactly
+# as the status page drops it.
+_TASK_LIST_HK_FLAGS="needs-consolidation wrong-base abandoned? worktree-kept base-unreleased STALE_CANDIDATE"
+
+# _task_list_json — the `data` of `task list --json` for the tasks
+# _task_list_select chose: one JSON object on stdout, in the shape
+# schemas/json.md pins. Every value comes from the producer that already
+# answers it for the text listing, the status page or the gates; nothing here
+# decides what they do not. Local reads only: no fetch, no forge.
+_task_list_json() {
+  # shellcheck source=lib/hklog.sh
+  . "$JIG_LIB/hklog.sh"
+  local worktrees flag ids fid flagged="" run ran_at forge t id rows=""
+  t=$(printf '\t')
+  worktrees=$(_task_worktrees)
+  # "<id><TAB><flag>" for every flag that still stands, asked once per flag
+  # rather than once per task. Pathname expansion is off for the split:
+  # `abandoned?` is a glob.
+  set -f
+  for flag in $_TASK_LIST_HK_FLAGS; do
+    ids=$(hklog_flagged_ids "$flag")
+    while IFS= read -r fid; do
+      [ -n "$fid" ] || continue
+      flagged="$flagged$fid$t$flag
+"
+    done <<EOF
+$ids
+EOF
+  done
+  set +f
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    rows="$rows$id$t$(_task_list_json_task "$id" "$worktrees" "$flagged")
+"
+  done <<EOF
+$_TASK_LIST_IDS
+EOF
+  printf '{"tasks":['
+  # Sorted by id, as the text listing is. A record holds no raw tab or
+  # newline (json_quote escapes both), so the id column is the whole key.
+  printf '%s' "$rows" | sed '/^$/d' | LC_ALL=C sort -t "$t" -k1,1 | cut -f2- \
+    | awk 'NR > 1 { printf "," } { printf "%s", $0 }'
+  printf '],"hidden":%s,"housekeeping":' "$_TASK_LIST_HIDDEN"
+  run=$(hklog_last_run)
+  if [ -z "$run" ]; then
+    printf 'null'
+  else
+    ran_at=${run%%"$t"*}
+    forge=${run#*"$t"}
+    [ "$forge" != "-" ] || forge=""
+    json_quote "$ran_at"
+    printf '{"ran_at":%s,' "$_JSON"
+    json_str_or_null "$forge"
+    printf '"forge":%s}' "$_JSON"
+  fi
+  printf '}\n'
+}
+
+# _task_list_json_task <id> <worktrees> <flagged> — one task as a JSON object
+# on one line. <worktrees> is a _task_worktrees listing and <flagged> the
+# "<id><TAB><flag>" lines _task_list_json collected; both are read once per
+# listing, not once per task.
+_task_list_json_task() {
+  local id="$1" worktrees="$2" flagged="$3" line o t
+  local class status issue consolidated paused created updated branch pr_url gate_by
+  local wt gate facts state repairs stage stage_at stop stop_at phase goal flag flags=""
+  t=$(printf '\t')
+  # Through task_state_get, the one reader of the state format.
+  class=$(task_state_get "$id" class)
+  status=$(task_state_get "$id" status)
+  issue=$(task_state_get "$id" issue)
+  consolidated=$(task_state_get "$id" knowledge_consolidated)
+  paused=$(task_state_get "$id" paused)
+  created=$(task_state_get "$id" created_at)
+  updated=$(task_state_get "$id" updated_at)
+  branch=$(task_state_get "$id" branch)
+  pr_url=$(task_state_get "$id" pr_url)
+  gate_by=$(task_state_get "$id" gate_by)
+
+  json_quote "$id"; o="{\"id\":$_JSON"
+  json_str_or_null "$class"; o="$o,\"class\":$_JSON"
+  json_str_or_null "$status"; o="$o,\"status\":$_JSON"
+  json_str_or_null "$issue"; o="$o,\"issue\":$_JSON"
+  goal=$(_task_goal "$(task_dir "$id")/task.md")
+  [ "$goal" != "(none)" ] || goal=""
+  json_str_or_null "$goal"; o="$o,\"goal\":$_JSON"
+  json_bool "$consolidated"; o="$o,\"knowledge_consolidated\":$_JSON"
+  json_bool "$paused"; o="$o,\"paused\":$_JSON"
+  json_str_or_null "$created"; o="$o,\"created_at\":$_JSON"
+  json_str_or_null "$updated"; o="$o,\"updated_at\":$_JSON"
+  json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
+  json_quote "$(jig_task_base "$id")"; o="$o,\"base_branch\":$_JSON"
+
+  wt=""
+  [ -z "$branch" ] || wt=$(_task_worktree_for "$branch" "$worktrees")
+  if [ -n "$wt" ]; then
+    json_quote "$wt"
+    o="$o,\"worktree\":{\"path\":$_JSON,\"uncommitted\":$(_task_worktree_uncommitted "$wt")}"
+  else
+    o="$o,\"worktree\":null"
+  fi
+
+  gate=$(_task_gate_state "$id")
+  if [ -n "$gate" ]; then
+    json_quote "$gate"; o="$o,\"gate\":{\"state\":$_JSON"
+    # Who approved: nobody while it waits; an approval recorded before
+    # `gate_by` existed is read as `human` (schemas/state.md).
+    if [ "$gate" = waiting ]; then
+      _JSON=null
+    else
+      json_quote "${gate_by:-human}"
+    fi
+    o="$o,\"by\":$_JSON}"
+  else
+    o="$o,\"gate\":null"
+  fi
+
+  facts=$(_task_autopilot_facts "$id")
+  if [ -n "$facts" ]; then
+    IFS="$t" read -r state repairs stage stage_at stop stop_at phase <<EOF
+$facts
+EOF
+    [ "$stage" != "-" ] || stage=""
+    [ "$stage_at" != "-" ] || stage_at=""
+    [ "$stop" != "-" ] || stop=""
+    [ "$stop_at" != "-" ] || stop_at=""
+    [ "$phase" != "-" ] || phase=""
+    json_quote "$state"; o="$o,\"autopilot\":{\"state\":$_JSON"
+    # The mode the gates read: anything but `unattended` is attended.
+    json_quote "$(_task_autopilot_mode "$id")"; o="$o,\"mode\":$_JSON"
+    json_int_or_null "$repairs"; o="$o,\"repairs\":$_JSON"
+    json_str_or_null "$stage"; o="$o,\"stage\":$_JSON"
+    json_str_or_null "$stage_at"; o="$o,\"stage_at\":$_JSON"
+    json_str_or_null "$stop"; o="$o,\"stop_reason\":$_JSON"
+    json_str_or_null "$stop_at"; o="$o,\"stop_at\":$_JSON"
+    json_str_or_null "$phase"; o="$o,\"phase\":$_JSON}"
+  else
+    o="$o,\"autopilot\":null"
+  fi
+
+  # What `task ship` opened. Its state and CI are added to this object from
+  # the forge cache once it exists (task forge-cache); reading never asks.
+  if [ -n "$pr_url" ]; then
+    json_quote "$pr_url"; o="$o,\"pull_request\":{\"url\":$_JSON}"
+  else
+    o="$o,\"pull_request\":null"
+  fi
+
+  while IFS="$t" read -r line flag; do
+    [ "$line" = "$id" ] || continue
+    json_quote "$flag"
+    flags="${flags:+$flags,}$_JSON"
+  done <<EOF
+$flagged
+EOF
+  printf '%s,"housekeeping_flags":[%s]}\n' "$o" "$flags"
 }
 
 # _task_goal <task.md> — the first paragraph under the `## Goal` heading of a
