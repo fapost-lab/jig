@@ -16,7 +16,7 @@
 # `list` only reads.
 # shellcheck shell=bash
 
-SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+SPEC_USAGE="usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 
 cmd_spec() {
   local sub="${1:-}"
@@ -283,16 +283,33 @@ spec_progress() {
 # counted under `-` with that heading as their title (`-` when there is
 # none), and listed only when there are some: every item is counted exactly
 # once, which is what keeps spec_progress's sum equal to the old total.
+#
+# With `items` as the second argument (spec_phase_items) each counted item is
+# also printed, before the line of its section, as
+# `item\t<checked 0|1>\t=<task-id>\t<fog 0|1>\t<text>`, `=` alone for no task
+# id — a mark no id can be, since `-` is one the pattern takes: the task id and the
+# fog mark by the same patterns the counts use, read from checked items too,
+# and the text as written after the checkbox, its indented continuation lines
+# joined with a space. Without it the output is the counts alone.
 spec_phase_counts() {
-  awk '
+  local items=0
+  [ "${2:-}" != items ] || items=1
+  awk -v items="$items" '
     function reset() { done = 0; total = 0; filed = 0; fog = 0 }
     function flush() {
       if (phase != "-" || total > 0)
         printf "%s\t%s\t%d\t%d\t%d\t%d\n", phase, (title == "" ? "-" : title), done, total, filed, fog
     }
-    BEGIN { phase = "-"; title = ""; reset() }
+    function emit() {
+      if (!pending) return
+      gsub(/\t/, " ", itext)
+      sub(/[[:space:]]+$/, "", itext)
+      printf "item\t%d\t=%s\t%d\t%s\n", ichecked, itid, ifog, itext
+      pending = 0
+    }
+    BEGIN { phase = "-"; title = ""; reset(); pending = 0 }
     /^##[[:space:]]/ {
-      flush(); reset()
+      emit(); flush(); reset()
       h = $0
       sub(/^##[[:space:]]+/, "", h)
       gsub(/\t/, " ", h)
@@ -309,16 +326,39 @@ spec_phase_counts() {
       next
     }
     /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/ {
+      emit()
       total++
-      if ($0 ~ /\[[xX]\]/) { done++; next }
+      checked = ($0 ~ /\[[xX]\]/) ? 1 : 0
       text = $0
-      sub(/^[[:space:]]*[-*][[:space:]]+\[ \][[:space:]]*/, "", text)
+      sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]*/, "", text)
+      tid = ""; isfog = 0
       # "—" is matched as its UTF-8 bytes, which every awk compares as-is.
-      if (text ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|-|--)[[:space:]]/) filed++
-      else if (text ~ /^fog:/) fog++
+      if (text ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|-|--)[[:space:]]/) {
+        tid = substr(text, 2); sub(/`.*$/, "", tid)
+      } else if (text ~ /^fog:/) isfog = 1
+      if (checked) done++
+      else if (tid != "") filed++
+      else if (isfog) fog++
+      if (items == 1) { pending = 1; ichecked = checked; itid = tid; ifog = isfog; itext = text }
+      next
     }
-    END { flush() }
+    pending && /^[[:space:]]+[^[:space:]]/ {
+      t = $0
+      sub(/^[[:space:]]+/, "", t)
+      sub(/[[:space:]]+$/, "", itext)
+      itext = itext " " t
+      next
+    }
+    { emit() }
+    END { emit(); flush() }
   ' "$1"
+}
+
+# spec_phase_items <roadmap.md|-> — spec_phase_counts with every item printed
+# before its section's line: the items and their counts from one pass, so the
+# two cannot disagree.
+spec_phase_items() {
+  spec_phase_counts "$1" items
 }
 
 # spec_phase_rows — every spec's progress by phase for the status page, one
@@ -383,7 +423,19 @@ _spec_phase_prefix() {
 }
 
 # spec_list — `jig spec list`: one aligned line per spec, from spec_list_rows.
+# `--json` anywhere asks for the same specs as data, in the envelope
+# (lib/json.sh). It is looked for before anything else runs, so that a refusal
+# — an unexpected argument, a checkout outside git — is an envelope too.
 spec_list() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _spec_list_json "$@"
+      return
+    fi
+  done
   [ $# -eq 0 ] || jig_die "spec list: unexpected argument: $1"
   jig_require_repo
   local rows
@@ -398,6 +450,116 @@ spec_list() {
     END { fmt = "%-" wi "s   %-" wt "s   %s\n"
           for (i = 1; i <= NR; i++) printf fmt, id[i], t[i], s[i] }
   '
+}
+
+# _spec_list_json [--json] — the producer of `jig spec list --json`
+# (schemas/json.md): `{"specs":[...]}`, one object per spec in spec_ids order.
+# Every value is read from what already answers it — spec_title, jig_spec_epic,
+# spec_roadmap_ref (where the current roadmap is, as the status page reads it),
+# spec_phase_items (the counts of spec_phase_counts with their items) and
+# spec_release_check. Local refs only: no fetch, no forge.
+_spec_list_json() {
+  local arg root id dir title missing line branch state here checked_out
+  local loc rc ref src content release epic phases progress
+  for arg in "$@"; do
+    [ "$arg" = --json ] || jig_die "spec list: unexpected argument: $arg"
+  done
+  jig_require_repo
+  root=$(spec_dir)
+  here=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  printf '{"specs":['
+  local sep=""
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    dir="$root/$id"
+    title="" missing=""
+    if [ -f "$dir/spec.md" ]; then
+      title=$(spec_title "$dir/spec.md")
+    else
+      missing='"spec.md"'
+    fi
+    [ -f "$dir/roadmap.md" ] || missing="${missing:+$missing,}\"roadmap.md\""
+    epic=null phases="[]" progress=null release=""
+    if [ -f "$dir/roadmap.md" ]; then
+      line=$(jig_spec_epic "$dir/roadmap.md" 2>/dev/null) || line=""
+      rc=0
+      loc=$(spec_roadmap_ref "$id") || rc=$?
+      ref="" src="$dir/roadmap.md" content=""
+      if [ "$rc" -eq 0 ] && [ -n "$loc" ]; then
+        ref=${loc%%$'\t'*}
+        src=""
+        content=$(jig_git_show_path "$ref" "$JIG_AI_DIR/specs/$id/roadmap.md" 2>/dev/null) || content=""
+      fi
+      if [ -n "$line" ]; then
+        branch=${line% *}
+        state=${line##* }
+        checked_out=false
+        if [ "$state" = open ] && [ "$branch" = "$here" ]; then checked_out=true; fi
+        json_quote "$branch"
+        epic="{\"branch\":$_JSON,\"state\":\"$state\",\"checked_out\":$checked_out"
+        if [ "$rc" -ne 0 ]; then epic="$epic,\"missing\":true"; else epic="$epic,\"missing\":false"; fi
+        json_str_or_null "$ref"
+        epic="$epic,\"ref\":$_JSON}"
+      fi
+      if [ -n "$src" ]; then
+        release=$(spec_release_check "spec list" "$JIG_AI_DIR/specs/$id/roadmap.md" < "$src" 2>/dev/null) || release=""
+      elif [ -n "$content" ]; then
+        release=$(spec_release_check "spec list" "$ref" 2>/dev/null <<<"$content") || release=""
+      fi
+      if [ "$rc" -eq 0 ] && [ -n "$src" ]; then
+        _spec_json_phases < <(spec_phase_items "$src")
+        phases=$_SPEC_JSON_PHASES progress=$_SPEC_JSON_PROGRESS
+      elif [ "$rc" -eq 0 ] && [ -n "$content" ]; then
+        _spec_json_phases < <(spec_phase_items - <<<"$content")
+        phases=$_SPEC_JSON_PHASES progress=$_SPEC_JSON_PROGRESS
+      fi
+    fi
+    json_quote "$id"
+    printf '%s{"id":%s' "$sep" "$_JSON"
+    json_str_or_null "$title"
+    printf ',"title":%s,"missing_files":[%s]' "$_JSON" "$missing"
+    json_str_or_null "$release"
+    printf ',"release":%s,"epic":%s' "$_JSON" "$epic"
+    printf ',"progress":%s,"phases":%s}' "$progress" "$phases"
+    sep=","
+  done < <(spec_ids)
+  printf ']}\n'
+}
+
+# _spec_json_phases — spec_phase_items rows on stdin, as JSON in two globals:
+# _SPEC_JSON_PHASES, the array of phases with their items, and
+# _SPEC_JSON_PROGRESS, their sum — the sum spec_progress prints, so the spec's
+# total and its phases cannot disagree. Globals, not stdout: the caller reads
+# both without a subshell per value.
+_SPEC_JSON_PHASES="[]"
+_SPEC_JSON_PROGRESS=null
+_spec_json_phases() {
+  local f1 f2 f3 f4 f5 f6 items="" isep="" out="" psep="" num
+  local sd=0 st=0 sf=0 sg=0
+  while IFS=$'\t' read -r f1 f2 f3 f4 f5 f6; do
+    if [ "$f1" = item ]; then
+      # f2 checked, f3 `=` and the task id, f4 fog, f5 the text (no tab in it).
+      json_quote "$f5"
+      items="$items$isep{\"text\":$_JSON"
+      if [ "$f2" = 1 ]; then items="$items,\"checked\":true"; else items="$items,\"checked\":false"; fi
+      if [ "$f3" = = ]; then _JSON=null; else json_quote "${f3#=}"; fi
+      items="$items,\"task\":$_JSON"
+      if [ "$f4" = 1 ]; then items="$items,\"fog\":true}"; else items="$items,\"fog\":false}"; fi
+      isep=","
+      continue
+    fi
+    json_int_or_null "$f1"
+    num=$_JSON
+    # A CRLF roadmap leaves its CR on a heading; the data carries the title.
+    f2=${f2%$'\r'}
+    if [ "$f2" = - ]; then _JSON=null; else json_quote "$f2"; fi
+    out="$out$psep{\"phase\":$num,\"title\":$_JSON,\"done\":$f3,\"total\":$f4,\"filed\":$f5,\"fog\":$f6,\"items\":[$items]}"
+    psep=","
+    items="" isep=""
+    sd=$((sd + f3)) st=$((st + f4)) sf=$((sf + f5)) sg=$((sg + f6))
+  done
+  _SPEC_JSON_PHASES="[$out]"
+  _SPEC_JSON_PROGRESS="{\"done\":$sd,\"total\":$st,\"filed\":$sf,\"fog\":$sg}"
 }
 
 # spec_list_rows — what `spec list` answers, one "<id><TAB><title><TAB><state>"

@@ -38,7 +38,9 @@ A line that opens with a backticked command rather than a task id, like
 ``- [ ] `jig spec remove` with flags``, is a planned item: the id grammar has no spaces, and
 ``- [ ] `jig-consolidate` checks the item`` has no dash after the backticks.
 
-`jig spec list` prints `roadmap <done>/<total> done, <filed> filed, fog <fog>`.
+`jig spec list` prints `roadmap <done>/<total> done, <filed> filed, fog <fog>`. `jig spec list
+--json` gives the same counts by section with their items (schemas/json.md), from the same pass
+over the roadmap.
 
 ### Waves
 

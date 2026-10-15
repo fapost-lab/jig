@@ -5,11 +5,12 @@ description: "Read your project's tasks from a script, a bot or a dashboard as J
 
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
-`--json`. Today `jig task list` offers it; more commands will, in the same form.
+`--json`. Today `jig task list` and `jig spec list` offer it; more commands will, in the same form.
 
 ```bash
 jig task list --json
 jig task list --json --all
+jig spec list --json
 ```
 
 <Info>
@@ -89,6 +90,42 @@ housekeeping` heard from the forge, at `fetched_at`; the read itself never asks.
 has not run, or the forge did not answer, they are `null` or as old as `fetched_at` says — run
 `jig housekeeping` to refresh them. Checks are asked only for open pull requests, and GitLab's list
 carries none, so there `ci` is `null`.
+
+## Specs
+
+`jig spec list --json` lists the same specs as `jig spec list`, each with its roadmap as data: its
+phases, the items of each phase, and how far it has come.
+
+```json
+{
+  "id": "booking",
+  "title": "Booking flow",
+  "missing_files": [],
+  "release": "minor",
+  "epic": {"branch": "epic/booking", "state": "open", "checked_out": false, "missing": false, "ref": "refs/remotes/origin/epic/booking"},
+  "progress": {"done": 1, "total": 3, "filed": 1, "fog": 1},
+  "phases": [
+    {
+      "phase": 1,
+      "title": "Book a table",
+      "done": 1, "total": 3, "filed": 1, "fog": 1,
+      "items": [
+        {"text": "`booking-form` — the form", "checked": true, "task": "booking-form", "fog": false},
+        {"text": "`booking-message` — the confirmation", "checked": false, "task": "booking-message", "fog": false},
+        {"text": "fog: reminders by text message", "checked": false, "task": null, "fog": true}
+      ]
+    }
+  ]
+}
+```
+
+`progress` is the same count `jig spec list` prints, and the sum of the phases. Each item says
+whether it is checked, which task it names, if any, and whether it is still fog.
+
+A spec built on an epic branch keeps its roadmap there. When you read it from another branch, the
+phases come from the epic's branch as your repository last fetched it — `epic.ref` names it — and
+when that branch is nowhere on your disk, `epic.missing` is `true` and `progress` is `null`.
+`release` is the version level the epic will be released at, or `null` when none was recorded.
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
