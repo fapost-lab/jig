@@ -411,6 +411,21 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.27.0 to 0.28.0
+
+Nothing on the checklist the upgrade itself prints. The installer did not change, and
+`.ai/config.yaml` is not touched. The upgrade brings new text for the review skills
+(`jig-review`, `jig-architecture-review`, `jig-autopilot`) and two `jig-task` references; a copy
+you edited yourself is handled as every edited framework file is
+([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** After the upgrade your agent hands every review to a helper agent,
+also when you work beside it. If you had set no review model or runtime, a T2 or T3 task's review
+now starts a subagent where it used to run in your session; with none set, the helper runs on your
+session's model. For a T4 task a review model or review runtime unlike the coding one is what puts
+its review on another model; without one, the pull request says so. Nothing to set, and nothing to
+change if you are happy with your session's model.
+
 ## From 0.26.0 to 0.27.0
 
 Nothing on the checklist the upgrade itself prints. The installer did not change, and
