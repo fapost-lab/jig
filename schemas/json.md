@@ -87,3 +87,56 @@ join housekeeping's own remote state uses. A run whose forge did not answer, or 
 leaves the last cache as it is: an old entry says how old it is through `fetched_at`, and is never
 refreshed by a reader. The file lives in the checkout that owns the task workspaces; a worktree
 borrowing them (ADR-0029) reads the owner's and its own housekeeping writes none.
+
+## `jig spec list --json`
+
+The specs `jig spec list` shows, in the same order, each with its roadmap as data. It takes no
+argument but `--json`.
+
+```json
+{"specs": [ <spec>, ... ]}
+```
+
+A spec:
+
+| Field | Type | Value |
+|---|---|---|
+| `id` | string | the spec id, its directory under `.ai/specs/` |
+| `title` | string or null | the first `# ` heading of `spec.md`; `null` without one |
+| `missing_files` | array of strings | which of `spec.md` and `roadmap.md` are missing — what the text form calls `incomplete`; `[]` for none |
+| `release` | string or null | `patch`, `minor` or `major` from the roadmap's `Release:` line (schemas/spec.md); `null` when it has none, or one `spec epic` and `spec ship` would refuse |
+| `epic` | object or null | the roadmap's `Epic:` line, below; `null` when it has none |
+| `progress` | object or null | `{"done", "total", "filed", "fog"}`, integers: the sum of `phases`, the counts the text form prints as `roadmap D/T done, F filed, fog G` (off an open epic the text form prints `progress is on the epic` instead, and these are the epic's). `null` when the roadmap could not be read — no `roadmap.md`, a missing epic branch, or an epic ref without it |
+| `phases` | array | one object per roadmap section the status page counts (`spec_phase_counts`), in roadmap order; `[]` when `progress` is `null` |
+
+`epic`:
+
+| Field | Type | Value |
+|---|---|---|
+| `branch` | string | the epic branch |
+| `state` | string | `open`, or `finished` for a legacy `— finished` line |
+| `checked_out` | boolean | the checkout the command ran in is on the open epic — the text form's `(on <branch>)` |
+| `missing` | boolean | the epic is open, not checked out here, and has neither a local nor an origin ref, or a name git refuses as a branch — the text form's `branch missing`. `progress` is then `null` |
+| `ref` | string or null | the ref `phases` were read from: an open epic not checked out here is read from it (`refs/remotes/origin/<branch>` as of the last fetch, else `refs/heads/<branch>`) — the text form's `progress is on the epic`. `null` when the roadmap was read from this checkout |
+
+A phase:
+
+| Field | Type | Value |
+|---|---|---|
+| `phase` | integer or null | `<n>` of a `## Phase <n> — <title>` heading; `null` for the items of any other section, or before the first heading |
+| `title` | string or null | the heading's title; for a section that is not a phase, its whole heading; `null` when there is none |
+| `done`, `total`, `filed`, `fog` | integer | the section's counts, by the rules of schemas/spec.md. A phase is listed even with no items; another section only when it has some |
+| `items` | array | the section's checkbox lines, in order |
+
+An item — the counts above are the sum of its fields, read in the same pass:
+
+| Field | Type | Value |
+|---|---|---|
+| `text` | string | the line after its checkbox, indented continuation lines joined with a space; tabs become spaces and trailing whitespace is dropped |
+| `checked` | boolean | `[x]` or `[X]` |
+| `task` | string or null | the backticked task id the text starts with, followed by a dash — the pattern `filed` counts; `null` otherwise. Read from checked items too |
+| `fog` | boolean | the text starts with `fog:` |
+
+`done` counts the checked items, `filed` the unchecked ones with a `task`, `fog` the unchecked ones
+with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
+fetch, every other one from this checkout.

@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -3640,4 +3640,209 @@ test_spec_ship_refuses_an_invalid_release_line() {
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 1 "$RC"
   assert_contains "$OUT" "records an invalid release level: soon"
+}
+
+# --- spec list --json (adr-20261015-a-read-is-one-json-envelope) -------------
+#
+# The contract: schemas/json.md describes the shape these tests pin. A field
+# renamed or retyped here is a broken consumer elsewhere, so the shape is
+# compared whole, not probed field by field.
+
+# _sl_json [args] — `jig spec list --json <args>` with stdout in OUT, stderr in
+# ERR, status in RC, and generated_at replaced by T once its form is checked.
+_sl_json() {
+  local out err at
+  out=$(_run_out)
+  err=$(_run_out .err)
+  ( jig spec list --json "$@" ) >"$out" 2>"$err"
+  RC=$?
+  OUT=$(cat "$out")
+  ERR=$(cat "$err")
+  rm -f "$out" "$err"
+  at=$(printf '%s\n' "$OUT" | sed -n 's/.*"generated_at":"\([^"]*\)".*/\1/p')
+  case "$at" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
+  esac
+  OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')
+}
+
+# _sl_spec <id> <title> — a spec directory with spec.md titled <title>; the
+# roadmap is the caller's, on stdin.
+_sl_spec() {
+  mkdir -p ".ai/specs/$1"
+  printf '# %s\n\nBody.\n' "$2" > ".ai/specs/$1/spec.md"
+  cat > ".ai/specs/$1/roadmap.md"
+}
+
+test_spec_list_json_pins_a_spec_with_every_fact() {
+  fixture_repo
+  _sl_spec idea-x 'Idea "X"' <<'ROADMAP'
+# Roadmap — Idea X
+
+Epic: epic/idea-x
+Release: minor
+
+- [ ] loose item before any phase
+
+## Phase 1 — First steps
+
+- [x] `t-1` — shipped
+- [ ] `t-2` — filed, and wrapped
+  onto a second line
+- [ ] fog: not yet clear
+- [ ] plain item
+
+## Phase 2 — Later
+
+## Waves
+
+1. `t-1`; `t-2`.
+ROADMAP
+  git add -A
+  git commit -q -m "spec"
+  git checkout -q -b epic/idea-x
+
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"loose item before any phase","checked":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"text":"`t-1` — shipped","checked":true,"task":"t-1","fog":false},{"text":"`t-2` — filed, and wrapped onto a second line","checked":false,"task":"t-2","fog":false},{"text":"fog: not yet clear","checked":false,"task":null,"fog":true},{"text":"plain item","checked":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}]}]}}' "$OUT"
+  # The text form of the same spec is what it always was.
+  run jig spec list
+  assert_eq 'idea-x   Idea "X"   roadmap 1/5 done, 1 filed, fog 1 (on epic/idea-x)' "$OUT"
+}
+
+test_spec_list_json_says_null_for_every_fact_a_spec_does_not_have() {
+  fixture_repo
+  printf -- '## Notes\n\n- [ ] one\n' | _sl_spec a-plain 'Plain'
+  mkdir -p .ai/specs/b-bare .ai/specs/c-half
+  printf 'no heading\n' > .ai/specs/c-half/spec.md
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"one","checked":false,"task":null,"fog":false}]}]},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]}]}}' "$OUT"
+}
+
+test_spec_list_json_with_no_specs_is_an_empty_list() {
+  fixture_repo
+  _sl_json
+  assert_eq 0 "$RC"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"specs":[]}}' "$OUT"
+}
+
+# Off an open epic the copy here is stale by design (ADR-0040): the text form
+# says `progress is on the epic`, and the data is read from the epic's ref, as
+# the status page reads it (spec_roadmap_ref), with that ref named.
+test_spec_list_json_reads_an_open_epic_from_its_ref() {
+  fixture_repo
+  _sl_spec idea-x 'Idea X' <<'ROADMAP'
+Epic: epic/idea-x
+
+## Phase 1 — One
+
+- [ ] `t-1` — first
+ROADMAP
+  git add -A
+  git commit -q -m "spec"
+  git checkout -q -b epic/idea-x
+  sed 's/^- \[ \] `t-1`/- [x] `t-1`/' .ai/specs/idea-x/roadmap.md > r.tmp
+  mv r.tmp .ai/specs/idea-x/roadmap.md
+  git commit -q -am "check t-1"
+  git checkout -q main
+
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"epic":{"branch":"epic/idea-x","state":"open","checked_out":false,"missing":false,"ref":"refs/heads/epic/idea-x"},"progress":{"done":1,"total":1,"filed":0,"fog":0}'
+  assert_contains "$OUT" '"items":[{"text":"`t-1` — first","checked":true,"task":"t-1","fog":false}]'
+  run jig spec list
+  assert_contains "$OUT" "epic/idea-x — progress is on the epic"
+}
+
+test_spec_list_json_says_an_epic_branch_is_missing() {
+  fixture_repo
+  _sl_spec idea-x 'Idea X' <<'ROADMAP'
+Epic: epic/idea-x
+Release: patch
+
+- [ ] `t-1` — first
+ROADMAP
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"release":"patch","epic":{"branch":"epic/idea-x","state":"open","checked_out":false,"missing":true,"ref":null},"progress":null,"phases":[]}'
+  run jig spec list
+  assert_contains "$OUT" "epic/idea-x — branch missing"
+}
+
+# A finished epic's roadmap is current wherever it is read; a Release: line the
+# commands that ship would refuse is no fact, and is null rather than a
+# refusal of the whole read.
+test_spec_list_json_reads_a_finished_epic_here_and_an_invalid_release_as_null() {
+  fixture_repo
+  _sl_spec idea-x 'Idea X' <<'ROADMAP'
+Epic: epic/idea-x — finished
+Release: soon
+
+- [x] `t-1` — first
+ROADMAP
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"release":null,"epic":{"branch":"epic/idea-x","state":"finished","checked_out":false,"missing":false,"ref":null},"progress":{"done":1,"total":1,"filed":0,"fog":0}'
+}
+
+test_spec_list_json_reports_a_refusal_as_an_envelope() {
+  fixture_repo
+  _sl_json extra
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"spec list: unexpected argument: extra"}}' "$OUT"
+  assert_contains "$ERR" "jig: error: spec list: unexpected argument: extra"
+  # --json may come anywhere among the arguments.
+  local out
+  out=$(jig spec list extra --json 2>/dev/null) || true
+  assert_contains "$out" '"error":{"code":"failed","message":"spec list: unexpected argument: extra"}}'
+}
+
+test_spec_list_json_outside_git_is_an_envelope() {
+  mkdir plain
+  cd plain || return 1
+  _sl_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"'
+  assert_not_contains "$OUT" '"data"'
+}
+
+# Reading never touches the network: no forge CLI, no fetch, no ls-remote,
+# even for an epic whose ref is the remote's.
+test_spec_list_json_never_reaches_the_network() {
+  fixture_repo
+  _sl_spec idea-x 'Idea X' <<'ROADMAP'
+Epic: epic/idea-x
+
+- [ ] `t-1` — first
+ROADMAP
+  git add -A
+  git commit -q -m "spec"
+  git update-ref refs/remotes/origin/epic/idea-x HEAD
+  git remote add origin https://example.invalid/repo.git
+  mkdir bin
+  printf '#!/bin/sh\necho called >> "%s/gh.called"\nexit 1\n' "$PWD" > bin/gh
+  chmod +x bin/gh
+  PATH="$PWD/bin:$PATH" GIT_TRACE="$PWD/git.trace" _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"ref":"refs/remotes/origin/epic/idea-x"'
+  assert_no_file gh.called
+  assert_file git.trace
+  assert_not_contains "$(cat git.trace)" "fetch"
+  assert_not_contains "$(cat git.trace)" "ls-remote"
+  assert_not_contains "$(cat git.trace)" "remote-https"
+}
+
+# The id pattern the counts use takes `-` too, and the item says what the count
+# counted; an exported variable never turns the text form's counts into items;
+# a CRLF roadmap's titles carry no CR.
+test_spec_list_json_items_agree_with_counts_on_edge_lines() {
+  fixture_repo
+  printf '## Phase 1 — One\r\n\r\n- [ ] `-` — dash id\r\n- [ ] `t-1` — real\r\n' | _sl_spec idea-x 'Idea X'
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"phases":[{"phase":1,"title":"One","done":0,"total":2,"filed":2,"fog":0,"items":[{"text":"`-` — dash id","checked":false,"task":"-","fog":false},{"text":"`t-1` — real","checked":false,"task":"t-1","fog":false}]}]'
+  JIG_SP_ITEMS=1 run jig spec list
+  assert_eq 'idea-x   Idea X   roadmap 0/2 done, 2 filed, fog 0' "$OUT"
 }
