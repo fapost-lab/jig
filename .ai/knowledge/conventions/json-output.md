@@ -19,7 +19,8 @@ reviewed_at: 2026-10-15
 
 The boundary every command that offers `--json` plugs into: `scripts/lib/json.sh` and the shape
 pinned in `schemas/json.md` (adr-20261015-a-read-is-one-json-envelope). `jig task list` is the first
-implementation; the spec list, attention items, legal actions and failure codes follow it.
+implementation; `jig spec list` and `jig status` (attention items) followed it, and legal actions
+and failure codes will.
 
 ## Practice
 
@@ -49,6 +50,13 @@ calls `json_run _task_list "$@"`; `_task_list` parses the same flags as the text
 `hklog_flagged_ids`; a pull request's state and checks come from the forge cache housekeeping
 wrote (`forgecache_read`, `forgecache_entry`), never from the forge. Its whole shape is compared in
 `tests/task.t.sh`.
+
+A read that answers what a page already shows renders the page's own records. `jig status --json`
+prints the items `_status_attention` (scripts/lib/status.sh) produces, and `_status_html_needs`
+draws the same records as cards: a new "Needs you" card is a new item kind, added there once and
+listed in schemas/json.md, and `tests/status.t.sh` compares every card with its item. Run in a task
+worktree, such a read switches `JIG_PROJECT` to the main checkout inside its producer, so it reads
+the runtime the page reads, answered by the jig that was asked.
 
 ## Rationale
 

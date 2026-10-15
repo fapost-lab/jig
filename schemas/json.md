@@ -140,3 +140,63 @@ An item — the counts above are the sum of its fields, read in the same pass:
 `done` counts the checked items, `filed` the unchecked ones with a `task`, `fog` the unchecked ones
 with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
 fetch, every other one from this checkout.
+
+## `jig status --json`
+
+What needs a person in this clone, as data: the items the status page shows under "Needs you", in
+the same order, built by the same code (`_status_attention`, `scripts/lib/status.sh`) — the page
+renders each item as a card and this command prints it as an object, so the two cannot disagree.
+`--json` takes no other argument: with `--html`, `--open` or `--refresh` beside it the read is
+refused, and a read never writes a page or counts. Run in a task worktree it reads the main
+checkout — its workspaces, housekeeping log and saved counts — as the page does (ADR-0029), answered
+by the jig that was asked. An uninitialised project is a refusal.
+
+```json
+{
+  "attention": [ <item>, ... ],
+  "housekeeping": {"ran_at": "2026-10-15T09:00:00Z", "forge": "github", "stale": false},
+  "knowledge_counts_at": "2026-10-15T08:00:00Z"
+}
+```
+
+| Field | Value |
+|---|---|
+| `attention` | the items, most urgent first; `[]` when nothing needs the reader |
+| `housekeeping` | the last `jig housekeeping` run the pull request and flag items come from: `ran_at` (UTC), `forge` (as in `jig task list --json`) and `stale` — `true` when the forge did not answer or the run is older than `housekeeping.cadence`, so a pull request waiting for the reader may be missing. `null` when housekeeping never ran in this checkout |
+| `knowledge_counts_at` | when the knowledge counts behind `knowledge-proposed` and `sources-changed` were taken (UTC): the counts the last full `jig status` saved for the page, read as they are; when there are none, the two knowledge counts are taken now and saved nowhere |
+
+An item:
+
+| Field | Type | Value |
+|---|---|---|
+| `kind` | string | what is needed, one of the kinds below; a program acts on this |
+| `subject` | object | what the item is about: `{"type", "id"}`, `type` `task`, `phase` (`id` is `<spec-id>/<n>`) or `project` (`id` is `null`) |
+| `tasks` | array of strings | the task ids the item is about: one for a task, every stopped task of the phase for a phase, `[]` for the project |
+| `title` | string | what happened, for a person — the card's heading |
+| `detail` | string or null | why, for a person: the stop reason with its age, the housekeeping run a fact was borrowed from, a count |
+| `todo` | string | what the person should do, in plain words |
+| `url` | string or null | the pull request's address, for the pull request kinds when jig knows it |
+
+The kinds, in the order they are listed:
+
+| `kind` | `subject` | Needs a person because |
+|---|---|---|
+| `release-available` | project | a newer jig is out (`.ai/runtime/latest-release`, written by housekeeping) |
+| `phase-stopped` | phase | tasks of a phase run stopped; answered once, in the coordinator's session |
+| `autopilot-stopped` | task | an autopilot run stopped with a question |
+| `gate-waiting` | task | a T3/T4 design waits at its human gate |
+| `gate-changed` | task | a design changed after it was approved |
+| `git-step` | task | finished and consolidated; the next git step is the person's (`agent.git`) |
+| `pull-request-waiting` | task | `jig task ship` opened a pull request that waits for review or merge |
+| `pull-request-was-open` | task | the last housekeeping run saw a pull request open (it may have merged since) |
+| `pull-request-of-abandoned-task` | task | the task was abandoned, and its pull request was open at the last housekeeping run |
+| `needs-consolidation` | task | merged; the task can be closed |
+| `wrong-base` | task | the work landed on another branch than planned |
+| `closed-unmerged` | task | the pull request was closed without merging (housekeeping's `abandoned?`) |
+| `worktree-kept` | task | a worktree was kept because it still holds work |
+| `knowledge-proposed` | project | knowledge documents wait for a decision |
+| `sources-changed` | project | adopted source files changed since they were approved |
+
+A new kind may be added without raising `schema`; a program shows an unknown kind by its `title`,
+`detail` and `todo`. The person-facing strings are not a contract: read `kind`, `subject` and
+`tasks`.
