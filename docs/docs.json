@@ -50,6 +50,7 @@
         "group": "For developers",
         "pages": [
           "manual-control",
+          "reading-jig-as-data",
           "under-the-hood",
           "concepts",
           "skills",

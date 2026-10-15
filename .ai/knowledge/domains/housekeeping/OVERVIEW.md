@@ -11,7 +11,8 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/jig-session-hook
   - "templates/scheduler/**"
-reviewed_at: 2026-10-07
+  - scripts/lib/hklog.sh
+reviewed_at: 2026-10-15
 ---
 # Housekeeping
 
@@ -155,8 +156,10 @@ that data can be trusted: `failed` means the forge did not answer this run, so n
 (adr-20260924-the-status-page-keeps-the-readers-place). A flag here is where one of its cards
 starts, never where it ends: the page drops a flag a fact on its own disk disproves before any
 card is built, so this run's `needs-consolidation`, `abandoned?` or `worktree-kept` reaches the
-reader only while the task is still open and the worktree still there (`_status_flagged_ids`,
-domains/task). Nothing in this domain changes for it — the decisions, the flag names and the
+reader only while the task is still open and the worktree still there (`hklog_flagged_ids` in
+`scripts/lib/hklog.sh`, domains/task). `jig task list --json` reports the same surviving flags per
+task, with the marker's time and forge as `housekeeping` (schemas/json.md), so renaming a flag or
+reshaping a line changes that contract too. Nothing in this domain changes for it — the decisions, the flag names and the
 line shape are what they were; the flag is simply not carried past the fact that answered it.
 A non-dry run ends by redrawing the
 page in full when it exists (`jig_status_page_touch --full`), which also refreshes the counts the

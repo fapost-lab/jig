@@ -30,7 +30,13 @@ that need them. How a report looks is one such library, `lib/output.sh`: whether
 terminal is decided there and nowhere else in `scripts/`, and a command that prints through its
 blocks prints today's bytes to a pipe (adr-20261005-output-is-decorated-only-on-a-terminal). The
 two installers, which run before any checkout exists, speak the same blocks through their own
-copies (adr-20261005-the-installer-speaks-one-form-in-two-shells). A subject large enough to crowd out its command gets a library of its own even
+copies (adr-20261005-the-installer-speaks-one-form-in-two-shells). JSON is written in one such library, `lib/json.sh`: a command that offers `--json` runs its body as
+a producer through `json_run`, which prints the one envelope line every `--json` read shares, and
+builds every string with `json_quote` (adr-20261015-a-read-is-one-json-envelope; schemas/json.md;
+`conventions/json-output.md`). The housekeeping log is read through `lib/hklog.sh`, sourced by
+`status` and `task`: "which flags still stand" is decided there once. It is the one shared library
+that calls a command library's function — its rechecks ask `task_state_get` — so a reader sources
+`lib/task.sh` before it. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
 lifecycle.

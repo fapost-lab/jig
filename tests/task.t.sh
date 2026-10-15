@@ -7299,3 +7299,169 @@ test_task_ship_without_an_issue_keeps_the_subject() {
   assert_eq 0 "$RC" "$OUT"
   assert_eq "Fix the login form" "$(git log -1 --format=%s)"
 }
+
+# --- task list --json (adr-20261015-a-read-is-one-json-envelope) -------------
+#
+# The contract: schemas/json.md describes the shape these tests pin. A field
+# renamed or retyped here is a broken consumer elsewhere, so the shape is
+# compared whole, not probed field by field.
+
+# _tl_json — `jig task list --json <args>` with stdout in OUT, stderr in ERR,
+# and generated_at replaced by T once its form is checked.
+_tl_json() {
+  run_split jig task list --json "$@"
+  local at
+  at=$(printf '%s\n' "$OUT" | sed -n 's/.*"generated_at":"\([^"]*\)".*/\1/p')
+  case "$at" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
+  esac
+  OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')
+}
+
+test_task_list_json_pins_a_task_with_every_fact() {
+  task_setup_nested
+  git branch task/SRD-9-full
+  git worktree add -q ../wt task/SRD-9-full
+  printf 'new\n' > ../wt/new.txt
+  local wt dir upd
+  wt=$(cd ../wt && pwd -P)
+  dir=.ai/workspace/tasks/SRD-9-full
+  fixture_task SRD-9-full task/SRD-9-full active "class:T3" "issue:SRD-9" \
+    "created_at:2026-10-01" "paused:true" "pr_url:https://github.com/example/example/pull/7"
+  printf '# SRD-9-full\n\n## Goal\n\nShip the list\nas "data".\n\n## Scope\n\nx\n' > "$dir/task.md"
+  printf 'design\n' > "$dir/design.md"
+  jig task gate SRD-9-full approved >/dev/null
+  printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 1\nautopilot_phase: spec-x/1\n' >> "$dir/state"
+  printf '2026-10-02T09:00:00Z\tstart\t-\n2026-10-02T10:00:00Z\tstage\timplement\n2026-10-02T11:00:00Z\tstop\tWhich "name"?\n' > "$dir/autopilot"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-10-02T12:00:00Z forge=github\n'
+    printf '2026-10-02T12:00:00Z task=SRD-9-full status=active remote=unknown via=forge action=preserve flags=wrong-base,STALE_CANDIDATE\n'
+  } > .ai/runtime/housekeeping.log
+  upd=$(sed -n 's/^updated_at: //p' "$dir/state")
+
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "{\"schema\":1,\"revision\":null,\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+}
+
+test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
+  task_setup
+  fixture_task bare "" active "created_at:2026-10-01" "updated_at:2026-10-01"
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
+}
+
+test_task_list_json_with_no_tasks_is_an_empty_list() {
+  task_setup
+  _tl_json
+  assert_eq 0 "$RC"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"tasks":[],"hidden":0,"housekeeping":null}}' "$OUT"
+}
+
+# Which tasks are listed is the text listing's rule, with the count of what it
+# hid; --all and --status mean what they mean there. Sorted by id.
+test_task_list_json_lists_the_tasks_the_text_listing_does() {
+  task_setup
+  fixture_task b-live "" active
+  fixture_task a-ready "" ready
+  fixture_task c-done "" consolidated
+  fixture_task d-gone "" abandoned
+  _tl_json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"hidden":2'
+  assert_eq 'a-ready b-live' "$(printf '%s\n' "$OUT" | grep -o '"id":"[^"]*"' | sed 's/"id":"//; s/"$//' | paste -sd' ' -)"
+  _tl_json --all
+  assert_contains "$OUT" '"hidden":0'
+  assert_eq 'a-ready b-live c-done d-gone' "$(printf '%s\n' "$OUT" | grep -o '"id":"[^"]*"' | sed 's/"id":"//; s/"$//' | paste -sd' ' -)"
+  # --json may come anywhere among the arguments.
+  run_split jig task list --status consolidated --json
+  assert_eq 0 "$RC"
+  assert_eq '"id":"c-done"' "$(printf '%s\n' "$OUT" | grep -o '"id":"[^"]*"')"
+}
+
+# A flag this disk already disproves is gone here exactly as it is gone from
+# the status page (hklog_flagged_ids), and one it cannot disprove stays.
+test_task_list_json_reports_the_housekeeping_flags_that_still_stand() {
+  task_setup
+  fixture_task closed-since task/closed-since consolidated
+  fixture_task open-still task/open-still active
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-01T00:00:00Z forge=github\n'
+    printf '2026-09-01T00:00:00Z task=open-still status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+    printf -- '--- run 2026-09-25T12:00:00Z forge=failed\n'
+    printf '2026-09-25T12:00:00Z task=closed-since status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=open-still status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+  _tl_json --all
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"id":"closed-since",'
+  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[]},{"id":"open-still"'
+  # Only the last run counts: the older abandoned? is not repeated.
+  assert_contains "$OUT" '"housekeeping_flags":["needs-consolidation"]}]'
+  assert_contains "$OUT" '"housekeeping":{"ran_at":"2026-09-25T12:00:00Z","forge":"failed"}'
+}
+
+test_task_list_json_reports_a_refusal_as_an_envelope() {
+  task_setup
+  _tl_json --status bogus
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"task list: invalid status: bogus"}}' "$OUT"
+  assert_contains "$ERR" "jig: error: task list: invalid status: bogus"
+  _tl_json --nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"task list: unknown argument: --nope"}}'
+}
+
+test_task_list_json_in_a_project_without_jig_is_an_envelope() {
+  mkdir plain
+  cd plain
+  git init -q
+  _tl_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"'
+  assert_not_contains "$OUT" '"data"'
+}
+
+# Reading never touches the network: no forge CLI, no fetch, no ls-remote.
+# A gh on PATH would leave a mark; git's own trace lists every git it ran.
+test_task_list_json_never_reaches_the_network() {
+  task_setup
+  fixture_task t1 task/t1 active "pr_url:https://github.com/example/example/pull/7"
+  git remote add origin https://example.invalid/repo.git
+  mkdir bin
+  printf '#!/bin/sh\necho called >> "%s/gh.called"\nexit 1\n' "$PWD" > bin/gh
+  chmod +x bin/gh
+  PATH="$PWD/bin:$PATH" GIT_TRACE="$PWD/git.trace" run_split jig task list --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_no_file gh.called
+  assert_file git.trace
+  assert_not_contains "$(cat git.trace)" "fetch"
+  assert_not_contains "$(cat git.trace)" "ls-remote"
+  assert_not_contains "$(cat git.trace)" "remote-https"
+}
+
+# --json changes nothing for a reader of the text listing.
+test_task_list_text_form_is_unchanged_beside_json() {
+  task_setup
+  fixture_task t1 "" active "class:T1"
+  run jig task list --goals
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 't1 class=T1 status=active not-started\n  goal: (none)')" "$OUT"
+}
+
+# The mode is the one the gates read (_task_autopilot_mode): anything but
+# `unattended` — an absent key, a stray capital — is an attended run.
+test_task_list_json_reports_the_autopilot_mode_the_gates_read() {
+  task_setup
+  fixture_task odd "" active "autopilot:on" "autopilot_mode:Unattended"
+  fixture_task old "" active "autopilot:done"
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"id":"odd",'
+  assert_not_contains "$OUT" '"mode":"Unattended"'
+  assert_eq 2 "$(printf '%s\n' "$OUT" | grep -o '"mode":"attended"' | wc -l | tr -d ' ')"
+}
