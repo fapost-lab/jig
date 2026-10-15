@@ -59,8 +59,9 @@ answer to "which housekeeping flags still stand" lived (`_status_flagged_ids`).
   rechecks ask. The page, both reports and the JSON therefore cannot disagree about a flag.
 - **`jig task list --json`** lists the tasks the text listing would, with the same flags, as
   `{"tasks": [...], "hidden": n, "housekeeping": {...}|null}`; schemas/json.md pins every field and
-  `tests/task.t.sh` compares the whole shape. Its `pull_request` holds only `url`: state and CI
-  join it from a cache housekeeping writes (task forge-cache), never from the forge on read.
+  `tests/task.t.sh` compares the whole shape. Its `pull_request` holds `url`, and `state`, `ci` and
+  `fetched_at` from the forge cache housekeeping writes (task forge-cache, `lib/forgecache.sh`),
+  never from the forge on read.
 
 ## Alternatives
 

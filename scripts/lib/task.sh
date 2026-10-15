@@ -3411,6 +3411,10 @@ _task_list_select() {
 # as the status page drops it.
 _TASK_LIST_HK_FLAGS="needs-consolidation wrong-base abandoned? worktree-kept base-unreleased STALE_CANDIDATE"
 
+# The forge cache's lines (forgecache_read), read once by _task_list_json for
+# every task it lists.
+_TASK_LIST_FORGE_CACHE=""
+
 # _task_list_json — the `data` of `task list --json` for the tasks
 # _task_list_select chose: one JSON object on stdout, in the shape
 # schemas/json.md pins. Every value comes from the producer that already
@@ -3419,9 +3423,13 @@ _TASK_LIST_HK_FLAGS="needs-consolidation wrong-base abandoned? worktree-kept bas
 _task_list_json() {
   # shellcheck source=lib/hklog.sh
   . "$JIG_LIB/hklog.sh"
+  # shellcheck source=lib/forgecache.sh
+  . "$JIG_LIB/forgecache.sh"
   local worktrees flag ids fid flagged="" run ran_at forge t id rows=""
   t=$(printf '\t')
   worktrees=$(_task_worktrees)
+  # What housekeeping last heard from the forge, read once per listing.
+  _TASK_LIST_FORGE_CACHE=$(forgecache_read)
   # "<id><TAB><flag>" for every flag that still stands, asked once per flag
   # rather than once per task. Pathname expansion is off for the split:
   # `abandoned?` is a glob.
@@ -3471,7 +3479,7 @@ EOF
 # listing, not once per task.
 _task_list_json_task() {
   local id="$1" worktrees="$2" flagged="$3" line o t
-  local class status issue consolidated paused created updated branch pr_url gate_by
+  local class status issue consolidated paused created updated branch base pr_url gate_by
   local wt gate facts state repairs stage stage_at stop stop_at phase goal flag flags=""
   t=$(printf '\t')
   # Through task_state_get, the one reader of the state format.
@@ -3498,7 +3506,8 @@ _task_list_json_task() {
   json_str_or_null "$created"; o="$o,\"created_at\":$_JSON"
   json_str_or_null "$updated"; o="$o,\"updated_at\":$_JSON"
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
-  json_quote "$(jig_task_base "$id")"; o="$o,\"base_branch\":$_JSON"
+  base=$(jig_task_base "$id")
+  json_quote "$base"; o="$o,\"base_branch\":$_JSON"
 
   wt=""
   [ -z "$branch" ] || wt=$(_task_worktree_for "$branch" "$worktrees")
@@ -3547,10 +3556,16 @@ EOF
     o="$o,\"autopilot\":null"
   fi
 
-  # What `task ship` opened. Its state and CI are added to this object from
-  # the forge cache once it exists (task forge-cache); reading never asks.
+  # What `task ship` opened, with its state and checks as housekeeping last
+  # heard them from the forge (lib/forgecache.sh), joined by the task's branch
+  # and base as housekeeping's own remote state joins them. Reading never asks
+  # the forge: an old entry says how old it is, a missing one is null.
   if [ -n "$pr_url" ]; then
-    json_quote "$pr_url"; o="$o,\"pull_request\":{\"url\":$_JSON}"
+    json_quote "$pr_url"; o="$o,\"pull_request\":{\"url\":$_JSON"
+    forgecache_entry "$_TASK_LIST_FORGE_CACHE" "$branch" "$base"
+    json_str_or_null "$_FORGECACHE_STATE"; o="$o,\"state\":$_JSON"
+    json_str_or_null "$_FORGECACHE_CI"; o="$o,\"ci\":$_JSON"
+    json_str_or_null "$_FORGECACHE_AT"; o="$o,\"fetched_at\":$_JSON}"
   else
     o="$o,\"pull_request\":null"
   fi

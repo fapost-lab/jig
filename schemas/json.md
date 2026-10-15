@@ -67,5 +67,23 @@ A task:
 | `worktree` | object or null | `{"path", "uncommitted"}`: the worktree, other than the checkout the command ran in, that has the task's branch checked out, and how many files there differ from its HEAD |
 | `gate` | object or null | a T3/T4 design's gate: `{"state", "by"}`, `state` `waiting`, `changed` (the design moved after approval) or `approved`; `by` `human` or `agent`, `null` while waiting. `null` for any other class, or before `design.md` exists |
 | `autopilot` | object or null | the task's autopilot run: `state` (`on`, `stopped`, `done`), `mode` (`attended`, `unattended`), `repairs` (integer), `stage` and `stage_at` (the last stage the current run entered), `stop_reason` and `stop_at` (the journal's last stop), `phase` (`<spec-id>/<n>` for a task of a phase run); each `null` when there is none. `null` when the task never ran on autopilot |
-| `pull_request` | object or null | `{"url"}` of the pull request `jig task ship` opened. Its state and CI are not read from the forge here; they join this object from a local cache (task `forge-cache`) |
+| `pull_request` | object or null | the pull request `jig task ship` opened: `{"url", "state", "ci", "fetched_at"}`. `null` when none was opened. `state` (`open`, `merged`, `closed`) and `ci` (`green`, `red`, `pending`, `none` — no check ran) are what the last `jig housekeeping` heard from the forge, at `fetched_at` (UTC), read from the forge cache below; each `null` when the cache does not say — no cache, no entry for the task's branch and base, or, for `ci`, a pull request that is not open or a forge whose list carries no checks (GitLab) |
 | `housekeeping_flags` | array of strings | the flags of the last housekeeping run that still stand for the task — `needs-consolidation`, `wrong-base`, `abandoned?`, `worktree-kept`, `base-unreleased`, `STALE_CANDIDATE` — after the same local recheck the status page makes (a closed task is no longer `needs-consolidation`); `[]` for none |
+
+### The forge cache
+
+A read never asks the forge, so pull request state comes from `.ai/runtime/forge-cache`, which
+`jig housekeeping` writes from the lists it already fetches (not on `--dry-run`): `gh pr list
+--state all` for states, and on GitHub a second `gh pr list --state open` for the checks of the open
+pull requests — two calls a run, whatever the number of tasks. One line per pull request, newest
+first as the forge lists them, written atomically, `#` lines are comments:
+
+```
+<head>	<base>	<state>	<ci>	<fetched_at>
+```
+
+`<ci>` is `-` when it was not asked. A task's entry is the first line for its branch and base, the
+join housekeeping's own remote state uses. A run whose forge did not answer, or that has no forge,
+leaves the last cache as it is: an old entry says how old it is through `fetched_at`, and is never
+refreshed by a reader. The file lives in the checkout that owns the task workspaces; a worktree
+borrowing them (ADR-0029) reads the owner's and its own housekeeping writes none.

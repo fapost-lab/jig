@@ -68,7 +68,12 @@ Each task carries what Jig knows about it:
   "worktree": {"path": "/home/me/shop.worktrees/booking-message", "uncommitted": 2},
   "gate": null,
   "autopilot": null,
-  "pull_request": {"url": "https://github.com/me/shop/pull/42"},
+  "pull_request": {
+    "url": "https://github.com/me/shop/pull/42",
+    "state": "open",
+    "ci": "green",
+    "fetched_at": "2026-10-15T09:00:00Z"
+  },
   "housekeeping_flags": []
 }
 ```
@@ -78,8 +83,12 @@ without a design approval step, `autopilot` for a task that never ran on autopil
 ones the last `jig housekeeping` run raised and that still apply, for example `needs-consolidation`
 for merged work nobody has closed yet; `data.housekeeping` says when that run was.
 
-`pull_request` holds only the link for now. Whether it is open, merged or passing CI will be added
-from what housekeeping already learns from the forge, still without a network call on read.
+`pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
+went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
+housekeeping` heard from the forge, at `fetched_at`; the read itself never asks. When housekeeping
+has not run, or the forge did not answer, they are `null` or as old as `fetched_at` says — run
+`jig housekeeping` to refresh them. Checks are asked only for open pull requests, and GitLab's list
+carries none, so there `ci` is `null`.
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
