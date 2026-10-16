@@ -15,6 +15,9 @@
 _json_script() {
   {
     printf '#!/usr/bin/env bash\nset -eu\nset -o pipefail\n'
+    # Not the project of a `jig verify` this run may be under: a script sets
+    # its own (_json_rev_script), or has none and reads revision 0.
+    printf 'unset JIG_PROJECT\n'
     printf '. "%s/scripts/lib/common.sh"\n' "$JIG_HOME"
     printf '. "%s/scripts/lib/json.sh"\n' "$JIG_HOME"
     printf '%s\n' "$2"
@@ -88,7 +91,7 @@ produce() { printf "warned\n" >&2; printf "{\"n\":%s}\n" "$1"; }
 json_run produce 3'
   _json_run_script e.sh
   assert_eq 0 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"n":3}}' "$(_json_no_time "$OUT")"
+  assert_eq '{"schema":1,"revision":0,"generated_at":"T","data":{"n":3}}' "$(_json_no_time "$OUT")"
   # One line on stdout, and what the producer said to a person stays on stderr.
   assert_eq 1 "$(wc -l < out.txt | tr -d ' ')"
   assert_eq "warned" "$ERR"
@@ -100,7 +103,7 @@ produce() { jig_die "task list: invalid status: \"x\""; }
 json_run produce'
   _json_run_script r.sh
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"task list: invalid status: \"x\""}}' "$(_json_no_time "$OUT")"
+  assert_eq '{"schema":1,"revision":0,"generated_at":"T","error":{"code":"failed","message":"task list: invalid status: \"x\""}}' "$(_json_no_time "$OUT")"
   assert_contains "$ERR" 'jig: error: task list: invalid status: "x"'
 }
 
@@ -122,7 +125,7 @@ produce() { printf "{\"half\":"; false; printf "1}\n"; }
 json_run produce'
   _json_run_script f.sh
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"exited with status 1"}}' "$(_json_no_time "$OUT")"
+  assert_eq '{"schema":1,"revision":0,"generated_at":"T","error":{"code":"failed","message":"exited with status 1"}}' "$(_json_no_time "$OUT")"
 }
 
 test_json_run_refuses_a_producer_that_printed_nothing() {
@@ -131,7 +134,7 @@ produce() { :; }
 json_run produce'
   _json_run_script n.sh
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"printed no data"}}' "$(_json_no_time "$OUT")"
+  assert_eq '{"schema":1,"revision":0,"generated_at":"T","error":{"code":"failed","message":"printed no data"}}' "$(_json_no_time "$OUT")"
 }
 
 test_json_run_leaves_no_temporary_files() {
@@ -145,4 +148,381 @@ json_run produce'
   set -e
   assert_eq 0 "$RC"
   assert_eq "" "$(ls tmp)"
+}
+
+# --- the clone's revision (adr-20261016-the-clone-revision-is-a-claimed-name) --
+#
+# jig_revision_read / jig_revision_bump (common.sh) and the funnel every writer
+# calls, jig_record_changed. What must hold: every Jig write raises it, a read
+# never does, no increment is lost to a concurrent writer, every worktree of a
+# clone shares it, and a `--json` read takes it before the data.
+
+# _json_rev_script <file> <body> — _json_script with config.sh loaded and
+# JIG_PROJECT set to the directory the script runs in, as the dispatcher does.
+_json_rev_script() {
+  _json_script "$1" '. "$JIG_HOME/scripts/lib/config.sh"
+JIG_PROJECT=$(pwd -P)
+'"$2"
+}
+
+test_json_revision_is_zero_before_the_first_write_then_counts_each_one() {
+  _json_rev_script r.sh '
+jig_revision_read
+jig_revision_bump
+jig_revision_read
+jig_revision_bump
+jig_revision_read'
+  local t0 first second
+  t0=$(date +%s)
+  _json_run_script r.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq 0 "$(printf '%s\n' "$OUT" | sed -n 1p)"
+  first=$(printf '%s\n' "$OUT" | sed -n 2p)
+  second=$(printf '%s\n' "$OUT" | sed -n 3p)
+  # The first write seeds with the time, so a counter lost with .ai/runtime
+  # starts again above any value a consumer may still hold.
+  [ "$first" -ge "$t0" ] || fail "seed $first is below the time $t0"
+  assert_eq "$((first + 1))" "$second"
+  assert_eq "$(printf '%s\n%s' "$first" "$second")" "$(ls .ai/runtime/revision)"
+}
+
+test_json_revision_starts_again_above_the_lost_one() {
+  mkdir -p .ai/runtime/revision
+  : > .ai/runtime/revision/5
+  _json_rev_script r.sh '
+jig_revision_read
+rm -r .ai/runtime/revision
+jig_revision_read
+jig_revision_bump
+jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq 5 "$(printf '%s\n' "$OUT" | sed -n 1p)"
+  assert_eq 0 "$(printf '%s\n' "$OUT" | sed -n 2p)"
+  [ "$(printf '%s\n' "$OUT" | sed -n 3p)" -gt 5 ] || fail "the counter came round again: $OUT"
+}
+
+# Two names at once — two first writes in two seconds, or a leftover; the highest one
+# is the revision, and the next write raises that one.
+test_json_revision_reads_the_highest_of_two_names() {
+  mkdir -p .ai/runtime/revision
+  : > .ai/runtime/revision/7
+  : > .ai/runtime/revision/12
+  _json_rev_script r.sh '
+jig_revision_read
+jig_revision_bump
+jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "$(printf '12\n13')" "$OUT"
+}
+
+# Leftovers — a claim whose clearing failed, a file of the first version, a
+# name that is not a number — never change what is read, and the next raise
+# clears the numbered ones below it.
+test_json_revision_reads_past_stale_leftovers_and_clears_them() {
+  mkdir -p .ai/runtime/revision/10 .ai/runtime/revision/11 .ai/runtime/revision/40 .ai/runtime/revision/45
+  : > .ai/runtime/revision/20
+  : > .ai/runtime/revision/notes
+  _json_rev_script r.sh '
+jig_revision_read
+jig_revision_bump
+jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq "$(printf '45\n46')" "$OUT"
+  # Cleared only more than 16 below the claim: 10, 11 and the file 20 go,
+  # 40 stays.
+  assert_eq "$(printf '40\n45\n46\nnotes')" "$(ls .ai/runtime/revision)"
+  assert_dir .ai/runtime/revision/46
+}
+
+# A writer that read <n>, stalled while others claimed far past it and cleared
+# the low names, would create <n+1> again — below the counter, counting
+# nothing. Clearing <n+1> took a claim more than 16 above it, so a claim that
+# finds the highest name that far above itself withdraws and claims again.
+test_json_revision_catches_a_claim_made_stale_by_a_stall() {
+  mkdir -p .ai/runtime/revision/120
+  _json_rev_script s.sh '
+eval "$(declare -f _jig_revision_scan | sed "1s/_jig_revision_scan/_jig_real_scan/")"
+stalled=1
+_jig_revision_scan() {
+  if [ -n "$stalled" ]; then stalled=""; _JIG_REV=100; _JIG_REV_OLD=""; return 0; fi
+  _jig_real_scan "$@"
+}
+jig_revision_bump
+jig_revision_read'
+  _json_run_script s.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq 121 "$OUT"
+  assert_eq "$(printf '120\n121')" "$(ls .ai/runtime/revision)"
+}
+
+# The same for a writer that found the directory empty and stalled before it
+# seeded with the time, while the counter ran ahead of the clock.
+test_json_revision_catches_a_seed_made_stale_by_a_stall() {
+  local ahead
+  ahead=$(( $(date +%s) + 1000 ))
+  mkdir -p ".ai/runtime/revision/$ahead"
+  _json_rev_script s.sh '
+eval "$(declare -f _jig_revision_scan | sed "1s/_jig_revision_scan/_jig_real_scan/")"
+stalled=1
+_jig_revision_scan() {
+  if [ -n "$stalled" ]; then stalled=""; _JIG_REV=""; _JIG_REV_OLD=""; return 0; fi
+  _jig_real_scan "$@"
+}
+jig_revision_bump
+jig_revision_read'
+  _json_run_script s.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq "$((ahead + 1))" "$OUT"
+  assert_eq "$(printf '%s\n%s' "$ahead" "$((ahead + 1))")" "$(ls .ai/runtime/revision)"
+}
+
+# mkdir is the claim: of two writers that saw the same value one creates the
+# next name and the other reads again. Nothing is lost, nothing waits. It
+# starts from a file, the counter of the first, rename-based version — which
+# lost increments here on Windows CI, where Git Bash emulates rename.
+test_json_revision_loses_no_increment_to_concurrent_writers() {
+  mkdir -p .ai/runtime/revision
+  : > .ai/runtime/revision/100
+  _json_rev_script w.sh '
+i=0
+while [ "$i" -lt 30 ]; do jig_revision_bump; i=$((i + 1)); done'
+  bash w.sh 2> w1.err &
+  local p1=$!
+  bash w.sh 2> w2.err &
+  local p2=$!
+  bash w.sh 2> w3.err &
+  local p3=$!
+  wait "$p1" || fail "writer 1 failed: $(cat w1.err)"
+  wait "$p2" || fail "writer 2 failed: $(cat w2.err)"
+  wait "$p3" || fail "writer 3 failed: $(cat w3.err)"
+  assert_eq "" "$(cat w1.err w2.err w3.err)"
+  # The count, as a reader sees it: leftovers below it are clutter the design
+  # accepts, not part of the answer.
+  _json_rev_script r.sh 'jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 190 "$OUT"
+}
+
+# One counter per clone, in its main checkout: a write in a worktree is seen
+# from the main checkout, and the worktree keeps no counter of its own.
+test_json_revision_is_shared_by_every_worktree_of_the_clone() {
+  fixture_repo
+  git worktree add -q -b side ../wt
+  _json_rev_script r.sh '
+jig_revision_bump
+jig_revision_read'
+  cp r.sh ../wt/r.sh
+  local main side
+  (cd ../wt && bash r.sh > ../wt.out 2> ../wt.err) || fail "worktree run failed: $(cat ../wt.err)"
+  side=$(cat ../wt.out)
+  _json_run_script r.sh
+  assert_eq 0 "$RC" "$ERR"
+  main=$OUT
+  assert_eq "$((side + 1))" "$main"
+  assert_no_file ../wt/.ai/runtime/revision
+}
+
+# Not writable (a sandboxed worktree may not write the main checkout): the
+# write already landed, so the command goes on, and says what was not counted.
+test_json_revision_that_cannot_be_raised_warns_and_does_not_fail() {
+  skip_unless_readonly_dirs
+  mkdir -p .ai/runtime
+  chmod a-w .ai/runtime
+  _json_rev_script r.sh '
+jig_revision_bump
+printf "went on\n"'
+  _json_run_script r.sh
+  chmod u+w .ai/runtime
+  assert_eq 0 "$RC"
+  assert_eq "went on" "$OUT"
+  assert_contains "$ERR" "jig: warning: could not raise the clone revision"
+}
+
+# Taken before the producer runs: a write that lands during the read must not
+# be covered by the revision the envelope reports.
+test_json_run_reports_the_revision_taken_before_the_data() {
+  mkdir -p .ai/runtime/revision
+  : > .ai/runtime/revision/41
+  _json_rev_script e.sh '
+produce() { jig_revision_bump; printf "{}\n"; }
+json_run produce
+jig_revision_read'
+  _json_run_script e.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":41,"generated_at":"T","data":{}}' "$(_json_no_time "$(printf '%s\n' "$OUT" | sed -n 1p)")"
+  assert_eq 42 "$(printf '%s\n' "$OUT" | sed -n 2p)"
+}
+
+# _json_rev — REV <- the revision `jig task list --json` reports.
+_json_rev() {
+  REV=$(jig task list --json 2>/dev/null | sed -n 's/^{"schema":1,"revision":\([0-9][0-9]*\),.*/\1/p')
+  [ -n "$REV" ] || fail "no revision in the task list"
+}
+
+# _json_raised <what> — the revision rose since the last _json_rev/_json_raised.
+_json_raised() {
+  local before="$REV"
+  _json_rev
+  [ "$REV" -gt "$before" ] || fail "$1 did not raise the revision ($before -> $REV)"
+}
+
+# _json_kept <what> — the revision did not move.
+_json_kept() {
+  local before="$REV"
+  _json_rev
+  assert_eq "$before" "$REV" "$1 raised the revision"
+}
+
+test_json_revision_rises_with_every_jig_write_and_not_with_a_read() {
+  fixture_jig_repo
+  _json_rev
+  assert_eq 0 "$REV"
+
+  jig spec new idea-x >/dev/null 2>&1 || fail "spec new failed"
+  _json_raised "spec new"
+  jig task new t-1 --class T3 >/dev/null || fail "task new failed"
+  _json_raised "task new"
+  printf 'the design\n' | jig task artifact write t-1 design --from - >/dev/null
+  _json_raised "task artifact write"
+  printf 'more\n' | jig task artifact append t-1 design --from - >/dev/null
+  _json_raised "task artifact append"
+  jig task gate t-1 approved >/dev/null
+  _json_raised "task gate"
+  jig task set t-1 domains task >/dev/null
+  _json_raised "task set"
+  jig task pause t-1 --reason "later" >/dev/null 2>&1
+  _json_raised "task pause"
+  jig task resume t-1 >/dev/null 2>&1
+  _json_raised "task resume"
+  jig task autopilot t-1 start >/dev/null 2>&1
+  _json_raised "task autopilot start"
+  jig task finding add t-1 --severity P2 --where - --summary "a nit" >/dev/null
+  _json_raised "task finding add"
+  jig task finding set t-1 F1 fixed >/dev/null
+  _json_raised "task finding set"
+  printf '# Roadmap\n\n## Phase 1 — First\n\n- [ ] `t-1` — the task\n' > .ai/specs/idea-x/roadmap.md
+  _json_kept "a file written by hand"
+  jig spec link idea-x t-1 >/dev/null 2>&1 || fail "spec link failed"
+  _json_raised "spec link"
+  jig knowledge new convention c-1 --proposed >/dev/null 2>&1 || fail "knowledge new failed"
+  _json_raised "knowledge new"
+  jig knowledge reject convention-c-1 >/dev/null 2>&1 || fail "knowledge reject failed"
+  _json_raised "knowledge reject"
+  jig config set agent.git pr --local >/dev/null 2>&1 || fail "config set failed"
+  _json_raised "config set"
+  jig config unset agent.git --local >/dev/null 2>&1 || fail "config unset failed"
+  _json_raised "config unset"
+
+  jig task list >/dev/null
+  jig task show t-1 >/dev/null
+  jig task findings t-1 >/dev/null
+  jig spec list >/dev/null
+  jig knowledge proposed >/dev/null 2>&1 || true
+  _json_kept "a read"
+}
+
+test_json_revision_rises_once_with_a_housekeeping_run() {
+  fixture_jig_repo
+  jig task new t-1 >/dev/null
+  _json_rev
+  jig housekeeping >/dev/null 2>&1 || true
+  _json_raised "housekeeping"
+  jig housekeeping --dry-run >/dev/null 2>&1 || true
+  _json_kept "housekeeping --dry-run"
+}
+
+# `jig status --json` reports the knowledge counts a full report saves
+# (.ai/runtime/status-counts): new counts raise the revision, the same ones
+# again do not, however often the page is redrawn.
+test_json_revision_rises_when_the_saved_knowledge_counts_change() {
+  fixture_jig_repo
+  jig status --html >/dev/null 2>&1 || fail "status --html failed"
+  assert_file .ai/runtime/status-counts
+  _json_rev
+  jig status --html >/dev/null 2>&1
+  _json_kept "a redraw with the same counts"
+  mkdir -p .ai/knowledge/features
+  printf -- '---\nid: feature-by-hand\ntype: feature\nstatus: proposed\nsummary: x\n---\n# By hand\n' \
+    > .ai/knowledge/features/by-hand.md
+  _json_kept "a document written by hand"
+  jig status --html >/dev/null 2>&1
+  _json_raised "new saved counts"
+}
+
+# _json_unrecorded_writers <file>... — every function in <file>s that moves a
+# file into place (`mv`) without recording the change: neither calling
+# jig_record_changed nor a function that does, however deep. Every record Jig
+# writes is a temporary file and an `mv` (conventions/shell.md), so this is
+# where a writer that forgot the revision shows.
+_json_unrecorded_writers() {
+  awk '
+    /^[A-Za-z_][A-Za-z_0-9]*\(\) *\{/ { fn = $1; sub(/\(\).*/, "", fn); names[++n] = fn; next }
+    /^}/ { fn = ""; next }
+    fn == "" { next }
+    /^[ \t]*#/ { next }
+    {
+      body[fn] = body[fn] "\n" $0
+      if ($0 ~ /(^|[;&|!{( \t])mv[ \t]/) moves[fn] = 1
+    }
+    END {
+      rec["jig_record_changed"] = 1
+      do {
+        grew = 0
+        for (i = 1; i <= n; i++) {
+          f = names[i]
+          if (f in rec) continue
+          for (g in rec) {
+            if (match(body[f], "(^|[^A-Za-z_0-9])" g "([^A-Za-z_0-9]|$)")) { rec[f] = 1; grew = 1; break }
+          }
+        }
+      } while (grew)
+      for (i = 1; i <= n; i++) if ((names[i] in moves) && !(names[i] in rec)) print names[i]
+    }
+  ' "$@"
+}
+
+test_json_no_jig_writer_misses_the_revision() {
+  local lib="$JIG_HOME/scripts/lib" found
+  found=$(_json_unrecorded_writers "$lib/config.sh" "$lib/forgecache.sh" "$lib/frontmatter.sh" "$lib/task.sh" "$lib/spec.sh" "$lib/knowledge.sh")
+  # The two that move something which is not a record yet: a partial restore
+  # going to trash, and the build file knowledge new publishes and records.
+  assert_eq "$(printf 'spec_trash_partial\nkm_source_link_body')" "$found" \
+    "a writer that moves a record into place without jig_record_changed"
+  # Housekeeping writes its log line by line; one raise when the run ends.
+  assert_contains "$(cat "$lib/housekeeping.sh")" "jig_on_exit 'jig_revision_bump'"
+}
+
+# The guard above sees what it is for: a planted writer, and one that records
+# through a helper two calls away.
+test_json_unrecorded_writer_guard_sees_a_planted_writer() {
+  cat > planted.sh <<'SH'
+jig_record_changed() {
+  :
+}
+_save() {
+  mv "$1.tmp" "$1"
+}
+_noted() {
+  mv "$1.tmp" "$1"
+  _note
+}
+_note() {
+  _deeper
+}
+_deeper() {
+  jig_record_changed
+}
+_quiet() {
+  # mv in a comment is not a write
+  :
+}
+SH
+  assert_eq "_save" "$(_json_unrecorded_writers planted.sh)"
 }

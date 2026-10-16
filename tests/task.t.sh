@@ -7307,16 +7307,19 @@ test_task_ship_without_an_issue_keeps_the_subject() {
 # compared whole, not probed field by field.
 
 # _tl_json — `jig task list --json <args>` with stdout in OUT, stderr in ERR,
-# and generated_at replaced by T once its form is checked.
+# generated_at replaced by T and revision by R once their forms are checked
+# (the revision's own behaviour is pinned in tests/json.t.sh).
 _tl_json() {
   run_split jig task list --json "$@"
-  local at
+  local at rev
   at=$(printf '%s\n' "$OUT" | sed -n 's/.*"generated_at":"\([^"]*\)".*/\1/p')
   case "$at" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
     *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
   esac
-  OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')
+  rev=$(printf '%s\n' "$OUT" | sed -n 's/^{"schema":1,"revision":\([0-9][0-9]*\),.*/\1/p')
+  [ -n "$rev" ] || fail "revision is not an integer in $OUT"
+  OUT=$(printf '%s\n' "$OUT" | sed -e 's/"generated_at":"[^"]*"/"generated_at":"T"/' -e 's/^{"schema":1,"revision":[0-9]*,/{"schema":1,"revision":"R",/')
 }
 
 test_task_list_json_pins_a_task_with_every_fact() {
@@ -7344,7 +7347,7 @@ test_task_list_json_pins_a_task_with_every_fact() {
 
   _tl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq "{\"schema\":1,\"revision\":null,\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -7352,14 +7355,14 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   fixture_task bare "" active "created_at:2026-10-01" "updated_at:2026-10-01"
   _tl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
 }
 
 test_task_list_json_with_no_tasks_is_an_empty_list() {
   task_setup
   _tl_json
   assert_eq 0 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"tasks":[],"hidden":0,"housekeeping":null}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[],"hidden":0,"housekeeping":null}}' "$OUT"
 }
 
 # Which tasks are listed is the text listing's rule, with the count of what it
@@ -7410,7 +7413,7 @@ test_task_list_json_reports_a_refusal_as_an_envelope() {
   task_setup
   _tl_json --status bogus
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"task list: invalid status: bogus"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"failed","message":"task list: invalid status: bogus"}}' "$OUT"
   assert_contains "$ERR" "jig: error: task list: invalid status: bogus"
   _tl_json --nope
   assert_eq 1 "$RC"

@@ -1411,18 +1411,23 @@ test_status_html_writes_one_file_prints_its_path_and_changes_nothing_else() {
   assert_eq 0 "$RC"
   assert_eq "$(pwd -P)/.ai/runtime/status.html" "$OUT"
   assert_file .ai/runtime/status.html
-  # The page, the counts its redraws reuse, and the record every jig run
-  # leaves saying a session is working in this checkout
-  # (adr-20260924-a-checkout-records-what-is-happening-in-it) — nothing else.
+  # The page, the counts its redraws reuse, the record every jig run leaves
+  # saying a session is working in this checkout
+  # (adr-20260924-a-checkout-records-what-is-happening-in-it), and the clone's
+  # revision, which the first saved counts raise because `status --json`
+  # reports them (adr-20261016-the-clone-revision-is-a-claimed-name) — nothing
+  # else.
   assert_eq "checkout
+revision
 status-counts
-status.html" "$(ls .ai/runtime)" "nothing but the page, its counts and the checkout record"
+status.html" "$(ls .ai/runtime)" "nothing but the page, its counts, the checkout record and the revision"
   assert_eq "$before" "$(git status --porcelain --ignored | grep -v '^!! .ai/runtime/' || true)"
 
   # A second run replaces the page rather than adding another.
   run jig status --html
   assert_eq 0 "$RC"
   assert_eq "checkout
+revision
 status-counts
 status.html" "$(ls .ai/runtime)"
 }
@@ -3151,6 +3156,10 @@ _st_json() {
   case "$at" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
     *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
+  esac
+  case "$OUT" in
+    '{"schema":1,"revision":'[0-9]*) ;;
+    *) fail "revision is not an integer in $OUT" ;;
   esac
   OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/; s/"revision":[^,]*,/"revision":R,/')
 }

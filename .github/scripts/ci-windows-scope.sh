@@ -14,8 +14,9 @@
 #     released defect — the same exposure this repository had before this
 #     script existed.
 #
-# Why a signal at all: the Windows shards are ~15 minutes on every pull
-# request (six shares since adr-20260925-windows-runs-in-six-shares), and
+# Why a signal at all: the Windows shards are ~22 minutes on every pull
+# request (ten shares since
+# adr-20261016-the-suite-runs-in-shares-on-every-platform), and
 # most changes here cannot behave differently on Windows. Remeasured over the
 # 105 merged pull requests numbered below #107, enumerated with `gh pr list
 # --state merged` rather than from the merge commits of main — #60 to #85

@@ -94,7 +94,9 @@ sound dangerous:
 
 Route: **discover → specify → alternatives → design → HUMAN GATE → implement →
 independent review → regression and security verification → consolidate**. Workspace
-with `spec.md` and `design.md`; review runs in a fresh context.
+with `spec.md` and `design.md`. Every review runs in a fresh context; T4's is extended — another
+model where the person set one, every acceptance criterion checked, every fixed P0/P1 reverted
+until its test goes red (`jig-review`).
 
 ## Not T4, however alarming it sounds
 

@@ -45,7 +45,7 @@ cmd_task() {
     *) jig_die "$(_task_usage)" ;;
   esac
   # One redraw of the status page for however many writes the command made
-  # (jig_status_page_dirty, common.sh). A command that stops early redraws on
+  # (jig_record_changed, common.sh). A command that stops early redraws on
   # its own way out: jig_die flushes, and so does the one `return 3` below.
   jig_status_page_flush
 }
@@ -565,6 +565,7 @@ EOF
     fi
   fi
   mv "$tmp" "$dest"
+  jig_record_changed
 }
 
 # --- state file rewriting -------------------------------------------------------
@@ -610,7 +611,7 @@ _task_rewrite_state() {
     }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
 }
 
 # Rewrite <dir>/state with the <key> line removed (companion to
@@ -636,7 +637,7 @@ _task_rewrite_state_remove() {
     }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
 }
 
 # _task_touch_state <dir> — refresh `updated_at` and mark the status page,
@@ -659,7 +660,7 @@ _task_touch_state() {
     { print }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
 }
 
 # --- pause / resume helpers (design §4, §5) --------------------------------------
@@ -938,7 +939,7 @@ task_new() {
     printf 'updated_at: %s\n' "$(jig_today)"
   } > "$tmp"
   mv "$tmp" "$dir/state"
-  jig_status_page_dirty
+  jig_record_changed
 
   _task_write_task_md "$id" "$dir/task.md" "$from"
 
@@ -1604,7 +1605,7 @@ _task_autopilot_log() {
   fi
   printf '%s\t%s\t%s\n' "$(_task_autopilot_now)" "$event" "$text" >> "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
 }
 
 # _task_autopilot_note <id> — "autopilot=on" or "autopilot=stopped" for
@@ -2212,7 +2213,7 @@ task_finding_add() {
   fi
   printf '%s\t%s\topen\t%s\t%s\t%s\t\n' "$fid" "$severity" "$where" "$summary" "$(jig_today)" >> "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
 
   printf '%s\n' "$fid"
 }
@@ -2279,7 +2280,7 @@ task_finding_set() {
       { print }
     ' "$file" > "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
 }
 
 # jig task findings <id> [--blocking] — a table of every recorded finding,
@@ -2721,7 +2722,7 @@ task_receipt_write() {
     printf 'findings: %s\n' "$findings"
   } > "$tmp"
   mv "$tmp" "$file"
-  jig_status_page_dirty
+  jig_record_changed
   cat "$file"
 }
 

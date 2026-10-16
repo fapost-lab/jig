@@ -3664,7 +3664,11 @@ _sl_json() {
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
     *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
   esac
-  OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')
+  case "$OUT" in
+    '{"schema":1,"revision":'[0-9]*) ;;
+    *) fail "revision is not an integer in $OUT" ;;
+  esac
+  OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/; s/^{"schema":1,"revision":[0-9]*,/{"schema":1,"revision":"R",/')
 }
 
 # _sl_spec <id> <title> — a spec directory with spec.md titled <title>; the
@@ -3705,7 +3709,7 @@ ROADMAP
 
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"loose item before any phase","checked":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"text":"`t-1` — shipped","checked":true,"task":"t-1","fog":false},{"text":"`t-2` — filed, and wrapped onto a second line","checked":false,"task":"t-2","fog":false},{"text":"fog: not yet clear","checked":false,"task":null,"fog":true},{"text":"plain item","checked":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}]}]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"loose item before any phase","checked":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"text":"`t-1` — shipped","checked":true,"task":"t-1","fog":false},{"text":"`t-2` — filed, and wrapped onto a second line","checked":false,"task":"t-2","fog":false},{"text":"fog: not yet clear","checked":false,"task":null,"fog":true},{"text":"plain item","checked":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}]}]}}' "$OUT"
   # The text form of the same spec is what it always was.
   run jig spec list
   assert_eq 'idea-x   Idea "X"   roadmap 1/5 done, 1 filed, fog 1 (on epic/idea-x)' "$OUT"
@@ -3718,14 +3722,14 @@ test_spec_list_json_says_null_for_every_fact_a_spec_does_not_have() {
   printf 'no heading\n' > .ai/specs/c-half/spec.md
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"one","checked":false,"task":null,"fog":false}]}]},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]}]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"one","checked":false,"task":null,"fog":false}]}]},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]}]}}' "$OUT"
 }
 
 test_spec_list_json_with_no_specs_is_an_empty_list() {
   fixture_repo
   _sl_json
   assert_eq 0 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","data":{"specs":[]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[]}}' "$OUT"
 }
 
 # Off an open epic the copy here is stale by design (ADR-0040): the text form
@@ -3791,7 +3795,7 @@ test_spec_list_json_reports_a_refusal_as_an_envelope() {
   fixture_repo
   _sl_json extra
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":null,"generated_at":"T","error":{"code":"failed","message":"spec list: unexpected argument: extra"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"failed","message":"spec list: unexpected argument: extra"}}' "$OUT"
   assert_contains "$ERR" "jig: error: spec list: unexpected argument: extra"
   # --json may come anywhere among the arguments.
   local out

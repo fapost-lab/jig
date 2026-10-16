@@ -23,5 +23,6 @@ owned hunks against starting evidence, or report an unresolved boundary and with
 complete-review claim. Refresh scope if the checkout changes during review. Surrounding
 code can be read for context without silently claiming it belongs to the task.
 
-Review all acceptance criteria before code quality. T4 needs actual independent findings;
+Review all acceptance criteria before code quality; at T4 each one needs evidence
+([T4 is reviewed further](../SKILL.md)). A review needs actual findings from a fresh reader;
 an asynchronous completion notification without the report is not a clean review.

@@ -80,6 +80,10 @@ cmd_housekeeping() {
       printf 'another housekeeping run holds this clone; skipping\n'
       return 0
     fi
+    # A run writes its log line by line and may move workspaces to trash: one
+    # change of the clone, counted once when the run ends, however it ends
+    # (jig_revision_bump, common.sh). Registered before the first write.
+    jig_on_exit 'jig_revision_bump'
   fi
 
   _HK_DEFAULT_BASE=$(cfg git.base_branch main)
