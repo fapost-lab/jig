@@ -116,6 +116,80 @@ json_run produce'
   assert_contains "$OUT" '"message":"first line\nsecond line"'
 }
 
+# --- failure codes -----------------------------------------------------------
+
+# A refusal names its code with jig_fail; the person reads the same text as
+# from jig_die, with no trace of the code on stderr.
+test_json_run_reports_the_code_a_refusal_names() {
+  _json_script c.sh '
+produce() { jig_fail usage "task list: unknown argument: --nope"; }
+json_run produce'
+  _json_run_script c.sh
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":0,"generated_at":"T","error":{"code":"usage","message":"task list: unknown argument: --nope"}}' "$(_json_no_time "$OUT")"
+  assert_eq "jig: error: task list: unknown argument: --nope" "$ERR"
+}
+
+# Outside a producer jig_fail prints exactly what jig_die does: the text form
+# of every command is unchanged by the codes.
+test_jig_fail_outside_json_prints_only_the_message() {
+  _json_script p.sh 'jig_fail not-initialised "project is not initialised; run: jig init"'
+  _json_run_script p.sh
+  assert_eq 1 "$RC"
+  assert_eq "" "$OUT"
+  assert_eq "jig: error: project is not initialised; run: jig init" "$ERR"
+}
+
+# The code belongs to the message the envelope reports: a coded refusal whose
+# message was swallowed inside $(...) does not lend its code to the plain
+# refusal that follows, and a visible one is replaced by the caller's own.
+test_json_run_pairs_the_code_with_the_reported_message() {
+  _json_script s.sh '
+inner() { jig_fail not-a-repository "not inside a git repository"; }
+produce() { x=$(inner 2>/dev/null) || jig_die "status: something else"; }
+json_run produce'
+  _json_run_script s.sh
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"status: something else"}}'
+  _json_script v.sh '
+inner() { jig_fail not-a-repository "not inside a git repository"; }
+produce() { x=$(inner) || jig_fail usage "status: outer"; }
+json_run produce'
+  _json_run_script v.sh
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"status: outer"}}'
+  assert_eq "$(printf 'jig: error: not inside a git repository\njig: error: status: outer')" "$ERR"
+}
+
+# Only a code jig_fail could name is reported; anything else is failed. A
+# refusal printed by hand, or by a child jig, carries no code either.
+test_json_run_falls_back_to_failed_for_what_is_not_a_code() {
+  _json_script b.sh '
+produce() { jig_fail "Not A Code" "bad"; }
+json_run produce'
+  _json_run_script b.sh
+  assert_contains "$OUT" '"error":{"code":"failed","message":"bad"}}'
+  _json_script u.sh '
+produce() { jig_fail Usage "capital"; }
+json_run produce'
+  _json_run_script u.sh
+  assert_contains "$OUT" '"error":{"code":"failed","message":"capital"}}'
+  _json_script h.sh '
+produce() { printf "jig: error: by hand\n" >&2; exit 1; }
+json_run produce'
+  _json_run_script h.sh
+  assert_contains "$OUT" '"error":{"code":"failed","message":"by hand"}}'
+  _json_script k.sh '
+produce() { bash -c ". \"$JIG_LIB_UNDER_TEST/common.sh\"; jig_fail usage child" || exit 1; }
+json_run produce'
+  set +e
+  JIG_LIB_UNDER_TEST="$JIG_HOME/scripts/lib" bash k.sh > out.txt 2> err.txt
+  RC=$?
+  set -e
+  assert_eq 1 "$RC"
+  assert_contains "$(cat out.txt)" '"error":{"code":"failed","message":"child"}}'
+}
+
 # The producer runs under set -e even though json_run must survive its
 # failure: a failed command stops it, and nothing it printed before that is
 # passed off as data.

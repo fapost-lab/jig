@@ -12,7 +12,7 @@ paths:
   - scripts/lib/task.sh
   - schemas/json.md
 summary: Why every --json read is one envelope line built by json.sh around a producer run in a subshell, why revision is null and error.code failed for now, and why housekeeping flags are read through the shared hklog.sh.
-reviewed_at: 2026-10-15
+reviewed_at: 2026-10-16
 ---
 # A `--json` read prints one envelope, built by json.sh around a producer run in a subshell
 
@@ -100,3 +100,15 @@ answer to "which housekeeping flags still stand" lived (`_status_flagged_ids`).
 > `0` before Jig's first write in the clone (adr-20261016-the-clone-revision-is-a-claimed-name).
 > `json_revision` reads it, and `json_run` now takes it **before** the producer runs, next to
 > `generated_at`, so the data is never older than the revision it is reported with.
+
+> **Amendment (2026-10-16).** `error.code` is no longer always `failed`: a refusal names a stable
+> code with `jig_fail <code> <message>` (common.sh), and `jig_die` stays `failed`. Inside a producer
+> the code travels on stderr as a marker on the line before the message, so it is swallowed and
+> passed on together with its message; `json_run` reads the marker next to the last message, falls
+> back to `failed` without one, and strips every marker from what a person sees. `jig_die`'s text
+> is unchanged and still prints no JSON. The vocabulary — `usage`, `not-a-repository`,
+> `not-initialised`, `failed` — is in schemas/json.md, "Failure codes"; a new code is compatible, a
+> renamed one raises `schema`. Rejected: the code in the human text (`jig: error[usage]: …`), which
+> changes what every person and every test reads; and a side file the producer writes the code to,
+> which a refusal swallowed inside `$(...) 2>/dev/null` would leave behind for the next message to
+> borrow.

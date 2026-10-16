@@ -7431,11 +7431,14 @@ test_task_list_json_reports_a_refusal_as_an_envelope() {
   task_setup
   _tl_json --status bogus
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"failed","message":"task list: invalid status: bogus"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"usage","message":"task list: invalid status: bogus"}}' "$OUT"
   assert_contains "$ERR" "jig: error: task list: invalid status: bogus"
   _tl_json --nope
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"error":{"code":"failed","message":"task list: unknown argument: --nope"}}'
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task list: unknown argument: --nope"}}'
+  _tl_json --status
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task list: --status requires a value"}}'
 }
 
 test_task_list_json_in_a_project_without_jig_is_an_envelope() {
@@ -7444,8 +7447,15 @@ test_task_list_json_in_a_project_without_jig_is_an_envelope() {
   git init -q
   _tl_json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"error":{"code":"failed","message":"'
+  assert_contains "$OUT" '"error":{"code":"not-initialised","message":"project is not initialised; run: jig init"}}'
   assert_not_contains "$OUT" '"data"'
+  # Outside git altogether, the refusal says so in its own code.
+  cd ..
+  mkdir bare
+  cd bare
+  _tl_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-a-repository","message":"not inside a git repository"}}'
 }
 
 # Reading never touches the network: no forge CLI, no fetch, no ls-remote.

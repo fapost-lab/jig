@@ -34,7 +34,7 @@ When the command refuses — an unknown flag, a project without Jig — it still
 `error` in place of `data`, and exits with a non-zero status:
 
 ```json
-{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"usage","message":"task list: invalid status: bogus"}}
 ```
 
 - `schema` is `1`. It changes only when a field is removed, renamed or changes type. New fields
@@ -46,10 +46,25 @@ When the command refuses — an unknown flag, a project without Jig — it still
   A file changed by hand or by git — your `git pull`, or the branch Jig checks out after a merge —
   does not change it: watch the files too if that matters to you.
 - `generated_at` is when the read started, in UTC.
-- `error.code` is `failed` for every refusal for now; specific codes a program can act on will
-  follow. `error.message` is the same text the command prints after `jig: error:`.
+- `error.code` says why the command refused, in a word your program can act on (below).
+  `error.message` is the same text the command prints after `jig: error:`, meant for a person.
 
 Warnings meant for a person still go to stderr, so stdout always holds just the envelope.
+
+### Why a command refused
+
+Act on `error.code`, never on the wording of `error.message`: codes stay as they are, messages may
+be reworded.
+
+| `error.code` | What happened |
+|---|---|
+| `usage` | the command was called with an argument it does not take, or with a value it does not accept — check how your program calls it |
+| `not-a-repository` | it ran outside a Git repository |
+| `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
+| `failed` | anything else: the message says what |
+
+New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
+`failed`. Whatever the code, the command exits with a non-zero status.
 
 ## Tasks
 

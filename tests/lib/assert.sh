@@ -57,6 +57,9 @@ fixture_cache_prepare() {
   [ ! -f "$JIG_TEST_CACHE/ready" ] || return 0
   mkdir -p "$JIG_TEST_CACHE" || return 1
   build=$(mktemp -d "$JIG_TEST_CACHE/build.XXXXXX") || return 1
+  # An empty result with status 0 is a substitution that never ran (tests/run.sh,
+  # run_dir_ok): `cd ""` would build the fixture where the caller stands.
+  [ -n "$build" ] && [ -d "$build" ] || return 1
   (
     cd "$build" || exit 1
     fixture_repo && jig init --from "$JIG_HOME" >/dev/null
@@ -297,6 +300,10 @@ skip() {
 skip_unless_readonly_dirs() {
   local dir blocked=0
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-ro-check.XXXXXX") || return 1
+  # Checked by name too, here and in every probe below: out of descriptors the
+  # substitution is empty with status 0, and the probe would run in the test's
+  # own directory (tests/run.sh, run_dir_ok).
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
   chmod 555 "$dir"
   ( : > "$dir/probe" ) 2>/dev/null || blocked=1
   chmod 755 "$dir"
@@ -311,6 +318,7 @@ skip_unless_readonly_dirs() {
 skip_unless_sha256_repos() {
   local dir made=0
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-sha256-check.XXXXXX") || return 1
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
   if ( cd "$dir" && git init -q --object-format=sha256 . ) >/dev/null 2>&1; then
     made=1
   fi
@@ -324,6 +332,7 @@ skip_unless_sha256_repos() {
 skip_unless_unreadable_files() {
   local dir blocked=0
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-unreadable-check.XXXXXX") || return 1
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
   printf 'probe\n' > "$dir/probe"
   chmod 000 "$dir/probe"
   cat "$dir/probe" >/dev/null 2>&1 || blocked=1
@@ -354,6 +363,7 @@ plant_dir_link() {
 skip_unless_control_char_names() {
   local dir name status
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-ctrl-check.XXXXXX") || return 1
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
   name=$(printf 'bad\tname')
   status=$(
     cd "$dir" || exit 1
@@ -376,6 +386,7 @@ skip_unless_control_char_names() {
 skip_unless_non_ascii_names() {
   local dir name listed
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-utf8-check.XXXXXX") || return 1
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
   name=$(printf 'caf\303\251.sh')
   listed=$(
     cd "$dir" || exit 1
@@ -397,6 +408,7 @@ skip_unless_non_ascii_names() {
 skip_unless_symlinks() {
   local dir linked=0
   dir=$(mktemp -d "${TMPDIR:-/tmp}/jig-symlink-check.XXXXXX") || return 1
+  [ -n "$dir" ] && [ -d "$dir" ] || return 1
   mkdir "$dir/target"
   if ln -s "$dir/target" "$dir/link" 2>/dev/null && [ -L "$dir/link" ]; then
     linked=1

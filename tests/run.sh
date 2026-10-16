@@ -40,12 +40,24 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# Empty with status 0 when the substitution could not make its pipe (see
+# RESULTS below): the run would find no tests and pass with nothing run.
+[ -n "$ROOT" ] && [ -f "$ROOT/tests/run.sh" ] \
+  || { printf 'tests/run.sh: could not resolve the repository root\n' >&2; exit 1; }
 export JIG_HOME="$ROOT"
 export JIG_BIN="$ROOT/scripts/jig"
 
 # Shared only within this run; tests receive independent copies.
 # Everything this run creates lives under RESULTS (see below), so one trap removes it.
 RESULTS=$(mktemp -d "${TMPDIR:-/tmp}/jig-test-results.XXXXXX") || exit 1
+# A command substitution that could not make its pipe is an empty string with
+# status 0 in bash 3.2 ("cannot make pipe for command substitution"), so the
+# `|| exit 1` above does not see it. Every directory this run makes is checked
+# by name as well (run_dir_ok below).
+case "$RESULTS" in
+  */jig-test-results.?*) [ -d "$RESULTS" ] || exit 1 ;;
+  *) printf 'tests/run.sh: could not make the results directory\n' >&2; exit 1 ;;
+esac
 JIG_TEST_CACHE="$RESULTS/cache"
 export JIG_TEST_CACHE
 
@@ -173,10 +185,24 @@ list_tests() {
   ' _ "$ROOT/tests/lib/assert.sh" "$1"
 }
 
+# run_dir_ok <path> — whether <path> is a directory this run made under
+# RESULTS. A test directory is checked before anything enters or removes it:
+# when the machine ran out of file descriptors, `tmp=$(mktemp -d ...)` came back
+# empty with status 0 (see RESULTS above), `cd ""` stayed where the runner was
+# started, the test wrote its fixture there, and `rm -rf "$tmp" "$tmp".*`
+# became `rm -rf "" .*` — a `jig verify` lost its worktree's .git and .ai.
+run_dir_ok() {
+  case "$1" in
+    "$RESULTS"/?*) [ -d "$1" ] ;;
+    *) return 1 ;;
+  esac
+}
+
 # enter_test_env <dir> — what every test runs inside, and what the fixture
 # cache is built inside: <dir> as working directory and HOME, git reading no
 # system config, a fixed identity, and the assertion helpers.
 enter_test_env() {
+  run_dir_ok "$1" || exit 1
   cd "$1" || exit 1
   export HOME="$1"
   export JIG_TEST_TMP="$1"
@@ -243,6 +269,12 @@ run_test() {
   # trap removes that directory, so a test killed with its worker leaves nothing
   # behind (6832 `jig-test.*` directories once piled up in $TMPDIR this way).
   tmp=$(mktemp -d "$RESULTS/test.XXXXXX") || return 1
+  # No result is written: a test that never started is not completed, and the
+  # run says so instead of passing or failing it.
+  if ! run_dir_ok "$tmp"; then
+    printf 'tests/run.sh: could not make a directory for %s\n' "$full" >&2
+    return 1
+  fi
   start=$SECONDS
   (
     # The runner's descriptors are the runner's: 3 is the semaphore, 4 is the
@@ -315,6 +347,10 @@ else
   # The shared fixture is built before any test starts (fixture_cache_prepare
   # explains what two tests building it at once would do).
   cache_dir=$(mktemp -d "$RESULTS/cache-build.XXXXXX") || exit 1
+  if ! run_dir_ok "$cache_dir"; then
+    printf 'tests/run.sh: could not make a directory for the fixture cache\n' >&2
+    exit 1
+  fi
   if ! ( enter_test_env "$cache_dir"; fixture_cache_prepare ) >"$RESULTS/cache.log" 2>&1; then
     printf 'tests/run.sh: could not build the fixture cache\n' >&2
     sed 's/^/     | /' "$RESULTS/cache.log" >&2

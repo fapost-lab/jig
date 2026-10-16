@@ -26,7 +26,7 @@ cmd_status() {
       --html) [ "$mode" = open ] || mode=html; shift ;;
       --open) mode=open; shift ;;
       --refresh) mode=refresh; shift ;;
-      *) jig_die "status: unknown argument: $1 (usage: jig status [--html | --open | --json])" ;;
+      *) jig_fail usage "status: unknown argument: $1 (usage: jig status [--html | --open | --json])" ;;
     esac
   done
   jig_require_repo
@@ -2120,7 +2120,7 @@ _status_attention_phase_stops() {
 _status_json() {
   local arg attn rec kind stype sid tasks title detail todo url objs="" o t tl hk stale root
   for arg in "$@"; do
-    [ "$arg" = --json ] || jig_die "status --json: unknown argument: $arg (usage: jig status --json)"
+    [ "$arg" = --json ] || jig_fail usage "status --json: unknown argument: $arg (usage: jig status --json)"
   done
   jig_require_repo
   # A task worktree borrows the owner's workspaces (ADR-0029), and the runtime
@@ -2135,7 +2135,7 @@ _status_json() {
     cd "$root" || jig_die "status --json: cannot read the main checkout: $root"
   fi
   [ -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ] \
-    || jig_die "status --json: project is not initialised; run: jig init"
+    || jig_fail not-initialised "status --json: project is not initialised; run: jig init"
   _status_load
   # The counts the last full run saved for the page. Without them, only the
   # two the items need are counted, and saved nowhere: what `jig upgrade`

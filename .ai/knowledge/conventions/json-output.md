@@ -21,7 +21,7 @@ reviewed_at: 2026-10-16
 The boundary every command that offers `--json` plugs into: `scripts/lib/json.sh` and the shape
 pinned in `schemas/json.md` (adr-20261015-a-read-is-one-json-envelope). `jig task list` is the first
 implementation; `jig spec list` and `jig status` (attention items) followed it, and legal actions
-and failure codes will.
+will. A refusal says why in `error.code`, from the vocabulary in schemas/json.md ("Failure codes").
 
 ## Practice
 
@@ -44,6 +44,16 @@ MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote); pr
           without raising schema; write anything but what the dispatcher already records;
           change jig_die to print JSON; read the revision itself — json_run takes it,
           before the producer runs
+
+A refusal a program could act on (scripts/lib/common.sh, jig_fail)
+
+MUST:     refuse with jig_fail <code> <message> when one of the codes in schemas/json.md
+          says why — usage for an argument, not-a-repository, not-initialised; pin the
+          code in the command's --json test; add a new code to that table (and to
+          docs/reading-jig-as-data.mdx) in the change that first prints it
+MAY:      leave a refusal no program would act on as jig_die: it reads `failed`
+MUST NOT: rename a code or give it another meaning without raising schema; put the
+          code in the message a person reads; reuse a code for a different reason
 
 A command that writes a record a read reports (scripts/lib/common.sh, jig_record_changed)
 
