@@ -109,3 +109,10 @@ the price of a red run whenever a runner is slow.
   branch protection.
 - `.github/workflows/**` now reaches a check in `.ai/verify/shell.map`, where it used to
   reach none.
+
+> **Amendment (2026-10-16).** The count is now ten
+> (adr-20261016-the-suite-runs-in-shares-on-every-platform). The suite's work on Windows
+> doubled within a month — six shares summed to 9695–11585 s and the slowest took 31–36
+> minutes — so six no longer bought the fifteen minutes above. The reasoning here stands:
+> the count is the matrix's length, and starting fewer processes per test is still the
+> larger lever, still left to its own decision.

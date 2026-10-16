@@ -179,7 +179,7 @@ test_ci_ok_expectations_match_the_conditions_in_the_workflow() {
   {
     grep -qF "knowledge: needs: scope if: needs.scope.outputs.full != 'true'" <<< "$flat" ||
       fail "the condition of knowledge changed; update ci-ok.sh"
-    grep -qF "name: \${{ matrix.os }} needs: scope if: needs.scope.outputs.full == 'true' runs-on:" <<< "$flat" ||
+    grep -qF "name: \${{ matrix.os }} \${{ matrix.shard }} needs: scope if: needs.scope.outputs.full == 'true' runs-on:" <<< "$flat" ||
       fail "the condition of test changed; update ci-ok.sh"
     grep -qF "if: needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'" <<< "$flat" ||
       fail "the condition of test-windows changed; update ci-ok.sh"
