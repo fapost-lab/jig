@@ -37,6 +37,12 @@ CI, a bot or an agent. See [Reading Jig as data](/reading-jig-as-data).
 - **Checks on a pull request come back sooner.** CI runs the suite in shares on every platform —
   Linux 2, macOS 3, Windows 10 — and every platform still runs the full set: about 14 minutes for a
   pull request without Windows instead of 24–38, about 23 with it instead of 34–37.
+- **Fixed: housekeeping obeyed your own git setting for untracked files.** With
+  `status.showUntrackedFiles=all` in your git config, a run over a worktree holding `vendor/` or
+  `node_modules/` listed every file in them and started a process for each: it took tens of minutes,
+  could exhaust the machine's open files, and each new session started it again. With `no`, it left
+  ignored paths out altogether, so a worktree holding the only copy of a nested repository's commits
+  could be removed. Housekeeping now asks git in a fixed mode, whatever your config says.
 - **Fixed: the test suite could delete files where it was started.** Out of file descriptors on a
   heavily loaded machine, `tests/run.sh` could run a test in the directory it was launched from and
   clean up there, removing that checkout's `.git` and `.ai`. It now checks every directory it makes
