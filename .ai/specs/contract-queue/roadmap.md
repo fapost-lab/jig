@@ -14,6 +14,7 @@ and a pause request stops a running task at its next stage boundary.
 - [ ] queue as JSON (after: queue file — it is what is read; contract-extensions' task list — read together, same envelope)
 - [ ] pause and resume requests — sticky, kept in the queue file, honoured at the next stage boundary and cleared by the same command (after: queue file — the request lives there; contract-extensions' legal actions — they say when a pause is offered)
 - [ ] fog: next task by priority, order and dependencies — how an agent or a person is advised what to take is not stated yet
+- [ ] fog: registration hook in `jig init` for an installed UI — moved from contract-extensions when its epic was finished
 
 ## Waves
 

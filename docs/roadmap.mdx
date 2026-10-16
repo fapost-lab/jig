@@ -30,10 +30,6 @@ and a moved tree asks for a new run.
 
 ## Then: what costs you time
 
-**The checks on a pull request must come back sooner.** Today the slowest platform takes the better
-part of forty minutes, and several pull requests at once wait for free machines on top of that. The
-full set stays, on every platform it runs on now; the work is in how it is split and queued.
-
 **A second review round must not open a new front.** When the first round finds blockers and they
 are fixed, the next round checks those blockers, not the whole change again. A blocker that appears
 only in the second round goes to you instead of starting a third. Each extra round is where the time
@@ -45,13 +41,11 @@ only if that agent confirms it. A wrong finding then costs one check instead of 
 
 ## After that: new capabilities
 
-**Jig that a program can read.** Today Jig answers in text written for a person, so every tool that
-wants to know the state of a project has to parse it. Commands that report state get a stable JSON
-form, and failures get stable codes, each pinned by a test. Beside it, Jig's contracts grow in the
-same direction: a queue that holds the priority, order and dependencies of tasks and epics, written
-by one command that refuses a stale write; what a person may do next with a task in its current
-state; and what needs a person, as data rather than as a page. Each of these is useful without
-anything built on top — to CI, to a bot, to an agent choosing what to take next.
+**Planning that lives in Jig.** Jig can now be read by a program; what is left is the half that
+plans. A queue holds the priority, order and dependencies of tasks and epics, written by one
+command that refuses a write made against a stale revision; a person can ask a running task to
+pause, and the request holds until the agent honours it at its next stage. Like the rest of Jig's
+contracts, it is useful without anything built on top.
 
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
@@ -79,6 +73,6 @@ of an existing file rather than a whole one.
 [Jig UI](https://github.com/fapost-lab/jig-ui) is a separate, optional project, in the making: a
 local page with a board across all your Jig projects, where tasks and epics are ordered and
 prioritised and new tasks are filed. It reads and changes your projects only through Jig's own
-commands and contracts — the ones described above under "Jig that a program can read" — so Jig
+commands and contracts — the JSON form described in [Reading Jig as data](/reading-jig-as-data), and the planning described above — so Jig
 works exactly as it does without it. Its plans live in its own repository, and its documentation
 at [jig-ui.fapost.in](https://jig-ui.fapost.in).

@@ -13,7 +13,8 @@ paths:
   - schemas/state.md
   - templates/task.md
   - scripts/lib/notify.sh
-reviewed_at: 2026-10-13
+  - scripts/lib/hklog.sh
+reviewed_at: 2026-10-15
 ---
 # Task
 
@@ -157,6 +158,16 @@ about the worktree road are easy to get wrong from inside this domain's code:
 - A task in a worktree is not `task current` in the filing checkout: its branch is checked
   out elsewhere, and ADR-0008's branch match is what decides.
 
+**`task list --json` is this domain's state as a contract with programs**
+(adr-20261015-a-read-is-one-json-envelope; schemas/json.md). It selects tasks exactly as the text
+listing does (`_task_list_select`, shared by both forms) and reads every value through the producer
+that already answers it — `task_state_get`, `_task_gate_state`, `_task_autopilot_facts`,
+`_task_autopilot_mode`, `_task_worktrees`, `_task_worktree_uncommitted`, `_task_goal`,
+`jig_task_base`, `hklog_flagged_ids` — never a parse of its own. So a state key renamed, or a word
+those producers print reworded, is a change to a published JSON shape: the whole-shape tests in
+`tests/task.t.sh` go red, and schemas/json.md changes with it, raising `schema` when a field is
+removed or retyped. Reading stays local: nothing on that path may call the forge or fetch.
+
 **`task ship` is the one command here that commits, pushes or opens a pull request**
 (adr-20260921-agent-git-rights-are-a-local-setting). It reads three things other parts of this
 domain own — `knowledge_consolidated`, `branch` and the task base through `jig_task_base` — and
@@ -198,7 +209,7 @@ there too (adr-20261005-output-is-decorated-only-on-a-terminal).
 **A card goes when what it asks for has been done and the page can see that for free.** Both
 halves decide it, and neither is about the kind of card. A task's own `status`, and whether a
 worktree is still on disk, are read here for nothing while the page is redrawn after every
-command — so `_status_flagged_ids` asks them again at that moment and drops the flag: closing a
+command — so `hklog_flagged_ids` (`scripts/lib/hklog.sh`) asks them again at that moment and drops the flag: closing a
 task answers `needs-consolidation`, abandoning one answers `abandoned?`, and removing the tree
 answers `worktree-kept`, each with no housekeeping run in between. Those three, and no others.
 `wrong-base` fails the second half: only the forge and the history know where work landed, which
@@ -221,13 +232,15 @@ merging it is still the right move.
 Two constraints hold the rule in shape. **A recheck may only contradict, never invent** — a task
 with no state file, or a kept worktree the log recorded no path for, keeps its card, because a
 page that hid what it failed to look up would be worse than one a run behind. And **the answer is
-decided in one place**: the cards and the counts in both reports call `_status_flagged_ids`, so a
-count that said two while the cards showed one cannot happen. A new flag joins the borrowed side
+decided in one place**: the cards, the counts in both reports and `task list --json` call
+`hklog_flagged_ids`, so a count that said two while the cards showed one cannot happen. A new flag joins the borrowed side
 by default; moving it across costs a local reader, and the reason is its price, not its subject.
 
-Every writer here — `_task_rewrite_state`, `_task_rewrite_state_remove`, `task new`'s state, the
-autopilot journal, the findings ledger, the receipt — calls `jig_status_page_dirty`, and `cmd_task`
-redraws the page once at its end. An exit that skips that end after a write must flush first:
+Every writer here — `_task_rewrite_state`, `_task_rewrite_state_remove`, `_task_touch_state`,
+`task new`'s state and `task.md`, the autopilot journal, the findings ledger, the receipt — calls
+`jig_record_changed` right after its `mv`: it raises the clone's revision at once
+(adr-20261016-the-clone-revision-is-a-claimed-name; `tests/json.t.sh` fails on a writer that does
+not) and marks the page (`jig_status_page_dirty`), which `cmd_task` redraws once at its end. An exit that skips that end after a write must flush first:
 `jig_die` does, and so does the third repair's `return 3`. A new writer that does not mark, or a new
 early exit that does not flush, leaves the page a command behind.
 

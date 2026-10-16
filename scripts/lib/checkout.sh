@@ -389,12 +389,15 @@ _jig_checkout_write() {
 # jig_checkout_record <command-words...> — called by the dispatcher before the
 # command runs. Writes at most two records and prints nothing.
 #
-# JIG_INTERNAL_REDRAW marks the one re-entry that is not a session: the status
+# JIG_INTERNAL_REDRAW marks the re-entries that are not a session: the status
 # page's own redraw (jig_status_page_touch, common.sh) re-runs `jig status
 # --refresh|--html` as a subprocess, because none of the writers that trigger
-# it may source status.sh (ARCHITECTURE.md, Scripts layout). Recording that
-# run as work would overwrite `runtime/checkout`'s `command:` with a line
-# nobody ran — a redraw, not a session
+# it may source status.sh (ARCHITECTURE.md, Scripts layout); and a review
+# receipt's check runs `jig context` in the task's checkout to hash the
+# knowledge it read (_task_receipt_context_hash, task.sh), from any command
+# that asks it — `task list --json` among them. Recording either run as work
+# would overwrite `runtime/checkout`'s `command:` with a line nobody ran — a
+# redraw or a read, not a session
 # (adr-20260924-a-checkout-records-what-is-happening-in-it).
 jig_checkout_record() {
   [ -z "${JIG_INTERNAL_REDRAW:-}" ] || return 0

@@ -8,6 +8,46 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.29.0 — 2026-10-16
+
+Jig can now be read by a program. The commands that report state print JSON with `--json`, in one
+envelope that every command shares, without touching the network. The text form of every command
+is unchanged. This is what [Jig UI](https://jig-ui.fapost.in) reads, and it is just as useful to
+CI, a bot or an agent. See [Reading Jig as data](/reading-jig-as-data).
+
+- **`jig task list --json`** — every task of the clone: class, status, gate, autopilot run,
+  branch, worktree, pull request and housekeeping flags.
+- **`jig spec list --json`** — every spec with its phases, items, progress, epic branch and
+  release level.
+- **`jig status --json`** — what needs you, as items with a stable `kind`, from the same logic that
+  draws the status page.
+- **What a person may do next.** Each task in `task list --json` carries `actions`: start, pause,
+  resume, approve the gate, answer a stop, set the class, ship, close, abandon, reopen — each
+  offered only when the command would accept it, and when withheld, with the command's own refusal
+  as the reason.
+- **One envelope.** `{"schema", "revision", "generated_at", "data"}`, or `error` with a stable
+  `code` (`usage`, `not-a-repository`, `not-initialised`, `failed`) instead of `data`. `schema`
+  rises only on an incompatible change.
+- **A revision of the clone.** Every write Jig makes raises one counter per clone, shared by its
+  worktrees, and every JSON read reports it, so a program can tell that something changed. A file
+  edited by hand or by git does not raise it.
+- **Pull request and CI state, offline.** `jig housekeeping` keeps what it already asks the forge
+  — pull request state and CI result — with the time it asked, and `task list --json` reports it
+  without calling the forge.
+- **Checks on a pull request come back sooner.** CI runs the suite in shares on every platform —
+  Linux 2, macOS 3, Windows 10 — and every platform still runs the full set: about 14 minutes for a
+  pull request without Windows instead of 24–38, about 23 with it instead of 34–37.
+- **Fixed: housekeeping obeyed your own git setting for untracked files.** With
+  `status.showUntrackedFiles=all` in your git config, a run over a worktree holding `vendor/` or
+  `node_modules/` listed every file in them and started a process for each: it took tens of minutes,
+  could exhaust the machine's open files, and each new session started it again. With `no`, it left
+  ignored paths out altogether, so a worktree holding the only copy of a nested repository's commits
+  could be removed. Housekeeping now asks git in a fixed mode, whatever your config says.
+- **Fixed: the test suite could delete files where it was started.** Out of file descriptors on a
+  heavily loaded machine, `tests/run.sh` could run a test in the directory it was launched from and
+  clean up there, removing that checkout's `.git` and `.ai`. It now checks every directory it makes
+  and reports such a test as not completed. This concerns people who develop Jig itself.
+
 ## 0.28.0 — 2026-10-15
 
 Every review is now done by an agent that did not write the change, whether you work beside your

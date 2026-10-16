@@ -10,7 +10,26 @@ export JIG_AI_DIR
 jig_log()  { [ -n "${JIG_QUIET:-}" ] || printf '%s\n' "$*"; }
 jig_info() { [ -n "${JIG_QUIET:-}" ] || printf 'jig: %s\n' "$*" >&2; }
 jig_warn() { printf 'jig: warning: %s\n' "$*" >&2; }
-jig_die()  {
+jig_die()  { _jig_die_as failed "$@"; }
+
+# jig_fail <code> <message...> — jig_die, naming the stable failure code a
+# program reads from a `--json` refusal's `error.code` (schemas/json.md, "Failure
+# codes"). The person reads the same `jig: error: <message>` either way; a
+# refusal that names no code is `failed`.
+jig_fail() {
+  local code="$1"
+  shift
+  _jig_die_as "$code" "$@"
+}
+
+# Inside a `--json` producer (json_run sets _JIG_JSON_CODES there, never
+# exported) the code goes on the line just before the message, behind a unit
+# separator: the two travel and vanish together — a `2>/dev/null` swallows
+# both — so json_run always pairs the message it reports with its own code,
+# and strips the marker before stderr reaches a person.
+_jig_die_as() {
+  [ -z "${_JIG_JSON_CODES:-}" ] || printf '\037jig: code: %s\n' "$1" >&2
+  shift
   printf 'jig: error: %s\n' "$*" >&2
   # A command that changed a task and then failed still redraws the status
   # page, so the page never shows less than the files do.
@@ -184,7 +203,7 @@ jig_repo_root() {
 jig_require_repo() {
   local top
   jig_clear_git_location_env
-  top=$(jig_repo_root) || jig_die "not inside a git repository"
+  top=$(jig_repo_root) || jig_fail not-a-repository "not inside a git repository"
   JIG_PROJECT=$(cd -P "$top" 2>/dev/null && pwd -P) \
     || jig_die "cannot resolve the repository root: $top"
   export JIG_PROJECT
@@ -221,7 +240,7 @@ jig_has_line() {
 jig_require_init() {
   jig_require_repo
   [ -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ] \
-    || jig_die "project is not initialised; run: jig init"
+    || jig_fail not-initialised "project is not initialised; run: jig init"
 }
 
 # True when <dir> is a framework source checkout (has skills/ and templates/).
@@ -1961,9 +1980,9 @@ jig_status_page_touch() {
 }
 
 # jig_status_page_dirty — note that this command changed something the page
-# shows. The writers call it themselves, so a new command that writes through
-# them is covered without anyone remembering to; jig_status_page_flush then
-# redraws once, however many writes came before.
+# shows. The writers call it themselves, through jig_record_changed below, so
+# a new command that writes through them is covered without anyone remembering
+# to; jig_status_page_flush then redraws once, however many writes came before.
 jig_status_page_dirty() { _JIG_PAGE_DIRTY=1; }
 
 # jig_status_page_flush — redraw the page when this command changed something.
@@ -1971,6 +1990,166 @@ jig_status_page_flush() {
   [ -n "${_JIG_PAGE_DIRTY:-}" ] || return 0
   _JIG_PAGE_DIRTY=""
   jig_status_page_touch --refresh
+}
+
+# --- the clone's revision (adr-20261016-the-clone-revision-is-a-claimed-name) ---
+#
+# One counter per clone, raised by every Jig write — task state, artifacts, the
+# autopilot journal, findings, the receipt, specs, knowledge, settings, a
+# housekeeping run — and reported as `revision` by every `--json` read (json.sh,
+# schemas/json.md). A consumer compares it between reads, and from
+# contract-queue on sends it back with a write.
+#
+# The value is the highest numeric **name** in `.ai/runtime/revision/` of the
+# clone's main checkout (jig_config_clone_root: every worktree raises and reads
+# the same one, ADR-0008 as amended 2026-09-25). Raising it claims the next
+# name with `mkdir <n+1>`: mkdir is atomic on POSIX and on NTFS under Git Bash
+# (CreateDirectoryW) alike, so of two writers that both saw <n> exactly one
+# creates <n+1> and the other gets EEXIST, reads again and claims <n+2>; a
+# claim made stale by a long stall is caught and made again (jig_revision_bump).
+# No increment is lost, and there is no lock to go stale, wait for or break. A
+# reader only lists names and never opens one. Not `mv <n> <n+1>`: Git Bash
+# emulates rename, and two writers both "renamed" the same <n> on Windows CI.
+#
+# A file edited by hand, or changed by a git command a person ran, raises
+# nothing: the accepted risk of the contract-extensions spec.
+
+# jig_revision_dir — where the counter lives; fails outside a project.
+jig_revision_dir() {
+  local root
+  [ -n "${JIG_PROJECT:-}" ] || return 1
+  root=$(jig_config_clone_root) || return 1
+  [ -n "$root" ] || return 1
+  printf '%s/%s/runtime/revision\n' "$root" "$JIG_AI_DIR"
+}
+
+# _jig_revision_scan <dir> — _JIG_REV <- the highest numeric name in <dir>, or
+# empty when there is none; _JIG_REV_OLD <- the other numeric names, which a
+# raise clears away. The shell's own glob, no process. A name is a directory
+# (a claim) or a file (the counter of the first, rename-based version, still
+# found in clones that ran it): either counts, and the highest wins.
+_JIG_REV=""
+_JIG_REV_OLD=""
+_jig_revision_scan() {
+  local f n
+  _JIG_REV=""
+  _JIG_REV_OLD=""
+  for f in "$1"/[0-9]*; do
+    n=${f##*/}
+    case "$n" in
+      '' | *[!0-9]*) continue ;;
+    esac
+    [ -e "$f" ] || continue
+    if [ -z "$_JIG_REV" ]; then
+      _JIG_REV=$n
+    elif [ "$n" -gt "$_JIG_REV" ]; then
+      _JIG_REV_OLD="$_JIG_REV_OLD $_JIG_REV"
+      _JIG_REV=$n
+    else
+      _JIG_REV_OLD="$_JIG_REV_OLD $n"
+    fi
+  done
+}
+
+# jig_revision_read — print the clone's revision: an integer, `0` when Jig has
+# not written anything in this clone yet (no counter).
+jig_revision_read() {
+  local dir
+  dir=$(jig_revision_dir) || { printf '0\n'; return 0; }
+  _JIG_REV=""
+  [ ! -d "$dir" ] || _jig_revision_scan "$dir"
+  printf '%s\n' "${_JIG_REV:-0}"
+}
+
+# _jig_revision_clear <dir> <below> <names> — remove the names in <names> that
+# are below <below>: best effort, at most 16 a time, never a failure. A reader
+# takes the highest name, so a leftover is clutter, not a wrong answer. Each
+# path is a digits-only name inside the revision directory (RULES.md: validated
+# before anything is removed).
+_jig_revision_clear() {
+  local dir="$1" below="$2" n count=0 dirs="" files=""
+  for n in $3; do
+    case "$n" in
+      '' | *[!0-9]*) continue ;;
+    esac
+    [ "$n" -lt "$below" ] || continue
+    [ "$count" -lt 16 ] || break
+    count=$((count + 1))
+    if [ -d "$dir/$n" ]; then
+      dirs="$dirs $n"
+    elif [ -f "$dir/$n" ]; then
+      files="$files $n"
+    fi
+  done
+  # shellcheck disable=SC2086 # digits-only names, split on purpose
+  if [ -n "$dirs" ]; then (cd "$dir" && rmdir $dirs) 2>/dev/null || true; fi
+  # shellcheck disable=SC2086 # digits-only names, split on purpose
+  if [ -n "$files" ]; then (cd "$dir" && rm -f $files) 2>/dev/null || true; fi
+  return 0
+}
+
+# How far below a claim a name must be before a raise clears it. A name is
+# cleared only by a claim more than this above it, so a claim that finds the
+# highest name that far above itself is a cleared name created again.
+_JIG_REV_KEEP=16
+
+# jig_revision_bump — raise the clone's revision by one, after a write landed.
+#
+# Claim the name above the highest one seen; a claim that loses (EEXIST) reads
+# again. A claim can also *succeed stale*: a writer that read <n> (or found the
+# directory empty and seeded), stalled, and meanwhile others claimed <n+1> and
+# far beyond and cleared it, would create <n+1> again — below the counter,
+# counting nothing. Clearing <n+1> took a claim more than _JIG_REV_KEEP above
+# it, and the highest name never goes down, so after its mkdir every claim
+# reads again: a highest name more than _JIG_REV_KEEP above its own makes it
+# stale, and it is withdrawn and made again. A fresh claim is misjudged only if
+# that many raises land between its mkdir and the next read, microseconds
+# apart — and then it counts once too often, never too few.
+#
+# A first write (or the first after `.ai/runtime` was lost) claims the current
+# time in seconds rather than 1, so that a revision a consumer still holds from
+# before the loss does not come round again. Never fails the command: the write
+# it follows has already landed, so a counter that cannot be raised — the main
+# checkout not writable from a sandboxed worktree — is a warning.
+jig_revision_bump() {
+  local dir tries=0 next seen old
+  dir=$(jig_revision_dir) || return 0
+  if [ ! -d "$dir" ] && ! mkdir -p "$dir" 2>/dev/null; then
+    jig_warn "could not raise the clone revision: cannot create $dir"
+    return 0
+  fi
+  while [ "$tries" -lt 64 ]; do
+    tries=$((tries + 1))
+    _jig_revision_scan "$dir"
+    seen=$_JIG_REV
+    old="$_JIG_REV_OLD $_JIG_REV"
+    if [ -z "$seen" ]; then
+      next=$(date +%s)
+    else
+      next=$((seen + 1))
+    fi
+    # The claim: exactly one writer creates <next>; the loser reads again.
+    mkdir "$dir/$next" 2>/dev/null || continue
+    _jig_revision_scan "$dir"
+    if [ "${_JIG_REV:-$next}" -le "$((next + _JIG_REV_KEEP))" ]; then
+      _jig_revision_clear "$dir" "$((next - _JIG_REV_KEEP))" "$old"
+      return 0
+    fi
+    # Stale: <next> had been claimed and cleared before. Withdraw it.
+    rmdir "$dir/$next" 2>/dev/null || true
+  done
+  jig_warn "could not raise the clone revision in $dir; a reader may miss this change"
+  return 0
+}
+
+# jig_record_changed — a Jig write landed: raise the clone's revision now, and
+# redraw the status page once when the command ends (jig_status_page_dirty).
+# Every writer of a record calls it right after its write lands, not once at
+# the command's end: a write made inside `$(...)`, or by a command that dies
+# after it, is still counted. tests/json.t.sh fails on a writer that does not.
+jig_record_changed() {
+  jig_revision_bump
+  jig_status_page_dirty
 }
 
 # jig_hash_git_dir — the git directory every hash in this project is computed

@@ -30,7 +30,14 @@ that need them. How a report looks is one such library, `lib/output.sh`: whether
 terminal is decided there and nowhere else in `scripts/`, and a command that prints through its
 blocks prints today's bytes to a pipe (adr-20261005-output-is-decorated-only-on-a-terminal). The
 two installers, which run before any checkout exists, speak the same blocks through their own
-copies (adr-20261005-the-installer-speaks-one-form-in-two-shells). A subject large enough to crowd out its command gets a library of its own even
+copies (adr-20261005-the-installer-speaks-one-form-in-two-shells). JSON is written in one such library, `lib/json.sh`: a command that offers `--json` runs its body as
+a producer through `json_run`, which prints the one envelope line every `--json` read shares, and
+builds every string with `json_quote` (adr-20261015-a-read-is-one-json-envelope; schemas/json.md;
+`conventions/json-output.md`). The housekeeping log is read through `lib/hklog.sh`, sourced by
+`status` and `task`: "which flags still stand" is decided there once. It is the one shared library
+that calls a command library's function — its rechecks ask `task_state_get` — so a reader sources
+`lib/task.sh` before it. `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
+forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
 lifecycle.
@@ -49,6 +56,9 @@ task or spec directory" — a roadmap names task ids, so the two grammars may no
 `jig spec remove` both put things there), `jig_status_page_touch` with `jig_status_page_dirty` and
 `jig_status_page_flush` ("redraw the status page" — task, spec and housekeeping all trigger it, and
 none of them may source `status.sh`, so the redraw is a `jig status --refresh` process),
+`jig_record_changed`, `jig_revision_bump` and `jig_revision_read` ("a Jig write landed: raise the
+clone's revision" — every writer of task, spec and knowledge records calls the first, and every
+`--json` read reports the last; adr-20261016-the-clone-revision-is-a-claimed-name),
 `jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push`, `jig_ship_pr` and `jig_ship_merge` ("carry a
 change as far as `agent.git` allows" — `task ship`, `spec ship` and a copy-mode `jig upgrade` take the
 same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-agent-git-level,

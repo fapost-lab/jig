@@ -411,6 +411,17 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.28.0 to 0.29.0
+
+Nothing on the checklist the upgrade itself prints. The installer, the skills and
+`.ai/config.yaml` did not change; the upgrade brings new scripts only.
+
+**What you will notice.** Nothing, unless you ask for it: every command prints the same text as
+before, and `--json` is new. Two new files appear under `.ai/runtime/`, which is not under git:
+`revision/`, the clone's revision counter, and `forge-cache`, where `jig housekeeping` keeps pull
+request and CI state. Housekeeping asks the forge once more per run — for the checks of open pull
+requests — whatever the number of tasks.
+
 ## From 0.27.0 to 0.28.0
 
 Nothing on the checklist the upgrade itself prints. The installer did not change, and

@@ -436,6 +436,71 @@ test_runner_failure_only_summary_still_exits_1() {
   assert_contains "$OUT" "2 passed, 1 failed, 0 skipped, 0 not completed"
 }
 
+# --- a test never runs where the runner was started ---------------------------
+# bash 3.2 turns a command substitution that could not make its pipe into an
+# empty string with status 0. Out of file descriptors, `tmp=$(mktemp -d ...)`
+# came back empty: the test ran in the directory `jig verify` was started from,
+# wrote its fixture there, and the cleanup's `rm -rf "" .*` removed that
+# worktree's .git and .ai. A mktemp stub that prints nothing for one template
+# stands in for the lost pipe.
+
+# rn_stub_mktemp <template-name> — ./stub/mktemp, silent with status 0 for
+# <template-name>.XXXXXX, the real mktemp for everything else.
+rn_stub_mktemp() {
+  local real
+  real=$(command -v mktemp)
+  mkdir -p stub
+  printf '#!/bin/sh\ncase "$*" in *"/%s.XXXXXX"*) exit 0 ;; esac\nexec "%s" "$@"\n' \
+    "$1" "$real" > stub/mktemp
+  chmod +x stub/mktemp
+}
+
+# rn_write_escape_fixture — a test that writes into its working directory, and
+# a launch directory holding what an escaped test or cleanup would destroy.
+rn_write_escape_fixture() {
+  cat > root/tests/esc.t.sh <<'EOF'
+# shellcheck shell=bash
+test_1_writes_here() { printf 'escaped\n' > escaped; }
+EOF
+  mkdir -p launch/.ai
+  printf 'kept\n' > launch/.keep
+  printf 'kept\n' > launch/.ai/config.yaml
+}
+
+test_runner_does_not_run_a_test_whose_directory_came_back_empty() {
+  rn_build_suite
+  rn_write_escape_fixture
+  rn_stub_mktemp test
+  local here=$PWD
+  cd launch || return 1
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=1 PATH="$here/stub:$PATH" \
+    "$here/root/tests/run.sh"
+  cd "$here" || return 1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "tests/run.sh: could not make a directory for esc::test_1_writes_here"
+  assert_contains "$OUT" "NOT COMPLETED esc::test_1_writes_here (no result: the worker did not finish)"
+  assert_no_file launch/escaped
+  assert_file_contains launch/.keep kept
+  assert_file_contains launch/.ai/config.yaml kept
+}
+
+test_runner_does_not_build_the_cache_where_it_was_started() {
+  rn_build_suite
+  rn_write_escape_fixture
+  rn_stub_mktemp cache-build
+  local here=$PWD
+  cd launch || return 1
+  run env -u JIG_TEST_SHARD -u JIG_TEST_SKIP JIG_TEST_JOBS=2 PATH="$here/stub:$PATH" \
+    "$here/root/tests/run.sh"
+  cd "$here" || return 1
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "tests/run.sh: could not make a directory for the fixture cache"
+  assert_no_file launch/escaped
+  assert_no_file launch/README.md
+  assert_file_contains launch/.keep kept
+  assert_file_contains launch/.ai/config.yaml kept
+}
+
 # --- the run record, and the shape that must never break ---------------------
 #
 # This runner takes the clone's run record so that a targeted run and a

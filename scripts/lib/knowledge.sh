@@ -1730,6 +1730,7 @@ km_new() {
     km_new_abandon "$build" "knowledge new: invalid --paths value: $paths_in"
   fi
   mv "$build" "$file" || km_new_abandon "$build" "knowledge new: could not move the finished document into place: $(km_rel "$file")"
+  jig_record_changed
 
   rel=$(km_rel "$file")
   if [ "$has_copy" -eq 1 ]; then

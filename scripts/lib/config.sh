@@ -894,6 +894,10 @@ _config_set() {
     return 0
   fi
   mv "$_CONFIG_TMP" "$file"
+  # A setting can change what a read reports (the git level and unattended
+  # mode decide what a person may do next), so a written one raises the
+  # clone's revision.
+  jig_record_changed
   i=0
   while [ "$i" -lt "$n" ]; do
     printf 'config: %s: %s (%s)\n' "${args[i]}" "${args[i + 1]}" "$shown"
@@ -1005,6 +1009,7 @@ _config_unset() {
   # it that it did not already satisfy.
   if [ "$removed" -gt 0 ]; then
     mv "$_CONFIG_TMP" "$file"
+    jig_record_changed
   else
     rm -f "$_CONFIG_TMP"
   fi

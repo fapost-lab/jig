@@ -1411,18 +1411,23 @@ test_status_html_writes_one_file_prints_its_path_and_changes_nothing_else() {
   assert_eq 0 "$RC"
   assert_eq "$(pwd -P)/.ai/runtime/status.html" "$OUT"
   assert_file .ai/runtime/status.html
-  # The page, the counts its redraws reuse, and the record every jig run
-  # leaves saying a session is working in this checkout
-  # (adr-20260924-a-checkout-records-what-is-happening-in-it) — nothing else.
+  # The page, the counts its redraws reuse, the record every jig run leaves
+  # saying a session is working in this checkout
+  # (adr-20260924-a-checkout-records-what-is-happening-in-it), and the clone's
+  # revision, which the first saved counts raise because `status --json`
+  # reports them (adr-20261016-the-clone-revision-is-a-claimed-name) — nothing
+  # else.
   assert_eq "checkout
+revision
 status-counts
-status.html" "$(ls .ai/runtime)" "nothing but the page, its counts and the checkout record"
+status.html" "$(ls .ai/runtime)" "nothing but the page, its counts, the checkout record and the revision"
   assert_eq "$before" "$(git status --porcelain --ignored | grep -v '^!! .ai/runtime/' || true)"
 
   # A second run replaces the page rather than adding another.
   run jig status --html
   assert_eq 0 "$RC"
   assert_eq "checkout
+revision
 status-counts
 status.html" "$(ls .ai/runtime)"
 }
@@ -2099,7 +2104,7 @@ test_status_page_shows_what_housekeeping_left_for_a_person() {
   assert_not_contains "$needs" "<code>old</code>"
 }
 
-# --- a flag this disk disproves (_status_flagged_ids) ------------------------
+# --- a flag this disk disproves (hklog_flagged_ids) ------------------------
 #
 # The cut is the cost of asking again. A task's own status and a worktree's
 # existence are read for nothing while the page is drawn, so a card they
@@ -2264,7 +2269,7 @@ test_status_asks_you_to_close_the_pull_request_of_a_task_you_abandoned() {
 
 test_status_asks_nothing_about_a_bad_id_on_the_pull_request_path_either() {
   fixture_jig_repo
-  # The sister of the guard in _status_hk_recheck, and it needs its own stand:
+  # The sister of the guard in _hklog_recheck, and it needs its own stand:
   # that one is reached through `flags=`, this one through ` remote=open `,
   # and a test of the first says nothing about the second. Both readings here
   # -- pr_url and status -- run on ids that came out of the log.
@@ -3127,4 +3132,257 @@ test_status_names_a_tasks_tracker_issue() {
   assert_contains "$OUT" "task SRD-9-fix class=T1 status=active issue=SRD-9"
   assert_contains "$OUT" "task other class=T1 status=active"
   assert_not_contains "$OUT" "task other class=T1 status=active issue"
+}
+
+# --- status --json: what needs the reader, as data ---------------------------
+#
+# The contract: schemas/json.md describes the shape these tests pin, and the
+# page's "Needs you" is built from the same items (_status_attention), which
+# the agreement test below proves.
+
+# _st_json [args] — `jig status --json <args>` with stdout in OUT, stderr in
+# ERR, generated_at replaced by T once its form is checked and revision by R
+# (pinned by tests/json.t.sh, not here).
+_st_json() {
+  local out err at
+  out=$(_run_out)
+  err=$(_run_out .err)
+  ( jig status --json "$@" ) >"$out" 2>"$err"
+  RC=$?
+  OUT=$(cat "$out")
+  ERR=$(cat "$err")
+  rm -f "$out" "$err"
+  at=$(printf '%s\n' "$OUT" | sed -n 's/.*"generated_at":"\([^"]*\)".*/\1/p')
+  case "$at" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
+  esac
+  case "$OUT" in
+    '{"schema":1,"revision":'[0-9]*) ;;
+    *) fail "revision is not an integer in $OUT" ;;
+  esac
+  OUT=$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/; s/"revision":[^,]*,/"revision":R,/')
+}
+
+test_status_json_says_when_nothing_needs_you() {
+  fixture_jig_repo
+  mkdir -p .ai/runtime
+  printf 'at: 2026-10-15T08:00:00Z\nproposals: 0\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[],"housekeeping":null,"knowledge_counts_at":"2026-10-15T08:00:00Z"}}' "$OUT"
+}
+
+# Every field of an item, and of the data around it, pinned whole.
+test_status_json_pins_an_item_with_every_field() {
+  export TZ=UTC
+  fixture_jig_repo
+  fixture_task shipped task/shipped ready "class:T2" "knowledge_consolidated:true" \
+    "pr_url:https://example.com/o/r/pull/7"
+  fixture_task given-up task/given-up abandoned "class:T2"
+  mkdir -p .ai/runtime
+  printf 'at: 2026-10-15T08:00:00Z\nproposals: 2\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+  {
+    printf -- '--- run 2026-10-01T09:30:00Z forge=github\n'
+    printf '2026-10-01T09:30:00Z task=given-up status=abandoned remote=open via=forge action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Review it and merge it; jig merges one itself only at agent.git: merge, on green CI.","url":"https://example.com/o/r/pull/7"},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z"}}' "$OUT"
+}
+
+# _st_json_cards <envelope> — each item of `jig status --json` drawn as the
+# page draws a card (_status_card), one per line: the label is the task id,
+# `phase <id>` for a phase and nothing for the project; the url is a link when
+# it is https. Values are compared unescaped, so the fixture keeps them free
+# of `"`, `<` and `>`.
+_st_json_cards() {
+  local item kind stype sid title detail todo url label line
+  printf '%s\n' "$1" | sed 's/^.*"attention":\[{//; s/}\],"housekeeping".*$//; s/},{"kind"/\
+"kind"/g' | while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    kind=$(printf '%s\n' "$item" | sed -n 's/^"kind":"\([^"]*\)".*/\1/p')
+    stype=$(printf '%s\n' "$item" | sed -n 's/.*"subject":{"type":"\([^"]*\)".*/\1/p')
+    sid=$(printf '%s\n' "$item" | sed -n 's/.*"subject":{"type":"[^"]*","id":"\([^"]*\)"}.*/\1/p')
+    title=$(printf '%s\n' "$item" | sed -n 's/.*"title":"\([^"]*\)".*/\1/p')
+    detail=$(printf '%s\n' "$item" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')
+    todo=$(printf '%s\n' "$item" | sed -n 's/.*"todo":"\([^"]*\)".*/\1/p')
+    url=$(printf '%s\n' "$item" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+    label=$sid
+    [ "$stype" != phase ] || label="phase $sid"
+    line="<div class=\"card\"><h3>$title</h3>"
+    if [ -n "$label" ] || [ -n "$detail" ]; then
+      line="$line<p>"
+      [ -z "$label" ] || line="$line<code>$label</code>"
+      [ -z "$label" ] || [ -z "$detail" ] || line="$line · "
+      line="$line$detail</p>"
+    fi
+    case "$url" in
+      https://*) line="$line<p><a href=\"$url\">$url</a></p>" ;;
+      ?*) line="$line<p><code>$url</code></p>" ;;
+    esac
+    printf '%s<p class="todo">%s</p></div>\n' "$line" "$todo"
+    printf '%s\n' "$kind" >> "$2"
+  done
+}
+
+# The page and the data read one source: every kind of item, and the page's
+# cards say exactly what the items say — title, subject, detail, what to do,
+# link — in the same order, with the badge on the two stopped kinds.
+test_status_json_and_the_page_name_the_same_items() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local t stub_root stub_bin path_dir p
+  for t in ph-1 ph-2; do
+    jig task new "$t" --class T2 >/dev/null
+    jig task start "$t" >/dev/null 2>&1 || true
+    jig task autopilot "$t" start --phase alpha/1 >/dev/null
+    jig task autopilot "$t" stop --reason "question from $t" >/dev/null
+  done
+  jig task new solo --class T2 >/dev/null
+  jig task autopilot solo start >/dev/null
+  jig task autopilot solo stop --reason "a question & an answer" >/dev/null
+  fixture_task gate-w task/gate-w active "class:T3"
+  printf '# Design\n' > .ai/workspace/tasks/gate-w/design.md
+  fixture_task gate-c task/gate-c active "class:T3"
+  printf '# Design\n' > .ai/workspace/tasks/gate-c/design.md
+  jig task gate gate-c approved >/dev/null
+  printf 'changed\n' >> .ai/workspace/tasks/gate-c/design.md
+  fixture_task done-1 task/done-1 ready "class:T2" "knowledge_consolidated:true"
+  fixture_task shipped task/shipped ready "class:T2" "knowledge_consolidated:true" \
+    "pr_url:https://example.com/o/r/pull/7"
+  fixture_task waiting task/waiting consolidated "class:T2" "pr_url:https://example.com/o/r/pull/9"
+  fixture_task given-up task/given-up abandoned "class:T2"
+  fixture_task landed task/landed ready "class:T2"
+  fixture_task elsewhere task/elsewhere active "class:T2"
+  fixture_task unmerged task/unmerged active "class:T2"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-22T00:00:00Z task=waiting status=consolidated remote=open via=forge action=preserve\n'
+    printf '2026-09-22T00:00:00Z task=given-up status=abandoned remote=open via=forge action=preserve\n'
+    printf '2026-09-22T00:00:00Z task=landed status=ready remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-22T00:00:00Z task=elsewhere status=active remote=unknown via=forge action=preserve flags=wrong-base\n'
+    printf '2026-09-22T00:00:00Z task=unmerged status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+    printf '2026-09-22T00:00:00Z task=no-path-logged status=consolidated remote=merged via=forge action=preserve flags=worktree-kept\n'
+  } > .ai/runtime/housekeeping.log
+  # A newer jig is out than the one on PATH (test_status_html_shows_a_card_for_a_new_release).
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.1.0"')
+  p=$(_status_path_without_jig "$path_dir")
+  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+  env PATH="$p" "$JIG_BIN" status --html >/dev/null
+  printf 'at: 2026-10-15T08:00:00Z\nproposals: 2\nsources_changed: 1\npending: 0\n' > .ai/runtime/status-counts
+  env PATH="$p" "$JIG_BIN" status --refresh
+  OUT=$(env PATH="$p" "$JIG_BIN" status --json 2>/dev/null)
+  rm -rf "$stub_root" "$stub_bin"
+
+  local needs page_cards json_cards kinds
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  page_cards=$(printf '%s\n' "$needs" | grep '^<div class="card">' \
+    | sed 's/ <span class="badge warn">autopilot stopped<\/span>//' \
+    | sed "s/&#39;/'/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/\"/g; s/&amp;/\\&/g")
+  : > kinds.txt
+  json_cards=$(_st_json_cards "$OUT" kinds.txt)
+  kinds=$(tr '\n' ' ' < kinds.txt)
+  assert_eq "release-available phase-stopped autopilot-stopped gate-changed gate-waiting git-step pull-request-waiting pull-request-was-open pull-request-of-abandoned-task needs-consolidation wrong-base closed-unmerged worktree-kept knowledge-proposed sources-changed " "$kinds"
+  assert_eq "$page_cards" "$json_cards"
+  # The badge is the stopped kinds' and only theirs.
+  assert_eq 2 "$(printf '%s\n' "$needs" | grep -c '<span class="badge warn">autopilot stopped</span>')"
+  assert_contains "$needs" 'A phase run is waiting for you <span class="badge warn">autopilot stopped</span>'
+  assert_contains "$needs" 'Autopilot stopped and is waiting for you <span class="badge warn">autopilot stopped</span>'
+  assert_contains "$OUT" '"subject":{"type":"phase","id":"alpha/1"},"tasks":["ph-1","ph-2"]'
+  assert_contains "$OUT" '"subject":{"type":"project","id":null},"tasks":[]'
+}
+
+# A task worktree borrows the owner's workspaces (ADR-0029), and reads the
+# owner's housekeeping log and counts as the page does: an agent working in a
+# worktree is told what the person's page says.
+test_status_json_in_a_worktree_reads_the_main_checkout() {
+  fixture_jig_repo
+  jig task new T-1 --class T2 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-22T00:00:00Z task=T-1 status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+  } > .ai/runtime/housekeeping.log
+  printf 'at: 2026-10-15T08:00:00Z\nproposals: 3\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+  local main
+  main=$(jig status --json 2>/dev/null | sed 's/"generated_at":"[^"]*"//')
+  OUT=$(cd "$wt" && jig status --json 2>/dev/null | sed 's/"generated_at":"[^"]*"//')
+  assert_contains "$OUT" '"kind":"closed-unmerged","subject":{"type":"task","id":"T-1"}'
+  assert_contains "$OUT" '"detail":"3 document(s) proposed"'
+  assert_contains "$OUT" '"housekeeping":{"ran_at":"'
+  assert_eq "$main" "$OUT"
+  assert_no_file "$wt/.ai/runtime/status-counts"
+}
+
+test_status_json_reports_a_refusal_as_an_envelope() {
+  fixture_jig_repo
+  _st_json --nope
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","error":{"code":"usage","message":"status --json: unknown argument: --nope (usage: jig status --json)"}}' "$OUT"
+  assert_contains "$ERR" "jig: error: status --json: unknown argument: --nope"
+  # --json may stand anywhere; beside a page mode it is refused, and the
+  # refusal writes no page.
+  _st_json --html
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"usage","message":"status --json: unknown argument: --html'
+  assert_no_file .ai/runtime/status.html
+}
+
+test_status_json_in_an_uninitialised_project_is_an_envelope() {
+  fixture_repo
+  _st_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-initialised","message":"status --json: project is not initialised; run: jig init"}}'
+  assert_no_file .ai
+}
+
+test_status_json_outside_git_is_an_envelope() {
+  mkdir plain
+  cd plain || return 1
+  _st_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-a-repository","message":"not inside a git repository"}}'
+  assert_not_contains "$OUT" '"data"'
+}
+
+# A read never asks the forge and writes nothing: no page, no counts.
+test_status_json_never_reaches_the_network_and_writes_nothing() {
+  fixture_jig_repo
+  fixture_task shipped task/shipped ready "class:T2" "knowledge_consolidated:true" \
+    "pr_url:https://github.com/example/example/pull/7"
+  git remote add origin https://example.invalid/repo.git
+  mkdir bin
+  printf '#!/bin/sh\necho called >> "%s/gh.called"\nexit 1\n' "$PWD" > bin/gh
+  chmod +x bin/gh
+  local before
+  # The dispatcher's own record of who is working here is the one write a
+  # read may cause (convention json-output): it is not this command's.
+  before=$(find .ai -type f ! -path .ai/runtime/checkout ! -path '.ai/runtime/working/*' | sort)
+  PATH="$PWD/bin:$PATH" GIT_TRACE="$PWD/git.trace" _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"kind":"pull-request-waiting"'
+  assert_no_file gh.called
+  assert_no_file .ai/runtime/status.html
+  assert_no_file .ai/runtime/status-counts
+  assert_eq "$before" "$(find .ai -type f ! -path .ai/runtime/checkout ! -path '.ai/runtime/working/*' | sort)"
+  assert_not_contains "$(cat git.trace)" "fetch"
+  assert_not_contains "$(cat git.trace)" "ls-remote"
+}
+
+# The text report is not touched by --json existing: the same bytes as the
+# plain report the page embeds.
+test_status_json_leaves_the_text_report_unchanged() {
+  fixture_jig_repo
+  fixture_task done-1 task/done-1 ready "class:T2" "knowledge_consolidated:true"
+  local before
+  before=$(jig status 2>&1)
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "$before" "$(jig status 2>&1)"
 }

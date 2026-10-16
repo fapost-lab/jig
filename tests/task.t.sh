@@ -7299,3 +7299,520 @@ test_task_ship_without_an_issue_keeps_the_subject() {
   assert_eq 0 "$RC" "$OUT"
   assert_eq "Fix the login form" "$(git log -1 --format=%s)"
 }
+
+# --- task list --json (adr-20261015-a-read-is-one-json-envelope) -------------
+#
+# The contract: schemas/json.md describes the shape these tests pin. A field
+# renamed or retyped here is a broken consumer elsewhere, so the shape is
+# compared whole, not probed field by field.
+
+# _tl_json — `jig task list --json <args>` with stdout in OUT, stderr in ERR,
+# generated_at replaced by T and revision by R once their forms are checked
+# (the revision's own behaviour is pinned in tests/json.t.sh).
+_tl_json() {
+  run_split jig task list --json "$@"
+  local at rev
+  at=$(printf '%s\n' "$OUT" | sed -n 's/.*"generated_at":"\([^"]*\)".*/\1/p')
+  case "$at" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) fail "generated_at is not a UTC timestamp: [$at] in $OUT" ;;
+  esac
+  rev=$(printf '%s\n' "$OUT" | sed -n 's/^{"schema":1,"revision":\([0-9][0-9]*\),.*/\1/p')
+  [ -n "$rev" ] || fail "revision is not an integer in $OUT"
+  OUT=$(printf '%s\n' "$OUT" | sed -e 's/"generated_at":"[^"]*"/"generated_at":"T"/' -e 's/^{"schema":1,"revision":[0-9]*,/{"schema":1,"revision":"R",/')
+}
+
+# _tl_cut_actions — move every task's `actions` array out of OUT into ACTIONS,
+# one array per line in the order the tasks came, so the facts and the actions
+# are pinned by tests of their own. No reason holds a `]`.
+_tl_cut_actions() {
+  ACTIONS=$(printf '%s\n' "$OUT" | grep -o ',"actions":\[[^]]*\]' | sed 's/^,"actions"://')
+  OUT=$(printf '%s\n' "$OUT" | sed 's/,"actions":\[[^]]*\]//g')
+}
+
+# _tl_ids — the task ids OUT lists, space-separated, in order.
+_tl_ids() {
+  printf '%s\n' "$OUT" | grep -o '"id":"[^"]*","class"' | sed 's/"id":"//; s/","class"$//' | paste -sd' ' -
+}
+
+test_task_list_json_pins_a_task_with_every_fact() {
+  task_setup_nested
+  git branch task/SRD-9-full
+  git worktree add -q ../wt task/SRD-9-full
+  printf 'new\n' > ../wt/new.txt
+  local wt dir upd
+  wt=$(cd ../wt && pwd -P)
+  dir=.ai/workspace/tasks/SRD-9-full
+  fixture_task SRD-9-full task/SRD-9-full active "class:T3" "issue:SRD-9" \
+    "created_at:2026-10-01" "paused:true" "pr_url:https://github.com/example/example/pull/7"
+  printf '# SRD-9-full\n\n## Goal\n\nShip the list\nas "data".\n\n## Scope\n\nx\n' > "$dir/task.md"
+  printf 'design\n' > "$dir/design.md"
+  jig task gate SRD-9-full approved >/dev/null
+  printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 1\nautopilot_phase: spec-x/1\n' >> "$dir/state"
+  printf '2026-10-02T09:00:00Z\tstart\t-\n2026-10-02T10:00:00Z\tstage\timplement\n2026-10-02T11:00:00Z\tstop\tWhich "name"?\n' > "$dir/autopilot"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-10-02T12:00:00Z forge=github\n'
+    printf '2026-10-02T12:00:00Z task=SRD-9-full status=active remote=unknown via=forge action=preserve flags=wrong-base,STALE_CANDIDATE\n'
+  } > .ai/runtime/housekeeping.log
+  printf 'task/SRD-9-full\tmain\topen\tred\t2026-10-02T12:00:00Z\n' > .ai/runtime/forge-cache
+  upd=$(sed -n 's/^updated_at: //p' "$dir/state")
+
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  _tl_cut_actions
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+}
+
+test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
+  task_setup
+  fixture_task bare "" active "created_at:2026-10-01" "updated_at:2026-10-01"
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  _tl_cut_actions
+  assert_eq 10 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
+}
+
+test_task_list_json_with_no_tasks_is_an_empty_list() {
+  task_setup
+  _tl_json
+  assert_eq 0 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[],"hidden":0,"housekeeping":null}}' "$OUT"
+}
+
+# Which tasks are listed is the text listing's rule, with the count of what it
+# hid; --all and --status mean what they mean there. Sorted by id.
+test_task_list_json_lists_the_tasks_the_text_listing_does() {
+  task_setup
+  fixture_task b-live "" active
+  fixture_task a-ready "" ready
+  fixture_task c-done "" consolidated
+  fixture_task d-gone "" abandoned
+  _tl_json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"hidden":2'
+  assert_eq 'a-ready b-live' "$(_tl_ids)"
+  _tl_json --all
+  assert_contains "$OUT" '"hidden":0'
+  assert_eq 'a-ready b-live c-done d-gone' "$(_tl_ids)"
+  # --json may come anywhere among the arguments.
+  run_split jig task list --status consolidated --json
+  assert_eq 0 "$RC"
+  assert_eq 'c-done' "$(_tl_ids)"
+}
+
+# A flag this disk already disproves is gone here exactly as it is gone from
+# the status page (hklog_flagged_ids), and one it cannot disprove stays.
+test_task_list_json_reports_the_housekeeping_flags_that_still_stand() {
+  task_setup
+  fixture_task closed-since task/closed-since consolidated
+  fixture_task open-still task/open-still active
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-01T00:00:00Z forge=github\n'
+    printf '2026-09-01T00:00:00Z task=open-still status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+    printf -- '--- run 2026-09-25T12:00:00Z forge=failed\n'
+    printf '2026-09-25T12:00:00Z task=closed-since status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=open-still status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+  _tl_json --all
+  assert_eq 0 "$RC"
+  _tl_cut_actions
+  assert_contains "$OUT" '"id":"closed-since",'
+  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[]},{"id":"open-still"'
+  # Only the last run counts: the older abandoned? is not repeated.
+  assert_contains "$OUT" '"housekeeping_flags":["needs-consolidation"]}]'
+  assert_contains "$OUT" '"housekeeping":{"ran_at":"2026-09-25T12:00:00Z","forge":"failed"}'
+}
+
+test_task_list_json_reports_a_refusal_as_an_envelope() {
+  task_setup
+  _tl_json --status bogus
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"usage","message":"task list: invalid status: bogus"}}' "$OUT"
+  assert_contains "$ERR" "jig: error: task list: invalid status: bogus"
+  _tl_json --nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task list: unknown argument: --nope"}}'
+  _tl_json --status
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task list: --status requires a value"}}'
+}
+
+test_task_list_json_in_a_project_without_jig_is_an_envelope() {
+  mkdir plain
+  cd plain
+  git init -q
+  _tl_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-initialised","message":"project is not initialised; run: jig init"}}'
+  assert_not_contains "$OUT" '"data"'
+  # Outside git altogether, the refusal says so in its own code.
+  cd ..
+  mkdir bare
+  cd bare
+  _tl_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-a-repository","message":"not inside a git repository"}}'
+}
+
+# Reading never touches the network: no forge CLI, no fetch, no ls-remote.
+# A gh on PATH would leave a mark; git's own trace lists every git it ran.
+test_task_list_json_never_reaches_the_network() {
+  task_setup
+  fixture_task t1 task/t1 active "pr_url:https://github.com/example/example/pull/7"
+  git remote add origin https://example.invalid/repo.git
+  mkdir -p .ai/runtime
+  printf 'task/t1\tmain\topen\tpending\t2026-10-01T00:00:00Z\n' > .ai/runtime/forge-cache
+  mkdir bin
+  printf '#!/bin/sh\necho called >> "%s/gh.called"\nexit 1\n' "$PWD" > bin/gh
+  chmod +x bin/gh
+  PATH="$PWD/bin:$PATH" GIT_TRACE="$PWD/git.trace" run_split jig task list --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_no_file gh.called
+  # An old cache is reported with its time, never refreshed by the read.
+  assert_contains "$OUT" '"state":"open","ci":"pending","fetched_at":"2026-10-01T00:00:00Z"'
+  assert_file git.trace
+  assert_not_contains "$(cat git.trace)" "fetch"
+  assert_not_contains "$(cat git.trace)" "ls-remote"
+  assert_not_contains "$(cat git.trace)" "remote-https"
+}
+
+# The pull request's state and checks come from the forge cache housekeeping
+# wrote (lib/forgecache.sh), joined by the task's branch and base; the newest
+# entry wins, an entry for another base is not the task's, and what the cache
+# does not say is null — with the time it was heard when it does.
+test_task_list_json_joins_the_pull_request_to_the_forge_cache() {
+  task_setup
+  fixture_task a-open task/a-open active "pr_url:https://github.com/example/example/pull/1"
+  fixture_task b-merged task/b-merged active "pr_url:https://github.com/example/example/pull/2" "base_branch:epic/x"
+  fixture_task c-unheard task/c-unheard active "pr_url:https://github.com/example/example/pull/3"
+  fixture_task d-no-pr task/d-no-pr active
+  mkdir -p .ai/runtime
+  {
+    printf '# jig forge cache\n'
+    printf 'task/a-open\tmain\topen\tpending\t2026-10-15T10:00:00Z\n'
+    printf 'task/a-open\tmain\tclosed\tred\t2026-10-01T10:00:00Z\n'
+    printf 'task/b-merged\tmain\tclosed\t-\t2026-10-15T10:00:00Z\n'
+    printf 'task/b-merged\tepic/x\tmerged\t-\t2026-10-14T10:00:00Z\n'
+    printf 'task/d-no-pr\tmain\topen\tgreen\t2026-10-15T10:00:00Z\n'
+  } > .ai/runtime/forge-cache
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  _tl_cut_actions
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/1","state":"open","ci":"pending","fetched_at":"2026-10-15T10:00:00Z"}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/2","state":"merged","ci":null,"fetched_at":"2026-10-14T10:00:00Z"}'
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/3","state":null,"ci":null,"fetched_at":null}'
+  # No pull request opened: the cache does not invent one.
+  assert_contains "$OUT" '"id":"d-no-pr",'
+  assert_contains "$OUT" '"pull_request":null,"housekeeping_flags":[]}]'
+}
+
+# A worktree borrows the owner's task directory (ADR-0029), and so reads the
+# owner's forge cache; its own housekeeping never writes one.
+test_task_list_json_in_a_worktree_reads_the_owners_forge_cache() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'pr_url: https://github.com/example/example/pull/9\n' >> .ai/workspace/tasks/T-1/state
+  mkdir -p .ai/runtime
+  printf 'task/T-1\tmain\topen\tgreen\t2026-10-15T10:00:00Z\n' > .ai/runtime/forge-cache
+  OUT=$(cd "$wt" && jig task list --json 2>/dev/null)
+  assert_contains "$OUT" '"pull_request":{"url":"https://github.com/example/example/pull/9","state":"open","ci":"green","fetched_at":"2026-10-15T10:00:00Z"}'
+
+  local bin="$PWD/bin"
+  mkdir -p "$bin"
+  # shellcheck disable=SC2016 # the stub's own $1 and $*, expanded when it runs
+  printf '#!/bin/sh\necho "$*" >> "%s/calls"\ncase "$1" in auth) exit 0 ;; esac\nprintf "task/T-1\\tmain\\tMERGED\\tabc\\n"\n' "$bin" > "$bin/gh"
+  chmod +x "$bin/gh"
+  sed 's/^forge:.*/forge: github/; s/^housekeeping.fetch:.*/housekeeping.fetch: false/' \
+    .ai/config.yaml > "$wt/.ai/config.yaml"
+  git remote add origin https://github.com/example/example.git
+  (cd "$wt" && PATH="$bin:$PATH" jig housekeeping >/dev/null 2>&1) || true
+  # The forge was asked, and what it said went nowhere.
+  assert_contains "$(cat "$bin/calls")" "pr list"
+  assert_no_file "$wt/.ai/runtime/forge-cache"
+  assert_eq "$(printf 'task/T-1\tmain\topen\tgreen\t2026-10-15T10:00:00Z')" "$(cat .ai/runtime/forge-cache)"
+}
+
+# --json changes nothing for a reader of the text listing.
+test_task_list_text_form_is_unchanged_beside_json() {
+  task_setup
+  fixture_task t1 "" active "class:T1"
+  run jig task list --goals
+  assert_eq 0 "$RC"
+  assert_eq "$(printf 't1 class=T1 status=active not-started\n  goal: (none)')" "$OUT"
+}
+
+# The mode is the one the gates read (_task_autopilot_mode): anything but
+# `unattended` — an absent key, a stray capital — is an attended run.
+test_task_list_json_reports_the_autopilot_mode_the_gates_read() {
+  task_setup
+  fixture_task odd "" active "autopilot:on" "autopilot_mode:Unattended"
+  fixture_task old "" active "autopilot:done"
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"id":"odd",'
+  assert_not_contains "$OUT" '"mode":"Unattended"'
+  assert_eq 2 "$(printf '%s\n' "$OUT" | grep -o '"mode":"attended"' | wc -l | tr -d ' ')"
+}
+
+# --- what a person may do next (adr-20261015-one-table-of-what-a-person-may-do)
+#
+# The actions table (_task_actions) offers an action only when its command
+# accepts it on the task's state, and says why it withholds one in the words
+# the command's own guard refuses with. These tests run the commands to prove
+# it rather than restating the table.
+
+# _tl_action_rows — one line per action object in OUT (a listing of one task):
+# `<id><TAB><offered><TAB><command><TAB><reason>`, the reason empty for null.
+# No command or reason the table writes holds a `}` or an escaped backslash.
+_tl_action_rows() {
+  printf '%s\n' "$OUT" \
+    | grep -o '{"id":"[a-z-]*","command":"[^"]*","offered":[a-z]*,"reason":[^}]*}' \
+    | awk '{
+        s = $0
+        sub(/^\{"id":"/, "", s); id = s; sub(/".*/, "", id); s = substr(s, length(id) + 1)
+        sub(/^","command":"/, "", s); cmd = s; sub(/","offered":.*/, "", cmd); s = substr(s, length(cmd) + 1)
+        sub(/^","offered":/, "", s); off = s; sub(/,.*/, "", off); s = substr(s, length(off) + 1)
+        sub(/^,"reason":/, "", s); sub(/\}$/, "", s)
+        if (s == "null") r = ""; else { r = substr(s, 2, length(s) - 2); gsub(/\\"/, "\"", r) }
+        printf "%s\t%s\t%s\t%s\n", id, off, cmd, r
+      }'
+}
+
+# _tl_agree <id> <expected-offered> — list <id> as data, check that the
+# actions offered are exactly <expected-offered> (space-separated, in table
+# order), then run every command: an offered one must succeed, and one a guard
+# withheld must refuse with its reason. The table's own withholdings — a
+# finished task, an approved design, a merged pull request — have no command
+# refusal to compare and are skipped. The workspace is put back after each
+# command; `start`, which moves HEAD, runs last.
+_tl_agree() {
+  local id="$1" want="$2" rows action offered command reason t saved msg got="" start=""
+  t=$(printf '\t')
+  _tl_json --all
+  assert_eq 0 "$RC" "$ERR"
+  rows=$(_tl_action_rows)
+  assert_eq 10 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
+  msg="$saved/msg.txt"
+  printf 'Ship it\n' > "$msg"
+  cp -R ".ai/workspace/tasks/$id" "$saved/ws"
+  while IFS="$t" read -r action offered command reason; do
+    [ -n "$action" ] || continue
+    [ "$offered" = false ] || got="${got:+$got }$action"
+    if [ "$offered" = false ]; then
+      case "$reason" in
+        "task $id is "* | *"design is approved"* | *"pull request is merged"*) continue ;;
+      esac
+    fi
+    command=$(printf '%s' "$command" | sed "s|<text>|go|; s|<Tn>|T4|; s|<file>|$msg|")
+    if [ "$action" = start ] && [ "$offered" = true ]; then
+      start="$command"
+      continue
+    fi
+    set -f
+    # shellcheck disable=SC2086 # the command is words, split as a person types them
+    set -- $command
+    set +f
+    # Away from the rows this loop reads: a command must not eat them.
+    run_split "$@" </dev/null
+    if [ "$offered" = true ]; then
+      assert_eq 0 "$RC" "$action is offered but its command refused: $ERR"
+    else
+      [ "$RC" -ne 0 ] || fail "$action is withheld ($reason) but its command accepted it"
+      assert_contains "$ERR" "$reason"
+    fi
+    rm -rf ".ai/workspace/tasks/$id"
+    cp -R "$saved/ws" ".ai/workspace/tasks/$id"
+  done <<EOF
+$rows
+EOF
+  assert_eq "$want" "$got"
+  if [ -n "$start" ]; then
+    set -f
+    # shellcheck disable=SC2086
+    set -- $start
+    set +f
+    run_split "$@"
+    assert_eq 0 "$RC" "start is offered but its command refused: $ERR"
+  fi
+  rm -rf "$saved"
+}
+
+test_task_actions_of_a_task_not_started_agree_with_their_commands() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tl_agree fresh "start pause set-class abandon"
+}
+
+# An attended run stopped at a T3 gate, on a paused task started here: the
+# person approves, answers, unpauses; the ship and the close wait for the
+# knowledge decision.
+test_task_actions_at_a_gate_and_a_stop_agree_with_their_commands() {
+  task_setup_clean
+  ship_cfg_local agent.git commit
+  jig task new big --class T3 >/dev/null
+  jig task start big >/dev/null
+  jig task artifact write big design --from - >/dev/null <<EOF
+the design
+EOF
+  printf 'autopilot: stopped\nautopilot_mode: attended\nautopilot_repairs: 1\npaused: true\n' >> .ai/workspace/tasks/big/state
+  _tl_agree big "resume approve-gate answer-stop set-class abandon"
+}
+
+# Where nobody answers (autopilot.unattended), a run that spent its repairs is
+# not resumed and its gate is not the person's; a task whose knowledge
+# decision is recorded and that opened no pull request can be closed; a ship
+# is refused for the record its route is missing.
+test_task_actions_of_an_unattended_run_agree_with_their_commands() {
+  task_setup_clean
+  ship_cfg_local agent.git commit
+  ship_cfg_local autopilot.unattended true
+  jig task new run --class T3 >/dev/null
+  jig task start run >/dev/null
+  jig task artifact write run design --from - >/dev/null <<EOF
+the design
+EOF
+  sed 's/^knowledge_consolidated: false/knowledge_consolidated: true/' .ai/workspace/tasks/run/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/run/state
+  printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 2\n' >> .ai/workspace/tasks/run/state
+  _tl_agree run "pause set-class close abandon"
+  _tl_json --all
+  assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft"'
+  assert_contains "$OUT" '"id":"ship","command":"jig task ship run --message-file <file>","offered":false,"reason":"task ship: the route of run (T3) is missing: '
+}
+
+# A finished task offers nothing but reopening an abandoned one.
+test_task_actions_of_finished_tasks_offer_only_reopen() {
+  task_setup_clean
+  fixture_task gone "" abandoned
+  _tl_agree gone "reopen"
+  rm -rf .ai/workspace/tasks/gone
+  fixture_task done-1 "" consolidated
+  _tl_agree done-1 ""
+  _tl_json --all
+  assert_contains "$OUT" '"id":"abandon","command":"jig task abandon done-1","offered":false,"reason":"task done-1 is consolidated"}'
+}
+
+# A design approved is not offered for approval again, though the command
+# would record it a second time: the table may withhold more than a command
+# refuses, never less.
+test_task_actions_withhold_an_approval_already_given() {
+  task_setup_clean
+  jig task new big --class T3 >/dev/null
+  jig task artifact write big design --from - >/dev/null <<EOF
+the design
+EOF
+  jig task gate big approved >/dev/null
+  _tl_json
+  assert_contains "$OUT" '"id":"approve-gate","command":"jig task gate big approved","offered":false,"reason":"task gate: big'"'"'s design is approved; nothing waits at its gate"}'
+  printf 'changed\n' >> .ai/workspace/tasks/big/design.md
+  _tl_json
+  assert_contains "$OUT" '"id":"approve-gate","command":"jig task gate big approved","offered":true,"reason":null}'
+}
+
+# `close` is the one guard that asks the forge; the table reads the forge
+# cache instead and never the forge. A cache's `merged` is final, so the
+# command agrees when it asks; a cache that says `open`, or nothing, withholds
+# the close in the words the command refuses with when the forge says the same.
+test_task_actions_close_reads_the_forge_cache_the_command_confirms() {
+  task_setup_clean
+  ship_cfg forge github
+  git remote add origin https://github.com/example/example.git
+  fixture_task T-1 task/T-1 active "knowledge_consolidated:true" "pr_url:https://github.com/example/example/pull/7"
+  mkdir -p .ai/runtime
+  printf 'task/T-1\tmain\tmerged\t-\t2026-10-15T10:00:00Z\n' > .ai/runtime/forge-cache
+  _tl_json
+  assert_contains "$OUT" '"id":"close","command":"jig task set T-1 status consolidated","offered":true,"reason":null}'
+  pr_check_stub_gh "" MERGED
+  run_split jig task set T-1 status consolidated
+  assert_eq 0 "$RC" "$ERR"
+
+  fixture_task T-1 task/T-1 active "knowledge_consolidated:true" "pr_url:https://github.com/example/example/pull/7"
+  printf 'task/T-1\tmain\topen\tgreen\t2026-10-15T10:00:00Z\n' > .ai/runtime/forge-cache
+  _tl_json
+  assert_contains "$OUT" '"id":"close","command":"jig task set T-1 status consolidated","offered":false,"reason":"task set: status consolidated requires its pull request to be merged: https://github.com/example/example/pull/7 is open; merge it, then run this again"}'
+  pr_check_stub_gh "" OPEN
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "jig: error: task set: status consolidated requires its pull request to be merged: https://github.com/example/example/pull/7 is open; merge it, then run this again"
+
+  rm -f .ai/runtime/forge-cache
+  _tl_json
+  assert_contains "$OUT" '"reason":"task set: status consolidated requires its pull request to be merged: https://github.com/example/example/pull/7 is unknown; merge it, then run this again"}'
+  pr_check_stub_gh "" FAIL
+  run_split jig task set T-1 status consolidated
+  assert_contains "$ERR" "is unknown; merge it, then run this again"
+}
+
+# A ship the table offers is one `task ship` carries out.
+test_task_actions_offer_a_ship_the_command_carries_out() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  _tl_json
+  assert_contains "$OUT" '"id":"ship","command":"jig task ship T-1 --message-file <file>","offered":true,"reason":null}'
+  run_split jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "Ship T-1" "$(git log -1 --format=%s)"
+}
+
+# The guards the table asks never reach the network: not the close's forge
+# question, not the ship's receipt check.
+test_task_actions_never_reach_the_network() {
+  task_setup
+  ship_cfg forge github
+  ship_cfg_local agent.git pr
+  fixture_task t1 task/t1 active "knowledge_consolidated:true" "pr_url:https://github.com/example/example/pull/7"
+  printf 'stage: review\ndiff: x\ncontext: x\ndesign: -\nfindings: -\n' > .ai/workspace/tasks/t1/receipt
+  git remote add origin https://example.invalid/repo.git
+  mkdir bin
+  printf '#!/bin/sh\necho called >> "%s/gh.called"\nexit 1\n' "$PWD" > bin/gh
+  chmod +x bin/gh
+  PATH="$PWD/bin:$PATH" GIT_TRACE="$PWD/git.trace" run_split jig task list --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_no_file gh.called
+  assert_contains "$OUT" '"id":"close","command":"jig task set t1 status consolidated","offered":false,"reason":"task set: status consolidated requires its pull request to be merged: https://github.com/example/example/pull/7 is unknown; merge it, then run this again"}'
+  assert_contains "$OUT" '"id":"ship","command":"jig task ship t1 --message-file <file>","offered":false,"reason":"task ship: review is stale: '
+  assert_not_contains "$(cat git.trace)" "fetch"
+  assert_not_contains "$(cat git.trace)" "ls-remote"
+  assert_not_contains "$(cat git.trace)" "remote-https"
+}
+
+# An invalid git level withholds the ship in the words `task ship` refuses with.
+test_task_actions_of_an_invalid_git_level_agree_with_their_commands() {
+  task_setup_clean
+  ship_cfg_local agent.git bogus
+  jig task new lvl >/dev/null
+  _tl_agree lvl "start pause set-class abandon"
+  _tl_json
+  assert_contains "$OUT" '"reason":"task ship: invalid agent.git: bogus (expected none|commit|push|pr|merge)"}'
+}
+
+# A read about work in another checkout is not work there: the ship row's
+# receipt check runs `jig context` in the task's worktree, and that run leaves
+# no checkout record behind (adr-20260924-a-checkout-records-what-is-happening-in-it).
+test_task_actions_leave_no_checkout_record_in_the_tasks_worktree() {
+  task_setup_nested
+  ship_cfg_local agent.git commit
+  jig task new x >/dev/null
+  local wt before after
+  wt=$(jig task start x --worktree 2>/dev/null)
+  printf 'work\n' > "$wt/work.txt"
+  sed 's/^knowledge_consolidated: false/knowledge_consolidated: true/' .ai/workspace/tasks/x/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/x/state
+  printf 'stage: review\ndiff: x\ncontext: x\ndesign: -\nfindings: -\n' > .ai/workspace/tasks/x/receipt
+  before=$(cd "$wt" && find .ai/runtime -type f 2>/dev/null | LC_ALL=C sort; cat .ai/runtime/checkout 2>/dev/null)
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"reason":"task ship: review is stale: '
+  after=$(cd "$wt" && find .ai/runtime -type f 2>/dev/null | LC_ALL=C sort; cat .ai/runtime/checkout 2>/dev/null)
+  assert_eq "$before" "$after"
+}

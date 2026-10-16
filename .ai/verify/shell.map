@@ -23,6 +23,15 @@ scripts/jig-session-hook        housekeeping::
 scripts/jig                     dispatcher::
 scripts/jig.cmd                 init:: install::
 
+# The JSON layer and the housekeeping log reader are libraries with more than
+# one reader: json.sh writes every `--json` envelope (task list, spec list,
+# status), hklog.sh decides which housekeeping flags still stand for the status
+# page and for `task list --json` alike (adr-20261015-a-read-is-one-json-envelope). forgecache.sh is written by
+# housekeeping and read by `task list --json`.
+scripts/lib/json.sh             json:: task::test_task_list_json spec::test_spec_list_json status::test_status_json
+scripts/lib/hklog.sh            status:: task::test_task_list_json
+scripts/lib/forgecache.sh       housekeeping::test_housekeeping_keeps_the_forge housekeeping::test_housekeeping_forge_cache housekeeping::test_housekeeping_dry_run_writes_no_forge_cache task::test_task_list_json
+
 adapters/**                     adapters::
 profiles/**                     profiles:: verify::
 # One template is read by a third suite: tests/adapters.t.sh opens
