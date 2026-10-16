@@ -2005,6 +2005,70 @@ test_housekeeping_names_the_ignored_files_a_removed_worktree_took() {
   assert_file_contains .ai/runtime/housekeeping.log "action=remove ignored=local/"
 }
 
+test_housekeeping_asks_for_ignored_directories_whatever_the_users_git_shows() {
+  # `status.showUntrackedFiles=all` is a person's own taste, and it turns git's
+  # answer about ignored paths from one line per directory into one line per
+  # file: 43 621 lines for a worktree with vendor/ and node_modules/ (measured,
+  # 2026-10-16), each walked by a find of its own. The question must not depend
+  # on how the person likes their `git status`.
+  hk_worktree_setup
+  local wt
+  git config status.showUntrackedFiles all
+  hk_worktree_ignores 'local/'
+  wt=$(hk_worktree_task T-1)
+  mkdir -p "$wt/local/a" "$wt/local/b"
+  printf 'x\n' > "$wt/local/a/one"
+  printf 'x\n' > "$wt/local/b/two"
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_no_file "$wt"
+  grep -q ' ignored=local/$' .ai/runtime/housekeeping.log \
+    || fail "the removal did not name local/ as one directory: $(grep 'ignored=' .ai/runtime/housekeeping.log)"
+}
+
+test_housekeeping_finds_a_nested_repository_whatever_the_users_git_shows() {
+  # The opposite taste was worse than slow: with `status.showUntrackedFiles=no`
+  # git leaves the ignored paths out of `status --ignored` altogether, the walk
+  # had nothing to walk, and a worktree holding the only copy of a repository's
+  # commits was removed with it.
+  hk_worktree_setup
+  local wt
+  git config status.showUntrackedFiles no
+  hk_worktree_ignores 'vendor/'
+  wt=$(hk_worktree_task T-1)
+  hk_nested_repo "$wt/vendor/dep"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "worktree $wt kept (nested-repository)"
+  assert_file "$wt/vendor/dep/notes.txt"
+}
+
+test_housekeeping_walks_many_ignored_files_without_running_out_of_descriptors() {
+  # Files ignored one by one inside a tracked directory are listed one by one
+  # whatever the untracked mode (*.pyc next to the sources). A walk that keeps a
+  # process substitution open per path holds one descriptor each until the
+  # function returns on bash 3.2 — measured, and on 2026-10-16 that exhausted
+  # the system's file table. Under a low limit the run must still finish. Only
+  # bash 3.2 (macOS) can fail this: bash 5 closes each substitution as it goes.
+  hk_worktree_setup
+  local wt i
+  hk_worktree_ignores '*.cache'
+  wt=$(hk_worktree_task T-1)
+  i=0
+  while [ "$i" -lt 300 ]; do
+    : > "$wt/f$i.cache"
+    i=$((i + 1))
+  done
+
+  ( ulimit -n 64 ) 2>/dev/null || skip "ulimit -n 64 is refused here"
+  run bash -c 'ulimit -n 64 && exec "$0" housekeeping' "$JIG_BIN"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "Too many open files"
+  assert_no_file "$wt"
+}
+
 # hk_worktree_keeps_its_own_directory <worktree> <id> — give <worktree> the
 # task directory of ADR-0029 before its 2026-09-25 amendment: a real directory
 # of its own holding one link to the task's workspace. That is what an older

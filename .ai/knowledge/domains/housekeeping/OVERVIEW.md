@@ -110,7 +110,13 @@ Read these before changing anything here; each is a rule someone paid for.
   own git, since nothing outside it knows, and the reason reads `nested-repository`; when git will
   not say what it ignores at all, the reason reads `ignored-unknown` and the worktree is kept on
   the same principle as every other unanswered question here
-  (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). Ignored files that are
+  (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). The question names its
+  untracked mode (`--untracked-files=normal`), because a person's `status.showUntrackedFiles`
+  otherwise decides the answer: `no` leaves the ignored paths out entirely, which read as
+  "nothing nested" and removed a repository's only copy, and `all` lists every file in
+  `vendor/` and `node_modules/`, which on 2026-10-16 ran a find per file and exhausted the
+  system's descriptors through bash 3.2's per-iteration process substitutions. Any git output
+  a script parses is asked in a mode it names, never in the user's. Ignored files that are
   not a repository still go, and the removal's log line names them in its last field,
   `ignored=`; an orphaned task directory under `.ai/workspace/` is not a repository and is
   not covered by this. It is also no longer how a worktree normally looks: a worktree jig

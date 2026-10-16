@@ -1275,7 +1275,11 @@ _hk_worktree_retire() {
 # _hk_worktree_ignored <path> — the paths `git worktree remove` would delete
 # without a word: what the project ignores, as git reports it, one per line and
 # relative to the worktree. Whole ignored directories come back as one entry,
-# so a tree full of dependencies is a handful of lines, not thousands. `-z`
+# so a tree full of dependencies is a handful of lines, not thousands — but only
+# in the `normal` untracked mode, so it is asked for by name. A person's own
+# `status.showUntrackedFiles=all` otherwise lists every file inside them: 43 621
+# lines for one worktree with vendor/ and node_modules/ (measured, 2026-10-16),
+# and a find for each in _hk_worktree_unshared. `-z`
 # spares the quoting git otherwise puts around a path with a space, a quote or a
 # byte above ASCII in it — measured: without `-z` those come back as
 # `"with space/"` and no `[ -e ]` finds them again. The NUL stays inside the
@@ -1287,7 +1291,7 @@ _hk_worktree_retire() {
 # pipeline carry git's failure out, and the caller reads that as an uncertainty,
 # never as "nothing is ignored".
 _hk_worktree_ignored() {
-  git -C "$1" status --porcelain -z --ignored 2>/dev/null \
+  git -C "$1" status --porcelain -z --ignored --untracked-files=normal 2>/dev/null \
     | tr '\0' '\n' \
     | sed -n 's/^!! //p'
 }
@@ -1340,22 +1344,40 @@ _hk_repo_holds_work() {
 # nor a link inside one is followed — .ai/workspace/tasks is itself the link
 # that borrows another checkout's workspaces (the fallback shape holds one link
 # per task under it instead), and it leads into another checkout entirely.
+#
+# Ignored files are listed one by one even in the normal mode (*.pyc beside
+# the sources), so the walk stays cheap per entry: a file other than a `.git`
+# of its own holds no repository and gets no find, and find's answer is read
+# from a here-document, not a process substitution — bash 3.2 keeps every
+# process substitution opened in a loop until the function returns, one
+# descriptor per ignored path (measured; on 2026-10-16 that ran the system's
+# file table out).
 _hk_worktree_unshared() {
-  local path="$1" list="$2" rel dot repo
+  local path="$1" list="$2" rel dot dots repo
   while IFS= read -r rel; do
     # git marks a directory with a trailing slash; find implementations differ
     # on whether they double it into the paths they print.
     rel=${rel%/}
     [ -n "$rel" ] || continue
     [ -e "$path/$rel" ] || continue
+    case "/$rel" in
+      */.git) ;;
+      *) [ -d "$path/$rel" ] || continue ;;
+    esac
+    dots=$(find "$path/$rel" -name .git -prune -print 2>/dev/null) || true
+    [ -n "$dots" ] || continue
     while IFS= read -r dot; do
       repo=${dot%/.git}
       [ "$repo" != "$dot" ] || continue
       _hk_repo_holds_work "$repo" || continue
       printf '%s\n' "$repo"
       return 0
-    done < <(find "$path/$rel" -name .git -prune -print 2>/dev/null)
-  done < <(printf '%s\n' "$list")
+    done <<EOF
+$dots
+EOF
+  done <<EOF
+$list
+EOF
   return 1
 }
 
