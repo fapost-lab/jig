@@ -196,14 +196,14 @@ needs every other one, runs with `always()`, and fails when a job failed, was ca
 skipped although `scope` and the event required it to run (`.github/scripts/ci-ok.sh`) — so the
 merge button stays off while the suite runs, and a skipped job counts only when `scope` decided it.
 
-Do not require a matrix job by name. `test` is named `${{ matrix.os }}`; when `scope` skips it the
-expression is never expanded, and GitHub reports one skipped check called `matrix.os` instead of
-`ubuntu-latest` and `macos-latest`. A rule naming those waits for a status nobody will send, and
-the pull request cannot be merged although its CI is green. `test-windows`
+Do not require a matrix job by name. `test` is named `${{ matrix.os }} ${{ matrix.shard }}`; when
+`scope` skips it the expression is never expanded, and GitHub reports one skipped check named after
+the expression instead of `ubuntu-latest 1/2` and the rest. A rule naming those waits for a status
+nobody will send, and the pull request cannot be merged although its CI is green. `test-windows`
 (`${{ matrix.shard }}/${{ strategy.job-total }}`) behaves the same way. A new job therefore joins
-`ci-ok`'s `needs` rather than the rule. It is also why the number of Windows shares can be changed
-without touching the branch rules: the share count is in the job names, and `ci-ok`'s name never
-moves.
+`ci-ok`'s `needs` rather than the rule. It is also why the number of shares on any platform can be
+changed without touching the branch rules: the share count is in the job names, and `ci-ok`'s name
+never moves.
 
 ### Routing evals
 

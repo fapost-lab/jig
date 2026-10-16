@@ -207,13 +207,14 @@ Some settings are a matter of personal taste rather than project policy. Put the
   and your agent checks what it reports. Write the name the way Claude Code understands it —
   `sonnet`, `opus`, `haiku` or a full model id; Jig passes it on as written and never checks it.
   The review key covers every review of a route, the architecture review of a risky task included.
-  Not set (the default), nothing is handed over and your agent does the stage itself. Local only:
+  Not set (the default), your agent writes the code itself, and every review still goes to a helper
+  on your session's model. Local only:
   which model is worth its cost depends on your plan and your budget. See
   [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
 - `codex.implement_model`, `codex.review_model` — in Codex, the model of the subagent that
   runs implementation or any review stage. Set either with `jig config set <key> <model> --local`.
   Jig passes the model name to Codex without checking a model list. With no value, the current
-  session handles the stage as usual. If a chosen Codex subagent cannot start, the stage stops
+  session writes the code itself and a review goes to a subagent on the session's model. If a chosen Codex subagent cannot start, the stage stops
   with the reason; it is not silently completed by the current session. The reviewer starts
   with a fresh context. Local only. See [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
 - `executor.implement_runtime`, `executor.review_runtime` — choose `claude` or `codex` for

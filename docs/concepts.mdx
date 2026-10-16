@@ -163,6 +163,15 @@ a change nobody can undo.
 specification and the alternatives — word for word, with its own objections after it. It records
 what you decided and does not implement until you approve. A summary is never what gets approved.
 
+**A review is a second reader.** Every review in a route — T2's review, T3's architecture review,
+T4's independent review — is done by a helper agent that never saw the code being written: it gets
+the task and the design, not the author's account of what was done, and each repeat review is a new
+helper. For T4 the review goes further. It runs on another model or tool when you have set one up
+([Autopilot: helpers on another model](/autopilot#helpers-on-another-model)), and otherwise the
+pull request says it ran on the same model as the code. Every acceptance criterion needs evidence,
+and every serious problem the agent says it fixed is checked by undoing the fix and watching its
+test fail.
+
 **Every route ends in consolidation**, even a typo fix: the task decides what the project should
 remember, and records "nothing" explicitly when that is the answer.
 

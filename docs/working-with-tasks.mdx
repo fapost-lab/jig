@@ -118,7 +118,9 @@ or a scheduler you choose ([Configuration](/configuration)).
 
 ## Review findings
 
-When a task is reviewed, each problem the review finds is written down in the task's workspace with a
+A review is never done by the agent that wrote the change: it goes to a helper that has not seen the
+work being done, and a repeat review goes to a new one ([Concepts](/concepts)). When a task is
+reviewed, each problem the review finds is written down in the task's workspace with a
 severity:
 
 | | Means | Stops the task |

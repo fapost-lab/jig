@@ -107,9 +107,20 @@ model remains the person's decision.
 
 ## Without a matching line
 
-The current session does the stage as before. Where the route asks for a review in a fresh
-context, use a subagent on the session's model; if none can start, say so in the pull request.
-No setting is required for a normal Jig route.
+The current session implements as before. Every review stage still goes to a new subagent on
+the session's model, briefed without the implementation conversation. Only here, with no review
+line at all, may the session review when no subagent can start, and it says so in the pull
+request. No setting is required for a normal Jig route.
+
+## T4: another model when there is one
+
+A T4 review runs on a different model or runtime from the implementation when the lines say so.
+Take the effective implementer — the `executor: implement` runtime (with its model, if printed),
+else the `delegate: implement` model, else the session — and the effective reviewer the same way
+from the `review` lines. They differ when their runtimes differ, or when the same runtime names
+two different models. The coordinator never picks a model on its own. With no such line, a same-model reviewer in a fresh context does
+the review and the pull request says that it ran on the implementation's model. Nothing records
+the model elsewhere: the receipt pins content, not who read it.
 
 ## What stays with the coordinator
 
