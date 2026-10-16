@@ -81,7 +81,12 @@ Each task carries what Jig knows about it:
     "ci": "green",
     "fetched_at": "2026-10-15T09:00:00Z"
   },
-  "housekeeping_flags": []
+  "housekeeping_flags": [],
+  "actions": [
+    {"id": "start", "command": "jig task start booking-message", "offered": false, "reason": "task start: already started on task/booking-message; ..."},
+    {"id": "pause", "command": "jig task pause booking-message", "offered": true, "reason": null},
+    ...
+  ]
 }
 ```
 
@@ -96,6 +101,34 @@ housekeeping` heard from the forge, at `fetched_at`; the read itself never asks.
 has not run, or the forge did not answer, they are `null` or as old as `fetched_at` says — run
 `jig housekeeping` to refresh them. Checks are asked only for open pull requests, and GitLab's list
 carries none, so there `ci` is `null`.
+
+## What a person may do next
+
+`actions` lists what a person can do with the task right now, so a dashboard can show the right
+buttons without knowing Jig's rules. Every task carries the same ten actions, in the same order:
+
+| `id` | What it does |
+|---|---|
+| `start` | Start a task that was filed for later |
+| `pause`, `resume` | Set the task aside, and pick it up again |
+| `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
+| `answer-stop` | Answer an autopilot run that stopped to ask you something |
+| `set-class` | Change the task's class |
+| `ship` | Commit, push and open the pull request, as far as your settings let the agent |
+| `close` | Close a task whose work has landed |
+| `abandon` | Give the task up |
+| `reopen` | Take back an abandoned task |
+
+`offered` is `true` when Jig would accept the action now, and `command` is the Jig command that does
+it, with the values you supply written as `<text>`, `<Tn>` or `<file>`. When `offered` is `false`,
+`reason` says why, in the same words the command itself would refuse with.
+
+Jig judges the task's own state. A few things it cannot know until the command runs: whether you are
+in the right place (run `resume` and `ship` in the task's worktree when it has one), whether there is
+anything to commit, and whether the forge agrees. `close` trusts what the last `jig housekeeping`
+heard about the pull request: until it has seen the merge, `close` stays unavailable.
+
+More actions may appear later; ignore the ones you do not know.
 
 ## Specs
 

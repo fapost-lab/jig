@@ -14,7 +14,7 @@ paths:
   - scripts/lib/forgecache.sh
   - scripts/lib/common.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
-reviewed_at: 2026-10-15
+reviewed_at: 2026-10-16
 ---
 # A command's `--json` output
 
@@ -34,8 +34,11 @@ MUST:     look for --json among all its arguments before anything else runs, and
           its whole body as the producer of json_run, so every refusal is an envelope;
           print exactly one JSON value on stdout from the producer; build every string
           with json_quote; read each value from the producer that already answers it
-          for the text form, the status page or the gates; keep the text form's bytes;
-          pin the whole shape of its data in its own test file and in schemas/json.md
+          for the text form, the status page or the gates; decide whether an action is
+          offered by asking the command's own guard (_task_*_refusal), never a copy of
+          its condition — it may withhold more than the guard refuses, never offer more;
+          keep the text form's bytes; pin the whole shape of its data in its own test
+          file and in schemas/json.md
 MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote); print
           to stdout outside the producer; rename or remove a field, or change its type,
           without raising schema; write anything but what the dispatcher already records;
@@ -63,9 +66,10 @@ MUST NOT: raise the revision before the write lands, or once at the command's en
 calls `json_run _task_list "$@"`; `_task_list` parses the same flags as the text form, shares
 `_task_list_select` with it, and prints `{"tasks":[...],"hidden":n,"housekeeping":...}` built from
 `task_state_get`, `_task_gate_state`, `_task_autopilot_facts`, `_task_autopilot_mode` and
-`hklog_flagged_ids`; a pull request's state and checks come from the forge cache housekeeping
-wrote (`forgecache_read`, `forgecache_entry`), never from the forge. Its whole shape is compared in
-`tests/task.t.sh`.
+`hklog_flagged_ids`; each task's `actions` come from `_task_actions`, whose rows ask the commands'
+own refusal functions (adr-20261015-one-table-of-what-a-person-may-do); a pull request's state and
+checks come from the forge cache housekeeping wrote (`forgecache_read`, `forgecache_entry`), never
+from the forge. Its whole shape is compared in `tests/task.t.sh`.
 
 A read that answers what a page already shows renders the page's own records. `jig status --json`
 prints the items `_status_attention` (scripts/lib/status.sh) produces, and `_status_html_needs`

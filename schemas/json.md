@@ -89,6 +89,52 @@ A task:
 | `autopilot` | object or null | the task's autopilot run: `state` (`on`, `stopped`, `done`), `mode` (`attended`, `unattended`), `repairs` (integer), `stage` and `stage_at` (the last stage the current run entered), `stop_reason` and `stop_at` (the journal's last stop), `phase` (`<spec-id>/<n>` for a task of a phase run); each `null` when there is none. `null` when the task never ran on autopilot |
 | `pull_request` | object or null | the pull request `jig task ship` opened: `{"url", "state", "ci", "fetched_at"}`. `null` when none was opened. `state` (`open`, `merged`, `closed`) and `ci` (`green`, `red`, `pending`, `none` — no check ran) are what the last `jig housekeeping` heard from the forge, at `fetched_at` (UTC), read from the forge cache below; each `null` when the cache does not say — no cache, no entry for the task's branch and base, or, for `ci`, a pull request that is not open or a forge whose list carries no checks (GitLab) |
 | `housekeeping_flags` | array of strings | the flags of the last housekeeping run that still stand for the task — `needs-consolidation`, `wrong-base`, `abandoned?`, `worktree-kept`, `base-unreleased`, `STALE_CANDIDATE` — after the same local recheck the status page makes (a closed task is no longer `needs-consolidation`); `[]` for none |
+| `actions` | array of objects | what a person may do next with the task: every row of the actions table below, in its order |
+
+### Actions
+
+What a person may do next with a task, as Jig decides it from the task's state
+(adr-20261015-one-table-of-what-a-person-may-do). One table in Jig (`_task_actions`,
+`scripts/lib/task.sh`); a consumer shows it and keeps no copy. Every task carries every row:
+
+```json
+{"id": "pause", "command": "jig task pause booking-message", "offered": true, "reason": null}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `id` | string | the action, one of the ids below; stable |
+| `command` | string | the Jig command that takes it, with the task's id; a word in `<…>` is a value the person supplies — `<text>`, `<Tn>`, `<file>` |
+| `offered` | boolean | `true` when the command accepts the action on the task's state as it is |
+| `reason` | string or null | why it is not offered: the command's own refusal, word for word, or the table's for a move that makes no sense in this state; `null` when offered |
+
+| `id` | `command` | Offered when |
+|---|---|---|
+| `start` | `jig task start <id>` | the task has not been started |
+| `pause` | `jig task pause <id>` | it is not paused |
+| `resume` | `jig task resume <id>` | it is paused |
+| `approve-gate` | `jig task gate <id> approved` | a T3/T4 design waits at its gate (`waiting` or `changed`), and the gate is a person's: not in a clone or a run where nobody answers (`autopilot.unattended`) |
+| `answer-stop` | `jig task autopilot <id> resume --answer <text>`, with ` --by human` for an unattended run | its autopilot run is `stopped`, and an unattended one has repairs left |
+| `set-class` | `jig task set <id> class <Tn>` | the task is live |
+| `ship` | `jig task ship <id> --message-file <file>` | the git level (`agent.git`, or `autopilot.git` for a run) is not `none`, the knowledge decision is recorded, no P0/P1 finding blocks, the review receipt is current, the route has its records, the task is started on a branch other than its base, and its pull request is not merged |
+| `close` | `jig task set <id> status consolidated` | the knowledge decision is recorded, and the task opened no pull request or the forge cache says it merged |
+| `abandon` | `jig task abandon <id>` | the task is live |
+| `reopen` | `jig task set <id> status active` | the task is `abandoned` |
+
+A `consolidated` task offers nothing, an `abandoned` one only `reopen`.
+
+The rule is one-way. An action offered is one its command accepts on the task's state, because the
+table asks the command's own guard; the table may withhold more than a command refuses (a finished
+task, a design already approved, a merged pull request). What a command refuses for reasons that are
+not the task's state is checked when it runs, never here: the checkout it runs in (`resume` and
+`ship` run where the task's branch is checked out — its `worktree`, when it has one; `start` wants a
+clean, unoccupied checkout), what is staged, the network, and the value a person types (`set-class`
+lowering a class needs `--reason`, and is refused below T3 where nobody answers). `close` is judged
+by the forge cache, never the forge: a cache that says `merged` is final, and one behind the forge
+withholds a close until the next `jig housekeeping`.
+
+New ids may appear without `schema` changing — the pause and resume requests of a later release join
+this table — so a consumer ignores ids it does not know.
 
 ### The forge cache
 
