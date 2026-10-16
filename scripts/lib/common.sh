@@ -10,7 +10,26 @@ export JIG_AI_DIR
 jig_log()  { [ -n "${JIG_QUIET:-}" ] || printf '%s\n' "$*"; }
 jig_info() { [ -n "${JIG_QUIET:-}" ] || printf 'jig: %s\n' "$*" >&2; }
 jig_warn() { printf 'jig: warning: %s\n' "$*" >&2; }
-jig_die()  {
+jig_die()  { _jig_die_as failed "$@"; }
+
+# jig_fail <code> <message...> — jig_die, naming the stable failure code a
+# program reads from a `--json` refusal's `error.code` (schemas/json.md, "Failure
+# codes"). The person reads the same `jig: error: <message>` either way; a
+# refusal that names no code is `failed`.
+jig_fail() {
+  local code="$1"
+  shift
+  _jig_die_as "$code" "$@"
+}
+
+# Inside a `--json` producer (json_run sets _JIG_JSON_CODES there, never
+# exported) the code goes on the line just before the message, behind a unit
+# separator: the two travel and vanish together — a `2>/dev/null` swallows
+# both — so json_run always pairs the message it reports with its own code,
+# and strips the marker before stderr reaches a person.
+_jig_die_as() {
+  [ -z "${_JIG_JSON_CODES:-}" ] || printf '\037jig: code: %s\n' "$1" >&2
+  shift
   printf 'jig: error: %s\n' "$*" >&2
   # A command that changed a task and then failed still redraws the status
   # page, so the page never shows less than the files do.
@@ -184,7 +203,7 @@ jig_repo_root() {
 jig_require_repo() {
   local top
   jig_clear_git_location_env
-  top=$(jig_repo_root) || jig_die "not inside a git repository"
+  top=$(jig_repo_root) || jig_fail not-a-repository "not inside a git repository"
   JIG_PROJECT=$(cd -P "$top" 2>/dev/null && pwd -P) \
     || jig_die "cannot resolve the repository root: $top"
   export JIG_PROJECT
@@ -221,7 +240,7 @@ jig_has_line() {
 jig_require_init() {
   jig_require_repo
   [ -f "$JIG_PROJECT/$JIG_AI_DIR/config.yaml" ] \
-    || jig_die "project is not initialised; run: jig init"
+    || jig_fail not-initialised "project is not initialised; run: jig init"
 }
 
 # True when <dir> is a framework source checkout (has skills/ and templates/).

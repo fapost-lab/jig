@@ -437,7 +437,7 @@ spec_list() {
       return
     fi
   done
-  [ $# -eq 0 ] || jig_die "spec list: unexpected argument: $1"
+  [ $# -eq 0 ] || jig_fail usage "spec list: unexpected argument: $1"
   jig_require_repo
   local rows
   rows=$(spec_list_rows)
@@ -463,7 +463,7 @@ _spec_list_json() {
   local arg root id dir title missing line branch state here checked_out
   local loc rc ref src content release epic phases progress
   for arg in "$@"; do
-    [ "$arg" = --json ] || jig_die "spec list: unexpected argument: $arg"
+    [ "$arg" = --json ] || jig_fail usage "spec list: unexpected argument: $arg"
   done
   jig_require_repo
   root=$(spec_dir)

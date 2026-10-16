@@ -3406,12 +3406,12 @@ _task_list() {
       --goals) goals=1; shift ;;
       --json) json=1; shift ;;
       --status)
-        [ $# -ge 2 ] || jig_die "task list: --status requires a value"
-        _task_valid_status "$2" || jig_die "task list: invalid status: $2"
+        [ $# -ge 2 ] || jig_fail usage "task list: --status requires a value"
+        _task_valid_status "$2" || jig_fail usage "task list: invalid status: $2"
         want_status="$2"
         shift 2
         ;;
-      *) jig_die "task list: unknown argument: $1" ;;
+      *) jig_fail usage "task list: unknown argument: $1" ;;
     esac
   done
 

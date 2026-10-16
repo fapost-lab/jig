@@ -11,7 +11,7 @@ Every `--json` read prints exactly one line on stdout, whether it succeeded or w
 
 ```json
 {"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","data":{...}}
-{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"usage","message":"task list: invalid status: bogus"}}
 ```
 
 | Field | Value |
@@ -20,7 +20,7 @@ Every `--json` read prints exactly one line on stdout, whether it succeeded or w
 | `revision` | the clone's revision: an integer every Jig write raises, one for the clone and all its worktrees. A consumer compares it between reads (different means something changed; equal means Jig wrote nothing) and, from `contract-queue` on, sends it back with a write. Taken before the data is read, so the data is never older than it. `0` before Jig's first write in the clone. The first write starts it at the time in seconds, so its value says nothing but itself: compare it, do not count with it. See "The revision" below |
 | `generated_at` | when the read started, UTC, `YYYY-MM-DDTHH:MM:SSZ` |
 | `data` | the command's answer, its shape below. Present only on success |
-| `error` | instead of `data` when the command refused or failed: `code` and `message`, both strings. `message` is what the command printed after `jig: error:` (possibly several lines, joined by `\n`), or `exited with status <n>` when it said nothing. `code` is `failed` for every refusal until stable failure codes exist (task `failure-codes`) |
+| `error` | instead of `data` when the command refused or failed: `code` and `message`, both strings. `message` is what the command printed after `jig: error:` (possibly several lines, joined by `\n`), or `exited with status <n>` when it said nothing. `code` is one of the failure codes below |
 
 The exit status is the command's: 0 with `data`, non-zero with `error`. What the command says to a
 person — warnings, notices — goes to stderr unchanged and never into the envelope. Reading never
@@ -29,6 +29,30 @@ touches the network: no forge CLI, no fetch.
 Strings escape `"`, `\` and every control byte (`\n`, `\t`, `\r`, the rest as `\u00XX`); other
 bytes pass through as they are, so a value is UTF-8 when what Jig read was. A value Jig has no
 fact for is `null`, never an empty string or a missing key.
+
+## Failure codes
+
+`error.code` says why a read was refused, in a word a program can act on; `error.message` says it to
+a person and may be reworded. The codes are part of the contract: one is never renamed or given
+another meaning without raising `schema`. A new code may be added without raising it — a refusal
+that has none yet reads `failed` until it gains one — so a program treats a code it does not know as
+`failed`. The exit status keeps its meaning whatever the code: non-zero for every refusal.
+
+| `code` | The read was refused because |
+|---|---|
+| `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
+| `not-a-repository` | it ran outside a git repository |
+| `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
+| `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
+
+A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
+<message>` is `failed`. Both print the same `jig: error: <message>` to a person. Inside a `--json`
+read `jig_fail` also prints its code on the line before the message, behind a unit separator
+(`\037jig: code: <code>`), and `json_run` takes the code from the marker right before the message it
+reports and removes every marker from the stderr a person sees. A refusal without such a marker
+next to its message — `jig_die`, a message printed by hand, a child `jig` — is `failed`, and so is a
+marker that is not a code (lowercase words joined by `-`). `tests/json.t.sh` pins the mechanism; the
+`--json` tests of each command pin the code of each of its refusals.
 
 ## The revision
 

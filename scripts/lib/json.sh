@@ -10,8 +10,12 @@
 #       or, when the producer fails or prints nothing,
 #         {"schema":1,"revision":…,"generated_at":"…","error":{"code":"…","message":"…"}}
 #       The producer prints one JSON value and nothing else on stdout; what it
-#       prints on stderr reaches stderr unchanged. Returns the producer's status
-#       (1 when it succeeded without printing anything).
+#       prints on stderr reaches stderr unchanged, but for the code markers
+#       below. Returns the producer's status (1 when it succeeded without
+#       printing anything).
+#       `code` is the stable failure code the refusal named — `jig_fail <code>`
+#       (common.sh) — or `failed` when it named none (schemas/json.md, "Failure
+#       codes").
 #
 #   json_quote <s>        _JSON <- <s> as a JSON string, quotes included
 #   json_str_or_null <s>  _JSON <- null for an empty <s>, else json_quote
@@ -85,22 +89,46 @@ json_revision() {
   jig_revision_read
 }
 
-# _json_error_from <stderr-file> <status> — the refusal's message: what the
-# last `jig: error: ` said, to the end of the file (a message can span lines),
-# or the bare exit status when nothing said why (`set -e` on a failed command).
+# The marker _jig_die_as (common.sh) prints just before a refusal's message
+# inside a producer: a unit separator and `jig: code: `, then the code.
+_JSON_CODE_MARK=$(printf '\037jig: code: ')
+
+# _json_error_from <stderr-file> <status> — the refusal as two lines: its
+# code, then its message. The message is what the last `jig: error: ` said, to
+# the end of the file (a message can span lines), or the bare exit status when
+# nothing said why (`set -e` on a failed command). The code is the one the
+# marker on the line right before that message named; `failed` when there is
+# no such marker — a refusal by plain jig_die, by a child jig, by a message
+# printed without either, or no message at all — or when what it names is not
+# a code (lowercase words joined by `-`).
 _json_error_from() {
-  local msg
-  msg=$(awk '
-    index($0, "jig: error: ") == 1 { text = substr($0, 13); on = 1; next }
+  local both code msg
+  both=$(JIG_JSON_MARK="$_JSON_CODE_MARK" awk '
+    BEGIN { mark = ENVIRON["JIG_JSON_MARK"]; pending = "" }
+    index($0, mark) == 1 { pending = substr($0, length(mark) + 1); next }
+    index($0, "jig: error: ") == 1 {
+      code = pending; text = substr($0, 13); on = 1; pending = ""; next
+    }
+    { pending = "" }
     on { text = text "\n" $0 }
-    END { printf "%s", text }
+    END { printf "%s\n%s", code, text }
   ' "$1")
-  [ -n "$msg" ] || msg="exited with status $2"
-  printf '%s' "$msg"
+  code=${both%%$'\n'*}
+  msg=${both#*$'\n'}
+  # The letters are spelled out: a range such as [a-z] takes capitals too in
+  # some locales, and a code is lowercase.
+  case "$code" in
+    [abcdefghijklmnopqrstuvwxyz]*)
+      case "$code" in *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) code=failed ;; esac
+      ;;
+    *) code=failed ;;
+  esac
+  [ -n "$msg" ] || { msg="exited with status $2"; code=failed; }
+  printf '%s\n%s' "$code" "$msg"
 }
 
 json_run() {
-  local producer="$1" out err rc at rev
+  local producer="$1" out err rc at rev both code
   shift
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   # Read before the data, never after: a write that lands while the producer
@@ -117,11 +145,20 @@ json_run() {
   # is reported here, in the one envelope. Not `( … ) || rc=$?`: inside a
   # condition bash ignores `set -e` for the whole subshell, and the producer
   # would run on past its own failures.
+  # _JIG_JSON_CODES asks _jig_die_as for its code marker, in the producer's
+  # subshell only, and unexported: a child jig's refusal is plain text, and
+  # reads as `failed`.
   set +e
-  ( set -e; "$producer" "$@" ) >"$out" 2>"$err"
+  ( set -e; _JIG_JSON_CODES=1; "$producer" "$@" ) >"$out" 2>"$err"
   rc=$?
   set -e
-  cat "$err" >&2
+  # The person reads stderr as the text form prints it: the markers are for
+  # the code below, never for them.
+  if LC_ALL=C grep -q "^$_JSON_CODE_MARK" "$err"; then
+    JIG_JSON_MARK="$_JSON_CODE_MARK" awk 'index($0, ENVIRON["JIG_JSON_MARK"]) != 1' "$err" >&2
+  else
+    cat "$err" >&2
+  fi
   printf '{"schema":1,"revision":%s,"generated_at":"%s",' "$rev" "$at"
   if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
     printf '"data":%s}\n' "$(cat "$out")"
@@ -129,12 +166,12 @@ json_run() {
   fi
   if [ "$rc" -eq 0 ]; then
     rc=1
-    json_quote "printed no data"
+    both=$(printf 'failed\nprinted no data')
   else
-    json_quote "$(_json_error_from "$err" "$rc")"
+    both=$(_json_error_from "$err" "$rc")
   fi
-  # Every refusal is `failed` until stable failure codes exist (task
-  # failure-codes): this is the one line that will read the code a refusal names.
-  printf '"error":{"code":"failed","message":%s}}\n' "$_JSON"
+  code=${both%%$'\n'*}
+  json_quote "${both#*$'\n'}"
+  printf '"error":{"code":"%s","message":%s}}\n' "$code" "$_JSON"
   return "$rc"
 }

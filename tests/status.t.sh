@@ -3324,13 +3324,13 @@ test_status_json_reports_a_refusal_as_an_envelope() {
   fixture_jig_repo
   _st_json --nope
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":R,"generated_at":"T","error":{"code":"failed","message":"status --json: unknown argument: --nope (usage: jig status --json)"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","error":{"code":"usage","message":"status --json: unknown argument: --nope (usage: jig status --json)"}}' "$OUT"
   assert_contains "$ERR" "jig: error: status --json: unknown argument: --nope"
   # --json may stand anywhere; beside a page mode it is refused, and the
   # refusal writes no page.
   _st_json --html
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"message":"status --json: unknown argument: --html'
+  assert_contains "$OUT" '"code":"usage","message":"status --json: unknown argument: --html'
   assert_no_file .ai/runtime/status.html
 }
 
@@ -3338,8 +3338,17 @@ test_status_json_in_an_uninitialised_project_is_an_envelope() {
   fixture_repo
   _st_json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"error":{"code":"failed","message":"status --json: project is not initialised; run: jig init"}}'
+  assert_contains "$OUT" '"error":{"code":"not-initialised","message":"status --json: project is not initialised; run: jig init"}}'
   assert_no_file .ai
+}
+
+test_status_json_outside_git_is_an_envelope() {
+  mkdir plain
+  cd plain || return 1
+  _st_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-a-repository","message":"not inside a git repository"}}'
+  assert_not_contains "$OUT" '"data"'
 }
 
 # A read never asks the forge and writes nothing: no page, no counts.

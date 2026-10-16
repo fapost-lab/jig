@@ -3795,12 +3795,12 @@ test_spec_list_json_reports_a_refusal_as_an_envelope() {
   fixture_repo
   _sl_json extra
   assert_eq 1 "$RC"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"failed","message":"spec list: unexpected argument: extra"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"usage","message":"spec list: unexpected argument: extra"}}' "$OUT"
   assert_contains "$ERR" "jig: error: spec list: unexpected argument: extra"
   # --json may come anywhere among the arguments.
   local out
   out=$(jig spec list extra --json 2>/dev/null) || true
-  assert_contains "$out" '"error":{"code":"failed","message":"spec list: unexpected argument: extra"}}'
+  assert_contains "$out" '"error":{"code":"usage","message":"spec list: unexpected argument: extra"}}'
 }
 
 test_spec_list_json_outside_git_is_an_envelope() {
@@ -3808,7 +3808,7 @@ test_spec_list_json_outside_git_is_an_envelope() {
   cd plain || return 1
   _sl_json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"error":{"code":"failed","message":"'
+  assert_contains "$OUT" '"error":{"code":"not-a-repository","message":"not inside a git repository"}}'
   assert_not_contains "$OUT" '"data"'
 }
 
