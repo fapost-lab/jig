@@ -65,6 +65,8 @@ epics in Jig rather than in the UI, and to ask a running task to pause without l
 
 - Queue file format and command names.
 - The release level of this spec's epic — asked when the epic is declared.
+- Whether `jig init` gets a hook that lets an installed UI register the project, without making
+  the UI a dependency of Jig (moved from `contract-extensions` when its epic was finished).
 
 ## Assumptions left untested
 
