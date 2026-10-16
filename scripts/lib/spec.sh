@@ -176,6 +176,7 @@ spec_new() {
   fi
   for f in spec.md roadmap.md; do
     mv "$dir/$f.tmp.$$" "$dir/$f" || jig_die "spec new: could not write $JIG_AI_DIR/specs/$id/$f"
+    jig_record_changed
     printf '%s/specs/%s/%s\n' "$JIG_AI_DIR" "$id" "$f"
   done
   branch=$(_spec_cut_own_branch "$id" "spec new") || exit 1
@@ -1358,6 +1359,7 @@ spec_epic_reopen() {
     spec_trash_partial "$tmp" "$id"
     jig_die "spec epic: could not move the restored spec into $rel"
   fi
+  jig_record_changed
   printf 'restored: %s from %s\n' "$rel" "$(git -C "$JIG_PROJECT" rev-parse --short "$src")"
   jig_info "spec epic: fix it with ordinary tasks, then run \`jig spec epic $id --finish\` again"
 }
@@ -1907,6 +1909,7 @@ spec_close_dir() {
   rel_dest=${dest#"$JIG_PROJECT"/}
   mkdir -p "${dest%/*}" || jig_die "$who: cannot create ${rel_dest%/*}"
   mv "$dir" "$dest" || jig_die "$who: could not move $JIG_AI_DIR/specs/$id to $rel_dest"
+  jig_record_changed
   printf 'removed: %s/specs/%s -> %s\n' "$JIG_AI_DIR" "$id" "$rel_dest"
 }
 
@@ -1966,6 +1969,7 @@ spec_epic_write() {
     jig_die "spec epic: $roadmap has no Destination: line to put the Epic: line after"
   }
   mv "$tmp" "$roadmap" || jig_die "spec epic: could not write $roadmap"
+  jig_record_changed
 }
 
 # --- task links ----------------------------------------------------------------
@@ -2070,6 +2074,7 @@ spec_done() {
   case "$rc" in
     0)
       mv "$tmp" "$roadmap" || jig_die "spec done: could not write $JIG_AI_DIR/specs/$sid/roadmap.md"
+      jig_record_changed
       printf 'spec done: %s checked in %s/specs/%s/roadmap.md\n' "$tid" "$JIG_AI_DIR" "$sid"
       printf '%s\n' "$out" | sed 's/^/  /'
       spec_done_complete_hint "$sid" "$roadmap"
@@ -2279,6 +2284,7 @@ spec_remove() {
   fi
   mkdir -p "${dest%/*}" || jig_die "spec remove: cannot create ${rel_dest%/*}"
   mv "$dir" "$dest" || jig_die "spec remove: could not move $JIG_AI_DIR/specs/$sid to $rel_dest"
+  jig_record_changed
   printf 'moved          %s/specs/%s -> %s\n' "$JIG_AI_DIR" "$sid" "$rel_dest"
 }
 
@@ -2402,6 +2408,7 @@ spec_link_task() {
     return 1
   fi
   mv "$tmp" "$file"
+  jig_record_changed
 }
 
 # spec_links_to <task.md> <spec-id> — whether any `Spec:` line names exactly
@@ -2438,4 +2445,5 @@ spec_unlink_task() {
     return 1
   fi
   mv "$tmp" "$file"
+  jig_record_changed
 }

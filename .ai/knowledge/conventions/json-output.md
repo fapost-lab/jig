@@ -12,6 +12,7 @@ paths:
   - scripts/lib/spec.sh
   - schemas/json.md
   - scripts/lib/forgecache.sh
+  - scripts/lib/common.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-10-15
 ---
@@ -38,7 +39,19 @@ MUST:     look for --json among all its arguments before anything else runs, and
 MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote); print
           to stdout outside the producer; rename or remove a field, or change its type,
           without raising schema; write anything but what the dispatcher already records;
-          change jig_die to print JSON
+          change jig_die to print JSON; read the revision itself — json_run takes it,
+          before the producer runs
+
+A command that writes a record a read reports (scripts/lib/common.sh, jig_record_changed)
+
+MUST:     call jig_record_changed right after the mv that lands the write, or call a
+          writer that does (tests/json.t.sh lists every function with an mv that
+          reaches neither)
+MUST NOT: raise the revision before the write lands, or once at the command's end
+          instead of after each write — except a batch whose many writes are one
+          change and that runs only as its own command, never inside $(...):
+          housekeeping registers jig_on_exit 'jig_revision_bump' before its first
+          write, and only a run that writes (not --dry-run) registers it
 ```
 
 ## Example
@@ -65,4 +78,8 @@ no network call keep them working and clear of forge rate limits. A second compu
 is how a report and the command it summarises come to disagree (ARCHITECTURE.md, reporting
 commands); the architecture review of the first implementation found exactly that, a mode
 recomputed beside `_task_autopilot_mode`. JSON printed from `jig_die` would be lost inside `$(...)`
-and doubled by the caller's own refusal, which is why the envelope is built around the producer.
+and doubled by the caller's own refusal, which is why the envelope is built around the producer. The
+revision is taken before the data because a write landing during a read must leave the revision
+behind the data, never ahead of it; and it is raised after every write, not once per command,
+because a write inside `$(...)` or in a command that dies after it must still count
+(adr-20261015-the-clone-revision-is-a-renamed-file).

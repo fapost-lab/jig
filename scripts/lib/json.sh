@@ -6,6 +6,7 @@
 #   json_run <producer> [args...]
 #       Run <producer> and print exactly one envelope line on stdout:
 #         {"schema":1,"revision":…,"generated_at":"…","data":<producer's stdout>}
+#       with the revision and the time both taken before the producer runs
 #       or, when the producer fails or prints nothing,
 #         {"schema":1,"revision":…,"generated_at":"…","error":{"code":"…","message":"…"}}
 #       The producer prints one JSON value and nothing else on stdout; what it
@@ -77,12 +78,11 @@ json_bool() {
   if [ "$1" = true ]; then _JSON=true; else _JSON=false; fi
 }
 
-# json_revision — the clone's revision every envelope reports. `null` until the
-# per-clone counter exists (task clone-revision fills this function, and only
-# this one): a consumer comparing revisions must not read "unknown" as "nothing
-# changed", which a placeholder number would say.
+# json_revision — the clone's revision every envelope reports: the counter
+# every Jig write raises (jig_revision_read, common.sh;
+# adr-20261015-the-clone-revision-is-a-renamed-file), `0` before the first one.
 json_revision() {
-  printf 'null\n'
+  jig_revision_read
 }
 
 # _json_error_from <stderr-file> <status> — the refusal's message: what the
@@ -100,9 +100,14 @@ _json_error_from() {
 }
 
 json_run() {
-  local producer="$1" out err rc at
+  local producer="$1" out err rc at rev
   shift
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # Read before the data, never after: a write that lands while the producer
+  # reads then raises the revision past this one, and the consumer's next read
+  # sees it. Read after, the revision could cover a write the data missed, and
+  # the consumer would never learn of it.
+  rev=$(json_revision)
   out=$(mktemp "${TMPDIR:-/tmp}/jig-json.XXXXXX")
   jig_cleanup_add "$out"
   err=$(mktemp "${TMPDIR:-/tmp}/jig-json.XXXXXX")
@@ -117,7 +122,7 @@ json_run() {
   rc=$?
   set -e
   cat "$err" >&2
-  printf '{"schema":1,"revision":%s,"generated_at":"%s",' "$(json_revision)" "$at"
+  printf '{"schema":1,"revision":%s,"generated_at":"%s",' "$rev" "$at"
   if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
     printf '"data":%s}\n' "$(cat "$out")"
     return 0

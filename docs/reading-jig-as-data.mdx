@@ -27,20 +27,24 @@ Every `--json` command prints exactly **one line**: a JSON object called the env
 it carries the answer in `data`:
 
 ```json
-{"schema":1,"revision":null,"generated_at":"2026-10-15T12:00:00Z","data":{"tasks":[...],"hidden":0,"housekeeping":null}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","data":{"tasks":[...],"hidden":0,"housekeeping":null}}
 ```
 
 When the command refuses — an unknown flag, a project without Jig — it still prints one line, with
 `error` in place of `data`, and exits with a non-zero status:
 
 ```json
-{"schema":1,"revision":null,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
 ```
 
 - `schema` is `1`. It changes only when a field is removed, renamed or changes type. New fields
   can appear at any time without it changing, so ignore the fields you do not know.
-- `revision` is `null` for now. It will become a number that changes whenever Jig writes anything
-  in the project, so a program can tell whether what it showed is still current.
+- `revision` is a number that changes whenever Jig writes anything in the project — a task, its
+  documents, a spec, knowledge, a housekeeping run — in this checkout or any of its worktrees. If it
+  is the same as on your last read, Jig changed nothing; if it differs, read again. It is `0` before
+  Jig's first write, and only its changes mean anything: compare it, do not do arithmetic with it.
+  A file changed by hand or by git — your `git pull`, or the branch Jig checks out after a merge —
+  does not change it: watch the files too if that matters to you.
 - `generated_at` is when the read started, in UTC.
 - `error.code` is `failed` for every refusal for now; specific codes a program can act on will
   follow. `error.message` is the same text the command prints after `jig: error:`.

@@ -209,6 +209,15 @@ _fm_replace() {
     return 1
   fi
   mv "$tmp" "$file"
+  # Every frontmatter write lands here, so this is where it raises the clone's
+  # revision (jig_record_changed, common.sh) — except on the file
+  # `knowledge new` is still building (`<doc>.new.<pid>`), which is not a
+  # record until km_new moves it into place and records that. This parser is
+  # also sourced alone, by its own tests, where there is no clone to count in.
+  case "$file" in
+    *.new.[0-9]*) return 0 ;;
+  esac
+  if type jig_record_changed >/dev/null 2>&1; then jig_record_changed; fi
 }
 
 # fm_set <file> <key> <value> — set a scalar key inside the frontmatter,

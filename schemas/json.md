@@ -10,14 +10,14 @@ each command's own test file (its `data`).
 Every `--json` read prints exactly one line on stdout, whether it succeeded or was refused:
 
 ```json
-{"schema":1,"revision":null,"generated_at":"2026-10-15T12:00:00Z","data":{...}}
-{"schema":1,"revision":null,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","data":{...}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-15T12:00:00Z","error":{"code":"failed","message":"task list: invalid status: bogus"}}
 ```
 
 | Field | Value |
 |---|---|
 | `schema` | `1`. Raised only on an incompatible change: a field removed, renamed or given another type. Adding a field is compatible and does not raise it, so a consumer ignores fields it does not know |
-| `revision` | the clone's revision, which a consumer compares between reads and sends back with a write. **`null` until the per-clone counter exists** (task `clone-revision`): unknown, never "unchanged" |
+| `revision` | the clone's revision: an integer every Jig write raises, one for the clone and all its worktrees. A consumer compares it between reads (different means something changed; equal means Jig wrote nothing) and, from `contract-queue` on, sends it back with a write. Taken before the data is read, so the data is never older than it. `0` before Jig's first write in the clone. The first write starts it at the time in seconds, so its value says nothing but itself: compare it, do not count with it. See "The revision" below |
 | `generated_at` | when the read started, UTC, `YYYY-MM-DDTHH:MM:SSZ` |
 | `data` | the command's answer, its shape below. Present only on success |
 | `error` | instead of `data` when the command refused or failed: `code` and `message`, both strings. `message` is what the command printed after `jig: error:` (possibly several lines, joined by `\n`), or `exited with status <n>` when it said nothing. `code` is `failed` for every refusal until stable failure codes exist (task `failure-codes`) |
@@ -29,6 +29,26 @@ touches the network: no forge CLI, no fetch.
 Strings escape `"`, `\` and every control byte (`\n`, `\t`, `\r`, the rest as `\u00XX`); other
 bytes pass through as they are, so a value is UTF-8 when what Jig read was. A value Jig has no
 fact for is `null`, never an empty string or a missing key.
+
+## The revision
+
+What raises it: every write Jig makes to a record a read can report — a task's state, its
+artifacts and `task.md`, the autopilot journal, findings, the review receipt, a spec's files
+(`new`, `epic`, `done`, `close`, `remove`, `link`, and the unlink `remove` does), knowledge
+documents (`new` and every frontmatter change), settings (`jig config set|unset`), the pull
+request and CI cache housekeeping writes, the knowledge counts a full `jig status` saves (when a
+count changed), and a
+housekeeping run (once, when it ends; not `--dry-run`). One write raises
+it at least once; a command that writes several times raises it several times.
+
+What does not: a read, Jig's caches and records of what it is doing (the context cache, the
+checkout record, the status page, the verify run), and — the accepted risk — **a file changed by
+anything but a Jig write**: edited by hand, or by git, whoever ran it — a person's `pull` or
+`checkout`, and Jig's own git steps too (the base checked out and fast-forwarded after a ship
+merges, a spec's branch switch, `upgrade` and `init` placing files). A consumer that must see those
+watches the files as well.
+
+Reference: adr-20261015-the-clone-revision-is-a-renamed-file.
 
 ## `jig task list --json`
 

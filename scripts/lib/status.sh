@@ -123,18 +123,28 @@ _status_counts_read() {
 }
 
 # _status_counts_save — write the counts for the next redraw, atomically.
+#
+# `jig status --json` reports these counts, so new ones raise the clone's
+# revision (adr-20261015-the-clone-revision-is-a-renamed-file): otherwise a
+# consumer that read the old counts at revision R would see R again after the
+# refresh and never read them. Only when a count changed, not for `at:` alone,
+# which every full redraw moves. jig_revision_bump, not jig_record_changed: this
+# is the page's own redraw, which must not mark the page to redraw again.
 _status_counts_save() {
-  local dir="$JIG_PROJECT/$JIG_AI_DIR/runtime" file tmp
+  local dir="$JIG_PROJECT/$JIG_AI_DIR/runtime" file tmp before="" after
   file="$dir/status-counts"
   tmp="$file.tmp.$$"
   jig_cleanup_add "$tmp"
   mkdir -p "$dir" || return 1
-  {
-    printf 'at: %s\n' "$_SC_AT"
+  [ ! -f "$file" ] || before=$(sed '/^at: /d' "$file" 2>/dev/null) || before=""
+  after=$(
     printf 'proposals: %s\n' "${_SC_PROPOSALS:-unknown}"
     printf 'sources_changed: %s\n' "${_SC_SOURCES:-unknown}"
     printf 'pending: %s\n' "${_SC_PENDING:-unknown}"
-  } > "$tmp" && mv "$tmp" "$file"
+  )
+  if ! { printf 'at: %s\n' "$_SC_AT"; printf '%s\n' "$after"; } > "$tmp"; then return 1; fi
+  if ! mv "$tmp" "$file"; then return 1; fi
+  [ "$before" = "$after" ] || jig_revision_bump
 }
 
 # _status_load — source the peers whose answers this report consumes

@@ -52,7 +52,13 @@ forgecache_write() {
   {
     printf '# jig forge cache: <head> <base> <state> <ci> <fetched_at>, written by jig housekeeping\n'
     [ -z "$rows" ] || printf '%s\n' "$rows"
-  } > "$tmp" 2>/dev/null && mv "$tmp" "$file" 2>/dev/null
+  } > "$tmp" 2>/dev/null || return 0
+  mv "$tmp" "$file" 2>/dev/null || return 0
+  # `task list --json` reports what the cache holds, so a written cache raises
+  # the clone's revision (adr-20261015-the-clone-revision-is-a-renamed-file).
+  # housekeeping, today's one writer, raises it again when its run ends; this
+  # one keeps any other writer from forgetting.
+  jig_record_changed
   return 0
 }
 

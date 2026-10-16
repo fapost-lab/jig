@@ -1961,9 +1961,9 @@ jig_status_page_touch() {
 }
 
 # jig_status_page_dirty — note that this command changed something the page
-# shows. The writers call it themselves, so a new command that writes through
-# them is covered without anyone remembering to; jig_status_page_flush then
-# redraws once, however many writes came before.
+# shows. The writers call it themselves, through jig_record_changed below, so
+# a new command that writes through them is covered without anyone remembering
+# to; jig_status_page_flush then redraws once, however many writes came before.
 jig_status_page_dirty() { _JIG_PAGE_DIRTY=1; }
 
 # jig_status_page_flush — redraw the page when this command changed something.
@@ -1971,6 +1971,118 @@ jig_status_page_flush() {
   [ -n "${_JIG_PAGE_DIRTY:-}" ] || return 0
   _JIG_PAGE_DIRTY=""
   jig_status_page_touch --refresh
+}
+
+# --- the clone's revision (adr-20261015-the-clone-revision-is-a-renamed-file) ---
+#
+# One counter per clone, raised by every Jig write — task state, artifacts, the
+# autopilot journal, findings, the receipt, specs, knowledge, settings, a
+# housekeeping run — and reported as `revision` by every `--json` read (json.sh,
+# schemas/json.md). A consumer compares it between reads, and from
+# contract-queue on sends it back with a write.
+#
+# The value is the **name** of the one file in `.ai/runtime/revision/` of the
+# clone's main checkout (jig_config_clone_root: every worktree raises and reads
+# the same one, ADR-0008 as amended 2026-09-25). Raising it is
+# `mv <n> <n+1>`: rename is atomic on POSIX and in Git Bash alike, so of two
+# writers that both saw <n> exactly one renames it and the other finds the
+# source gone, reads again and raises <n+1>. No increment is lost to two
+# writers raising one counter, and there is no lock to go stale, wait for or
+# break. A reader only lists names and never opens the file. The one window
+# left is at the seed: a first write racing a raise in the next second (ADR).
+#
+# A file edited by hand, or changed by a git command a person ran, raises
+# nothing: the accepted risk of the contract-extensions spec.
+
+# jig_revision_dir — where the counter lives; fails outside a project.
+jig_revision_dir() {
+  local root
+  [ -n "${JIG_PROJECT:-}" ] || return 1
+  root=$(jig_config_clone_root) || return 1
+  [ -n "$root" ] || return 1
+  printf '%s/%s/runtime/revision\n' "$root" "$JIG_AI_DIR"
+}
+
+# _jig_revision_scan <dir> — _JIG_REV <- the highest counter in <dir>, or empty
+# when there is none. The shell's own glob, no process. Two names at once are
+# possible only after two first writes raced; the highest is the revision.
+_JIG_REV=""
+_jig_revision_scan() {
+  local f n
+  _JIG_REV=""
+  for f in "$1"/[0-9]*; do
+    n=${f##*/}
+    case "$n" in
+      '' | *[!0-9]*) continue ;;
+    esac
+    if [ -z "$_JIG_REV" ] || [ "$n" -gt "$_JIG_REV" ]; then _JIG_REV=$n; fi
+  done
+}
+
+# jig_revision_read — print the clone's revision: an integer, `0` when Jig has
+# not written anything in this clone yet (no counter). A directory listed at
+# the very moment a writer renames its one file may show neither name, so an
+# empty scan is repeated before it is believed.
+jig_revision_read() {
+  local dir tries=0
+  dir=$(jig_revision_dir) || { printf '0\n'; return 0; }
+  if [ -d "$dir" ]; then
+    while [ "$tries" -lt 3 ]; do
+      tries=$((tries + 1))
+      _jig_revision_scan "$dir"
+      if [ -n "$_JIG_REV" ]; then
+        printf '%s\n' "$_JIG_REV"
+        return 0
+      fi
+    done
+  fi
+  printf '0\n'
+}
+
+# jig_revision_bump — raise the clone's revision by one, after a write landed.
+#
+# A first write (or the first after `.ai/runtime` was lost) starts the counter
+# at the current time in seconds rather than at 1, so that a revision a
+# consumer still holds from before the loss does not come round again. Never
+# fails the command: the write it follows has already landed, so a counter
+# that cannot be raised — the main checkout not writable from a sandboxed
+# worktree — is a warning.
+jig_revision_bump() {
+  local dir tries=0 seed
+  dir=$(jig_revision_dir) || return 0
+  if [ ! -d "$dir" ] && ! mkdir -p "$dir" 2>/dev/null; then
+    jig_warn "could not raise the clone revision: cannot create $dir"
+    return 0
+  fi
+  while [ "$tries" -lt 64 ]; do
+    tries=$((tries + 1))
+    _jig_revision_scan "$dir"
+    # Scanned up to three times before seeding, as the reader does: an empty
+    # listing may be a rename seen half-way, and a seed beside a live counter
+    # is a second name.
+    [ -n "$_JIG_REV" ] || _jig_revision_scan "$dir"
+    [ -n "$_JIG_REV" ] || _jig_revision_scan "$dir"
+    if [ -z "$_JIG_REV" ]; then
+      seed=$(date +%s)
+      # set -C: the file is made only when absent, so two first writers in
+      # one second make one name, and the loser raises it on its next turn.
+      if (set -C; : > "$dir/$seed") 2>/dev/null; then return 0; fi
+    elif mv "$dir/$_JIG_REV" "$dir/$((_JIG_REV + 1))" 2>/dev/null; then
+      return 0
+    fi
+  done
+  jig_warn "could not raise the clone revision in $dir; a reader may miss this change"
+  return 0
+}
+
+# jig_record_changed — a Jig write landed: raise the clone's revision now, and
+# redraw the status page once when the command ends (jig_status_page_dirty).
+# Every writer of a record calls it right after its write lands, not once at
+# the command's end: a write made inside `$(...)`, or by a command that dies
+# after it, is still counted. tests/json.t.sh fails on a writer that does not.
+jig_record_changed() {
+  jig_revision_bump
+  jig_status_page_dirty
 }
 
 # jig_hash_git_dir — the git directory every hash in this project is computed
