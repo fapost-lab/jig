@@ -8,6 +8,27 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.28.0 — 2026-10-15
+
+Every review is now done by an agent that did not write the change, whether you work beside your
+agent or hand a task to autopilot. No command, setting or file layout changed.
+
+- **Every review is a second reader.** T2's review, T3's architecture review and T4's independent
+  review go to a helper agent (a subagent, or the other runtime's CLI when you chose one) that
+  never saw the code being written. It gets the task and the design, not the author's account of
+  what was done, and every repeat review is a new helper. Until now, unless you had set a review
+  model or runtime, a review done with you present ran in the session that wrote the code; T4
+  asked for a fresh context and autopilot for a helper. This is an instruction to your agent in
+  the skills — no script can check which context a review ran in. A review costs one more helper
+  per round. See [Concepts](/concepts).
+- **T4's review goes further.** It runs on another model or runtime than the code when your
+  settings choose one (`claude.review_model`, `codex.review_model` or `executor.review_runtime`
+  unlike the implementer's); otherwise the pull request says the review ran on the same model, and
+  the ship is not held up. Every acceptance criterion needs evidence, and every serious finding
+  marked fixed is checked by undoing the fix and watching its test fail. See
+  [Autopilot: helpers on another model](/autopilot#helpers-on-another-model).
+- **A link to Jig UI's documentation** in the site's top bar and on [What's next](/roadmap).
+
 ## 0.27.0 — 2026-10-14
 
 A stage can go to a helper in Codex as well as in Claude Code, to the other runtime's CLI, and to a

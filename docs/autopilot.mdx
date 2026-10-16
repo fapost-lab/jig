@@ -46,11 +46,9 @@ cannot answer the questions a run stops on, read [Without stops](#without-stops)
 ## What happens during a run
 
 The same steps as without autopilot, in the same order: understanding the task, a plan or a design,
-the change itself, a review, the checks, and recording what the project should remember. Two things
-are different:
+the change itself, a review, the checks, and recording what the project should remember. As in every
+task, the review is done by a second agent that did not write the code. One thing is different:
 
-- **The review is done by a second agent** that did not write the code, so the author does not
-  review its own work.
 - **Fixing has a limit.** When the review finds a serious problem or the checks fail, the agent
   fixes it and has it looked at again — at most twice per run. A third attempt is refused by Jig
   itself, and the run stops instead of going round in circles.
@@ -75,8 +73,10 @@ the design and its approval, the checks, deciding what the project should rememb
 with your agent.
 
 Jig never checks the name you write: the selected runtime interprets it. With
-nothing set — the default — nothing is handed over, and a review still goes to a second agent on
-your session's own model. Codex uses its own two settings. A requested Codex helper that cannot start stops the stage
+nothing set — the default — no helper model is chosen, and a review still goes to a second agent on
+your session's own model, with or without autopilot. For a T4 task a review model unlike
+the coding one is what makes its review run on another model; without one, the pull request says the
+review ran on the same model. Codex uses its own two settings. A requested Codex helper that cannot start stops the stage
 instead of silently changing the chosen executor. `jig task route <task-id>` prints a
 `delegate:` line for each configured runtime and stage; the session follows its own runtime's lines.
 

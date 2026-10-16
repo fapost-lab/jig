@@ -142,7 +142,8 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
 > `ci.yml` runs the shards only where `ci-scope.sh` also says `full`, and all 30 are `full`,
 > so the signal never makes a cheap pull request expensive. The cost per pull request is no
 > longer the 25 minutes above: the suite moved to six shares and ~15 minutes
-> (adr-20260925-windows-runs-in-six-shares).
+> (adr-20260925-windows-runs-in-six-shares), and, after its work doubled, to ten shares and
+> ~22 minutes (adr-20261016-the-suite-runs-in-shares-on-every-platform).
 
 > **Amendment (2026-09-25).** The residual risk above — a change that depends on the platform
 > by idiom rather than by word — is narrowed, and the rule for when an idiom counts is that

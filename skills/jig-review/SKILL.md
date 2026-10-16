@@ -26,12 +26,26 @@ files nobody planned. If the guard reports pending documents, read and acknowled
 before reviewing: a review that has not read the rules it is reviewing against is a
 formality.
 
-For T4 the review is independent: run it in a fresh context, or delegate it to a
-subagent that has not seen the implementation being defended. When `jig task route <id>`
-prints `delegate: review` for this session's runtime, that subagent runs on the model it names
-([delegation](../jig-task/references/delegation.md)).
-An `executor: review` line selecting another runtime takes precedence: run the external
-review in a fresh process, then record its checked findings and receipt here.
+Every review is done by a reader who has not seen the implementation: a subagent or a fresh
+process, not the session that wrote the change — attended or on autopilot, at every class whose
+route has a review. Brief a subagent with the task id, worktree, base, this skill, `task.md` and
+the design or plan, and nothing else: no implementer's report, no account of what was done. It
+gathers the change and the knowledge itself, with the commands above; an external process gets
+the brief [delegation](../jig-task/references/delegation.md) names. Each re-review is a new
+reviewer. Who reviews is chosen as delegation says: an `executor: review` line selecting another
+runtime, else a `delegate: review` line for this session's runtime, else a subagent on the
+session's model. When a selected model or runtime cannot start, do what delegation says for that
+runtime — a Codex model or another runtime stops the stage, a model Claude Code refuses falls
+back to a subagent on the session's model — and never let this session sign its own review in
+its place. Only with neither line, where no subagent can start, review here and say so in the
+pull request.
+
+**T4 is reviewed further.** The reviewer runs on another model or runtime than the
+implementation when the person configured one; delegation's T4 section says how the two are
+compared. Never pick one yourself. Without it, a fresh reviewer on the same model, and the pull
+request says the review ran on the implementation's model; that does not stop the ship. Every
+acceptance criterion is checked with evidence, and every P0 or P1 marked `fixed` is re-reviewed
+by reverting the fix and watching its test go red (§3).
 
 ## 2. Look for these, in order
 

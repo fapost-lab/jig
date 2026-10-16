@@ -125,17 +125,41 @@ jobs:
           scripts/jig knowledge check
           tests/run.sh knowledge::test_real_repository_knowledge_passes_with_no_failures
 
+  # The whole suite on Linux and macOS, each divided into shares that run at
+  # once (JIG_TEST_SHARD, as on Windows below). The suite is CPU-bound — a
+  # macOS host that happened to have five cores instead of three ran it in
+  # half the time — so more runners shorten it and more workers on one
+  # runner would not. macOS ran for 23 to 36 minutes in one job and was the
+  # slowest required job of most pull requests; in three shares it is about
+  # twelve. Linux is halved so that it does not become the next one. The
+  # measurements are in
+  # adr-20261016-the-suite-runs-in-shares-on-every-platform.
+  #
+  # One matrix spans two platforms with different share counts, so
+  # `strategy.job-total` cannot be the denominator here: each entry names its
+  # share as <i>/<n>. tests/ci-workflow.t.sh holds every platform's entries to
+  # exactly 1/n .. n/n with one n — a hole, a repeat or a second denominator
+  # is a share of the suite no job runs.
+  #
+  # `ci-ok` and `release` need `test`, and a matrix job's result is the
+  # result of all its shares: a share that failed, was cancelled or never
+  # started keeps `test` from `success`.
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.os }} ${{ matrix.shard }}
     needs: scope
     if: needs.scope.outputs.full == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
-      # Both platforms always report. A failure on one is information about
-      # that platform, not a reason to cancel the other and lose the answer.
+      # Every share always reports. A failure in one is information about that
+      # platform, not a reason to cancel the others and lose the answer.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest, shard: '1/2' }
+          - { os: ubuntu-latest, shard: '2/2' }
+          - { os: macos-latest, shard: '1/3' }
+          - { os: macos-latest, shard: '2/3' }
+          - { os: macos-latest, shard: '3/3' }
 
     steps:
       - uses: actions/checkout@v7
@@ -171,6 +195,8 @@ jobs:
       # The suite needs only the source checkout, git and bash — no install
       # step, because tests/run.sh resolves the framework from its own path.
       - name: Tests
+        env:
+          JIG_TEST_SHARD: ${{ matrix.shard }}
         run: tests/run.sh
 
       # A smoke test of the *installed* copy, which is a different artefact
@@ -178,6 +204,10 @@ jobs:
       # project, then run the project's own gate there. On Linux this is also
       # the first time the GNU branches of the portability helpers
       # (`stat -c %Y`, `date -d`) actually execute.
+      #
+      # Every share runs it. It takes about twenty seconds, and a condition
+      # running it in one share only would be a step that can be skipped
+      # without any job saying so — `ci-ok` sees jobs, not steps.
       - name: Install into a scratch project and verify it
         run: |
           set -eu
@@ -203,15 +233,18 @@ jobs:
   # The whole suite on Windows under Git Bash, with the git settings a Windows
   # user gets out of the box: core.autocrlf=true and no native symlinks, so
   # `ln -s` copies and links fall back to junctions. Every process start is
-  # slow there, so the suite runs in six shares at once (JIG_TEST_SHARD) and
+  # slow there, so the suite runs in ten shares at once (JIG_TEST_SHARD) and
   # skips the one check that reads only this repository's own knowledge and says
   # nothing about the platform (JIG_TEST_SKIP; it still runs on Linux and macOS).
   #
-  # Six is where the measured curve stops paying for itself: three shares took
-  # 30 minutes and six take 15, while every doubling after that buys about
-  # three more minutes and spends twice the runners, out of a concurrency
-  # budget shared with every other pull request in flight. The measurements
-  # are in adr-20260925-windows-runs-in-six-shares.
+  # Six shares took 15 minutes when they were chosen and 31 to 36 a month
+  # later: the suite's work on Windows doubled, and the slowest share is what
+  # a release and a platform pull request wait for. Ten bring it to about 22.
+  # Twelve would reach about 18, but a full run would then hold all twenty
+  # jobs the organisation may run at once, and any other pull request would
+  # wait for the whole of it. The measurements are in
+  # adr-20261016-the-suite-runs-in-shares-on-every-platform, the reasoning
+  # about the count in adr-20260925-windows-runs-in-six-shares.
   #
   # How many shares there are is the length of the matrix below and is written
   # nowhere else: `strategy.job-total` is the number of jobs the matrix made,
@@ -237,7 +270,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     defaults:
       run:
         shell: bash
@@ -420,11 +453,13 @@ jobs:
         run: .github/scripts/changelog-check.sh
 
   # The one context a branch rule can require. A matrix job's name cannot be:
-  # `test` is named ${{ matrix.os }}, and when `scope` skips it the expression
-  # is never expanded, so GitHub reports a single skipped check called
-  # `matrix.os` and a rule naming `ubuntu-latest` waits forever for a status
-  # nobody will send — a pull request with a green CI that can never merge
-  # (seen on #86). `test-windows` has the same shape.
+  # `test` is named ${{ matrix.os }} ${{ matrix.shard }}, and when `scope`
+  # skips it the expression is never expanded, so GitHub reports a single
+  # skipped check named after the expression, and a rule naming
+  # `ubuntu-latest` waits forever for a status nobody will send — a pull
+  # request with a green CI that can never merge (seen on #86, when the name
+  # was ${{ matrix.os }} alone). `test-windows` has the same shape, and the
+  # share counts in both names change whenever the shares do.
   #
   # This job's name never changes, `always()` makes it report on every event,
   # and it gathers what the others ended as. A skipped job passes only when
