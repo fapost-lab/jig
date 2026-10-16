@@ -18,7 +18,7 @@ contract test pins each one.
 - [x] `json-spec-list` — spec and epic list as JSON — specs with phases and items, progress, epic branch, release level (after: task list — same envelope and conventions)
 - [x] `json-attention` — attention items as data — what needs a person, from the logic behind the status page rather than a second copy of it (after: task list — same envelope)
 - [x] `json-legal-actions` — legal human actions per task state — Jig says what a person may do next (after: task list — actions are read from a task's state)
-- [ ] `failure-codes` — stable failure codes — each refusal names a code that a tool can act on, in the envelope's `error` (after: task list — the envelope that carries it)
+- [x] `failure-codes` — stable failure codes — each refusal names a code that a tool can act on, in the envelope's `error` (after: task list — the envelope that carries it)
 - [ ] fog: registration hook in `jig init` for an installed UI
 
 ## Waves
