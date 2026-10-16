@@ -1415,7 +1415,7 @@ test_status_html_writes_one_file_prints_its_path_and_changes_nothing_else() {
   # saying a session is working in this checkout
   # (adr-20260924-a-checkout-records-what-is-happening-in-it), and the clone's
   # revision, which the first saved counts raise because `status --json`
-  # reports them (adr-20261015-the-clone-revision-is-a-renamed-file) — nothing
+  # reports them (adr-20261016-the-clone-revision-is-a-claimed-name) — nothing
   # else.
   assert_eq "checkout
 revision

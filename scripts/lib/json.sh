@@ -80,7 +80,7 @@ json_bool() {
 
 # json_revision — the clone's revision every envelope reports: the counter
 # every Jig write raises (jig_revision_read, common.sh;
-# adr-20261015-the-clone-revision-is-a-renamed-file), `0` before the first one.
+# adr-20261016-the-clone-revision-is-a-claimed-name), `0` before the first one.
 json_revision() {
   jig_revision_read
 }

@@ -150,7 +150,7 @@ json_run produce'
   assert_eq "" "$(ls tmp)"
 }
 
-# --- the clone's revision (adr-20261015-the-clone-revision-is-a-renamed-file) --
+# --- the clone's revision (adr-20261016-the-clone-revision-is-a-claimed-name) --
 #
 # jig_revision_read / jig_revision_bump (common.sh) and the funnel every writer
 # calls, jig_record_changed. What must hold: every Jig write raises it, a read
@@ -184,7 +184,7 @@ jig_revision_read'
   # starts again above any value a consumer may still hold.
   [ "$first" -ge "$t0" ] || fail "seed $first is below the time $t0"
   assert_eq "$((first + 1))" "$second"
-  assert_eq "$second" "$(ls .ai/runtime/revision)"
+  assert_eq "$(printf '%s\n%s' "$first" "$second")" "$(ls .ai/runtime/revision)"
 }
 
 test_json_revision_starts_again_above_the_lost_one() {
@@ -203,7 +203,7 @@ jig_revision_read'
   [ "$(printf '%s\n' "$OUT" | sed -n 3p)" -gt 5 ] || fail "the counter came round again: $OUT"
 }
 
-# Two names at once happen only when two first writes raced; the highest one
+# Two names at once — two first writes in two seconds, or a leftover; the highest one
 # is the revision, and the next write raises that one.
 test_json_revision_reads_the_highest_of_two_names() {
   mkdir -p .ai/runtime/revision
@@ -218,8 +218,75 @@ jig_revision_read'
   assert_eq "$(printf '12\n13')" "$OUT"
 }
 
-# rename is the compare-and-swap: of two writers that saw the same value one
-# renames it and the other reads again. Nothing is lost, nothing waits.
+# Leftovers — a claim whose clearing failed, a file of the first version, a
+# name that is not a number — never change what is read, and the next raise
+# clears the numbered ones below it.
+test_json_revision_reads_past_stale_leftovers_and_clears_them() {
+  mkdir -p .ai/runtime/revision/10 .ai/runtime/revision/11 .ai/runtime/revision/40 .ai/runtime/revision/45
+  : > .ai/runtime/revision/20
+  : > .ai/runtime/revision/notes
+  _json_rev_script r.sh '
+jig_revision_read
+jig_revision_bump
+jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq "$(printf '45\n46')" "$OUT"
+  # Cleared only more than 16 below the claim: 10, 11 and the file 20 go,
+  # 40 stays.
+  assert_eq "$(printf '40\n45\n46\nnotes')" "$(ls .ai/runtime/revision)"
+  assert_dir .ai/runtime/revision/46
+}
+
+# A writer that read <n>, stalled while others claimed far past it and cleared
+# the low names, would create <n+1> again — below the counter, counting
+# nothing. Clearing <n+1> took a claim more than 16 above it, so a claim that
+# finds the highest name that far above itself withdraws and claims again.
+test_json_revision_catches_a_claim_made_stale_by_a_stall() {
+  mkdir -p .ai/runtime/revision/120
+  _json_rev_script s.sh '
+eval "$(declare -f _jig_revision_scan | sed "1s/_jig_revision_scan/_jig_real_scan/")"
+stalled=1
+_jig_revision_scan() {
+  if [ -n "$stalled" ]; then stalled=""; _JIG_REV=100; _JIG_REV_OLD=""; return 0; fi
+  _jig_real_scan "$@"
+}
+jig_revision_bump
+jig_revision_read'
+  _json_run_script s.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq 121 "$OUT"
+  assert_eq "$(printf '120\n121')" "$(ls .ai/runtime/revision)"
+}
+
+# The same for a writer that found the directory empty and stalled before it
+# seeded with the time, while the counter ran ahead of the clock.
+test_json_revision_catches_a_seed_made_stale_by_a_stall() {
+  local ahead
+  ahead=$(( $(date +%s) + 1000 ))
+  mkdir -p ".ai/runtime/revision/$ahead"
+  _json_rev_script s.sh '
+eval "$(declare -f _jig_revision_scan | sed "1s/_jig_revision_scan/_jig_real_scan/")"
+stalled=1
+_jig_revision_scan() {
+  if [ -n "$stalled" ]; then stalled=""; _JIG_REV=""; _JIG_REV_OLD=""; return 0; fi
+  _jig_real_scan "$@"
+}
+jig_revision_bump
+jig_revision_read'
+  _json_run_script s.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_eq "$((ahead + 1))" "$OUT"
+  assert_eq "$(printf '%s\n%s' "$ahead" "$((ahead + 1))")" "$(ls .ai/runtime/revision)"
+}
+
+# mkdir is the claim: of two writers that saw the same value one creates the
+# next name and the other reads again. Nothing is lost, nothing waits. It
+# starts from a file, the counter of the first, rename-based version — which
+# lost increments here on Windows CI, where Git Bash emulates rename.
 test_json_revision_loses_no_increment_to_concurrent_writers() {
   mkdir -p .ai/runtime/revision
   : > .ai/runtime/revision/100
@@ -236,7 +303,11 @@ while [ "$i" -lt 30 ]; do jig_revision_bump; i=$((i + 1)); done'
   wait "$p2" || fail "writer 2 failed: $(cat w2.err)"
   wait "$p3" || fail "writer 3 failed: $(cat w3.err)"
   assert_eq "" "$(cat w1.err w2.err w3.err)"
-  assert_eq 190 "$(ls .ai/runtime/revision)"
+  # The count, as a reader sees it: leftovers below it are clutter the design
+  # accepts, not part of the answer.
+  _json_rev_script r.sh 'jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 190 "$OUT"
 }
 
 # One counter per clone, in its main checkout: a write in a worktree is seen

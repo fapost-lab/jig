@@ -111,6 +111,6 @@ write the same `state` file.
 
 > **Amendment (2026-10-15).** A third user of the per-clone runtime exception: the clone's
 > revision, `.ai/runtime/revision/` in the main checkout
-> (adr-20261015-the-clone-revision-is-a-renamed-file). It passes the same test — one counter for
+> (adr-20261016-the-clone-revision-is-a-claimed-name). It passes the same test — one counter for
 > every worktree is a fact about the clone — but it is not derived: lost, it cannot be rebuilt,
 > only restarted, which is why it restarts from the time in seconds rather than from 1.

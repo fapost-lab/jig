@@ -239,7 +239,7 @@ by default; moving it across costs a local reader, and the reason is its price, 
 Every writer here — `_task_rewrite_state`, `_task_rewrite_state_remove`, `_task_touch_state`,
 `task new`'s state and `task.md`, the autopilot journal, the findings ledger, the receipt — calls
 `jig_record_changed` right after its `mv`: it raises the clone's revision at once
-(adr-20261015-the-clone-revision-is-a-renamed-file; `tests/json.t.sh` fails on a writer that does
+(adr-20261016-the-clone-revision-is-a-claimed-name; `tests/json.t.sh` fails on a writer that does
 not) and marks the page (`jig_status_page_dirty`), which `cmd_task` redraws once at its end. An exit that skips that end after a write must flush first:
 `jig_die` does, and so does the third repair's `return 3`. A new writer that does not mark, or a new
 early exit that does not flush, leaves the page a command behind.

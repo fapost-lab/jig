@@ -51,7 +51,10 @@ MUST NOT: raise the revision before the write lands, or once at the command's en
           instead of after each write — except a batch whose many writes are one
           change and that runs only as its own command, never inside $(...):
           housekeeping registers jig_on_exit 'jig_revision_bump' before its first
-          write, and only a run that writes (not --dry-run) registers it
+          write, and only a run that writes (not --dry-run) registers it; call
+          jig_record_changed from the status page's own redraw — the saved
+          knowledge counts (_status_counts_save) raise with jig_revision_bump, and
+          only when a count changed, so the redraw does not mark itself again
 ```
 
 ## Example
@@ -82,4 +85,4 @@ and doubled by the caller's own refusal, which is why the envelope is built arou
 revision is taken before the data because a write landing during a read must leave the revision
 behind the data, never ahead of it; and it is raised after every write, not once per command,
 because a write inside `$(...)` or in a command that dies after it must still count
-(adr-20261015-the-clone-revision-is-a-renamed-file).
+(adr-20261016-the-clone-revision-is-a-claimed-name).

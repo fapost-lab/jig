@@ -1,8 +1,8 @@
 ---
-id: adr-20261015-the-clone-revision-is-a-renamed-file
+id: adr-20261016-the-clone-revision-is-a-claimed-name
 type: adr
 status: accepted
-date: 2026-10-15
+date: 2026-10-16
 domains:
   - task
   - scripts
@@ -10,9 +10,9 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/json.sh
   - schemas/json.md
-summary: Why the clone revision is the name of one file in the main checkout's runtime, raised by an atomic rename after every Jig write through jig_record_changed, read by --json before the data, seeded with the time.
+summary: Why the clone revision is the highest name in the main checkout's .ai/runtime/revision/, raised by claiming the next one with mkdir (atomic on POSIX and NTFS, unlike Git Bash's emulated mv) after every Jig write through jig_record_changed, read by --json before the data, seeded with the time.
 ---
-# The clone's revision is the name of one file, raised by renaming it after every Jig write
+# The clone's revision is the highest name in one directory, raised by claiming the next with mkdir
 
 ## Context
 
@@ -34,20 +34,34 @@ caught; and when a read takes it relative to its data.
   `jig_config_clone_root`, the third user of ADR-0008's per-clone runtime exception (after the
   status page and the verify run record). Every worktree raises and reads the same one; a worktree
   keeps none of its own.
-- **The value is the name of the one file in that directory**, and raising it is
-  `mv <n> <n+1>`. rename is atomic on POSIX and in Git Bash, so it is a compare-and-swap: of two
-  writers that saw `<n>`, one renames it and the other finds the source gone, scans again and raises
-  `<n+1>`. No increment is lost to writers raising one counter, and there is no lock — nothing to
-  go stale, wait for or break. A reader lists names with the shell's glob and never opens the file.
-  A listing taken during a rename may show no name; reader and writer scan three times before they
-  believe that.
-- **The first write seeds the counter with the time in seconds**, not 1, with `set -C` so that two
-  first writers make one file. A counter lost with `.ai/runtime` starts again above the value a
-  consumer still holds, as long as there were fewer writes than seconds since the seed. Two names at
-  once (two first writes in different seconds) read as the higher one. The one window that can lose
-  an increment is there: a raise of `<n>` that lands on a `<n+1>` a racing first writer seeded a
-  second later replaces it (rename overwrites). It needs two first writes and a raise in the same
-  second or two, once in a clone's life; accepted rather than paid for with a lock.
+- **The value is the highest numeric name in that directory**, and raising it claims the next one:
+  read the highest `<n>`, then `mkdir <n+1>`. mkdir is atomic on POSIX (`mkdir(2)`, EEXIST when
+  the name exists) and on NTFS under Git Bash (`CreateDirectoryW`, ERROR_ALREADY_EXISTS): of two
+  writers that saw `<n>`, exactly one creates `<n+1>` and the other reads again and claims `<n+2>`.
+  With the stale-claim check below, no increment is lost, and there is no lock — nothing to go stale, wait for or break. It is the
+  primitive the housekeeping lock and the verify record already stand on. A reader lists names
+  with the shell's glob and never opens one; a claim never removes the highest name, so a listing
+  always holds it.
+- **A claim can succeed stale, and is checked for it.** A writer that read `<n>` (or found the
+  directory empty and is about to seed) and stalled while others claimed far past it and cleared the
+  low names would create `<n+1>` again — below the counter, counting nothing. A name is cleared
+  only by a claim more than 16 above it, and the highest name never goes down, so after every
+  successful `mkdir`, seed included, the writer reads again: a highest name more than 16 above its
+  own claim makes the claim stale, and it is withdrawn (`rmdir`) and made again. The test reads
+  the maximum, not whether some lower name is still there, so a leftover, another writer's
+  short-lived stale claim or the order names sort in cannot fool it.
+- **After a claim, only names more than 16 below it are cleared** (`rmdir`, or `rm -f` for a file;
+  at most 16 a time, best effort, never a failure). The margin is what keeps the stale test right:
+  it misjudges a fresh claim only if 16 other raises land between one writer's `mkdir` and its next
+  read, microseconds apart — and then it counts once too often, never too few. A reader takes the
+  highest name, so a leftover is clutter, not a wrong answer.
+- **A file is a name too.** The first version of this decision kept the counter as one file renamed
+  by `mv`; a clone that ran it holds such a file. Files and directories are read alike, the highest
+  wins, and the next claim clears the file.
+- **The first write claims the time in seconds**, not 1. A counter lost with `.ai/runtime` starts
+  again above the value a consumer still holds, as long as there were fewer writes than seconds
+  since the seed. Two first writers in one second contend for one name like any claim; in two
+  different seconds they make two names, and the higher one is read.
 - **A read before any write reports `0`** — a fact (Jig has written nothing in this clone), not
   "unknown", so never `null`.
 - **Every writer calls one funnel right after its write lands**: `jig_record_changed` (common.sh)
@@ -87,10 +101,17 @@ caught; and when a read takes it relative to its data.
 
 ## Alternatives
 
+- **`mv <n> <n+1>` as the compare-and-swap** — this decision's first version (2026-10-15).
+  Git Bash emulates rename, and on Windows CI (PR #258) three writers raising 30 times each lost
+  three increments: two writers both "renamed" the same `<n>`. The owner chose the mkdir claim over
+  accepting the loss on Windows, because contract-queue's stale-write check would then let two
+  writers with one revision through.
+- **`mv -n` or `ln` as the claim.** Neither is promised atomic under msys, and `ln -s` copies there
+  (conventions/shell.md).
 - **A number inside a file, under a `mkdir` lock** (the housekeeping and verify idiom). A lock
   needs a stale rule (pid, mtime, ttl), waiting for it means a retry loop with `sleep`, and a writer
-  killed inside it blocks the rest until the ttl. The rename gives the same guarantee with none of
-  those failure modes.
+  killed inside it blocks the rest until the ttl. The claim gives the same guarantee with none of
+  those failure modes; the claim is that same `mkdir`, without the lock around it.
 - **Append one byte per write; the revision is the file's size.** Lock-free on POSIX, but
   O_APPEND is emulated as seek-and-write under Git Bash, where concurrent writers overwrite each
   other; and the file grows for ever.
@@ -108,13 +129,15 @@ caught; and when a read takes it relative to its data.
 - A new writer of a record calls `jig_record_changed` after its `mv`, or `tests/json.t.sh`
   fails; a new kind of write that is not an `mv` (an append) has to be covered by hand, as
   housekeeping's is.
-- Each write costs one `mv` process and a glob; a command writes a handful of times.
+- Each write costs two globs (the scan and the stale check after the claim), one `mkdir`, and
+  usually one `rmdir` of the name 17 below its claim; a command writes a handful of times.
 - A file edited by hand, or changed by git — a person's pull or checkout, or Jig's own branch
   switches and post-merge fast-forward — raises nothing. A consumer that needs to see those re-reads
   on file change as well.
-- An orphan name left by two racing first writes stays, harmless: the higher one is read and
-  raised.
-- contract-queue can build its stale-write check on the same rename: renaming exactly the
-  revision a write carries succeeds only while the revision is still that one.
+- A leftover name (a claim whose clearing failed, an old-format file) is harmless and goes with a
+  later claim.
+- contract-queue can build its stale-write check on the same claim, but not on `mkdir <r+1>`
+  alone: a cleared `<r+1>` can be created again. The check claims `<r+1>` and then requires no
+  name above it — the stale test above, made exact.
 - The revision directory sits in `.ai/runtime/`, gitignored with the rest; `upgrade` and
   housekeeping never touch it.

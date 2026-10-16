@@ -55,7 +55,7 @@ forgecache_write() {
   } > "$tmp" 2>/dev/null || return 0
   mv "$tmp" "$file" 2>/dev/null || return 0
   # `task list --json` reports what the cache holds, so a written cache raises
-  # the clone's revision (adr-20261015-the-clone-revision-is-a-renamed-file).
+  # the clone's revision (adr-20261016-the-clone-revision-is-a-claimed-name).
   # housekeeping, today's one writer, raises it again when its run ends; this
   # one keeps any other writer from forgetting.
   jig_record_changed

@@ -125,7 +125,7 @@ _status_counts_read() {
 # _status_counts_save — write the counts for the next redraw, atomically.
 #
 # `jig status --json` reports these counts, so new ones raise the clone's
-# revision (adr-20261015-the-clone-revision-is-a-renamed-file): otherwise a
+# revision (adr-20261016-the-clone-revision-is-a-claimed-name): otherwise a
 # consumer that read the old counts at revision R would see R again after the
 # refresh and never read them. Only when a count changed, not for `at:` alone,
 # which every full redraw moves. jig_revision_bump, not jig_record_changed: this

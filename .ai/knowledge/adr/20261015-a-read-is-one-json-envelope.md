@@ -97,6 +97,6 @@ answer to "which housekeeping flags still stand" lived (`_status_flagged_ids`).
   `task.sh` first, or the rechecks die.
 
 > **Amendment (2026-10-15).** `revision` is no longer `null`: it is the clone's counter, an integer,
-> `0` before Jig's first write in the clone (adr-20261015-the-clone-revision-is-a-renamed-file).
+> `0` before Jig's first write in the clone (adr-20261016-the-clone-revision-is-a-claimed-name).
 > `json_revision` reads it, and `json_run` now takes it **before** the producer runs, next to
 > `generated_at`, so the data is never older than the revision it is reported with.

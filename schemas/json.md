@@ -48,7 +48,7 @@ anything but a Jig write**: edited by hand, or by git, whoever ran it — a pers
 merges, a spec's branch switch, `upgrade` and `init` placing files). A consumer that must see those
 watches the files as well.
 
-Reference: adr-20261015-the-clone-revision-is-a-renamed-file.
+Reference: adr-20261016-the-clone-revision-is-a-claimed-name.
 
 ## `jig task list --json`
 

@@ -58,7 +58,7 @@ task or spec directory" — a roadmap names task ids, so the two grammars may no
 none of them may source `status.sh`, so the redraw is a `jig status --refresh` process),
 `jig_record_changed`, `jig_revision_bump` and `jig_revision_read` ("a Jig write landed: raise the
 clone's revision" — every writer of task, spec and knowledge records calls the first, and every
-`--json` read reports the last; adr-20261015-the-clone-revision-is-a-renamed-file),
+`--json` read reports the last; adr-20261016-the-clone-revision-is-a-claimed-name),
 `jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push`, `jig_ship_pr` and `jig_ship_merge` ("carry a
 change as far as `agent.git` allows" — `task ship`, `spec ship` and a copy-mode `jig upgrade` take the
 same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-agent-git-level,
