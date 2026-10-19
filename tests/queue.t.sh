@@ -107,9 +107,9 @@ test_queue_file_lives_in_runtime_in_its_one_format() {
 
 test_queue_keeps_the_lines_of_a_kind_it_does_not_know() {
   _q_setup a b
-  printf '# jig queue 1\nitem\ttask:a\t-\t100\t-\nrequest\ttask:a\tpause\tlater\n' > .ai/runtime/queue
+  printf '# jig queue 1\nitem\ttask:a\t-\t100\t-\nhold\ttask:a\tlater\n' > .ai/runtime/queue
   jig queue set b --priority 4 >/dev/null
-  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:a\tpause\tlater')"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'hold\ttask:a\tlater')"
   assert_eq "$(printf 'task:a - 100 -\ntask:b - 200 4')" "$(_q_items)"
 }
 
@@ -474,4 +474,113 @@ test_queue_outside_an_initialised_project_is_refused() {
   fixture_repo
   _q_json set a --priority 1
   assert_eq not-initialised "$(_q_code)"
+}
+
+# --- pause requests (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary)
+
+# _q_request_line <id> — the request line of task <id>, its time replaced by T.
+_q_request_line() {
+  awk -F '\t' -v r="task:$1" '$1 == "request" && $2 == r { $4 = "T"; print }' OFS='\t' .ai/runtime/queue
+}
+
+test_queue_request_writes_one_line_beside_items_and_dependencies() {
+  _q_setup a b
+  jig queue set a --priority 2 >/dev/null
+  jig queue depend b --on a --reason "after a" >/dev/null
+  run jig queue request b pause --reason "$(printf 'lunch\tbreak')"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "queue: pause of task:b requested at "
+  assert_eq "$(printf 'request\ttask:b\tpause\tT\tlunch break')" "$(_q_request_line b)"
+  # When: UTC, to the second, so a consumer shows its age.
+  awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue \
+    | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || fail "not a UTC time"
+  # In canonical order, after the dependencies; the task need not be queued.
+  jig queue request task:a pause >/dev/null
+  assert_eq "$(printf 'item\nitem\ndep\nrequest\nrequest')" "$(awk -F '\t' 'NR > 1 { print $1 }' .ai/runtime/queue)"
+  assert_eq "$(printf 'request\ttask:a\tpause\tT\t')" "$(_q_request_line a)"
+  # Every other write keeps the requests, and a remove of the item too.
+  jig queue move a --bottom >/dev/null
+  jig queue remove b >/dev/null
+  assert_eq "$(printf 'request\ttask:b\tpause\tT\tlunch break')" "$(_q_request_line b)"
+  assert_eq "$(printf 'task:a - 300 2')" "$(_q_items)"
+}
+
+test_queue_request_is_sticky_and_cancelled_only_by_cancel() {
+  _q_setup a
+  jig queue request a pause >/dev/null
+  local first
+  first=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  _q_json request a pause
+  assert_eq 1 "$RC"
+  assert_eq already-exists "$(_q_code)"
+  assert_eq "$first" "$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)"
+  run jig queue cancel task:a pause
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "queue: pause request of task:a cancelled" "$OUT"
+  assert_eq "" "$(_q_request_line a)"
+  _q_json cancel a pause
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_q_code)"
+  # A task gone to trash still has its request taken out.
+  jig queue request a pause >/dev/null
+  rm -rf .ai/workspace/tasks/a
+  run jig queue cancel a pause
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_queue_request_answers_in_the_envelope() {
+  _q_setup a
+  _q_rev
+  _q_json request a pause --reason "standup" --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"ref\":\"task:a\",\"request\":{\"kind\":\"pause\",\"requested_at\":\"$at\",\"reason\":\"standup\"}}}" \
+    "$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')"
+  _q_json cancel a pause
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"ref":"task:a","request":null}}'
+  _q_json request a pause
+  assert_contains "$OUT" '"reason":null}'
+}
+
+test_queue_request_refuses_by_the_tasks_state() {
+  _q_setup a b c
+  _q_epic big
+  jig task pause a >/dev/null
+  _q_json request a pause
+  assert_eq 1 "$RC"
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "task a is already paused"
+  jig task abandon b >/dev/null 2>&1 || fail "abandon failed"
+  _q_json request b pause
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "task b is abandoned"
+  _q_json request nobody pause
+  assert_eq not-found "$(_q_code)"
+  _q_json request epic:big pause
+  assert_eq usage "$(_q_code)"
+  _q_json cancel epic:big pause
+  assert_eq usage "$(_q_code)"
+  _q_json request c resume
+  assert_eq usage "$(_q_code)"
+  _q_json request c
+  assert_eq usage "$(_q_code)"
+  _q_json cancel c pause --reason x
+  assert_eq usage "$(_q_code)"
+  assert_no_file .ai/runtime/queue
+}
+
+test_queue_request_with_a_stale_revision_is_refused_and_changes_nothing() {
+  _q_setup a b
+  _q_rev
+  local old=$REV
+  jig queue request a pause >/dev/null
+  local before
+  before=$(cat .ai/runtime/queue)
+  _q_json request b pause --revision "$old"
+  assert_eq stale-revision "$(_q_code)"
+  _q_json cancel a pause --revision "$old"
+  assert_eq stale-revision "$(_q_code)"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
 }

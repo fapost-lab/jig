@@ -140,4 +140,6 @@ a new dependency (ADR-0002, ADR-0037).
   canonical order and keeps its lines of unknown kinds.
 - The readers that follow in the spec — the queue in `jig status`, `jig context` and as JSON, the
   pause requests — read this file through `queue.sh`'s parser and add their own line kinds; a new
-  incompatible field raises the format version.
+  incompatible field raises the format version. (Amended 2026-10-19: `task` reads the pause
+  requests through a reader of its own in `common.sh`, since a command library never sources
+  another; adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary.)

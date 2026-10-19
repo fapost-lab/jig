@@ -268,6 +268,10 @@ writing must join that exclusion, or every task will read as unreviewed at its l
 the workspace. The only rule it enforces is the repair limit — two per run, a third refused with
 exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A run changes none of
 the completion gates: a task on autopilot meets the same findings and receipt checks as any other.
+`stage` is also where a person's pause request is honoured
+(adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): it takes the request out of the
+queue through `jig queue cancel`, pauses the task instead of entering the stage, and exits 4 with
+the run still `on`; a paused task enters no stage.
 
 `autopilot_phase: <spec-id>/<n>`, written by `start --phase`, says this run is one task of a phase
 run (adr-20260922-a-phase-run-is-coordinated): a coordinator started it and will ship it. This

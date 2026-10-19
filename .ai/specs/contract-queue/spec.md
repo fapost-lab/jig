@@ -59,6 +59,11 @@ epics in Jig rather than in the UI, and to ask a running task to pause without l
   another stage, sets the pause field (ADR-0012) and clears the request in the same Jig command.
   The request lives in the queue file (one writer), not in `state`. Rejected: dropping a request
   the task has moved past.
+- Resume is not a request (maintainer, 2026-10-19): while a task is paused no agent works on it,
+  so nobody would read a resume request; `jig task resume`, already a legal action, resumes it at
+  once. Jig UI's drop out of the paused column calls it directly. The request line keeps a kind
+  column, so a resume request can be added later without a new format. Rejected: a sticky resume
+  request (it would wait for a reader that never comes).
 - Released on its own epic, after `contract-extensions` (maintainer, 2026-10-14).
 - The epic is released `minor` (maintainer, 2026-10-19): new commands and fields, nothing existing
   changes its meaning, as with `contract-extensions` (0.29.0).
@@ -69,11 +74,19 @@ epics in Jig rather than in the UI, and to ask a running task to pause without l
 
 ## Open questions
 
-- Queue file format and command names.
 - Whether `jig init` gets a hook that lets an installed UI register the project, without making
   the UI a dependency of Jig (moved from `contract-extensions` when its epic was finished).
 
 ## Assumptions left untested
 
-- That a running autopilot or agent reads a pause request at its next stage boundary — to check
-  against `task autopilot` and ADR-0012 before the requests item is designed.
+- Checked by `pause-requests` (2026-10-19): `jig task autopilot <id> stage` read nothing before;
+  it now honours the request, since it is the one command an autopilot run calls at every stage
+  boundary. A session without autopilot calls nothing there and does not see a request
+  (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
+
+## Release notes
+
+Lines the epic's release pull request carries into `docs/changelog.mdx`, beside the new commands:
+
+- `jig task autopilot <id> stage` on a paused task now refuses with exit code 4 instead of entering
+  the stage, and a pending pause request makes it pause the task the same way.

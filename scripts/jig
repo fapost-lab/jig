@@ -102,6 +102,9 @@ Usage: jig <command> [args]
   queue set|move|depend|undepend|remove <ref> [...] [--revision <n>] [--json]
                                  change one item; refused (stale-revision) when the
                                  clone changed since revision <n>
+  queue request|cancel <ref> pause [--reason <text>] [--revision <n>] [--json]
+                                 ask a task to pause at its next stage boundary,
+                                 or take the request back
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
   config set <key> <value> [...] --local [--dry-run]
                                  write your own settings to .ai/config.local.yaml;

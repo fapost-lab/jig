@@ -62,7 +62,11 @@ clone's revision" — every writer of task, spec and knowledge records calls the
 `jig_revision_claim` ("has anybody written since this revision" — the check `jig queue` writes
 under; adr-20261019-the-queue-is-one-file-written-against-a-revision), `jig_task_epic` ("which
 epic is this task built on" — `task start` cuts the branch from it and `jig queue` puts the task on
-its level; same adr),
+its level; same adr), `jig_queue_file`, `jig_pause_request`, `jig_pause_request_refusal` and
+`jig_pause_cancel_refusal` ("where is the queue, is a pause of this task requested, and may one be
+asked or cancelled" — `jig queue request|cancel` writes the request, and `task` honours it at a
+stage boundary and offers it in the actions table;
+adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary),
 `jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push`, `jig_ship_pr` and `jig_ship_merge` ("carry a
 change as far as `agent.git` allows" — `task ship`, `spec ship` and a copy-mode `jig upgrade` take the
 same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-agent-git-level,

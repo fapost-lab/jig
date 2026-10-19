@@ -1897,7 +1897,12 @@ _task_autopilot_mode() {
 }
 
 # stage <name>: logs which stage the run just reached. Requires an active
-# run — a run only ever moves through stages while `on`.
+# run — a run only ever moves through stages while `on`. It is the boundary
+# Jig sees between two stages, so a pause request is honoured here
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): a paused
+# task enters no stage, and a pending request pauses it instead of the stage.
+# Both exit 4, the run staying `on`: a pause is not a stop, and `jig task
+# resume` ends it.
 _task_autopilot_stage() {
   local id="$1"
   shift
@@ -1912,8 +1917,55 @@ _task_autopilot_stage() {
     || jig_die "task autopilot stage: no active autopilot run: $id; run: jig task autopilot $id start"
   _task_autopilot_valid_stage "$name" \
     || jig_die "task autopilot stage: invalid name: $name (expected [a-z0-9-]+)"
+  if [ "$(task_state_get "$id" paused)" = true ]; then
+    printf 'jig: error: task autopilot stage: %s is paused; resume it with jig task resume %s before entering a stage\n' "$id" "$id" >&2
+    return 4
+  fi
+  if _task_pause_take_request "$id" "task autopilot stage"; then
+    local why="pause requested at $_JIG_PAUSE_AT"
+    [ -z "$_JIG_PAUSE_REASON" ] || why="$why: $_JIG_PAUSE_REASON"
+    _task_rewrite_state "$dir" paused true
+    _task_rewrite_state "$dir" paused_at "$(jig_today)"
+    _task_rewrite_state "$dir" paused_reason "$why"
+    _task_autopilot_log "$id" pause "$name not entered: $why"
+    printf 'paused: %s (%s); stage %s not entered\n' "$id" "$why" "$name"
+    # `return 4` ends the command under errexit before cmd_task's own flush.
+    jig_status_page_flush
+    return 4
+  fi
   _task_autopilot_log "$id" stage "$name"
   printf 'stage: %s\n' "$name"
+}
+
+# _task_pause_take_request <id> <verb> — when the queue holds a pause request
+# for <id>, take it out through `jig queue cancel`, the queue's one writer,
+# and exit 0 with _JIG_PAUSE_AT and _JIG_PAUSE_REASON (common.sh) naming it;
+# exit 1 when there is none, or somebody cancelled it first. The request goes
+# before the pause is set: a request that could not be taken out leaves the
+# task unpaused and the request standing, never a pause whose request would
+# pause it again after `resume`. A stale revision is another write landing in
+# between: read again, up to three times.
+_task_pause_take_request() {
+  local id="$1" verb="$2" tries=0 out at reason
+  while jig_pause_request "$id"; do
+    at=$_JIG_PAUSE_AT
+    reason=$_JIG_PAUSE_REASON
+    if out=$("$JIG_SELF" queue cancel "task:$id" pause --json 2>/dev/null); then
+      _JIG_PAUSE_AT=$at
+      _JIG_PAUSE_REASON=$reason
+      return 0
+    fi
+    # The code as json.sh's envelope prints it, without spaces
+    # (tests/json.t.sh pins that layout); there is no jq to parse it with.
+    case "$out" in
+      *'"code":"not-found"'*) return 1 ;;
+      *'"code":"stale-revision"'*) ;;
+      *) jig_die "$verb: cannot take the pause request of $id out of the queue" ;;
+    esac
+    tries=$((tries + 1))
+    [ "$tries" -lt 3 ] || jig_die "$verb: the queue kept changing; the pause request of $id stays"
+  done
+  return 1
 }
 
 # repair --reason <text>: one repair attempt, limited to 2 per run (gate
@@ -3386,6 +3438,9 @@ task_pause() {
     fi
   fi
 
+  # A pause made by hand honours a pending request too: it goes with it.
+  _task_pause_take_request "$id" "task pause" || true
+
   _task_rewrite_state "$dir" paused true
   _task_rewrite_state "$dir" paused_at "$(jig_today)"
   [ -z "$reason" ] || _task_rewrite_state "$dir" paused_reason "$reason"
@@ -3687,6 +3742,14 @@ _task_list_json_task() {
   json_str_or_null "$goal"; o="$o,\"goal\":$_JSON"
   json_bool "$consolidated"; o="$o,\"knowledge_consolidated\":$_JSON"
   json_bool "$paused"; o="$o,\"paused\":$_JSON"
+  # A pause asked of the task and not yet honoured, with when it was asked:
+  # the card shows its age (common.sh reads the queue file).
+  if jig_pause_request "$id"; then
+    json_quote "$_JIG_PAUSE_AT"; o="$o,\"pause_request\":{\"requested_at\":$_JSON"
+    json_str_or_null "$_JIG_PAUSE_REASON"; o="$o,\"reason\":$_JSON}"
+  else
+    o="$o,\"pause_request\":null"
+  fi
   json_str_or_null "$created"; o="$o,\"created_at\":$_JSON"
   json_str_or_null "$updated"; o="$o,\"updated_at\":$_JSON"
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
@@ -3792,10 +3855,9 @@ EOF
 # command refuses by the checkout it runs in, by the network or by the value a
 # person types is the command's when it runs, never the table's.
 #
-# The rows, in their order; the ids are a contract. Pause and resume requests
-# (spec contract-queue) join as rows of their own, with a guard that reads the
-# queue.
-_TASK_ACTIONS="start pause resume approve-gate answer-stop set-class ship close abandon reopen"
+# The rows, in their order; the ids are a contract. The pause request rows ask
+# the guards `jig queue request|cancel` asks (common.sh), which read the queue.
+_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop set-class ship close abandon reopen"
 
 # _task_actions <id> <pr-state> — one line per row of the table:
 # `<action><TAB><true|false><TAB><command><TAB><reason>`, the reason empty
@@ -3811,6 +3873,8 @@ _task_actions() {
       start) command="jig task start $id" ;;
       pause) command="jig task pause $id" ;;
       resume) command="jig task resume $id" ;;
+      request-pause) command="jig queue request task:$id pause" ;;
+      cancel-pause-request) command="jig queue cancel task:$id pause" ;;
       approve-gate) command="jig task gate $id approved" ;;
       answer-stop)
         # The `--by human` an unattended run's resume needs, in the command
@@ -3828,11 +3892,17 @@ _task_actions() {
     esac
     case "$status:$action" in
       abandoned:reopen) ;;
+      # A request left on a finished task — made during its last stage, or
+      # before it was closed — can still be taken back.
+      consolidated:cancel-pause-request | abandoned:cancel-pause-request)
+        reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
       consolidated:* | abandoned:*) reason="task $id is $status" ;;
       *:reopen) reason="task $id is $status, not abandoned" ;;
       *:start) reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id") ;;
       *:pause) reason=$(_task_actions_guard "$id" "$action" _task_pause_refusal "$id") ;;
       *:resume) reason=$(_task_actions_guard "$id" "$action" _task_resume_refusal "$id") ;;
+      *:request-pause) reason=$(_task_actions_guard "$id" "$action" jig_pause_request_refusal "$id") ;;
+      *:cancel-pause-request) reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
       *:approve-gate)
         reason=$(_task_actions_guard "$id" "$action" _task_gate_refusal "$id" human)
         if [ -z "$reason" ] && [ "$(_task_gate_state "$id")" = approved ]; then
