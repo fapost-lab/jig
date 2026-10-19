@@ -235,7 +235,8 @@ jig queue depend booking-message --on booking-form --reason "Quotes the form" --
 
 If anything changed in the project since that read — another person's drag, an agent's task
 update — the write is refused with `stale-revision` and nothing is written: read again and let the
-person decide again. Two programs that send the same revision cannot both land; exactly one does.
+person decide again. Two programs that send the same revision cannot both land: at most one does,
+and when a third write slips in between, neither.
 A write that lands answers with the item as the queue now holds it:
 
 ```json

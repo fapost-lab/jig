@@ -120,27 +120,25 @@ _queue_ref_form() {
 }
 
 # _queue_level <kind> <id> — _QLEVEL <- the level the item belongs to: `-` for
-# an epic and for a task built on no epic, `epic:<spec>` for a task whose
-# `Spec:` line names a spec this checkout has and whose roadmap declares an
-# open epic (jig_spec_link, jig_spec_epic: the rule `task start` cuts by).
+# an epic and for a task built on no epic, `epic:<spec>` for a task built on
+# its spec's open epic (jig_task_epic: the answer `task start` cuts by). A task
+# whose record makes that answer a guess — two Spec: lines, two Epic: lines —
+# is refused, as `task start` refuses it. A spec this checkout does not have
+# and a finished epic put the task on the top level, where `task start`
+# refuses: the queue records where work sits, and a write from a worktree
+# without the spec is the accepted risk of
+# adr-20261019-the-queue-is-one-file-written-against-a-revision.
 _QLEVEL="-"
 _queue_level() {
-  local spec="" line="" rc=0 roadmap
+  local rc=0
   _QLEVEL="-"
   [ "$1" = task ] || return 0
-  [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$2/task.md" ] || return 0
-  spec=$(jig_spec_link "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$2/task.md") || rc=$?
-  if [ "$rc" -ne 0 ] || [ -z "$spec" ]; then
-    return 0
-  fi
-  roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
-  [ -f "$roadmap" ] || return 0
-  rc=0
-  line=$(jig_spec_epic "$roadmap") || rc=$?
-  [ "$rc" -eq 0 ] || return 0
-  case "$line" in
-    *' open') _QLEVEL="epic:$spec" ;;
+  jig_task_epic "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$2/task.md" || rc=$?
+  case "$rc" in
+    2) jig_die "queue: task $2 links to more than one spec; keep one Spec: line" ;;
+    4) jig_die "queue: spec $_JIG_TASK_SPEC declares more than one epic; keep one Epic: line" ;;
   esac
+  [ "$_JIG_TASK_EPIC_STATE" != open ] || _QLEVEL="epic:$_JIG_TASK_SPEC"
   return 0
 }
 

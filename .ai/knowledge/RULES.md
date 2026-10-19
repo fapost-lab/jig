@@ -77,7 +77,8 @@
   same shape: under `<clone root>/.ai/runtime/revision/` a raise removes only digits-only names more
   than 16 below its own claim (`rmdir`, or `rm -f` for a file), and a claim that turns out stale —
   `jig_revision_bump`'s, or `jig_revision_claim`'s for a `jig queue` write — is withdrawn by
-  `rmdir` of the one name that call created. (adr-20261016-the-clone-revision-is-a-claimed-name,
+  `rmdir` of the one name that call created, except a claim of 0 that finds a name below its own,
+  which stays as the highest name. (adr-20261016-the-clone-revision-is-a-claimed-name,
   adr-20261019-the-queue-is-one-file-written-against-a-revision) Moving to trash is not deleting, and it has two users: housekeeping moves
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish` —
   while `epic --reopen` moves aside the partial restore it has just made itself. Each is reached
