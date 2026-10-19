@@ -23,6 +23,19 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
+## Updating existing project knowledge at the end of a task asks for a new review
+
+**What you see.** At the last step of a task your agent edits a knowledge document that already
+existed — a domain overview, a convention — and one the task's review read. `jig task ship`, marking
+the task ready or recording its knowledge decision then refuses: the review is stale, because the
+knowledge it relied on changed (`context`). `jig task receipt <id> --since-review` answers `full`.
+A new document the task adds, such as its own ADR, does not do this.
+
+**What it can cost you.** A full repeat review of a change nobody touched since it was reviewed.
+
+**What to do instead.** Leave the edit to an existing document for a task of its own, or accept the
+repeat review. Fixed by the task `consolidation-keeps-receipt-current`.
+
 ## You cannot approve a design yourself when your agent runs without questions
 
 **What you see.** Your settings have `autopilot.unattended: true`, a T3 or T4 task has a new or
