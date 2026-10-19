@@ -8,6 +8,27 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.30.0 — 2026-10-19
+
+A repeat review after a small fix no longer reads the whole change again. Nothing that gates a task
+changed: an edit after the review still asks for a review before the task is finished.
+
+- **A repeat review reads what changed since the review.** When a review's findings were fixed, or
+  anything else was edited after it, the next reviewer — still a fresh helper — reads only what
+  changed since the reviewed state and the findings marked fixed, not the whole change. On the
+  task that brought this, the last repeat review, after a fix for CI, read one file with three lines
+  added and one removed. It reads
+  everything again when the design or the project knowledge the review relied on changed since.
+  Applies to the code review and to the architecture review of risky tasks; an external reviewer
+  of another runtime gets the same narrowed diff in its prompt.
+- **`jig task receipt <id> --since-review`** prints that difference and says whether the repeat
+  review may be narrow (`narrow`), must read everything (`full`, with the reason, exit 1) or has
+  nothing to do (`none`). `--format paths` lists only the files.
+- **Nits are listed, not fixed.** A P3 finding is never fixed after the review, at any route depth:
+  it stays open and goes into the pull request. Fixing it would only have asked for another round.
+  A P2 is still fixed unless your route is lean. A fix you ask for yourself after the review is an
+  ordinary edit with a narrow repeat review.
+
 ## 0.29.0 — 2026-10-16
 
 Jig can now be read by a program. The commands that report state print JSON with `--json`, in one
