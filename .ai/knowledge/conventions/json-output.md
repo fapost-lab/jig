@@ -13,6 +13,7 @@ paths:
   - schemas/json.md
   - scripts/lib/forgecache.sh
   - scripts/lib/common.sh
+  - scripts/lib/queue.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-10-16
 ---
@@ -60,7 +61,10 @@ A command that writes a record a read reports (scripts/lib/common.sh, jig_record
 MUST:     call jig_record_changed right after the mv that lands the write, or call a
           writer that does (tests/json.t.sh lists every function with an mv that
           reaches neither)
-MUST NOT: raise the revision before the write lands, or once at the command's end
+MUST NOT: raise the revision before the write lands — except a write checked against the
+          caller's revision, which claims the next one first (jig_revision_claim), moves its
+          file into place right after, and then calls jig_record_changed (`jig queue`;
+          adr-20261019-the-queue-is-one-file-written-against-a-revision) — or once at the command's end
           instead of after each write — except a batch whose many writes are one
           change and that runs only as its own command, never inside $(...):
           housekeeping registers jig_on_exit 'jig_revision_bump' before its first
@@ -68,6 +72,13 @@ MUST NOT: raise the revision before the write lands, or once at the command's en
           jig_record_changed from the status page's own redraw — the saved
           knowledge counts (_status_counts_save) raise with jig_revision_bump, and
           only when a count changed, so the redraw does not mark itself again
+
+A write a program sends with the revision it read (scripts/lib/common.sh, jig_revision_claim)
+
+MUST:     take --revision <n> and, without it, check against the revision the command reads
+          itself before it reads what it changes; build the new file before the claim; refuse
+          a claim that does not stand with jig_fail stale-revision, having written nothing
+MUST NOT: write anything before the claim stands; land a second write under one claim
 ```
 
 ## Example

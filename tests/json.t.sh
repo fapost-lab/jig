@@ -384,6 +384,57 @@ while [ "$i" -lt 30 ]; do jig_revision_bump; i=$((i + 1)); done'
   assert_eq 190 "$OUT"
 }
 
+# jig_revision_claim (adr-20261019-the-queue-is-one-file-written-against-a-revision):
+# a claim stands only when nobody wrote since the revision the caller read.
+test_json_revision_claim_stands_only_on_the_revision_read() {
+  mkdir -p .ai/runtime/revision/100
+  _json_rev_script c.sh '
+for e in 99 100 100; do
+  rc=0; jig_revision_claim "$e" || rc=$?
+  printf "%s:%s " "$e" "$rc"
+done
+jig_revision_read'
+  _json_run_script c.sh
+  assert_eq 0 "$RC" "$ERR"
+  # 99: stale (100 is above it); 100: claims 101; 100 again: 101 is taken.
+  assert_eq "99:1 100:0 100:1 101" "$OUT"
+  # The stale claim of 100 was withdrawn: nothing but what was there and 101.
+  assert_eq "$(printf '100\n101')" "$(ls .ai/runtime/revision)"
+}
+
+# A cleared name created again, and a counter lost with .ai/runtime, are stale too.
+test_json_revision_claim_is_stale_when_the_read_revision_is_gone() {
+  mkdir -p .ai/runtime/revision/300
+  _json_rev_script c.sh '
+rc=0; jig_revision_claim 250 || rc=$?; printf "%s " "$rc"
+rc=0; jig_revision_claim 300 || rc=$?; printf "%s\n" "$rc"'
+  _json_run_script c.sh
+  assert_eq "1 0" "$OUT"
+  assert_eq "$(printf '300\n301')" "$(ls .ai/runtime/revision)"
+  # A revision above the clone's claims nothing: the counter never goes down.
+  _json_rev_script f.sh '
+rc=0; jig_revision_claim 400 || rc=$?; printf "%s\n" "$rc"
+jig_revision_read'
+  _json_run_script f.sh
+  assert_eq "$(printf '1\n301')" "$OUT"
+  assert_eq "$(printf '300\n301')" "$(ls .ai/runtime/revision)"
+  rm -rf .ai/runtime/revision
+  _json_rev_script l.sh '
+rc=0; jig_revision_claim 301 || rc=$?; printf "%s " "$rc"
+rc=0; jig_revision_claim 0 || rc=$?; printf "%s\n" "$rc"
+jig_revision_read'
+  local t0
+  t0=$(date +%s)
+  _json_run_script l.sh
+  assert_eq "1 0" "$(printf '%s\n' "$OUT" | sed -n 1p)"
+  # Revision 0 claims the time, the seed a first raise would make.
+  [ "$(printf '%s\n' "$OUT" | sed -n 2p)" -ge "$t0" ] || fail "claim of 0 did not seed with the time: $OUT"
+  # And 0 is stale once anything was written.
+  _json_rev_script z.sh 'rc=0; jig_revision_claim 0 || rc=$?; printf "%s\n" "$rc"; ls .ai/runtime/revision | wc -l | tr -d " "'
+  _json_run_script z.sh
+  assert_eq "$(printf '1\n1')" "$OUT"
+}
+
 # One counter per clone, in its main checkout: a write in a worktree is seen
 # from the main checkout, and the worktree keeps no counter of its own.
 test_json_revision_is_shared_by_every_worktree_of_the_clone() {
@@ -493,11 +544,14 @@ test_json_revision_rises_with_every_jig_write_and_not_with_a_read() {
   _json_raised "config set"
   jig config unset agent.git --local >/dev/null 2>&1 || fail "config unset failed"
   _json_raised "config unset"
+  jig queue set t-1 --priority 1 >/dev/null 2>&1 || fail "queue set failed"
+  _json_raised "queue set"
 
   jig task list >/dev/null
   jig task show t-1 >/dev/null
   jig task findings t-1 >/dev/null
   jig spec list >/dev/null
+  jig queue >/dev/null
   jig knowledge proposed >/dev/null 2>&1 || true
   _json_kept "a read"
 }
@@ -564,7 +618,7 @@ _json_unrecorded_writers() {
 
 test_json_no_jig_writer_misses_the_revision() {
   local lib="$JIG_HOME/scripts/lib" found
-  found=$(_json_unrecorded_writers "$lib/config.sh" "$lib/forgecache.sh" "$lib/frontmatter.sh" "$lib/task.sh" "$lib/spec.sh" "$lib/knowledge.sh")
+  found=$(_json_unrecorded_writers "$lib/config.sh" "$lib/forgecache.sh" "$lib/frontmatter.sh" "$lib/task.sh" "$lib/spec.sh" "$lib/knowledge.sh" "$lib/queue.sh")
   # The two that move something which is not a record yet: a partial restore
   # going to trash, and the build file knowledge new publishes and records.
   assert_eq "$(printf 'spec_trash_partial\nkm_source_link_body')" "$found" \

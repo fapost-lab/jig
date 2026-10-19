@@ -1,0 +1,560 @@
+# jig queue — priority, order and dependencies of tasks and epics, one queue
+# per clone (adr-20261019-the-queue-is-one-file-written-against-a-revision).
+#
+# The queue is one file, `.ai/runtime/queue` in the clone's main checkout
+# (jig_config_clone_root), shared by every worktree and never under git. This
+# command is its only writer. Every write is checked against the clone revision
+# its caller read (`--revision <n>`, or the one this command reads itself before
+# it reads the queue): it claims the revision right above that one
+# (jig_revision_claim) and is refused with the failure code `stale-revision`
+# when anybody wrote since. The new file is built first and moved into place
+# whole, so a reader sees the old queue or the new one, never half of either.
+#
+# The format, one record per line, fields separated by a tab:
+#
+#   # jig queue 1 — ...                    the version of the format, first line
+#   item <ref> <level> <position> <priority>
+#   dep  <ref> <on-ref> <reason>
+#
+# <ref> is `task:<id>` or `epic:<spec-id>`; <level> is `-` (the top) or the
+# `epic:<spec-id>` a task is built on; <position> a non-negative integer,
+# sparse (step 100) and compared only within a level; <priority> `0` (most
+# urgent) to `5`, or `-`. A line of any other kind is kept as it is, so a later
+# record kind (the pause requests of contract-queue) does not lose its lines
+# to a writer that predates it. A file of another format version is refused,
+# never rewritten.
+# shellcheck shell=bash
+
+QUEUE_USAGE="usage: jig queue [list] | jig queue set <ref> --priority <0-5|none> | jig queue move <ref> (--before <ref> | --after <ref> | --top | --bottom) | jig queue depend <ref> --on <ref> --reason <text> | jig queue undepend <ref> --on <ref> | jig queue remove <ref>; every write takes [--revision <n>] [--json]; <ref> is task:<id>, epic:<spec-id> or <id>"
+
+QUEUE_FORMAT=1
+QUEUE_STEP=100
+
+# Set by cmd_queue when `--json` is among the arguments; the producer runs in
+# json_run's subshell and inherits it.
+_QUEUE_AS_JSON=""
+
+# cmd_queue — `--json` anywhere runs the whole command as the producer of
+# json_run (conventions/json-output.md), so every refusal is an envelope too.
+cmd_queue() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      _QUEUE_AS_JSON=1
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _queue_main "$@"
+      return
+    fi
+  done
+  _queue_main "$@"
+}
+
+_queue_main() {
+  local sub="list" arg args=()
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  if [ "${#args[@]}" -gt 0 ]; then
+    sub=${args[0]}
+    args=("${args[@]:1}")
+  fi
+  case "$sub" in
+    list) _queue_list ${args[@]+"${args[@]}"} ;;
+    set | move | depend | undepend | remove) _queue_write "$sub" ${args[@]+"${args[@]}"} ;;
+    help | -h | --help) printf '%s\n' "$QUEUE_USAGE" ;;
+    *) jig_fail usage "queue: unknown subcommand: $sub; $QUEUE_USAGE" ;;
+  esac
+}
+
+# --- where the queue is -------------------------------------------------------
+
+# queue_file — the queue's path in the clone's main checkout.
+queue_file() {
+  local root
+  root=$(jig_config_clone_root) || jig_die "queue: cannot find the clone's main checkout"
+  printf '%s/%s/runtime/queue\n' "$root" "$JIG_AI_DIR"
+}
+
+# --- references -----------------------------------------------------------------
+
+# _queue_ref <text> <what> — _QREF <- the canonical reference `task:<id>` or
+# `epic:<id>`, _QKIND and _QID its parts. A bare id is a task. Refused with
+# `usage` when it is not a reference at all, and with `not-found` when it names
+# no task or epic of this clone: a task has a state file in the workspace, an
+# epic is a spec in this checkout whose roadmap declares an epic branch. The id
+# passes jig_valid_id before it becomes a path (RULES.md).
+_QREF=""
+_QKIND=""
+_QID=""
+_queue_ref() {
+  local rc=0 line
+  _queue_ref_form "$1" "$2"
+  if [ "$_QKIND" = task ]; then
+    [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$_QID/state" ] \
+      || jig_fail not-found "queue: no task $_QID in this clone"
+    return 0
+  fi
+  [ -f "$JIG_PROJECT/$JIG_AI_DIR/specs/$_QID/roadmap.md" ] \
+    || jig_fail not-found "queue: no spec $_QID in this checkout"
+  line=$(jig_spec_epic "$JIG_PROJECT/$JIG_AI_DIR/specs/$_QID/roadmap.md") || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$line" ]; then
+    jig_fail not-found "queue: spec $_QID declares no epic (one Epic: line in its roadmap)"
+  fi
+  return 0
+}
+
+# _queue_ref_form <text> <what> — _queue_ref's grammar alone: _QREF, _QKIND
+# and _QID, refused with `usage` when <text> is not a reference, and nothing
+# asked about what it names.
+_queue_ref_form() {
+  local text="$1" what="$2"
+  case "$text" in
+    task:*) _QKIND=task; _QID=${text#task:} ;;
+    epic:*) _QKIND=epic; _QID=${text#epic:} ;;
+    *:*) jig_fail usage "queue: $what is not task:<id>, epic:<id> or <id>: $text" ;;
+    *) _QKIND=task; _QID=$text ;;
+  esac
+  jig_valid_id "$_QID" || jig_fail usage "queue: $what is not a valid id: $text"
+  _QREF="$_QKIND:$_QID"
+}
+
+# _queue_level <kind> <id> — _QLEVEL <- the level the item belongs to: `-` for
+# an epic and for a task built on no epic, `epic:<spec>` for a task whose
+# `Spec:` line names a spec this checkout has and whose roadmap declares an
+# open epic (jig_spec_link, jig_spec_epic: the rule `task start` cuts by).
+_QLEVEL="-"
+_queue_level() {
+  local spec="" line="" rc=0 roadmap
+  _QLEVEL="-"
+  [ "$1" = task ] || return 0
+  [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$2/task.md" ] || return 0
+  spec=$(jig_spec_link "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$2/task.md") || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$spec" ]; then
+    return 0
+  fi
+  roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
+  [ -f "$roadmap" ] || return 0
+  rc=0
+  line=$(jig_spec_epic "$roadmap") || rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  case "$line" in
+    *' open') _QLEVEL="epic:$spec" ;;
+  esac
+  return 0
+}
+
+# --- the file -------------------------------------------------------------------
+
+# _queue_apply <file> — print the queue <file> (absent: empty) with one change
+# applied, in canonical order: items by level (the top first) and position,
+# then dependencies, then the lines of other kinds as they were. The change
+# comes through the environment (conventions/shell.md: free text never through
+# `awk -v`): Q_OP set|move|depend|undepend|remove|read, Q_REF, Q_LEVEL, Q_PRIO,
+# Q_PLACE top|bottom|before|after, Q_ANCHOR, Q_ON, Q_REASON. Exit status names
+# a refusal: 3 the anchor is not in the queue, 4 the anchor is on another
+# level, 5 a reference to itself, 6 another format version, 7 a dependency
+# cycle, 8 the item or dependency is not in the queue.
+_queue_apply() {
+  local file="$1"
+  [ -f "$file" ] || file=/dev/null
+  Q_FORMAT="$QUEUE_FORMAT" Q_STEP="$QUEUE_STEP" awk -F '\t' '
+    function num(s) { return s + 0 }
+    function before(a, b) {   # item a sorts before item b
+      if (lvl[a] != lvl[b]) {
+        if (lvl[a] == "-") return 1
+        if (lvl[b] == "-") return 0
+        return lvl[a] < lvl[b]
+      }
+      if (num(pos[a]) != num(pos[b])) return num(pos[a]) < num(pos[b])
+      return ref[a] < ref[b]
+    }
+    function maxpos(level,   i, m) {
+      m = 0
+      for (i = 1; i <= n; i++) if (alive[i] && lvl[i] == level && num(pos[i]) > m) m = num(pos[i])
+      return m
+    }
+    function add(r, level,   i) {
+      i = ++n; ref[i] = r; lvl[i] = level; pri[i] = "-"; alive[i] = 1; idx[r] = i
+      pos[i] = maxpos(level) + step
+      return i
+    }
+    # place item i into its level at the place asked: between its neighbours
+    # when there is room, otherwise the whole level respaced in this one write.
+    function place(i, how, anchor,   m, j, k, s, t, lo, hi, a) {
+      m = 0
+      for (j = 1; j <= n; j++) if (alive[j] && j != i && lvl[j] == lvl[i]) s[++m] = j
+      for (j = 2; j <= m; j++) { t = s[j]; k = j - 1
+        while (k >= 1 && before(t, s[k])) { s[k + 1] = s[k]; k-- }
+        s[k + 1] = t }
+      if (how == "top") k = 0
+      else if (how == "bottom") k = m
+      else {
+        a = idx[anchor]
+        for (j = 1; j <= m; j++) if (s[j] == a) break
+        k = (how == "before") ? j - 1 : j
+      }
+      lo = (k > 0) ? num(pos[s[k]]) : 0
+      if (k == m) { pos[i] = lo + step; return }
+      hi = num(pos[s[k + 1]])
+      if (hi - lo >= 2) { pos[i] = lo + int((hi - lo) / 2); return }
+      t = 0
+      for (j = 1; j <= m; j++) {
+        if (j == k + 1) pos[i] = (++t) * step
+        pos[s[j]] = (++t) * step
+      }
+    }
+    function reaches(from, to,   j, seen, stack, sp, cur) {
+      sp = 0; stack[++sp] = from
+      while (sp > 0) {
+        cur = stack[sp--]
+        if (cur == to) return 1
+        if (cur in seen) continue
+        seen[cur] = 1
+        for (j = 1; j <= dn; j++) if (dalive[j] && dsub[j] == cur) stack[++sp] = don[j]
+      }
+      return 0
+    }
+    BEGIN {
+      step = ENVIRON["Q_STEP"] + 0
+      op = ENVIRON["Q_OP"]; r = ENVIRON["Q_REF"]; level = ENVIRON["Q_LEVEL"]
+      n = 0; dn = 0; on = 0
+    }
+    FNR == 1 && /^# jig queue / {
+      split($0, w, " ")
+      if (w[4] != ENVIRON["Q_FORMAT"]) { bad = 6; exit 6 }
+      next
+    }
+    /^#/ || /^[ \t]*$/ { next }
+    $1 == "item" && NF >= 5 {
+      if ($2 in idx) next
+      i = ++n; ref[i] = $2; lvl[i] = $3; pos[i] = $4; pri[i] = $5; alive[i] = 1; idx[$2] = i
+      next
+    }
+    $1 == "dep" && NF >= 4 {
+      k = $2 SUBSEP $3
+      if (k in didx) next
+      j = ++dn; dsub[j] = $2; don[j] = $3; drea[j] = $4; dalive[j] = 1; didx[k] = j
+      next
+    }
+    { other[++on] = $0 }
+    END {
+      if (bad) exit bad
+      if (op == "set" || op == "move" || op == "depend") {
+        if (r in idx) {
+          i = idx[r]
+          if (lvl[i] != level) { lvl[i] = level; pos[i] = maxpos(level) + step }
+          fresh = 0
+        } else { i = add(r, level); fresh = 1 }
+      }
+      if (op == "set") pri[i] = ENVIRON["Q_PRIO"]
+      else if (op == "move") {
+        how = ENVIRON["Q_PLACE"]; anchor = ENVIRON["Q_ANCHOR"]
+        if (how == "before" || how == "after") {
+          if (anchor == r) exit 5
+          if (!(anchor in idx)) exit 3
+          if (lvl[idx[anchor]] != lvl[i]) exit 4
+        }
+        place(i, how, anchor)
+      } else if (op == "depend") {
+        o = ENVIRON["Q_ON"]
+        if (o == r) exit 5
+        if (reaches(o, r)) exit 7
+        k = r SUBSEP o
+        if (k in didx) drea[didx[k]] = ENVIRON["Q_REASON"]
+        else { j = ++dn; dsub[j] = r; don[j] = o; drea[j] = ENVIRON["Q_REASON"]; dalive[j] = 1; didx[k] = j }
+      } else if (op == "undepend") {
+        k = r SUBSEP ENVIRON["Q_ON"]
+        if (!(k in didx)) exit 8
+        dalive[didx[k]] = 0
+      } else if (op == "remove") {
+        if (!(r in idx)) exit 8
+        alive[idx[r]] = 0
+        for (j = 1; j <= dn; j++) if (dsub[j] == r) dalive[j] = 0
+      }
+      m = 0
+      for (j = 1; j <= n; j++) if (alive[j]) s[++m] = j
+      for (j = 2; j <= m; j++) { t = s[j]; k = j - 1
+        while (k >= 1 && before(t, s[k])) { s[k + 1] = s[k]; k-- }
+        s[k + 1] = t }
+      printf "# jig queue %s — written by `jig queue` only; do not edit by hand\n", ENVIRON["Q_FORMAT"]
+      for (j = 1; j <= m; j++) printf "item\t%s\t%s\t%.0f\t%s\n", ref[s[j]], lvl[s[j]], num(pos[s[j]]), pri[s[j]]
+      md = 0
+      for (j = 1; j <= dn; j++) if (dalive[j]) d[++md] = j
+      for (j = 2; j <= md; j++) { t = d[j]; k = j - 1
+        while (k >= 1 && (dsub[t] < dsub[d[k]] || (dsub[t] == dsub[d[k]] && don[t] < don[d[k]]))) { d[k + 1] = d[k]; k-- }
+        d[k + 1] = t }
+      for (j = 1; j <= md; j++) printf "dep\t%s\t%s\t%s\n", dsub[d[j]], don[d[j]], drea[d[j]]
+      for (j = 1; j <= on; j++) print other[j]
+    }
+  ' "$file"
+}
+
+# _queue_commit <expected> <new> <file> — land the queue built in <new> as
+# <file>, if nobody wrote in this clone since revision <expected>: claim the
+# revision above it (jig_revision_claim), move the file into place, then raise
+# the revision again (jig_record_changed), because the claim raised it before
+# the write landed and a read in between took the old queue with it.
+_queue_commit() {
+  local expected="$1" new="$2" file="$3" rc=0
+  jig_revision_claim "$expected" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) jig_fail stale-revision "queue: the clone changed since revision $expected; read the queue again and retry" ;;
+    *) jig_die "queue: cannot claim the clone revision in $(jig_revision_dir)" ;;
+  esac
+  mv "$new" "$file"
+  jig_record_changed
+}
+
+# --- writes ---------------------------------------------------------------------
+
+_queue_need_value() {
+  [ "$2" -ge 2 ] || jig_fail usage "queue: $1 requires a value"
+}
+
+_queue_write() {
+  local sub="$1" target="" rev="" rev_given="" prio="" place="" anchor="" on="" reason="" seen_reason=""
+  local file new rc=0 expected ref level
+  shift
+  [ $# -ge 1 ] || jig_fail usage "queue $sub: missing <ref>; $QUEUE_USAGE"
+  case "$1" in
+    -*) jig_fail usage "queue $sub: missing <ref> before $1; $QUEUE_USAGE" ;;
+  esac
+  target=$1
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --revision) _queue_need_value "$1" $#; rev=$2; rev_given=1; shift 2 ;;
+      --priority)
+        [ "$sub" = set ] || jig_fail usage "queue $sub: unexpected argument: $1"
+        _queue_need_value "$1" $#; prio=$2; shift 2 ;;
+      --before | --after)
+        [ "$sub" = move ] || jig_fail usage "queue $sub: unexpected argument: $1"
+        _queue_need_value "$1" $#
+        [ -z "$place" ] || jig_fail usage "queue move: give one of --before, --after, --top, --bottom"
+        place=${1#--}; anchor=$2; shift 2 ;;
+      --top | --bottom)
+        [ "$sub" = move ] || jig_fail usage "queue $sub: unexpected argument: $1"
+        [ -z "$place" ] || jig_fail usage "queue move: give one of --before, --after, --top, --bottom"
+        place=${1#--}; shift ;;
+      --on)
+        [ "$sub" = depend ] || [ "$sub" = undepend ] || jig_fail usage "queue $sub: unexpected argument: $1"
+        _queue_need_value "$1" $#; on=$2; shift 2 ;;
+      --reason)
+        [ "$sub" = depend ] || jig_fail usage "queue $sub: unexpected argument: $1"
+        _queue_need_value "$1" $#; reason=$2; seen_reason=1; shift 2 ;;
+      *) jig_fail usage "queue $sub: unexpected argument: $1" ;;
+    esac
+  done
+  # A revision is digits without a leading zero: `08` is not one, and the
+  # shell would read it as octal.
+  [ -z "$rev_given" ] || [ -n "$rev" ] || jig_fail usage "queue: --revision is empty"
+  case "$rev" in
+    '' | 0) ;;
+    [1-9]*)
+      case "$rev" in
+        *[!0-9]*) jig_fail usage "queue: --revision is not a revision: $rev" ;;
+      esac ;;
+    *) jig_fail usage "queue: --revision is not a revision: $rev" ;;
+  esac
+  case "$sub" in
+    set)
+      [ -n "$prio" ] || jig_fail usage "queue set: --priority is required"
+      case "$prio" in
+        [0-5]) ;;
+        none) prio="-" ;;
+        *) jig_fail usage "queue set: --priority is 0 (most urgent) to 5, or none: $prio" ;;
+      esac ;;
+    move) [ -n "$place" ] || jig_fail usage "queue move: give one of --before, --after, --top, --bottom" ;;
+    depend)
+      [ -n "$on" ] || jig_fail usage "queue depend: --on is required"
+      [ -n "$seen_reason" ] || jig_fail usage "queue depend: --reason is required: a dependency without a reason is not one"
+      # One line in the file: tabs and line breaks become spaces.
+      reason=$(printf '%s' "$reason" | tr '\t\r\n' '   ')
+      case "$reason" in
+        *[![:space:]]*) ;;
+        *) jig_fail usage "queue depend: --reason is empty" ;;
+      esac ;;
+    undepend) [ -n "$on" ] || jig_fail usage "queue undepend: --on is required" ;;
+  esac
+
+  jig_require_init
+  # The revision this write is checked against: the caller's, or the one read
+  # here before the queue is, so the queue read below is never newer than it.
+  if [ -n "$rev" ]; then
+    expected=$rev
+  else
+    expected=$(jig_revision_read)
+  fi
+
+  if [ "$sub" = remove ] || [ "$sub" = undepend ]; then
+    # Taking something out needs nothing behind the reference: the task may
+    # have gone to trash, the spec been retired, and the item must still go.
+    _queue_ref_form "$target" "<ref>"
+    level="-"
+  else
+    _queue_ref "$target" "<ref>"
+    _queue_level "$_QKIND" "$_QID"
+    level=$_QLEVEL
+  fi
+  ref=$_QREF
+  if [ -n "$anchor" ]; then
+    # An anchor that names nothing in this clone, or is not queued, is not-found.
+    _queue_ref "$anchor" "--$place"
+    anchor=$_QREF
+  fi
+  if [ -n "$on" ]; then
+    if [ "$sub" = depend ]; then
+      _queue_ref "$on" "--on"
+      on=$_QREF
+    else
+      # Undepend needs no task behind the reference: it may be gone.
+      _queue_ref_form "$on" "--on"
+      on=$_QREF
+    fi
+  fi
+
+  file=$(queue_file)
+  mkdir -p "${file%/*}" || jig_die "queue: cannot create ${file%/*}"
+  new="$file.tmp.$$"
+  jig_cleanup_add "$new"
+  rc=0
+  Q_OP="$sub" Q_REF="$ref" Q_LEVEL="$level" Q_PRIO="$prio" Q_PLACE="$place" \
+    Q_ANCHOR="$anchor" Q_ON="$on" Q_REASON="$reason" _queue_apply "$file" > "$new" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) jig_fail not-found "queue move: $anchor is not in the queue" ;;
+    4) jig_fail usage "queue move: $anchor is on another level of the queue than $ref" ;;
+    5) jig_fail usage "queue $sub: $ref cannot be placed against or depend on itself" ;;
+    6) jig_die "queue: $file is in another format than this jig writes ($QUEUE_FORMAT); upgrade jig" ;;
+    7) jig_fail usage "queue depend: $on already waits for $ref; the dependency would close a cycle" ;;
+    8)
+      if [ "$sub" = undepend ]; then
+        jig_fail not-found "queue undepend: $ref does not wait for $on"
+      fi
+      jig_fail not-found "queue $sub: $ref is not in the queue" ;;
+    *) jig_die "queue: cannot read $file" ;;
+  esac
+  _queue_commit "$expected" "$new" "$file"
+
+  if [ -n "$_QUEUE_AS_JSON" ]; then
+    _queue_item_json "$file" "$ref"
+    return 0
+  fi
+  case "$sub" in
+    remove) printf 'queue: %s removed\n' "$ref" ;;
+    undepend) printf 'queue: %s no longer waits for %s\n' "$ref" "$on" ;;
+    depend) printf 'queue: %s waits for %s\n' "$ref" "$on" ;;
+    *) _queue_item_line "$file" "$ref" ;;
+  esac
+}
+
+# _queue_item_line <file> <ref> — `queue: <ref> at <position> on <level>, priority <p>`.
+_queue_item_line() {
+  Q_REF="$2" awk -F '\t' '
+    $1 == "item" && $2 == ENVIRON["Q_REF"] {
+      printf "queue: %s at %s on %s, priority %s\n", $2, $4, ($3 == "-" ? "the top level" : $3), ($5 == "-" ? "none" : $5)
+      found = 1
+    }
+    END { if (!found) exit 1 }
+  ' "$1"
+}
+
+# _queue_item_json <file> <ref> — the producer's data after a write:
+# {"ref": <ref>, "item": {...} | null} (schemas/json.md, "Queue writes").
+_queue_item_json() {
+  local file="$1" ref="$2" kind lvl pos pri deps="" first=1 line sub o reason out
+  local item="null"
+  lvl="" pos="" pri=""
+  while IFS= read -r line; do
+    case "$line" in
+      item$'\t'*)
+        IFS=$'\t' read -r _ sub lvl pos pri <<EOF
+$line
+EOF
+        [ "$sub" = "$ref" ] || { lvl="" ; continue; }
+        item=found
+        break ;;
+    esac
+  done < "$file"
+  json_quote "$ref"
+  out="{\"ref\":$_JSON,\"item\":"
+  if [ "$item" = found ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        dep$'\t'*)
+          IFS=$'\t' read -r _ sub o reason <<EOF
+$line
+EOF
+          [ "$sub" = "$ref" ] || continue
+          [ -n "$first" ] || deps="$deps,"
+          first=""
+          json_quote "$o"; deps="$deps{\"on\":$_JSON"
+          json_quote "$reason"; deps="$deps,\"reason\":$_JSON}" ;;
+      esac
+    done < "$file"
+    kind=${ref%%:*}
+    json_quote "$ref"; out="$out{\"ref\":$_JSON"
+    json_quote "$kind"; out="$out,\"kind\":$_JSON"
+    json_quote "${ref#*:}"; out="$out,\"id\":$_JSON"
+    if [ "$lvl" = "-" ]; then out="$out,\"level\":null"; else json_quote "$lvl"; out="$out,\"level\":$_JSON"; fi
+    out="$out,\"position\":$pos"
+    json_int_or_null "$pri"; out="$out,\"priority\":$_JSON"
+    out="$out,\"depends_on\":[$deps]}"
+  else
+    out="${out}null"
+  fi
+  printf '%s}\n' "$out"
+}
+
+# --- the listing -------------------------------------------------------------------
+
+# _queue_list — the queue for a person: the top level in order, each epic's
+# tasks indented under it (an epic not queued itself is listed after the top
+# level), every item with its priority and what it waits for.
+_queue_list() {
+  [ $# -eq 0 ] || jig_fail usage "queue list: unexpected argument: $1"
+  [ -z "$_QUEUE_AS_JSON" ] || jig_fail usage "queue list: --json is not offered yet"
+  jig_require_init
+  local file
+  file=$(queue_file)
+  if [ ! -f "$file" ]; then
+    printf 'queue: empty\n'
+    return 0
+  fi
+  local rc=0 canonical
+  # Read in the writer's canonical order, so a listing never depends on how
+  # the lines happen to lie in the file.
+  canonical=$(Q_OP=read Q_REF="" _queue_apply "$file") || rc=$?
+  case "$rc" in
+    0) ;;
+    6) jig_die "queue: $file is in another format than this jig reads ($QUEUE_FORMAT); upgrade jig" ;;
+    *) jig_die "queue: cannot read $file" ;;
+  esac
+  awk -F '\t' '
+    function show(i, indent,   j, p) {
+      p = (pri[i] == "-") ? "-" : "P" pri[i]
+      printf "%s%s  %s\n", indent, ref[i], p
+      for (j = 1; j <= dn; j++) if (dsub[j] == ref[i]) printf "%s    waits for %s: %s\n", indent, don[j], drea[j]
+    }
+    $1 == "item" { i = ++n; ref[i] = $2; lvl[i] = $3; pri[i] = $5; queued[$2] = 1 }
+    $1 == "dep" { j = ++dn; dsub[j] = $2; don[j] = $3; drea[j] = $4 }
+    END {
+      if (n == 0) { print "queue: empty"; exit }
+      for (i = 1; i <= n; i++) {
+        if (lvl[i] != "-") continue
+        show(i, "")
+        for (k = 1; k <= n; k++) if (lvl[k] == ref[i]) show(k, "  ")
+      }
+      for (i = 1; i <= n; i++) {
+        if (lvl[i] == "-" || (lvl[i] in queued) || (lvl[i] in head)) continue
+        head[lvl[i]] = 1
+        printf "%s  (not queued)\n", lvl[i]
+        for (k = 1; k <= n; k++) if (lvl[k] == lvl[i]) show(k, "  ")
+      }
+    }
+  ' <<EOF
+$canonical
+EOF
+}

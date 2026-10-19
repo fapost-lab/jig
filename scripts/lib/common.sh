@@ -2152,6 +2152,47 @@ jig_record_changed() {
   jig_status_page_dirty
 }
 
+# jig_revision_claim <expected> — claim the revision right above <expected>,
+# for a write that must be refused when the clone changed after its caller
+# read <expected> (adr-20261019-the-queue-is-one-file-written-against-a-revision).
+#
+# The claim is jig_revision_bump's `mkdir <expected+1>` made exact. Before it,
+# the highest name must be <expected> (for 0, there must be no name at all):
+# otherwise the call is stale and claims nothing — a revision from before a
+# lost `.ai/runtime`, from the future, or simply old. Of two writers holding
+# one revision exactly one then creates the name (0 claims the time in
+# seconds, the seed of a first raise). After it, the claim must be the highest
+# name; when a higher one appeared in between — a cleared name created again,
+# another writer's raise — it is withdrawn: `rmdir` of the digits-only name
+# this call just created, never anything else. A claim is withdrawn only from
+# under a higher name, so the clone's revision never goes down.
+#
+# The claim raises the revision *before* the caller's write lands. The caller
+# therefore moves its file into place and then calls jig_record_changed, so
+# that a read which took the claimed revision with the old data sees a change
+# again. <expected> is validated by the caller: digits, no leading zero.
+# Returns 0 claimed, 1 stale, 2 when the counter cannot be created at all.
+jig_revision_claim() {
+  local expected="$1" dir next
+  dir=$(jig_revision_dir) || return 2
+  if [ ! -d "$dir" ] && ! mkdir -p "$dir" 2>/dev/null; then
+    return 2
+  fi
+  _jig_revision_scan "$dir"
+  if [ "$expected" = 0 ]; then
+    [ -z "$_JIG_REV" ] || return 1
+    next=$(date +%s)
+  else
+    [ "$_JIG_REV" = "$expected" ] || return 1
+    next=$((expected + 1))
+  fi
+  mkdir "$dir/$next" 2>/dev/null || return 1
+  _jig_revision_scan "$dir"
+  [ "$_JIG_REV" != "$next" ] || return 0
+  rmdir "$dir/$next" 2>/dev/null || true
+  return 1
+}
+
 # jig_hash_git_dir — the git directory every hash in this project is computed
 # against, empty when the project is not in a repository at all. Asked of git
 # once per shell that asks, because it costs a git startup and `jig status`

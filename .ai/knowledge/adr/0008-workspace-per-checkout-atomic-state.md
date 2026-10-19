@@ -114,3 +114,14 @@ write the same `state` file.
 > (adr-20261016-the-clone-revision-is-a-claimed-name). It passes the same test — one counter for
 > every worktree is a fact about the clone — but it is not derived: lost, it cannot be rebuilt,
 > only restarted, which is why it restarts from the time in seconds rather than from 1.
+
+> **Amendment (2026-10-19).** A fourth user of the per-clone runtime exception, and the first that
+> holds data a person wrote: the queue, `.ai/runtime/queue` in the main checkout
+> (adr-20261019-the-queue-is-one-file-written-against-a-revision). It passes the test of
+> **whose it is** — the priority, order and dependencies of the clone's tasks are one for every
+> worktree, as the maintainer settled for the contract-queue spec (2026-10-14) — but not "derived and
+> rebuilt if it is lost": lost with `.ai/runtime`, it is gone, and a write carrying a revision from
+> before the loss is refused. That loss is accepted: the queue is a plan, not a record of work done,
+> and it is rebuilt by ordering again. It is still not task data in this ADR's sense — no task's
+> `state`, artifacts or lifecycle live there, and a task is whole without it — and workspaces stay
+> exactly as above.
