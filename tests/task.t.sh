@@ -4586,7 +4586,7 @@ test_task_receipt_writes_all_keys() {
   assert_file .ai/workspace/tasks/T-1/receipt
   local keys
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' .ai/workspace/tasks/T-1/receipt | tr '\n' ' ')
-  assert_eq "stage stages reviewed_at tree diff context base_commit head design findings " "$keys"
+  assert_eq "stage stages reviewed_at tree diff context merge_base base_commit head design findings " "$keys"
 
   assert_file_contains .ai/workspace/tasks/T-1/receipt "stage: review"
   assert_file_contains .ai/workspace/tasks/T-1/receipt "reviewed_at: $(date +%Y-%m-%d)"
@@ -7815,4 +7815,253 @@ test_task_actions_leave_no_checkout_record_in_the_tasks_worktree() {
   assert_contains "$OUT" '"reason":"task ship: review is stale: '
   after=$(cd "$wt" && find .ai/runtime -type f 2>/dev/null | LC_ALL=C sort; cat .ai/runtime/checkout 2>/dev/null)
   assert_eq "$before" "$after"
+}
+
+# --- receipt --since-review (re-review reads what changed since the review) ---
+
+# A task with one committed file, reviewed: the starting point of most of the
+# since-review tests below.
+_since_review_setup() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'one\n' > work.txt
+  printf 'keep\n' > steady.txt
+  git add work.txt steady.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+}
+
+test_task_receipt_records_the_merge_base_its_diff_was_measured_from() {
+  _since_review_setup
+  local mb
+  mb=$(sed -n 's/^merge_base:[[:space:]]*//p' .ai/workspace/tasks/T-1/receipt)
+  [ -n "$mb" ] || fail "receipt has no merge_base"
+  git cat-file -e "$mb^{commit}" || fail "merge_base is not a commit: $mb"
+  assert_eq "$(git merge-base HEAD "$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^task/' | head -1)")" "$mb"
+}
+
+test_task_receipt_since_review_is_none_when_the_receipt_is_current() {
+  _since_review_setup
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC"
+  assert_eq "re-review: none — the receipt is current" "$OUT"
+}
+
+test_task_receipt_since_review_is_narrow_after_editing_a_task_file() {
+  _since_review_setup
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "re-review: narrow (diff)"
+  assert_contains "$OUT" "changed since review: 1 paths"
+  assert_contains "$OUT" "diff --git a/work.txt b/work.txt"
+  assert_contains "$OUT" "-one"
+  assert_contains "$OUT" "+two"
+  assert_not_contains "$OUT" "steady.txt"
+}
+
+test_task_receipt_since_review_includes_a_new_untracked_file() {
+  _since_review_setup
+  printf 'fresh\n' > added.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "re-review: narrow (diff)"
+  assert_contains "$OUT" "changed since review: 1 paths"
+  assert_contains "$OUT" "added.txt"
+  assert_contains "$OUT" "+fresh"
+}
+
+test_task_receipt_since_review_leaves_out_what_a_base_merge_brought_in() {
+  _since_review_setup
+  local base
+  base=$(git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^task/' | head -1)
+  git checkout -q "$base"
+  printf 'someone else\n' > other.txt
+  git add other.txt
+  git commit -q -m "unrelated change on the base"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+  assert_file other.txt
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "re-review: narrow (diff)"
+  assert_contains "$OUT" "changed since review: 1 paths"
+  assert_contains "$OUT" "diff --git a/work.txt b/work.txt"
+  assert_not_contains "$OUT" "other.txt"
+}
+
+test_task_receipt_since_review_paths_format_prints_only_paths() {
+  _since_review_setup
+  printf 'two\n' > work.txt
+  printf 'fresh\n' > added.txt
+
+  run jig task receipt T-1 --since-review --format paths
+  assert_eq 0 "$RC"
+  assert_eq "added.txt
+work.txt" "$OUT"
+}
+
+test_task_receipt_since_review_paths_format_sends_none_to_stderr() {
+  _since_review_setup
+  local out err
+  out=$(jig task receipt T-1 --since-review --format paths 2>/dev/null)
+  err=$(jig task receipt T-1 --since-review --format paths 2>&1 >/dev/null)
+  assert_eq "" "$out"
+  assert_contains "$err" "re-review: none"
+}
+
+test_task_receipt_since_review_ledger_only_change_is_narrow_with_zero_paths() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'one\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task finding add T-1 --severity P2 --where - --summary "minor" >/dev/null
+  jig task receipt T-1 --stage review >/dev/null
+  jig task finding set T-1 F1 fixed >/dev/null
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "re-review: narrow (findings)"
+  assert_contains "$OUT" "changed since review: 0 paths"
+  assert_not_contains "$OUT" "diff --git"
+}
+
+test_task_receipt_since_review_is_full_when_the_design_changed() {
+  _since_review_setup
+  printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
+  jig task receipt T-1 --stage review >/dev/null
+  printf '# design v2\n' > .ai/workspace/tasks/T-1/design.md
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — "
+}
+
+test_task_receipt_since_review_is_full_when_the_knowledge_changed() {
+  task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  _task_receipt_commit_work_convention
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'one\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+
+  git checkout -q "$base"
+  printf 'v2\n' >> .ai/knowledge/rule-work.md
+  git commit -q -am "the base rewrites the convention"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — the knowledge the review relied on changed"
+}
+
+test_task_receipt_since_review_is_full_for_a_legacy_tree_receipt() {
+  _since_review_setup
+  grep -v '^diff:' .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — the receipt predates the task's own diff"
+}
+
+test_task_receipt_since_review_is_full_without_a_receipt() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — "
+}
+
+test_task_receipt_since_review_is_full_for_a_receipt_without_merge_base() {
+  _since_review_setup
+  sed '/^merge_base:/d' .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — "
+}
+
+test_task_receipt_since_review_is_full_for_an_empty_merge_base() {
+  _since_review_setup
+  sed 's/^merge_base:.*/merge_base: /' .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — "
+}
+
+test_task_receipt_since_review_is_full_when_the_receipt_tree_is_unreadable() {
+  _since_review_setup
+  sed 's/^tree:.*/tree: 0000000000000000000000000000000000000001/' .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — "
+}
+
+test_task_receipt_since_review_full_in_paths_format_goes_to_stderr() {
+  task_setup_clean
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+
+  local out err
+  out=$(jig task receipt T-1 --since-review --format paths 2>/dev/null) && fail "expected exit 1"
+  err=$(jig task receipt T-1 --since-review --format paths 2>&1 >/dev/null) || true
+  assert_eq "" "$out"
+  assert_contains "$err" "re-review: full — "
+}
+
+test_task_receipt_since_review_is_full_when_the_branch_is_checked_out_nowhere() {
+  _since_review_setup
+  git checkout -q main
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — "
+}
+
+test_task_receipt_since_review_with_stage_dies() {
+  _since_review_setup
+  run jig task receipt T-1 --since-review --stage review
+  [ "$RC" -ne 0 ] || fail "expected a non-zero exit"
+  assert_contains "$OUT" "--since-review takes no --stage or --check"
+}
+
+test_task_receipt_since_review_with_check_dies() {
+  _since_review_setup
+  run jig task receipt T-1 --since-review --check
+  [ "$RC" -ne 0 ] || fail "expected a non-zero exit"
+  assert_contains "$OUT" "--since-review takes no --stage or --check"
+}
+
+test_task_receipt_format_without_since_review_dies() {
+  _since_review_setup
+  run jig task receipt T-1 --check --format paths
+  [ "$RC" -ne 0 ] || fail "expected a non-zero exit"
+  assert_contains "$OUT" "--format goes with --since-review"
 }

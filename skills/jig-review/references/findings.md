@@ -21,6 +21,10 @@ report its findings in the conversation as before.
 | P2 | Worth fixing; the code is correct without it | no |
 | P3 | A nit | no |
 
+A P3 is never fixed after the review, at any depth: it stays `open` and is listed in the pull
+request. P2 is fixed at full depth, and only left open on lean. A fix the human asks for after the
+review is an ordinary edit followed by a re-review.
+
 State the concrete input that breaks it, or it is not a P0 or P1. When unsure between two
 levels, pick the higher one: a blocking finding costs a re-review, a missed one ships.
 
@@ -28,7 +32,8 @@ levels, pick the higher one: a blocking finding costs a re-review, a missed one 
 
 - **Review records** every finding as `open`.
 - **Implementation fixes** it and sets `fixed`. The author never closes a finding.
-- **Re-review closes**: after the fixes, the reviewer reads each `fixed` finding against the
+- **Re-review closes**: it starts from `jig task receipt <id> --since-review`, which says whether
+  it may read only what changed. After the fixes, the reviewer reads each `fixed` finding against the
   new code and sets `closed`, or `open` when it is not fixed. A P0 or P1 in `fixed` still
   blocks until then.
 - **Dismissing** — the finding is wrong, or the human decided not to fix it — needs a reason.

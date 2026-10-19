@@ -90,3 +90,6 @@ shipping, which is what `verify` is for.
 - Each check does a few more git calls and one knowledge resolution; it runs only for tasks that have a
   receipt.
 - A task's own knowledge decisions can no longer be hidden behind the receipt, and no longer break it.
+
+> **Amendment (2026-10-19).** The receipt gains a `merge_base` line, the commit the diff was measured
+> from. It is read, never compared: see adr-20261019-a-re-review-reads-what-changed-since-review.
