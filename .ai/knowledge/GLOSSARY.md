@@ -277,6 +277,16 @@ optional `executor.*_model` names that process's model. The current Agent remain
 the Coordinator for task files, verification and shipping. Scripts do not start
 the process (adr-20261012-cross-runtime-stage-executors).
 
+## Queue
+
+The priority, order and dependencies of a clone's tasks and epics: `.ai/runtime/queue` in the main
+checkout, one per clone, not under git, written only by `jig queue`. Priority `0` (most urgent) to
+`5`; positions are sparse and ordered within a level — the top level holds epics and tasks without
+an epic, an epic's level its tasks. A write is checked against the clone revision its caller read and
+refused `stale-revision` when anything was written since
+(adr-20261019-the-queue-is-one-file-written-against-a-revision). Informal synonyms: backlog order,
+task queue.
+
 ## Status Page
 
 `.ai/runtime/status.html`: one self-contained page written by `jig status --html` or

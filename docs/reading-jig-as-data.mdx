@@ -61,6 +61,8 @@ be reworded.
 | `usage` | the command was called with an argument it does not take, or with a value it does not accept — check how your program calls it |
 | `not-a-repository` | it ran outside a Git repository |
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
+| `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
+| `not-found` | the task or epic named does not exist, or is not in the queue where the command needs it |
 | `failed` | anything else: the message says what |
 
 New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
@@ -218,6 +220,32 @@ Pull request items are as old as the last `jig housekeeping` run; `housekeeping.
 when that run is older than your housekeeping cadence or the forge did not answer, so one may be
 missing. The knowledge counts are the ones the last full `jig status` took for the page, at
 `knowledge_counts_at`.
+
+## Changing the queue
+
+The queue holds the priority, order and dependencies of tasks and epics, one per project. A
+program changes it with the same commands a person uses, adding `--json` and the `revision` of the
+read it decided on:
+
+```bash
+jig queue move booking-message --after booking-form --revision 1792079790 --json
+jig queue set booking-message --priority 0 --revision 1792079790 --json
+jig queue depend booking-message --on booking-form --reason "Quotes the form" --revision 1792079790 --json
+```
+
+If anything changed in the project since that read — another person's drag, an agent's task
+update — the write is refused with `stale-revision` and nothing is written: read again and let the
+person decide again. Two programs that send the same revision cannot both land; exactly one does.
+A write that lands answers with the item as the queue now holds it:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"ref":"task:booking-message","item":{"ref":"task:booking-message","kind":"task","id":"booking-message","level":null,"position":150,"priority":0,"depends_on":[]}}}
+```
+
+The envelope's `revision` is taken before the write, so with `--revision` it is the one you sent;
+the write raised it, so read again before the next change. A move moves one item, never the others: drag an item by sending one
+`move`, not by renumbering the list. `position` is only for comparing within a `level` — the top
+level (`null`) orders epics and tasks without an epic, and `epic:<spec-id>` orders that epic's tasks.
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).

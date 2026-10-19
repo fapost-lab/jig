@@ -43,6 +43,8 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`). Read again and decide again; nothing was written |
+| `not-found` | a reference names no task or epic of this clone, or an item or dependency that is not in the queue where the command needs it |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -290,3 +292,35 @@ The kinds, in the order they are listed:
 A new kind may be added without raising `schema`; a program shows an unknown kind by its `title`,
 `detail` and `todo`. The person-facing strings are not a contract: read `kind`, `subject` and
 `tasks`.
+
+## `jig queue` writes
+
+`jig queue set|move|depend|undepend|remove <ref> … --json` change one item of the clone's queue
+(adr-20261019-the-queue-is-one-file-written-against-a-revision) and answer in the envelope. A write
+takes `--revision <n>`, the `revision` of the read the caller decided on; when anything was
+written in the clone since, the write is refused with `stale-revision` and changes nothing. Without
+`--revision` the command checks against the revision it reads itself as it starts. The envelope's
+`revision` is taken before the write: with `--revision` the write was checked against the value
+sent, without it against one the command read a moment later, which a write landing in between
+makes newer than the envelope's — send `--revision` when that matters. A landed
+write raises the revision past it (by two: the claim and the write), so read again for the new one.
+
+```json
+{"ref": "task:queue-file", "item": {"ref": "task:queue-file", "kind": "task", "id": "queue-file", "level": "epic:contract-queue", "position": 150, "priority": 0, "depends_on": [{"on": "task:other", "reason": "needs the format"}]}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `ref` | string | the item written: `task:<id>` or `epic:<spec-id>` |
+| `item` | object or null | the item as the queue now holds it; `null` after `remove` |
+| `item.kind` | string | `task` or `epic` |
+| `item.id` | string | the task id, or the spec id of the epic |
+| `item.level` | string or null | `epic:<spec-id>` for a task built on that open epic; `null` on the top level, where epics and tasks without an epic are ordered together |
+| `item.position` | integer | its place within its level, sparse: compare positions, do not count with them. A move changes the moved item only, unless no integer was left between its neighbours — then that one write respaced the whole level |
+| `item.priority` | integer or null | `0` (most urgent) to `5`; `null` when not set. A label: the order is the positions' |
+| `item.depends_on` | array | what the item waits for, each `{"on": <ref>, "reason": <string>}`, ordered by `on` |
+
+Refusals: `usage` for an argument the command does not take, a priority outside `0`–`5`, a move
+against an item of another level, a reference to itself or a dependency that would close a cycle;
+`not-found` and `stale-revision` as above. `jig queue list` has no `--json` yet.
+
