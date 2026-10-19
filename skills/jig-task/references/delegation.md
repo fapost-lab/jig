@@ -67,7 +67,10 @@ requirements, design, actual diff, applicable knowledge and the review skill. Co
 --strict-mcp-config --permission-mode plan --permission-prompts none
 --tools Read Glob Grep --output-format json` from the worktree. Add an external model
 only when selected. The reviewer reports findings with severity, path, line and a
-reproducible reason; it does not edit code, ledger or receipt.
+reproducible reason; it does not edit code, ledger or receipt. The process cannot run Jig, so
+for a re-review the coordinator runs `jig task receipt <id> --since-review` itself and puts its
+verdict in the prompt: on `narrow`, the interdiff and the `fixed` findings in place of the actual
+diff; on `full`, the actual diff as for a first review.
 
 The coordinator checks the process exit and denials, compares its reviewed diff with the
 current diff, enters every finding through `jig task finding`, and records the receipt
@@ -84,6 +87,8 @@ Give it the task id, worktree path, base, stage skill, and approved design or pl
 the skill itself, reads the relevant knowledge, records findings and the review receipt, and
 returns a report. The coordinator checks `jig task findings <id>` and the receipt before
 continuing. Never treat the subagent's final message alone as stage evidence.
+
+A re-reviewer's brief adds one line: start with `jig task receipt <id> --since-review`.
 
 The implementer and reviewer are different subagents. A reviewer starts with a fresh context
 that does not include the implementation conversation. A fix after review goes to the

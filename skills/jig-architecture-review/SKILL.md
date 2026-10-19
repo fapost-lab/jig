@@ -55,4 +55,9 @@ blocking: record each as a P0 in the task's ledger
 (`jig task receipt <id> --stage architecture-review`). Escalate a conflict between the change and an accepted decision to the human
 rather than resolving it yourself.
 
+A re-review starts from `jig task receipt <id> --since-review`, as
+[jig-review](../jig-review/SKILL.md) §5 says: on `narrow`, check the five things against the
+interdiff and the `fixed` findings instead of loading the whole change; on `full`, start from §1.
+Its receipt is `--stage architecture-review` again.
+
 Then hand the ADR candidates to `jig-consolidate`.

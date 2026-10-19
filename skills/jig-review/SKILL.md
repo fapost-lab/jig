@@ -84,7 +84,26 @@ own change, the knowledge that applies to it, the design and the ledger.
 Then either apply the fixes or hand them back, depending on what the user asked. A review
 that ends without a decision on every finding is unfinished.
 
-At `depth: lean` (`jig task route <id>`) a review is one round. P2 and P3 stay `open` in
-the ledger and are listed in the pull request instead of fixed: a fix after the review makes the
-receipt stale and asks for another round. A P0 or P1 is fixed and re-reviewed as always — the
-ledger blocks until a re-review closes it, and lean does not change that.
+A P3 is never fixed after the review, at any depth: it stays `open` in the ledger and is listed in
+the pull request, because a fix after the review makes the receipt stale and asks for another round
+for a nit. A person may still ask for the fix; then it is an ordinary edit and a re-review.
+
+At `depth: lean` (`jig task route <id>`) a review is one round, and P2 is left `open` and listed
+too. A P0 or P1 is fixed and re-reviewed as always — the ledger blocks until a re-review closes it,
+and lean does not change that.
+
+## 5. Re-review
+
+Start with `.ai/scripts/jig task receipt <id> --since-review`; it says whether the re-review may
+be narrow, and the script decides, not you.
+
+- **`narrow`** — read the interdiff it prints (what changed since the reviewed state), every
+  `fixed` finding against the new code, and the surrounding code only as far as judging the
+  interdiff needs: callers of a changed function yes, the rest of the task's diff no. Record only
+  findings the interdiff introduced; a P0 or P1 you notice anywhere is still recorded. A P2 or P3
+  outside the interdiff is not: the first review saw that code.
+- **`full`** (exit 1, with the reason) — no usable receipt, or the design or the knowledge moved:
+  review as for a first one, from §1.
+- **`none`** — the receipt is current; there is nothing to re-review.
+
+The receipt at the end is the same: `jig task receipt <id> --stage review`.
