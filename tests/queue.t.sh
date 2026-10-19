@@ -132,10 +132,13 @@ test_queue_is_shared_by_every_worktree_of_the_clone() {
   _q_epic big
   git add -A >/dev/null
   git commit -q -m "spec"
-  git worktree add -q -b side ../wt
-  (cd ../wt && jig queue set epic:big --priority 3 > ../wt.out 2>&1) || fail "worktree write failed: $(cat ../wt.out)"
+  # Beside the test's own directory, under its name: ../wt would be shared by
+  # every test of the run, and another test's worktree there makes this one fail.
+  local wt="$JIG_TEST_TMP.wt"
+  git worktree add -q -b side "$wt"
+  (cd "$wt" && jig queue set epic:big --priority 3 > "$wt.out" 2>&1) || fail "worktree write failed: $(cat "$wt.out")"
   assert_eq "epic:big - 100 3" "$(_q_items)"
-  assert_no_file ../wt/.ai/runtime/queue
+  assert_no_file "$wt/.ai/runtime/queue"
 }
 
 # --- set ---------------------------------------------------------------------------
