@@ -252,6 +252,175 @@ test_task_new_invalid_domains_dies() {
   assert_contains "$OUT" "invalid domains"
 }
 
+# --- new --goal, new --json ---------------------------------------------------
+#
+# A program files a task without writing a file first (spec contract-queue):
+# the short description is the goal paragraph, and with --json the answer is
+# the filed task, or a refusal with its code (schemas/json.md).
+
+test_task_new_goal_writes_the_goal_paragraph() {
+  task_setup
+  run jig task new T-1 --goal '  File the task  from the page '
+  assert_eq 0 "$RC"
+  # The text form says what it always said: the workspace, nothing else.
+  assert_eq ".ai/workspace/tasks/T-1" "$OUT"
+  local md=.ai/workspace/tasks/T-1/task.md
+  assert_eq "$(printf '# T-1\n\n## Goal\n\nFile the task  from the page\n\n## Scope')" "$(sed -n 1,7p "$md")"
+  assert_not_contains "$(cat "$md")" "One paragraph"
+  assert_file_contains "$md" "## Notes"
+  run jig task list --goals
+  assert_contains "$OUT" "goal: File the task  from the page"
+  # The built-in brief of an installed copy takes it the same way.
+  run jig_installed task new T-2 --goal "Ship it & say so"
+  assert_eq 0 "$RC"
+  assert_eq "$(printf '# T-2\n\n## Goal\n\nShip it & say so\n\n## Scope')" "$(sed -n 1,7p .ai/workspace/tasks/T-2/task.md)"
+}
+
+test_task_new_goal_refuses_what_is_not_one_paragraph() {
+  task_setup
+  printf 'x\n' > from.md
+  run jig task new T-1 --goal "$(printf 'one\ntwo')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal is one line"
+  run jig task new T-1 --goal "   "
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal is empty"
+  run jig task new T-1 --goal " # Heading"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal cannot start with #"
+  run jig task new T-1 --goal x --from from.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal and --from both write task.md"
+  run jig task new T-1 --goal
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal requires a value"
+  assert_no_file .ai/workspace/tasks/T-1
+}
+
+# The goal goes in place of the template's placeholder; a brief whose heading
+# is followed by text keeps it below the goal, and one without the heading
+# gets one.
+test_task_new_goal_lands_under_the_goal_heading_of_any_brief() {
+  task_setup
+  local got
+  got=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/task.sh"
+    printf '# x\n\n## Goal\nold text\n\n## Scope\n' | _task_md_put_goal 'G \1 &'
+    printf -- '--\n'
+    printf '# x\n\nBody.\n' | _task_md_put_goal 'G'
+    printf -- '--\n'
+    printf '# x\n\n## Goal\n\n' | _task_md_put_goal 'G'
+  )
+  assert_eq "$(printf '# x\n\n## Goal\nG \\1 &\n\nold text\n\n## Scope\n--\n# x\n\nBody.\n\n## Goal\n\nG\n--\n# x\n\n## Goal\n\nG')" "$got"
+}
+
+# _tn_json — `jig task new --json <args>` with stdout in OUT, stderr in ERR,
+# generated_at and revision replaced as _tl_json replaces them.
+_tn_json() {
+  run_split jig task new --json "$@"
+  local rc=$RC err=$ERR
+  OUT=$(printf '%s\n' "$OUT" | sed -e 's/"generated_at":"[0-9TZ:-]*"/"generated_at":"T"/' -e 's/^{"schema":1,"revision":[0-9][0-9]*,/{"schema":1,"revision":"R",/')
+  RC=$rc
+  ERR=$err
+}
+
+test_task_new_json_answers_with_the_filed_task() {
+  task_setup
+  local today
+  today=$(date +%Y-%m-%d)
+  _tn_json T-1 --class T1 --goal 'File "it" from the page'
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  _tl_cut_actions
+  # The filed task is the object `task list --json` lists for it.
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
+  local actions=$ACTIONS
+  _tl_json
+  _tl_cut_actions
+  assert_eq "$actions" "$ACTIONS"
+  assert_contains "$OUT" "{\"id\":\"T-1\",\"class\":\"T1\""
+  assert_file .ai/workspace/tasks/T-1/state
+  # Without --goal the brief is the template's.
+  _tn_json T-2
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"T-2","class":null,"status":"active","issue":null,"goal":'
+  # --json may stand anywhere; the id stays the first of the others.
+  run_split jig task new T-3 --lean --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"T-3",'
+  assert_file_contains .ai/workspace/tasks/T-3/state "route_depth: lean"
+}
+
+test_task_new_json_names_why_it_refused() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tn_json T-1 --goal "again"
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"already-exists","message":"task new: task already exists: T-1"}}' "$OUT"
+  assert_eq "jig: error: task new: task already exists: T-1" "$ERR"
+  # A directory left without a state file still holds the id.
+  mkdir -p .ai/workspace/tasks/T-2
+  _tn_json T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"already-exists","message":"task new: task already exists: T-2"}}'
+  # Every usage refusal comes before the id is judged taken: a program told
+  # `already-exists` asks for another id, and must not then learn of a bad class.
+  _tn_json T-1 --class T9
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: invalid class: T9"}}'
+  _tn_json T-1 --goal ""
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: --goal is empty"}}'
+  _tn_json "bad id!"
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"usage","message":"task new: invalid task id: bad id!"}}' "$OUT"
+  assert_no_file ".ai/workspace/tasks/bad id!"
+  _tn_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"usage: jig task new <id> '
+  _tn_json T-4 --nope
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: unknown argument: --nope"}}'
+  _tn_json T-4 --class T9
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: invalid class: T9"}}'
+  _tn_json T-4 --domains Not_Valid
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: invalid domains: Not_Valid"}}'
+  _tn_json T-4 --class
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: --class requires a value"}}'
+  _tn_json T-4 --goal "$(printf 'a\nb')"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: --goal is one line: the goal paragraph of task.md"}}'
+  assert_no_file .ai/workspace/tasks/T-4
+}
+
+# Two `task new` racing for one id both pass the check that the directory is
+# absent; the directory itself is the claim, and the second is refused as taken.
+# A mkdir on PATH makes the directory appear between the check and the claim.
+test_task_new_json_loses_a_race_for_the_id_as_already_exists() {
+  task_setup
+  local stub="$JIG_TEST_TMP.mkdirstub" real
+  real=$(command -v mkdir)
+  mkdir -p "$stub"
+  cat > "$stub/mkdir" <<EOF
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\${1##*/}" = T-race ]; then "$real" "\$1"; fi
+exec "$real" "\$@"
+EOF
+  chmod +x "$stub/mkdir"
+  PATH="$stub:$PATH" _tn_json T-race
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"already-exists","message":"task new: task already exists: T-race"}}'
+  assert_no_file .ai/workspace/tasks/T-race/state
+  rm -rf "$stub"
+}
+
+test_task_new_json_in_a_project_without_jig_is_an_envelope() {
+  mkdir plain
+  cd plain
+  git init -q
+  _tn_json T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-initialised","message":"project is not initialised; run: jig init"}}'
+  assert_no_file .ai/workspace/tasks/T-1
+}
+
 test_task_start_on_detached_head_records_detached() {
   # The `detached` fallback survives where it still applies: a project with
   # branch-per-task off records the checkout's branch, and a detached HEAD

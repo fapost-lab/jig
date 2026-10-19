@@ -56,7 +56,7 @@ cmd_task() {
 _task_usage() {
   case "${1:-}" in
     '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
-    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>] [--lean]\n' ;;
+    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap]\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id>\n' ;;
     set)
@@ -531,7 +531,7 @@ _task_likely_owner() {
 # survives byte-for-byte except at the placeholder itself. A document
 # without the placeholder is copied verbatim.
 _task_write_task_md() {
-  local id="$1" dest="$2" from="${3:-}" source tmpl tmp
+  local id="$1" dest="$2" from="${3:-}" goal="${4:-}" source tmpl tmp
   tmp="$dest.tmp.$$"
   jig_cleanup_add "$tmp"
   if [ -n "$from" ]; then
@@ -564,8 +564,38 @@ _task_write_task_md() {
 EOF
     fi
   fi
-  mv "$tmp" "$dest"
+  if [ -n "$goal" ]; then
+    jig_cleanup_add "$tmp.goal"
+    _task_md_put_goal "$goal" < "$tmp" > "$tmp.goal"
+    mv "$tmp.goal" "$dest"
+  else
+    mv "$tmp" "$dest"
+  fi
   jig_record_changed
+}
+
+# _task_md_put_goal <goal> — a filter: the brief on stdin, with <goal> as the
+# paragraph under its first `## Goal` heading, in place of the template's
+# placeholder comment, or as a new paragraph before what follows the heading;
+# a brief with no such heading gets one at its end. The goal reaches awk
+# through the environment, so it is printed literally (see _task_rewrite_state).
+_task_md_put_goal() {
+  JIG_T_GOAL="$1" awk '
+    BEGIN { goal = ENVIRON["JIG_T_GOAL"] }
+    !done && !in_goal && /^##[[:space:]]+Goal[[:space:]]*$/ { print; in_goal = 1; next }
+    in_goal && /^[[:space:]]*$/ { print; next }
+    in_goal {
+      in_goal = 0; done = 1
+      print goal
+      if ($0 ~ /^[[:space:]]*<!--.*-->[[:space:]]*$/) next
+      print ""
+    }
+    { print }
+    END {
+      if (in_goal) { print goal; done = 1 }
+      if (!done) { print ""; print "## Goal"; print ""; print goal }
+    }
+  '
 }
 
 # --- state file rewriting -------------------------------------------------------
@@ -840,23 +870,70 @@ _task_refuse_dirty_tree() {
 
 # --- subcommands ----------------------------------------------------------------
 
+# task_new <id> [...] — file a task. `--json` anywhere runs the whole command
+# as the producer of json_run (conventions/json-output.md), so a program reads
+# the filed task, or why it was refused, in the envelope: an id already taken
+# is `already-exists`, an invalid one `usage` (schemas/json.md).
 task_new() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_new_body 1 "$@"
+      return
+    fi
+  done
+  _task_new_body 0 "$@"
+}
+
+# _task_new_body <as_json> <id> [...] — the body of `task new`; with <as_json>
+# 1 it runs inside json_run and prints the filed task as data, not its path.
+_task_new_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  [ $# -ge 1 ] || jig_die "$(_task_usage new)"
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage new)"
   local id="$1"
   shift
-  local class="" domains="" from="" depth=""
+  local class="" domains="" from="" depth="" goal="" goal_given=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --lean) depth=lean; shift ;;
-      --class) [ $# -ge 2 ] || jig_die "task new: --class requires a value"; class="$2"; shift 2 ;;
-      --domains) [ $# -ge 2 ] || jig_die "task new: --domains requires a value"; domains="$2"; shift 2 ;;
-      --from) [ $# -ge 2 ] || jig_die "task new: --from requires a value"; from="$2"; shift 2 ;;
-      *) jig_die "task new: unknown argument: $1" ;;
+      --class) [ $# -ge 2 ] || jig_fail usage "task new: --class requires a value"; class="$2"; shift 2 ;;
+      --domains) [ $# -ge 2 ] || jig_fail usage "task new: --domains requires a value"; domains="$2"; shift 2 ;;
+      --from) [ $# -ge 2 ] || jig_fail usage "task new: --from requires a value"; from="$2"; shift 2 ;;
+      --goal) [ $# -ge 2 ] || jig_fail usage "task new: --goal requires a value"; goal="$2"; goal_given=1; shift 2 ;;
+      *) jig_fail usage "task new: unknown argument: $1" ;;
     esac
   done
 
-  _task_valid_id "$id" || jig_die "task new: invalid task id: $id"
+  _task_valid_id "$id" || jig_fail usage "task new: invalid task id: $id"
+  [ -z "$class" ] || _task_valid_class "$class" || jig_fail usage "task new: invalid class: $class"
+  [ -z "$domains" ] || _task_valid_domains "$domains" || jig_fail usage "task new: invalid domains: $domains"
+  # The goal is the paragraph under `## Goal` that `task list --goals` and
+  # `task list --json` read back (_task_goal): one line, so that it stays one
+  # paragraph, and not a heading, so that it stays under `## Goal`.
+  if [ "$goal_given" -eq 1 ]; then
+    [ -z "$from" ] || jig_fail usage "task new: --goal and --from both write task.md; give one of them"
+    case "$goal" in
+      *$'\n'* | *$'\r'*) jig_fail usage "task new: --goal is one line: the goal paragraph of task.md" ;;
+    esac
+    case "$goal" in
+      *[![:space:]]*) ;;
+      *) jig_fail usage "task new: --goal is empty" ;;
+    esac
+    # Trimmed: leading blanks would make the paragraph a code block.
+    goal=${goal#"${goal%%[![:space:]]*}"}
+    goal=${goal%"${goal##*[![:space:]]}"}
+    case "$goal" in
+      '#'*) jig_fail usage "task new: --goal cannot start with #: it would read as a heading" ;;
+    esac
+  fi
 
   # A task filed in a worktree that keeps a task directory of its own dies with
   # that worktree: the directory is gitignored, the checkout holding the queue
@@ -875,7 +952,7 @@ task_new() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -e "$dir" ] && jig_die "task new: task already exists: $id"
+  [ -e "$dir" ] && jig_fail already-exists "task new: task already exists: $id"
   # The tasks directory may not exist yet (`mkdir -p` below makes it), and then
   # it is `.ai/workspace` that has to be this repository's: made through a link
   # there it would be made outside.
@@ -889,8 +966,6 @@ task_new() {
       || jig_die "task new: $JIG_AI_DIR/workspace leads to $ws_real, which is no checkout of this repository"
   fi
 
-  [ -z "$class" ] || _task_valid_class "$class" || jig_die "task new: invalid class: $class"
-  [ -z "$domains" ] || _task_valid_domains "$domains" || jig_die "task new: invalid domains: $domains"
 
   # --from is validated here, before the workspace directory exists, so a
   # missing/unreadable/non-regular source (a directory, for instance) never
@@ -913,7 +988,14 @@ task_new() {
   # branch, so there is nothing for uncommitted work to leak into. The check
   # lives in `task start`, and filing a task for later in the middle of other
   # work is the case this split exists for.
-  mkdir -p "$dir"
+  # The directory is the claim on the id: made without -p, it fails for the
+  # second of two `task new` racing for one id, which is refused as taken
+  # rather than both writing one task.
+  mkdir -p "$(dirname "$dir")"
+  if ! mkdir "$dir" 2>/dev/null; then
+    [ -e "$dir" ] && jig_fail already-exists "task new: task already exists: $id"
+    jig_die "task new: cannot create $(jig_relpath "$dir" "$JIG_PROJECT")"
+  fi
 
   # `branch` and `base_commit` are written by `task start`, not here. A task
   # filed for later has no branch, and saying so by *omission* is what makes
@@ -941,8 +1023,15 @@ task_new() {
   mv "$tmp" "$dir/state"
   jig_record_changed
 
-  _task_write_task_md "$id" "$dir/task.md" "$from"
+  _task_write_task_md "$id" "$dir/task.md" "$from" "$goal"
 
+  if [ "$as_json" = 1 ]; then
+    # The filed task as `task list --json` lists it: one producer of a task's
+    # facts. A task just filed has no branch, so no worktree to look up, and
+    # no housekeeping flag can stand for it yet.
+    printf '{"task":%s}\n' "$(_task_list_json_task "$id" "" "")"
+    return 0
+  fi
   jig_relpath "$dir" "$JIG_PROJECT"
 }
 

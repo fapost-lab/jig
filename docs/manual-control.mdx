@@ -49,6 +49,14 @@ jig task show booking-message
 Fill in `.ai/workspace/tasks/booking-message/task.md`: the goal, scope, and what a correct result
 looks like. Filing the task does not switch branches.
 
+To give the goal as you file it, pass it as one line; it becomes the paragraph under `## Goal`:
+
+```bash
+jig task new booking-form --class T1 --goal "Guests can book a table"
+```
+
+To start from a brief you already wrote, pass `--from <file>` instead.
+
 <Warning>
   Start from a repository with a commit and no uncommitted tracked changes. If other work is in
   progress, pause its task or use a separate worktree; do not bundle it into this task's commit.
