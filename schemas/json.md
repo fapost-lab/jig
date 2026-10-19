@@ -44,8 +44,8 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, or an item or dependency that is not in the queue where the command needs it |
-| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds. Nothing was written |
+| `not-found` | a reference names no task or epic of this clone, or an item, dependency or request that is not in the queue where the command needs it |
+| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -108,6 +108,7 @@ A task:
 | `goal` | string or null | the first paragraph under `## Goal` in `task.md`, joined into one line |
 | `knowledge_consolidated` | boolean | the knowledge decision is recorded |
 | `paused` | boolean | |
+| `pause_request` | object or null | a pause asked of the task and not yet honoured (`jig queue request`): `{"requested_at", "reason"}`, `requested_at` UTC, `reason` `null` when none was given; `null` when none is pending. It holds until the task's next autopilot stage boundary pauses the task, a `jig task pause`, or a `jig queue cancel` |
 | `created_at`, `updated_at` | string or null | `YYYY-MM-DD` |
 | `branch` | string or null | `null`: the task has not been started |
 | `base_branch` | string | the branch the task is judged against and lands on (`jig_task_base`): its recorded base, else `git.base_branch` |
@@ -140,6 +141,8 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `start` | `jig task start <id>` | the task has not been started |
 | `pause` | `jig task pause <id>` | it is not paused |
 | `resume` | `jig task resume <id>` | it is paused |
+| `request-pause` | `jig queue request task:<id> pause` | it is not paused and no pause of it is requested |
+| `cancel-pause-request` | `jig queue cancel task:<id> pause` | a pause of it is requested |
 | `approve-gate` | `jig task gate <id> approved` | a T3/T4 design waits at its gate (`waiting` or `changed`), and the gate is a person's: not in a clone or a run where nobody answers (`autopilot.unattended`) |
 | `answer-stop` | `jig task autopilot <id> resume --answer <text>`, with ` --by human` for an unattended run | its autopilot run is `stopped`, and an unattended one has repairs left |
 | `set-class` | `jig task set <id> class <Tn>` | the task is live |
@@ -148,7 +151,8 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `abandon` | `jig task abandon <id>` | the task is live |
 | `reopen` | `jig task set <id> status active` | the task is `abandoned` |
 
-A `consolidated` task offers nothing, an `abandoned` one only `reopen`.
+A `consolidated` task offers nothing, an `abandoned` one only `reopen` — except, for both,
+`cancel-pause-request` while a pause of it is still requested.
 
 The rule is one-way. An action offered is one its command accepts on the task's state, because the
 table asks the command's own guard; the table may withhold more than a command refuses (a finished
@@ -160,8 +164,7 @@ lowering a class needs `--reason`, and is refused below T3 where nobody answers)
 by the forge cache, never the forge: a cache that says `merged` is final, and one behind the forge
 withholds a close until the next `jig housekeeping`.
 
-New ids may appear without `schema` changing — the pause and resume requests of a later release join
-this table — so a consumer ignores ids it does not know.
+New ids may appear without `schema` changing, so a consumer ignores ids it does not know.
 
 ### The forge cache
 
@@ -346,6 +349,36 @@ Read with `jig task list --json`: a `task` item joins a task by `id`, an `epic` 
 `jig spec list --json` by `id`. A task finished or gone stays queued until removed, so it may have
 no match in the default listing (`--all` lists the finished ones). The envelope's `revision` is the
 one to send with the next write, as for every read.
+
+### Pause requests
+
+`jig queue request <ref> pause [--reason <text>] … --json` asks a task to pause, and `jig queue
+cancel <ref> pause … --json` takes the request back
+(adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary). Both are queue writes: the same
+`--revision`, the same claim, the same `stale-revision`. A request is sticky: it holds until the
+task's autopilot run reaches its next stage boundary (`jig task autopilot <id> stage`, which then
+pauses the task instead of entering the stage), until `jig task pause` pauses it by hand, or until
+it is cancelled — whatever stage the task reaches in between. A session without an autopilot run
+calls no command at a stage boundary and does not see the request.
+
+```json
+{"ref": "task:booking-message", "request": {"kind": "pause", "requested_at": "2026-10-19T12:00:00Z", "reason": "need the laptop"}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `ref` | string | the task asked: `task:<id>` |
+| `request` | object or null | the request as the queue now holds it; `null` after `cancel` |
+| `request.kind` | string | `pause` |
+| `request.requested_at` | string | when it was made, UTC; not changed by anything until it goes |
+| `request.reason` | string or null | the reason given, on one line; `null` for none |
+
+Refusals: `usage` for a reference that is not a task, a kind other than `pause`, or an argument the
+command does not take; `not-found` for a task this clone does not have, and for `cancel` when no
+pause of it is requested (`cancel` takes any well-formed reference, so a task gone to trash can still
+have its request taken out); `already-exists` when a pause of it is already requested — its time
+stays; `failed` when the task is paused, `consolidated` or `abandoned`. The `request-pause` and
+`cancel-pause-request` actions ask the same guards.
 
 ## `jig task new --json`
 

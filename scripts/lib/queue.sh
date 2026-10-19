@@ -15,17 +15,21 @@
 #   # jig queue 1 — ...                    the version of the format, first line
 #   item <ref> <level> <position> <priority>
 #   dep  <ref> <on-ref> <reason>
+#   request <ref> <kind> <requested_at> <reason>
 #
 # <ref> is `task:<id>` or `epic:<spec-id>`; <level> is `-` (the top) or the
 # `epic:<spec-id>` a task is built on; <position> a non-negative integer,
 # sparse (step 100) and compared only within a level; <priority> `0` (most
-# urgent) to `5`, or `-`. A line of any other kind is kept as it is, so a later
-# record kind (the pause requests of contract-queue) does not lose its lines
+# urgent) to `5`, or `-`. A request is a person's ask a running task honours
+# at its next stage boundary (adr-20261019-a-pause-request-is-honoured-at-the-
+# stage-boundary): <ref> a `task:<id>`, <kind> `pause`, <requested_at> UTC
+# `YYYY-MM-DDTHH:MM:SSZ`, <reason> one line, possibly empty. A line of any
+# other kind is kept as it is, so a later record kind does not lose its lines
 # to a writer that predates it. A file of another format version is refused,
 # never rewritten.
 # shellcheck shell=bash
 
-QUEUE_USAGE="usage: jig queue [list] [--json] | jig queue set <ref> --priority <0-5|none> | jig queue move <ref> (--before <ref> | --after <ref> | --top | --bottom) | jig queue depend <ref> --on <ref> --reason <text> | jig queue undepend <ref> --on <ref> | jig queue remove <ref>; every write takes [--revision <n>] [--json]; <ref> is task:<id>, epic:<spec-id> or <id>"
+QUEUE_USAGE="usage: jig queue [list] [--json] | jig queue set <ref> --priority <0-5|none> | jig queue move <ref> (--before <ref> | --after <ref> | --top | --bottom) | jig queue depend <ref> --on <ref> --reason <text> | jig queue undepend <ref> --on <ref> | jig queue remove <ref> | jig queue request <ref> pause [--reason <text>] | jig queue cancel <ref> pause; every write takes [--revision <n>] [--json]; <ref> is task:<id>, epic:<spec-id> or <id>"
 
 QUEUE_FORMAT=1
 QUEUE_STEP=100
@@ -61,7 +65,7 @@ _queue_main() {
   fi
   case "$sub" in
     list) _queue_list ${args[@]+"${args[@]}"} ;;
-    set | move | depend | undepend | remove) _queue_write "$sub" ${args[@]+"${args[@]}"} ;;
+    set | move | depend | undepend | remove | request | cancel) _queue_write "$sub" ${args[@]+"${args[@]}"} ;;
     help | -h | --help) printf '%s\n' "$QUEUE_USAGE" ;;
     *) jig_fail usage "queue: unknown subcommand: $sub; $QUEUE_USAGE" ;;
   esac
@@ -69,11 +73,10 @@ _queue_main() {
 
 # --- where the queue is -------------------------------------------------------
 
-# queue_file — the queue's path in the clone's main checkout.
+# queue_file — the queue's path in the clone's main checkout; common.sh's
+# answer, which `task` reads the pause requests by too.
 queue_file() {
-  local root
-  root=$(jig_config_clone_root) || jig_die "queue: cannot find the clone's main checkout"
-  printf '%s/%s/runtime/queue\n' "$root" "$JIG_AI_DIR"
+  jig_queue_file
 }
 
 # --- references -----------------------------------------------------------------
@@ -146,13 +149,15 @@ _queue_level() {
 
 # _queue_apply <file> — print the queue <file> (absent: empty) with one change
 # applied, in canonical order: items by level (the top first) and position,
-# then dependencies, then the lines of other kinds as they were. The change
-# comes through the environment (conventions/shell.md: free text never through
-# `awk -v`): Q_OP set|move|depend|undepend|remove|read, Q_REF, Q_LEVEL, Q_PRIO,
-# Q_PLACE top|bottom|before|after, Q_ANCHOR, Q_ON, Q_REASON. Exit status names
-# a refusal: 3 the anchor is not in the queue, 4 the anchor is on another
-# level, 5 a reference to itself, 6 another format version, 7 a dependency
-# cycle, 8 the item or dependency is not in the queue.
+# then dependencies, then requests (by reference and kind), then the lines of
+# other kinds as they were. The change comes through the environment
+# (conventions/shell.md: free text never through `awk -v`): Q_OP
+# set|move|depend|undepend|remove|request|cancel|read, Q_REF, Q_LEVEL, Q_PRIO,
+# Q_PLACE top|bottom|before|after, Q_ANCHOR, Q_ON, Q_REASON, Q_KIND, Q_AT.
+# Exit status names a refusal: 3 the anchor is not in the queue, 4 the anchor
+# is on another level, 5 a reference to itself, 6 another format version, 7 a
+# dependency cycle, 8 the item, dependency or request is not in the queue, 9
+# the request is already there.
 _queue_apply() {
   local file="$1"
   [ -f "$file" ] || file=/dev/null
@@ -216,7 +221,7 @@ _queue_apply() {
     BEGIN {
       step = ENVIRON["Q_STEP"] + 0
       op = ENVIRON["Q_OP"]; r = ENVIRON["Q_REF"]; level = ENVIRON["Q_LEVEL"]
-      n = 0; dn = 0; on = 0
+      n = 0; dn = 0; on = 0; rn = 0
     }
     FNR == 1 && /^# jig queue / {
       split($0, w, " ")
@@ -233,6 +238,12 @@ _queue_apply() {
       k = $2 SUBSEP $3
       if (k in didx) next
       j = ++dn; dsub[j] = $2; don[j] = $3; drea[j] = $4; dalive[j] = 1; didx[k] = j
+      next
+    }
+    $1 == "request" && NF >= 4 {
+      k = $2 SUBSEP $3
+      if (k in ridx) next
+      j = ++rn; rsub[j] = $2; rkind[j] = $3; rat[j] = $4; rrea[j] = $5; ralive[j] = 1; ridx[k] = j
       next
     }
     { other[++on] = $0 }
@@ -265,6 +276,15 @@ _queue_apply() {
         k = r SUBSEP ENVIRON["Q_ON"]
         if (!(k in didx)) exit 8
         dalive[didx[k]] = 0
+      } else if (op == "request") {
+        k = r SUBSEP ENVIRON["Q_KIND"]
+        if (k in ridx) exit 9
+        j = ++rn; rsub[j] = r; rkind[j] = ENVIRON["Q_KIND"]; rat[j] = ENVIRON["Q_AT"]
+        rrea[j] = ENVIRON["Q_REASON"]; ralive[j] = 1; ridx[k] = j
+      } else if (op == "cancel") {
+        k = r SUBSEP ENVIRON["Q_KIND"]
+        if (!(k in ridx)) exit 8
+        ralive[ridx[k]] = 0
       } else if (op == "remove") {
         if (!(r in idx)) exit 8
         alive[idx[r]] = 0
@@ -283,6 +303,12 @@ _queue_apply() {
         while (k >= 1 && (dsub[t] < dsub[d[k]] || (dsub[t] == dsub[d[k]] && don[t] < don[d[k]]))) { d[k + 1] = d[k]; k-- }
         d[k + 1] = t }
       for (j = 1; j <= md; j++) printf "dep\t%s\t%s\t%s\n", dsub[d[j]], don[d[j]], drea[d[j]]
+      mr = 0
+      for (j = 1; j <= rn; j++) if (ralive[j]) q[++mr] = j
+      for (j = 2; j <= mr; j++) { t = q[j]; k = j - 1
+        while (k >= 1 && (rsub[t] < rsub[q[k]] || (rsub[t] == rsub[q[k]] && rkind[t] < rkind[q[k]]))) { q[k + 1] = q[k]; k-- }
+        q[k + 1] = t }
+      for (j = 1; j <= mr; j++) printf "request\t%s\t%s\t%s\t%s\n", rsub[q[j]], rkind[q[j]], rat[q[j]], rrea[q[j]]
       for (j = 1; j <= on; j++) print other[j]
     }
   ' "$file"
@@ -313,7 +339,7 @@ _queue_need_value() {
 
 _queue_write() {
   local sub="$1" target="" rev="" rev_given="" prio="" place="" anchor="" on="" reason="" seen_reason=""
-  local file new rc=0 expected ref level
+  local file new rc=0 expected ref level kind="" at="" refusal
   shift
   [ $# -ge 1 ] || jig_fail usage "queue $sub: missing <ref>; $QUEUE_USAGE"
   case "$1" in
@@ -321,6 +347,13 @@ _queue_write() {
   esac
   target=$1
   shift
+  if [ "$sub" = request ] || [ "$sub" = cancel ]; then
+    # What is asked, after the reference: `pause` is the one kind there is.
+    [ $# -ge 1 ] || jig_fail usage "queue $sub: missing the kind after $target (pause); $QUEUE_USAGE"
+    kind=$1
+    shift
+    [ "$kind" = pause ] || jig_fail usage "queue $sub: unknown kind: $kind (expected pause)"
+  fi
   while [ $# -gt 0 ]; do
     case "$1" in
       --revision) _queue_need_value "$1" $#; rev=$2; rev_given=1; shift 2 ;;
@@ -340,7 +373,7 @@ _queue_write() {
         [ "$sub" = depend ] || [ "$sub" = undepend ] || jig_fail usage "queue $sub: unexpected argument: $1"
         _queue_need_value "$1" $#; on=$2; shift 2 ;;
       --reason)
-        [ "$sub" = depend ] || jig_fail usage "queue $sub: unexpected argument: $1"
+        [ "$sub" = depend ] || [ "$sub" = request ] || jig_fail usage "queue $sub: unexpected argument: $1"
         _queue_need_value "$1" $#; reason=$2; seen_reason=1; shift 2 ;;
       *) jig_fail usage "queue $sub: unexpected argument: $1" ;;
     esac
@@ -375,6 +408,13 @@ _queue_write() {
         *) jig_fail usage "queue depend: --reason is empty" ;;
       esac ;;
     undepend) [ -n "$on" ] || jig_fail usage "queue undepend: --on is required" ;;
+    request)
+      # One line in the file, as a dependency's reason; an empty one is none.
+      reason=$(printf '%s' "$reason" | tr '\t\r\n' '   ')
+      case "$reason" in
+        *[![:space:]]*) ;;
+        *) reason="" ;;
+      esac ;;
   esac
 
   jig_require_init
@@ -386,10 +426,13 @@ _queue_write() {
     expected=$(jig_revision_read)
   fi
 
-  if [ "$sub" = remove ] || [ "$sub" = undepend ]; then
+  if [ "$sub" = remove ] || [ "$sub" = undepend ] || [ "$sub" = cancel ]; then
     # Taking something out needs nothing behind the reference: the task may
     # have gone to trash, the spec been retired, and the item must still go.
     _queue_ref_form "$target" "<ref>"
+    level="-"
+  elif [ "$sub" = request ]; then
+    _queue_ref "$target" "<ref>"
     level="-"
   else
     _queue_ref "$target" "<ref>"
@@ -397,6 +440,18 @@ _queue_write() {
     level=$_QLEVEL
   fi
   ref=$_QREF
+  if [ -n "$kind" ]; then
+    [ "$_QKIND" = task ] || jig_fail usage "queue $sub: a $kind is asked of a task, not of $ref"
+    if [ "$sub" = request ]; then
+      # The table of what a person may do asks the same guard (common.sh).
+      refusal=$(jig_pause_request_refusal "$_QID")
+      if [ -n "$refusal" ]; then
+        jig_pause_request "$_QID" && jig_fail already-exists "$refusal"
+        jig_die "$refusal"
+      fi
+      at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    fi
+  fi
   if [ -n "$anchor" ]; then
     # An anchor that names nothing in this clone, or is not queued, is not-found.
     _queue_ref "$anchor" "--$place"
@@ -419,7 +474,8 @@ _queue_write() {
   jig_cleanup_add "$new"
   rc=0
   Q_OP="$sub" Q_REF="$ref" Q_LEVEL="$level" Q_PRIO="$prio" Q_PLACE="$place" \
-    Q_ANCHOR="$anchor" Q_ON="$on" Q_REASON="$reason" _queue_apply "$file" > "$new" || rc=$?
+    Q_ANCHOR="$anchor" Q_ON="$on" Q_REASON="$reason" Q_KIND="$kind" Q_AT="$at" \
+    _queue_apply "$file" > "$new" || rc=$?
   case "$rc" in
     0) ;;
     3) jig_fail not-found "queue move: $anchor is not in the queue" ;;
@@ -431,16 +487,26 @@ _queue_write() {
       if [ "$sub" = undepend ]; then
         jig_fail not-found "queue undepend: $ref does not wait for $on"
       fi
+      if [ "$sub" = cancel ]; then
+        jig_fail not-found "queue cancel: no $kind of $ref is requested"
+      fi
       jig_fail not-found "queue $sub: $ref is not in the queue" ;;
+    9) jig_fail already-exists "queue request: a $kind of $ref is already requested" ;;
     *) jig_die "queue: cannot read $file" ;;
   esac
   _queue_commit "$expected" "$new" "$file"
 
   if [ -n "$_QUEUE_AS_JSON" ]; then
-    _queue_item_json "$file" "$ref"
+    if [ -n "$kind" ]; then
+      _queue_request_json "$file" "$ref" "$kind"
+    else
+      _queue_item_json "$file" "$ref"
+    fi
     return 0
   fi
   case "$sub" in
+    request) printf 'queue: %s of %s requested at %s\n' "$kind" "$ref" "$at" ;;
+    cancel) printf 'queue: %s request of %s cancelled\n' "$kind" "$ref" ;;
     remove) printf 'queue: %s removed\n' "$ref" ;;
     undepend) printf 'queue: %s no longer waits for %s\n' "$ref" "$on" ;;
     depend) printf 'queue: %s waits for %s\n' "$ref" "$on" ;;
@@ -532,6 +598,28 @@ _queue_item_dep() {
 _queue_item_end() {
   _QITEM="$_QI_HEAD,\"depends_on\":[$_QI_DEPS]}"
   _QI_REF=""
+}
+
+# _queue_request_json <file> <ref> <kind> — the producer's data after a
+# request or a cancel: {"ref": <ref>, "request": {"kind", "requested_at",
+# "reason"} | null} (schemas/json.md, "Queue writes").
+_queue_request_json() {
+  local line out at reason
+  line=$(Q_REF="$2" Q_KIND="$3" awk -F '\t' '
+    $1 == "request" && $2 == ENVIRON["Q_REF"] && $3 == ENVIRON["Q_KIND"] && NF >= 4 { print $4 "\t" $5; exit }
+  ' "$1")
+  json_quote "$2"
+  out="{\"ref\":$_JSON,\"request\":"
+  if [ -n "$line" ]; then
+    at=${line%%$'\t'*}
+    reason=${line#*$'\t'}
+    json_quote "$3"; out="$out{\"kind\":$_JSON"
+    json_quote "$at"; out="$out,\"requested_at\":$_JSON"
+    json_str_or_null "$reason"; out="$out,\"reason\":$_JSON}"
+  else
+    out="${out}null"
+  fi
+  printf '%s}\n' "$out"
 }
 
 # --- the listing -------------------------------------------------------------------

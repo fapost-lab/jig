@@ -2242,6 +2242,89 @@ jig_revision_claim() {
   return 1
 }
 
+# --- the queue file, as its readers outside `jig queue` see it ----------------
+#
+# `jig queue` (lib/queue.sh) is the queue's only writer; `task` reads the pause
+# requests in it and acts on them through `"$JIG_SELF" queue cancel`. Where the
+# file is and when a pause request may be made are the answers they must never
+# disagree about, so they live here
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
+
+# jig_queue_file — the queue's path in the clone's main checkout
+# (jig_config_clone_root), shared by every worktree.
+jig_queue_file() {
+  local root
+  root=$(jig_config_clone_root) || jig_die "queue: cannot find the clone's main checkout"
+  printf '%s/%s/runtime/queue\n' "$root" "$JIG_AI_DIR"
+}
+
+# jig_pause_request <id> — exit 0 when the queue holds a pause request for
+# task <id>, with _JIG_PAUSE_AT <- when it was made (UTC) and
+# _JIG_PAUSE_REASON <- its reason (empty for none); exit 1 when it holds none
+# or there is no queue. The record is `request<TAB>task:<id><TAB>pause<TAB>
+# <requested_at><TAB><reason>`; the first one counts, as the writer reads it.
+# A file of another format version holds no request this jig can read, as the
+# writer refuses to rewrite it: none is reported. This is a second reader of
+# the queue's lines beside queue.sh's parser, for the one record `task` needs,
+# because a command library never sources another (ARCHITECTURE.md).
+_JIG_PAUSE_AT=""
+_JIG_PAUSE_REASON=""
+jig_pause_request() {
+  local file line
+  _JIG_PAUSE_AT=""
+  _JIG_PAUSE_REASON=""
+  file=$(jig_queue_file)
+  [ -f "$file" ] || return 1
+  line=$(Q_REF="task:$1" Q_FORMAT=1 awk -F '\t' '
+    FNR == 1 && /^# jig queue / { split($0, w, " "); if (w[4] != ENVIRON["Q_FORMAT"]) exit }
+    $1 == "request" && $2 == ENVIRON["Q_REF"] && $3 == "pause" && NF >= 4 { print $4 "\t" $5; exit }
+  ' "$file")
+  [ -n "$line" ] || return 1
+  _JIG_PAUSE_AT=${line%%$'\t'*}
+  _JIG_PAUSE_REASON=${line#*$'\t'}
+  return 0
+}
+
+# _jig_task_state_value <id> <key> — the value of <key> in task <id>'s state
+# file, read as `task_state_get` reads it (lib/task.sh owns the file; reading
+# a peer's file directly is allowed, ARCHITECTURE.md). The id passes
+# jig_valid_id before it becomes a path (RULES.md); an invalid one has no state.
+_jig_task_state_value() {
+  jig_valid_id "$1" || return 0
+  local file="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$1/state"
+  [ -f "$file" ] || return 0
+  awk -v k="$2:" 'index($0, k) == 1 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$file"
+}
+
+# jig_pause_request_refusal <id> — why `jig queue request task:<id> pause`
+# refuses this task by its state, or nothing when it would write the request.
+# The command and the actions table (_task_actions) both ask it. <id> is a
+# valid id of a task that exists; the caller checked.
+jig_pause_request_refusal() {
+  local id="$1" status
+  status=$(_jig_task_state_value "$id" status)
+  case "$status" in
+    consolidated | abandoned)
+      printf 'queue request: task %s is %s\n' "$id" "$status"
+      return 0 ;;
+  esac
+  if [ "$(_jig_task_state_value "$id" paused)" = true ]; then
+    printf 'queue request: task %s is already paused\n' "$id"
+    return 0
+  fi
+  if jig_pause_request "$id"; then
+    printf 'queue request: a pause of task:%s is already requested, at %s\n' "$id" "$_JIG_PAUSE_AT"
+  fi
+  return 0
+}
+
+# jig_pause_cancel_refusal <id> — why `jig queue cancel task:<id> pause`
+# refuses, or nothing when there is a request to cancel.
+jig_pause_cancel_refusal() {
+  jig_pause_request "$1" || printf 'queue cancel: no pause of task:%s is requested\n' "$1"
+  return 0
+}
+
 # jig_hash_git_dir — the git directory every hash in this project is computed
 # against, empty when the project is not in a repository at all. Asked of git
 # once per shell that asks, because it costs a git startup and `jig status`

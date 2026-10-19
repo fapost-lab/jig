@@ -129,6 +129,21 @@ the run a new direction. It carries your answer into the run's record word for w
 lists it under **Resumed on an answer** — if you see an answer there you never gave, the agent
 resumed itself.
 
+### Pausing a run yourself
+
+To stop a run that needs nothing from you — you want to look at something first, or need the
+machine — ask it to pause:
+
+```bash
+jig queue request <task-id> pause --reason "Need to check the copy first"
+```
+
+The agent finishes the stage it is on and, instead of starting the next one, pauses the task and
+ends its session. The request waits until then, however long the stage takes; `jig queue cancel
+<task-id> pause` takes it back. To continue, run `jig task resume <task-id>` in the task's worktree
+and start a new session there: the run picks up at the stage it had not started. A paused run is
+not a stop, so there is no question to answer.
+
 ## The report
 
 At the end — or at a stop — the agent shows the run's report: which stages it went through, each
