@@ -4903,9 +4903,12 @@ test_task_receipt_check_stale_when_a_base_merge_changes_a_file_the_task_touches(
 
 # The knowledge the review resolved is pinned by content. Another hand editing
 # it makes the receipt stale and the message says it is the knowledge, not the
-# code; the task's own knowledge edits (consolidation) leave it current.
+# code; the task's own knowledge edits (consolidation) leave it current, a new
+# document and an edit to one the review resolved alike.
 test_task_receipt_context_follows_resolved_knowledge_not_the_tasks_own() {
   task_setup_clean
+  local base
+  base=$(git symbolic-ref --short HEAD)
   mkdir -p .ai/knowledge
   cat > .ai/knowledge/rule-work.md <<'EOF2'
 ---
@@ -4943,8 +4946,24 @@ EOF2
   run jig task receipt T-1 --check
   assert_eq "receipt: current" "$OUT"
 
-  # The convention the review relied on changes, not by the task.
-  printf 'v2\n' >> .ai/knowledge/rule-work.md
+  # The task edits the convention the review resolved: still its own change.
+  printf 'the task adds a note\n' >> .ai/knowledge/rule-work.md
+  run jig task receipt T-1 --check
+  assert_eq "receipt: current" "$OUT"
+  run jig task receipt T-1 --since-review
+  assert_not_contains "$OUT" "knowledge the review relied on changed"
+  git add -A
+  git commit -q -m "the task's knowledge"
+  run jig task receipt T-1 --check
+  assert_eq "receipt: current" "$OUT"
+
+  # The convention the review relied on changes by another hand, merged in.
+  git checkout -q "$base"
+  sed 's/^summary: .*/summary: Work files follow this, revised./' .ai/knowledge/rule-work.md > rule.tmp
+  mv rule.tmp .ai/knowledge/rule-work.md
+  git commit -q -am "the base revises the convention"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
   assert_contains "$OUT" "receipt: stale (context, reviewed"
@@ -5001,6 +5020,8 @@ test_task_receipt_check_stale_when_a_base_merge_changes_resolved_knowledge() {
 # in its own worktree: the knowledge is resolved where the branch is.
 test_task_receipt_context_is_resolved_in_the_tasks_worktree() {
   task_setup_nested
+  local base
+  base=$(git symbolic-ref --short HEAD)
   _task_receipt_commit_work_convention
   jig task new T-1 --class T2 >/dev/null
   jig task start T-1 --worktree >/dev/null
@@ -5015,7 +5036,9 @@ test_task_receipt_context_is_resolved_in_the_tasks_worktree() {
   run jig task receipt T-1 --check
   assert_eq "receipt: current" "$OUT"
 
-  printf 'v2\n' >> "$wt/.ai/knowledge/rule-work.md"
+  # Committed on the base and merged into the task's branch, it is.
+  git commit -q -am "the base rewrites the convention"
+  git -C "$wt" merge -q --no-edit "$base"
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
   assert_contains "$OUT" "receipt: stale (context, reviewed"
@@ -5219,6 +5242,7 @@ test_task_ship_refuses_a_receipt_stale_by_context() {
   git checkout -q "$base"
   printf 'v2\n' >> .ai/knowledge/rule-work.md
   git commit -q -am "the base rewrites the convention"
+  git push -q origin "$base"
   git checkout -q task/T-1
   git merge -q --no-edit "$base"
   printf 'Ship T-1\n\nBody.\n' > msg.txt

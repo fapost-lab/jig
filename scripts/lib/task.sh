@@ -2514,11 +2514,15 @@ _task_receipt_diff_hash() {
 # knowledge the review was done against, by content. The documents are what
 # `jig context` resolves for the files of the task's change, run in the
 # checkout <dir> with the task's domains (the global documents included, the
-# task's workspace left out), and the documents the task edited itself left out too: consolidation
-# writes them after the review (ADR-0030), and they are part of the task's own
-# change. The value hashes "<path> <content hash>" lines, so a document added,
-# removed or edited by anyone else changes it. Fails when it cannot be
-# computed; "-" when there is no merge base to find the task's files from.
+# task's workspace left out). A document the task edited itself counts at the
+# content it had at the merge base, as a checkout would hold it — what the
+# review read before the task touched it — and one the task added counts not
+# at all: consolidation writes knowledge after the review (ADR-0030), and those
+# edits are the task's own change, so they must neither stale the receipt nor
+# drop a line out of it. The value hashes "<path> <content hash>" lines, so a
+# document added, removed or edited by anyone else — a base merged in moves the
+# merge base — changes it. Fails when it cannot be computed; "-" when there is
+# no merge base to find the task's files from.
 _task_receipt_context_hash() {
   local id="$1" dir="$2" mb files full own domains matched path lines=""
   mb=$(_task_review_merge_base "$id" "$dir") || { printf -- '-\n'; return 0; }
@@ -2537,7 +2541,12 @@ _task_receipt_context_hash() {
     ${domains:+--domains "$(printf '%s' "$domains" | tr ' ' ',')"} --format paths) 2>/dev/null) || return 1
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    jig_has_line "$path" "$own" && continue
+    if jig_has_line "$path" "$own"; then
+      git -C "$dir" cat-file -e "$mb:$path" 2>/dev/null || continue
+      lines="$lines$path $(git -C "$dir" cat-file --filters "$mb:$path" | jig_hash_stdin)
+"
+      continue
+    fi
     if [ -f "$dir/$path" ]; then
       lines="$lines$path $(jig_hash "$dir/$path")
 "
