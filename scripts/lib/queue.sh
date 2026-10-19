@@ -25,7 +25,7 @@
 # never rewritten.
 # shellcheck shell=bash
 
-QUEUE_USAGE="usage: jig queue [list] | jig queue set <ref> --priority <0-5|none> | jig queue move <ref> (--before <ref> | --after <ref> | --top | --bottom) | jig queue depend <ref> --on <ref> --reason <text> | jig queue undepend <ref> --on <ref> | jig queue remove <ref>; every write takes [--revision <n>] [--json]; <ref> is task:<id>, epic:<spec-id> or <id>"
+QUEUE_USAGE="usage: jig queue [list] [--json] | jig queue set <ref> --priority <0-5|none> | jig queue move <ref> (--before <ref> | --after <ref> | --top | --bottom) | jig queue depend <ref> --on <ref> --reason <text> | jig queue undepend <ref> --on <ref> | jig queue remove <ref>; every write takes [--revision <n>] [--json]; <ref> is task:<id>, epic:<spec-id> or <id>"
 
 QUEUE_FORMAT=1
 QUEUE_STEP=100
@@ -462,48 +462,76 @@ _queue_item_line() {
 # _queue_item_json <file> <ref> — the producer's data after a write:
 # {"ref": <ref>, "item": {...} | null} (schemas/json.md, "Queue writes").
 _queue_item_json() {
-  local file="$1" ref="$2" kind lvl pos pri deps="" first=1 line sub o reason out
-  local item="null"
-  lvl="" pos="" pri=""
-  while IFS= read -r line; do
-    case "$line" in
-      item$'\t'*)
-        IFS=$'\t' read -r _ sub lvl pos pri <<EOF
-$line
-EOF
-        [ "$sub" = "$ref" ] || { lvl="" ; continue; }
-        item=found
-        break ;;
+  _queue_item_object "$1" "$2"
+  json_quote "$2"
+  printf '{"ref":%s,"item":%s}\n' "$_JSON" "$_QITEM"
+}
+
+# _queue_item_object <file> <ref> — _QITEM <- the item <ref> as the queue
+# <file> holds it, or `null` when it is not queued.
+_QITEM=""
+_queue_item_object() {
+  local kind f2 f3 f4 f5
+  _QITEM=null
+  while IFS=$'\t' read -r kind f2 f3 f4 f5; do
+    case "$kind" in
+      item) _queue_item_begin "$f2" "$f3" "$f4" "$f5" ;;
+      dep) _queue_item_dep "$f2" "$f3" ;;
     esac
-  done < "$file"
-  json_quote "$ref"
-  out="{\"ref\":$_JSON,\"item\":"
-  if [ "$item" = found ]; then
-    while IFS= read -r line; do
-      case "$line" in
-        dep$'\t'*)
-          IFS=$'\t' read -r _ sub o reason <<EOF
-$line
+  done <<EOF
+$(_queue_items_with_deps "$1" "$2")
 EOF
-          [ "$sub" = "$ref" ] || continue
-          [ -n "$first" ] || deps="$deps,"
-          first=""
-          json_quote "$o"; deps="$deps{\"on\":$_JSON"
-          json_quote "$reason"; deps="$deps,\"reason\":$_JSON}" ;;
-      esac
-    done < "$file"
-    kind=${ref%%:*}
-    json_quote "$ref"; out="$out{\"ref\":$_JSON"
-    json_quote "$kind"; out="$out,\"kind\":$_JSON"
-    json_quote "${ref#*:}"; out="$out,\"id\":$_JSON"
-    if [ "$lvl" = "-" ]; then out="$out,\"level\":null"; else json_quote "$lvl"; out="$out,\"level\":$_JSON"; fi
-    out="$out,\"position\":$pos"
-    json_int_or_null "$pri"; out="$out,\"priority\":$_JSON"
-    out="$out,\"depends_on\":[$deps]}"
-  else
-    out="${out}null"
-  fi
-  printf '%s}\n' "$out"
+  [ -z "$_QI_REF" ] || _queue_item_end
+}
+
+# _queue_items_with_deps <file> [<ref>] — every item of the queue <file> in the
+# order of its lines, each followed by its own dependencies in theirs:
+# `item <ref> <level> <position> <priority>`, then `dep <on-ref> <reason>`.
+# With <ref>, that item alone. Lines of any other kind are left out, so a
+# later record kind never reaches the JSON.
+_queue_items_with_deps() {
+  Q_REF="${2:-}" awk -F '\t' '
+    $1 == "item" && NF >= 5 && (ENVIRON["Q_REF"] == "" || $2 == ENVIRON["Q_REF"]) {
+      i = ++n; line[i] = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5; r[i] = $2
+    }
+    $1 == "dep" && NF >= 4 { j = ++dn; dsub[j] = $2; dl[j] = $1 "\t" $3 "\t" $4 }
+    END {
+      for (i = 1; i <= n; i++) {
+        print line[i]
+        for (j = 1; j <= dn; j++) if (dsub[j] == r[i]) print dl[j]
+      }
+    }
+  ' "$1"
+}
+
+# The item being built: _queue_item_begin starts it, _queue_item_dep adds one
+# dependency, _queue_item_end sets _QITEM — the one object a write's answer and
+# the listing both print (schemas/json.md).
+_QI_REF=""
+_QI_HEAD=""
+_QI_DEPS=""
+_queue_item_begin() {
+  local ref="$1" lvl="$2" pos="$3" pri="$4" out
+  json_quote "$ref"; out="{\"ref\":$_JSON"
+  json_quote "${ref%%:*}"; out="$out,\"kind\":$_JSON"
+  json_quote "${ref#*:}"; out="$out,\"id\":$_JSON"
+  if [ "$lvl" = "-" ]; then out="$out,\"level\":null"; else json_quote "$lvl"; out="$out,\"level\":$_JSON"; fi
+  json_int_or_null "$pos"; out="$out,\"position\":$_JSON"
+  json_int_or_null "$pri"; out="$out,\"priority\":$_JSON"
+  _QI_REF=$ref
+  _QI_HEAD=$out
+  _QI_DEPS=""
+}
+
+_queue_item_dep() {
+  [ -z "$_QI_DEPS" ] || _QI_DEPS="$_QI_DEPS,"
+  json_quote "$1"; _QI_DEPS="$_QI_DEPS{\"on\":$_JSON"
+  json_quote "$2"; _QI_DEPS="$_QI_DEPS,\"reason\":$_JSON}"
+}
+
+_queue_item_end() {
+  _QITEM="$_QI_HEAD,\"depends_on\":[$_QI_DEPS]}"
+  _QI_REF=""
 }
 
 # --- the listing -------------------------------------------------------------------
@@ -513,12 +541,11 @@ EOF
 # level), every item with its priority and what it waits for.
 _queue_list() {
   [ $# -eq 0 ] || jig_fail usage "queue list: unexpected argument: $1"
-  [ -z "$_QUEUE_AS_JSON" ] || jig_fail usage "queue list: --json is not offered yet"
   jig_require_init
   local file
   file=$(queue_file)
   if [ ! -f "$file" ]; then
-    printf 'queue: empty\n'
+    if [ -n "$_QUEUE_AS_JSON" ]; then printf '{"items":[]}\n'; else printf 'queue: empty\n'; fi
     return 0
   fi
   local rc=0 canonical
@@ -530,6 +557,10 @@ _queue_list() {
     6) jig_die "queue: $file is in another format than this jig reads ($QUEUE_FORMAT); upgrade jig" ;;
     *) jig_die "queue: cannot read $file" ;;
   esac
+  if [ -n "$_QUEUE_AS_JSON" ]; then
+    _queue_list_json "$canonical"
+    return 0
+  fi
   awk -F '\t' '
     function show(i, indent,   j, p) {
       p = (pri[i] == "-") ? "-" : "P" pri[i]
@@ -555,4 +586,31 @@ _queue_list() {
   ' <<EOF
 $canonical
 EOF
+}
+
+# _queue_list_json <canonical> — the producer's data for `jig queue list
+# --json`: {"items": [...]}, every item in the writer's canonical order (the
+# top level by position, then each epic's level), each the object a write
+# answers with (schemas/json.md, "jig queue list --json").
+_queue_list_json() {
+  local kind f2 f3 f4 f5 items=""
+  _QI_REF=""
+  while IFS=$'\t' read -r kind f2 f3 f4 f5; do
+    case "$kind" in
+      item)
+        if [ -n "$_QI_REF" ]; then
+          _queue_item_end
+          items="$items${items:+,}$_QITEM"
+        fi
+        _queue_item_begin "$f2" "$f3" "$f4" "$f5" ;;
+      dep) _queue_item_dep "$f2" "$f3" ;;
+    esac
+  done <<EOF
+$(printf '%s\n' "$1" | _queue_items_with_deps -)
+EOF
+  if [ -n "$_QI_REF" ]; then
+    _queue_item_end
+    items="$items${items:+,}$_QITEM"
+  fi
+  printf '{"items":[%s]}\n' "$items"
 }

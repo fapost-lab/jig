@@ -323,7 +323,29 @@ write raises the revision past it (by two: the claim and the write), so read aga
 
 Refusals: `usage` for an argument the command does not take, a priority outside `0`–`5`, a move
 against an item of another level, a reference to itself or a dependency that would close a cycle;
-`not-found` and `stale-revision` as above. `jig queue list` has no `--json` yet.
+`not-found` and `stale-revision` as above.
+
+## `jig queue list --json`
+
+The whole queue of the clone, the same for every worktree; `jig queue --json` is the same read. It
+writes nothing and raises no revision.
+
+```json
+{"items": [<item>, ...]}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `items` | array | every queued item, each the object `item` of a write's answer above, in the queue's canonical order: the top level (`level` `null`) by `position`, then each epic's level (ordered by its `level`) by `position`; `[]` when nothing is queued |
+
+Lines of a kind this version does not read (record kinds a later Jig adds to the file) are left
+out, never an error. A queue file of another format version is refused with `failed`, as is any
+argument after `list` with `usage`.
+
+Read with `jig task list --json`: a `task` item joins a task by `id`, an `epic` item a spec of
+`jig spec list --json` by `id`. A task finished or gone stays queued until removed, so it may have
+no match in the default listing (`--all` lists the finished ones). The envelope's `revision` is the
+one to send with the next write, as for every read.
 
 ## `jig task new --json`
 

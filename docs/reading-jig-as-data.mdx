@@ -5,14 +5,15 @@ description: "Read your project's tasks, specs and what needs you from a script,
 
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
-`--json`. Today `jig task list`, `jig spec list` and `jig status` offer it, and `jig queue` and
-`jig task new` answer in it when they write; more commands will, in the same form.
+`--json`. Today `jig task list`, `jig spec list`, `jig status` and `jig queue list` offer it, and
+`jig queue` and `jig task new` answer in it when they write; more commands will, in the same form.
 
 ```bash
 jig task list --json
 jig task list --json --all
 jig spec list --json
 jig status --json
+jig queue list --json
 ```
 
 <Info>
@@ -222,11 +223,34 @@ when that run is older than your housekeeping cadence or the forge did not answe
 missing. The knowledge counts are the ones the last full `jig status` took for the page, at
 `knowledge_counts_at`.
 
+## The queue
+
+The queue holds the priority, order and dependencies of tasks and epics, one per project, shared
+by every worktree. `jig queue list --json` (or `jig queue --json`) reads all of it:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"items":[
+  {"ref":"epic:booking","kind":"epic","id":"booking","level":null,"position":100,"priority":0,"depends_on":[]},
+  {"ref":"task:booking-form","kind":"task","id":"booking-form","level":"epic:booking","position":100,"priority":null,"depends_on":[]},
+  {"ref":"task:booking-message","kind":"task","id":"booking-message","level":"epic:booking","position":200,"priority":1,"depends_on":[{"on":"task:booking-form","reason":"Quotes the form"}]}
+]}}
+```
+
+`items` is in the queue's order: the top level (`level` `null`) by `position`, then each epic's
+tasks under their `level`. An empty queue is `"items":[]`. An item is the same object a write
+below answers with, so a board renders both with one piece of code.
+
+The queue holds order, not the tasks themselves: read it together with `jig task list --json`
+and join a `task` item to a task by `id`, and an `epic` item to `jig spec list --json` by the
+spec's `id`. All of them carry the same `revision` when nothing was written between the reads, and
+the one you send with a change is the `revision` of the queue read you showed. An item whose task
+is finished, or gone, stays in the queue until it is removed; it has no match in the default task
+list, so join against `jig task list --json --all` or show it as it is.
+
 ## Changing the queue
 
-The queue holds the priority, order and dependencies of tasks and epics, one per project. A
-program changes it with the same commands a person uses, adding `--json` and the `revision` of the
-read it decided on:
+A program changes the queue with the same commands a person uses, adding `--json` and the
+`revision` of the read it decided on:
 
 ```bash
 jig queue move booking-message --after booking-form --revision 1792079790 --json
