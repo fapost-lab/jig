@@ -402,22 +402,40 @@ jig_revision_read'
   assert_eq "$(printf '100\n101')" "$(ls .ai/runtime/revision)"
 }
 
+# _json_mkdir_log — script text that records, in mk.log, each revision name a
+# mkdir is asked to create: a stale call must not create one even for a moment,
+# which the names left afterwards cannot show (a name made and withdrawn again
+# leaves nothing behind).
+_json_mkdir_log='
+mkdir() {
+  case "${1:-}" in
+    */revision/[0-9]*) printf "%s\n" "${1##*/}" >> mk.log ;;
+  esac
+  command mkdir "$@"
+}
+'
+
 # A cleared name created again, and a counter lost with .ai/runtime, are stale too.
 test_json_revision_claim_is_stale_when_the_read_revision_is_gone() {
   mkdir -p .ai/runtime/revision/300
-  _json_rev_script c.sh '
+  _json_rev_script c.sh "$_json_mkdir_log"'
 rc=0; jig_revision_claim 250 || rc=$?; printf "%s " "$rc"
 rc=0; jig_revision_claim 300 || rc=$?; printf "%s\n" "$rc"'
   _json_run_script c.sh
   assert_eq "1 0" "$OUT"
   assert_eq "$(printf '300\n301')" "$(ls .ai/runtime/revision)"
-  # A revision above the clone's claims nothing: the counter never goes down.
-  _json_rev_script f.sh '
+  # The stale 250 asked for no name at all: only 300's claim of 301 did.
+  assert_eq 301 "$(cat mk.log)"
+  # A revision above the clone's claims nothing — not even a 401 withdrawn
+  # again: the counter never goes up past a name nobody counted, nor down.
+  rm -f mk.log
+  _json_rev_script f.sh "$_json_mkdir_log"'
 rc=0; jig_revision_claim 400 || rc=$?; printf "%s\n" "$rc"
 jig_revision_read'
   _json_run_script f.sh
   assert_eq "$(printf '1\n301')" "$OUT"
   assert_eq "$(printf '300\n301')" "$(ls .ai/runtime/revision)"
+  assert_no_file mk.log
   rm -rf .ai/runtime/revision
   _json_rev_script l.sh '
 rc=0; jig_revision_claim 301 || rc=$?; printf "%s " "$rc"
@@ -433,6 +451,29 @@ jig_revision_read'
   _json_rev_script z.sh 'rc=0; jig_revision_claim 0 || rc=$?; printf "%s\n" "$rc"; ls .ai/runtime/revision | wc -l | tr -d " "'
   _json_run_script z.sh
   assert_eq "$(printf '1\n1')" "$OUT"
+}
+
+# Two writers holding 0 claim different seconds, so mkdir alone does not keep
+# the second out: one that claimed <now-1> between this call's empty scan and
+# its mkdir of <now> has already landed. A claim of 0 therefore stands only
+# alone; this one is stale, and stays as the highest name rather than lowering
+# the revision by its withdrawal.
+test_json_revision_claim_of_zero_stands_only_alone() {
+  _json_rev_script z.sh '
+date() {
+  local now
+  now=$(command date +%s)
+  command mkdir "$(jig_revision_dir)/$((now - 1))"
+  printf "%s\n" "$now"
+}
+rc=0; jig_revision_claim 0 || rc=$?; printf "%s\n" "$rc"
+jig_revision_read'
+  _json_run_script z.sh
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | sed -n 1p)"
+  local now
+  now=$(printf '%s\n' "$OUT" | sed -n 2p)
+  assert_eq "$(printf '%s\n%s' "$((now - 1))" "$now")" "$(ls .ai/runtime/revision)"
 }
 
 # One counter per clone, in its main checkout: a write in a worktree is seen

@@ -1601,6 +1601,44 @@ jig_spec_epic() {
   ' "$1"
 }
 
+# jig_task_epic <task.md> — which epic a task is built on, by its `Spec:` line
+# (jig_spec_link) and that spec's `Epic:` line (jig_spec_epic) in this
+# checkout's `.ai/specs`: the one answer `task start`, which cuts the task's
+# branch from it, and `jig queue`, which puts the task on that epic's level,
+# must never disagree on (ARCHITECTURE.md Scripts layout). What each does with
+# an answer off the happy path is its own: the codes say which one it is.
+#
+# Sets _JIG_TASK_SPEC (the spec id, empty without a link), _JIG_TASK_EPIC (the
+# branch, empty when the spec declares none) and _JIG_TASK_EPIC_STATE (`none`,
+# `open` or `finished`). Returns 0 with an answer — a task.md that does not
+# exist links to nothing — 2 when the task links to more than one spec, 3 when
+# the spec it links to is not in this checkout, 4 when that spec declares more
+# than one epic. Sets variables rather than printing: a caller in `$(...)`
+# would lose them.
+_JIG_TASK_SPEC=""
+_JIG_TASK_EPIC=""
+_JIG_TASK_EPIC_STATE=none
+jig_task_epic() {
+  local spec="" line="" rc=0 roadmap
+  _JIG_TASK_SPEC=""
+  _JIG_TASK_EPIC=""
+  _JIG_TASK_EPIC_STATE=none
+  [ -f "$1" ] || return 0
+  spec=$(jig_spec_link "$1") || rc=$?
+  [ "$rc" -ne 2 ] || return 2
+  [ -n "$spec" ] || return 0
+  _JIG_TASK_SPEC=$spec
+  roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
+  [ -f "$roadmap" ] || return 3
+  rc=0
+  line=$(jig_spec_epic "$roadmap") || rc=$?
+  [ "$rc" -ne 2 ] || return 4
+  [ -n "$line" ] || return 0
+  _JIG_TASK_EPIC=${line% *}
+  _JIG_TASK_EPIC_STATE=${line##* }
+  return 0
+}
+
 # jig_tracked_changes — the tracked-and-uncommitted lines of
 # `git status --porcelain`, never the untracked ones (`??`): untracked files
 # are not work in progress (build output, a spec nobody started yet), only a
@@ -2160,12 +2198,15 @@ jig_record_changed() {
 # the highest name must be <expected> (for 0, there must be no name at all):
 # otherwise the call is stale and claims nothing — a revision from before a
 # lost `.ai/runtime`, from the future, or simply old. Of two writers holding
-# one revision exactly one then creates the name (0 claims the time in
-# seconds, the seed of a first raise). After it, the claim must be the highest
-# name; when a higher one appeared in between — a cleared name created again,
-# another writer's raise — it is withdrawn: `rmdir` of the digits-only name
-# this call just created, never anything else. A claim is withdrawn only from
-# under a higher name, so the clone's revision never goes down.
+# one revision at most one then creates the name. After it, the claim must be
+# the highest name; when a higher one appeared in between — a cleared name
+# created again, another writer's raise — it is withdrawn: `rmdir` of the
+# digits-only name this call just created, never anything else. A claim is
+# withdrawn only from under a higher name, so the clone's revision never goes
+# down. 0 claims the time in seconds, the seed of a first raise, and two
+# writers holding 0 claim different seconds; so a claim of 0 must also be the
+# only name, and one that finds another claim of 0 below it is stale but
+# stays — the highest name, it counts as one more raise.
 #
 # The claim raises the revision *before* the caller's write lands. The caller
 # therefore moves its file into place and then calls jig_record_changed, so
@@ -2188,7 +2229,15 @@ jig_revision_claim() {
   fi
   mkdir "$dir/$next" 2>/dev/null || return 1
   _jig_revision_scan "$dir"
-  [ "$_JIG_REV" != "$next" ] || return 0
+  if [ "$_JIG_REV" = "$next" ]; then
+    # For 0 the names two writers claim differ (each its own second), so
+    # mkdir alone excludes nobody: the claim stands only alone. A name below
+    # it is another writer's first raise or claim of 0; this one stays, the
+    # highest name: withdrawing it would lower the revision. It counts as one
+    # more raise.
+    [ "$expected" != 0 ] || [ -z "$_JIG_REV_OLD" ] || return 1
+    return 0
+  fi
   rmdir "$dir/$next" 2>/dev/null || true
   return 1
 }

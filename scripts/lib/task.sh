@@ -1381,25 +1381,20 @@ _task_paused_hint() {
 # already finished. The fetch runs for every task: a stale local `main` cuts a
 # stale branch just as surely as a missing epic does.
 _task_start_base() {
-  local id="$1" default base spec="" line="" rc=0 roadmap
+  local id="$1" default base spec rc=0
   default=$(cfg git.base_branch main)
   base=$default
-  if [ -f "$(task_dir "$id")/task.md" ]; then
-    spec=$(jig_spec_link "$(task_dir "$id")/task.md") || rc=$?
-    [ "$rc" -ne 2 ] || jig_die "task start: $id links to more than one spec; keep one Spec: line"
-  fi
-  if [ -n "$spec" ]; then
-    roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
-    [ -f "$roadmap" ] \
-      || jig_die "task start: $id links to spec $spec, which this checkout does not have; switch to a branch that has it"
-    rc=0
-    line=$(jig_spec_epic "$roadmap") || rc=$?
-    [ "$rc" -ne 2 ] || jig_die "task start: spec $spec declares more than one epic; keep one Epic: line"
-    if [ -n "$line" ]; then
-      base=${line% *}
-      [ "${line##* }" = open ] \
-        || jig_die "task start: spec $spec marks epic $base finished; drop \"— finished\" from its Epic: line to cut tasks from it, or link the task to another spec"
-    fi
+  jig_task_epic "$(task_dir "$id")/task.md" || rc=$?
+  # shellcheck disable=SC2153 # set by jig_task_epic (common.sh)
+  spec=$_JIG_TASK_SPEC
+  [ "$rc" -ne 2 ] || jig_die "task start: $id links to more than one spec; keep one Spec: line"
+  [ "$rc" -ne 3 ] \
+    || jig_die "task start: $id links to spec $spec, which this checkout does not have; switch to a branch that has it"
+  [ "$rc" -ne 4 ] || jig_die "task start: spec $spec declares more than one epic; keep one Epic: line"
+  if [ -n "$_JIG_TASK_EPIC" ]; then
+    base=$_JIG_TASK_EPIC
+    [ "$_JIG_TASK_EPIC_STATE" = open ] \
+      || jig_die "task start: spec $spec marks epic $base finished; drop \"— finished\" from its Epic: line to cut tasks from it, or link the task to another spec"
   fi
   git check-ref-format --branch "$base" >/dev/null 2>&1 \
     || jig_die "task start: git rejects the base branch name: $base"
