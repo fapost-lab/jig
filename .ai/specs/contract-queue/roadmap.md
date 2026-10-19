@@ -14,7 +14,7 @@ and a pause request stops a running task at its next stage boundary.
 
 - [x] `queue-file` — queue file and commands — one file per clone beside `.ai/runtime/`, not under git; priority 0–5, sparse position (step 100), dependencies with a reason, epics as a level; atomic write checked against the clone revision; a reorder moves one item
 - [ ] `queue-status-context` — queue in status and context — `jig status` and `jig context` show a task's place (after: queue file — they read it)
-- [ ] `queue-json` — queue as JSON (after: queue file — it is what is read; contract-extensions' task list — read together, same envelope)
+- [x] `queue-json` — queue as JSON (after: queue file — it is what is read; contract-extensions' task list — read together, same envelope)
 - [x] `pause-requests` — pause requests — sticky, kept in the queue file, honoured at the next stage boundary and cleared by the same command; resume stays the direct `jig task resume` (after: queue file — the request lives there; contract-extensions' legal actions — they say when a pause is offered)
 - [x] `task-new-json` — task new as JSON — `jig task new` takes a short description as an argument and answers in the shared envelope, a refusal with its failure code (an id already taken, an invalid id), so a program can file a task without writing a file first (after: contract-extensions' envelope and failure codes — it is answered in them)
 - [x] `queue-claim-fixes` — exact claim and review leftovers of the queue — a claim at revision 0 lets at most one of two first writers land, the clone-revision regression test fails on the old code, and the queue and `task start` share one answer to which epic a task is built on (after: queue file — it fixes what that task left open)

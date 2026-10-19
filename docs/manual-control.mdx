@@ -112,7 +112,8 @@ The queue keeps the priority, order and dependencies of your tasks and epics, on
 whole project, outside git. Priority runs from `0` (most urgent) to `5`. A move places one item
 before or after another, or with `--top` and `--bottom` at an end; an epic (`epic:<spec-id>`) is
 ordered beside tasks, and the tasks built on it are ordered within it. A dependency always says why.
-`jig queue remove` takes an item out, and `jig queue undepend` drops a dependency.
+`jig queue remove` takes an item out, and `jig queue undepend` drops a dependency. A program
+reads the queue with `jig queue list --json` ([Reading Jig as data](/reading-jig-as-data#the-queue)).
 
 ## Inspect the change and its review
 

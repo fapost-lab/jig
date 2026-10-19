@@ -98,7 +98,7 @@ Usage: jig <command> [args]
                                  cut, finish or reopen a spec's epic branch
   spec remove <id> [--dry-run] [--abandon-unstarted]
                                  unlink a spec's open tasks and move the spec to trash
-  queue [list]                   priority, order and dependencies of tasks and epics
+  queue [list] [--json]          priority, order and dependencies of tasks and epics
   queue set|move|depend|undepend|remove <ref> [...] [--revision <n>] [--json]
                                  change one item; refused (stale-revision) when the
                                  clone changed since revision <n>
