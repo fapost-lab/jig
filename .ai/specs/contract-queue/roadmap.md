@@ -3,6 +3,9 @@
 Destination: priority, order, dependencies and pause requests live in Jig, written by one command
 that refuses a stale write, and agents honour them.
 
+Epic: epic/contract-queue
+Release: minor
+
 ## Phase 1 — The queue and requests
 
 Goal: priority, order, dependencies and pause requests exist in Jig and agents honour them. Done
@@ -13,12 +16,13 @@ and a pause request stops a running task at its next stage boundary.
 - [ ] queue in status and context — `jig status` and `jig context` show a task's place (after: queue file — they read it)
 - [ ] queue as JSON (after: queue file — it is what is read; contract-extensions' task list — read together, same envelope)
 - [ ] pause and resume requests — sticky, kept in the queue file, honoured at the next stage boundary and cleared by the same command (after: queue file — the request lives there; contract-extensions' legal actions — they say when a pause is offered)
+- [ ] task new as JSON — `jig task new` takes a short description as an argument and answers in the shared envelope, a refusal with its failure code (an id already taken, an invalid id), so a program can file a task without writing a file first (after: contract-extensions' envelope and failure codes — it is answered in them)
 - [ ] fog: next task by priority, order and dependencies — how an agent or a person is advised what to take is not stated yet
 - [ ] fog: registration hook in `jig init` for an installed UI — moved from contract-extensions when its epic was finished
 
 ## Waves
 
-1. Queue file and commands.
+1. Queue file and commands; task new as JSON.
 2. Queue in status and context; queue as JSON; pause and resume requests.
 
 <!--
