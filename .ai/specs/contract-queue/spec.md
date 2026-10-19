@@ -38,7 +38,7 @@ epics in Jig rather than in the UI, and to ask a running task to pause without l
 ## Scope and non-goals
 
 - In scope: the queue and its command; the queue in `jig status`, `jig context` and JSON; pause and
-  resume requests.
+  resume requests; filing a task from a program (`jig task new` in the JSON envelope).
 - Not doing: anything with a server, a port or a watcher — that is Jig UI's; next-task selection
   until the queue has been used.
 
@@ -60,11 +60,16 @@ epics in Jig rather than in the UI, and to ask a running task to pause without l
   The request lives in the queue file (one writer), not in `state`. Rejected: dropping a request
   the task has moved past.
 - Released on its own epic, after `contract-extensions` (maintainer, 2026-10-14).
+- The epic is released `minor` (maintainer, 2026-10-19): new commands and fields, nothing existing
+  changes its meaning, as with `contract-extensions` (0.29.0).
+- `jig task new` answers in the JSON envelope and takes a short description as an argument
+  (maintainer, 2026-10-19): Jig UI's Phase 2 files a minimal backlog task from the page and has to
+  tell an id already taken from any other refusal. Rejected: the UI writing a file for `--from`
+  and reading the exit status, which names no reason.
 
 ## Open questions
 
 - Queue file format and command names.
-- The release level of this spec's epic — asked when the epic is declared.
 - Whether `jig init` gets a hook that lets an installed UI register the project, without making
   the UI a dependency of Jig (moved from `contract-extensions` when its epic was finished).
 
