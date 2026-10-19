@@ -5,8 +5,8 @@ description: "Read your project's tasks, specs and what needs you from a script,
 
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
-`--json`. Today `jig task list`, `jig spec list` and `jig status` offer it; more commands will, in
-the same form.
+`--json`. Today `jig task list`, `jig spec list` and `jig status` offer it, and `jig queue` and
+`jig task new` answer in it when they write; more commands will, in the same form.
 
 ```bash
 jig task list --json
@@ -63,6 +63,7 @@ be reworded.
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
 | `not-found` | the task or epic named does not exist, or is not in the queue where the command needs it |
+| `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
 | `failed` | anything else: the message says what |
 
 New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
@@ -247,6 +248,33 @@ The envelope's `revision` is taken before the write, so with `--revision` it is 
 the write raised it, so read again before the next change. A move moves one item, never the others: drag an item by sending one
 `move`, not by renumbering the list. `position` is only for comparing within a `level` — the top
 level (`null`) orders epics and tasks without an epic, and `epic:<spec-id>` orders that epic's tasks.
+
+## Filing a task
+
+A program files a task with `jig task new`, giving the goal on the command line instead of writing
+a file first:
+
+```bash
+jig task new booking-message --goal "Guests get a confirmation message after booking" --json
+```
+
+The goal becomes the paragraph under `## Goal` in the task's `task.md`. It is one line of text, not
+empty and not starting with `#`. You may add `--class` and `--domains` as a person would. The
+answer is the filed task, the same object `jig task list --json` lists for it:
+
+```json
+{"schema":1,"revision":1792405174,"generated_at":"2026-10-19T10:22:28Z","data":{"task":{"id":"booking-message","class":null,"status":"active","issue":null,"goal":"Guests get a confirmation message after booking","knowledge_consolidated":false,"paused":false,"created_at":"2026-10-19","updated_at":"2026-10-19","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[],"actions":[...]}}}
+```
+
+When the id is taken, the refusal says so in its own code, so your program can ask the person for
+another id rather than show a generic failure:
+
+```json
+{"schema":1,"revision":1792405176,"generated_at":"2026-10-19T10:22:28Z","error":{"code":"already-exists","message":"task new: task already exists: booking-message"}}
+```
+
+An id Jig does not accept — a space, a leading dash — and a goal that is empty or spans lines are
+`usage`.
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).

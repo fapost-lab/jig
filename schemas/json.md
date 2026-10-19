@@ -45,6 +45,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, or an item or dependency that is not in the queue where the command needs it |
+| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds. Nothing was written |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -324,3 +325,29 @@ Refusals: `usage` for an argument the command does not take, a priority outside 
 against an item of another level, a reference to itself or a dependency that would close a cycle;
 `not-found` and `stale-revision` as above. `jig queue list` has no `--json` yet.
 
+## `jig task new --json`
+
+`jig task new <id> … --json` files a task and answers with it. `--goal <text>` gives the task's
+goal on the command line, so a program files a task without writing a file for `--from` first: the
+text, trimmed, becomes the paragraph under `## Goal` in the template's `task.md`, the one the task's `goal`
+reads back. `--json` may stand anywhere among the arguments; without it the command prints
+the workspace's path, as it always has.
+
+```json
+{"task": <task>}
+```
+
+`task` is the filed task as `jig task list --json` lists it — the same object, every field and its
+`actions`. A task just filed has no branch, so `branch`, `worktree`, `autopilot` and `pull_request`
+are `null` and `housekeeping_flags` is `[]`. Filed without `--goal`, the brief is the template's and
+`goal` reads its placeholder. The envelope's `revision` is taken before the task is written; the
+write raises it, so read again for the new one.
+
+Refusals: `already-exists` when a task — or a directory under `.ai/workspace/tasks/` — already holds
+the id, including the second of two `task new` racing for one; `usage` for an id outside the grammar
+(ASCII letters, digits, `.`, `_` and `-`, not starting with `.` or `-`; `jig_valid_id`,
+`scripts/lib/common.sh`), an argument the command does not take, an option without its value, a class or
+domains it does not accept, and a `--goal` that is empty, holds a line break, starts with `#`, or
+stands beside `--from`; `not-initialised` and `not-a-repository` as everywhere. Any other refusal —
+a worktree that keeps a task directory of its own, a `--from` file that cannot be read — reads
+`failed`. Nothing is written on a refusal.
