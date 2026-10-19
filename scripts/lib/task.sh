@@ -2726,7 +2726,9 @@ task_receipt() {
   done
   [ "$check" -eq 0 ] || [ "$has_stage" -eq 0 ] || jig_die "task receipt: --stage and --check are mutually exclusive"
   if [ "$since" -eq 1 ]; then
-    [ "$check" -eq 0 ] && [ "$has_stage" -eq 0 ] || jig_die "task receipt: --since-review takes no --stage or --check"
+    if [ "$check" -eq 1 ] || [ "$has_stage" -eq 1 ]; then
+      jig_die "task receipt: --since-review takes no --stage or --check"
+    fi
     case "${format:-report}" in report | paths) ;; *) jig_die "task receipt: invalid format: $format" ;; esac
     _task_receipt_since_review "$id" "${format:-report}"
     return
