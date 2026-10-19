@@ -93,6 +93,112 @@ test_queue_list_names_an_epic_whose_tasks_are_queued_without_it() {
   assert_eq "$(printf '%s\n' 'epic:big  (not queued)' '  task:t1  -')" "$OUT"
 }
 
+# --- the listing as JSON -----------------------------------------------------------
+
+# _q_data — the envelope in OUT with its generated_at blanked.
+_q_data() {
+  printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/'
+}
+
+test_queue_list_json_of_an_empty_queue() {
+  _q_setup a
+  _q_rev
+  _q_json list
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"items\":[]}}" "$(_q_data)"
+  # Bare `jig queue --json` is the listing too.
+  _q_json
+  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"items\":[]}}" "$(_q_data)"
+  assert_no_file .ai/runtime/queue
+}
+
+# The whole shape: the top level by position, then each epic's level, every
+# item the object a write answers with, dependencies ordered by `on`.
+test_queue_list_json_is_every_item_in_the_writers_order() {
+  _q_setup a b
+  _q_epic big t1 t2
+  jig queue set a --priority 1 >/dev/null
+  jig queue set epic:big --priority 0 >/dev/null
+  jig queue move t2 --bottom >/dev/null
+  jig queue move t1 --top >/dev/null
+  jig queue depend b --on epic:big --reason 'say "why"' >/dev/null
+  jig queue depend b --on a --reason "needs the format" >/dev/null
+  _q_rev
+  _q_json list
+  assert_eq 0 "$RC" "$ERR"
+  local items
+  items=$(printf '%s,' \
+    '{"ref":"task:a","kind":"task","id":"a","level":null,"position":100,"priority":1,"depends_on":[]}' \
+    '{"ref":"epic:big","kind":"epic","id":"big","level":null,"position":200,"priority":0,"depends_on":[]}' \
+    '{"ref":"task:b","kind":"task","id":"b","level":null,"position":300,"priority":null,"depends_on":[{"on":"epic:big","reason":"say \"why\""},{"on":"task:a","reason":"needs the format"}]}' \
+    '{"ref":"task:t1","kind":"task","id":"t1","level":"epic:big","position":50,"priority":null,"depends_on":[]}' \
+    '{"ref":"task:t2","kind":"task","id":"t2","level":"epic:big","position":100,"priority":null,"depends_on":[]}')
+  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"items\":[${items%,}]}}" "$(_q_data)"
+}
+
+# One item shape: what the listing prints for an item is byte for byte what
+# the write that touched it answered.
+test_queue_list_json_item_is_the_object_a_write_answers_with() {
+  _q_setup a b
+  _q_epic big t1
+  jig queue depend t1 --on b --reason "b first" >/dev/null
+  _q_json set t1 --priority 3
+  assert_eq 0 "$RC" "$ERR"
+  local written
+  written=$(printf '%s\n' "$OUT" | sed 's/.*"item":\(.*\)}}$/\1/')
+  _q_json list
+  assert_contains "$OUT" "$written"
+}
+
+# A line of a kind the reader does not know (the pause requests to come) is
+# left out of the JSON, which stays one valid value.
+test_queue_list_json_ignores_lines_of_a_kind_it_does_not_know() {
+  _q_setup a
+  printf '# jig queue 1\nrequest\ttask:a\tpause\tlater "now"\nitem\ttask:a\t-\t100\t-\nfuture\tx\n' > .ai/runtime/queue
+  _q_json list
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"items":[{"ref":"task:a","kind":"task","id":"a","level":null,"position":100,"priority":null,"depends_on":[]}]}}'
+  assert_not_contains "$OUT" "request"
+  assert_not_contains "$OUT" "future"
+}
+
+test_queue_list_json_refuses_another_format_version() {
+  _q_setup a
+  printf '# jig queue 2\nitem\ttask:a\t-\t100\t-\tnew-field\n' > .ai/runtime/queue
+  _q_json list
+  assert_eq 1 "$RC"
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "in another format than this jig reads"
+}
+
+# A read writes nothing: the revision it reports is the one after it.
+test_queue_list_json_raises_no_revision() {
+  _q_setup a
+  jig queue set a --priority 1 >/dev/null
+  _q_rev
+  local before=$REV
+  _q_json list
+  assert_contains "$OUT" "\"revision\":$before,"
+  _q_rev
+  assert_eq "$before" "$REV" "a JSON listing raised the revision"
+}
+
+# The queue is the clone's: a worktree reads the main checkout's file, with
+# the same revision a task list there reports.
+test_queue_list_json_from_a_worktree_reads_the_clones_queue() {
+  _q_setup
+  _q_epic big
+  git add -A >/dev/null
+  git commit -q -m "spec"
+  jig queue set epic:big --priority 3 >/dev/null
+  _q_rev
+  local wt="$JIG_TEST_TMP.wtjson"
+  git worktree add -q -b side-json "$wt"
+  (cd "$wt" && jig queue list --json > "$wt.out" 2>&1) || fail "worktree read failed: $(cat "$wt.out")"
+  assert_contains "$(cat "$wt.out")" "\"revision\":$REV,"
+  assert_contains "$(cat "$wt.out")" '"items":[{"ref":"epic:big","kind":"epic","id":"big","level":null,"position":100,"priority":3,"depends_on":[]}]'
+}
+
 # --- the file ---------------------------------------------------------------------
 
 test_queue_file_lives_in_runtime_in_its_one_format() {
@@ -462,7 +568,7 @@ test_queue_refuses_what_it_does_not_take() {
   assert_eq usage "$(_q_code)"
   _q_json set a --priority 1 --before a
   assert_eq usage "$(_q_code)"
-  _q_json list
+  _q_json list extra
   assert_eq usage "$(_q_code)"
   _q_json set
   assert_eq usage "$(_q_code)"
