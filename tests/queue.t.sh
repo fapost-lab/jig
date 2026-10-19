@@ -236,6 +236,33 @@ test_queue_puts_a_task_of_a_finished_epic_on_the_top_level() {
   assert_eq "task:t1 - 100 -" "$(_q_items)"
 }
 
+# The level is task start's answer (jig_task_epic): a record that makes it a
+# guess is refused, as task start refuses it, and nothing is written.
+test_queue_refuses_a_task_whose_epic_would_be_a_guess() {
+  _q_setup
+  _q_epic big t1
+  _q_epic other t2
+  printf '# t1\n\nSpec: .ai/specs/big/ — Phase 1\nSpec: .ai/specs/other/ — Phase 1\n' > .ai/workspace/tasks/t1/task.md
+  _q_json move t1 --bottom
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "more than one spec"
+  printf '# Roadmap\n\nEpic: epic/other\nEpic: epic/else\n' > .ai/specs/other/roadmap.md
+  _q_json move t2 --bottom
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "more than one epic"
+  assert_no_file .ai/runtime/queue
+}
+
+# A spec this checkout does not have is the ADR's accepted risk: the task goes
+# on the top level, where task start would refuse to cut it.
+test_queue_puts_a_task_of_a_spec_not_here_on_the_top_level() {
+  _q_setup
+  _q_epic big t1
+  rm -rf .ai/specs/big
+  jig queue move t1 --bottom >/dev/null
+  assert_eq "task:t1 - 100 -" "$(_q_items)"
+}
+
 test_queue_refuses_a_reference_to_nothing() {
   _q_setup a
   mkdir -p .ai/specs/plain

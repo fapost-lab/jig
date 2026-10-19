@@ -11,6 +11,7 @@ paths:
   - scripts/lib/common.sh
   - schemas/json.md
 summary: Why the queue is .ai/runtime/queue in the main checkout, one tab-separated record per line written only by jig queue, and why a write claims the revision above the caller's (jig_revision_claim) and refuses with stale-revision, then moves the file and raises the revision again.
+reviewed_at: 2026-10-19
 ---
 # The queue is one tab-separated file per clone, written only by `jig queue` against the revision its caller read
 
@@ -57,10 +58,14 @@ a new dependency (ADR-0002, ADR-0037).
 - **`0` is the most urgent priority**, as P0 is for review findings. Priority is a label: the order
   is the positions'. Choosing the next task from priority, order and dependencies is the spec's fog,
   not this decision.
-- **A task's level is computed at each write that touches it** — its `Spec:` line (`jig_spec_link`)
-  names a spec whose roadmap declares an open epic (`jig_spec_epic`), the rule `task start` cuts
-  by — and stored, so the readers that follow do not compute it again. A move places an item only
-  against an item of its own level.
+- **A task's level is computed at each write that touches it** — its `Spec:` line names a spec
+  whose roadmap declares an open epic, asked of `jig_task_epic` (common.sh), the one answer
+  `task start` cuts by too — and stored, so the readers that follow do not compute it again. A move
+  places an item only against an item of its own level. Off the happy path the two commands share
+  the answer, not the policy: a record that makes the answer a guess — two `Spec:` lines, two
+  `Epic:` lines — is refused by both; a spec this checkout does not have and a finished epic make
+  `task start` refuse, while the queue puts the task on the top level, because it records where
+  work sits rather than where a branch is cut (and the first is the accepted risk below).
 - **A move takes the integer halfway between the new neighbours; with none left, the same command
   respaces that level by 100 in the same single write.** The spec forbids a renumbering a consumer
   issues as several commands, because a reader could see half of it; one write is never seen half
@@ -69,12 +74,17 @@ a new dependency (ADR-0002, ADR-0037).
   revision ADR's `mkdir <E+1>` made exact, as its Consequences prescribed. Before the claim the
   highest name must be `<E>` (for `<E>` = 0: no name at all), or the call is stale and claims
   nothing — so a revision that is old, from before a lost `.ai/runtime`, or above the clone's never
-  creates a name. Then `mkdir <E+1>` (for 0, the time in seconds): of two writers holding one
-  revision exactly one creates it. After it, the claim must be the highest name; one that appeared
-  above it in between — a cleared name created again, any other raise — makes it stale, and it is
-  withdrawn (`rmdir` of the digits-only name the call just made). A claim is withdrawn only from
-  under a higher name, so the revision never goes down, which the revision ADR relies on. A stale
-  call refuses with the failure code `stale-revision`, having written nothing.
+  creates a name. Then `mkdir <E+1>`: of two writers holding one revision at most one creates it.
+  After it, the claim must be the highest name; one that appeared above it in between — a cleared
+  name created again, any other raise — makes it stale, and it is withdrawn (`rmdir` of the
+  digits-only name the call just made). A claim is withdrawn only from under a higher name, so the
+  revision never goes down, which the revision ADR relies on. For `<E>` = 0 the claim is the time in
+  seconds, and two writers holding 0 claim different seconds, so `mkdir` alone keeps neither out:
+  a claim of 0 must also be the only name. One that finds another name below it — another writer's
+  claim of 0, or a first raise, which may already have landed — is stale and stays, being the
+  highest name: it counts as one raise more, never as a revision lost. A stale call refuses with
+  the failure code `stale-revision`, having written nothing; two writers holding one revision may
+  both be refused, never both land.
   `<E>` is the caller's `--revision`, or the revision the command reads itself before it reads the
   queue, so a person in a terminal types no number and two of their commands still cannot
   overwrite each other.
