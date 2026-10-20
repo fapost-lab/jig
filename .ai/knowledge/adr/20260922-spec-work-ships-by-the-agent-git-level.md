@@ -12,7 +12,7 @@ paths:
   - scripts/lib/common.sh
   - skills/jig-idea/SKILL.md
 summary: Why jig spec ship carries a spec's declaration, epic branch and final pull request as far as agent.git allows, why the git steps are shared in common.sh, and why the release level is recorded when the epic is declared.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-10-20
 ---
 # A spec's declaration, epic branch and final pull request ship by the same agent.git level as a task
 
@@ -97,3 +97,12 @@ open. Merging the final pull request in an unattended run, and the default level
 > merge commit once CI passed and nothing is left of the epic; no `Release:` line reads as `minor`, and a
 > `major` release opens as a draft that needs a human. A declaration is still never merged
 > (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+
+> **Amendment (2026-10-20).** A fourth mode, `remove`: a spec gone from the checkout (`spec close`, or
+> `spec remove`) whose removed roadmap declared no open epic was refused as "only an epic's final pull
+> request ships a removed spec", leaving the removal to a hand-made commit. It is now shipped like a
+> declaration: `spec ship` stages only `.ai/specs/<id>/`, refuses anything staged outside it and any
+> `epic/*` branch, cuts `close/<id>` from the default branch (a name Jig owns and deletes once merged,
+> as `finish/<id>`; `spec/<id>` would collide with the spec's own branch), pushes and opens the pull
+> request as far as `agent.git` allows, and never merges. A removal with an open epic is still `final`.
+> One removal per pull request: moving work from one spec to another is two ships.

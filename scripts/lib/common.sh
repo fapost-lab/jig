@@ -1391,9 +1391,10 @@ _jig_pr_state_gitlab() {
 
 # jig_branch_is_jigs <branch> — exit 0 when <branch> is a name Jig gives its
 # own branches: `jig/upgrade-*` (jig upgrade), `finish/<id>` (spec ship's
-# finish) or the name `git.branch_template` gives a valid task id. A template
-# with no literal text before `{id}` names no branch as Jig's: every branch
-# whose name is a valid id would match it. Never an epic (`epic/*`, ADR-0040)
+# finish), `close/<id>` (spec ship's removal of an epic-less spec) or the name
+# `git.branch_template` gives a valid task id. A template with no literal text
+# before `{id}` names no branch as Jig's: every branch whose name is a valid id
+# would match it. Never an epic (`epic/*`, ADR-0040)
 # or a spec branch (`spec/*`): those are the bases tasks are judged against,
 # and never the project's base branch, whatever it is called.
 jig_branch_is_jigs() {
@@ -1404,6 +1405,7 @@ jig_branch_is_jigs() {
     epic/* | spec/*) return 1 ;;
     jig/upgrade-?*) return 0 ;;
     finish/*) jig_valid_id "${b#finish/}"; return ;;
+    close/*) jig_valid_id "${b#close/}"; return ;;
   esac
   template=$(cfg git.branch_template "task/{id}")
   case "$template" in

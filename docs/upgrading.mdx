@@ -543,7 +543,7 @@ change; `.ai/config.yaml` is not touched. One thing deserves a look before you u
 has been used for a while:
 
 **The first housekeeping run after the upgrade deletes the merged Jig branches it can, all at
-once.** Branches Jig made (`jig/upgrade-*`, `finish/<id>`, the task branches `git.branch_template`
+once.** Branches Jig made (`jig/upgrade-*`, `finish/<id>`, `close/<id>`, the task branches `git.branch_template`
 names) whose work has landed are deleted from your clone, and the first run is the one that meets all
 the ones collected so far; on a clone that has been through dozens of tasks that is dozens of
 branches. Housekeeping starts on its own with your agent's session, by default at most once a day, once the
