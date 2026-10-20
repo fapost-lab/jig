@@ -46,9 +46,12 @@ global:    .ai/knowledge/RULES.md
 required:  .ai/knowledge/domains/reporting/OVERVIEW.md  (domains: reporting)
 catalog:   .ai/knowledge/adr/20260912-export-formats.md  [adr-20260912-export-formats] Why exports are streamed.
 workspace: .ai/workspace/tasks/csv-export/task.md
+queue:     2 of 4 on the top level, priority 1
 ```
 
-The script answers from file metadata alone; the agent then reads the listed files itself.
+The script answers from file metadata alone; the agent then reads the listed files itself. When the
+task is in the [queue](/manual-control#order-the-work), the `queue:` lines say where it stands, what
+it waits for and why, and a pause asked of it that it has not honoured yet.
 
 ## What lives where
 

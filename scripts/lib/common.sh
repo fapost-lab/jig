@@ -2245,9 +2245,10 @@ jig_revision_claim() {
 # --- the queue file, as its readers outside `jig queue` see it ----------------
 #
 # `jig queue` (lib/queue.sh) is the queue's only writer; `task` reads the pause
-# requests in it and acts on them through `"$JIG_SELF" queue cancel`. Where the
-# file is and when a pause request may be made are the answers they must never
-# disagree about, so they live here
+# requests in it and acts on them through `"$JIG_SELF" queue cancel`, and
+# `status` and `context` show a task's place in it. Where the file is, how its
+# items are parsed and when a pause request may be made are the answers they
+# must never disagree about, so they live here
 # (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
 
 # jig_queue_file — the queue's path in the clone's main checkout
@@ -2258,6 +2259,88 @@ jig_queue_file() {
   printf '%s/%s/runtime/queue\n' "$root" "$JIG_AI_DIR"
 }
 
+# _jig_queue_readable <file> — exit 0 when the queue <file> exists and is of
+# the format version this jig reads. A file of another version holds nothing
+# this jig can read, as the writer refuses to rewrite it.
+_JIG_QUEUE_FORMAT=1
+_jig_queue_readable() {
+  [ -f "$1" ] || return 1
+  Q_FORMAT=$_JIG_QUEUE_FORMAT awk '
+    FNR == 1 { if ($0 ~ /^# jig queue /) { split($0, w, " "); if (w[4] != ENVIRON["Q_FORMAT"]) bad = 1 } exit }
+    END { exit bad }
+  ' "$1"
+}
+
+# jig_queue_items <file|-> [<ref>] — every item of the queue <file> in the
+# order of its lines, each followed by its own dependencies in theirs:
+# `item <ref> <level> <position> <priority>`, then `dep <on-ref> <reason>`.
+# With <ref>, that item alone. Lines of any other kind are left out. This is
+# the one parser of the queue's items and dependencies: `jig queue list
+# --json` (queue.sh) reads them through it, and so do `jig status` and `jig
+# context` (jig_queue_place), since a command library never sources another
+# (ARCHITECTURE.md). The format version is the caller's to check.
+jig_queue_items() {
+  Q_REF="${2:-}" awk -F '\t' '
+    $1 == "item" && NF >= 5 && (ENVIRON["Q_REF"] == "" || $2 == ENVIRON["Q_REF"]) {
+      i = ++n; line[i] = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5; r[i] = $2
+    }
+    $1 == "dep" && NF >= 4 { j = ++dn; dsub[j] = $2; dl[j] = $1 "\t" $3 "\t" $4 }
+    END {
+      for (i = 1; i <= n; i++) {
+        print line[i]
+        for (j = 1; j <= dn; j++) if (dsub[j] == r[i]) print dl[j]
+      }
+    }
+  ' "$1"
+}
+
+# jig_queue_place <id> — exit 0 when task <id> is an item of the queue, with
+# _JIG_QUEUE_LEVEL <- its level (`-` the top, or `epic:<spec>`),
+# _JIG_QUEUE_POSITION and _JIG_QUEUE_PRIORITY (`-` for none) as stored,
+# _JIG_QUEUE_RANK <- its place on its level counted from 1 (positions compare
+# within a level only), _JIG_QUEUE_COUNT <- how many items that level holds,
+# and _JIG_QUEUE_DEPS <- what it waits for, one `<on-ref><TAB><reason>` line
+# each. Exit 1 when it is not queued, there is no queue, or the queue is of
+# another format version. What `jig status` and `jig context` show of a
+# task's place (adr-20261019-the-queue-is-one-file-written-against-a-revision).
+_JIG_QUEUE_LEVEL=""
+_JIG_QUEUE_POSITION=""
+_JIG_QUEUE_PRIORITY=""
+_JIG_QUEUE_RANK=""
+_JIG_QUEUE_COUNT=""
+_JIG_QUEUE_DEPS=""
+jig_queue_place() {
+  local file ref="task:$1" kind f2 f3 f4 f5 mine="" items="" rank
+  _JIG_QUEUE_LEVEL="" _JIG_QUEUE_POSITION="" _JIG_QUEUE_PRIORITY=""
+  _JIG_QUEUE_RANK="" _JIG_QUEUE_COUNT="" _JIG_QUEUE_DEPS=""
+  file=$(jig_queue_file)
+  _jig_queue_readable "$file" || return 1
+  items=$(jig_queue_items "$file")
+  while IFS=$'\t' read -r kind f2 f3 f4 f5; do
+    case "$kind" in
+      item)
+        mine=""
+        [ "$f2" = "$ref" ] || continue
+        mine=1
+        _JIG_QUEUE_LEVEL=$f3 _JIG_QUEUE_POSITION=$f4 _JIG_QUEUE_PRIORITY=$f5 ;;
+      dep)
+        [ -n "$mine" ] || continue
+        _JIG_QUEUE_DEPS="$_JIG_QUEUE_DEPS$f2"$'\t'"$f3"$'\n' ;;
+    esac
+  done <<EOF
+$items
+EOF
+  [ -n "$_JIG_QUEUE_LEVEL" ] || return 1
+  _JIG_QUEUE_DEPS=${_JIG_QUEUE_DEPS%$'\n'}
+  rank=$(printf '%s\n' "$items" | Q_LEVEL="$_JIG_QUEUE_LEVEL" Q_POS="$_JIG_QUEUE_POSITION" awk -F '\t' '
+    $1 == "item" && $3 == ENVIRON["Q_LEVEL"] { n++; if ($4 + 0 < ENVIRON["Q_POS"] + 0) before++ }
+    END { print before + 1, n + 0 }
+  ')
+  _JIG_QUEUE_RANK=${rank%% *}
+  _JIG_QUEUE_COUNT=${rank#* }
+  return 0
+}
+
 # jig_pause_request <id> — exit 0 when the queue holds a pause request for
 # task <id>, with _JIG_PAUSE_AT <- when it was made (UTC) and
 # _JIG_PAUSE_REASON <- its reason (empty for none); exit 1 when it holds none
@@ -2265,8 +2348,9 @@ jig_queue_file() {
 # <requested_at><TAB><reason>`; the first one counts, as the writer reads it.
 # A file of another format version holds no request this jig can read, as the
 # writer refuses to rewrite it: none is reported. This is a second reader of
-# the queue's lines beside queue.sh's parser, for the one record `task` needs,
-# because a command library never sources another (ARCHITECTURE.md).
+# the queue's lines beside queue.sh's writer, for the one record `task`,
+# `status` and `context` need, because a command library never sources
+# another (ARCHITECTURE.md).
 _JIG_PAUSE_AT=""
 _JIG_PAUSE_REASON=""
 jig_pause_request() {
@@ -2274,15 +2358,37 @@ jig_pause_request() {
   _JIG_PAUSE_AT=""
   _JIG_PAUSE_REASON=""
   file=$(jig_queue_file)
-  [ -f "$file" ] || return 1
-  line=$(Q_REF="task:$1" Q_FORMAT=1 awk -F '\t' '
-    FNR == 1 && /^# jig queue / { split($0, w, " "); if (w[4] != ENVIRON["Q_FORMAT"]) exit }
+  _jig_queue_readable "$file" || return 1
+  line=$(Q_REF="task:$1" awk -F '\t' '
     $1 == "request" && $2 == ENVIRON["Q_REF"] && $3 == "pause" && NF >= 4 { print $4 "\t" $5; exit }
   ' "$file")
   [ -n "$line" ] || return 1
   _JIG_PAUSE_AT=${line%%$'\t'*}
   _JIG_PAUSE_REASON=${line#*$'\t'}
   return 0
+}
+
+# jig_utc_epoch <UTC ISO time> — seconds since the epoch, or nothing. BSD date
+# first (macOS), GNU date otherwise (Linux, Git Bash).
+jig_utc_epoch() {
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null \
+    || date -u -d "$1" +%s 2>/dev/null \
+    || true
+}
+
+# jig_utc_ago <UTC ISO time> — how long ago, in words a person reads at a
+# glance: "just now", "12 min", "3 h", "2 days"; empty when unparsable.
+jig_utc_ago() {
+  local past now d
+  past=$(jig_utc_epoch "$1")
+  [ -n "$past" ] || return 0
+  now=$(date -u +%s)
+  d=$((now - past))
+  if [ "$d" -lt 60 ]; then printf 'just now\n'
+  elif [ "$d" -lt 3600 ]; then printf '%d min\n' $((d / 60))
+  elif [ "$d" -lt 172800 ]; then printf '%d h\n' $((d / 3600))
+  else printf '%d days\n' $((d / 86400))
+  fi
 }
 
 # _jig_task_state_value <id> <key> — the value of <key> in task <id>'s state

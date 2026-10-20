@@ -341,8 +341,9 @@ writes nothing and raises no revision.
 |---|---|---|
 | `items` | array | every queued item, each the object `item` of a write's answer above, in the queue's canonical order: the top level (`level` `null`) by `position`, then each epic's level (ordered by its `level`) by `position`; `[]` when nothing is queued |
 
-Lines of a kind this version does not read (record kinds a later Jig adds to the file) are left
-out, never an error. A queue file of another format version is refused with `failed`, as is any
+Request lines (`request`, [Pause requests](#pause-requests) below) are read but not listed: `jig
+task list --json` shows a task's pending pause as its `pause_request`. Lines of a kind this version
+does not read (record kinds a later Jig adds to the file) are left out, never an error. A queue file of another format version is refused with `failed`, as is any
 argument after `list` with `usage`.
 
 Read with `jig task list --json`: a `task` item joins a task by `id`, an `epic` item a spec of

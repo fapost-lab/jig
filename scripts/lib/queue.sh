@@ -31,7 +31,7 @@
 
 QUEUE_USAGE="usage: jig queue [list] [--json] | jig queue set <ref> --priority <0-5|none> | jig queue move <ref> (--before <ref> | --after <ref> | --top | --bottom) | jig queue depend <ref> --on <ref> --reason <text> | jig queue undepend <ref> --on <ref> | jig queue remove <ref> | jig queue request <ref> pause [--reason <text>] | jig queue cancel <ref> pause; every write takes [--revision <n>] [--json]; <ref> is task:<id>, epic:<spec-id> or <id>"
 
-QUEUE_FORMAT=1
+QUEUE_FORMAT=$_JIG_QUEUE_FORMAT
 QUEUE_STEP=100
 
 # Set by cmd_queue when `--json` is among the arguments; the producer runs in
@@ -495,6 +495,9 @@ _queue_write() {
     *) jig_die "queue: cannot read $file" ;;
   esac
   _queue_commit "$expected" "$new" "$file"
+  # The status page shows each task's place in the queue (`jig status`), so a
+  # landed write redraws it, as a task write does.
+  jig_status_page_flush
 
   if [ -n "$_QUEUE_AS_JSON" ]; then
     if [ -n "$kind" ]; then
@@ -545,29 +548,9 @@ _queue_item_object() {
       dep) _queue_item_dep "$f2" "$f3" ;;
     esac
   done <<EOF
-$(_queue_items_with_deps "$1" "$2")
+$(jig_queue_items "$1" "$2")
 EOF
   [ -z "$_QI_REF" ] || _queue_item_end
-}
-
-# _queue_items_with_deps <file> [<ref>] — every item of the queue <file> in the
-# order of its lines, each followed by its own dependencies in theirs:
-# `item <ref> <level> <position> <priority>`, then `dep <on-ref> <reason>`.
-# With <ref>, that item alone. Lines of any other kind are left out, so a
-# later record kind never reaches the JSON.
-_queue_items_with_deps() {
-  Q_REF="${2:-}" awk -F '\t' '
-    $1 == "item" && NF >= 5 && (ENVIRON["Q_REF"] == "" || $2 == ENVIRON["Q_REF"]) {
-      i = ++n; line[i] = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5; r[i] = $2
-    }
-    $1 == "dep" && NF >= 4 { j = ++dn; dsub[j] = $2; dl[j] = $1 "\t" $3 "\t" $4 }
-    END {
-      for (i = 1; i <= n; i++) {
-        print line[i]
-        for (j = 1; j <= dn; j++) if (dsub[j] == r[i]) print dl[j]
-      }
-    }
-  ' "$1"
 }
 
 # The item being built: _queue_item_begin starts it, _queue_item_dep adds one
@@ -694,7 +677,7 @@ _queue_list_json() {
       dep) _queue_item_dep "$f2" "$f3" ;;
     esac
   done <<EOF
-$(printf '%s\n' "$1" | _queue_items_with_deps -)
+$(printf '%s\n' "$1" | jig_queue_items -)
 EOF
   if [ -n "$_QI_REF" ]; then
     _queue_item_end

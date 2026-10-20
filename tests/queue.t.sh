@@ -690,3 +690,13 @@ test_queue_request_with_a_stale_revision_is_refused_and_changes_nothing() {
   assert_eq stale-revision "$(_q_code)"
   assert_eq "$before" "$(cat .ai/runtime/queue)"
 }
+
+test_queue_write_redraws_the_status_page() {
+  _q_setup a
+  jig status --html >/dev/null
+  assert_not_contains "$(cat .ai/runtime/status.html)" "queue=1/1"
+  jig queue set a --priority 2 >/dev/null
+  assert_contains "$(cat .ai/runtime/status.html)" "queue=1/1 priority=2"
+  jig queue set a --priority 3 --json >/dev/null
+  assert_contains "$(cat .ai/runtime/status.html)" "queue=1/1 priority=3"
+}

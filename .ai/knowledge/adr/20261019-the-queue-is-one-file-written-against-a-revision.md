@@ -142,4 +142,7 @@ a new dependency (ADR-0002, ADR-0037).
   pause requests — read this file through `queue.sh`'s parser and add their own line kinds; a new
   incompatible field raises the format version. (Amended 2026-10-19: `task` reads the pause
   requests through a reader of its own in `common.sh`, since a command library never sources
-  another; adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary.)
+  another; adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary. Amended again
+  2026-10-19: the parser of items and dependencies moved to `common.sh` as `jig_queue_items`, which
+  `jig queue list --json` calls, and `jig status` and `jig context` read a task's place through
+  `jig_queue_place` on top of it, so the readers share one parser and one format check.)
