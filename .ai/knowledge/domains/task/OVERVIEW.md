@@ -256,11 +256,16 @@ did, not a merge state: ADR-0005 still holds, and housekeeping still derives whe
 After the findings check, each gate asks one staleness function whether the task's own change (`diff`: the content difference
 against the merge base with its base branch, so a merge of the base that touches none of the task's
 files does not move it), the knowledge resolved for that change (`context`, `jig context`'s own
-matching, the task's own knowledge edits left out), the approved design or the ledger moved since the
+matching; a document the task edited counts at its content on the merge base, one it added not at all), the approved design or the ledger moved since the
 receipt, and a T4 task must have one (adr-20261003-receipt-pins-what-the-review-read). The pinned
 content is built in a temporary index, never the real one, and it leaves out `.ai/knowledge/` and
 `.ai/specs/` because consolidation writes them after review. A new path that consolidation starts
 writing must join that exclusion, or every task will read as unreviewed at its last step.
+`jig task receipt <id> --since-review` reads the same staleness answer and never gates: it narrows a
+re-review to the interdiff from the receipt's `tree`, limited to the task's files then (from the
+receipt's `merge_base`) and now, only when nothing but `diff` or `findings` moved, and answers `full`
+otherwise (adr-20261019-a-re-review-reads-what-changed-since-review). It lives on `task receipt`, not
+`task changes`, because ADR-0022 keeps that one an inventory from an explicit `--base`.
 
 **An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
 `jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode` and

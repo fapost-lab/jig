@@ -84,6 +84,7 @@ _task_usage() {
     receipt)
       printf 'usage: jig task receipt <id> --stage review|architecture-review\n'
       printf '       jig task receipt <id> --check\n'
+      printf '       jig task receipt <id> --since-review [--format report|paths]\n'
       ;;
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft]\n' ;;
     autopilot)
@@ -2649,11 +2650,15 @@ _task_receipt_diff_hash() {
 # knowledge the review was done against, by content. The documents are what
 # `jig context` resolves for the files of the task's change, run in the
 # checkout <dir> with the task's domains (the global documents included, the
-# task's workspace left out), and the documents the task edited itself left out too: consolidation
-# writes them after the review (ADR-0030), and they are part of the task's own
-# change. The value hashes "<path> <content hash>" lines, so a document added,
-# removed or edited by anyone else changes it. Fails when it cannot be
-# computed; "-" when there is no merge base to find the task's files from.
+# task's workspace left out). A document the task edited itself counts at the
+# content it had at the merge base, as a checkout would hold it — what the
+# review read before the task touched it — and one the task added counts not
+# at all: consolidation writes knowledge after the review (ADR-0030), and those
+# edits are the task's own change, so they must neither stale the receipt nor
+# drop a line out of it. The value hashes "<path> <content hash>" lines, so a
+# document added, removed or edited by anyone else — a base merged in moves the
+# merge base — changes it. Fails when it cannot be computed; "-" when there is
+# no merge base to find the task's files from.
 _task_receipt_context_hash() {
   local id="$1" dir="$2" mb files full own domains matched path lines=""
   mb=$(_task_review_merge_base "$id" "$dir") || { printf -- '-\n'; return 0; }
@@ -2672,7 +2677,12 @@ _task_receipt_context_hash() {
     ${domains:+--domains "$(printf '%s' "$domains" | tr ' ' ',')"} --format paths) 2>/dev/null) || return 1
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    jig_has_line "$path" "$own" && continue
+    if jig_has_line "$path" "$own"; then
+      git -C "$dir" cat-file -e "$mb:$path" 2>/dev/null || continue
+      lines="$lines$path $(git -C "$dir" cat-file --filters "$mb:$path" | jig_hash_stdin)
+"
+      continue
+    fi
     if [ -f "$dir/$path" ]; then
       lines="$lines$path $(jig_hash "$dir/$path")
 "
@@ -2845,17 +2855,30 @@ task_receipt() {
   dir=$(task_dir "$id")
   [ -f "$dir/state" ] || jig_die "task receipt: unknown task: $id"
 
-  local stage="" has_stage=0 check=0
+  local stage="" has_stage=0 check=0 since=0 format="" has_format=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --stage)
         [ $# -ge 2 ] || jig_die "task receipt: --stage requires a value"
         stage="$2"; has_stage=1; shift 2 ;;
       --check) check=1; shift ;;
+      --since-review) since=1; shift ;;
+      --format)
+        [ $# -ge 2 ] || jig_die "task receipt: --format requires a value"
+        format="$2"; has_format=1; shift 2 ;;
       *) jig_die "task receipt: unknown argument: $1" ;;
     esac
   done
   [ "$check" -eq 0 ] || [ "$has_stage" -eq 0 ] || jig_die "task receipt: --stage and --check are mutually exclusive"
+  if [ "$since" -eq 1 ]; then
+    if [ "$check" -eq 1 ] || [ "$has_stage" -eq 1 ]; then
+      jig_die "task receipt: --since-review takes no --stage or --check"
+    fi
+    case "${format:-report}" in report | paths) ;; *) jig_die "task receipt: invalid format: $format" ;; esac
+    _task_receipt_since_review "$id" "${format:-report}"
+    return
+  fi
+  [ "$has_format" -eq 0 ] || jig_die "task receipt: --format goes with --since-review"
 
   if [ "$check" -eq 1 ]; then
     task_receipt_check "$id"
@@ -2876,7 +2899,7 @@ task_receipt() {
 # re-review, replaces it outright — the stage most recently written wins, and
 # nothing reads the one it overwrote.
 task_receipt_write() {
-  local id="$1" stage="$2" dir tree base_commit head diff context design findings file tmp
+  local id="$1" stage="$2" dir tree base_commit head diff context design findings file tmp merge_base
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task receipt"
   local review_dir
@@ -2885,6 +2908,9 @@ task_receipt_write() {
   tree=$(_task_review_tree "$review_dir") || jig_die "task receipt: could not read the working tree"
   diff=$(_task_receipt_diff_hash "$id" "$review_dir") || jig_die "task receipt: could not read the task's change"
   context=$(_task_receipt_context_hash "$id" "$review_dir") || jig_die "task receipt: could not resolve the knowledge for the task's change"
+  # What `diff` was measured from: read by `task receipt --since-review`, never
+  # compared (adr-20261019-a-re-review-reads-what-changed-since-review).
+  merge_base=$(_task_review_merge_base "$id" "$review_dir") || merge_base=""
   base_commit=$(task_state_get "$id" base_commit)
   head=$(git -C "$review_dir" rev-parse --verify --quiet HEAD 2>/dev/null) || head=""
   design=$(_task_receipt_design_hash "$id")
@@ -2908,6 +2934,7 @@ task_receipt_write() {
     printf 'tree: %s\n' "$tree"
     printf 'diff: %s\n' "$diff"
     printf 'context: %s\n' "$context"
+    printf 'merge_base: %s\n' "$merge_base"
     printf 'base_commit: %s\n' "$base_commit"
     printf 'head: %s\n' "$head"
     printf 'design: %s\n' "$design"
@@ -2948,6 +2975,93 @@ task_receipt_check() {
   fi
   printf 'receipt: stale (%s, reviewed %s)\n' "$changed" "$(_task_receipt_get "$id" reviewed_at)"
   return 1
+}
+
+# _task_receipt_since_review <id> <report|paths> — what the task's own change
+# did since its receipt was written: the interdiff a re-review reads instead of
+# the whole change (adr-20261019-a-re-review-reads-what-changed-since-review).
+# It narrows the re-review only; no gate reads it, and the receipt still goes
+# stale on any change. The reviewed tree is diffed against the current review
+# tree, limited to the files of the task's change then (receipt `merge_base`
+# to receipt `tree`) and now, so what a merge of the base brought into files
+# the task never touched is left out.
+#
+# Exit 0 with `re-review: narrow (...)` and the interdiff when only the task's
+# diff or the ledger moved; exit 0 with `re-review: none` when the receipt is
+# current; exit 1 with `re-review: full — <why>` when the re-review must read
+# everything: no receipt, the design or the knowledge under the review moved,
+# or what the receipt pinned can no longer be read. With `paths` only the
+# interdiff's files are printed, and the verdict of none or full goes to
+# stderr, so the list can be piped into `jig context resolve`.
+_task_receipt_since_review() {
+  local id="$1" format="$2" changed dir old_tree old_mb new_tree old_files new_files paths diffed files="" path
+  if [ ! -f "$(task_dir "$id")/receipt" ]; then
+    _task_since_review_full "$format" "$id has no review receipt"
+    return 1
+  fi
+  dir=$(_task_review_dir "$id") || {
+    _task_since_review_full "$format" "$(task_state_get "$id" branch) is not checked out in any worktree"
+    return 1
+  }
+  changed=$(_task_receipt_changed "$id")
+  if [ -z "$changed" ]; then
+    if [ "$format" = paths ]; then
+      printf 're-review: none — the receipt is current\n' >&2
+    else
+      printf 're-review: none — the receipt is current\n'
+    fi
+    return 0
+  fi
+  case ", $changed, " in
+    *", design, "*) _task_since_review_full "$format" "the approved design changed since the review"; return 1 ;;
+    *", context, "*) _task_since_review_full "$format" "the knowledge the review relied on changed"; return 1 ;;
+    *", tree, "*) _task_since_review_full "$format" "the receipt predates the task's own diff; it pins the whole tree"; return 1 ;;
+  esac
+  old_tree=$(_task_receipt_get "$id" tree)
+  old_mb=$(_task_receipt_get "$id" merge_base)
+  if [ -z "$old_mb" ]; then
+    _task_since_review_full "$format" "the receipt does not record what its diff was measured from"
+    return 1
+  fi
+  if ! git -C "$dir" cat-file -e "$old_tree^{tree}" 2>/dev/null \
+    || ! git -C "$dir" cat-file -e "$old_mb^{commit}" 2>/dev/null; then
+    _task_since_review_full "$format" "what the review read is no longer in the repository"
+    return 1
+  fi
+  new_tree=$(_task_review_tree "$dir") || { _task_since_review_full "$format" "could not read the working tree"; return 1; }
+  old_files=$(git -C "$dir" diff-tree -r --no-renames --name-only "$old_mb" "$old_tree" \
+    -- . ":(exclude)$JIG_AI_DIR/knowledge" ":(exclude)$JIG_AI_DIR/specs" 2>/dev/null) \
+    || { _task_since_review_full "$format" "could not read the reviewed change"; return 1; }
+  new_files=$(_task_review_changed_files "$id" "$dir") \
+    || { _task_since_review_full "$format" "could not read the task's change"; return 1; }
+  paths=$(printf '%s\n%s\n' "$old_files" "$new_files" | sed '/^$/d' | LC_ALL=C sort -u)
+  diffed=$(git -C "$dir" diff-tree -r --no-renames --name-only "$old_tree" "$new_tree" 2>/dev/null) \
+    || { _task_since_review_full "$format" "could not compare with the reviewed tree"; return 1; }
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    jig_has_line "$path" "$paths" || continue
+    files="$files$path
+"
+  done < <(printf '%s\n' "$diffed")
+  if [ "$format" = paths ]; then
+    printf '%s' "$files"
+    return 0
+  fi
+  printf 're-review: narrow (%s)\n' "$changed"
+  printf 'task: %s\nreviewed: %s (tree %s)\n' "$id" "$(_task_receipt_get "$id" reviewed_at)" "$old_tree"
+  printf 'changed since review: %s paths\n' "$(printf '%s' "$files" | sed '/^$/d' | wc -l | tr -d ' ')"
+  [ -n "$files" ] || return 0
+  printf '%s' "$files" | tr '\n' '\0' | (cd "$dir" && xargs -0 git --literal-pathspecs diff --no-color --no-ext-diff "$old_tree" "$new_tree" --)
+}
+
+# _task_since_review_full <format> <why> — the `re-review: full` verdict of
+# _task_receipt_since_review, on stdout for a report and on stderr for paths.
+_task_since_review_full() {
+  if [ "$1" = paths ]; then
+    printf 're-review: full — %s\n' "$2" >&2
+  else
+    printf 're-review: full — %s\n' "$2"
+  fi
 }
 
 # --- route depth (adr-20261002-route-depth-is-a-personal-choice) --------------

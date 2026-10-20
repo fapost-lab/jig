@@ -8,6 +8,73 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.31.0 — 2026-10-20
+
+Jig can now be planned with. A queue keeps the priority, order and dependencies of your tasks and
+epics, and you can ask a running task to pause without losing the agent's step. The queue lives in
+Jig, not in a tool beside it, so agents and programs read the same order. It is what the
+next phase of [Jig UI](https://jig-ui.fapost.in) is built on, and it is useful without it.
+
+- **`jig queue`** — one queue per project, kept in `.ai/runtime/` of the main checkout, shared by
+  its worktrees and never under git. `jig queue set <id> --priority 0..5|none`,
+  `jig queue move <id> --before|--after <id>` or `--top|--bottom`,
+  `jig queue depend <id> --on <id> --reason <text>` (a dependency always says why), `undepend` and
+  `remove`. An epic (`epic:<spec-id>`) is ordered beside tasks, and the tasks built on it within it.
+  A move moves one item and never renumbers the rest. See
+  [Order the work](/manual-control#order-the-work).
+- **A stale write is refused.** Every `jig queue` write takes `--revision <n>`, the clone revision
+  the caller read. When anything in the project changed since, the write is refused with the code
+  `stale-revision` and nothing is written; two writers that send the same revision land at most
+  once.
+- **`jig queue list --json`** (or `jig queue --json`) — the whole queue in the shared envelope, in
+  order, each item with its level, position, priority and dependencies. A write with `--json`
+  answers with the item as the queue now holds it; one that names a task or epic Jig does not have
+  is refused with the new code `not-found`. See [The queue](/reading-jig-as-data#the-queue).
+- **Ask a running task to pause.** `jig queue request <id> pause [--reason <text>]` leaves a request
+  that holds until it is honoured or `jig queue cancel <id> pause` takes it back, whatever stage the
+  task reaches meanwhile. An autopilot run honours it at its next stage: the task becomes paused and
+  the agent ends its session. `jig task pause` honours it too. Continue with `jig task resume <id>`
+  and a new session. `jig task list --json` shows a pending request as `pause_request`, and the
+  task's `actions` gain `request-pause` and `cancel-pause-request`, twelve in all.
+- **`jig task autopilot <id> stage` on a paused task now refuses with exit code 4** instead of
+  entering the stage, and a pending pause request makes it pause the task the same way. The
+  `jig-autopilot` skill tells the agent to end its session there; a pause is not a stop.
+- **The queue in `jig status` and `jig context`.** `jig status` adds `queue=<rank>/<count>` and
+  `priority=<p>` to a queued task's line, with what it waits for and a pending pause request on
+  indented lines under it; `jig context` with a task adds `queue:` lines. Without a queue file both
+  print what they did before.
+- **File a task from a program.** `jig task new <id> --goal "<one line>"` writes the goal under
+  `## Goal` in `task.md`, with no file to write first. With `--json` it answers with the filed task,
+  the object `jig task list --json` lists for it; an id already taken is refused with the new code
+  `already-exists`, an invalid id or goal with `usage`. See
+  [Filing a task](/reading-jig-as-data#filing-a-task).
+- **Fixed: editing existing knowledge at the end of a task no longer asks for a new review.** When
+  consolidation edited a knowledge document the review had read, marking the task ready, recording
+  the knowledge decision and `jig task ship` refused with a stale review. A document the task edited
+  now counts as it is on the merge base; a change to it that arrives through the base still asks for
+  a new review.
+
+## 0.30.0 — 2026-10-19
+
+A repeat review after a small fix no longer reads the whole change again. Nothing that gates a task
+changed: an edit after the review still asks for a review before the task is finished.
+
+- **A repeat review reads what changed since the review.** When a review's findings were fixed, or
+  anything else was edited after it, the next reviewer — still a fresh helper — reads only what
+  changed since the reviewed state and the findings marked fixed, not the whole change. On the
+  task that brought this, the last repeat review, after a fix for CI, read one file with three lines
+  added and one removed. It reads
+  everything again when the design or the project knowledge the review relied on changed since.
+  Applies to the code review and to the architecture review of risky tasks; an external reviewer
+  of another runtime gets the same narrowed diff in its prompt.
+- **`jig task receipt <id> --since-review`** prints that difference and says whether the repeat
+  review may be narrow (`narrow`), must read everything (`full`, with the reason, exit 1) or has
+  nothing to do (`none`). `--format paths` lists only the files.
+- **Nits are listed, not fixed.** A P3 finding is never fixed after the review, at any route depth:
+  it stays open and goes into the pull request. Fixing it would only have asked for another round.
+  A P2 is still fixed unless your route is lean. A fix you ask for yourself after the review is an
+  ordinary edit with a narrow repeat review.
+
 ## 0.29.0 — 2026-10-16
 
 Jig can now be read by a program. The commands that report state print JSON with `--json`, in one

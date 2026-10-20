@@ -135,12 +135,15 @@ Without a queue, both look as they always have.
 jig task changes booking-message --base main
 jig task findings booking-message
 jig task receipt booking-message --check
+jig task receipt booking-message --since-review
 ```
 
 Replace `main` with the task's actual base from `jig task show booking-message`. The change inventory
 includes committed and local changes; it does not prove that every change belongs to this task.
 Findings and the receipt tell you what was reviewed and whether that review still matches the work.
 A missing receipt can be expected before review or for a task whose route does not require one.
+When the receipt is stale, `--since-review` shows what changed since the review, and whether a repeat
+review may read only that (`narrow`) or must read everything (`full`, with the reason).
 
 ## Ask which knowledge applies
 
