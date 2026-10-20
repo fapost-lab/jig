@@ -1,8 +1,8 @@
 # jig manifest. Do not edit by hand; maintained by `jig init` and `jig upgrade`.
-jig.version: 0.28.0
+jig.version: 0.30.0
 jig.source: .
 jig.mode: link
-installed_at: 2026-10-15
+installed_at: 2026-10-20
 adapters: [claude, codex]
 instructions.section: e858830f151e3929c98a29247b0f86cea7bbbcf5 AGENTS.md
 ---
