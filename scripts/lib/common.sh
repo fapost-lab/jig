@@ -2479,6 +2479,17 @@ jig_hash() {
   fi
 }
 
+# jig_hash_stdin — jig_hash of the bytes on stdin: the same hash space, no
+# filters, so content read out of git hashes as the same file on disk would.
+jig_hash_stdin() {
+  jig_hash_git_dir
+  if [ -n "$_JIG_HASH_GIT_DIR" ]; then
+    GIT_DIR="$_JIG_HASH_GIT_DIR" git hash-object --no-filters --stdin
+  else
+    git hash-object --no-filters --stdin
+  fi
+}
+
 # jig_copy_tree <src-dir> <dst-dir> — copy every regular file under <src-dir>
 # (`find -type f`: symlinks and empty directories are not copied) to the same
 # relative path under <dst-dir>, with `cp -p`. Plain overwrite, no conflict

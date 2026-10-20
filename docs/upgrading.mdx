@@ -411,6 +411,19 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.29.0 to 0.30.0
+
+Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
+change. The upgrade brings new scripts and new text for the review skills (`jig-review`,
+`jig-architecture-review`) and the `jig-task` delegation reference; a copy you edited yourself is
+handled as every edited framework file is
+([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** A repeat review after a fix is shorter. A review receipt written before
+the upgrade does not record what its diff was measured from, so the first repeat review of a task
+already reviewed then still reads the whole change; the next one is narrow. Your agent stops fixing
+P3 nits after a review and lists them in the pull request instead.
+
 ## From 0.28.0 to 0.29.0
 
 Nothing on the checklist the upgrade itself prints. The installer, the skills and

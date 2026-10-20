@@ -90,3 +90,19 @@ shipping, which is what `verify` is for.
 - Each check does a few more git calls and one knowledge resolution; it runs only for tasks that have a
   receipt.
 - A task's own knowledge decisions can no longer be hidden behind the receipt, and no longer break it.
+
+> **Amendment (2026-10-19).** The receipt gains a `merge_base` line, the commit the diff was measured
+> from. It is read, never compared: see adr-20261019-a-re-review-reads-what-changed-since-review.
+>
+> **Amendment (2026-10-19, consolidation-keeps-receipt-current).** "Documents the task itself edited
+> are left out" dropped the line of a document the review had read once the task edited it at
+> consolidation, so the `context` hash moved and the gates refused — the opposite of the decision.
+> A document the task edited now counts at its content on the merge base, as a checkout holds it
+> (`git cat-file --filters`, hashed like `jig_hash`): what the review read, unless the task edited it
+> before the review. A document the task added still counts not at all. Holes, named: the task's own
+> edit that changes which documents resolve (a `paths` or domain change, a deleted document) changes
+> the set of lines and stales the receipt — stricter, never softer; a knowledge edit that reaches the
+> task's branch from anywhere but the base ref (a base commit merged before it is pushed, another
+> task's branch merged in) moves no merge base, reads as the task's own and no longer stales it; and
+> a receipt written before this, for a task that edited a resolved document before its review, goes
+> stale once.

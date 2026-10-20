@@ -130,6 +130,10 @@ severity:
 | P2 | Worth fixing, but the code works without it | no |
 | P3 | A small thing | no |
 
+A P3 is never fixed after the review: it stays open and is listed in the pull request, so a nit does
+not cost another review round. If you want one fixed, ask — it is then an ordinary edit followed by a
+re-review.
+
 A P0 or P1 stops the task from being finished. Until it is resolved, the agent cannot mark the task
 ready, record what the project should remember, or commit and open the pull request
 ([Letting the agent ship](/agent-ships)). A fix alone does not resolve it: the agent fixes the
@@ -160,6 +164,13 @@ brings nothing the task touches. The knowledge the task writes itself and the sp
 not pinned: the agent writes them after the review, as the last step of every task.
 
 A task of the highest risk class (T4) cannot be finished without such a pinned review at all.
+
+The repeat review after a fix does not start from zero. A new helper reads only what changed since
+the review — the difference between the reviewed state and now — and checks each fixed finding against
+the new code. It reads everything again when it cannot trust the earlier review as a starting point:
+the approved design or the project knowledge changed, the review was written before this was
+possible, or the reviewed state is no longer available. The check is still the same afterwards: any
+change makes the review stale, and the repeat review writes a new one.
 
 To see whether the review still holds, ask *"is the review still current?"*, or run
 `jig task receipt <task-id> --check`. `jig status` marks a task whose review no longer holds with
