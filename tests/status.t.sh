@@ -3386,3 +3386,127 @@ test_status_json_leaves_the_text_report_unchanged() {
   assert_eq 0 "$RC" "$ERR"
   assert_eq "$before" "$(jig status 2>&1)"
 }
+
+# --- the queue in the report (jig_queue_place, jig_pause_request) ------------------
+
+# _stq_setup [ids...] — an installed project with a filed task for each id.
+_stq_setup() {
+  local id
+  fixture_jig_repo
+  for id in "$@"; do
+    fixture_task "$id" "task/$id" active
+  done
+}
+
+# _stq_epic <spec> <task>... — a spec whose roadmap declares an open epic, and
+# tasks linked to it by their Spec: line.
+_stq_epic() {
+  local spec="$1" id
+  shift
+  mkdir -p ".ai/specs/$spec"
+  printf '# %s\n' "$spec" > ".ai/specs/$spec/spec.md"
+  printf '# Roadmap\n\nEpic: epic/%s\n\n## Phase 1 — One\n' "$spec" > ".ai/specs/$spec/roadmap.md"
+  for id in "$@"; do
+    fixture_task "$id" "task/$id" active
+    printf '# %s\n\nSpec: .ai/specs/%s/ — Phase 1\n' "$id" "$spec" > ".ai/workspace/tasks/$id/task.md"
+  done
+}
+
+
+# _stq_age_request <id> — make the pause request of <id> years old, so its age is
+# counted in days and no test meets a minute boundary.
+_stq_age_request() {
+  awk -F '\t' -v r="task:$1" 'BEGIN { OFS = "\t" } $1 == "request" && $2 == r { $4 = "2020-01-01T00:00:00Z" } { print }' \
+    .ai/runtime/queue > queue.tmp && mv queue.tmp .ai/runtime/queue
+}
+
+# _stq_task_block <id> — the `task <id>` line of the plain status report in OUT,
+# with the indented lines under it.
+_stq_task_block() {
+  printf '%s\n' "$OUT" | awk -v t="task $1 " '
+    index($0, t) == 1 { on = 1; print; next }
+    on && /^  / { print; next }
+    { on = 0 }
+  '
+}
+
+test_status_queue_without_a_queue_shows_no_place() {
+  _stq_setup a
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "task a class= status=active" "$(_stq_task_block a)"
+  run jig context --task a --files x
+  assert_not_contains "$OUT" "queue:"
+}
+
+test_status_queue_shows_rank_priority_dependencies_and_a_pause_request() {
+  _stq_setup a b c
+  jig queue set a --priority 1 >/dev/null
+  jig queue move b --bottom >/dev/null
+  jig queue depend b --on a --reason "needs the format" >/dev/null
+  jig queue depend b --on task:c --reason "reads it" >/dev/null
+  jig queue request b pause --reason "standup" >/dev/null
+  _stq_age_request b
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "task a class= status=active queue=1/2 priority=1" "$(_stq_task_block a)"
+  local block
+  block=$(_stq_task_block b)
+  assert_eq "task b class= status=active queue=2/2" "$(printf '%s\n' "$block" | sed -n 1p)"
+  assert_eq "  waits for task:a: needs the format" "$(printf '%s\n' "$block" | sed -n 2p)"
+  assert_eq "  waits for task:c: reads it" "$(printf '%s\n' "$block" | sed -n 3p)"
+  printf '%s\n' "$block" | sed -n 4p | grep -Eq '^  pause requested [0-9]+ days ago: standup$' \
+    || fail "no pause request line: $block"
+  # A pause request of a task that is not queued shows too: c is only waited for.
+  jig queue request c pause >/dev/null
+  _stq_age_request c
+  run jig status
+  block=$(_stq_task_block c)
+  printf '%s\n' "$block" | grep -Eq '^task c class= status=active$' || fail "c is queued: $block"
+  printf '%s\n' "$block" | grep -Eq '^  pause requested [0-9]+ days ago$' || fail "no request of c: $block"
+}
+
+test_status_queue_ranks_a_task_within_its_epics_level() {
+  _stq_setup a
+  _stq_epic big t1 t2
+  jig queue move a --top >/dev/null
+  jig queue move t1 --bottom >/dev/null
+  jig queue move t2 --top >/dev/null
+  run jig status
+  assert_contains "$OUT" "task t2 class= status=active queue=1/2"
+  assert_contains "$OUT" "task t1 class= status=active queue=2/2"
+  assert_contains "$OUT" "task a class= status=active queue=1/1"
+}
+
+test_status_queue_reads_no_queue_of_another_format_version() {
+  _stq_setup a
+  jig queue set a --priority 1 >/dev/null
+  jig queue request a pause >/dev/null
+  sed '1s/^# jig queue 1/# jig queue 2/' .ai/runtime/queue > queue.tmp && mv queue.tmp .ai/runtime/queue
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "task a class= status=active" "$(_stq_task_block a)"
+}
+
+test_status_queue_terminal_shows_the_place_as_notes() {
+  _stq_setup a b c
+  jig queue set a --priority 2 >/dev/null
+  jig queue depend b --on a --reason "after a" >/dev/null
+  jig queue request b pause >/dev/null
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  local row
+  row=$(printf '%s\n' "$OUT" | grep ' a  ' | head -1)
+  assert_contains "$row" "queue 1/2"
+  assert_contains "$row" "priority 2"
+  row=$(printf '%s\n' "$OUT" | grep ' b  ' | head -1)
+  assert_contains "$row" "queue 2/2"
+  assert_contains "$row" "waits for task:a: after a"
+  assert_contains "$row" "pause requested"
+  # A task that needs the reader carries what it waits for as a detail.
+  jig task pause c >/dev/null
+  jig queue depend c --on b --reason "after b" >/dev/null
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  printf '%s\n' "$OUT" | grep -Eq '^ +queue: waits for task:b: after b$' || fail "no detail: $OUT"
+}

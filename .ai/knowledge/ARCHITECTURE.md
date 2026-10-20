@@ -66,7 +66,11 @@ its level; same adr), `jig_queue_file`, `jig_pause_request`, `jig_pause_request_
 `jig_pause_cancel_refusal` ("where is the queue, is a pause of this task requested, and may one be
 asked or cancelled" — `jig queue request|cancel` writes the request, and `task` honours it at a
 stage boundary and offers it in the actions table;
-adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary),
+adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary), `jig_queue_items` and
+`jig_queue_place` ("what is queued, and where does this task stand" — the one parser of the queue's
+items and dependencies: `jig queue list --json` reads through the first, `status` and `context`
+show a task's place through the second), `jig_utc_epoch` and `jig_utc_ago` ("how long ago was this
+UTC time" — the status page's ages and a pause request's age in `status` and `context`),
 `jig_ship_check_staged`, `jig_ship_commit`, `jig_ship_push`, `jig_ship_pr` and `jig_ship_merge` ("carry a
 change as far as `agent.git` allows" — `task ship`, `spec ship` and a copy-mode `jig upgrade` take the
 same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-agent-git-level,

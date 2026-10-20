@@ -163,6 +163,42 @@ workspace${t}${wdir}/${wf}${t}"
       printf '%-10s %s\n' "$label:" "$path"
     fi
   done < <(printf '%s\n' "$rows")
+  [ -z "$task_id" ] || _ctx_queue_lines "$task_id"
+}
+
+# _ctx_queue_lines <id> — the task's place in the queue, as `queue:` lines
+# after its workspace: its rank on its level and its priority, what it waits
+# for, and a pause asked of it that it has not honoured yet, with its age.
+# Nothing when the task is neither queued nor asked to pause. Read through
+# common.sh (jig_queue_place, jig_pause_request), the readers `jig status`
+# reads it by too: a command library never sources another (ARCHITECTURE.md).
+_ctx_queue_lines() {
+  local level on reason ago
+  if jig_queue_place "$1"; then
+    if [ "$_JIG_QUEUE_LEVEL" = "-" ]; then level="the top level"; else level=$_JIG_QUEUE_LEVEL; fi
+    if [ "$_JIG_QUEUE_PRIORITY" = "-" ]; then
+      printf '%-10s %s of %s on %s, no priority\n' "queue:" "$_JIG_QUEUE_RANK" "$_JIG_QUEUE_COUNT" "$level"
+    else
+      printf '%-10s %s of %s on %s, priority %s\n' "queue:" "$_JIG_QUEUE_RANK" "$_JIG_QUEUE_COUNT" "$level" "$_JIG_QUEUE_PRIORITY"
+    fi
+    while IFS=$'\t' read -r on reason; do
+      [ -n "$on" ] || continue
+      printf '%-10s waits for %s: %s\n' "queue:" "$on" "$reason"
+    done <<EOF
+$_JIG_QUEUE_DEPS
+EOF
+  fi
+  if jig_pause_request "$1"; then
+    ago=$(jig_utc_ago "$_JIG_PAUSE_AT")
+    case "$ago" in
+      "") ago="at $_JIG_PAUSE_AT" ;;
+      "just now") ;;
+      *) ago="$ago ago" ;;
+    esac
+    printf '%-10s pause requested %s%s; an autopilot run honours it at its next stage boundary\n' \
+      "queue:" "$ago" "${_JIG_PAUSE_REASON:+ ($_JIG_PAUSE_REASON)}"
+  fi
+  return 0
 }
 
 # --- knowledge matching -------------------------------------------------------------
@@ -795,6 +831,7 @@ ctx_resolve() {
     [ -n "$relpath" ] || continue
     printf '%-10s %s\n' "workspace:" "$relpath"
   done < <(_ctx_workspace_rows)
+  [ -z "$CTX_TASK" ] || _ctx_queue_lines "$CTX_TASK"
 
   rm -f "$rows"
 }

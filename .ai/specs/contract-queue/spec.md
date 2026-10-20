@@ -90,3 +90,6 @@ Lines the epic's release pull request carries into `docs/changelog.mdx`, beside 
 
 - `jig task autopilot <id> stage` on a paused task now refuses with exit code 4 instead of entering
   the stage, and a pending pause request makes it pause the task the same way.
+- `jig status` adds `queue=<rank>/<count>` and `priority=<p>` to a queued task's line, with what it
+  waits for and a pending pause request on indented lines under it; `jig context` with a task adds
+  `queue:` lines. Without a queue file both print what they did before.
