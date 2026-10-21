@@ -281,9 +281,12 @@ the process (adr-20261012-cross-runtime-stage-executors).
 
 The priority, order and dependencies of a clone's tasks and epics: `.ai/runtime/queue` in the main
 checkout, one per clone, not under git, written only by `jig queue`. Priority `0` (most urgent) to
-`5`; positions are sparse and ordered within a level — the top level holds epics and tasks without
-an epic, an epic's level its tasks. A write is checked against the clone revision its caller read and
-refused `stale-revision` when anything was written since
+`5`, one scale for every person and agent: `0` broken or dangerous — data loss, a destructive
+operation, an install that fails; `1` a bug a user meets; `2` not a bug, but it stops a user doing
+their own work; `3` friction; `4` an improvement or a new capability; `5` some day. Positions are
+sparse and ordered within a level — the top level holds epics and tasks without an epic, an epic's
+level its tasks. A write is checked against the clone revision its caller read and refused
+`stale-revision` when anything was written since
 (adr-20261019-the-queue-is-one-file-written-against-a-revision). Informal synonyms: backlog order,
 task queue.
 

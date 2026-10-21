@@ -114,7 +114,19 @@ jig queue
 ```
 
 The queue keeps the priority, order and dependencies of your tasks and epics, one queue for the
-whole project, outside git. Priority runs from `0` (most urgent) to `5`. A move places one item
+whole project, outside git. Priority runs from `0` (most urgent) to `5`, and each number means
+one thing, so that you and your agent set "bugs first" the same way:
+
+| Priority | When |
+|---|---|
+| `0` | Something is broken or dangerous: data loss, a destructive operation, an install that fails |
+| `1` | A bug a user meets |
+| `2` | Not a bug, but it stops a user doing their own work |
+| `3` | Friction: the work gets done, with more effort than it should take |
+| `4` | An improvement or a new capability |
+| `5` | Some day |
+
+`--priority none` takes the priority away. A move places one item
 before or after another, or with `--top` and `--bottom` at an end; an epic (`epic:<spec-id>`) is
 ordered beside tasks, and the tasks built on it are ordered within it. A dependency always says why.
 `jig queue remove` takes an item out, and `jig queue undepend` drops a dependency. A program
