@@ -56,7 +56,7 @@ cmd_task() {
 _task_usage() {
   case "${1:-}" in
     '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
-    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file>] [--lean]\n' ;;
+    new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap]\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id>\n' ;;
     set)
@@ -64,7 +64,7 @@ _task_usage() {
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
       ;;
     abandon) printf 'usage: jig task abandon <id>\n' ;;
-    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
+    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
     resume) printf 'usage: jig task resume <id>\n' ;;
     list) printf 'usage: jig task list [--all] [--status <status>] [--goals] [--json]\n' ;;
     show) printf 'usage: jig task show <id>\n' ;;
@@ -532,7 +532,7 @@ _task_likely_owner() {
 # survives byte-for-byte except at the placeholder itself. A document
 # without the placeholder is copied verbatim.
 _task_write_task_md() {
-  local id="$1" dest="$2" from="${3:-}" source tmpl tmp
+  local id="$1" dest="$2" from="${3:-}" goal="${4:-}" source tmpl tmp
   tmp="$dest.tmp.$$"
   jig_cleanup_add "$tmp"
   if [ -n "$from" ]; then
@@ -565,8 +565,38 @@ _task_write_task_md() {
 EOF
     fi
   fi
-  mv "$tmp" "$dest"
+  if [ -n "$goal" ]; then
+    jig_cleanup_add "$tmp.goal"
+    _task_md_put_goal "$goal" < "$tmp" > "$tmp.goal"
+    mv "$tmp.goal" "$dest"
+  else
+    mv "$tmp" "$dest"
+  fi
   jig_record_changed
+}
+
+# _task_md_put_goal <goal> — a filter: the brief on stdin, with <goal> as the
+# paragraph under its first `## Goal` heading, in place of the template's
+# placeholder comment, or as a new paragraph before what follows the heading;
+# a brief with no such heading gets one at its end. The goal reaches awk
+# through the environment, so it is printed literally (see _task_rewrite_state).
+_task_md_put_goal() {
+  JIG_T_GOAL="$1" awk '
+    BEGIN { goal = ENVIRON["JIG_T_GOAL"] }
+    !done && !in_goal && /^##[[:space:]]+Goal[[:space:]]*$/ { print; in_goal = 1; next }
+    in_goal && /^[[:space:]]*$/ { print; next }
+    in_goal {
+      in_goal = 0; done = 1
+      print goal
+      if ($0 ~ /^[[:space:]]*<!--.*-->[[:space:]]*$/) next
+      print ""
+    }
+    { print }
+    END {
+      if (in_goal) { print goal; done = 1 }
+      if (!done) { print ""; print "## Goal"; print ""; print goal }
+    }
+  '
 }
 
 # --- state file rewriting -------------------------------------------------------
@@ -841,23 +871,70 @@ _task_refuse_dirty_tree() {
 
 # --- subcommands ----------------------------------------------------------------
 
+# task_new <id> [...] — file a task. `--json` anywhere runs the whole command
+# as the producer of json_run (conventions/json-output.md), so a program reads
+# the filed task, or why it was refused, in the envelope: an id already taken
+# is `already-exists`, an invalid one `usage` (schemas/json.md).
 task_new() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_new_body 1 "$@"
+      return
+    fi
+  done
+  _task_new_body 0 "$@"
+}
+
+# _task_new_body <as_json> <id> [...] — the body of `task new`; with <as_json>
+# 1 it runs inside json_run and prints the filed task as data, not its path.
+_task_new_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  [ $# -ge 1 ] || jig_die "$(_task_usage new)"
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage new)"
   local id="$1"
   shift
-  local class="" domains="" from="" depth=""
+  local class="" domains="" from="" depth="" goal="" goal_given=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --lean) depth=lean; shift ;;
-      --class) [ $# -ge 2 ] || jig_die "task new: --class requires a value"; class="$2"; shift 2 ;;
-      --domains) [ $# -ge 2 ] || jig_die "task new: --domains requires a value"; domains="$2"; shift 2 ;;
-      --from) [ $# -ge 2 ] || jig_die "task new: --from requires a value"; from="$2"; shift 2 ;;
-      *) jig_die "task new: unknown argument: $1" ;;
+      --class) [ $# -ge 2 ] || jig_fail usage "task new: --class requires a value"; class="$2"; shift 2 ;;
+      --domains) [ $# -ge 2 ] || jig_fail usage "task new: --domains requires a value"; domains="$2"; shift 2 ;;
+      --from) [ $# -ge 2 ] || jig_fail usage "task new: --from requires a value"; from="$2"; shift 2 ;;
+      --goal) [ $# -ge 2 ] || jig_fail usage "task new: --goal requires a value"; goal="$2"; goal_given=1; shift 2 ;;
+      *) jig_fail usage "task new: unknown argument: $1" ;;
     esac
   done
 
-  _task_valid_id "$id" || jig_die "task new: invalid task id: $id"
+  _task_valid_id "$id" || jig_fail usage "task new: invalid task id: $id"
+  [ -z "$class" ] || _task_valid_class "$class" || jig_fail usage "task new: invalid class: $class"
+  [ -z "$domains" ] || _task_valid_domains "$domains" || jig_fail usage "task new: invalid domains: $domains"
+  # The goal is the paragraph under `## Goal` that `task list --goals` and
+  # `task list --json` read back (_task_goal): one line, so that it stays one
+  # paragraph, and not a heading, so that it stays under `## Goal`.
+  if [ "$goal_given" -eq 1 ]; then
+    [ -z "$from" ] || jig_fail usage "task new: --goal and --from both write task.md; give one of them"
+    case "$goal" in
+      *$'\n'* | *$'\r'*) jig_fail usage "task new: --goal is one line: the goal paragraph of task.md" ;;
+    esac
+    case "$goal" in
+      *[![:space:]]*) ;;
+      *) jig_fail usage "task new: --goal is empty" ;;
+    esac
+    # Trimmed: leading blanks would make the paragraph a code block.
+    goal=${goal#"${goal%%[![:space:]]*}"}
+    goal=${goal%"${goal##*[![:space:]]}"}
+    case "$goal" in
+      '#'*) jig_fail usage "task new: --goal cannot start with #: it would read as a heading" ;;
+    esac
+  fi
 
   # A task filed in a worktree that keeps a task directory of its own dies with
   # that worktree: the directory is gitignored, the checkout holding the queue
@@ -876,7 +953,7 @@ task_new() {
 
   local dir
   dir=$(task_dir "$id")
-  [ -e "$dir" ] && jig_die "task new: task already exists: $id"
+  [ -e "$dir" ] && jig_fail already-exists "task new: task already exists: $id"
   # The tasks directory may not exist yet (`mkdir -p` below makes it), and then
   # it is `.ai/workspace` that has to be this repository's: made through a link
   # there it would be made outside.
@@ -890,8 +967,6 @@ task_new() {
       || jig_die "task new: $JIG_AI_DIR/workspace leads to $ws_real, which is no checkout of this repository"
   fi
 
-  [ -z "$class" ] || _task_valid_class "$class" || jig_die "task new: invalid class: $class"
-  [ -z "$domains" ] || _task_valid_domains "$domains" || jig_die "task new: invalid domains: $domains"
 
   # --from is validated here, before the workspace directory exists, so a
   # missing/unreadable/non-regular source (a directory, for instance) never
@@ -914,7 +989,14 @@ task_new() {
   # branch, so there is nothing for uncommitted work to leak into. The check
   # lives in `task start`, and filing a task for later in the middle of other
   # work is the case this split exists for.
-  mkdir -p "$dir"
+  # The directory is the claim on the id: made without -p, it fails for the
+  # second of two `task new` racing for one id, which is refused as taken
+  # rather than both writing one task.
+  mkdir -p "$(dirname "$dir")"
+  if ! mkdir "$dir" 2>/dev/null; then
+    [ -e "$dir" ] && jig_fail already-exists "task new: task already exists: $id"
+    jig_die "task new: cannot create $(jig_relpath "$dir" "$JIG_PROJECT")"
+  fi
 
   # `branch` and `base_commit` are written by `task start`, not here. A task
   # filed for later has no branch, and saying so by *omission* is what makes
@@ -942,8 +1024,15 @@ task_new() {
   mv "$tmp" "$dir/state"
   jig_record_changed
 
-  _task_write_task_md "$id" "$dir/task.md" "$from"
+  _task_write_task_md "$id" "$dir/task.md" "$from" "$goal"
 
+  if [ "$as_json" = 1 ]; then
+    # The filed task as `task list --json` lists it: one producer of a task's
+    # facts. A task just filed has no branch, so no worktree to look up, and
+    # no housekeeping flag can stand for it yet.
+    printf '{"task":%s}\n' "$(_task_list_json_task "$id" "" "")"
+    return 0
+  fi
   jig_relpath "$dir" "$JIG_PROJECT"
 }
 
@@ -1293,25 +1382,20 @@ _task_paused_hint() {
 # already finished. The fetch runs for every task: a stale local `main` cuts a
 # stale branch just as surely as a missing epic does.
 _task_start_base() {
-  local id="$1" default base spec="" line="" rc=0 roadmap
+  local id="$1" default base spec rc=0
   default=$(cfg git.base_branch main)
   base=$default
-  if [ -f "$(task_dir "$id")/task.md" ]; then
-    spec=$(jig_spec_link "$(task_dir "$id")/task.md") || rc=$?
-    [ "$rc" -ne 2 ] || jig_die "task start: $id links to more than one spec; keep one Spec: line"
-  fi
-  if [ -n "$spec" ]; then
-    roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
-    [ -f "$roadmap" ] \
-      || jig_die "task start: $id links to spec $spec, which this checkout does not have; switch to a branch that has it"
-    rc=0
-    line=$(jig_spec_epic "$roadmap") || rc=$?
-    [ "$rc" -ne 2 ] || jig_die "task start: spec $spec declares more than one epic; keep one Epic: line"
-    if [ -n "$line" ]; then
-      base=${line% *}
-      [ "${line##* }" = open ] \
-        || jig_die "task start: spec $spec marks epic $base finished; drop \"— finished\" from its Epic: line to cut tasks from it, or link the task to another spec"
-    fi
+  jig_task_epic "$(task_dir "$id")/task.md" || rc=$?
+  # shellcheck disable=SC2153 # set by jig_task_epic (common.sh)
+  spec=$_JIG_TASK_SPEC
+  [ "$rc" -ne 2 ] || jig_die "task start: $id links to more than one spec; keep one Spec: line"
+  [ "$rc" -ne 3 ] \
+    || jig_die "task start: $id links to spec $spec, which this checkout does not have; switch to a branch that has it"
+  [ "$rc" -ne 4 ] || jig_die "task start: spec $spec declares more than one epic; keep one Epic: line"
+  if [ -n "$_JIG_TASK_EPIC" ]; then
+    base=$_JIG_TASK_EPIC
+    [ "$_JIG_TASK_EPIC_STATE" = open ] \
+      || jig_die "task start: spec $spec marks epic $base finished; drop \"— finished\" from its Epic: line to cut tasks from it, or link the task to another spec"
   fi
   git check-ref-format --branch "$base" >/dev/null 2>&1 \
     || jig_die "task start: git rejects the base branch name: $base"
@@ -1814,7 +1898,12 @@ _task_autopilot_mode() {
 }
 
 # stage <name>: logs which stage the run just reached. Requires an active
-# run — a run only ever moves through stages while `on`.
+# run — a run only ever moves through stages while `on`. It is the boundary
+# Jig sees between two stages, so a pause request is honoured here
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): a paused
+# task enters no stage, and a pending request pauses it instead of the stage.
+# Both exit 4, the run staying `on`: a pause is not a stop, and `jig task
+# resume` ends it.
 _task_autopilot_stage() {
   local id="$1"
   shift
@@ -1822,15 +1911,77 @@ _task_autopilot_stage() {
   local name="$1"
   shift
   [ $# -eq 0 ] || jig_die "task autopilot stage: unknown argument: $1"
-  local dir
-  dir=$(task_dir "$id")
+  task_dir "$id" >/dev/null
   _task_guard_write "$id" "task autopilot stage"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot stage: no active autopilot run: $id; run: jig task autopilot $id start"
   _task_autopilot_valid_stage "$name" \
     || jig_die "task autopilot stage: invalid name: $name (expected [a-z0-9-]+)"
+  if [ "$(task_state_get "$id" paused)" = true ]; then
+    printf 'jig: error: task autopilot stage: %s is paused; resume it with jig task resume %s before entering a stage\n' "$id" "$id" >&2
+    return 4
+  fi
+  if _task_pause_take_request "$id" "task autopilot stage"; then
+    _task_honour_pause_request "$id" "$name"
+    # `return 4` ends the command under errexit before cmd_task's own flush.
+    jig_status_page_flush
+    return 4
+  fi
   _task_autopilot_log "$id" stage "$name"
   printf 'stage: %s\n' "$name"
+}
+
+# _task_honour_pause_request <id> <stage> — the pause a pending request makes at
+# a stage boundary, once _task_pause_take_request has taken the request out:
+# `task autopilot stage` and `task pause --if-requested` (which `jig context
+# resolve --stage` runs) both come here
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary). It sets the
+# fields, writes a `pause` journal line for a run that is `on`, and prints the
+# `paused:` line. Called in a body, never as a condition: errexit must stop
+# it at a failed write, so a pause that was not recorded is never reported.
+_task_honour_pause_request() {
+  local id="$1" name="$2" dir why
+  dir=$(task_dir "$id")
+  why="pause requested at $_JIG_PAUSE_AT"
+  [ -z "$_JIG_PAUSE_REASON" ] || why="$why: $_JIG_PAUSE_REASON"
+  _task_rewrite_state "$dir" paused true
+  _task_rewrite_state "$dir" paused_at "$(jig_today)"
+  _task_rewrite_state "$dir" paused_reason "$why"
+  if [ "$(task_state_get "$id" autopilot)" = "on" ]; then
+    _task_autopilot_log "$id" pause "$name not entered: $why"
+  fi
+  printf 'paused: %s (%s); stage %s not entered\n' "$id" "$why" "$name"
+}
+
+# _task_pause_take_request <id> <verb> — when the queue holds a pause request
+# for <id>, take it out through `jig queue cancel`, the queue's one writer,
+# and exit 0 with _JIG_PAUSE_AT and _JIG_PAUSE_REASON (common.sh) naming it;
+# exit 1 when there is none, or somebody cancelled it first. The request goes
+# before the pause is set: a request that could not be taken out leaves the
+# task unpaused and the request standing, never a pause whose request would
+# pause it again after `resume`. A stale revision is another write landing in
+# between: read again, up to three times.
+_task_pause_take_request() {
+  local id="$1" verb="$2" tries=0 out at reason
+  while jig_pause_request "$id"; do
+    at=$_JIG_PAUSE_AT
+    reason=$_JIG_PAUSE_REASON
+    if out=$("$JIG_SELF" queue cancel "task:$id" pause --json 2>/dev/null); then
+      _JIG_PAUSE_AT=$at
+      _JIG_PAUSE_REASON=$reason
+      return 0
+    fi
+    # The code as json.sh's envelope prints it, without spaces
+    # (tests/json.t.sh pins that layout); there is no jq to parse it with.
+    case "$out" in
+      *'"code":"not-found"'*) return 1 ;;
+      *'"code":"stale-revision"'*) ;;
+      *) jig_die "$verb: cannot take the pause request of $id out of the queue" ;;
+    esac
+    tries=$((tries + 1))
+    [ "$tries" -lt 3 ] || jig_die "$verb: the queue kept changing; the pause request of $id stays"
+  done
+  return 1
 }
 
 # repair --reason <text>: one repair attempt, limited to 2 per run (gate
@@ -3367,11 +3518,13 @@ task_pause() {
   [ $# -ge 1 ] || jig_die "$(_task_usage pause)"
   local id="$1"
   shift
-  local reason="" stash=0 refusal
+  local reason="" stash=0 refusal if_requested=0 stage="" has_reason=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --reason) [ $# -ge 2 ] || jig_die "task pause: --reason requires a value"; reason="$2"; shift 2 ;;
+      --reason) [ $# -ge 2 ] || jig_die "task pause: --reason requires a value"; reason="$2"; has_reason=1; shift 2 ;;
       --stash) stash=1; shift ;;
+      --if-requested) if_requested=1; shift ;;
+      --stage) [ $# -ge 2 ] || jig_die "task pause: --stage requires a value"; stage="$2"; shift 2 ;;
       *) jig_die "task pause: unknown argument: $1" ;;
     esac
   done
@@ -3379,6 +3532,27 @@ task_pause() {
   local dir
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task pause"
+
+  # --if-requested: a stage is about to begin, and only a person's pending
+  # request may pause the task there. The reason is the request's, and a
+  # stash is the person's call, never the agent's; nothing pending, or a task
+  # already paused, is nothing to do. Exit 4 when it paused, as `task
+  # autopilot stage` does.
+  if [ "$if_requested" -eq 1 ]; then
+    [ "$has_reason" -eq 0 ] || jig_die "task pause: --if-requested takes the reason from the request; drop --reason"
+    [ "$stash" -eq 0 ] || jig_die "task pause: --if-requested does not stash; drop --stash"
+    [ -n "$stage" ] || jig_die "task pause: --if-requested requires --stage <name>"
+    _task_autopilot_valid_stage "$stage" || jig_die "task pause: invalid stage: $stage (expected [a-z0-9-]+)"
+    [ "$(task_state_get "$id" paused)" != "true" ] || return 0
+    if _task_pause_take_request "$id" "task pause"; then
+      _task_honour_pause_request "$id" "$stage"
+      # `return 4` ends the command under errexit before cmd_task's own flush.
+      jig_status_page_flush
+      return 4
+    fi
+    return 0
+  fi
+  [ -z "$stage" ] || jig_die "task pause: --stage needs --if-requested"
   refusal=$(_task_pause_refusal "$id") || exit 1
   [ -z "$refusal" ] || jig_die "$refusal"
 
@@ -3415,6 +3589,9 @@ task_pause() {
       printf 'working tree is clean; nothing to stash\n'
     fi
   fi
+
+  # A pause made by hand honours a pending request too: it goes with it.
+  _task_pause_take_request "$id" "task pause" || true
 
   _task_rewrite_state "$dir" paused true
   _task_rewrite_state "$dir" paused_at "$(jig_today)"
@@ -3717,6 +3894,14 @@ _task_list_json_task() {
   json_str_or_null "$goal"; o="$o,\"goal\":$_JSON"
   json_bool "$consolidated"; o="$o,\"knowledge_consolidated\":$_JSON"
   json_bool "$paused"; o="$o,\"paused\":$_JSON"
+  # A pause asked of the task and not yet honoured, with when it was asked:
+  # the card shows its age (common.sh reads the queue file).
+  if jig_pause_request "$id"; then
+    json_quote "$_JIG_PAUSE_AT"; o="$o,\"pause_request\":{\"requested_at\":$_JSON"
+    json_str_or_null "$_JIG_PAUSE_REASON"; o="$o,\"reason\":$_JSON}"
+  else
+    o="$o,\"pause_request\":null"
+  fi
   json_str_or_null "$created"; o="$o,\"created_at\":$_JSON"
   json_str_or_null "$updated"; o="$o,\"updated_at\":$_JSON"
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
@@ -3822,10 +4007,9 @@ EOF
 # command refuses by the checkout it runs in, by the network or by the value a
 # person types is the command's when it runs, never the table's.
 #
-# The rows, in their order; the ids are a contract. Pause and resume requests
-# (spec contract-queue) join as rows of their own, with a guard that reads the
-# queue.
-_TASK_ACTIONS="start pause resume approve-gate answer-stop set-class ship close abandon reopen"
+# The rows, in their order; the ids are a contract. The pause request rows ask
+# the guards `jig queue request|cancel` asks (common.sh), which read the queue.
+_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop set-class ship close abandon reopen"
 
 # _task_actions <id> <pr-state> — one line per row of the table:
 # `<action><TAB><true|false><TAB><command><TAB><reason>`, the reason empty
@@ -3841,6 +4025,8 @@ _task_actions() {
       start) command="jig task start $id" ;;
       pause) command="jig task pause $id" ;;
       resume) command="jig task resume $id" ;;
+      request-pause) command="jig queue request task:$id pause" ;;
+      cancel-pause-request) command="jig queue cancel task:$id pause" ;;
       approve-gate) command="jig task gate $id approved" ;;
       answer-stop)
         # The `--by human` an unattended run's resume needs, in the command
@@ -3858,11 +4044,17 @@ _task_actions() {
     esac
     case "$status:$action" in
       abandoned:reopen) ;;
+      # A request left on a finished task — made during its last stage, or
+      # before it was closed — can still be taken back.
+      consolidated:cancel-pause-request | abandoned:cancel-pause-request)
+        reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
       consolidated:* | abandoned:*) reason="task $id is $status" ;;
       *:reopen) reason="task $id is $status, not abandoned" ;;
       *:start) reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id") ;;
       *:pause) reason=$(_task_actions_guard "$id" "$action" _task_pause_refusal "$id") ;;
       *:resume) reason=$(_task_actions_guard "$id" "$action" _task_resume_refusal "$id") ;;
+      *:request-pause) reason=$(_task_actions_guard "$id" "$action" jig_pause_request_refusal "$id") ;;
+      *:cancel-pause-request) reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
       *:approve-gate)
         reason=$(_task_actions_guard "$id" "$action" _task_gate_refusal "$id" human)
         if [ -z "$reason" ] && [ "$(_task_gate_state "$id")" = approved ]; then
@@ -3905,16 +4097,33 @@ _task_actions_guard() {
 # task's brief, joined into one line, or `(none)` when the brief has no such
 # heading or nothing under it. What `jig task list --goals` shows a person
 # choosing which tasks go into a release; a missing goal is a gap in the
-# brief, said as one, not a field to add.
+# brief, said as one, not a field to add. HTML comments (`<!-- ... -->`, on one
+# line or across several) are not the goal: the template's guidance sits under
+# the heading of every brief filed without one, so it is dropped before a word
+# is kept, and a line that held only a comment does not end the paragraph.
 _task_goal() {
   local goal=""
   [ -f "$1" ] && goal=$(awk '
     /^##[[:space:]]+Goal[[:space:]]*$/ { in_goal = 1; next }
-    in_goal && /^#/ { exit }
-    in_goal && /^[[:space:]]*$/ { if (text != "") exit; next }
-    in_goal {
+    !in_goal { next }
+    !incomment && /^#/ { exit }
+    {
       line = $0
+      while (1) {
+        if (incomment) {
+          e = index(line, "-->")
+          if (e == 0) { line = ""; break }
+          line = substr(line, e + 3); incomment = 0
+        }
+        b = index(line, "<!--")
+        if (b == 0) break
+        rest = substr(line, b + 4)
+        e = index(rest, "-->")
+        if (e == 0) { line = substr(line, 1, b - 1); incomment = 1; break }
+        line = substr(line, 1, b - 1) substr(rest, e + 3)
+      }
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "") { if (text != "" && !incomment && $0 !~ /-->/) exit; next }
       text = (text == "" ? line : text " " line)
     }
     END { print text }

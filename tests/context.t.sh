@@ -1891,3 +1891,121 @@ test_context_resolve_accepted_linked_team_adr_without_domains_is_in_the_catalog(
   assert_eq 0 "$RC"
   assert_contains "$OUT" "catalog:   docs/adr/0001-team.md  [adr-0001-team]"
 }
+
+# --- the task's place in the queue (jig_queue_place, jig_pause_request) ------------
+
+# _ctxq_setup <spec> <task-on-epic> <tasks...> — an installed project with a
+# filed task for each of <tasks>, and <task-on-epic> linked to a spec whose
+# roadmap declares an open epic.
+_ctxq_setup() {
+  local spec="$1" on="$2" id
+  shift 2
+  fixture_jig_repo
+  for id in "$@"; do
+    fixture_task "$id" "task/$id" active
+  done
+  mkdir -p ".ai/specs/$spec"
+  printf '# %s\n' "$spec" > ".ai/specs/$spec/spec.md"
+  printf '# Roadmap\n\nEpic: epic/%s\n\n## Phase 1 — One\n' "$spec" > ".ai/specs/$spec/roadmap.md"
+  fixture_task "$on" "task/$on" active
+  printf '# %s\n\nSpec: .ai/specs/%s/ — Phase 1\n' "$on" "$spec" > ".ai/workspace/tasks/$on/task.md"
+}
+
+# _ctxq_age_request <id> — make the pause request of <id> years old, so its
+# age is counted in days and no test meets a minute boundary.
+_ctxq_age_request() {
+  awk -F '\t' -v r="task:$1" 'BEGIN { OFS = "\t" } $1 == "request" && $2 == r { $4 = "2020-01-01T00:00:00Z" } { print }' \
+    .ai/runtime/queue > queue.tmp && mv queue.tmp .ai/runtime/queue
+}
+
+test_context_shows_the_tasks_place_in_the_queue() {
+  _ctxq_setup big t1 a b c
+  jig queue move a --top >/dev/null
+  jig queue move b --bottom >/dev/null
+  jig queue set t1 --priority 0 >/dev/null
+  jig queue depend t1 --on a --reason "needs a" >/dev/null
+  jig queue request t1 pause --reason "standup" >/dev/null
+  _ctxq_age_request t1
+  run jig context --task t1 --files x
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "queue:     1 of 1 on epic:big, priority 0"
+  assert_contains "$OUT" "queue:     waits for task:a: needs a"
+  printf '%s\n' "$OUT" | grep -Eq '^queue: +pause requested [0-9]+ days ago \(standup\); honoured when the next stage of the task resolves its context$' \
+    || fail "no pause request: $OUT"
+  # Without --stage, resolve enters no stage: it shows the request too.
+  run jig context resolve --task t1 --files x
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pause requested"
+  assert_contains "$OUT" "queue:     1 of 1 on epic:big, priority 0"
+  assert_contains "$OUT" "queue:     waits for task:a: needs a"
+  run jig context --task a --files x
+  assert_contains "$OUT" "queue:     1 of 2 on the top level, no priority"
+  # The paths form stays paths alone.
+  run jig context --task t1 --files x --format paths
+  assert_not_contains "$OUT" "queue"
+  run jig context --task c --files x
+  assert_not_contains "$OUT" "queue:"
+}
+
+# --- a pause request honoured where a stage begins ---------------------------------
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary) A stage skill's
+# first step is `jig context resolve --task <id> --stage <stage>`, with or without
+# autopilot: a pending request pauses the task there, and no context is printed.
+
+test_context_resolve_with_a_stage_honours_a_pause_request() {
+  _ctxq_setup big t1 a
+  jig queue request t1 pause --reason "standup" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  run jig context resolve --task t1 --stage implement --files x
+  assert_eq 4 "$RC" "$OUT"
+  assert_eq "paused: t1 (pause requested at $at: standup); stage implement not entered" "$(printf '%s\n' "$OUT" | sed -n 1p)"
+  assert_contains "$OUT" "next:      a person asked for this pause; do not start the implement stage, end the session; jig task resume t1 continues the task"
+  assert_not_contains "$OUT" "global:"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/t1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  # Paused, the next resolve reads as always: the pause is the person's to end.
+  run jig context resolve --task t1 --stage implement --files x
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "global:"
+  assert_not_contains "$OUT" "paused:"
+}
+
+# The commands an agent runs inside a stage, and a task guessed from the
+# branch, pause nothing: only a named stage of a named task is its entry.
+test_context_mid_stage_commands_leave_a_pause_request_standing() {
+  _ctxq_setup big t1 a
+  jig queue request t1 pause >/dev/null
+  run jig context resolve --task t1 --files x
+  assert_eq 0 "$RC" "$OUT"
+  run jig context guard --task t1 --stage implement --files x
+  run jig context pending --task t1 --stage implement --files x
+  run jig context --task t1 --files x
+  assert_eq 0 "$RC" "$OUT"
+  git checkout -q -b task/t1 2>/dev/null || git checkout -q task/t1
+  run jig context resolve --stage implement --files x
+  assert_not_contains "$OUT" "paused:"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/t1/state)"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:t1\tpause')"
+  # Another task's request is not this one's.
+  run jig context resolve --task a --stage implement --files x
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "paused:"
+}
+
+# A pause that cannot be made leaves the request standing, sticky, and the
+# context is printed as always: reading it never breaks on the queue.
+test_context_resolve_prints_the_context_when_the_pause_is_refused() {
+  skip_unless_readonly_dirs
+  _ctxq_setup big t1 a
+  jig queue request t1 pause >/dev/null
+  # The queue cannot be written, so the request cannot be taken out.
+  chmod a-w .ai/runtime
+  run jig context resolve --task t1 --stage implement --files x
+  chmod u+w .ai/runtime
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "global:"
+  assert_contains "$OUT" "jig: warning: context: the pause requested for t1 was not honoured"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/t1/state)"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:t1\tpause')"
+}

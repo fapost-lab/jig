@@ -252,6 +252,203 @@ test_task_new_invalid_domains_dies() {
   assert_contains "$OUT" "invalid domains"
 }
 
+# --- new --goal, new --json ---------------------------------------------------
+#
+# A program files a task without writing a file first (spec contract-queue):
+# the short description is the goal paragraph, and with --json the answer is
+# the filed task, or a refusal with its code (schemas/json.md).
+
+test_task_new_goal_writes_the_goal_paragraph() {
+  task_setup
+  run jig task new T-1 --goal '  File the task  from the page '
+  assert_eq 0 "$RC"
+  # The text form says what it always said: the workspace, nothing else.
+  assert_eq ".ai/workspace/tasks/T-1" "$OUT"
+  local md=.ai/workspace/tasks/T-1/task.md
+  assert_eq "$(printf '# T-1\n\n## Goal\n\nFile the task  from the page\n\n## Scope')" "$(sed -n 1,7p "$md")"
+  assert_not_contains "$(cat "$md")" "One paragraph"
+  assert_file_contains "$md" "## Notes"
+  run jig task list --goals
+  assert_contains "$OUT" "goal: File the task  from the page"
+  # The built-in brief of an installed copy takes it the same way.
+  run jig_installed task new T-2 --goal "Ship it & say so"
+  assert_eq 0 "$RC"
+  assert_eq "$(printf '# T-2\n\n## Goal\n\nShip it & say so\n\n## Scope')" "$(sed -n 1,7p .ai/workspace/tasks/T-2/task.md)"
+}
+
+test_task_new_goal_refuses_what_is_not_one_paragraph() {
+  task_setup
+  printf 'x\n' > from.md
+  run jig task new T-1 --goal "$(printf 'one\ntwo')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal is one line"
+  run jig task new T-1 --goal "   "
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal is empty"
+  run jig task new T-1 --goal " # Heading"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal cannot start with #"
+  run jig task new T-1 --goal x --from from.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal and --from both write task.md"
+  run jig task new T-1 --goal
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task new: --goal requires a value"
+  assert_no_file .ai/workspace/tasks/T-1
+}
+
+# The goal goes in place of the template's placeholder; a brief whose heading
+# is followed by text keeps it below the goal, and one without the heading
+# gets one.
+test_task_new_goal_lands_under_the_goal_heading_of_any_brief() {
+  task_setup
+  local got
+  got=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/task.sh"
+    printf '# x\n\n## Goal\nold text\n\n## Scope\n' | _task_md_put_goal 'G \1 &'
+    printf -- '--\n'
+    printf '# x\n\nBody.\n' | _task_md_put_goal 'G'
+    printf -- '--\n'
+    printf '# x\n\n## Goal\n\n' | _task_md_put_goal 'G'
+  )
+  assert_eq "$(printf '# x\n\n## Goal\nG \\1 &\n\nold text\n\n## Scope\n--\n# x\n\nBody.\n\n## Goal\n\nG\n--\n# x\n\n## Goal\n\nG')" "$got"
+}
+
+# A brief filed without --goal holds only the template's comment under
+# `## Goal`: that is no goal, in the text listing or in JSON. A comment on one
+# line or across several is dropped wherever it stands, and a line that held
+# only a comment does not end the paragraph.
+test_task_goal_leaves_html_comments_out() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task list --goals
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "goal: (none)"
+  assert_not_contains "$OUT" "<!--"
+  _tl_json
+  assert_contains "$OUT" '{"id":"T-1","class":null,"status":"active","issue":null,"goal":null,'
+  local got f="$JIG_TEST_TMP.goal.md"
+  got=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/task.sh"
+    printf '# x\n\n## Goal\n\n<!-- One paragraph:\n## not a heading -->\nKeep <!-- why -->the\nreturn URL.\n\nLater.\n' > "$f"
+    _task_goal "$f"
+    printf '# x\n\n## Goal\n\n<!-- one -->\n\n<!-- two\nlines -->\n\n## Scope\n\nx\n' > "$f"
+    _task_goal "$f"
+    printf '# x\n\n## Goal\n\nText <!-- open\nstill comment\n--> after.\n' > "$f"
+    _task_goal "$f"
+  )
+  rm -f "$f"
+  assert_eq "$(printf 'Keep the return URL.\n(none)\nText after.')" "$got"
+}
+
+# _tn_json — `jig task new --json <args>` with stdout in OUT, stderr in ERR,
+# generated_at and revision replaced as _tl_json replaces them.
+_tn_json() {
+  run_split jig task new --json "$@"
+  local rc=$RC err=$ERR
+  OUT=$(printf '%s\n' "$OUT" | sed -e 's/"generated_at":"[0-9TZ:-]*"/"generated_at":"T"/' -e 's/^{"schema":1,"revision":[0-9][0-9]*,/{"schema":1,"revision":"R",/')
+  RC=$rc
+  ERR=$err
+}
+
+test_task_new_json_answers_with_the_filed_task() {
+  task_setup
+  local today
+  today=$(date +%Y-%m-%d)
+  _tn_json T-1 --class T1 --goal 'File "it" from the page'
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  _tl_cut_actions
+  # The filed task is the object `task list --json` lists for it.
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
+  local actions=$ACTIONS
+  _tl_json
+  _tl_cut_actions
+  assert_eq "$actions" "$ACTIONS"
+  assert_contains "$OUT" "{\"id\":\"T-1\",\"class\":\"T1\""
+  assert_file .ai/workspace/tasks/T-1/state
+  # Without --goal the brief is the template's, and it has no goal yet.
+  _tn_json T-2
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"T-2","class":null,"status":"active","issue":null,"goal":null,'
+  # --json may stand anywhere; the id stays the first of the others.
+  run_split jig task new T-3 --lean --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"T-3",'
+  assert_file_contains .ai/workspace/tasks/T-3/state "route_depth: lean"
+}
+
+test_task_new_json_names_why_it_refused() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tn_json T-1 --goal "again"
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"already-exists","message":"task new: task already exists: T-1"}}' "$OUT"
+  assert_eq "jig: error: task new: task already exists: T-1" "$ERR"
+  # A directory left without a state file still holds the id.
+  mkdir -p .ai/workspace/tasks/T-2
+  _tn_json T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"already-exists","message":"task new: task already exists: T-2"}}'
+  # Every usage refusal comes before the id is judged taken: a program told
+  # `already-exists` asks for another id, and must not then learn of a bad class.
+  _tn_json T-1 --class T9
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: invalid class: T9"}}'
+  _tn_json T-1 --goal ""
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: --goal is empty"}}'
+  _tn_json "bad id!"
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"usage","message":"task new: invalid task id: bad id!"}}' "$OUT"
+  assert_no_file ".ai/workspace/tasks/bad id!"
+  _tn_json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"usage: jig task new <id> '
+  _tn_json T-4 --nope
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: unknown argument: --nope"}}'
+  _tn_json T-4 --class T9
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: invalid class: T9"}}'
+  _tn_json T-4 --domains Not_Valid
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: invalid domains: Not_Valid"}}'
+  _tn_json T-4 --class
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: --class requires a value"}}'
+  _tn_json T-4 --goal "$(printf 'a\nb')"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task new: --goal is one line: the goal paragraph of task.md"}}'
+  assert_no_file .ai/workspace/tasks/T-4
+}
+
+# Two `task new` racing for one id both pass the check that the directory is
+# absent; the directory itself is the claim, and the second is refused as taken.
+# A mkdir on PATH makes the directory appear between the check and the claim.
+test_task_new_json_loses_a_race_for_the_id_as_already_exists() {
+  task_setup
+  local stub="$JIG_TEST_TMP.mkdirstub" real
+  real=$(command -v mkdir)
+  mkdir -p "$stub"
+  cat > "$stub/mkdir" <<EOF
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\${1##*/}" = T-race ]; then "$real" "\$1"; fi
+exec "$real" "\$@"
+EOF
+  chmod +x "$stub/mkdir"
+  PATH="$stub:$PATH" _tn_json T-race
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"already-exists","message":"task new: task already exists: T-race"}}'
+  assert_no_file .ai/workspace/tasks/T-race/state
+  rm -rf "$stub"
+}
+
+test_task_new_json_in_a_project_without_jig_is_an_envelope() {
+  mkdir plain
+  cd plain
+  git init -q
+  _tn_json T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-initialised","message":"project is not initialised; run: jig init"}}'
+  assert_no_file .ai/workspace/tasks/T-1
+}
+
 test_task_start_on_detached_head_records_detached() {
   # The `detached` fallback survives where it still applies: a project with
   # branch-per-task off records the checkout's branch, and a detached HEAD
@@ -5407,6 +5604,196 @@ test_task_autopilot_stage_logs_name() {
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tstage\tanalyze')"
 }
 
+# A pause request is honoured at the next stage boundary
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): the stage
+# is not entered, the task is paused, the request is taken out of the queue,
+# and the run stays on — exit 4, which the skill ends the session on.
+test_task_autopilot_stage_honours_a_pause_request() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stage analyze >/dev/null
+  jig queue request T-1 pause --reason "need the laptop" >/dev/null
+  local at rev_before rev_after
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  rev_before=$(jig task list --json | sed -n 's/^{"schema":1,"revision":\([0-9]*\),.*/\1/p')
+  run jig task autopilot T-1 stage implement
+  assert_eq 4 "$RC" "$OUT"
+  assert_eq "paused: T-1 (pause requested at $at: need the laptop); stage implement not entered" "$OUT"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "pause requested at $at: need the laptop" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq on "$(sed -n 's/^autopilot: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tpause\timplement not entered: pause requested at %s: need the laptop' "$at")"
+  assert_eq 0 "$(grep -c "$(printf '\tstage\timplement')" .ai/workspace/tasks/T-1/autopilot)"
+  rev_after=$(jig task list --json | sed -n 's/^{"schema":1,"revision":\([0-9]*\),.*/\1/p')
+  [ "$rev_after" -gt "$rev_before" ] || fail "revision $rev_before -> $rev_after"
+  # Paused, the run enters no stage until the task is resumed.
+  run jig task autopilot T-1 stage implement
+  assert_eq 4 "$RC" "$OUT"
+  assert_contains "$OUT" "T-1 is paused; resume it with jig task resume T-1"
+  jig task resume T-1 >/dev/null
+  run jig task autopilot T-1 stage implement
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "stage: implement" "$OUT"
+}
+
+# Sticky: a request made of a task between two runs, or before its run
+# started, is honoured by the first stage that comes.
+test_task_autopilot_stage_honours_a_request_made_before_the_run() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage analyze
+  assert_eq 4 "$RC" "$OUT"
+  assert_contains "$OUT" "stage analyze not entered"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# The request of another task, or none at all, changes nothing.
+test_task_autopilot_stage_without_a_request_of_its_own_enters_the_stage() {
+  task_setup
+  task_started T-1
+  task_started T-2
+  jig queue request T-2 pause >/dev/null
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage analyze
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "stage: analyze" "$OUT"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:T-2\tpause')"
+}
+
+# A run works in the task's worktree; the queue is the clone's, in the main
+# checkout, and the request made there is honoured from the worktree.
+test_task_autopilot_stage_honours_a_request_from_the_tasks_worktree() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt out rc
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  jig queue request T-1 pause >/dev/null
+  out=$(cd "$wt" && jig task autopilot T-1 start >/dev/null && jig task autopilot T-1 stage analyze 2>&1)
+  rc=$?
+  assert_eq 4 "$rc" "$out"
+  assert_contains "$out" "stage analyze not entered"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  assert_no_file "$wt/.ai/runtime/queue"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# A queue of another format holds no request this jig reads: the stage is
+# entered, and the task lists none.
+test_task_autopilot_stage_reads_no_request_from_another_queue_format() {
+  task_setup
+  task_started T-1
+  mkdir -p .ai/runtime
+  printf '# jig queue 2\nrequest\ttask:T-1\tpause\t2026-10-19T10:00:00Z\t\n' > .ai/runtime/queue
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 stage analyze
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "stage: analyze" "$OUT"
+  run_split jig task list --json
+  assert_contains "$OUT" '"pause_request":null'
+}
+
+# A pause made by hand honours a pending request: it goes with it.
+test_task_pause_takes_a_pending_pause_request_out() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  run jig task pause T-1 --reason "by hand"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  assert_eq "by hand" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# --if-requested: the pause a stage boundary makes when only a person's
+# pending request asks for it — what `jig context resolve --stage` runs for
+# a session without autopilot. Nothing pending: silent, exit 0, not paused.
+test_task_pause_if_requested_without_a_request_does_nothing() {
+  task_setup
+  task_started T-1
+  task_started T-2
+  jig queue request T-2 pause >/dev/null
+  run jig task pause T-1 --if-requested --stage implement
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$OUT"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:T-2\tpause')"
+}
+
+# A pending request: taken out, the task paused with the request's reason,
+# exit 4; without a run, no journal is written.
+test_task_pause_if_requested_honours_a_pending_request() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause --reason "need the laptop" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  run jig task pause T-1 --if-requested --stage verify
+  assert_eq 4 "$RC" "$OUT"
+  assert_eq "paused: T-1 (pause requested at $at: need the laptop); stage verify not entered" "$OUT"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "pause requested at $at: need the laptop" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  assert_no_file .ai/workspace/tasks/T-1/autopilot
+  # Already paused: nothing more to do.
+  run jig task pause T-1 --if-requested --stage verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$OUT"
+}
+
+# With a run on, the journal records the stage it did not enter, as `task
+# autopilot stage` does.
+test_task_pause_if_requested_logs_a_running_autopilot() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig queue request T-1 pause >/dev/null
+  run jig task pause T-1 --if-requested --stage review
+  assert_eq 4 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tpause\treview not entered: pause requested at ')"
+  assert_eq on "$(sed -n 's/^autopilot: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# A pause that could not be written is never reported as made: the failed
+# state write stops the command (errexit), with no `paused:` line and no
+# exit 4. Forced with a read-only workspace directory, which makes
+# _task_rewrite_state's temp-file write fail.
+test_task_pause_if_requested_never_reports_a_pause_it_could_not_write() {
+  skip_unless_readonly_dirs
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  chmod 555 .ai/workspace/tasks/T-1
+  run jig task pause T-1 --if-requested --stage implement
+  chmod 755 .ai/workspace/tasks/T-1
+  [ "$RC" -ne 0 ] && [ "$RC" -ne 4 ] || fail "exit $RC: $OUT"
+  assert_not_contains "$OUT" "paused:"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+test_task_pause_if_requested_refuses_what_is_not_its_own() {
+  task_setup
+  task_started T-1
+  run jig task pause T-1 --if-requested --stage implement --reason "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "takes the reason from the request"
+  run jig task pause T-1 --if-requested --stage implement --stash
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "does not stash"
+  run jig task pause T-1 --if-requested
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires --stage"
+  run jig task pause T-1 --stage implement
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--stage needs --if-requested"
+  run jig task pause T-1 --if-requested --stage "Bad Name"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid stage: Bad Name"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
 test_task_autopilot_stage_invalid_name_dies() {
   task_setup
   task_started T-1
@@ -7385,8 +7772,8 @@ test_task_list_json_pins_a_task_with_every_fact() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -7395,8 +7782,8 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq 10 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
+  assert_eq 12 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
 }
 
 test_task_list_json_with_no_tasks_is_an_empty_list() {
@@ -7621,8 +8008,11 @@ _tl_agree() {
   _tl_json --all
   assert_eq 0 "$RC" "$ERR"
   rows=$(_tl_action_rows)
-  assert_eq 10 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  assert_eq 12 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
   saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
+  # The queue too: a pause request written by one command must not change
+  # what the next is judged on.
+  [ ! -f .ai/runtime/queue ] || cp .ai/runtime/queue "$saved/queue"
   msg="$saved/msg.txt"
   printf 'Ship it\n' > "$msg"
   cp -R ".ai/workspace/tasks/$id" "$saved/ws"
@@ -7653,6 +8043,8 @@ _tl_agree() {
     fi
     rm -rf ".ai/workspace/tasks/$id"
     cp -R "$saved/ws" ".ai/workspace/tasks/$id"
+    rm -f .ai/runtime/queue
+    [ ! -f "$saved/queue" ] || cp "$saved/queue" .ai/runtime/queue
   done <<EOF
 $rows
 EOF
@@ -7671,7 +8063,7 @@ EOF
 test_task_actions_of_a_task_not_started_agree_with_their_commands() {
   task_setup_clean
   jig task new fresh >/dev/null
-  _tl_agree fresh "start pause set-class abandon"
+  _tl_agree fresh "start pause request-pause set-class abandon"
 }
 
 # An attended run stopped at a T3 gate, on a paused task started here: the
@@ -7687,6 +8079,21 @@ the design
 EOF
   printf 'autopilot: stopped\nautopilot_mode: attended\nautopilot_repairs: 1\npaused: true\n' >> .ai/workspace/tasks/big/state
   _tl_agree big "resume approve-gate answer-stop set-class abandon"
+}
+
+# A pending pause request: it can be cancelled and not asked again; a direct
+# pause stays offered and takes the request with it. The task lists the
+# request with its time, for the card that shows its age.
+test_task_actions_of_a_pause_request_agree_with_their_commands() {
+  task_setup_clean
+  jig task new asked >/dev/null
+  jig queue request asked pause --reason "standup" >/dev/null
+  _tl_agree asked "start pause cancel-pause-request set-class abandon"
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  _tl_json
+  assert_contains "$OUT" "\"paused\":false,\"pause_request\":{\"requested_at\":\"$at\",\"reason\":\"standup\"},"
+  assert_contains "$OUT" "{\"id\":\"request-pause\",\"command\":\"jig queue request task:asked pause\",\"offered\":false,\"reason\":\"queue request: a pause of task:asked is already requested, at $at\"}"
 }
 
 # Where nobody answers (autopilot.unattended), a run that spent its repairs is
@@ -7705,7 +8112,7 @@ EOF
   sed 's/^knowledge_consolidated: false/knowledge_consolidated: true/' .ai/workspace/tasks/run/state > s.tmp
   mv s.tmp .ai/workspace/tasks/run/state
   printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 2\n' >> .ai/workspace/tasks/run/state
-  _tl_agree run "pause set-class close abandon"
+  _tl_agree run "pause request-pause set-class close abandon"
   _tl_json --all
   assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft"'
   assert_contains "$OUT" '"id":"ship","command":"jig task ship run --message-file <file>","offered":false,"reason":"task ship: the route of run (T3) is missing: '
@@ -7721,6 +8128,18 @@ test_task_actions_of_finished_tasks_offer_only_reopen() {
   _tl_agree done-1 ""
   _tl_json --all
   assert_contains "$OUT" '"id":"abandon","command":"jig task abandon done-1","offered":false,"reason":"task done-1 is consolidated"}'
+}
+
+# A request left on a finished task can still be taken back, and nothing else
+# is offered.
+test_task_actions_of_a_finished_task_with_a_pause_request_offer_its_cancel() {
+  task_setup_clean
+  # Asked while the task was live; it was closed before a stage came.
+  fixture_task done-2 "" active
+  jig queue request done-2 pause >/dev/null
+  sed 's/^status: active/status: consolidated/' .ai/workspace/tasks/done-2/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/done-2/state
+  _tl_agree done-2 "cancel-pause-request"
 }
 
 # A design approved is not offered for approval again, though the command
@@ -7815,7 +8234,7 @@ test_task_actions_of_an_invalid_git_level_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git bogus
   jig task new lvl >/dev/null
-  _tl_agree lvl "start pause set-class abandon"
+  _tl_agree lvl "start pause request-pause set-class abandon"
   _tl_json
   assert_contains "$OUT" '"reason":"task ship: invalid agent.git: bogus (expected none|commit|push|pr|merge)"}'
 }

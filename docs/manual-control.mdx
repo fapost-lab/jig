@@ -24,7 +24,8 @@ jig doctor
 `task list` shows the tasks; `task current` looks for the task on this branch. When several match,
 choose an explicit ID. `status` summarizes the project and `doctor` checks its setup.
 A script can read the same task list as JSON with `jig task list --json`, the specs with
-`jig spec list --json`, and what needs you with `jig status --json`; see
+`jig spec list --json`, the queue with `jig queue list --json`, and what needs you with
+`jig status --json`; see
 [Reading Jig as data](/reading-jig-as-data).
 
 To create the browser status file without opening a browser:
@@ -48,6 +49,14 @@ jig task show booking-message
 
 Fill in `.ai/workspace/tasks/booking-message/task.md`: the goal, scope, and what a correct result
 looks like. Filing the task does not switch branches.
+
+To give the goal as you file it, pass it as one line; it becomes the paragraph under `## Goal`:
+
+```bash
+jig task new booking-form --class T1 --goal "Guests can book a table"
+```
+
+To start from a brief you already wrote, pass `--from <file>` instead.
 
 <Warning>
   Start from a repository with a commit and no uncommitted tracked changes. If other work is in
@@ -79,6 +88,50 @@ jig task resume booking-message
 
 Add `--stash` to the pause command when you also need to put uncommitted work aside. Resume reports
 what changed while the task was paused. Read that report before continuing.
+
+When an agent is working on the task, on autopilot or in an ordinary session, ask it to pause
+instead:
+
+```bash
+jig queue request booking-message pause --reason "Need to check the copy first"
+jig queue cancel booking-message pause
+```
+
+The agent finishes the stage it is on, pauses the task instead of starting the next one, and stops.
+An autopilot run checks when it enters its next stage; any agent checks when the next stage reads
+its context with `jig context resolve --task <id> --stage <stage>`, the first step of every stage
+skill. A stage without a skill of its own, such as a plan, reads none, so the request then waits for
+the stage after it. The request waits until then, or until you cancel it. Resume as above, and start
+a new session to continue.
+
+## Order the work
+
+```bash
+jig queue set booking-message --priority 1
+jig queue move booking-message --before booking-form
+jig queue depend booking-message --on booking-form --reason "The message quotes the form's fields"
+jig queue
+```
+
+The queue keeps the priority, order and dependencies of your tasks and epics, one queue for the
+whole project, outside git. Priority runs from `0` (most urgent) to `5`. A move places one item
+before or after another, or with `--top` and `--bottom` at an end; an epic (`epic:<spec-id>`) is
+ordered beside tasks, and the tasks built on it are ordered within it. A dependency always says why.
+`jig queue remove` takes an item out, and `jig queue undepend` drops a dependency. A program
+reads the queue with `jig queue list --json` ([Reading Jig as data](/reading-jig-as-data#the-queue)).
+
+`jig status` shows each queued task's place on its task line — `queue=2/5` is second of five on its
+level (the top, or the epic it is built on), `priority=1` its priority — with what it waits for, and
+a pause asked of it with its age, on the lines under it:
+
+```text
+task booking-message class=T2 status=active queue=2/5 priority=1
+  waits for task:booking-form: The message quotes the form's fields
+  pause requested 12 min ago: need the laptop
+```
+
+`jig context --task <id>` gives the agent working on the task the same facts as `queue:` lines.
+Without a queue, both look as they always have.
 
 ## Inspect the change and its review
 

@@ -141,3 +141,10 @@ caught; and when a read takes it relative to its data.
   name above it — the stale test above, made exact.
 - The revision directory sits in `.ai/runtime/`, gitignored with the rest; `upgrade` and
   housekeeping never touch it.
+
+> **Amendment (2026-10-19).** The stale-write check contract-queue builds on this claim is
+> `jig_revision_claim <E>` (common.sh; adr-20261019-the-queue-is-one-file-written-against-a-revision),
+> and it is stricter than "claim `<r+1>`, then require no name above it": before the claim the highest
+> name must be `<E>`, so a revision above the clone's, or from before a lost `.ai/runtime`, creates no
+> name at all. Without that test a claim far above the counter would be the highest name until it was
+> withdrawn, and the revision would go down — which "the highest name never goes down" above forbids.

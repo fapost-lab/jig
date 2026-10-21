@@ -5,14 +5,15 @@ description: "Read your project's tasks, specs and what needs you from a script,
 
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
-`--json`. Today `jig task list`, `jig spec list` and `jig status` offer it; more commands will, in
-the same form.
+`--json`. Today `jig task list`, `jig spec list`, `jig status` and `jig queue list` offer it, and
+`jig queue` and `jig task new` answer in it when they write; more commands will, in the same form.
 
 ```bash
 jig task list --json
 jig task list --json --all
 jig spec list --json
 jig status --json
+jig queue list --json
 ```
 
 <Info>
@@ -61,6 +62,9 @@ be reworded.
 | `usage` | the command was called with an argument it does not take, or with a value it does not accept — check how your program calls it |
 | `not-a-repository` | it ran outside a Git repository |
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
+| `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
+| `not-found` | the task or epic named does not exist, or is not in the queue where the command needs it |
+| `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
 | `failed` | anything else: the message says what |
 
 New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
@@ -105,10 +109,12 @@ Each task carries what Jig knows about it:
 }
 ```
 
-A fact Jig does not have is `null`: `branch` is `null` for a task not started yet, `gate` for a task
-without a design approval step, `autopilot` for a task that never ran on autopilot. The flags are the
-ones the last `jig housekeeping` run raised and that still apply, for example `needs-consolidation`
-for merged work nobody has closed yet; `data.housekeeping` says when that run was.
+A fact Jig does not have is `null`: `branch` is `null` for a task not started yet, `goal` for a task
+whose `## Goal` holds nothing but an HTML comment such as the template's `<!-- … -->` hint, `gate`
+for a task without a design approval step, `autopilot` for a task that never ran on autopilot. The
+flags are the ones the last `jig housekeeping` run raised and that still apply, for example
+`needs-consolidation` for merged work nobody has closed yet; `data.housekeeping` says when that run
+was.
 
 `pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
 went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
@@ -120,12 +126,13 @@ carries none, so there `ci` is `null`.
 ## What a person may do next
 
 `actions` lists what a person can do with the task right now, so a dashboard can show the right
-buttons without knowing Jig's rules. Every task carries the same ten actions, in the same order:
+buttons without knowing Jig's rules. Every task carries the same twelve actions, in the same order:
 
 | `id` | What it does |
 |---|---|
 | `start` | Start a task that was filed for later |
 | `pause`, `resume` | Set the task aside, and pick it up again |
+| `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back |
 | `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
 | `answer-stop` | Answer an autopilot run that stopped to ask you something |
 | `set-class` | Change the task's class |
@@ -218,6 +225,110 @@ Pull request items are as old as the last `jig housekeeping` run; `housekeeping.
 when that run is older than your housekeeping cadence or the forge did not answer, so one may be
 missing. The knowledge counts are the ones the last full `jig status` took for the page, at
 `knowledge_counts_at`.
+
+## The queue
+
+The queue holds the priority, order and dependencies of tasks and epics, one per project, shared
+by every worktree. `jig queue list --json` (or `jig queue --json`) reads all of it:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"items":[
+  {"ref":"epic:booking","kind":"epic","id":"booking","level":null,"position":100,"priority":0,"depends_on":[]},
+  {"ref":"task:booking-form","kind":"task","id":"booking-form","level":"epic:booking","position":100,"priority":null,"depends_on":[]},
+  {"ref":"task:booking-message","kind":"task","id":"booking-message","level":"epic:booking","position":200,"priority":1,"depends_on":[{"on":"task:booking-form","reason":"Quotes the form"}]}
+]}}
+```
+
+`items` is in the queue's order: the top level (`level` `null`) by `position`, then each epic's
+tasks under their `level`. An empty queue is `"items":[]`. An item is the same object a write
+below answers with, so a board renders both with one piece of code.
+
+The queue holds order, not the tasks themselves: read it together with `jig task list --json`
+and join a `task` item to a task by `id`, and an `epic` item to `jig spec list --json` by the
+spec's `id`. All of them carry the same `revision` when nothing was written between the reads, and
+the one you send with a change is the `revision` of the queue read you showed. An item whose task
+is finished, or gone, stays in the queue until it is removed; it has no match in the default task
+list, so join against `jig task list --json --all` or show it as it is.
+
+## Changing the queue
+
+A program changes the queue with the same commands a person uses, adding `--json` and the
+`revision` of the read it decided on:
+
+```bash
+jig queue move booking-message --after booking-form --revision 1792079790 --json
+jig queue set booking-message --priority 0 --revision 1792079790 --json
+jig queue depend booking-message --on booking-form --reason "Quotes the form" --revision 1792079790 --json
+```
+
+If anything changed in the project since that read — another person's drag, an agent's task
+update — the write is refused with `stale-revision` and nothing is written: read again and let the
+person decide again. Two programs that send the same revision cannot both land: at most one does,
+and when a third write slips in between, neither.
+A write that lands answers with the item as the queue now holds it:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"ref":"task:booking-message","item":{"ref":"task:booking-message","kind":"task","id":"booking-message","level":null,"position":150,"priority":0,"depends_on":[]}}}
+```
+
+The envelope's `revision` is taken before the write, so with `--revision` it is the one you sent;
+the write raised it, so read again before the next change. A move moves one item, never the others: drag an item by sending one
+`move`, not by renumbering the list. `position` is only for comparing within a `level` — the top
+level (`null`) orders epics and tasks without an epic, and `epic:<spec-id>` orders that epic's tasks.
+
+## Asking a running task to pause
+
+A task an agent is working on cannot be paused from outside without losing the agent's step. Ask
+instead, and the agent pauses the task when it finishes the stage it is on:
+
+```bash
+jig queue request booking-message pause --reason "Need to check the copy first" --revision 1792079790 --json
+jig queue cancel booking-message pause --revision 1792079790 --json
+```
+
+The request is kept until it is honoured or cancelled, whatever stage the task reaches meanwhile. The
+agent working on the task honours it at its next stage — an autopilot run when it enters the stage,
+any agent when the stage reads its context with `jig context resolve --task <id> --stage <stage>`:
+the task becomes paused, the request goes, and the agent stops. `jig task pause` honours it too.
+
+The answer is the request as the queue now holds it, `null` after a cancel:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"ref":"task:booking-message","request":{"kind":"pause","requested_at":"2026-10-19T12:00:00Z","reason":"Need to check the copy first"}}}
+```
+
+While it waits, `jig task list --json` shows it on the task as `pause_request`, with
+`requested_at` for the age you show beside it, and offers `cancel-pause-request` instead of
+`request-pause`. Asking twice is refused with `already-exists`, and the first request keeps its time.
+Asking a task that is already paused, or finished, is refused.
+
+## Filing a task
+
+A program files a task with `jig task new`, giving the goal on the command line instead of writing
+a file first:
+
+```bash
+jig task new booking-message --goal "Guests get a confirmation message after booking" --json
+```
+
+The goal becomes the paragraph under `## Goal` in the task's `task.md`. It is one line of text, not
+empty and not starting with `#`. Without `--goal` the task has none yet, and its `goal` is `null`.
+You may add `--class` and `--domains` as a person would. The answer is the filed task, the same
+object `jig task list --json` lists for it:
+
+```json
+{"schema":1,"revision":1792405174,"generated_at":"2026-10-19T10:22:28Z","data":{"task":{"id":"booking-message","class":null,"status":"active","issue":null,"goal":"Guests get a confirmation message after booking","knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-19","updated_at":"2026-10-19","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[],"actions":[...]}}}
+```
+
+When the id is taken, the refusal says so in its own code, so your program can ask the person for
+another id rather than show a generic failure:
+
+```json
+{"schema":1,"revision":1792405176,"generated_at":"2026-10-19T10:22:28Z","error":{"code":"already-exists","message":"task new: task already exists: booking-message"}}
+```
+
+An id Jig does not accept — a space, a leading dash — and a goal that is empty or spans lines are
+`usage`.
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).

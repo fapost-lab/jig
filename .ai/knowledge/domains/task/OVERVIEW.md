@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-10-15
+reviewed_at: 2026-10-21
 ---
 # Task
 
@@ -273,6 +273,13 @@ otherwise (adr-20261019-a-re-review-reads-what-changed-since-review). It lives o
 the workspace. The only rule it enforces is the repair limit — two per run, a third refused with
 exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A run changes none of
 the completion gates: a task on autopilot meets the same findings and receipt checks as any other.
+`stage` is also where a person's pause request is honoured
+(adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): it takes the request out of the
+queue through `jig queue cancel`, pauses the task instead of entering the stage, and exits 4 with
+the run still `on`; a paused task enters no stage. Without autopilot the same honouring runs as
+`jig task pause <id> --if-requested --stage <stage>`, which `jig context resolve --task <id> --stage
+<stage>` — every stage skill's first step — calls as a process: both go through
+`_task_honour_pause_request`, and both exit 4.
 
 `autopilot_phase: <spec-id>/<n>`, written by `start --phase`, says this run is one task of a phase
 run (adr-20260922-a-phase-run-is-coordinated): a coordinator started it and will ship it. This

@@ -156,7 +156,8 @@ rules verbatim:
   after the merge.
 - Keep the journal: `jig task autopilot <id> stage <name>` on entering a stage,
   `... repair --reason "<what you are fixing>"` before every repair (exit 3 means stop and
-  report), `... stop --reason "<question>"` at a stop; a gate is `jig task gate`.
+  report), `... stop --reason "<question>"` at a stop; a gate is `jig task gate`. Exit 4 from
+  `stage` or from a stage's `jig context resolve` means a person asked the task to pause and Jig paused it: stop work and report that.
 - Follow the class's route as `jig-autopilot` §2–3 says (§5 when the run is unattended). Review
   and architecture review go to a subagent in a fresh context, implement and review on the model
   a `delegate:` line of `jig task route <id>` names
@@ -178,6 +179,7 @@ rules verbatim:
 | What | How you see it | What you do |
 |---|---|---|
 | The agent crashed | its process ended with no `stop` or `end` in the journal and no consolidated state | a new agent: "continue `<id>` from stage `<last stage>`". Repairs are not reset. A second crash on the same task is a stop (unattended: treat as an exhausted repair budget) |
+| A person paused the task | the agent reported exit 4 from `stage`; the task is `paused`, its run still `on` | nothing until they run `jig task resume <id>`; then a new agent: "continue `<id>` from stage `<the stage it did not enter>`". The wave waits for it like for a stop |
 | The agent hung | no new journal line for a long while, process still alive | attended: into the summary message. Unattended: stop the agent, then as for a crash |
 | CI is red | `gh pr checks`, or `not merged: a check failed` | an agent in that worktree: `repair --reason "CI red: …"` (the run is still `on`), fix, targeted tests, re-review, ship again. Exit 3 → a stop, or a draft when unattended |
 | A conflict updating the base | `git merge` stopped | an agent in that worktree resolves it keeping both intentions, runs the targeted tests, re-reviews and ships again. If the resolution needs a product decision: stop (unattended: `git merge --abort` and a draft naming the reason) |

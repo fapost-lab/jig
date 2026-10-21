@@ -1603,6 +1603,44 @@ jig_spec_epic() {
   ' "$1"
 }
 
+# jig_task_epic <task.md> — which epic a task is built on, by its `Spec:` line
+# (jig_spec_link) and that spec's `Epic:` line (jig_spec_epic) in this
+# checkout's `.ai/specs`: the one answer `task start`, which cuts the task's
+# branch from it, and `jig queue`, which puts the task on that epic's level,
+# must never disagree on (ARCHITECTURE.md Scripts layout). What each does with
+# an answer off the happy path is its own: the codes say which one it is.
+#
+# Sets _JIG_TASK_SPEC (the spec id, empty without a link), _JIG_TASK_EPIC (the
+# branch, empty when the spec declares none) and _JIG_TASK_EPIC_STATE (`none`,
+# `open` or `finished`). Returns 0 with an answer — a task.md that does not
+# exist links to nothing — 2 when the task links to more than one spec, 3 when
+# the spec it links to is not in this checkout, 4 when that spec declares more
+# than one epic. Sets variables rather than printing: a caller in `$(...)`
+# would lose them.
+_JIG_TASK_SPEC=""
+_JIG_TASK_EPIC=""
+_JIG_TASK_EPIC_STATE=none
+jig_task_epic() {
+  local spec="" line="" rc=0 roadmap
+  _JIG_TASK_SPEC=""
+  _JIG_TASK_EPIC=""
+  _JIG_TASK_EPIC_STATE=none
+  [ -f "$1" ] || return 0
+  spec=$(jig_spec_link "$1") || rc=$?
+  [ "$rc" -ne 2 ] || return 2
+  [ -n "$spec" ] || return 0
+  _JIG_TASK_SPEC=$spec
+  roadmap="$JIG_PROJECT/$JIG_AI_DIR/specs/$spec/roadmap.md"
+  [ -f "$roadmap" ] || return 3
+  rc=0
+  line=$(jig_spec_epic "$roadmap") || rc=$?
+  [ "$rc" -ne 2 ] || return 4
+  [ -n "$line" ] || return 0
+  _JIG_TASK_EPIC=${line% *}
+  _JIG_TASK_EPIC_STATE=${line##* }
+  return 0
+}
+
 # jig_tracked_changes — the tracked-and-uncommitted lines of
 # `git status --porcelain`, never the untracked ones (`??`): untracked files
 # are not work in progress (build output, a spec nobody started yet), only a
@@ -2152,6 +2190,262 @@ jig_revision_bump() {
 jig_record_changed() {
   jig_revision_bump
   jig_status_page_dirty
+}
+
+# jig_revision_claim <expected> — claim the revision right above <expected>,
+# for a write that must be refused when the clone changed after its caller
+# read <expected> (adr-20261019-the-queue-is-one-file-written-against-a-revision).
+#
+# The claim is jig_revision_bump's `mkdir <expected+1>` made exact. Before it,
+# the highest name must be <expected> (for 0, there must be no name at all):
+# otherwise the call is stale and claims nothing — a revision from before a
+# lost `.ai/runtime`, from the future, or simply old. Of two writers holding
+# one revision at most one then creates the name. After it, the claim must be
+# the highest name; when a higher one appeared in between — a cleared name
+# created again, another writer's raise — it is withdrawn: `rmdir` of the
+# digits-only name this call just created, never anything else. A claim is
+# withdrawn only from under a higher name, so the clone's revision never goes
+# down. 0 claims the time in seconds, the seed of a first raise, and two
+# writers holding 0 claim different seconds; so a claim of 0 must also be the
+# only name, and one that finds another claim of 0 below it is stale but
+# stays — the highest name, it counts as one more raise.
+#
+# The claim raises the revision *before* the caller's write lands. The caller
+# therefore moves its file into place and then calls jig_record_changed, so
+# that a read which took the claimed revision with the old data sees a change
+# again. <expected> is validated by the caller: digits, no leading zero.
+# Returns 0 claimed, 1 stale, 2 when the counter cannot be created at all.
+jig_revision_claim() {
+  local expected="$1" dir next
+  dir=$(jig_revision_dir) || return 2
+  if [ ! -d "$dir" ] && ! mkdir -p "$dir" 2>/dev/null; then
+    return 2
+  fi
+  _jig_revision_scan "$dir"
+  if [ "$expected" = 0 ]; then
+    [ -z "$_JIG_REV" ] || return 1
+    next=$(date +%s)
+  else
+    [ "$_JIG_REV" = "$expected" ] || return 1
+    next=$((expected + 1))
+  fi
+  mkdir "$dir/$next" 2>/dev/null || return 1
+  _jig_revision_scan "$dir"
+  if [ "$_JIG_REV" = "$next" ]; then
+    # For 0 the names two writers claim differ (each its own second), so
+    # mkdir alone excludes nobody: the claim stands only alone. A name below
+    # it is another writer's first raise or claim of 0; this one stays, the
+    # highest name: withdrawing it would lower the revision. It counts as one
+    # more raise.
+    [ "$expected" != 0 ] || [ -z "$_JIG_REV_OLD" ] || return 1
+    return 0
+  fi
+  rmdir "$dir/$next" 2>/dev/null || true
+  return 1
+}
+
+# --- the queue file, as its readers outside `jig queue` see it ----------------
+#
+# `jig queue` (lib/queue.sh) is the queue's only writer; `task` reads the pause
+# requests in it and acts on them through `"$JIG_SELF" queue cancel`, and
+# `status` and `context` show a task's place in it. Where the file is, how its
+# items are parsed and when a pause request may be made are the answers they
+# must never disagree about, so they live here
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
+
+# jig_queue_file — the queue's path in the clone's main checkout
+# (jig_config_clone_root), shared by every worktree.
+jig_queue_file() {
+  local root
+  root=$(jig_config_clone_root) || jig_die "queue: cannot find the clone's main checkout"
+  printf '%s/%s/runtime/queue\n' "$root" "$JIG_AI_DIR"
+}
+
+# _jig_queue_readable <file> — exit 0 when the queue <file> exists and is of
+# the format version this jig reads. A file of another version holds nothing
+# this jig can read, as the writer refuses to rewrite it.
+_JIG_QUEUE_FORMAT=1
+_jig_queue_readable() {
+  [ -f "$1" ] || return 1
+  Q_FORMAT=$_JIG_QUEUE_FORMAT awk '
+    FNR == 1 { if ($0 ~ /^# jig queue /) { split($0, w, " "); if (w[4] != ENVIRON["Q_FORMAT"]) bad = 1 } exit }
+    END { exit bad }
+  ' "$1"
+}
+
+# jig_queue_items <file|-> [<ref>] — every item of the queue <file> in the
+# order of its lines, each followed by its own dependencies in theirs:
+# `item <ref> <level> <position> <priority>`, then `dep <on-ref> <reason>`.
+# With <ref>, that item alone. Lines of any other kind are left out. This is
+# the one parser of the queue's items and dependencies: `jig queue list
+# --json` (queue.sh) reads them through it, and so do `jig status` and `jig
+# context` (jig_queue_place), since a command library never sources another
+# (ARCHITECTURE.md). The format version is the caller's to check.
+jig_queue_items() {
+  Q_REF="${2:-}" awk -F '\t' '
+    $1 == "item" && NF >= 5 && (ENVIRON["Q_REF"] == "" || $2 == ENVIRON["Q_REF"]) {
+      i = ++n; line[i] = $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5; r[i] = $2
+    }
+    $1 == "dep" && NF >= 4 { j = ++dn; dsub[j] = $2; dl[j] = $1 "\t" $3 "\t" $4 }
+    END {
+      for (i = 1; i <= n; i++) {
+        print line[i]
+        for (j = 1; j <= dn; j++) if (dsub[j] == r[i]) print dl[j]
+      }
+    }
+  ' "$1"
+}
+
+# jig_queue_place <id> — exit 0 when task <id> is an item of the queue, with
+# _JIG_QUEUE_LEVEL <- its level (`-` the top, or `epic:<spec>`),
+# _JIG_QUEUE_POSITION and _JIG_QUEUE_PRIORITY (`-` for none) as stored,
+# _JIG_QUEUE_RANK <- its place on its level counted from 1 (positions compare
+# within a level only), _JIG_QUEUE_COUNT <- how many items that level holds,
+# and _JIG_QUEUE_DEPS <- what it waits for, one `<on-ref><TAB><reason>` line
+# each. Exit 1 when it is not queued, there is no queue, or the queue is of
+# another format version. What `jig status` and `jig context` show of a
+# task's place (adr-20261019-the-queue-is-one-file-written-against-a-revision).
+_JIG_QUEUE_LEVEL=""
+_JIG_QUEUE_POSITION=""
+_JIG_QUEUE_PRIORITY=""
+_JIG_QUEUE_RANK=""
+_JIG_QUEUE_COUNT=""
+_JIG_QUEUE_DEPS=""
+jig_queue_place() {
+  local file ref="task:$1" kind f2 f3 f4 f5 mine="" items="" rank
+  _JIG_QUEUE_LEVEL="" _JIG_QUEUE_POSITION="" _JIG_QUEUE_PRIORITY=""
+  _JIG_QUEUE_RANK="" _JIG_QUEUE_COUNT="" _JIG_QUEUE_DEPS=""
+  file=$(jig_queue_file)
+  _jig_queue_readable "$file" || return 1
+  items=$(jig_queue_items "$file")
+  while IFS=$'\t' read -r kind f2 f3 f4 f5; do
+    case "$kind" in
+      item)
+        mine=""
+        [ "$f2" = "$ref" ] || continue
+        mine=1
+        _JIG_QUEUE_LEVEL=$f3 _JIG_QUEUE_POSITION=$f4 _JIG_QUEUE_PRIORITY=$f5 ;;
+      dep)
+        [ -n "$mine" ] || continue
+        _JIG_QUEUE_DEPS="$_JIG_QUEUE_DEPS$f2"$'\t'"$f3"$'\n' ;;
+    esac
+  done <<EOF
+$items
+EOF
+  [ -n "$_JIG_QUEUE_LEVEL" ] || return 1
+  _JIG_QUEUE_DEPS=${_JIG_QUEUE_DEPS%$'\n'}
+  rank=$(printf '%s\n' "$items" | Q_LEVEL="$_JIG_QUEUE_LEVEL" Q_POS="$_JIG_QUEUE_POSITION" awk -F '\t' '
+    $1 == "item" && $3 == ENVIRON["Q_LEVEL"] { n++; if ($4 + 0 < ENVIRON["Q_POS"] + 0) before++ }
+    END { print before + 1, n + 0 }
+  ')
+  _JIG_QUEUE_RANK=${rank%% *}
+  _JIG_QUEUE_COUNT=${rank#* }
+  return 0
+}
+
+# jig_pause_request <id> — exit 0 when the queue holds a pause request for
+# task <id>, with _JIG_PAUSE_AT <- when it was made (UTC) and
+# _JIG_PAUSE_REASON <- its reason (empty for none); exit 1 when it holds none
+# or there is no queue. The record is `request<TAB>task:<id><TAB>pause<TAB>
+# <requested_at><TAB><reason>`; the first one counts, as the writer reads it.
+# A file of another format version holds no request this jig can read, as the
+# writer refuses to rewrite it: none is reported. This is a second reader of
+# the queue's lines beside queue.sh's writer, for the one record `task`,
+# `status` and `context` need, because a command library never sources
+# another (ARCHITECTURE.md).
+_JIG_PAUSE_AT=""
+_JIG_PAUSE_REASON=""
+jig_pause_request() {
+  local file line
+  _JIG_PAUSE_AT=""
+  _JIG_PAUSE_REASON=""
+  file=$(jig_queue_file)
+  _jig_queue_readable "$file" || return 1
+  line=$(Q_REF="task:$1" awk -F '\t' '
+    $1 == "request" && $2 == ENVIRON["Q_REF"] && $3 == "pause" && NF >= 4 { print $4 "\t" $5; exit }
+  ' "$file")
+  [ -n "$line" ] || return 1
+  _JIG_PAUSE_AT=${line%%$'\t'*}
+  _JIG_PAUSE_REASON=${line#*$'\t'}
+  return 0
+}
+
+# jig_utc_epoch <UTC ISO time> — seconds since the epoch, or nothing. BSD date
+# first (macOS), GNU date otherwise (Linux, Git Bash).
+jig_utc_epoch() {
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null \
+    || date -u -d "$1" +%s 2>/dev/null \
+    || true
+}
+
+# jig_utc_ago <UTC ISO time> — how long ago, in words a person reads at a
+# glance: "just now", "12 min", "3 h", "2 days"; empty when unparsable.
+jig_utc_ago() {
+  local past now d
+  past=$(jig_utc_epoch "$1")
+  [ -n "$past" ] || return 0
+  now=$(date -u +%s)
+  d=$((now - past))
+  if [ "$d" -lt 60 ]; then printf 'just now\n'
+  elif [ "$d" -lt 3600 ]; then printf '%d min\n' $((d / 60))
+  elif [ "$d" -lt 172800 ]; then printf '%d h\n' $((d / 3600))
+  else printf '%d days\n' $((d / 86400))
+  fi
+}
+
+# _jig_task_state_value <id> <key> — the value of <key> in task <id>'s state
+# file, read as `task_state_get` reads it (lib/task.sh owns the file; reading
+# a peer's file directly is allowed, ARCHITECTURE.md). The id passes
+# jig_valid_id before it becomes a path (RULES.md); an invalid one has no state.
+_jig_task_state_value() {
+  jig_valid_id "$1" || return 0
+  local file="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$1/state"
+  [ -f "$file" ] || return 0
+  awk -v k="$2:" 'index($0, k) == 1 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$file"
+}
+
+# jig_pause_request_refusal <id> — why `jig queue request task:<id> pause`
+# refuses this task, or nothing when it would write the request. The task's
+# state is asked first (jig_pause_request_state_refusal): a paused or closed
+# task that still holds a request is refused for its state, not for the
+# request. The command and the actions table (_task_actions) both ask it.
+# <id> is a valid id of a task that exists; the caller checked.
+jig_pause_request_refusal() {
+  local refusal
+  refusal=$(jig_pause_request_state_refusal "$1")
+  if [ -n "$refusal" ]; then
+    printf '%s\n' "$refusal"
+    return 0
+  fi
+  if jig_pause_request "$1"; then
+    printf 'queue request: a pause of task:%s is already requested, at %s\n' "$1" "$_JIG_PAUSE_AT"
+  fi
+  return 0
+}
+
+# jig_pause_request_state_refusal <id> — the part of the refusal above that
+# comes from the task's own state (paused, consolidated, abandoned), or
+# nothing. `jig queue request` refuses it with `failed`, and only a refusal
+# past it — a request already pending — with `already-exists`.
+jig_pause_request_state_refusal() {
+  local id="$1" status
+  status=$(_jig_task_state_value "$id" status)
+  case "$status" in
+    consolidated | abandoned)
+      printf 'queue request: task %s is %s\n' "$id" "$status"
+      return 0 ;;
+  esac
+  if [ "$(_jig_task_state_value "$id" paused)" = true ]; then
+    printf 'queue request: task %s is already paused\n' "$id"
+  fi
+  return 0
+}
+
+# jig_pause_cancel_refusal <id> — why `jig queue cancel task:<id> pause`
+# refuses, or nothing when there is a request to cancel.
+jig_pause_cancel_refusal() {
+  jig_pause_request "$1" || printf 'queue cancel: no pause of task:%s is requested\n' "$1"
+  return 0
 }
 
 # jig_hash_git_dir — the git directory every hash in this project is computed

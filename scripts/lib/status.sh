@@ -291,7 +291,7 @@ $rel"
     printf 'specs: none\n'
   fi
 
-  local found=0 rec line default_base blocking bcount autopilot_note
+  local found=0 rec line default_base blocking bcount autopilot_note qlines qon qreason qago
   [ -n "$_STATUS_LIVE_READY" ] || _status_live_collect
   default_base=$_STATUS_DEFAULT_BASE
   while IFS= read -r rec; do
@@ -301,6 +301,32 @@ $rel"
     line="task $_ST_ID class=$_ST_CLASS status=$_ST_STATUS"
     # Where `jig task list` shows it (adr-20261010-a-task-carries-its-tracker-issue).
     [ -z "$_ST_ISSUE" ] || line="$line issue=$_ST_ISSUE"
+    # Its place in the queue: the rank on its level and the priority, then
+    # what it waits for and a pause asked of it, on lines of their own below.
+    # Read by the readers `jig context` and `task` read it by too
+    # (jig_queue_place, jig_pause_request; common.sh). The words go before the
+    # worktree, the base and the pause, where _status_task_needs reads only
+    # `lowered=`.
+    qlines=""
+    if jig_queue_place "$_ST_ID"; then
+      line="$line queue=$_JIG_QUEUE_RANK/$_JIG_QUEUE_COUNT"
+      [ "$_JIG_QUEUE_PRIORITY" = "-" ] || line="$line priority=$_JIG_QUEUE_PRIORITY"
+      while IFS=$'\t' read -r qon qreason; do
+        [ -n "$qon" ] || continue
+        qlines="$qlines  waits for $qon: $qreason"$'\n'
+      done <<EOF
+$_JIG_QUEUE_DEPS
+EOF
+    fi
+    if jig_pause_request "$_ST_ID"; then
+      qago=$(jig_utc_ago "$_JIG_PAUSE_AT")
+      case "$qago" in
+        "") qago="at $_JIG_PAUSE_AT" ;;
+        "just now") ;;
+        *) qago="$qago ago" ;;
+      esac
+      qlines="$qlines  pause requested $qago${_JIG_PAUSE_REASON:+: $_JIG_PAUSE_REASON}"$'\n'
+    fi
     # A lighter route than the class's own is worth a word; `full`, the
     # default, adds none (adr-20261002-route-depth-is-a-personal-choice).
     [ "$_ST_DEPTH" != lean ] || line="$line depth=lean"
@@ -344,7 +370,7 @@ $rel"
       autopilot_note=$(_task_autopilot_note "$_ST_ID")
       [ -z "$autopilot_note" ] || line="$line $autopilot_note"
     fi
-    printf '%s\n' "$line"
+    printf '%s\n%s' "$line" "$qlines"
   done <<EOF
 $_STATUS_LIVE
 EOF
@@ -480,23 +506,33 @@ _status_need_detail() {
 # _status_terminal — read the plain report on stdin and print its terminal
 # form.
 _status_terminal() {
-  local l t v m version="" prev_need="" list="" finished="" ntasks=0 hk=""
+  local l t v m version="" prev_need="" list="" tline="" finished="" ntasks=0 hk=""
   _STT_NEED_LEVEL=() _STT_NEED_TEXT=() _STT_NEED_DETAIL=() _STT_TASKS=() _STT_OTHERS=()
   _STT_INSTALL=() _STT_KNOW=() _STT_CFG=() _STT_REST=() _STT_HOOKS=() _STT_INSTR=()
   _STT_INSTR_OWN=()
   _STT_AGENT="" _STT_CURRENT="" _STT_UNSEEN="" _STT_MODE="" _STT_CURRENT_FW="" _STT_INIT=""
   while IFS= read -r l || [ -n "$l" ]; do
     # A line indented by two spaces belongs to the list named above it
-    # (modified:, missing:), which belongs to the drift line before that.
+    # (modified:, missing:), which belongs to the drift line before that, or
+    # to the task line above it: what the task waits for in the queue, a pause
+    # asked of it. Those become the task's notes, or details when the task
+    # needs the reader.
     case "$l" in
       "  "*)
         if [ -n "$list" ]; then
           _status_need_detail "$list" "${l#  }"
           continue
         fi
+        case "$tline" in
+          need) _status_need_detail queue "${l#  }"; continue ;;
+          task)
+            _STT_TASKS[${#_STT_TASKS[@]} - 1]="${_STT_TASKS[${#_STT_TASKS[@]} - 1]}"$'\t'"${l#  }"
+            continue ;;
+        esac
         ;;
     esac
     list=""
+    tline=""
     # A hint is a detail of the line it follows; the newer-release hint is
     # an item of its own, since nothing above it asked for it.
     case "$l" in
@@ -576,8 +612,10 @@ _status_terminal() {
         ntasks=$((ntasks + 1))
         if _status_task_needs "$l"; then
           _status_need warn "$l"
+          tline=need
         else
           _STT_TASKS+=("${l#task }")
+          tline=task
         fi
         ;;
       "no active tasks") ;;
@@ -913,12 +951,17 @@ _status_group_label() {
 # (_status_task_groups): a line per epic or spec with its progress, its tasks
 # under it on the branches of a tree, and "Other tasks" last.
 _status_terminal_tasks() {
-  local ntasks="$1" finished="$2" t id rest words w class wd counts
+  local ntasks="$1" finished="$2" t id rest words w class wd counts extra
   local -a ids=() classes=() notes=() note=()
   if [ "$ntasks" -gt 0 ]; then counts="$ntasks active"; else counts="no active tasks"; fi
   [ -z "$finished" ] || counts=$(out_join "$counts" "$finished finished")
   if [ ${#_STT_TASKS[@]} -gt 0 ]; then
     for t in "${_STT_TASKS[@]}"; do
+      # The lines under the task line came after a tab (_status_terminal).
+      extra=""
+      case "$t" in
+        *$'\t'*) extra=${t#*$'\t'}; t=${t%%$'\t'*} ;;
+      esac
       id=${t%% *}
       rest=${t#* }
       # The worktree's path is the one field a person chose: cut it out
@@ -942,7 +985,16 @@ _status_terminal_tasks() {
           uncommitted=*) note+=("${wd#uncommitted=} uncommitted") ;;
           base=*) note+=("base ${wd#base=}") ;;
           autopilot=on) note+=("autopilot on") ;;
+          queue=*) note+=("queue ${wd#queue=}") ;;
+          priority=*) note+=("priority ${wd#priority=}") ;;
           *) note+=("$wd") ;;
+        esac
+      done
+      while [ -n "$extra" ]; do
+        note+=("${extra%%$'\t'*}")
+        case "$extra" in
+          *$'\t'*) extra=${extra#*$'\t'} ;;
+          *) extra="" ;;
         esac
       done
       ids+=("$id")
@@ -1489,14 +1541,6 @@ _status_html_count() {
   fi
 }
 
-# _status_epoch <UTC ISO time> — seconds since the epoch, or nothing. BSD date
-# first (macOS), GNU date otherwise (Linux, Git Bash).
-_status_epoch() {
-  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null \
-    || date -u -d "$1" +%s 2>/dev/null \
-    || true
-}
-
 # _status_zone — reads "<date> <time> <offset> <zone>" (date's `%z %Z`) on
 # stdin and prints "<date> <time> <zone>", naming a +0000 offset `UTC`
 # whatever the zone abbreviation says: Git Bash's `date` calls TZ=UTC `GMT`,
@@ -1510,7 +1554,7 @@ _status_zone() {
 # unchanged when it cannot be read. BSD `date -r <seconds>`, else GNU `-d @`.
 _status_when() {
   local e out=""
-  e=$(_status_epoch "$1")
+  e=$(jig_utc_epoch "$1")
   if [ -n "$e" ]; then
     out=$(date -r "$e" '+%Y-%m-%d %H:%M %z %Z' 2>/dev/null \
       || date -d "@$e" '+%Y-%m-%d %H:%M %z %Z' 2>/dev/null) || out=""
@@ -1519,21 +1563,6 @@ _status_when() {
     printf '%s\n' "$out" | _status_zone
   else
     printf '%s\n' "$1"
-  fi
-}
-
-# _status_ago <UTC ISO time> — how long ago, in words a person reads at a
-# glance: "just now", "12 min", "3 h", "2 days"; empty when unparsable.
-_status_ago() {
-  local past now d
-  past=$(_status_epoch "$1")
-  [ -n "$past" ] || return 0
-  now=$(date -u +%s)
-  d=$((now - past))
-  if [ "$d" -lt 60 ]; then printf 'just now\n'
-  elif [ "$d" -lt 3600 ]; then printf '%d min\n' $((d / 60))
-  elif [ "$d" -lt 172800 ]; then printf '%d h\n' $((d / 3600))
-  else printf '%d days\n' $((d / 86400))
   fi
 }
 
@@ -1547,7 +1576,7 @@ _status_hk_stale() {
   cadence=$(cfg housekeeping.cadence 1d)
   days=${cadence%d}
   case "$days" in '' | *[!0-9]*) days=1 ;; esac
-  past=$(_status_epoch "$at")
+  past=$(jig_utc_epoch "$at")
   [ -n "$past" ] || return 0
   now=$(date -u +%s)
   [ $((now - past)) -gt $((days * 86400)) ]
@@ -1912,7 +1941,7 @@ _status_attention() {
       # then reads as true now. What is true now is derived here, in the
       # items around this one.
       ago=""
-      [ -z "$stop_at" ] || [ "$stop_at" = "-" ] || ago=$(_status_ago "$stop_at")
+      [ -z "$stop_at" ] || [ "$stop_at" = "-" ] || ago=$(jig_utc_ago "$stop_at")
       case "$ago" in
         '') stop_reason="stopped: $stop_reason" ;;
         "just now") stop_reason="stopped just now: $stop_reason" ;;
@@ -2471,7 +2500,7 @@ _status_html_stage() {
     fi
     printf '<span class="badge">autopilot</span> %s' "$(_status_h "$stage")"
     ago=""
-    [ -z "$stage_at" ] || [ "$stage_at" = "-" ] || ago=$(_status_ago "$stage_at")
+    [ -z "$stage_at" ] || [ "$stage_at" = "-" ] || ago=$(jig_utc_ago "$stage_at")
     case "$ago" in
       '') ;;
       "just now") printf ' <span class="muted">just started</span>' ;;

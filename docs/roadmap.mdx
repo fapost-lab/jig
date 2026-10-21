@@ -41,11 +41,11 @@ only if that agent confirms it. A wrong finding then costs one check instead of 
 
 ## After that: new capabilities
 
-**Planning that lives in Jig.** Jig can now be read by a program; what is left is the half that
-plans. A queue holds the priority, order and dependencies of tasks and epics, written by one
-command that refuses a write made against a stale revision; a person can ask a running task to
-pause, and the request holds until the agent honours it at its next stage. Like the rest of Jig's
-contracts, it is useful without anything built on top.
+**Planning that lives in Jig.** Jig can be read by a program (0.29.0) and planned with (0.31.0): a
+queue holds the priority, order and dependencies of tasks and epics, and a running task can be
+asked to pause. What is left: advice on which task to take next, from that priority, order and
+dependencies — once the queue has been used and it is clear what the advice should weigh — and a
+way for `jig init` to tell an installed Jig UI about a new project.
 
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.
@@ -74,5 +74,6 @@ of an existing file rather than a whole one.
 local page with a board across all your Jig projects, where tasks and epics are ordered and
 prioritised and new tasks are filed. It reads and changes your projects only through Jig's own
 commands and contracts — the JSON form described in [Reading Jig as data](/reading-jig-as-data), and the planning described above — so Jig
-works exactly as it does without it. Its plans live in its own repository, and its documentation
-at [jig-ui.fapost.in](https://jig-ui.fapost.in).
+works exactly as it does without it. What its next phase needs from Jig — the queue, pause
+requests and filing a task from a program — is in 0.31.0, so that phase can start on it. Its plans
+live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).
