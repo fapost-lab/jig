@@ -2403,10 +2403,29 @@ _jig_task_state_value() {
 }
 
 # jig_pause_request_refusal <id> — why `jig queue request task:<id> pause`
-# refuses this task by its state, or nothing when it would write the request.
-# The command and the actions table (_task_actions) both ask it. <id> is a
-# valid id of a task that exists; the caller checked.
+# refuses this task, or nothing when it would write the request. The task's
+# state is asked first (jig_pause_request_state_refusal): a paused or closed
+# task that still holds a request is refused for its state, not for the
+# request. The command and the actions table (_task_actions) both ask it.
+# <id> is a valid id of a task that exists; the caller checked.
 jig_pause_request_refusal() {
+  local refusal
+  refusal=$(jig_pause_request_state_refusal "$1")
+  if [ -n "$refusal" ]; then
+    printf '%s\n' "$refusal"
+    return 0
+  fi
+  if jig_pause_request "$1"; then
+    printf 'queue request: a pause of task:%s is already requested, at %s\n' "$1" "$_JIG_PAUSE_AT"
+  fi
+  return 0
+}
+
+# jig_pause_request_state_refusal <id> — the part of the refusal above that
+# comes from the task's own state (paused, consolidated, abandoned), or
+# nothing. `jig queue request` refuses it with `failed`, and only a refusal
+# past it — a request already pending — with `already-exists`.
+jig_pause_request_state_refusal() {
   local id="$1" status
   status=$(_jig_task_state_value "$id" status)
   case "$status" in
@@ -2416,10 +2435,6 @@ jig_pause_request_refusal() {
   esac
   if [ "$(_jig_task_state_value "$id" paused)" = true ]; then
     printf 'queue request: task %s is already paused\n' "$id"
-    return 0
-  fi
-  if jig_pause_request "$id"; then
-    printf 'queue request: a pause of task:%s is already requested, at %s\n' "$id" "$_JIG_PAUSE_AT"
   fi
   return 0
 }

@@ -22,10 +22,10 @@ next phase of [Jig UI](https://jig-ui.fapost.in) is built on, and it is useful w
   `remove`. An epic (`epic:<spec-id>`) is ordered beside tasks, and the tasks built on it within it.
   A move moves one item and never renumbers the rest. See
   [Order the work](/manual-control#order-the-work).
-- **A stale write is refused.** Every `jig queue` write takes `--revision <n>`, the clone revision
-  the caller read. When anything in the project changed since, the write is refused with the code
-  `stale-revision` and nothing is written; two writers that send the same revision land at most
-  once.
+- **A stale write is refused.** Every `jig queue` write accepts `--revision <n>`, the clone revision
+  the caller read; a write without it is checked against the revision it reads itself. When
+  anything in the project changed since, the write is refused with the code `stale-revision` and
+  nothing is written; two writers that send the same revision land at most once.
 - **`jig queue list --json`** (or `jig queue --json`) — the whole queue in the shared envelope, in
   order, each item with its level, position, priority and dependencies. A write with `--json`
   answers with the item as the queue now holds it; one that names a task or epic Jig does not have
