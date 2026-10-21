@@ -6,7 +6,7 @@ Destination: an agent or a person asks Jig what to take next and gets an answer 
 
 Goal: not stated yet.
 
-- [ ] `priority-scale` — priority scale — what `0`–`5` mean, written in the glossary and the queue docs page, so a person and an agent set "bugs first" the same way (after: nothing — it describes what 0.31.0 already stores)
+- [x] `priority-scale` — priority scale — what `0`–`5` mean, written in the glossary and the queue docs page, so a person and an agent set "bugs first" the same way (after: nothing — it describes what 0.31.0 already stores)
 - [ ] fog: next task by priority, order and dependencies — how an agent or a person is advised what to take is not stated yet (moved from contract-queue, 2026-10-20)
 
 ## Waves
