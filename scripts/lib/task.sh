@@ -4059,16 +4059,33 @@ _task_actions_guard() {
 # task's brief, joined into one line, or `(none)` when the brief has no such
 # heading or nothing under it. What `jig task list --goals` shows a person
 # choosing which tasks go into a release; a missing goal is a gap in the
-# brief, said as one, not a field to add.
+# brief, said as one, not a field to add. HTML comments (`<!-- ... -->`, on one
+# line or across several) are not the goal: the template's guidance sits under
+# the heading of every brief filed without one, so it is dropped before a word
+# is kept, and a line that held only a comment does not end the paragraph.
 _task_goal() {
   local goal=""
   [ -f "$1" ] && goal=$(awk '
     /^##[[:space:]]+Goal[[:space:]]*$/ { in_goal = 1; next }
-    in_goal && /^#/ { exit }
-    in_goal && /^[[:space:]]*$/ { if (text != "") exit; next }
-    in_goal {
+    !in_goal { next }
+    !incomment && /^#/ { exit }
+    {
       line = $0
+      while (1) {
+        if (incomment) {
+          e = index(line, "-->")
+          if (e == 0) { line = ""; break }
+          line = substr(line, e + 3); incomment = 0
+        }
+        b = index(line, "<!--")
+        if (b == 0) break
+        rest = substr(line, b + 4)
+        e = index(rest, "-->")
+        if (e == 0) { line = substr(line, 1, b - 1); incomment = 1; break }
+        line = substr(line, 1, b - 1) substr(rest, e + 3)
+      }
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "") { if (text != "" && !incomment && $0 !~ /-->/) exit; next }
       text = (text == "" ? line : text " " line)
     }
     END { print text }
