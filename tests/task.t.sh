@@ -315,6 +315,34 @@ test_task_new_goal_lands_under_the_goal_heading_of_any_brief() {
   assert_eq "$(printf '# x\n\n## Goal\nG \\1 &\n\nold text\n\n## Scope\n--\n# x\n\nBody.\n\n## Goal\n\nG\n--\n# x\n\n## Goal\n\nG')" "$got"
 }
 
+# A brief filed without --goal holds only the template's comment under
+# `## Goal`: that is no goal, in the text listing or in JSON. A comment on one
+# line or across several is dropped wherever it stands, and a line that held
+# only a comment does not end the paragraph.
+test_task_goal_leaves_html_comments_out() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task list --goals
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "goal: (none)"
+  assert_not_contains "$OUT" "<!--"
+  _tl_json
+  assert_contains "$OUT" '{"id":"T-1","class":null,"status":"active","issue":null,"goal":null,'
+  local got f="$JIG_TEST_TMP.goal.md"
+  got=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/task.sh"
+    printf '# x\n\n## Goal\n\n<!-- One paragraph:\n## not a heading -->\nKeep <!-- why -->the\nreturn URL.\n\nLater.\n' > "$f"
+    _task_goal "$f"
+    printf '# x\n\n## Goal\n\n<!-- one -->\n\n<!-- two\nlines -->\n\n## Scope\n\nx\n' > "$f"
+    _task_goal "$f"
+    printf '# x\n\n## Goal\n\nText <!-- open\nstill comment\n--> after.\n' > "$f"
+    _task_goal "$f"
+  )
+  rm -f "$f"
+  assert_eq "$(printf 'Keep the return URL.\n(none)\nText after.')" "$got"
+}
+
 # _tn_json — `jig task new --json <args>` with stdout in OUT, stderr in ERR,
 # generated_at and revision replaced as _tl_json replaces them.
 _tn_json() {
@@ -341,10 +369,10 @@ test_task_new_json_answers_with_the_filed_task() {
   assert_eq "$actions" "$ACTIONS"
   assert_contains "$OUT" "{\"id\":\"T-1\",\"class\":\"T1\""
   assert_file .ai/workspace/tasks/T-1/state
-  # Without --goal the brief is the template's.
+  # Without --goal the brief is the template's, and it has no goal yet.
   _tn_json T-2
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" '"data":{"task":{"id":"T-2","class":null,"status":"active","issue":null,"goal":'
+  assert_contains "$OUT" '"data":{"task":{"id":"T-2","class":null,"status":"active","issue":null,"goal":null,'
   # --json may stand anywhere; the id stays the first of the others.
   run_split jig task new T-3 --lean --json
   assert_eq 0 "$RC" "$ERR"
@@ -5677,6 +5705,93 @@ test_task_pause_takes_a_pending_pause_request_out() {
   assert_eq 0 "$RC" "$OUT"
   assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
   assert_eq "by hand" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# --if-requested: the pause a stage boundary makes when only a person's
+# pending request asks for it — what `jig context resolve --stage` runs for
+# a session without autopilot. Nothing pending: silent, exit 0, not paused.
+test_task_pause_if_requested_without_a_request_does_nothing() {
+  task_setup
+  task_started T-1
+  task_started T-2
+  jig queue request T-2 pause >/dev/null
+  run jig task pause T-1 --if-requested --stage implement
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$OUT"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:T-2\tpause')"
+}
+
+# A pending request: taken out, the task paused with the request's reason,
+# exit 4; without a run, no journal is written.
+test_task_pause_if_requested_honours_a_pending_request() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause --reason "need the laptop" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  run jig task pause T-1 --if-requested --stage verify
+  assert_eq 4 "$RC" "$OUT"
+  assert_eq "paused: T-1 (pause requested at $at: need the laptop); stage verify not entered" "$OUT"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "pause requested at $at: need the laptop" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  assert_no_file .ai/workspace/tasks/T-1/autopilot
+  # Already paused: nothing more to do.
+  run jig task pause T-1 --if-requested --stage verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$OUT"
+}
+
+# With a run on, the journal records the stage it did not enter, as `task
+# autopilot stage` does.
+test_task_pause_if_requested_logs_a_running_autopilot() {
+  task_setup
+  task_started T-1
+  jig task autopilot T-1 start >/dev/null
+  jig queue request T-1 pause >/dev/null
+  run jig task pause T-1 --if-requested --stage review
+  assert_eq 4 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tpause\treview not entered: pause requested at ')"
+  assert_eq on "$(sed -n 's/^autopilot: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# A pause that could not be written is never reported as made: the failed
+# state write stops the command (errexit), with no `paused:` line and no
+# exit 4. Forced with a read-only workspace directory, which makes
+# _task_rewrite_state's temp-file write fail.
+test_task_pause_if_requested_never_reports_a_pause_it_could_not_write() {
+  skip_unless_readonly_dirs
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  chmod 555 .ai/workspace/tasks/T-1
+  run jig task pause T-1 --if-requested --stage implement
+  chmod 755 .ai/workspace/tasks/T-1
+  [ "$RC" -ne 0 ] && [ "$RC" -ne 4 ] || fail "exit $RC: $OUT"
+  assert_not_contains "$OUT" "paused:"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+test_task_pause_if_requested_refuses_what_is_not_its_own() {
+  task_setup
+  task_started T-1
+  run jig task pause T-1 --if-requested --stage implement --reason "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "takes the reason from the request"
+  run jig task pause T-1 --if-requested --stage implement --stash
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "does not stash"
+  run jig task pause T-1 --if-requested
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "requires --stage"
+  run jig task pause T-1 --stage implement
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--stage needs --if-requested"
+  run jig task pause T-1 --if-requested --stage "Bad Name"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "invalid stage: Bad Name"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
 }
 
 test_task_autopilot_stage_invalid_name_dies() {

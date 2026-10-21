@@ -11,7 +11,7 @@ paths:
   - scripts/lib/knowledge.sh
   - schemas/frontmatter.md
 summary: Why stage relevance is additive and standalone exploration bypasses task selection.
-reviewed_at: 2026-09-10
+reviewed_at: 2026-10-21
 ---
 # ADR-0021: Stage relevance adds knowledge; exploration can be taskless
 
@@ -33,7 +33,10 @@ IDs and dependencies fail loudly. Legacy context rejects --stage and points to r
 Both context forms accept --no-task, mutually exclusive with --task. It bypasses implicit
 task selection, task domains and workspace artifacts; explicit relevance selectors still
 work. No-task guard reports absence of a ledger, not proof of reading. Stage and taskless
-selection never write task state. Workspace artifacts remain discoverable without filtering.
+selection never write task state. (Amended 2026-10-21: one exception, and the write is not
+context's. `resolve` with a named `--task` and a `--stage` enters that stage, so it runs `jig task
+pause <id> --if-requested --stage <stage>` as a process when a person's pause request is pending;
+adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary.) Workspace artifacts remain discoverable without filtering.
 
 ## Alternatives
 

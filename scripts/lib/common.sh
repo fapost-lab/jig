@@ -1391,9 +1391,10 @@ _jig_pr_state_gitlab() {
 
 # jig_branch_is_jigs <branch> — exit 0 when <branch> is a name Jig gives its
 # own branches: `jig/upgrade-*` (jig upgrade), `finish/<id>` (spec ship's
-# finish) or the name `git.branch_template` gives a valid task id. A template
-# with no literal text before `{id}` names no branch as Jig's: every branch
-# whose name is a valid id would match it. Never an epic (`epic/*`, ADR-0040)
+# finish), `close/<id>` (spec ship's removal of an epic-less spec) or the name
+# `git.branch_template` gives a valid task id. A template with no literal text
+# before `{id}` names no branch as Jig's: every branch whose name is a valid id
+# would match it. Never an epic (`epic/*`, ADR-0040)
 # or a spec branch (`spec/*`): those are the bases tasks are judged against,
 # and never the project's base branch, whatever it is called.
 jig_branch_is_jigs() {
@@ -1404,6 +1405,7 @@ jig_branch_is_jigs() {
     epic/* | spec/*) return 1 ;;
     jig/upgrade-?*) return 0 ;;
     finish/*) jig_valid_id "${b#finish/}"; return ;;
+    close/*) jig_valid_id "${b#close/}"; return ;;
   esac
   template=$(cfg git.branch_template "task/{id}")
   case "$template" in
@@ -2403,10 +2405,29 @@ _jig_task_state_value() {
 }
 
 # jig_pause_request_refusal <id> — why `jig queue request task:<id> pause`
-# refuses this task by its state, or nothing when it would write the request.
-# The command and the actions table (_task_actions) both ask it. <id> is a
-# valid id of a task that exists; the caller checked.
+# refuses this task, or nothing when it would write the request. The task's
+# state is asked first (jig_pause_request_state_refusal): a paused or closed
+# task that still holds a request is refused for its state, not for the
+# request. The command and the actions table (_task_actions) both ask it.
+# <id> is a valid id of a task that exists; the caller checked.
 jig_pause_request_refusal() {
+  local refusal
+  refusal=$(jig_pause_request_state_refusal "$1")
+  if [ -n "$refusal" ]; then
+    printf '%s\n' "$refusal"
+    return 0
+  fi
+  if jig_pause_request "$1"; then
+    printf 'queue request: a pause of task:%s is already requested, at %s\n' "$1" "$_JIG_PAUSE_AT"
+  fi
+  return 0
+}
+
+# jig_pause_request_state_refusal <id> — the part of the refusal above that
+# comes from the task's own state (paused, consolidated, abandoned), or
+# nothing. `jig queue request` refuses it with `failed`, and only a refusal
+# past it — a request already pending — with `already-exists`.
+jig_pause_request_state_refusal() {
   local id="$1" status
   status=$(_jig_task_state_value "$id" status)
   case "$status" in
@@ -2416,10 +2437,6 @@ jig_pause_request_refusal() {
   esac
   if [ "$(_jig_task_state_value "$id" paused)" = true ]; then
     printf 'queue request: task %s is already paused\n' "$id"
-    return 0
-  fi
-  if jig_pause_request "$id"; then
-    printf 'queue request: a pause of task:%s is already requested, at %s\n' "$id" "$_JIG_PAUSE_AT"
   fi
   return 0
 }

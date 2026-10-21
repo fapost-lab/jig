@@ -1507,8 +1507,14 @@ spec_ship_hint() {
 #   into the default branch — and at `merge`, in an unattended run only, merge
 #   it (spec_ship_final).
 #
-# A declaration's pull request is never merged here, and outside an unattended
-# run neither is the final one: that merge is the release. At `none` it exits
+# - remove — the spec is gone from the checkout (`spec close`) and never had an
+#   open epic: commit the staged removal, all of it under the spec's own
+#   directory, on a branch of its own — `close/<id>`, switched to from the
+#   default branch — push it and open the pull request into the default branch
+#   (spec_ship_remove).
+#
+# A declaration's or a removal's pull request is never merged here, and outside
+# an unattended run neither is the final one: that merge is the release. At `none` it exits
 # 3, like `task ship`: the skill reads it as "the human's step".
 spec_ship() {
   [ $# -ge 1 ] || jig_die "spec ship: missing spec id (usage: jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>])"
@@ -1547,7 +1553,7 @@ spec_ship() {
     exit 3
   fi
 
-  local dir rel roadmap here default line branch mode rc=0 start on_default
+  local dir rel roadmap here default line branch mode rc=0 start on_default src
   dir="$(spec_dir)/$id"
   rel="$JIG_AI_DIR/specs/$id"
   roadmap="$rel/roadmap.md"
@@ -1579,9 +1585,19 @@ spec_ship() {
       fi
     fi
   else
-    mode=final
-    branch=$(spec_ship_removed_epic "$id") || exit 1
-    spec_epic_site "spec ship" "$branch" "an epic's final pull request"
+    # A removed spec with an open epic is the epic's final pull request; any
+    # other removal (`spec close`) ships on a branch of its own.
+    src=$(spec_ship_removed_src "$id") || exit 1
+    rc=0
+    line=$(jig_git_show_path "$src" "$roadmap" 2>/dev/null | jig_spec_epic -) || rc=$?
+    [ "$rc" -ne 2 ] || jig_die "spec ship: the removed $roadmap declares more than one epic; keep one Epic: line"
+    if [ "$rc" -eq 0 ] && [ -n "$line" ] && [ "${line##* }" = open ]; then
+      mode=final
+      branch=$(spec_ship_removed_epic "$id") || exit 1
+      spec_epic_site "spec ship" "$branch" "an epic's final pull request"
+    else
+      mode=remove
+    fi
   fi
 
   printf 'mode: %s\n' "$mode"
@@ -1590,6 +1606,7 @@ spec_ship() {
     declare) spec_ship_declare "$id" "$level" "$here" "$default" "$message_file" "$title" "$body_file" "$line" ;;
     epic) spec_ship_epic "$id" "$level" "$branch" ;;
     final) spec_ship_final "$id" "$level" "$branch" "$default" "$message_file" "$title" "$body_file" "$here" ;;
+    remove) spec_ship_remove "$id" "$level" "$here" "$default" "$message_file" "$title" "$body_file" ;;
   esac
 }
 
@@ -1684,6 +1701,50 @@ $bad"
   fi
   spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file"
   [ -z "$line" ] || jig_info "spec ship: once $branch is merged into $default, run \`jig spec epic $id\` to cut ${line% *}"
+}
+
+# spec_ship_remove — the removal of a spec that had no open epic: stage only
+# its own directory, refuse anything staged outside it, and ship from a branch
+# of its own. Never merges.
+spec_ship_remove() {
+  local id="$1" level="$2" here="$3" default="$4" message_file="$5" title="$6" body_file="$7"
+  local rel branch p bad=""
+  rel="$JIG_AI_DIR/specs/$id"
+  [ -n "$message_file" ] || jig_die "spec ship: removing commits; --message-file is required"
+  case "$here" in
+    epic/*) jig_die "spec ship: $here is an epic branch; the removal goes into $default from a branch of its own" ;;
+  esac
+  # Fails when the removal is staged already and nothing of the spec is left in
+  # the index or on disk: nothing to add then, and the staged check below
+  # says what is there.
+  git -C "$JIG_PROJECT" add -A -- "$rel" >/dev/null 2>&1 || true
+  jig_ship_check_staged "spec ship"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in
+      "$rel/"*) ;;
+      *) bad="$bad
+$p" ;;
+    esac
+  done <<EOF
+$(jig_ship_staged)
+EOF
+  bad=$(printf '%s\n' "$bad" | sed '/^$/d')
+  if [ -n "$bad" ]; then
+    jig_die "spec ship: a removal commits only $rel/; staged outside it:
+$bad"
+  fi
+  # Cut a branch only for a removal there is to commit: one already merged
+  # leaves nothing staged, and a branch cut for it would be left empty.
+  if [ "$here" = "$default" ] && [ -z "$(jig_ship_staged)" ]; then
+    jig_die "spec ship: nothing of $rel/ is left to commit; the removal is already in $default"
+  fi
+  branch="$here"
+  if [ "$here" = "$default" ]; then
+    branch=$(_spec_cut_own_branch "$id" "spec ship" close) || exit 1
+    printf 'switched to %s\n' "$branch"
+  fi
+  spec_ship_steps "$level" "$branch" "$default" "$message_file" "$title" "$body_file"
 }
 
 spec_ship_epic() {
@@ -1938,7 +1999,7 @@ spec_close() {
     fi
   fi
   spec_close_dir "$id" "spec close" "$handled"
-  jig_info "spec close: commit the removal together with the change that finished the spec"
+  jig_info "spec close: commit the removal together with the change that finished the spec, or ship it on its own with \`jig spec ship $id\`"
 }
 
 # spec_epic_write <roadmap> declare <branch> [<release>] — add the Epic: line,

@@ -180,6 +180,9 @@ think through when a hook blocks work and when it only warns.
 - Should a waiver go stale like a review receipt when the code changes after it?
 - A project check in `jig verify` that runs in CI too — a separate feature, or a later phase of
   this one? It needs project-owned checks, which profiles do not allow today.
+- Whether `jig init` gets a hook that lets an installed UI register the project, without making
+  the UI a dependency of Jig (moved from `contract-queue` when its epic was finished, 2026-10-20;
+  Jig UI already connects a project when `npx @fapost/jig-ui` runs in its folder).
 
 ## Assumptions left untested
 

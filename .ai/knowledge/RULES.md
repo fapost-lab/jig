@@ -50,7 +50,7 @@
   touches the owner's entry it points at.
   (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it) A branch is the other thing git
   deletes for jig, through `jig_branch_leave` (common.sh): one jig made
-  (`jig_branch_is_jigs` — `jig/upgrade-*`, `finish/<id>`, the name `git.branch_template` gives a
+  (`jig_branch_is_jigs` — `jig/upgrade-*`, `finish/<id>`, `close/<id>`, the name `git.branch_template` gives a
   valid id after a non-empty prefix; never the base branch, `epic/*` or `spec/*`), checked out in
   no worktree, whose work landed, with `git.delete_merged_branches` not `false`. Locally `git
   branch -d`, never `-D`, run before origin is touched so that `-d` still compares the branch

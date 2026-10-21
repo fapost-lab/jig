@@ -414,13 +414,13 @@ and no commit.
 ## From 0.30.0 to 0.31.0
 
 Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
-change. The upgrade brings new scripts and new text for the `jig-autopilot` skill and its phase-run
-reference, which tell the agent what a pause request looks like; a copy you edited yourself is
+change. The upgrade brings new scripts and new text for the `jig-task` and `jig-autopilot` skills and the
+phase-run reference, which tell the agent what a pause request looks like; a copy you edited yourself is
 handled as every edited framework file is
 ([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
 
 **What you will notice.** Upgrade a project before you ask its tasks to pause. The updated global
-`jig` already writes the queue and the request, but an autopilot run in a project whose
+`jig` already writes the queue and the request, but an agent in a project whose
 `.ai/scripts/jig` is still 0.30.0 enters its next stage as before: the request waits, unseen, and
 `jig status` shows it as pending. The queue starts empty, and nothing changes in `jig status` or
 `jig context` until you put something in it.
@@ -557,7 +557,7 @@ change; `.ai/config.yaml` is not touched. One thing deserves a look before you u
 has been used for a while:
 
 **The first housekeeping run after the upgrade deletes the merged Jig branches it can, all at
-once.** Branches Jig made (`jig/upgrade-*`, `finish/<id>`, the task branches `git.branch_template`
+once.** Branches Jig made (`jig/upgrade-*`, `finish/<id>`, `close/<id>`, the task branches `git.branch_template`
 names) whose work has landed are deleted from your clone, and the first run is the one that meets all
 the ones collected so far; on a clone that has been through dozens of tasks that is dozens of
 branches. Housekeeping starts on its own with your agent's session, by default at most once a day, once the

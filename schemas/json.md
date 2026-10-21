@@ -105,7 +105,7 @@ A task:
 | `class` | string or null | `T0`–`T4`; `null` while unclassified |
 | `status` | string | `active`, `ready`, `consolidated`, `abandoned` (schemas/state.md) |
 | `issue` | string or null | the tracker issue the id starts with |
-| `goal` | string or null | the first paragraph under `## Goal` in `task.md`, joined into one line |
+| `goal` | string or null | the first paragraph under `## Goal` in `task.md`, joined into one line, HTML comments (`<!-- … -->`) left out; `null` when nothing is left |
 | `knowledge_consolidated` | boolean | the knowledge decision is recorded |
 | `paused` | boolean | |
 | `pause_request` | object or null | a pause asked of the task and not yet honoured (`jig queue request`): `{"requested_at", "reason"}`, `requested_at` UTC, `reason` `null` when none was given; `null` when none is pending. It holds until the task's next autopilot stage boundary pauses the task, a `jig task pause`, or a `jig queue cancel` |
@@ -357,10 +357,10 @@ one to send with the next write, as for every read.
 cancel <ref> pause … --json` takes the request back
 (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary). Both are queue writes: the same
 `--revision`, the same claim, the same `stale-revision`. A request is sticky: it holds until the
-task's autopilot run reaches its next stage boundary (`jig task autopilot <id> stage`, which then
-pauses the task instead of entering the stage), until `jig task pause` pauses it by hand, or until
-it is cancelled — whatever stage the task reaches in between. A session without an autopilot run
-calls no command at a stage boundary and does not see the request.
+task reaches its next stage boundary — `jig task autopilot <id> stage` in an autopilot run, or `jig
+context resolve --task <id> --stage <stage>`, the first step of every stage skill, with or without
+one, either of which then pauses the task instead of entering the stage — until `jig task pause`
+pauses it by hand, or until it is cancelled — whatever stage the task reaches in between.
 
 ```json
 {"ref": "task:booking-message", "request": {"kind": "pause", "requested_at": "2026-10-19T12:00:00Z", "reason": "need the laptop"}}
@@ -395,9 +395,9 @@ the workspace's path, as it always has.
 
 `task` is the filed task as `jig task list --json` lists it — the same object, every field and its
 `actions`. A task just filed has no branch, so `branch`, `worktree`, `autopilot` and `pull_request`
-are `null` and `housekeeping_flags` is `[]`. Filed without `--goal`, the brief is the template's and
-`goal` reads its placeholder. The envelope's `revision` is taken before the task is written; the
-write raises it, so read again for the new one.
+are `null` and `housekeeping_flags` is `[]`. Filed without `--goal`, the brief is the template's, whose
+placeholder under `## Goal` is an HTML comment, so `goal` is `null`. The envelope's `revision` is
+taken before the task is written; the write raises it, so read again for the new one.
 
 Refusals: `already-exists` when a task — or a directory under `.ai/workspace/tasks/` — already holds
 the id, including the second of two `task new` racing for one; `usage` for an id outside the grammar
