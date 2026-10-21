@@ -1709,6 +1709,14 @@ status_page_section() {
   '
 }
 
+# status_stop_ages_masked — stdin with each stop's age replaced by "<age>".
+# A test stops a run and then draws the page; a loaded runner can take over a
+# minute between the two, and "just now" then reads "1 min ago". The age is
+# derived from the clock, so the tests check where it stands, not its value.
+status_stop_ages_masked() {
+  sed -E 's/stopped (just now|[0-9]+ min ago):/stopped <age>:/g'
+}
+
 test_status_page_reloads_itself_and_orders_what_needs_you_first() {
   fixture_jig_repo
   run jig status --html
@@ -1826,14 +1834,14 @@ test_status_page_shows_a_stopped_run_first_with_its_reason() {
   assert_eq 0 "$RC"
   local page needs
   page=$(cat .ai/runtime/status.html)
-  needs=$(status_page_section "$page" needs)
+  needs=$(status_page_section "$page" needs | status_stop_ages_masked)
   assert_contains "$needs" 'Autopilot stopped and is waiting for you <span class="badge warn">autopilot stopped</span>'
   # The age leads and the reason follows a colon: the reason is prose written
   # once, at the stop, and nothing rechecks it. Read with the age appended it
   # claims to be true now, and a card was still saying "no pull request" hours
   # after one existed.
-  assert_contains "$needs" "<code>run-1</code> · stopped just now: which &lt;db&gt; to use &amp; why"
-  assert_not_contains "$needs" "which &lt;db&gt; to use &amp; why (just now)"
+  assert_contains "$needs" "<code>run-1</code> · stopped <age>: which &lt;db&gt; to use &amp; why"
+  assert_not_contains "$needs" "which &lt;db&gt; to use &amp; why ("
   assert_contains "$needs" "Answer the agent in this task&#39;s session; it resumes the run."
   # Shown once: a stopped run is a card, not also a row under "Running now".
   assert_not_contains "$(status_page_section "$page" tasks)" "<code>run-1</code>"
@@ -1870,13 +1878,13 @@ test_status_page_gathers_a_phases_stops_into_one_card() {
   done
   run jig status --html
   local needs n
-  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs | status_stop_ages_masked)
   n=$(printf '%s\n' "$needs" | grep -c "A phase run is waiting for you" || true)
   assert_eq 1 "$n" "expected one card for the whole phase, got $n"
   # Each line carries its own stop's age, because a wave's tasks stop at
   # different moments and each reason is prose from that moment.
-  assert_contains "$needs" "run-1 — stopped just now: question from run-1"
-  assert_contains "$needs" "run-2 — stopped just now: question from run-2"
+  assert_contains "$needs" "run-1 — stopped <age>: question from run-1"
+  assert_contains "$needs" "run-2 — stopped <age>: question from run-2"
   assert_contains "$needs" "Answer in the coordinator&#39;s session; it resumes the tasks."
 }
 
@@ -3282,9 +3290,12 @@ test_status_json_and_the_page_name_the_same_items() {
   needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
   page_cards=$(printf '%s\n' "$needs" | grep '^<div class="card">' \
     | sed 's/ <span class="badge warn">autopilot stopped<\/span>//' \
-    | sed "s/&#39;/'/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/\"/g; s/&amp;/\\&/g")
+    | sed "s/&#39;/'/g; s/&lt;/</g; s/&gt;/>/g; s/&quot;/\"/g; s/&amp;/\\&/g" \
+    | status_stop_ages_masked)
   : > kinds.txt
-  json_cards=$(_st_json_cards "$OUT" kinds.txt)
+  # The page and the JSON are drawn moments apart, and a stop's age can cross
+  # a minute between them.
+  json_cards=$(_st_json_cards "$OUT" kinds.txt | status_stop_ages_masked)
   kinds=$(tr '\n' ' ' < kinds.txt)
   assert_eq "release-available phase-stopped autopilot-stopped gate-changed gate-waiting git-step pull-request-waiting pull-request-was-open pull-request-of-abandoned-task needs-consolidation wrong-base closed-unmerged worktree-kept knowledge-proposed sources-changed " "$kinds"
   assert_eq "$page_cards" "$json_cards"
