@@ -89,7 +89,8 @@ jig task resume booking-message
 Add `--stash` to the pause command when you also need to put uncommitted work aside. Resume reports
 what changed while the task was paused. Read that report before continuing.
 
-When an agent is working on the task on autopilot, ask it to pause instead:
+When an agent is working on the task, on autopilot or in an ordinary session, ask it to pause
+instead:
 
 ```bash
 jig queue request booking-message pause --reason "Need to check the copy first"
@@ -97,8 +98,11 @@ jig queue cancel booking-message pause
 ```
 
 The agent finishes the stage it is on, pauses the task instead of starting the next one, and stops.
-The request waits until then, or until you cancel it. Resume as above, and start a new session to
-continue the run.
+An autopilot run checks when it enters its next stage; any agent checks when the next stage reads
+its context with `jig context resolve --task <id> --stage <stage>`, the first step of every stage
+skill. A stage without a skill of its own, such as a plan, reads none, so the request then waits for
+the stage after it. The request waits until then, or until you cancel it. Resume as above, and start
+a new session to continue.
 
 ## Order the work
 

@@ -286,9 +286,10 @@ jig queue request booking-message pause --reason "Need to check the copy first" 
 jig queue cancel booking-message pause --revision 1792079790 --json
 ```
 
-The request is kept until it is honoured or cancelled, whatever stage the task reaches meanwhile. An
-autopilot run honours it at its next stage: the task becomes paused, the request goes, and the agent
-stops. `jig task pause` honours it too. A session working without autopilot does not check for it.
+The request is kept until it is honoured or cancelled, whatever stage the task reaches meanwhile. The
+agent working on the task honours it at its next stage — an autopilot run when it enters the stage,
+any agent when the stage reads its context with `jig context resolve --task <id> --stage <stage>`:
+the task becomes paused, the request goes, and the agent stops. `jig task pause` honours it too.
 
 The answer is the request as the queue now holds it, `null` after a cancel:
 

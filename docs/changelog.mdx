@@ -39,6 +39,11 @@ next phase of [Jig UI](https://jig-ui.fapost.in) is built on, and it is useful w
 - **`jig task autopilot <id> stage` on a paused task now refuses with exit code 4** instead of
   entering the stage, and a pending pause request makes it pause the task the same way. The
   `jig-autopilot` skill tells the agent to end its session there; a pause is not a stop.
+- **A pause request reaches an agent working without autopilot.** `jig context resolve --task <id>
+  --stage <stage>`, the first step of every stage skill, honours a pending request before it prints
+  the context: the task is paused, the stage is not entered, the command exits with code 4 and tells
+  the agent to end its session. Underneath it runs the new `jig task pause <id> --if-requested
+  --stage <stage>`, which pauses only when a request is pending.
 - **The queue in `jig status` and `jig context`.** `jig status` adds `queue=<rank>/<count>` and
   `priority=<p>` to a queued task's line, with what it waits for and a pending pause request on
   indented lines under it; `jig context` with a task adds `queue:` lines. Without a queue file both

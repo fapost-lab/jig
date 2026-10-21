@@ -157,7 +157,7 @@ rules verbatim:
 - Keep the journal: `jig task autopilot <id> stage <name>` on entering a stage,
   `... repair --reason "<what you are fixing>"` before every repair (exit 3 means stop and
   report), `... stop --reason "<question>"` at a stop; a gate is `jig task gate`. Exit 4 from
-  `stage` means a person asked the task to pause and Jig paused it: stop work and report that.
+  `stage` or from a stage's `jig context resolve` means a person asked the task to pause and Jig paused it: stop work and report that.
 - Follow the class's route as `jig-autopilot` §2–3 says (§5 when the run is unattended). Review
   and architecture review go to a subagent in a fresh context, implement and review on the model
   a `delegate:` line of `jig task route <id>` names

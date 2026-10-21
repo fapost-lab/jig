@@ -357,10 +357,10 @@ one to send with the next write, as for every read.
 cancel <ref> pause … --json` takes the request back
 (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary). Both are queue writes: the same
 `--revision`, the same claim, the same `stale-revision`. A request is sticky: it holds until the
-task's autopilot run reaches its next stage boundary (`jig task autopilot <id> stage`, which then
-pauses the task instead of entering the stage), until `jig task pause` pauses it by hand, or until
-it is cancelled — whatever stage the task reaches in between. A session without an autopilot run
-calls no command at a stage boundary and does not see the request.
+task reaches its next stage boundary — `jig task autopilot <id> stage` in an autopilot run, or `jig
+context resolve --task <id> --stage <stage>`, the first step of every stage skill, with or without
+one, either of which then pauses the task instead of entering the stage — until `jig task pause`
+pauses it by hand, or until it is cancelled — whatever stage the task reaches in between.
 
 ```json
 {"ref": "task:booking-message", "request": {"kind": "pause", "requested_at": "2026-10-19T12:00:00Z", "reason": "need the laptop"}}

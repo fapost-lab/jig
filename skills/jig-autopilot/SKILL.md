@@ -34,7 +34,7 @@ Run each stage's skill in order, and mark it as you enter it:
 .ai/scripts/jig task autopilot <id> stage <analyze|plan|implement|review|verify|consolidate|...>
 ```
 
-Exit 4 from `stage` means a person asked the task to pause: Jig paused it and the stage was not
+Exit 4 from `stage`, or from the stage's `jig context resolve`, means a person asked the task to pause: Jig paused it and the stage was not
 entered. End the session there — say the task is paused at their request and how to resume
 (`jig task resume <id>`, then a new session); this is not a stop, so record none.
 

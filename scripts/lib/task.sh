@@ -64,7 +64,7 @@ _task_usage() {
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
       ;;
     abandon) printf 'usage: jig task abandon <id>\n' ;;
-    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n' ;;
+    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
     resume) printf 'usage: jig task resume <id>\n' ;;
     list) printf 'usage: jig task list [--all] [--status <status>] [--goals] [--json]\n' ;;
     show) printf 'usage: jig task show <id>\n' ;;
@@ -1911,8 +1911,7 @@ _task_autopilot_stage() {
   local name="$1"
   shift
   [ $# -eq 0 ] || jig_die "task autopilot stage: unknown argument: $1"
-  local dir
-  dir=$(task_dir "$id")
+  task_dir "$id" >/dev/null
   _task_guard_write "$id" "task autopilot stage"
   [ "$(task_state_get "$id" autopilot)" = "on" ] \
     || jig_die "task autopilot stage: no active autopilot run: $id; run: jig task autopilot $id start"
@@ -1923,19 +1922,35 @@ _task_autopilot_stage() {
     return 4
   fi
   if _task_pause_take_request "$id" "task autopilot stage"; then
-    local why="pause requested at $_JIG_PAUSE_AT"
-    [ -z "$_JIG_PAUSE_REASON" ] || why="$why: $_JIG_PAUSE_REASON"
-    _task_rewrite_state "$dir" paused true
-    _task_rewrite_state "$dir" paused_at "$(jig_today)"
-    _task_rewrite_state "$dir" paused_reason "$why"
-    _task_autopilot_log "$id" pause "$name not entered: $why"
-    printf 'paused: %s (%s); stage %s not entered\n' "$id" "$why" "$name"
+    _task_honour_pause_request "$id" "$name"
     # `return 4` ends the command under errexit before cmd_task's own flush.
     jig_status_page_flush
     return 4
   fi
   _task_autopilot_log "$id" stage "$name"
   printf 'stage: %s\n' "$name"
+}
+
+# _task_honour_pause_request <id> <stage> — the pause a pending request makes at
+# a stage boundary, once _task_pause_take_request has taken the request out:
+# `task autopilot stage` and `task pause --if-requested` (which `jig context
+# resolve --stage` runs) both come here
+# (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary). It sets the
+# fields, writes a `pause` journal line for a run that is `on`, and prints the
+# `paused:` line. Called in a body, never as a condition: errexit must stop
+# it at a failed write, so a pause that was not recorded is never reported.
+_task_honour_pause_request() {
+  local id="$1" name="$2" dir why
+  dir=$(task_dir "$id")
+  why="pause requested at $_JIG_PAUSE_AT"
+  [ -z "$_JIG_PAUSE_REASON" ] || why="$why: $_JIG_PAUSE_REASON"
+  _task_rewrite_state "$dir" paused true
+  _task_rewrite_state "$dir" paused_at "$(jig_today)"
+  _task_rewrite_state "$dir" paused_reason "$why"
+  if [ "$(task_state_get "$id" autopilot)" = "on" ]; then
+    _task_autopilot_log "$id" pause "$name not entered: $why"
+  fi
+  printf 'paused: %s (%s); stage %s not entered\n' "$id" "$why" "$name"
 }
 
 # _task_pause_take_request <id> <verb> — when the queue holds a pause request
@@ -3503,11 +3518,13 @@ task_pause() {
   [ $# -ge 1 ] || jig_die "$(_task_usage pause)"
   local id="$1"
   shift
-  local reason="" stash=0 refusal
+  local reason="" stash=0 refusal if_requested=0 stage="" has_reason=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --reason) [ $# -ge 2 ] || jig_die "task pause: --reason requires a value"; reason="$2"; shift 2 ;;
+      --reason) [ $# -ge 2 ] || jig_die "task pause: --reason requires a value"; reason="$2"; has_reason=1; shift 2 ;;
       --stash) stash=1; shift ;;
+      --if-requested) if_requested=1; shift ;;
+      --stage) [ $# -ge 2 ] || jig_die "task pause: --stage requires a value"; stage="$2"; shift 2 ;;
       *) jig_die "task pause: unknown argument: $1" ;;
     esac
   done
@@ -3515,6 +3532,27 @@ task_pause() {
   local dir
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task pause"
+
+  # --if-requested: a stage is about to begin, and only a person's pending
+  # request may pause the task there. The reason is the request's, and a
+  # stash is the person's call, never the agent's; nothing pending, or a task
+  # already paused, is nothing to do. Exit 4 when it paused, as `task
+  # autopilot stage` does.
+  if [ "$if_requested" -eq 1 ]; then
+    [ "$has_reason" -eq 0 ] || jig_die "task pause: --if-requested takes the reason from the request; drop --reason"
+    [ "$stash" -eq 0 ] || jig_die "task pause: --if-requested does not stash; drop --stash"
+    [ -n "$stage" ] || jig_die "task pause: --if-requested requires --stage <name>"
+    _task_autopilot_valid_stage "$stage" || jig_die "task pause: invalid stage: $stage (expected [a-z0-9-]+)"
+    [ "$(task_state_get "$id" paused)" != "true" ] || return 0
+    if _task_pause_take_request "$id" "task pause"; then
+      _task_honour_pause_request "$id" "$stage"
+      # `return 4` ends the command under errexit before cmd_task's own flush.
+      jig_status_page_flush
+      return 4
+    fi
+    return 0
+  fi
+  [ -z "$stage" ] || jig_die "task pause: --stage needs --if-requested"
   refusal=$(_task_pause_refusal "$id") || exit 1
   [ -z "$refusal" ] || jig_die "$refusal"
 
