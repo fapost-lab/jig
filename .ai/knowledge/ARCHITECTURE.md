@@ -65,7 +65,8 @@ epic is this task built on" — `task start` cuts the branch from it and `jig qu
 its level; same adr), `jig_queue_file`, `jig_pause_request`, `jig_pause_request_refusal` and
 `jig_pause_cancel_refusal` ("where is the queue, is a pause of this task requested, and may one be
 asked or cancelled" — `jig queue request|cancel` writes the request, and `task` honours it at a
-stage boundary and offers it in the actions table;
+stage boundary — `autopilot stage`, and `pause --if-requested`, which `context resolve --stage` runs
+as a process — and offers it in the actions table;
 adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary), `jig_queue_items` and
 `jig_queue_place` ("what is queued, and where does this task stand" — the one parser of the queue's
 items and dependencies: `jig queue list --json` reads through the first, `status` and `context`

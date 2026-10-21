@@ -12,10 +12,12 @@ paths:
   - scripts/lib/common.sh
   - schemas/json.md
   - skills/jig-autopilot/SKILL.md
-summary: Why a pause request is a request line of the queue file written by jig queue request|cancel, honoured by jig task autopilot stage (exit 4, request taken out before the pause is set, run stays on) and by jig task pause, and why there is no resume request.
-reviewed_at: 2026-10-19
+  - scripts/lib/context.sh
+  - skills/jig-task/SKILL.md
+summary: Why a pause request is a request line of the queue file written by jig queue request|cancel, honoured where a stage begins — by jig task autopilot stage and by jig context resolve --task --stage through jig task pause --if-requested (exit 4, request taken out before the pause is set, run stays on) — and by jig task pause, and why there is no resume request.
+reviewed_at: 2026-10-21
 ---
-# A pause request lives in the queue file and is honoured by `jig task autopilot <id> stage`, which pauses the task instead of entering the stage
+# A pause request lives in the queue file and is honoured where a stage begins — `jig task autopilot <id> stage`, and `jig context resolve --task <id> --stage <stage>` — which pauses the task instead of entering the stage
 
 ## Context
 
@@ -32,6 +34,13 @@ boundary where a request can be honoured. Checked against the code, it does not:
 autopilot <id> stage <name>` checked only that the run was `on` and appended a journal line. But it
 is the one Jig command an autopilot run must call on entering every stage (jig-autopilot §2), so it
 is the stage boundary Jig can see. A session working without autopilot calls no command there.
+
+(Amended 2026-10-21, task `pause-request-without-autopilot`.) It does: every stage skill's first
+step is `jig context resolve --task <id> --stage <stage>` — `jig-analyze`, `jig-implement`,
+`jig-review`, `jig-architecture-review`, `jig-verify`, `jig-consolidate`, and `jig-task` for the
+first stage of a route — with or without autopilot. The session hook Jig installs runs once, at
+`SessionStart`, and prints nothing into the session; the receipts, the gate and `status ready` are
+written at the end of a stage, not at its entry.
 
 ## Decision
 
@@ -64,6 +73,23 @@ is the stage boundary Jig can see. A session working without autopilot calls no 
   not enter. The skill ends the session on exit 4 and records no stop.
 - **`jig task pause <id>` honours a pending request too**, taking it out the same way before it
   sets the fields.
+- **`jig context resolve --task <id> --stage <stage>` honours it for any agent** (amended
+  2026-10-21). A named task resolving the context of a named stage is entering that stage, so a
+  pending request is honoured there, before any context is printed. The pause is `task`'s to write,
+  so `context` runs `"$JIG_SELF" task pause <id> --if-requested --stage <stage>` as a process
+  (ARCHITECTURE.md). `--if-requested` pauses only when a request is pending, with the request's
+  reason (it refuses `--reason` and `--stash`: the reason is the person's, a stash is their call),
+  through the same function as `autopilot stage` (`_task_honour_pause_request`: take the request
+  out, set the fields, a `pause` journal line when a run is `on`, the `paused:` line), and exits 4;
+  nothing pending, or a task already paused, is exit 0 and silent. `context resolve` then adds a
+  `next:` line telling the agent to end the session and exits 4 itself, with no context. A pause
+  the process could not make (exit other than 0 or 4) is a warning on stderr: the request stays,
+  sticky, and the context is printed — reading context never breaks on the queue. Not honoured:
+  `resolve` without `--stage`, or with a task guessed from the branch rather than named, `pending`,
+  `guard`, `acknowledge` and the stateless `jig context` — those run inside a stage. The `jig-task`
+  and `jig-autopilot` skills say in one sentence what exit 4 from it means. It is the one exception to
+  ADR-0021's "stage selection never writes task state", amended there: the write is `task pause`'s,
+  and it happens only when a person asked for it.
 - **`jig task list --json` carries the request** on each task (`pause_request`, its time and
   reason), and the actions table gains `request-pause` and `cancel-pause-request` after `resume`.
   A pending request leaves `pause` offered: a direct pause takes the request with it. A finished
@@ -83,8 +109,17 @@ is the stage boundary Jig can see. A session working without autopilot calls no 
   an unattended run would need `resume --by human` with an answer that is not one.
 - **A resume request.** While a task is paused nobody runs to read one; `jig task resume` is offered
   by the actions table and does it at once. The `<kind>` column leaves room for one.
-- **Honour the request in more commands an agent calls** (`jig context`, `jig verify`): mid-stage,
-  against "the agent finishes the step it is on".
+- **Honour the request in more commands an agent calls** (`jig verify`, `jig context guard` and
+  `pending`, `resolve` without `--stage`, receipts, `status ready`): mid-stage or at a stage's end,
+  against "the agent finishes the step it is on". `resolve --stage` is the exception adopted in
+  2026-10-21, because it is a stage's first step.
+- **The session hook** (`SessionStart`, amended 2026-10-21). It runs once per session, not per
+  stage, and by its contract prints nothing into the session and touches no git: an agent that
+  started before the request would never see it.
+- **A runtime hook on every prompt or tool call.** One runtime's feature, a change to the runtime's
+  own configuration that Jig does not edit (ADR-0024), and it fires mid-stage.
+- **A new stage-entry command in every stage skill** (`jig task stage <id> <name>`). One more step
+  six skills must remember, doing what `context resolve --stage` already declares.
 - **The request in the task's `state`.** Rejected by the spec: `state` is written last-write-wins,
   and the queue has one writer checked against the revision.
 - **Drop a request the task moved past.** Rejected by the spec: a request is sticky.
@@ -92,8 +127,17 @@ is the stage boundary Jig can see. A session working without autopilot calls no 
 ## Consequences
 
 - An autopilot run, attended or not, pauses at its next stage boundary after a request, however long
-  the current stage takes. A session without autopilot does not see a request; showing it in `jig
-  status` and `jig context` is the queue readers' (contract-queue's `queue-status-context`).
+  the current stage takes. Since 2026-10-21 so does a session without autopilot, at the next stage
+  that resolves its context; showing a request in `jig status` and `jig context` is the queue
+  readers' (contract-queue's `queue-status-context`).
+- A stage without a skill of its own — plan, design, a discover that is not a route's first stage —
+  resolves no context, so a request made during the stage before it is honoured one stage later.
+- **Accepted risk:** an agent that resolves the context of the stage it is already in again, in the
+  middle of it, is paused there. The step it is on is a read, so no work is lost, but the stage is
+  left unfinished; without autopilot no record says which stage came last, and adding one for this
+  would be new state.
+- `jig context resolve`, a read, writes when a person asked for a pause. No program reads Jig
+  through it: they have the `--json` reads.
 - `stage` gains exit 4, distinct from 1 (bad arguments) and from repair's 3 (the run stopped).
 - Honouring a request raises the revision by the cancel's two and the state writes'; a consumer that
   showed "requested" sees the change and reads `paused: true` and `pause_request: null`.

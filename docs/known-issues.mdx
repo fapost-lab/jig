@@ -23,20 +23,6 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## A pause request does not reach an agent working without autopilot
-
-**What you see.** You ran `jig queue request <id> pause`, and the agent working on the task in an
-ordinary session — not on autopilot — goes on from stage to stage. `jig status` shows the request
-as pending under the task, and it stays pending. Only an autopilot run checks for the
-request, when it enters its next stage; `jig context --task <id>` lists it, but an agent reads that
-only when it asks for context.
-
-**What it can cost you.** The work you wanted to stop goes on until you notice.
-
-**What to do instead.** Tell the agent in its session to pause the task: `jig task pause <id>`
-honours the request and takes it out of the queue. Or run the task on autopilot when you expect to
-pause it from outside. Fixed by the task `pause-request-without-autopilot`.
-
 ## You cannot approve a design yourself when your agent runs without questions
 
 **What you see.** Your settings have `autopilot.unattended: true`, a T3 or T4 task has a new or

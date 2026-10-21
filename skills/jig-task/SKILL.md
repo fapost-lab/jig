@@ -181,6 +181,9 @@ analysis is a few lines in `task.md`, at T2 the plan is part of the analysis, fr
 review round. Lean never trims tests on changed files, CI before a merge, consolidation, the
 gate or architecture review of T3/T4, or the class itself.
 
+Exit 4 from a stage's `jig context resolve` means a person asked the task to pause: Jig paused
+it and the stage was not entered. End the session and say so; `jig task resume <id>` continues it.
+
 Every route ends in `jig-consolidate`, even when nothing durable came out of the task: it
 records the knowledge decision before the commit and, once the change has landed, closes
 the task. A task stopped at `ready` is never cleaned up.

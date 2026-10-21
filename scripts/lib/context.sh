@@ -195,7 +195,7 @@ EOF
       "just now") ;;
       *) ago="$ago ago" ;;
     esac
-    printf '%-10s pause requested %s%s; an autopilot run honours it at its next stage boundary\n' \
+    printf '%-10s pause requested %s%s; honoured when the next stage of the task resolves its context\n' \
       "queue:" "$ago" "${_JIG_PAUSE_REASON:+ ($_JIG_PAUSE_REASON)}"
   fi
   return 0
@@ -301,6 +301,7 @@ ${relpath}${t}${reason}"
 
 _ctx_reset_selectors() {
   CTX_TASK=""
+  CTX_TASK_NAMED=0
   CTX_NO_TASK=0
   CTX_STAGE=""
   CTX_FILES=""
@@ -320,7 +321,7 @@ _ctx_parse_selectors() {
 
   while [ $# -gt 0 ]; do
     case "$1" in
-      --task) [ $# -ge 2 ] || jig_die "context: --task requires a value"; CTX_TASK="$2"; shift 2 ;;
+      --task) [ $# -ge 2 ] || jig_die "context: --task requires a value"; CTX_TASK="$2"; CTX_TASK_NAMED=1; shift 2 ;;
       --no-task) CTX_NO_TASK=1; shift ;;
       --stage) [ $# -ge 2 ] || jig_die "context: --stage requires a value"; jig_valid_stage "$2" || jig_die "context: invalid stage: $2"; CTX_STAGE="$2"; shift 2 ;;
       --files)
@@ -805,6 +806,11 @@ _ctx_workspace_rows() {
 
 ctx_resolve() {
   _ctx_parse_selectors "$@"
+  # Only a task named with --task: one guessed from the branch is not a
+  # declared entry into a stage.
+  if [ "$CTX_TASK_NAMED" -eq 1 ] && [ -n "$CTX_STAGE" ]; then
+    _ctx_honour_pause "$CTX_TASK" "$CTX_STAGE" || return $?
+  fi
 
   local rows relpath reason id summary
   rows="${TMPDIR:-/tmp}/jig-context-required.$$"
@@ -834,6 +840,27 @@ ctx_resolve() {
   [ -z "$CTX_TASK" ] || _ctx_queue_lines "$CTX_TASK"
 
   rm -f "$rows"
+}
+
+# _ctx_honour_pause <id> <stage> — a named task resolving the context of a
+# named stage is entering that stage, the one boundary an agent passes with or
+# without autopilot: a pause asked of the task is honoured here, before any
+# context is printed (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
+# The pause is task's to write, so it runs as a process (ARCHITECTURE.md).
+# Exit 4 when the task was paused, after saying what to do next; exit 0 when
+# nothing was asked, or when the pause could not be made — the request then
+# stays, sticky, and reading the context never breaks on the queue.
+_ctx_honour_pause() {
+  local id="$1" stage="$2" out rc=0
+  jig_pause_request "$id" || return 0
+  out=$("$JIG_SELF" task pause "$id" --if-requested --stage "$stage" 2>&1) || rc=$?
+  if [ "$rc" -eq 4 ]; then
+    printf '%s\n' "$out"
+    printf 'next:      a person asked for this pause; do not start the %s stage, end the session; jig task resume %s continues the task\n' "$stage" "$id"
+    return 4
+  fi
+  [ "$rc" -eq 0 ] || printf 'jig: warning: context: the pause requested for %s was not honoured: %s\n' "$id" "$out" >&2
+  return 0
 }
 
 # --- the context ledger ----------------------------------------------------------

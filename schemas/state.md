@@ -32,14 +32,15 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `domains` | skill via `jig task set` | comma-separated tags `^[a-z0-9-]+(,[a-z0-9-]+)*$`; used by `jig context` |
 | `paused` | `jig task pause` / `resume` | `true`; the line is removed on resume, so an absent key means false |
 | `paused_at` | `jig task pause` | `YYYY-MM-DD` |
-| `paused_reason` | `jig task pause --reason` | one line of free text, optional |
+| `paused_reason` | `jig task pause --reason`; for a pause request honoured at a stage boundary (`jig task pause --if-requested`, `jig task autopilot <id> stage`) `pause requested at <time>[: <reason>]` | one line of free text, optional |
 | `paused_stash` | `jig task pause --stash` | stash commit SHA; the SHA, never the `stash@{n}` index, which shifts |
 | `created_at` | `jig task new` | `YYYY-MM-DD` |
 | `updated_at` | every `jig task set` | `YYYY-MM-DD` |
 
 `jig task set` accepts only `class`, `status`, `knowledge_consolidated`, `domains`,
 `route_depth` and the four `executor_*` keys above, and validates the value; every other key is refused, the four `paused*` keys included:
-they are written only by `jig task pause` and `jig task resume` (ADR-0012).
+they are written only by `jig task pause`, `jig task resume` and, for a pause request, `jig task
+autopilot <id> stage` (ADR-0012; adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
 Two values are refused on top of validation, to keep the order of ADR-0030: `status
 consolidated` while `knowledge_consolidated` is not `true`, and `knowledge_consolidated
 false` on a task whose status is `consolidated`.
