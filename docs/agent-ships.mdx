@@ -250,14 +250,15 @@ need to learn the branch commands to discuss the release.
 <Accordion title="For developers: specifications, epic branches, and releases">
 The same setting covers the work of a [specification released at once](/greenfield): the spec
 reaching your main branch, the epic branch, and the epic's final pull request. The agent runs
-`jig spec ship <id>`, which works out which of the three it is from where your repository stands,
-prints it (`mode: declare`, `mode: epic` or `mode: final`) and goes as far as your level allows:
+`jig spec ship <id>`, which works out which of four it is from where your repository stands,
+prints it (`mode: declare`, `mode: epic`, `mode: final` or `mode: remove`) and goes as far as your level allows:
 
 | Step | `none` | `commit` | `push` | `pr` |
 |---|---|---|---|---|
 | The spec and its epic line reach the main branch | yours | committed on `spec/<id>` | and pushed | and a pull request into main |
 | The epic branch, after it is cut or after main was merged into it | yours | yours | pushed | pushed |
 | The finished epic: the spec's removal with the version bump | yours | committed on `finish/<id>`, cut from the epic | and pushed | and a pull request into main |
+| A finished spec with no epic, removed by `jig spec close` | yours | committed on `close/<id>` | and pushed | and a pull request into main |
 
 What stays yours at every level:
 
@@ -274,7 +275,7 @@ What stays yours at every level:
   repository that protects `epic/*` like main needs no bypass.
 
 `jig spec ship` keeps the limits of `jig task ship` below: it never force-pushes or skips hooks,
-never merges a spec reaching main, merges the epic only as above, commits only what was staged, and refuses when task notes or runtime files are staged. A spec
+never merges a spec reaching main or a spec's removal, merges the epic only as above, commits only what was staged, and refuses when task notes or runtime files are staged. A spec
 reaching main is committed on a branch of its own, never on main itself, and may stage nothing but
 the spec. The epic is pushed only as a fast-forward: when someone else moved it on the server, the
 push is refused and the agent tells you. The final pull request is refused until the epic holds the

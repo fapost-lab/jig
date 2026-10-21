@@ -2921,6 +2921,19 @@ sship_finished() {
   printf 'Release %s\n\nThe epic, finished.\n' "$1" > msg.txt
 }
 
+# sship_closed <id> — a spec without an epic, closed on main: its directory is
+# gone from disk and the removal is staged.
+sship_closed() {
+  epic_setup
+  mkdir -p ".ai/specs/$1"
+  cp .ai/templates/spec/spec.md ".ai/specs/$1/spec.md"
+  cp .ai/templates/spec/roadmap.md ".ai/specs/$1/roadmap.md"
+  git add -A
+  git commit -q -m "add spec $1"
+  git rm -rq ".ai/specs/$1"
+  printf 'Close %s\n\nThe spec, done.\n' "$1" > msg.txt
+}
+
 test_spec_ship_none_level_exits_3_and_changes_nothing() {
   sship_declared idea-x
 
@@ -2954,6 +2967,152 @@ test_spec_ship_unknown_spec_dies() {
   run jig spec ship nope
   assert_eq 1 "$RC"
   assert_contains "$OUT" "no spec nope here, and none removed in the history of this branch"
+}
+
+test_spec_ship_remove_at_commit_cuts_close_branch_and_commits_only_the_spec() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  printf 'stray\n' > stray.txt
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: remove"
+  assert_contains "$OUT" "switched to close/idea-x"
+  assert_contains "$OUT" "stopped at commit"
+  assert_eq "close/idea-x" "$(git symbolic-ref --short HEAD)"
+  assert_eq ".ai/specs/idea-x/roadmap.md
+.ai/specs/idea-x/spec.md" "$(git show --name-only --format= HEAD)"
+  assert_contains "$(git status --porcelain)" "?? stray.txt"
+}
+
+test_spec_ship_remove_already_committed_on_the_default_branch_cuts_no_branch() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  git commit -q -m "remove idea-x by hand"
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "nothing of .ai/specs/idea-x/ is left to commit"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  git rev-parse --verify --quiet refs/heads/close/idea-x >/dev/null \
+    && fail "a branch was cut for a removal with nothing to commit"
+  return 0
+}
+
+test_spec_ship_remove_with_two_epic_lines_is_refused() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  git reset -q --hard HEAD
+  printf '\nEpic: epic/a\nEpic: epic/b\n' >> .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "two epics"
+  git rm -rq .ai/specs/idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "declares more than one epic"
+}
+
+test_spec_ship_remove_stages_the_unstaged_removal_itself() {
+  epic_setup
+  mkdir -p .ai/specs/idea-x
+  cp .ai/templates/spec/spec.md .ai/specs/idea-x/spec.md
+  cp .ai/templates/spec/roadmap.md .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m "add spec"
+  rm -rf .ai/specs/idea-x
+  printf 'Close\n\nDone.\n' > msg.txt
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: remove"
+  assert_eq "" "$(git ls-files -- .ai/specs/idea-x)"
+}
+
+test_spec_ship_remove_at_push_pushes_the_close_branch() {
+  sship_closed idea-x
+  sship_origin
+  sship_cfg_local agent.git push
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pushed close/idea-x"
+  assert_contains "$OUT" "stopped at push"
+  assert_contains "$(git ls-remote origin refs/heads/close/idea-x)" "refs/heads/close/idea-x"
+}
+
+test_spec_ship_remove_at_pr_opens_the_pr_into_main() {
+  sship_closed idea-x
+  sship_origin
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: remove"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  local argv
+  argv=$(cat gh-create.argv)
+  assert_contains "$argv" "$(printf -- '--base\nmain')"
+  assert_contains "$argv" "$(printf -- '--head\nclose/idea-x')"
+  assert_contains "$argv" "$(printf -- '--title\nClose idea-x')"
+}
+
+test_spec_ship_remove_none_level_exits_3() {
+  sship_closed idea-x
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 3 "$RC"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_remove_requires_a_message_file() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "removing commits; --message-file is required"
+}
+
+test_spec_ship_remove_refuses_staged_paths_outside_the_spec() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  printf 'x\n' > other.txt
+  git add other.txt
+  local before
+  before=$(git rev-parse HEAD)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a removal commits only .ai/specs/idea-x/; staged outside it:"
+  assert_contains "$OUT" "other.txt"
+  assert_eq "$before" "$(git rev-parse HEAD)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+}
+
+test_spec_ship_remove_refuses_an_epic_branch() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  git checkout -q -b epic/other
+  local before
+  before=$(git rev-parse HEAD)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "epic/other is an epic branch; the removal goes into main from a branch of its own"
+  assert_eq "$before" "$(git rev-parse HEAD)"
+}
+
+test_spec_ship_removed_spec_with_an_open_epic_is_still_final() {
+  sship_finished idea-x
+  sship_cfg_local agent.git commit
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "mode: final"
+  assert_not_contains "$OUT" "mode: remove"
 }
 
 test_spec_ship_declare_at_commit_switches_off_main_and_commits() {
