@@ -677,6 +677,29 @@ test_queue_request_refuses_by_the_tasks_state() {
   assert_no_file .ai/runtime/queue
 }
 
+# A paused or closed task that still holds a request is refused for its state:
+# the state is checked before the request, so code and reason agree.
+test_queue_request_refuses_by_the_state_before_a_pending_request() {
+  _q_setup a b c
+  jig task pause a >/dev/null
+  jig task abandon b >/dev/null 2>&1 || fail "abandon failed"
+  mkdir -p .ai/runtime
+  printf '# jig queue 1\nrequest\ttask:a\tpause\t2026-10-19T12:00:00Z\t\nrequest\ttask:b\tpause\t2026-10-19T12:00:00Z\t\nrequest\ttask:c\tpause\t2026-10-19T12:00:00Z\t\n' > .ai/runtime/queue
+  local before
+  before=$(cat .ai/runtime/queue)
+  _q_json request a pause
+  assert_eq 1 "$RC"
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "task a is already paused"
+  _q_json request b pause
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "task b is abandoned"
+  _q_json request c pause
+  assert_eq already-exists "$(_q_code)"
+  assert_contains "$OUT" "a pause of task:c is already requested"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+}
+
 test_queue_request_with_a_stale_revision_is_refused_and_changes_nothing() {
   _q_setup a b
   _q_rev

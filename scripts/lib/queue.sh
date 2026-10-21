@@ -444,11 +444,13 @@ _queue_write() {
     [ "$_QKIND" = task ] || jig_fail usage "queue $sub: a $kind is asked of a task, not of $ref"
     if [ "$sub" = request ]; then
       # The table of what a person may do asks the same guard (common.sh).
+      # The table of what a person may do asks the same guards (common.sh).
+      # The task's state is refused before the request's presence, so a
+      # paused or closed task that still holds a request reads `failed`.
+      refusal=$(jig_pause_request_state_refusal "$_QID")
+      [ -z "$refusal" ] || jig_die "$refusal"
       refusal=$(jig_pause_request_refusal "$_QID")
-      if [ -n "$refusal" ]; then
-        jig_pause_request "$_QID" && jig_fail already-exists "$refusal"
-        jig_die "$refusal"
-      fi
+      [ -z "$refusal" ] || jig_fail already-exists "$refusal"
       at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     fi
   fi

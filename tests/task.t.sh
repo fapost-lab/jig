@@ -315,6 +315,34 @@ test_task_new_goal_lands_under_the_goal_heading_of_any_brief() {
   assert_eq "$(printf '# x\n\n## Goal\nG \\1 &\n\nold text\n\n## Scope\n--\n# x\n\nBody.\n\n## Goal\n\nG\n--\n# x\n\n## Goal\n\nG')" "$got"
 }
 
+# A brief filed without --goal holds only the template's comment under
+# `## Goal`: that is no goal, in the text listing or in JSON. A comment on one
+# line or across several is dropped wherever it stands, and a line that held
+# only a comment does not end the paragraph.
+test_task_goal_leaves_html_comments_out() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task list --goals
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "goal: (none)"
+  assert_not_contains "$OUT" "<!--"
+  _tl_json
+  assert_contains "$OUT" '{"id":"T-1","class":null,"status":"active","issue":null,"goal":null,'
+  local got f="$JIG_TEST_TMP.goal.md"
+  got=$(
+    # shellcheck source=/dev/null
+    . "$JIG_HOME/scripts/lib/task.sh"
+    printf '# x\n\n## Goal\n\n<!-- One paragraph:\n## not a heading -->\nKeep <!-- why -->the\nreturn URL.\n\nLater.\n' > "$f"
+    _task_goal "$f"
+    printf '# x\n\n## Goal\n\n<!-- one -->\n\n<!-- two\nlines -->\n\n## Scope\n\nx\n' > "$f"
+    _task_goal "$f"
+    printf '# x\n\n## Goal\n\nText <!-- open\nstill comment\n--> after.\n' > "$f"
+    _task_goal "$f"
+  )
+  rm -f "$f"
+  assert_eq "$(printf 'Keep the return URL.\n(none)\nText after.')" "$got"
+}
+
 # _tn_json — `jig task new --json <args>` with stdout in OUT, stderr in ERR,
 # generated_at and revision replaced as _tl_json replaces them.
 _tn_json() {
@@ -341,10 +369,10 @@ test_task_new_json_answers_with_the_filed_task() {
   assert_eq "$actions" "$ACTIONS"
   assert_contains "$OUT" "{\"id\":\"T-1\",\"class\":\"T1\""
   assert_file .ai/workspace/tasks/T-1/state
-  # Without --goal the brief is the template's.
+  # Without --goal the brief is the template's, and it has no goal yet.
   _tn_json T-2
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" '"data":{"task":{"id":"T-2","class":null,"status":"active","issue":null,"goal":'
+  assert_contains "$OUT" '"data":{"task":{"id":"T-2","class":null,"status":"active","issue":null,"goal":null,'
   # --json may stand anywhere; the id stays the first of the others.
   run_split jig task new T-3 --lean --json
   assert_eq 0 "$RC" "$ERR"

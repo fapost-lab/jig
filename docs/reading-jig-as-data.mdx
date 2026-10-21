@@ -109,10 +109,12 @@ Each task carries what Jig knows about it:
 }
 ```
 
-A fact Jig does not have is `null`: `branch` is `null` for a task not started yet, `gate` for a task
-without a design approval step, `autopilot` for a task that never ran on autopilot. The flags are the
-ones the last `jig housekeeping` run raised and that still apply, for example `needs-consolidation`
-for merged work nobody has closed yet; `data.housekeeping` says when that run was.
+A fact Jig does not have is `null`: `branch` is `null` for a task not started yet, `goal` for a task
+whose `## Goal` holds nothing but an HTML comment such as the template's `<!-- … -->` hint, `gate`
+for a task without a design approval step, `autopilot` for a task that never ran on autopilot. The
+flags are the ones the last `jig housekeeping` run raised and that still apply, for example
+`needs-consolidation` for merged work nobody has closed yet; `data.housekeeping` says when that run
+was.
 
 `pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
 went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
@@ -310,8 +312,9 @@ jig task new booking-message --goal "Guests get a confirmation message after boo
 ```
 
 The goal becomes the paragraph under `## Goal` in the task's `task.md`. It is one line of text, not
-empty and not starting with `#`. You may add `--class` and `--domains` as a person would. The
-answer is the filed task, the same object `jig task list --json` lists for it:
+empty and not starting with `#`. Without `--goal` the task has none yet, and its `goal` is `null`.
+You may add `--class` and `--domains` as a person would. The answer is the filed task, the same
+object `jig task list --json` lists for it:
 
 ```json
 {"schema":1,"revision":1792405174,"generated_at":"2026-10-19T10:22:28Z","data":{"task":{"id":"booking-message","class":null,"status":"active","issue":null,"goal":"Guests get a confirmation message after booking","knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-19","updated_at":"2026-10-19","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[],"actions":[...]}}}

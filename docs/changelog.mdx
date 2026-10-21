@@ -22,10 +22,10 @@ next phase of [Jig UI](https://jig-ui.fapost.in) is built on, and it is useful w
   `remove`. An epic (`epic:<spec-id>`) is ordered beside tasks, and the tasks built on it within it.
   A move moves one item and never renumbers the rest. See
   [Order the work](/manual-control#order-the-work).
-- **A stale write is refused.** Every `jig queue` write takes `--revision <n>`, the clone revision
-  the caller read. When anything in the project changed since, the write is refused with the code
-  `stale-revision` and nothing is written; two writers that send the same revision land at most
-  once.
+- **A stale write is refused.** Every `jig queue` write accepts `--revision <n>`, the clone revision
+  the caller read; a write without it is checked against the revision it reads itself. When
+  anything in the project changed since, the write is refused with the code `stale-revision` and
+  nothing is written; two writers that send the same revision land at most once.
 - **`jig queue list --json`** (or `jig queue --json`) — the whole queue in the shared envelope, in
   order, each item with its level, position, priority and dependencies. A write with `--json`
   answers with the item as the queue now holds it; one that names a task or epic Jig does not have
@@ -53,6 +53,9 @@ next phase of [Jig UI](https://jig-ui.fapost.in) is built on, and it is useful w
   the object `jig task list --json` lists for it; an id already taken is refused with the new code
   `already-exists`, an invalid id or goal with `usage`. See
   [Filing a task](/reading-jig-as-data#filing-a-task).
+- **Fixed: a task filed without a goal no longer shows the template's hint as its goal.** The
+  `<!-- … -->` comment under `## Goal` is left out, so `goal` is `null` in `jig task list --json`
+  and `jig task new --json`, and `jig task list --goals` says `(none)`.
 - **Fixed: editing existing knowledge at the end of a task no longer asks for a new review.** When
   consolidation edited a knowledge document the review had read, marking the task ready, recording
   the knowledge decision and `jig task ship` refused with a stale review. A document the task edited

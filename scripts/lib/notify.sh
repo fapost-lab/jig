@@ -29,9 +29,9 @@
 # next event would lose one of the two lines.
 #
 # Requires config.sh (cfg, jig_config_clone_root, jig_unattended, _cfg_chat_id,
-# JIG_CFG_MASK), and task.sh (task_dir, task_state_get, _task_autopilot_mode,
-# _task_likely_owner) for a task's messages and a waiting session's; a phase
-# run's (jig_notify_phase) need no task.sh.
+# JIG_CFG_MASK), and task.sh (task_dir, task_state_get, _task_goal,
+# _task_autopilot_mode, _task_likely_owner) for a task's messages and a waiting
+# session's; a phase run's (jig_notify_phase) need no task.sh.
 
 # jig_notify_token_ok <token> — exit 0 when <token> has a bot token's shape,
 # `<digits>:<letters, digits, _ and ->`. Checked before the token is written
@@ -198,33 +198,9 @@ _notify_description() {
     printf '%s\n' "$head"
     return 0
   fi
-  # The template's `<!-- ... -->` guidance is not a description: comments are
-  # dropped, on one line or across several, before a word is kept.
-  goal=$(awk '
-    /^## / { if (inside) exit_now = 1; inside = ($0 ~ /^## Goal[[:space:]]*$/); next }
-    exit_now || !inside { next }
-    {
-      line = $0
-      while (1) {
-        if (incomment) {
-          e = index(line, "-->")
-          if (e == 0) { line = ""; break }
-          line = substr(line, e + 3); incomment = 0
-        }
-        b = index(line, "<!--")
-        if (b == 0) break
-        rest = substr(line, b + 4)
-        e = index(rest, "-->")
-        if (e == 0) { line = substr(line, 1, b - 1); incomment = 1; break }
-        line = substr(line, 1, b - 1) substr(rest, e + 3)
-      }
-      sub(/^[[:space:]]+/, "", line)
-      sub(/[[:space:]]+$/, "", line)
-      if (line == "") { if (text != "" && !incomment && $0 !~ /-->/) exit_now = 1; next }
-      text = (text == "" ? line : text " " line)
-    }
-    END { print text }
-  ' "$file")
+  # The goal paragraph as task.sh reads it, the template's comment dropped.
+  goal=$(_task_goal "$file")
+  [ "$goal" != "(none)" ] || goal=""
   case "$goal" in
     *". "*) goal="${goal%%. *}." ;;
   esac
