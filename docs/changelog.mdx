@@ -8,7 +8,7 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
-## 0.31.0 — 2026-10-20
+## 0.31.0 — 2026-10-21
 
 Jig can now be planned with. A queue keeps the priority, order and dependencies of your tasks and
 epics, and you can ask a running task to pause without losing the agent's step. The queue lives in
@@ -61,6 +61,11 @@ next phase of [Jig UI](https://jig-ui.fapost.in) is built on, and it is useful w
   the knowledge decision and `jig task ship` refused with a stale review. A document the task edited
   now counts as it is on the merge base; a change to it that arrives through the base still asks for
   a new review.
+- **`jig spec ship` ships a spec you closed or removed.** A spec removed by `jig spec close` or
+  `jig spec remove` used to be refused by `spec ship`, which read every removal as an epic's final
+  pull request; the removal had to be committed by hand. It now cuts `close/<id>` from the default
+  branch, stages only `.ai/specs/<id>/`, and opens the pull request as far as `agent.git` allows; it
+  never merges. See [Agent ships](/agent-ships).
 
 ## 0.30.0 — 2026-10-19
 
