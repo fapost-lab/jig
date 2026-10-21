@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
   - "skills/jig-release/**"
-reviewed_at: 2026-10-15
+reviewed_at: 2026-10-20
 ---
 # Spec
 
@@ -37,7 +37,8 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   cut, finish and reopen it, and how `spec list` and `jig status` show it; the `Release:` line recorded
   at declaration (`spec_release_check`).
 - Shipping spec work (adr-20260922-spec-work-ships-by-the-agent-git-level): `jig spec ship` in the
-  modes `declare`, `epic` and `final`, read from the checkout, as far as `agent.git` allows; the lines
+  modes `declare`, `epic`, `final` and `remove` (a removed spec that never had an open epic, on
+  `close/<id>`), read from the checkout, as far as `agent.git` allows; the lines
   `spec epic` prints name the next step by that level (`spec_ship_hint`).
 - Closing a spec whose work is done (ADR-0035 as amended): its leftovers (`spec_leftovers`), the
   `roadmap complete` line of `spec done`, and the removal by `spec close` or `spec epic --finish`, in
@@ -116,7 +117,7 @@ can hold one: `jig config set` validates before it writes).
 
 `spec ship` takes its git steps from `common.sh` (`jig_ship_*`), the ones `task ship` takes, and keeps
 only its modes and their refusals here. It never writes a spec file: what it commits is what `spec epic`
-and the agent left staged. It merges one thing, the epic's final pull request, at `agent.git: merge` and
+and the agent left staged — and, in `remove`, the deletion of the spec's own directory, which it stages itself. It merges one thing, the epic's final pull request, at `agent.git: merge` and
 only when `autopilot.unattended` is set (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci):
 with a merge commit only, after `spec_ship_final_ready` finds the epic holding the freshest default, the
 spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut from the epic outside it

@@ -3323,10 +3323,10 @@ hk_is_jigs() {
 test_jig_branch_is_jigs_names_only_jigs_own_branches() {
   hk_setup
   local b
-  for b in task/T-1 jig/upgrade-0.23.0 jig/upgrade-0.23.0-2 finish/idea-x; do
+  for b in task/T-1 jig/upgrade-0.23.0 jig/upgrade-0.23.0-2 finish/idea-x close/idea-x; do
     hk_is_jigs "$b" || fail "$b should be Jig's"
   done
-  for b in main epic/idea-x spec/idea-x feature/x task/ task/a/b finish/ jig/upgrade- T-1; do
+  for b in main epic/idea-x spec/idea-x feature/x task/ task/a/b finish/ close/ jig/upgrade- T-1; do
     if hk_is_jigs "$b"; then fail "$b should not be Jig's"; fi
   done
   # The template decides a task branch's name; one with nothing before {id}

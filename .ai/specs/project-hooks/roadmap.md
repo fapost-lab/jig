@@ -28,6 +28,9 @@ output passes and shows it as a warning, a missing hook path refuses and is repo
   there is nothing to waive before a hook can refuse)
 - [ ] fog: hook timeout — whether a gate bounds a hook's run time depends on what bash 3.2 can
   do portably and on autopilot's stop rules; see the open questions
+- [ ] fog: registration hook in `jig init` for an installed UI — a way for an installed Jig UI to
+  register the project at `jig init` without making the UI a dependency of Jig (moved from
+  contract-queue when its epic was finished, 2026-10-20)
 
 ## Waves
 

@@ -256,6 +256,9 @@ item is checked later by `jig spec done`, called from consolidation — never by
 - **Starting a new project from a spec**: copy `.ai/specs/<id>/` into that project, which needs
   Jig 0.3.0 or later. From then on its own Jig tracks the spec; nothing links the two copies.
   Task ids in a copied roadmap belong to the old project.
+- **Closing a spec with no epic**: `jig spec close <id>` removes it; when no task's pull request carries
+  the removal, `jig spec ship <id> --message-file <file>` ships it alone (`mode: remove`, branch
+  `close/<id>`), as far as `agent.git` allows.
 - **Dropping a spec**: `jig spec remove <id> --dry-run` shows what would happen — open tasks
   unlinked, never-started ones abandoned only with `--abandon-unstarted`, the directory moved to
   trash. Run it without `--dry-run` once the human agrees.
