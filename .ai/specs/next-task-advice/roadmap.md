@@ -9,7 +9,7 @@ Goal: an agent, a person and Jig UI ask what to take next and get one answer. Do
 "what next" takes its answer.
 
 - [x] `priority-scale` — priority scale — what `0`–`5` mean, written in the glossary and the queue docs page, so a person and an agent set "bugs first" the same way (after: nothing — it describes what 0.31.0 already stores)
-- [ ] queue next — `jig queue next [--json]`: candidates, dependency landed or broken or unknown, priority, started-first tie-break, position across levels by the top-level item, `none` last, a count of unqueued tasks, and the reason when nothing can be advised; documented on the queue pages (after: priority-scale — it orders by that scale)
+- [ ] `queue-next` — queue next — `jig queue next [--json]`: candidates, dependency landed or broken or unknown, priority, started-first tie-break, position across levels by the top-level item, `none` last, a count of unqueued tasks, and the reason when nothing can be advised; documented on the queue pages (after: priority-scale — it orders by that scale)
 - [ ] next in status — `jig status` shows the advice as one `next:` line, and the status page beside it (after: queue next — it prints its answer)
 - [ ] agents ask for the next task — the `jig-task` skill asks `jig queue next` when a person says "what next" or "take the next one", instead of choosing itself (after: queue next — it is what they ask)
 
