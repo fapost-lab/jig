@@ -132,6 +132,27 @@ ordered beside tasks, and the tasks built on it are ordered within it. A depende
 `jig queue remove` takes an item out, and `jig queue undepend` drops a dependency. A program
 reads the queue with `jig queue list --json` ([Reading Jig as data](/reading-jig-as-data#the-queue)).
 
+To ask which task to take next, run `jig queue next`. It answers from the queue and from what Jig
+already knows, over the network never, and changes nothing:
+
+```text
+next: task:booking-form — 1 of 3 on the top level, priority 1, started
+  task:booking-message waits for task:booking-form: unknown — jig housekeeping
+not queued: 1 task — jig queue set <id> --priority <p>
+```
+
+Only a task that is `active` and not paused is advised, and one waits while anything it depends
+on, or the epic it is built on depends on, is not finished. A task is finished when it is closed
+or `jig housekeeping` saw its pull request merged; an epic when its branch has landed. Among the
+tasks that do not wait the lowest priority number goes first, with a task without one last; at the
+same priority a task already started goes before one not started; after that comes the place in
+the queue, a task on an epic taking its epic's place. When no task can be taken it says why:
+every queued task waits for a dependency, is paused, or there is none. A wait that can never end
+(`broken`: the task it waits for was abandoned or is gone) comes with the command that drops it;
+one Jig cannot tell (`unknown`) with the one that may find out. The last line counts the active
+tasks that are not in the queue. `jig queue next --json` gives the same answer to a program
+([Reading Jig as data](/reading-jig-as-data#which-task-is-next)).
+
 `jig status` shows each queued task's place on its task line — `queue=2/5` is second of five on its
 level (the top, or the epic it is built on), `priority=1` its priority — with what it waits for, and
 a pause asked of it with its age, on the lines under it:

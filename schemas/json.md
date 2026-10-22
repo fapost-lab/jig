@@ -381,6 +381,36 @@ have its request taken out); `already-exists` when a pause of it is already requ
 stays; `failed` when the task is paused, `consolidated` or `abandoned`. The `request-pause` and
 `cancel-pause-request` actions ask the same guards.
 
+## `jig queue next --json`
+
+Which queued task to take next, and what holds the others back. It reads the queue, the tasks'
+state files and what the last `jig housekeeping` run recorded, never the network, and writes
+nothing: the queue file and the revision stay as they were. The producer's rules are the Jig
+documentation's ("Order the work"); this is the shape.
+
+```json
+{"next": {"ref": "task:booking-form", "kind": "task", "id": "booking-form", "level": null, "position": 100, "priority": 1, "started": true}, "reason": null, "waiting": [{"ref": "task:booking-message", "on": "task:booking-form", "state": "unknown", "reason": "The message quotes the form"}], "not_queued": 1}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `next` | object or null | the task advised; `null` when there is none |
+| `next.ref`, `next.kind`, `next.id` | string | `task:<id>`, `task` and the task id |
+| `next.level` | string or null | as `item.level` of a write: `epic:<spec-id>`, or `null` on the top level |
+| `next.position` | integer | its place within its level, as stored |
+| `next.priority` | integer or null | `0` to `5`; `null` when not set |
+| `next.started` | boolean | `true` when the task has its branch and base commit |
+| `reason` | string or null | `null` when `next` is set; otherwise why there is none: `waiting` (a candidate waits for a dependency), `paused` (the queued tasks left are paused or have a pause request) or `empty` (nothing queued is a task to take) |
+| `waiting` | array | every dependency not finished that holds a candidate back, each `{"ref", "on", "state", "reason"}`; `ref` is the one that waits as the queue stores it (a task, or the epic its tasks inherit the dependency from), `on` what it waits for, `reason` the reason given, `[]` for none |
+| `waiting[].state` | string | `open` (not done yet), `broken` (the target was abandoned or is gone, so the wait never ends: drop it with `jig queue undepend`) or `unknown` (nothing says; `jig housekeeping` may) |
+| `not_queued` | integer | how many active, unpaused tasks have no item in the queue |
+
+A candidate is a queued task whose state is `active`, not paused and with no pause request. Tasks
+that are ready, closed, abandoned or gone, and epics, are never advised and never listed.
+`waiting` holds the dependencies of candidates only. The failures are the producer's alone and add
+no code: `usage` for an argument after `next`, `not-initialised` without Jig, `failed` for a queue
+file of another format version. Without a queue the answer is `"next":null,"reason":"empty"`.
+
 ## `jig task new --json`
 
 `jig task new <id> … --json` files a task and answers with it. `--goal <text>` gives the task's

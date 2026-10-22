@@ -287,8 +287,10 @@ their own work; `3` friction; `4` an improvement or a new capability; `5` some d
 sparse and ordered within a level — the top level holds epics and tasks without an epic, an epic's
 level its tasks. A write is checked against the clone revision its caller read and refused
 `stale-revision` when anything was written since
-(adr-20261019-the-queue-is-one-file-written-against-a-revision). Informal synonyms: backlog order,
-task queue.
+(adr-20261019-the-queue-is-one-file-written-against-a-revision). `jig queue next` reads it to advise
+the task to take: never one that waits for a dependency whose change has not landed, then the lower
+priority, a started task before an unstarted one, then position — across levels by the top-level
+item. Informal synonyms: backlog order, task queue.
 
 ## Status Page
 
