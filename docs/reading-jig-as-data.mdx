@@ -250,6 +250,21 @@ the one you send with a change is the `revision` of the queue read you showed. A
 is finished, or gone, stays in the queue until it is removed; it has no match in the default task
 list, so join against `jig task list --json --all` or show it as it is.
 
+### Which task is next
+
+`jig queue next --json` answers what the queue advises, so a board needs no rules of its own. It
+reads the queue, the tasks' state and the last `jig housekeeping` run, never the network, and
+changes nothing:
+
+```json
+{"schema":1,"revision":1792693064,"generated_at":"2026-10-22T18:17:22Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":true},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"not_queued":1}}
+```
+
+`next` is the task to take, or `null` with a `reason` (`waiting`, `paused` or `empty`) when there
+is none. `waiting` lists each dependency that holds a candidate back, in `state` `open`, `broken`
+(it never ends; drop it with `jig queue undepend`) or `unknown`. `not_queued` counts the active
+tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
+
 ## Changing the queue
 
 A program changes the queue with the same commands a person uses, adding `--json` and the

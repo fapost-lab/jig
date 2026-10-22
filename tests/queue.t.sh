@@ -723,3 +723,382 @@ test_queue_write_redraws_the_status_page() {
   jig queue set a --priority 3 --json >/dev/null
   assert_contains "$(cat .ai/runtime/status.html)" "queue=1/1 priority=3"
 }
+
+# --- the next task -----------------------------------------------------------------
+
+# _qn_task <id> <started|new> [status] [key:value...] — a filed task, started
+# (a branch and a base commit) or not (neither), in the given status.
+_qn_task() {
+  local id="$1" started="$2" status="${3:-active}" doc=""
+  shift 3 2>/dev/null || shift $#
+  # fixture_task rewrites task.md; a link to a spec (_q_epic) stays.
+  [ ! -f ".ai/workspace/tasks/$id/task.md" ] || doc=$(cat ".ai/workspace/tasks/$id/task.md")
+  fixture_task "$id" "task/$id" "$status" "$@"
+  [ -z "$doc" ] || printf '%s\n' "$doc" > ".ai/workspace/tasks/$id/task.md"
+  if [ "$started" = started ]; then
+    printf 'base_commit: abc123\n' >> ".ai/workspace/tasks/$id/state"
+  else
+    grep -v '^branch:' ".ai/workspace/tasks/$id/state" > ".ai/workspace/tasks/$id/state.tmp"
+    mv ".ai/workspace/tasks/$id/state.tmp" ".ai/workspace/tasks/$id/state"
+  fi
+}
+
+# _qn_hk <task> <remote> — the newest housekeeping run saw <task> with that
+# remote; one run for all the calls of a test, as the log keeps only the last.
+_qn_hk() {
+  mkdir -p .ai/runtime
+  [ -f .ai/runtime/housekeeping.log ] || printf -- '--- run 2026-10-21T10:00:00Z forge=none\n' > .ai/runtime/housekeeping.log
+  {
+    printf '2026-10-21T10:00:01Z task=%s status=active remote=%s via=ancestry action=preserve\n' "$1" "$2"
+  } >> .ai/runtime/housekeeping.log
+}
+
+# _qn_next — NEXT <- the text answer of `jig queue next`.
+_qn_next() {
+  run jig queue next
+  assert_eq 0 "$RC" "$OUT"
+  NEXT=$OUT
+}
+
+test_queue_next_on_an_empty_queue_says_none() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_next
+  assert_eq "$(printf '%s\n' \
+    'next: none — the queue holds no task to take' \
+    'not queued: 1 task — jig queue set <id> --priority <p>')" "$NEXT"
+  _q_json next
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"next":null,"reason":"empty","waiting":[],"not_queued":1}}'
+  assert_no_file .ai/runtime/queue
+  _qn_task a new closed
+  jig queue set a --priority 1 >/dev/null
+  _qn_next
+  assert_eq 'next: none — the queue holds no task to take' "$NEXT"
+}
+
+test_queue_next_takes_the_most_urgent_priority_and_none_last() {
+  fixture_jig_repo
+  _qn_task a started
+  _qn_task b started
+  _qn_task c started
+  _qn_task d started
+  jig queue set a --priority none >/dev/null
+  jig queue set b --priority 3 >/dev/null
+  jig queue set c --priority 1 >/dev/null
+  jig queue set d --priority 5 >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:c — 3 of 4 on the top level, priority 1, started"
+  jig queue remove c >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:b — "
+  jig queue remove b >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:d — "
+  jig queue remove d >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — 1 of 1 on the top level, priority none, started"
+}
+
+test_queue_next_prefers_a_started_task_then_the_position() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task b started
+  _qn_task c new
+  _qn_task d started
+  jig queue set a --priority 2 >/dev/null
+  jig queue set b --priority 2 >/dev/null
+  jig queue set c --priority 2 >/dev/null
+  jig queue set d --priority 2 >/dev/null
+  # Order a b c d: the started ones first, each by position.
+  _qn_next
+  assert_contains "$NEXT" "next: task:b — 2 of 4 on the top level, priority 2, started"
+  jig queue move d --top >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:d — 1 of 4 on the top level, priority 2, started"
+  jig task abandon d >/dev/null 2>&1 || fail "abandon failed"
+  jig task abandon b >/dev/null 2>&1 || fail "abandon failed"
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — 2 of 4 on the top level, priority 2, not started"
+  # A higher priority still beats a started task.
+  jig queue set c --priority 0 >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:c — "
+}
+
+test_queue_next_orders_levels_by_the_top_level_position() {
+  fixture_jig_repo
+  _qn_task a new
+  _q_epic big t1 t2
+  _q_epic other u1
+  _qn_task t1 new
+  _qn_task t2 new
+  _qn_task u1 new
+  jig queue set a --priority 1 >/dev/null
+  jig queue set epic:big --priority 1 >/dev/null
+  jig queue set t1 --priority 1 >/dev/null
+  jig queue set t2 --priority 1 >/dev/null
+  jig queue set u1 --priority 1 >/dev/null
+  jig queue move t2 --top >/dev/null
+  # The epic is queued after a: a goes first; without a, the epic's own tasks, by their position.
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — "
+  jig queue remove a >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:t2 — 1 of 2 on epic:big, priority 1, not started"
+  # An epic that is not queued is after every queued top-level item.
+  jig queue remove epic:big >/dev/null
+  jig queue set a --priority 1 >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — "
+  jig queue remove a >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:t2 — "
+}
+
+test_queue_next_reads_a_task_dependency_by_what_is_known_of_it() {
+  fixture_jig_repo
+  _qn_task w new
+  _qn_task open_t started
+  _qn_task fin_t started consolidated
+  _qn_task hk_t started
+  _qn_task gone_t started
+  _qn_task dead_t started abandoned
+  _qn_task unk_t started
+  _qn_task closed_t started
+  local on
+  jig queue set w --priority 1 >/dev/null
+  for on in open_t fin_t hk_t gone_t dead_t unk_t closed_t; do
+    jig queue depend w --on "$on" --reason "r $on" >/dev/null
+  done
+  rm -rf .ai/workspace/tasks/gone_t
+  _qn_hk open_t open
+  _qn_hk hk_t merged
+  _qn_hk closed_t closed
+  _q_json next
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"next":null,"reason":"waiting","waiting":['
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:open_t","state":"open","reason":"r open_t"}'
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:gone_t","state":"broken","reason":"r gone_t"}'
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:dead_t","state":"broken","reason":"r dead_t"}'
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:unk_t","state":"unknown","reason":"r unk_t"}'
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:closed_t","state":"open","reason":"r closed_t"}'
+  assert_not_contains "$OUT" 'task:fin_t","state'
+  assert_not_contains "$OUT" 'task:hk_t","state'
+  _qn_next
+  # In the queue's canonical order of dependencies (by target).
+  assert_eq "$(printf '%s\n' \
+    'next: none — every queued task waits for a dependency' \
+    '  task:w waits for task:closed_t: open' \
+    '  task:w waits for task:dead_t: broken — jig queue undepend task:w --on task:dead_t' \
+    '  task:w waits for task:gone_t: broken — jig queue undepend task:w --on task:gone_t' \
+    '  task:w waits for task:open_t: open' \
+    '  task:w waits for task:unk_t: unknown — jig housekeeping' \
+    'not queued: 4 tasks — jig queue set <id> --priority <p>')" "$NEXT"
+}
+
+# Only the newest housekeeping run counts: an older `merged` is not a merge.
+test_queue_next_reads_only_the_last_housekeeping_run() {
+  fixture_jig_repo
+  _qn_task w new
+  _qn_task d started
+  jig queue set w --priority 1 >/dev/null
+  jig queue depend w --on d --reason r >/dev/null
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-10-20T10:00:00Z forge=none\n'
+    printf '2026-10-20T10:00:01Z task=d status=active remote=merged via=ancestry action=preserve\n'
+    printf -- '--- run 2026-10-21T10:00:00Z forge=none\n'
+    printf '2026-10-21T10:00:01Z task=d status=active remote=unknown via=ancestry action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+  _qn_next
+  assert_contains "$NEXT" "task:w waits for task:d: unknown"
+  _qn_hk d merged
+  _qn_next
+  assert_contains "$NEXT" "next: task:w — "
+}
+
+test_queue_next_reads_an_epic_dependency_and_inherits_it() {
+  fixture_jig_repo
+  _qn_task w new
+  _q_epic base1 e1
+  _q_epic fin1 e2
+  _q_epic noepic1
+  _q_epic big t1
+  _qn_task t1 new
+  _qn_task e1 new
+  _qn_task e2 new
+  # A finished epic line, as an older jig left it.
+  printf '# Roadmap\n\nEpic: epic/fin1 — finished\n' > .ai/specs/fin1/roadmap.md
+  jig queue set w --priority 1 >/dev/null
+  jig queue depend w --on epic:base1 --reason a >/dev/null
+  jig queue depend w --on epic:fin1 --reason b >/dev/null
+  jig queue depend w --on epic:noepic1 --reason c >/dev/null
+  jig queue depend epic:big --on epic:base1 --reason d >/dev/null
+  # noepic1 has no spec any more, and no branch.
+  rm -rf .ai/specs/noepic1
+  _q_json next
+  assert_contains "$OUT" '{"ref":"task:w","on":"epic:base1","state":"open","reason":"a"}'
+  assert_not_contains "$OUT" 'epic:fin1","state'
+  assert_contains "$OUT" '{"ref":"task:w","on":"epic:noepic1","state":"unknown","reason":"c"}'
+  # The tasks of big inherit what big waits for: t1 waits, held by the epic.
+  jig queue set t1 --priority 0 >/dev/null
+  _q_json next
+  assert_contains "$OUT" '{"ref":"epic:big","on":"epic:base1","state":"open","reason":"d"}'
+  # A branch without a spec: an ancestor of the base is finished, any other is broken.
+  jig queue depend epic:big --on epic:base1 --reason d >/dev/null
+  local base
+  base=$(git symbolic-ref --short HEAD)
+  git branch epic/merged1
+  git checkout -q -b epic/ahead1
+  git commit -q --allow-empty -m ahead
+  git checkout -q "$base"
+  _q_epic merged1
+  _q_epic ahead1
+  jig queue depend w --on epic:merged1 --reason e >/dev/null
+  jig queue depend w --on epic:ahead1 --reason f >/dev/null
+  rm -rf .ai/specs/merged1 .ai/specs/ahead1
+  _q_json next
+  assert_not_contains "$OUT" 'epic:merged1","state'
+  assert_contains "$OUT" '{"ref":"task:w","on":"epic:ahead1","state":"broken","reason":"f"}'
+  _qn_next
+  assert_contains "$NEXT" "task:w waits for epic:ahead1: broken — jig queue undepend task:w --on epic:ahead1"
+  assert_contains "$NEXT" "epic:big waits for epic:base1: open"
+}
+
+test_queue_next_skips_what_is_not_a_candidate() {
+  fixture_jig_repo
+  _q_epic big
+  _qn_task paused_t started active paused:true
+  _qn_task asked_t started
+  _qn_task ready_t started ready
+  _qn_task done_t started consolidated
+  _qn_task dead_t started abandoned
+  _qn_task gone_t started
+  _qn_task ok_t new
+  local t
+  for t in paused_t asked_t ready_t done_t dead_t gone_t ok_t; do
+    jig queue set "$t" --priority 0 >/dev/null
+  done
+  jig queue set epic:big --priority 0 >/dev/null
+  jig queue request asked_t pause >/dev/null
+  rm -rf .ai/workspace/tasks/gone_t
+  _qn_next
+  assert_contains "$NEXT" "next: task:ok_t — "
+  assert_not_contains "$NEXT" "not queued"
+  jig queue remove ok_t >/dev/null
+  _qn_next
+  assert_contains "$NEXT" 'next: none — every queued task is paused'
+  assert_contains "$NEXT" 'not queued: 1 task — ' 
+  jig queue cancel asked_t pause >/dev/null
+  jig task resume paused_t >/dev/null 2>&1 || sed -i.bak 's/^paused:.*/paused: false/' .ai/workspace/tasks/paused_t/state
+  _qn_next
+  assert_contains "$NEXT" "next: task:paused_t — "
+  jig queue move asked_t --top >/dev/null
+  _qn_next
+  assert_contains "$NEXT" "next: task:asked_t — "
+}
+
+test_queue_next_counts_the_active_tasks_the_queue_does_not_know() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task q1 new
+  _qn_task q2 new
+  _qn_task p new active paused:true
+  _qn_task r new ready
+  _qn_task c started consolidated
+  jig queue set q1 --priority 1 >/dev/null
+  _qn_next
+  assert_eq "$(printf '%s\n' \
+    'next: task:q1 — 1 of 1 on the top level, priority 1, not started' \
+    'not queued: 2 tasks — jig queue set <id> --priority <p>')" "$NEXT"
+  jig queue set q2 --priority 1 >/dev/null
+  jig queue set a --priority 1 >/dev/null
+  _q_json next
+  assert_contains "$OUT" '"not_queued":0}'
+  _qn_next
+  assert_not_contains "$NEXT" "not queued"
+}
+
+test_queue_next_names_why_it_has_nothing_to_advise() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task b new active paused:true
+  _qn_task c new
+  jig queue set a --priority 1 >/dev/null
+  jig queue set b --priority 1 >/dev/null
+  jig queue depend a --on c --reason r >/dev/null
+  # a waits, b is paused: waiting wins.
+  _q_json next
+  assert_contains "$OUT" '"next":null,"reason":"waiting"'
+  # Without a waiting candidate the pause is the reason.
+  jig queue undepend a --on c >/dev/null
+  jig queue remove a >/dev/null
+  _q_json next
+  assert_contains "$OUT" '"next":null,"reason":"paused"'
+  jig queue remove b >/dev/null
+  _q_json next
+  assert_contains "$OUT" '"next":null,"reason":"empty"'
+}
+
+test_queue_next_json_shape_is_pinned() {
+  fixture_jig_repo
+  _qn_task a started
+  _qn_task b new
+  _qn_task c new
+  _q_epic big t1
+  _qn_task t1 started
+  jig queue set a --priority 2 >/dev/null
+  jig queue set t1 --priority none >/dev/null
+  jig queue set b --priority 1 >/dev/null
+  jig queue depend b --on c --reason "needs c" >/dev/null
+  _q_rev
+  _q_json next
+  assert_eq 0 "$RC" "$ERR"
+  local pos
+  pos=$(awk -F '\t' '$1 == "item" && $2 == "task:a" { print $4 }' .ai/runtime/queue)
+  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"next\":{\"ref\":\"task:a\",\"kind\":\"task\",\"id\":\"a\",\"level\":null,\"position\":$pos,\"priority\":2,\"started\":true},\"reason\":null,\"waiting\":[{\"ref\":\"task:b\",\"on\":\"task:c\",\"state\":\"unknown\",\"reason\":\"needs c\"}],\"not_queued\":1}}" \
+    "$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')"
+  # A task on an epic's level, with no priority.
+  jig queue remove a >/dev/null
+  jig queue remove b >/dev/null
+  _q_json next
+  assert_contains "$OUT" '"next":{"ref":"task:t1","kind":"task","id":"t1","level":"epic:big","position":'
+  assert_contains "$OUT" ',"priority":null,"started":true},"reason":null,"waiting":[],"not_queued":3}}'
+}
+
+test_queue_next_refuses_an_extra_argument_and_a_foreign_format() {
+  fixture_jig_repo
+  _qn_task a new
+  _q_json next extra
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_q_code)"
+  run jig queue next extra
+  assert_eq 1 "$RC"
+  mkdir -p .ai/runtime
+  printf '# jig queue 9\n' > .ai/runtime/queue
+  _q_json next
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "another format"
+}
+
+test_queue_next_reads_and_changes_nothing() {
+  fixture_jig_repo
+  _qn_task a started
+  _qn_task b new
+  jig queue set a --priority 1 >/dev/null
+  jig queue depend b --on a --reason r >/dev/null
+  jig queue request a pause >/dev/null
+  local before rev state
+  before=$(cat .ai/runtime/queue)
+  state=$(cat .ai/workspace/tasks/a/state)
+  _q_rev
+  rev=$REV
+  jig queue next >/dev/null
+  _q_json next
+  _q_json next
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+  assert_eq "$state" "$(cat .ai/workspace/tasks/a/state)"
+  _q_rev
+  assert_eq "$rev" "$REV"
+}
