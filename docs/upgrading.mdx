@@ -411,6 +411,19 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.31.0 to 0.32.0
+
+Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
+change. The upgrade brings new scripts and new text for the `jig-task` skill, which tells the agent
+to ask `jig queue next` when you ask what to take next; a copy you edited yourself is handled as
+every edited framework file is
+([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** Nothing until the project has a queue. Once it does, `jig status` ends its
+task lines with a `next:` line and the status page shows "Next task". A dependency counts as done
+only once Jig has seen its change merged, so right after a merge `jig queue next` may ask you to run
+`jig housekeeping` first.
+
 ## From 0.30.0 to 0.31.0
 
 Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not

@@ -41,11 +41,10 @@ only if that agent confirms it. A wrong finding then costs one check instead of 
 
 ## After that: new capabilities
 
-**Planning that lives in Jig.** Jig can be read by a program (0.29.0) and planned with (0.31.0): a
-queue holds the priority, order and dependencies of tasks and epics, and a running task can be
-asked to pause. What is left: advice on which task to take next, from that priority, order and
-dependencies — once the queue has been used and it is clear what the advice should weigh — and a
-way for `jig init` to tell an installed Jig UI about a new project.
+**Planning that lives in Jig.** Jig can be read by a program (0.29.0), planned with (0.31.0) and
+asked what to take next (0.32.0): a queue holds the priority, order and dependencies of tasks and
+epics, a running task can be asked to pause, and `jig queue next` advises the next task from them.
+What is left: a way for `jig init` to tell an installed Jig UI about a new project.
 
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.

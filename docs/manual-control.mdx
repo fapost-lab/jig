@@ -163,8 +163,21 @@ task booking-message class=T2 status=active queue=2/5 priority=1
   pause requested 12 min ago: need the laptop
 ```
 
+Once the project has a queue, `jig status` also prints the first line `jig queue next` gives, after
+the task lines, so the answer is where you already look (the status page shows it as "Next task"):
+
+```text
+task booking-form class=T2 status=active queue=1/2 priority=1
+task booking-message class=T2 status=active queue=2/2 priority=2
+next: task:booking-form — 1 of 2 on the top level, priority 1, not started
+current task: none
+```
+
+When nothing can be taken the line reads `next: none — ` and the reason; `jig queue next` has the
+lines under it. `jig status` only reads that answer, it does not work it out again.
+
 `jig context --task <id>` gives the agent working on the task the same facts as `queue:` lines.
-Without a queue, both look as they always have.
+Without a queue, none of this appears and the output looks as it always has.
 
 ## Inspect the change and its review
 
