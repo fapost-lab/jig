@@ -1587,16 +1587,22 @@ _task_close_refusal() {
   return 0
 }
 
-# _task_nobody_answers <id> — exit 0 when no human answers for <id>: this
-# clone sets `autopilot.unattended`, or the task's run was started unattended
-# and has not ended (`on` or `stopped`). Checked on the recorded mode too, so
-# unsetting the key halfway through a run changes nothing about it.
-_task_nobody_answers() {
-  if jig_unattended; then return 0; fi
+# _task_run_unattended <id> — exit 0 when the task's own run was started
+# unattended and has not ended (`on` or `stopped`). Checked on the recorded
+# mode, so unsetting the key halfway through a run changes nothing about it.
+_task_run_unattended() {
   case "$(task_state_get "$1" autopilot)" in
     on | stopped) [ "$(_task_autopilot_mode "$1")" = unattended ] ;;
     *) return 1 ;;
   esac
+}
+
+# _task_nobody_answers <id> — exit 0 when no human answers for <id>: this
+# clone sets `autopilot.unattended`, or the task's own run is unattended
+# (_task_run_unattended).
+_task_nobody_answers() {
+  if jig_unattended; then return 0; fi
+  _task_run_unattended "$1"
 }
 
 # _task_set_class <id> <dir> <class> <has-reason> <reason> — write the class.
@@ -3445,23 +3451,22 @@ _task_gate_refusal() {
       printf "task gate: --by agent is an unattended run's self-approval; %s has no unattended autopilot run on, so the gate is the human's\n" "$id"
       return 0
     fi
-  elif _task_nobody_answers "$id"; then
-    # Nobody answers where this clone is unattended or the task's unattended run
-    # is on or stopped, so an approval recorded there is the agent's, and is
-    # said to be (adr-20261004-a-route-stage-is-proven-by-its-record).
+  elif _task_run_unattended "$id"; then
+    # Inside the task's unattended run, on or stopped, nobody answers, so an
+    # approval recorded there is the agent's, and is said to be
+    # (adr-20261004-a-route-stage-is-proven-by-its-record). The clone's
+    # setting alone does not refuse it: without a run the person working the
+    # task is the one approving.
     if [ "$(task_state_get "$id" autopilot)" = on ]; then
       printf "task gate: %s's run is unattended, so this approval is the agent's: jig task gate %s approved --by agent\n" "$id" "$id"
       return 0
     fi
-    if [ "$(task_state_get "$id" autopilot)" = stopped ]; then
-      if [ "$(_task_autopilot_repairs "$id")" -ge 2 ]; then
-        printf 'task gate: %s exhausted its unattended repair limit; ship a draft\n' "$id"
-        return 0
-      fi
-      printf 'task gate: %s is stopped; if a human answered, run: jig task autopilot %s resume --answer <text> --by human; then approve with --by agent\n' "$id" "$id"
+    # Not on, so stopped.
+    if [ "$(_task_autopilot_repairs "$id")" -ge 2 ]; then
+      printf 'task gate: %s exhausted its unattended repair limit; ship a draft\n' "$id"
       return 0
     fi
-    printf 'task gate: nobody answers for %s (unattended); start its run and approve with --by agent\n' "$id"
+    printf 'task gate: %s is stopped; if a human answered, run: jig task autopilot %s resume --answer <text> --by human; then approve with --by agent\n' "$id" "$id"
     return 0
   fi
   class=$(task_state_get "$id" class)
