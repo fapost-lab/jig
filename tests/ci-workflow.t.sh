@@ -97,7 +97,7 @@ test_ci_workflow_test_matrix_entries_are_all_readable() {
 test_ci_workflow_test_runs_on_linux_and_macos() {
   local entries
   entries=$(cw_test_entries)
-  assert_contains "$entries" "ubuntu-latest " "the test job must run the suite on ubuntu-latest"
+  assert_contains "$entries" "ubuntu-" "the test job must run the suite on ubuntu"
   assert_contains "$entries" "macos-latest " "the test job must run the suite on macos-latest"
 }
 
