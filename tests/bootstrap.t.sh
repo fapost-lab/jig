@@ -993,6 +993,18 @@ test_share_counts_the_relative_target_through_a_tracked_link() {
   assert_relative_link "$OUT/lib/packages/alpha" index.php
 }
 
+# A directory of repositories nobody declared is named at the moment its
+# absence bites: the worktree just made has no packages.
+test_bootstrap_names_a_directory_worktree_share_should_name() {
+  bootstrap_setup_nested
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  assert_contains "$ERR" "packages/ holds separate repositories this worktree cannot reach; add \`worktree.share: [packages]\` to .ai/config.yaml"
+}
+
 # The named risk, measured on 2026-09-24 with `carry`: a commit and an
 # uncommitted file made in a package inside the worktree, then `git worktree
 # remove` without --force. It returns 0 and, the path being ignored, deletes

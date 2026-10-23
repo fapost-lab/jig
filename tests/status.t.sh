@@ -23,6 +23,42 @@ test_status_initialised_no_drift_no_tasks() {
   assert_contains "$OUT" "housekeeping: never"
 }
 
+# --- a directory worktree.share should name ----------------------------------
+
+# status_share_repo <dir> — a separate repository at <dir>, as a package under
+# edit is.
+status_share_repo() {
+  mkdir -p "$1"
+  git -C "$1" init -q
+}
+
+test_status_hints_a_directory_of_repositories_worktree_share_should_name() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  printf 'packages/\nvendor/\nlinked/\n' >> .gitignore
+  status_share_repo packages/alpha
+  # Two levels down, as composer --prefer-source leaves it: not a candidate.
+  status_share_repo vendor/acme/lib
+  # A `.git` file is a worktree, not a package.
+  mkdir -p linked/tree
+  printf 'gitdir: /nowhere\n' > linked/tree/.git
+  # Not ignored: git sees it, and sharing it would strand a worktree.
+  status_share_repo seen/one
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "hint: packages/ holds separate repositories a task worktree cannot reach; add \`worktree.share: [packages]\` to .ai/config.yaml"
+  assert_not_contains "$OUT" "hint: vendor/"
+  assert_not_contains "$OUT" "hint: linked/"
+  assert_not_contains "$OUT" "hint: seen/"
+
+  # Declared with the slash the docs show it with, as the bootstrap reads it.
+  printf 'worktree.share: [packages/]\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "holds separate repositories"
+}
+
 # --- config.local (ADR-0038) --------------------------------------------------
 
 test_status_omits_config_local_lines_when_there_is_no_local_file() {
