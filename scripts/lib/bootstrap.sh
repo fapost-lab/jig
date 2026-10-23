@@ -733,6 +733,15 @@ jig_bootstrap_worktree() {
 
   started=$(date +%s 2>/dev/null || printf '0')
 
+  # A directory that should be shared and is not leaves this worktree without
+  # it; say so here, where its absence is about to bite (jig_share_candidates).
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    jig_warn "$verb: $path/ holds separate repositories this worktree cannot reach; add \`worktree.share: [$path]\` to $JIG_AI_DIR/config.yaml, then run \`jig task bootstrap\`"
+  done <<EOF
+$(jig_share_candidates "$owner_root")
+EOF
+
   # Shared first. A directory declared as shared is a source of truth, and the
   # carry below refuses to copy anything that overlaps one — so every share
   # declaration that names a path at all counts, whether or not it could be

@@ -224,6 +224,7 @@ _status_report() {
     printf '%s\n' "manifest: missing"
   fi
   _status_new_release_hint
+  _status_share_hint
 
   # Drift: one pass over the manifest, then one git process for every file
   # still on disk (jig_hash_list). A manifest_hash_of and a jig_hash per path
@@ -2713,6 +2714,19 @@ _status_latest_release_available() {
   jig_release_version "v$global" >/dev/null 2>&1 || return 1
   jig_version_newer "$latest" "$global" || return 1
   printf '%s\n' "$latest"
+}
+
+# _status_share_hint — a line per directory `worktree.share` should name and
+# does not (jig_share_candidates): without it a task worktree has no packages.
+# The key is the team's, in .ai/config.yaml, so it is named, not written.
+_status_share_hint() {
+  local dir
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    printf '%s\n' "hint: $dir/ holds separate repositories a task worktree cannot reach; add \`worktree.share: [$dir]\` to $JIG_AI_DIR/config.yaml"
+  done <<EOF
+$(jig_share_candidates "$JIG_PROJECT")
+EOF
 }
 
 # _status_new_release_hint — the one line the plain-text report shows when

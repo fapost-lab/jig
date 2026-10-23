@@ -284,7 +284,9 @@ that: a copy gives the worktree a second clone of every package, work done there
 the checkout beside it, and `git worktree remove` deletes an ignored folder without a word,
 commits included.
 
-Declare such a folder as shared instead:
+Declare such a folder as shared instead. You do not have to spot it yourself: when a folder that
+Git ignores holds separate repositories and nothing shares it, `jig status` and `jig task start
+--worktree` name it and the line to add.
 
 ```yaml
 # .ai/config.yaml

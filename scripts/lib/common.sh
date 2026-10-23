@@ -2599,6 +2599,47 @@ jig_relpath_from() {
   '
 }
 
+# jig_share_candidates <root> — the top-level directories of the checkout at
+# <root> that `worktree.share` should name and does not, one per line: ignored
+# by git, not a repository itself, holding at least one separate repository
+# directly inside (a `.git` directory; a `.git` file is a worktree, not a
+# package). Composer's path repositories under `packages/` are the case; a
+# `vendor/<vendor>/<package>/.git` from --prefer-source is two levels down and
+# is not. Read by `jig status` and by a worktree's bootstrap, which say so
+# (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it).
+jig_share_candidates() {
+  local root="$1" entry dir child declared="" one
+  # Declared the way the bootstrap reads them: `packages/` names `packages`.
+  while IFS= read -r one; do
+    while :; do
+      case "$one" in
+        ?*/) one=${one%/} ;;
+        *) break ;;
+      esac
+    done
+    [ -z "$one" ] || declared="$declared$one
+"
+  done <<EOF
+$(cfg_list_lines worktree.share)
+EOF
+  while IFS= read -r entry; do
+    dir=${entry%/}
+    [ -n "$dir" ] || continue
+    case "$dir" in */*) continue ;; esac
+    [ "$entry" != "$dir" ] || continue
+    [ ! -e "$root/$dir/.git" ] || continue
+    ! jig_has_line "$dir" "$declared" || continue
+    for child in "$root/$dir"/*/.git "$root/$dir"/.[!.]*/.git; do
+      if [ -d "$child" ]; then
+        printf '%s\n' "$dir"
+        break
+      fi
+    done
+  done <<EOF
+$(git -C "$root" ls-files --others --ignored --exclude-standard --directory 2>/dev/null)
+EOF
+}
+
 # Path of <file> relative to <base>, both absolute. Pure string operation.
 jig_relpath() {
   local base="${2%/}/" file="$1"
