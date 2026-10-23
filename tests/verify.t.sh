@@ -2461,6 +2461,34 @@ test_verify_ci_env_ignores_a_live_record_and_leaves_it_untouched() {
 
 # verify.busy_ttl: 0 is the escape hatch: a live record is ignored outright,
 # nothing waits and nothing is written.
+# verify_uutils_mkdir — put first on PATH a `mkdir` that answers as uutils' does at its
+# worst: success though the directory is already there (Ubuntu 25.10 and
+# later; adr-20261023-a-claim-is-an-exclusive-create).
+verify_uutils_mkdir() {
+  local real
+  real=$(command -v mkdir)
+  mkdir -p uubin
+  printf '#!/bin/sh\nexec "%s" -p "$@"\n' "$real" > uubin/mkdir
+  chmod +x uubin/mkdir
+  PATH="$PWD/uubin:$PATH"
+}
+
+# `run` is the claim of the record, not `busy/`: where `mkdir` succeeds for a
+# second maker, the second claim still fails and the first record stands.
+test_verify_busy_claim_excludes_a_second_where_mkdir_excludes_nobody() {
+  verify_uutils_mkdir
+  mkdir -p rt
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    . "$JIG_LIB/verify.sh"
+    JIG_PROJECT=first; _verify_busy_claim "$PWD/rt" || exit 3
+    JIG_PROJECT=second; _verify_busy_claim "$PWD/rt" && exit 4
+    exit 0'
+  assert_eq 0 "$RC" "the second claim was granted (rc $RC): $OUT"
+  assert_file_contains rt/busy/run "checkout: first"
+}
+
 test_verify_busy_ttl_zero_disables_the_mechanism() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null

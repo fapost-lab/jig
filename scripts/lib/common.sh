@@ -2043,9 +2043,9 @@ jig_status_page_flush() {
 # The value is the highest numeric **name** in `.ai/runtime/revision/` of the
 # clone's main checkout (jig_config_clone_root: every worktree raises and reads
 # the same one, ADR-0008 as amended 2026-09-25). Raising it claims the next
-# name with `mkdir <n+1>`: mkdir is atomic on POSIX and on NTFS under Git Bash
-# (CreateDirectoryW) alike, so of two writers that both saw <n> exactly one
-# creates <n+1> and the other gets EEXIST, reads again and claims <n+2>; a
+# name, a file created exclusively (jig_claim_file, O_EXCL on POSIX and
+# CREATE_NEW on NTFS under Git Bash), so of two writers that both saw <n> exactly
+# one creates <n+1> and the other gets EEXIST, reads again and claims <n+2>; a
 # claim made stale by a long stall is caught and made again (jig_revision_bump).
 # No increment is lost, and there is no lock to go stale, wait for or break. A
 # reader only lists names and never opens one. Not `mv <n> <n+1>`: Git Bash
@@ -2089,6 +2089,21 @@ _jig_revision_scan() {
       _JIG_REV_OLD="$_JIG_REV_OLD $n"
     fi
   done
+}
+
+# jig_claim_file <path> — create <path>, empty, only if nothing is there: exit
+# 0 when this process created it and 1 when it already existed (or could not
+# be made). A caller that needs content renames a finished file over it, so a
+# reader never sees a partial one (ADR-0008).
+#
+# The claim of every lock and counter in Jig (adr-20261023-a-claim-is-an-exclusive-create).
+# It is bash's own noclobber, an open with O_EXCL, so no external tool decides
+# it: uutils' `mkdir`, the default on Ubuntu 25.10 and later, returns success to
+# both of two processes making one directory (110 of 300 races, measured on
+# ubuntu:26.04), which is why `mkdir` is not a claim anywhere here. Git Bash
+# maps O_EXCL to CREATE_NEW, which is as exclusive.
+jig_claim_file() {
+  ( set -C; : > "$1" ) 2>/dev/null
 }
 
 # jig_revision_read — print the clone's revision: an integer, `0` when Jig has
@@ -2140,10 +2155,10 @@ _JIG_REV_KEEP=16
 # directory empty and seeded), stalled, and meanwhile others claimed <n+1> and
 # far beyond and cleared it, would create <n+1> again — below the counter,
 # counting nothing. Clearing <n+1> took a claim more than _JIG_REV_KEEP above
-# it, and the highest name never goes down, so after its mkdir every claim
+# it, and the highest name never goes down, so after its claim every claim
 # reads again: a highest name more than _JIG_REV_KEEP above its own makes it
 # stale, and it is withdrawn and made again. A fresh claim is misjudged only if
-# that many raises land between its mkdir and the next read, microseconds
+# that many raises land between its claim and the next read, microseconds
 # apart — and then it counts once too often, never too few.
 #
 # A first write (or the first after `.ai/runtime` was lost) claims the current
@@ -2169,14 +2184,14 @@ jig_revision_bump() {
       next=$((seen + 1))
     fi
     # The claim: exactly one writer creates <next>; the loser reads again.
-    mkdir "$dir/$next" 2>/dev/null || continue
+    jig_claim_file "$dir/$next" || continue
     _jig_revision_scan "$dir"
     if [ "${_JIG_REV:-$next}" -le "$((next + _JIG_REV_KEEP))" ]; then
       _jig_revision_clear "$dir" "$((next - _JIG_REV_KEEP))" "$old"
       return 0
     fi
     # Stale: <next> had been claimed and cleared before. Withdraw it.
-    rmdir "$dir/$next" 2>/dev/null || true
+    rm -f "$dir/$next" 2>/dev/null || true
   done
   jig_warn "could not raise the clone revision in $dir; a reader may miss this change"
   return 0
@@ -2196,14 +2211,14 @@ jig_record_changed() {
 # for a write that must be refused when the clone changed after its caller
 # read <expected> (adr-20261019-the-queue-is-one-file-written-against-a-revision).
 #
-# The claim is jig_revision_bump's `mkdir <expected+1>` made exact. Before it,
+# The claim is jig_revision_bump's claim of <expected+1> made exact. Before it,
 # the highest name must be <expected> (for 0, there must be no name at all):
 # otherwise the call is stale and claims nothing — a revision from before a
 # lost `.ai/runtime`, from the future, or simply old. Of two writers holding
 # one revision at most one then creates the name. After it, the claim must be
 # the highest name; when a higher one appeared in between — a cleared name
-# created again, another writer's raise — it is withdrawn: `rmdir` of the
-# digits-only name this call just created, never anything else. A claim is
+# created again, another writer's raise — it is withdrawn: `rm -f` of the
+# digits-only name, a file, this call just created, never anything else. A claim is
 # withdrawn only from under a higher name, so the clone's revision never goes
 # down. 0 claims the time in seconds, the seed of a first raise, and two
 # writers holding 0 claim different seconds; so a claim of 0 must also be the
@@ -2229,18 +2244,18 @@ jig_revision_claim() {
     [ "$_JIG_REV" = "$expected" ] || return 1
     next=$((expected + 1))
   fi
-  mkdir "$dir/$next" 2>/dev/null || return 1
+  jig_claim_file "$dir/$next" || return 1
   _jig_revision_scan "$dir"
   if [ "$_JIG_REV" = "$next" ]; then
     # For 0 the names two writers claim differ (each its own second), so
-    # mkdir alone excludes nobody: the claim stands only alone. A name below
+    # the claim alone excludes nobody: it stands only alone. A name below
     # it is another writer's first raise or claim of 0; this one stays, the
     # highest name: withdrawing it would lower the revision. It counts as one
     # more raise.
     [ "$expected" != 0 ] || [ -z "$_JIG_REV_OLD" ] || return 1
     return 0
   fi
-  rmdir "$dir/$next" 2>/dev/null || true
+  rm -f "$dir/$next" 2>/dev/null || true
   return 1
 }
 

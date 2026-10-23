@@ -475,6 +475,34 @@ test_housekeeping_lock_acquire_claims_a_fresh_directory() {
   assert_file_contains "$dir/busy/run" "pid: "
 }
 
+# hk_uutils_mkdir — put first on PATH a `mkdir` that answers as uutils' does at its
+# worst: success though the directory is already there. Ubuntu 25.10 and later
+# ship it, and two racing `mkdir`s both succeeded 110 times in 300 on
+# ubuntu:26.04; this makes that race the rule, so a claim made by `mkdir` fails
+# every time (adr-20261023-a-claim-is-an-exclusive-create).
+hk_uutils_mkdir() {
+  local real
+  real=$(command -v mkdir)
+  mkdir -p uubin
+  printf '#!/bin/sh\nexec "%s" -p "$@"\n' "$real" > uubin/mkdir
+  chmod +x uubin/mkdir
+  PATH="$PWD/uubin:$PATH"
+}
+
+test_housekeeping_lock_is_held_where_mkdir_excludes_nobody() {
+  hk_uutils_mkdir
+  local dir="$PWD/lock"
+  mkdir -p "$dir/busy"
+  sleep 30 &
+  local holder_pid=$!
+  printf 'checkout: elsewhere\npid: %s\n' "$holder_pid" > "$dir/busy/run"
+
+  run hk_lock_acquire "$dir"
+  assert_eq 1 "$RC" "a live holder's lock was taken by a second claim"
+  assert_file_contains "$dir/busy/run" "pid: $holder_pid"
+  kill "$holder_pid" 2>/dev/null || true
+}
+
 test_housekeeping_lock_acquire_refuses_while_a_live_holder_has_it() {
   local dir="$PWD/lock"
   mkdir -p "$dir/busy"

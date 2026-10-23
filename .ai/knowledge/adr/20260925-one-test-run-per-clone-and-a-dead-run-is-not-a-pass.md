@@ -98,6 +98,11 @@ The body — `checkout:` and `pid:` — is written straight into the claimed dir
 claimant can write there, a reader that catches a partial file falls back to the expiry, and
 a leftover temporary would make `rmdir` refuse for good.
 
+> **Amendment (2026-10-23).** The claim is no longer a `mkdir`: uutils' `mkdir` (Ubuntu 25.10 and
+> later) lets two makers both succeed. `busy/run` is created exclusively by bash instead
+> (adr-20261023-a-claim-is-an-exclusive-create).
+
+
 **A record is live only when two independent tests both pass**, and they answer different
 failures:
 

@@ -99,6 +99,10 @@ a new dependency (ADR-0002, ADR-0037).
 - **`remove` takes the item and what it waits for out; what waits for it stays**: a dependency is a
   relation between tasks, not a place in the queue.
 
+> **Amendment (2026-10-23).** `mkdir <E+1>` is now `jig_claim_file` of `<E+1>`, a file, withdrawn
+> with `rm -f`: uutils' `mkdir` (Ubuntu 25.10 and later) lets two makers both succeed
+> (adr-20261023-a-claim-is-an-exclusive-create). The rest of the claim is unchanged.
+
 ## Alternatives
 
 - **A `mkdir` lock around read, change and write.** It would close the window below, but a lock
