@@ -51,6 +51,11 @@ entry of the same name.** The link is a symlink, or an NTFS junction where symli
 (`jig_link_dir`, ADR-0037). A file entry is linked only by a symlink; where only junctions work it
 is named and skipped, because a copy of it would diverge. Link targets are absolute.
 
+> **Amendment (2026-10-23).** "Link targets are absolute" is replaced by
+> adr-20261023-shared-entries-link-by-relative-path: a symlink's target is relative, counted from the
+> mirror's place in the worktree, so the mirror resolves in a container that mounts the common
+> parent; a junction's stays absolute.
+
 It is a team key in `.ai/config.yaml`, beside `worktree.carry`, and **never a profile key**: what
 is shared rather than copied is always one project's layout, never a property of a stack.
 
