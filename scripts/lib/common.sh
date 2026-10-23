@@ -2620,7 +2620,7 @@ jig_share_candidates() {
     [ -z "$one" ] || declared="$declared$one
 "
   done <<EOF
-$(cfg_list_lines worktree.share 2>/dev/null)
+$(cfg_list_lines worktree.share)
 EOF
   while IFS= read -r entry; do
     dir=${entry%/}
