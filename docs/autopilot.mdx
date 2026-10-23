@@ -404,7 +404,9 @@ A run can take a phase of a roadmap instead of a single task:
 > *"Run phase 4 of the autopilot spec on autopilot."*
 
 The agent becomes a **coordinator**. For each wave of that phase it files the wave's tasks,
-gives each one its own folder and its own agent, and those agents work at the same time. The
+gives each one its own folder and its own agent, and those agents work at the same time. They
+are the runtime's subagents, not sessions you open: the run goes on between your messages, and the
+Claude Code desktop app starts a session only on your own words. The status page shows their progress. The
 coordinator writes no code itself: it opens each task's pull request, keeps the merge queue,
 and after every merge ticks the roadmap item off and brings the other branches of the wave up
 to date. A wave finishes; then the next one starts.

@@ -204,7 +204,10 @@ One checkout holds one piece of uncommitted work. When an agent is already worki
 start something else, say *"start the caching task in a separate worktree"*. The agent creates a
 second working copy of the repository next to it (in `../<project>.worktrees/<id>` by default), cut
 from the freshest main branch, and leaves the current work alone. Open a new agent session in that
-folder — the agent tells you the path; some runtimes can switch there on their own.
+folder — the agent tells you the path; some runtimes can switch there on their own. Where the
+runtime can open a session for you (the Claude Code desktop app can), the agent starts it in that
+folder as soon as you ask, so you can open it and watch or talk to it. Ask in the same message:
+the app lets an agent start a session only on your own words, not later on its own.
 
 A worktree is a Git checkout, so it starts with exactly what Git tracks — no `vendor/`,
 `node_modules/` or `.env`, since every project with an install step keeps those out of Git.

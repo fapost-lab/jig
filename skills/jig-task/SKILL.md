@@ -129,6 +129,12 @@ that path only. If your runtime can switch this session into an existing worktre
 and run every command from there; otherwise tell the user to open a new agent session in
 that path. Either way, do not continue the task from here.
 
+**Where your runtime can open that session itself** (Claude Code desktop's `start_session`),
+do so for parallel work the person asked for: a task already filed with `jig task new` and
+started in its worktree, the session opened in that path and told the task id — **in the same
+turn they asked**, since a turn an event began may be refused
+([jig-autopilot](../jig-autopilot/SKILL.md) §2, where autopilot uses subagents instead).
+
 Write the task's own documents through jig, there and everywhere else — never with your
 editing tools, and never with a shell redirection:
 
