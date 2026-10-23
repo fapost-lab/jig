@@ -2576,6 +2576,29 @@ jig_hash_list() {
   fi
 }
 
+# jig_relpath_from <from> <to> — the relative path from directory <from> to
+# path <to> (both absolute, no trailing slash required). Pure string
+# computation, no filesystem access, so it also works for symlink targets that
+# do not exist yet.
+jig_relpath_from() {
+  awk -v from="$1" -v to="$2" '
+    BEGIN {
+      n1 = split(from, a, "/")
+      n2 = split(to, b, "/")
+      i = 1
+      while (i <= n1 && i <= n2 && a[i] == b[i]) i++
+      up = ""
+      for (j = i; j <= n1; j++) if (a[j] != "") up = up "../"
+      down = ""
+      for (j = i; j <= n2; j++) if (b[j] != "") down = down b[j] "/"
+      result = up down
+      sub(/\/$/, "", result)
+      if (result == "") result = "."
+      print result
+    }
+  '
+}
+
 # Path of <file> relative to <base>, both absolute. Pure string operation.
 jig_relpath() {
   local base="${2%/}/" file="$1"

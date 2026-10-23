@@ -711,7 +711,7 @@ _upgrade_link_one() {
 # framework-owned item for the *current* config is linked — .ai/scripts,
 # each active profile, each active adapter's skills — exactly the way
 # `jig init --link` places them (domains/install). Sources init.sh for
-# _init_place_symlink/_init_relpath so the two relative-symlink code paths
+# _init_place_symlink so the two relative-symlink code paths
 # never diverge; sourcing a command library only defines its functions, it
 # does not run cmd_init.
 _upgrade_link() {

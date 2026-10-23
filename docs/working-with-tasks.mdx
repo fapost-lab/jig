@@ -305,6 +305,11 @@ Two things to know:
   that existed when it was created. Run `jig task bootstrap <id>` and the new ones are linked in;
   nothing that is already there is touched. A folder you create *inside* the worktree's
   `packages/` is that worktree's own, not shared — create new packages in the main checkout.
+- **The links work inside a container.** On macOS and Linux each link points to its package by a
+  relative path, so a container that mounts the folder holding both your checkout and its
+  worktrees — devilbox's `/shared/httpd`, say — finds the packages there as well as on your
+  machine. A worktree made by an earlier Jig keeps its links by full path; a worktree made anew
+  gets the new ones.
 
 If `packages/` is tracked by your project's Git, the worktree already has it and the declaration
 does nothing.

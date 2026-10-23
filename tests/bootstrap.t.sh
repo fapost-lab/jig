@@ -896,6 +896,103 @@ test_share_mirrors_a_directory_one_link_per_entry() {
   assert_file packages/alpha/new.php
 }
 
+# share_symlinks_or_skip — skip under Git Bash, where the mirror's links keep
+# an absolute target (junctions, or native symlinks MSYS makes only to a
+# target that exists), and where `ln -s` makes no symlink at all.
+share_symlinks_or_skip() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) skip "Git Bash links a shared entry by an absolute target" ;;
+  esac
+  mkdir -p .probe-target
+  ln -s .probe-target .probe-link 2>/dev/null || true
+  if [ ! -L .probe-link ]; then
+    rm -rf .probe-target .probe-link
+    skip "this machine makes no symbolic links"
+  fi
+  rm -rf .probe-target .probe-link
+}
+
+# assert_relative_link <link> <file-inside> — <link> holds a relative target
+# and resolves to a directory holding <file-inside>.
+assert_relative_link() {
+  case "$(readlink "$1")" in
+    /*) fail "the link $1 holds an absolute target: $(readlink "$1")" ;;
+  esac
+  assert_file "$1/$2"
+}
+
+# A container mounts a common parent of the checkout and its worktrees under
+# another path (devilbox: ~/Projects/php as /shared/httpd); an absolute target
+# leads nowhere there. A relative one resolves wherever the parent is seen,
+# which moving that parent proves without a container
+# (adr-20261023-shared-entries-link-by-relative-path).
+test_share_links_by_a_relative_target_that_survives_moving_the_parent() {
+  bootstrap_setup_nested
+  share_symlinks_or_skip
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt parent rel
+  wt=$(cd -P "$OUT" && pwd -P)
+  assert_relative_link "$wt/packages/alpha" index.php
+
+  # What the owner gains later is topped up the same way.
+  share_repo packages/gamma
+  run jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  assert_relative_link "$wt/packages/gamma" index.php
+
+  parent=$(cd -P .. && pwd -P)
+  rel=${wt#"$parent"/}
+  cd "$parent" || return 1
+  mkdir mounted
+  mv repo "${rel%%/*}" mounted/
+  assert_file "mounted/$rel/packages/alpha/index.php" \
+    "the mirror lost the owner's packages when their common parent moved"
+  assert_file "mounted/$rel/packages/gamma/index.php"
+}
+
+# A worktree root reached through a link at another depth still gets a
+# target that resolves: the `../` are counted where the mirror really is.
+test_share_counts_the_relative_target_through_a_linked_worktree_root() {
+  bootstrap_setup_nested
+  share_symlinks_or_skip
+  mkdir -p ../deep/er/trees
+  ln -s deep/er/trees ../trees
+  printf 'git.worktree_root: ../trees\n' >> .ai/config.local.yaml
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC" "task start failed: $ERR"
+  assert_relative_link "$OUT/packages/alpha" index.php
+}
+
+# The shared path may pass through a link the project tracks itself; the
+# `../` are counted from where the mirror really is, not from its spelling.
+test_share_counts_the_relative_target_through_a_tracked_link() {
+  bootstrap_setup_nested
+  share_symlinks_or_skip
+  mkdir -p src/deep/lib
+  printf 'keep\n' > src/deep/lib/.keep
+  ln -s src/deep/lib lib
+  printf 'lib/packages/\n' >> .gitignore
+  git add -A
+  git commit -q -m "a tracked link"
+  printf 'worktree.share: [lib/packages]\n' >> .ai/config.yaml
+  share_repo lib/packages/alpha
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC" "task start failed: $ERR"
+  assert_contains "$ERR" "shared lib/packages: linked 1 entries"
+  assert_relative_link "$OUT/lib/packages/alpha" index.php
+}
+
 # The named risk, measured on 2026-09-24 with `carry`: a commit and an
 # uncommitted file made in a package inside the worktree, then `git worktree
 # remove` without --force. It returns 0 and, the path being ignored, deletes
