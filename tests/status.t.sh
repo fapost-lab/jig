@@ -3521,3 +3521,93 @@ test_status_queue_terminal_shows_the_place_as_notes() {
   assert_eq 0 "$RC" "$OUT"
   printf '%s\n' "$OUT" | grep -Eq '^ +queue: waits for task:b: after b$' || fail "no detail: $OUT"
 }
+
+# --- the queue's advice (next-advice-readers; adr-20261022-the-next-task-is-advised-from-the-queue) ---
+
+# _status_next_queue — an installed project with two filed tasks and a queue.
+_status_next_queue() {
+  fixture_jig_repo
+  fixture_task a task/a active "class:T1"
+  fixture_task b task/b active "class:T1"
+  jig queue set a --priority 1 >/dev/null
+  jig queue set b --priority 2 >/dev/null
+}
+
+test_status_prints_the_queue_advice_when_a_queue_exists() {
+  local want
+  _status_next_queue
+  run jig queue next
+  assert_eq 0 "$RC" "$OUT"
+  want=$(printf '%s\n' "$OUT" | sed -n 1p)
+  assert_contains "$want" "next: task:a — "
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | grep -c '^next: ')"
+  assert_eq "$want" "$(printf '%s\n' "$OUT" | grep '^next: ')"
+  # After the task lines, before the current task.
+  assert_eq "next: " "$(printf '%s\n' "$OUT" | grep -A1 '^task b ' | sed -n 2p | cut -c1-6)"
+}
+
+test_status_prints_next_none_with_the_reason_when_nothing_is_advised() {
+  fixture_jig_repo
+  fixture_task a task/a active "class:T1"
+  jig queue set a --priority 1 >/dev/null
+  jig task pause a >/dev/null
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "next: none — every queued task is paused"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | grep -c '^next: ')"
+}
+
+test_status_has_no_advice_line_without_a_queue_file() {
+  fixture_jig_repo
+  fixture_task a task/a active "class:T1"
+  [ ! -f .ai/runtime/queue ] || fail "the fixture has a queue"
+  run jig status
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "next:"
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "next:"
+}
+
+test_status_terminal_shows_the_advice_among_the_tasks_and_not_under_needs() {
+  _status_next_queue
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "next: task:a — "
+  # Whatever else needs the reader (the fixture has no session hook), not this.
+  assert_not_contains "$OUT" "warn  next:"
+  assert_eq "" "$(printf '%s\n' "$OUT" | awk '/^-- /{s=$2} /next: task:a/ && s=="Needs"{print "needs"}')"
+  # The row sits in the tasks section.
+  assert_eq "Tasks" "$(printf '%s\n' "$OUT" | awk '/^-- /{s=$2} /next: task:a/{print s}')"
+  # `next: none` is an answer too, never an item that needs the reader.
+  jig task pause a >/dev/null
+  jig task pause b >/dev/null
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "next: none — every queued task is paused"
+  assert_eq "Tasks" "$(printf '%s\n' "$OUT" | awk '/^-- /{s=$2} /next: none/{print s}')"
+  assert_not_contains "$OUT" "warn  next:"
+}
+
+test_status_html_shows_the_next_task_only_with_a_queue() {
+  local page
+  fixture_jig_repo
+  fixture_task a task/a active "class:T1"
+  run jig status --html
+  assert_eq 0 "$RC" "$OUT"
+  page=$(cat .ai/runtime/status.html)
+  assert_not_contains "$page" "Next task"
+  jig queue set a --priority 1 >/dev/null
+  run jig status --html
+  assert_eq 0 "$RC" "$OUT"
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" "<dt>Next task</dt><dd>task:a — "
+}
+
+test_status_json_is_unchanged_by_the_queue() {
+  _status_next_queue
+  run jig status --json
+  assert_not_contains "$OUT" "next:"
+}

@@ -8,6 +8,33 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.32.0 — 2026-10-23
+
+Jig now tells you which task to take next. The queue from 0.31.0 held priority, order and
+dependencies, but you or your agent still picked by hand, and a task waiting for another could be
+started first. One command now answers from the queue, and `jig status`, your agent and Jig UI all
+read that one answer.
+
+- **Priorities have one meaning.** `0` broken or dangerous (data loss, a destructive operation, an
+  install that fails), `1` a bug a user meets, `2` not a bug but it stops a user doing their own
+  work, `3` friction, `4` an improvement or a new capability, `5` some day — so "bugs first" is set
+  the same way by everyone. See [Order the work](/manual-control#order-the-work).
+- **`jig queue next`** names the task to take: never one that waits for a dependency whose change
+  has not landed yet, then the most urgent priority (`none` last), a task already started before
+  one not started, then position — tasks in different epics by the epics' places. With nothing to
+  take it says why: everything waits, everything is paused, or the queue holds nothing. A
+  dependency on an abandoned or deleted task is called broken, with the `jig queue undepend` to
+  run; one Jig cannot judge yet asks you to run `jig housekeeping`. Active tasks that are not in the
+  queue are counted, not advised. It reads only: nothing is written and nothing asks the network.
+- **`jig queue next --json`** gives the same answer in the shared envelope — the advised task, the
+  reason when there is none, every dependency holding a task back with its state, and the count of
+  tasks outside the queue. See [Which task is next](/reading-jig-as-data#which-task-is-next).
+- **`jig status` shows the advice** as a `next:` line after the task lines, and the status page as
+  "Next task". Without a queue file both look as they did.
+- **Your agent asks instead of choosing.** When you ask the `jig-task` skill "what next" or "take
+  the next one", it runs `jig queue next`, names the task and starts it; on `next: none` it tells
+  you why and does not pick one itself.
+
 ## 0.31.0 — 2026-10-21
 
 Jig can now be planned with. A queue keeps the priority, order and dependencies of your tasks and

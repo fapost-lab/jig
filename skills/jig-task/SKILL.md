@@ -1,6 +1,6 @@
 ---
 name: jig-task
-description: Start or resume a task with Jig — classify it by risk, create its workspace and choose the workflow. Use when the user describes work to do ("add …", "fix …", "refactor …"), asks to start or continue a task, or says "jig task", "classify this", "what process does this need".
+description: Start or resume a task with Jig — classify it by risk, create its workspace and choose the workflow. Use when the user describes work to do ("add …", "fix …", "refactor …"), asks to start or continue a task, asks what to take next ("what next", "take the next one"), or says "jig task", "classify this", "what process does this need".
 ---
 
 # jig-task — classify and route
@@ -58,6 +58,11 @@ Then ask which merged tasks wait to be closed. The dry run changes nothing:
 For each task flagged `needs-consolidation`, name it and ask the user whether it can be
 closed — a fix may still be expected. On yes, close it with `jig-consolidate` §6. Never
 close without asking, and do not hold up the work the user came for while waiting.
+
+When the person asks what to take next ("what next", "take the next one"), run
+`.ai/scripts/jig queue next` instead of choosing. Name the task and its place, then start it
+through this skill (§3). On `next: none`, report its reason and the lines under it and stop:
+do not pick a task yourself.
 
 ## 2. Classify
 
