@@ -10,7 +10,7 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/json.sh
   - schemas/json.md
-summary: Why the clone revision is the highest name in the main checkout's .ai/runtime/revision/, raised by claiming the next one with mkdir (atomic on POSIX and NTFS, unlike Git Bash's emulated mv) after every Jig write through jig_record_changed, read by --json before the data, seeded with the time.
+summary: Why the clone revision is the highest name in the main checkout's .ai/runtime/revision/, raised by claiming the next one exclusively (jig_claim_file since adr-20261023; mkdir before) after every Jig write through jig_record_changed, read by --json before the data, seeded with the time.
 ---
 # The clone's revision is the highest name in one directory, raised by claiming the next with mkdir
 
@@ -98,6 +98,11 @@ caught; and when a read takes it relative to its data.
   file and an `mv` (conventions/shell.md), which is why `mv` is where a writer shows. A second test
   runs each writing command in a fixture and requires the revision to rise, and each read to leave
   it.
+
+> **Amendment (2026-10-23).** The claim is no longer a `mkdir`: uutils' `mkdir` (Ubuntu 25.10 and
+> later) lets two makers both succeed. The name `<n+1>`, a file, is created exclusively by bash instead
+> (adr-20261023-a-claim-is-an-exclusive-create).
+
 
 ## Alternatives
 

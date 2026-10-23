@@ -154,12 +154,9 @@ jobs:
       # platform, not a reason to cancel the others and lose the answer.
       fail-fast: false
       matrix:
-        # Linux is pinned to 24.04 until the task atomic-claim-without-mkdir
-        # lands: ubuntu-latest became 26.04, whose uutils `mkdir` is not
-        # atomic, and Jig still claims with it.
         include:
-          - { os: ubuntu-24.04, shard: '1/2' }
-          - { os: ubuntu-24.04, shard: '2/2' }
+          - { os: ubuntu-latest, shard: '1/2' }
+          - { os: ubuntu-latest, shard: '2/2' }
           - { os: macos-latest, shard: '1/3' }
           - { os: macos-latest, shard: '2/3' }
           - { os: macos-latest, shard: '3/3' }

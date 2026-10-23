@@ -68,6 +68,32 @@ test_task_new_creates_state_with_expected_keys_in_order() {
   assert_file_contains .ai/workspace/tasks/T-1/state "updated_at: $(date +%Y-%m-%d)"
 }
 
+# The state file is the claim on the id, not the directory. A `mkdir` that
+# succeeds for a second maker lets two `task new` past the existence check at
+# once; this one plays the race out: making the task's directory, it also lets
+# the rival's state land first, then reports success as uutils does.
+test_task_new_refuses_a_taken_id_where_mkdir_excludes_nobody() {
+  task_setup
+  local real
+  real=$(command -v mkdir)
+  mkdir -p uubin
+  cat > uubin/mkdir <<EOF
+#!/bin/sh
+"$real" -p "\$@" || exit 1
+for d in "\$@"; do
+  case "\$d" in
+    */tasks/T-1) printf 'task_id: T-1\\nclass: T2\\n' > "\$d/state" ;;
+  esac
+done
+EOF
+  chmod +x uubin/mkdir
+  PATH="$PWD/uubin:$PATH"
+  run jig task new T-1 --class T1
+  assert_eq 1 "$RC" "task new wrote over a state another maker had filed"
+  assert_contains "$OUT" "task already exists: T-1"
+  assert_file_contains .ai/workspace/tasks/T-1/state "class: T2"
+}
+
 test_task_new_with_class_and_domains_order() {
   task_setup
   run jig task new T-1 --class T2 --domains flow,triggers

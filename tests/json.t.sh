@@ -310,7 +310,9 @@ jig_revision_read'
   # Cleared only more than 16 below the claim: 10, 11 and the file 20 go,
   # 40 stays.
   assert_eq "$(printf '40\n45\n46\nnotes')" "$(ls .ai/runtime/revision)"
-  assert_dir .ai/runtime/revision/46
+  # A claim is a file now (adr-20261023-a-claim-is-an-exclusive-create); the
+  # directories an earlier version claimed are read and cleared as they are.
+  assert_file .ai/runtime/revision/46
 }
 
 # A writer that read <n>, stalled while others claimed far past it and cleared
@@ -355,6 +357,38 @@ jig_revision_read'
   assert_eq "" "$ERR"
   assert_eq "$((ahead + 1))" "$OUT"
   assert_eq "$(printf '%s\n%s' "$ahead" "$((ahead + 1))")" "$(ls .ai/runtime/revision)"
+}
+
+# json_uutils_mkdir — put first on PATH a `mkdir` that answers as uutils' does at its
+# worst: success though the directory is already there. Ubuntu 25.10 and later
+# ship it, and two racing `mkdir`s both succeeded 110 times in 300 on
+# ubuntu:26.04; this makes that race the rule, so a claim made by `mkdir` fails
+# every time (adr-20261023-a-claim-is-an-exclusive-create).
+json_uutils_mkdir() {
+  local real
+  real=$(command -v mkdir)
+  mkdir -p uubin
+  printf '#!/bin/sh\nexec "%s" -p "$@"\n' "$real" > uubin/mkdir
+  chmod +x uubin/mkdir
+  PATH="$PWD/uubin:$PATH"
+}
+
+test_json_revision_loses_no_increment_where_mkdir_excludes_nobody() {
+  json_uutils_mkdir
+  mkdir -p .ai/runtime/revision
+  : > .ai/runtime/revision/100
+  _json_rev_script w.sh '
+i=0
+while [ "$i" -lt 20 ]; do jig_revision_bump; i=$((i + 1)); done'
+  bash w.sh 2> w1.err &
+  local p1=$!
+  bash w.sh 2> w2.err &
+  local p2=$!
+  wait "$p1" || fail "writer 1 failed: $(cat w1.err)"
+  wait "$p2" || fail "writer 2 failed: $(cat w2.err)"
+  _json_rev_script r.sh 'jig_revision_read'
+  _json_run_script r.sh
+  assert_eq 140 "$OUT"
 }
 
 # mkdir is the claim: of two writers that saw the same value one creates the
@@ -403,15 +437,16 @@ jig_revision_read'
 }
 
 # _json_mkdir_log — script text that records, in mk.log, each revision name a
-# mkdir is asked to create: a stale call must not create one even for a moment,
+# claim is asked to create: a stale call must not create one even for a moment,
 # which the names left afterwards cannot show (a name made and withdrawn again
 # leaves nothing behind).
 _json_mkdir_log='
-mkdir() {
+eval "$(declare -f jig_claim_file | sed "1s/jig_claim_file/_jig_real_claim/")"
+jig_claim_file() {
   case "${1:-}" in
     */revision/[0-9]*) printf "%s\n" "${1##*/}" >> mk.log ;;
   esac
-  command mkdir "$@"
+  _jig_real_claim "$@"
 }
 '
 

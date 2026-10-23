@@ -99,8 +99,9 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
   killed still reads as an ordinary failure, and that limit is stated rather than papered over
   (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass).
 - **One test run per clone, and the second one waits.** `jig verify` claims a record every
-  worktree of the clone can see (`<clone root>/.ai/runtime/verify/busy/`, taken with `mkdir`
-  because eight waiters must not wake together) and waits while another run holds it. A record
+  worktree of the clone can see (`<clone root>/.ai/runtime/verify/busy/run`, created exclusively by
+  `jig_claim_file` because eight waiters must not wake together;
+  adr-20261023-a-claim-is-an-exclusive-create) and waits while another run holds it. A record
   is live only while `kill -0` on its pid succeeds *and* its mtime is within `verify.busy_ttl`;
   `0` switches the mechanism off, and `CI` switches it off by itself, because parallelism there
   is deliberate. Nothing in it may fail `jig verify`: a record that cannot be taken lets the run

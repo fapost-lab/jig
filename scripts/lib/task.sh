@@ -989,9 +989,9 @@ _task_new_body() {
   # branch, so there is nothing for uncommitted work to leak into. The check
   # lives in `task start`, and filing a task for later in the middle of other
   # work is the case this split exists for.
-  # The directory is the claim on the id: made without -p, it fails for the
-  # second of two `task new` racing for one id, which is refused as taken
-  # rather than both writing one task.
+  # The directory, made without -p, refuses an id already filed; the claim on
+  # it is the state file below, since `mkdir` does not exclude a second maker
+  # everywhere (adr-20261023-a-claim-is-an-exclusive-create).
   mkdir -p "$(dirname "$dir")"
   if ! mkdir "$dir" 2>/dev/null; then
     [ -e "$dir" ] && jig_fail already-exists "task new: task already exists: $id"
@@ -1021,6 +1021,14 @@ _task_new_body() {
     printf 'created_at: %s\n' "$(jig_today)"
     printf 'updated_at: %s\n' "$(jig_today)"
   } > "$tmp"
+  # The state file is the claim on the id: the directory alone is not, since
+  # `mkdir` does not exclude a second maker everywhere
+  # (adr-20261023-a-claim-is-an-exclusive-create). Claimed empty, then
+  # replaced whole by the rename, so no reader sees a partial state (ADR-0008).
+  if ! jig_claim_file "$dir/state"; then
+    rm -f "$tmp"
+    jig_fail already-exists "task new: task already exists: $id"
+  fi
   mv "$tmp" "$dir/state"
   jig_record_changed
 

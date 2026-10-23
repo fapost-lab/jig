@@ -67,8 +67,9 @@
   (adr-20261007-a-merged-branch-leaves-with-its-work)
   `jig verify`'s run record is the
   sixth, and it is the shape ADR-0035 already allows rather than a new one: the directory
-  `<clone root>/.ai/runtime/verify/busy/` is created by a plain `mkdir` — the atomic claim
-  itself, so making it and finding it taken are one act — and given back by removing the one
+  `<clone root>/.ai/runtime/verify/busy/` holds the record `run`, created exclusively by bash —
+  the claim itself, so making it and finding it taken are one act
+  (adr-20261023-a-claim-is-an-exclusive-create) — and given back by removing the one
   file the script named, `run`, and then `rmdir`, which refuses a directory that is not
   empty. The path is checked to end in `.ai/runtime/verify` before either runs, and the same
   two deletions take back a record whose holder is gone. Nothing else under that directory is
@@ -77,7 +78,7 @@
   same shape: under `<clone root>/.ai/runtime/revision/` a raise removes only digits-only names more
   than 16 below its own claim (`rmdir`, or `rm -f` for a file), and a claim that turns out stale —
   `jig_revision_bump`'s, or `jig_revision_claim`'s for a `jig queue` write — is withdrawn by
-  `rmdir` of the one name that call created, except a claim of 0 that finds a name below its own,
+  `rm -f` of the one name, a file, that call created, except a claim of 0 that finds a name below its own,
   which stays as the highest name. (adr-20261016-the-clone-revision-is-a-claimed-name,
   adr-20261019-the-queue-is-one-file-written-against-a-revision) Moving to trash is not deleting, and it has two users: housekeeping moves
   a workspace, and `jig spec` moves `.ai/specs/<id>/` — `remove`, `close` and `epic --finish` —
