@@ -7501,14 +7501,15 @@ test_route_gate_in_an_unattended_run_is_the_agents() {
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
 }
 
-test_route_gate_in_an_unattended_clone_is_refused_before_a_run_starts() {
+# Before a run starts, the person working the task is there to approve it
+# (test_task_gate_in_an_unattended_clone_without_a_run_is_the_persons).
+test_route_gate_in_an_unattended_clone_before_a_run_is_the_persons() {
   route_task --class T3
   unattended_local
   route_design
   run jig task gate T-1 approved
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" "start its run and approve with --by agent"
-  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "gate: approved"
+  assert_eq 0 "$RC" "a person could not approve before a run started: $OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate: approved"
 }
 
 test_route_gate_in_an_unattended_clone_is_refused_when_the_run_is_stopped() {
@@ -8116,6 +8117,46 @@ EOF
   _tl_json --all
   assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft"'
   assert_contains "$OUT" '"id":"ship","command":"jig task ship run --message-file <file>","offered":false,"reason":"task ship: the route of run (T3) is missing: '
+}
+
+# A clone set to autopilot.unattended still has a person in it: a task worked
+# without a run is approved by that person, and the table offers the approval
+# the command records. Inside the task's unattended run the approval stays the
+# agent's (adr-20261004-a-route-stage-is-proven-by-its-record).
+test_task_gate_in_an_unattended_clone_without_a_run_is_the_persons() {
+  task_setup_clean
+  ship_cfg_local autopilot.unattended true
+  jig task new big --class T3 >/dev/null
+  jig task artifact write big design --from - >/dev/null <<EOF
+the design
+EOF
+  _tl_json
+  assert_contains "$OUT" '"id":"approve-gate","command":"jig task gate big approved","offered":true,"reason":null}'
+  # The status says the design waits for the person, and the table offers it.
+  run jig status --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"gate-waiting"'
+
+  run jig task gate big approved --by agent
+  assert_eq 1 "$RC" "an agent approved outside an unattended run"
+  assert_contains "$OUT" "has no unattended autopilot run on, so the gate is the human's"
+
+  run jig task gate big approved --by human
+  assert_eq 0 "$RC" "the person could not approve in an unattended clone: $OUT"
+  assert_contains "$OUT" "gate: approved"
+  assert_file_contains .ai/workspace/tasks/big/state "gate_by: human"
+}
+
+test_task_gate_inside_an_unattended_run_is_still_the_agents() {
+  task_setup_clean
+  jig task new big --class T3 >/dev/null
+  jig task artifact write big design --from - >/dev/null <<EOF
+the design
+EOF
+  printf 'autopilot: on\nautopilot_mode: unattended\n' >> .ai/workspace/tasks/big/state
+  run jig task gate big approved --by human
+  assert_eq 1 "$RC" "a human approval was recorded inside an unattended run"
+  assert_contains "$OUT" "big's run is unattended, so this approval is the agent's"
 }
 
 # A finished task offers nothing but reopening an abandoned one.

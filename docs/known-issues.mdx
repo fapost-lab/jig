@@ -23,18 +23,3 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-## You cannot approve a design yourself when your agent runs without questions
-
-**What you see.** Your settings have `autopilot.unattended: true`, a T3 or T4 task has a new or
-changed design, and no autopilot run is going on for it — the run ended, or you are taking the task
-on by hand. `jig task gate <id> approved --by human` refuses, saying nobody answers for the task, and
-`--by agent` refuses too, saying the gate is the human's. `jig status` and `jig status --json` still
-show the design as waiting for your decision, while `jig task list --json` offers no `approve-gate`
-action for it.
-
-**What it can cost you.** A task stops at its gate with no command that records your approval.
-
-**What to do instead.** Turn questions back on for one command and off again:
-`jig config set --local autopilot.unattended false`, then
-`jig task gate <id> approved --by human`, then `jig config set --local autopilot.unattended true`.
-Fixed by the task `owner-gate-in-unattended-clone`.
