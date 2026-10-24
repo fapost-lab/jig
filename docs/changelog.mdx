@@ -8,6 +8,39 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.33.0 — 2026-10-24
+
+A repair release. On Ubuntu 25.10 and later Jig's locks and counters did not exclude anyone, and a
+folder of packages shared with task worktrees could not be seen from a container. Both are fixed,
+and Jig now tells you when a folder should be shared.
+
+- **Locks and counters hold on every system.** Ubuntu 25.10 and later ship a `mkdir` that reports
+  success to both of two processes making the same directory, and Jig claimed its locks with
+  `mkdir`. Two `jig verify` runs could run at once, two housekeeping runs could overlap, and the
+  counter Jig UI and `--json` readers watch for changes could lose a step. Every claim is now made
+  by creating a file only if nothing is there, which bash itself does, whatever tools the system
+  ships. Nothing to do on your side.
+- **Shared packages are found inside a container.** The links `worktree.share` puts into a task
+  worktree pointed to the full path on your machine, so a container that mounts the folder holding
+  both your checkout and its worktrees under another path (devilbox's `/shared/httpd`, say) saw them
+  broken and its tests could not find the packages. On macOS and Linux they now point by a relative
+  path. A worktree made
+  before this release keeps its old links; a worktree made anew gets the new ones. See
+  [Sharing a folder of packages you edit](/working-with-tasks#sharing-a-folder-of-packages-you-edit).
+- **Jig names a folder you should share.** A folder Git ignores that holds separate repositories —
+  Composer path repositories under `packages/`, say — and that `worktree.share` does not name is
+  pointed out by `jig status`, the status page and `jig task start --worktree`, with the line to add
+  to `.ai/config.yaml`.
+- **You can approve a design yourself with questions turned off.** With
+  `autopilot.unattended: true`, a T3 or T4 task you were working on by hand had no command that
+  recorded your approval. `jig task gate <id> approved` now records it whenever the task has no
+  autopilot run of its own; inside an unattended run the approval is still the agent's.
+- **Helpers on autopilot, sessions for you.** The `jig-autopilot` skill now starts every helper —
+  reviewer, delegated stage, a phase run's task agent — as a subagent of your runtime, never as a
+  separate app session, which the Claude Code desktop app may refuse to start between your messages.
+  When you ask for work to run alongside yours, the `jig-task` skill opens its session in the same
+  turn you asked. See [Several agents at once](/working-with-tasks#several-agents-at-once).
+
 ## 0.32.0 — 2026-10-23
 
 Jig now tells you which task to take next. The queue from 0.31.0 held priority, order and

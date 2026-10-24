@@ -411,6 +411,20 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.32.0 to 0.33.0
+
+Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
+change. The upgrade brings new scripts and new text for the `jig-autopilot` and `jig-task` skills
+and the phase-run reference; a copy you edited yourself is handled as every edited framework file is
+([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** A project with a folder of separate repositories that `worktree.share`
+does not name gets a line about it in `jig status`; add the key it names when you want task
+worktrees to see that folder. A task worktree made before the upgrade keeps the links it got by
+full path; to have relative ones, start the task's worktree anew. The counter under
+`.ai/runtime/revision/` now holds files rather than directories; what an earlier version left there
+is read and cleared as it is.
+
 ## From 0.31.0 to 0.32.0
 
 Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
@@ -685,7 +699,8 @@ forms changed for everyone, and a refusal names the new form: lowering a class i
 `jig task set <id> class <Tn> --reason <text>`, and `jig task autopilot <id> resume` takes
 `--answer <the human's answer>` and is refused in an unattended run. Where nobody answers (an
 unattended clone), `jig task gate <id> approved` is refused and an approval is given with `--by agent`;
-an attended clone is unchanged. A script or a skill of your own that calls these must use the new forms. Where a project's own tests
+an attended clone is unchanged. (Since 0.33.0 the refusal holds only inside a task's own unattended
+run: a task worked by hand is approved by you in either kind of clone.) A script or a skill of your own that calls these must use the new forms. Where a project's own tests
 or smoke steps jump a fresh task to its end, classify it and sign verification off first
 (`jig task set <id> class T0`, `status ready`, `knowledge_consolidated true`).
 

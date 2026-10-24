@@ -339,6 +339,9 @@ request, in plain words:
 | A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged, and the run never resumes itself for more attempts |
 | The task turns out smaller than its design approval assumed | Keeps the risky task's route. Only a person can lower a task out of the classes that need a design approval |
 
+A task you work on by hand, with no autopilot run of its own, is still yours to approve:
+`jig task gate <id> approved` records your approval with questions turned off too.
+
 If you are present and answer a run that was already stopped for a decision, the agent can
 record your exact answer and continue without gaining more attempts to fix a failing change.
 A stop after the repair limit still ends in a draft. If a risky design changed while the run
