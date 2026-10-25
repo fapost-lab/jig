@@ -46,6 +46,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, or an item, dependency or request that is not in the queue where the command needs it |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
+| `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. `message` lists every reason, one per line, each with what to do |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -438,3 +439,37 @@ domains it does not accept, and a `--goal` that is empty, holds a line break, st
 stands beside `--from`; `not-initialised` and `not-a-repository` as everywhere. Any other refusal —
 a worktree that keeps a task directory of its own, a `--from` file that cannot be read — reads
 `failed`. Nothing is written on a refusal.
+
+## `jig upgrade --json`
+
+`jig upgrade … --json` runs the upgrade as it always does and answers with what it did. `--json` may
+stand anywhere among the arguments and goes with `--dry-run` and `--from`; the text the command
+prints for a person goes to stderr, unchanged. When the run is handed to a newer jig (the project's
+source holds a newer version than the jig that was called), that jig's data is this envelope's.
+
+```json
+{"mode": "copy", "dry_run": false, "from": "0.32.0", "to": "0.33.0", "outcome": "upgraded",
+ "files": {"placed": 12, "kept": 100, "removed": 0, "conflicts": 0},
+ "git": {"level": "pr", "branch": "jig/upgrade-0.33.0", "commit": "<sha>", "pushed": true,
+         "pull_request": "<url>", "merged": false},
+ "manual_steps": [], "would_stop": []}
+```
+
+| Field | Meaning |
+|---|---|
+| `mode` | `copy`, or `link` for a project installed with `jig init --link` |
+| `dry_run` | `true` for `--dry-run`, which changes nothing |
+| `from`, `to` | the project's Jig before the run (the manifest's `jig.version`) and the version it upgrades to; `null` when unknown |
+| `outcome` | `planned` (a dry run), `linked` (link mode, every link in place), `nothing-to-do`, `incomplete` (the self-check failed, so nothing was committed; run again), `staged` (changed and left for the person to commit: `agent.git` is `none`, or the repository has no commit yet), `upgraded` (committed) |
+| `files` | how many framework files the run placed, kept as they were, removed and left in conflict; `null` in link mode |
+| `git` | how far git went, by `agent.git` (`level`): the upgrade's `branch` (`null` when the project works on one branch), the `commit` (`null` when staged), `pushed`, the `pull_request` URL or `null`, and `merged`. `null` when nothing was staged or committed |
+| `manual_steps` | the steps this release asks for by hand, as the upgrade commit lists them; empty when there are none |
+| `would_stop` | for a dry run, every reason a real run would refuse, as `upgrade-blocked` would name it; empty otherwise |
+
+Refusals: `upgrade-blocked` before anything is touched; `usage` for an argument the command does
+not take or `--from` without its value; `not-initialised` and `not-a-repository` as everywhere. Any
+other refusal — a source that is not a Jig checkout, a project in link mode where links cannot be
+made — reads `failed`. A failure after the commit (the push, the pull request or the merge) also
+reads `failed` and carries no data: the commit and the branch are already there, and running
+`jig upgrade` again on that branch carries the run on.
+
