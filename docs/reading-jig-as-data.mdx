@@ -65,6 +65,7 @@ be reworded.
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
 | `not-found` | the task or epic named does not exist, or is not in the queue where the command needs it |
 | `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
+| `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
 | `failed` | anything else: the message says what |
 
 New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
@@ -349,3 +350,29 @@ An id Jig does not accept — a space, a leading dash — and a goal that is emp
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
+
+## Upgrading a project
+
+A program upgrades a project the way a person does, and reads what happened:
+
+```bash
+jig upgrade --json
+```
+
+The text the command prints for a person goes to stderr; stdout holds the envelope. `outcome` says
+how it ended — `upgraded`, `staged` (left for the person to commit), `nothing-to-do`, `incomplete` (run
+it again) — and `git` how far it went by the project's `agent.git`: the branch, the commit, the pull
+request and whether it was merged. `manual_steps` lists what this release asks for by hand; an agent
+can do those, a script cannot. `jig upgrade --dry-run --json` changes nothing and lists in
+`would_stop` what a real run would refuse for. Which projects need an upgrade at all is the
+`upgrade-available` item of `jig status --json` ([What needs you](#what-needs-you)).
+
+When the upgrade cannot start, it changes nothing and says why in its own code, with every reason in
+the message:
+
+```json
+{"schema":1,"revision":1792500000,"generated_at":"2026-10-25T09:08:11Z","error":{"code":"upgrade-blocked","message":"upgrade: nothing was changed:\n  - the working tree has uncommitted changes; commit them, stash them (`git stash`), or finish the task they belong to, then run `jig upgrade` again"}}
+```
+
+The whole shape is in `schemas/json.md`.
+

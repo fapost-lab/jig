@@ -402,6 +402,10 @@ Branches that were already in progress get the upgrade when you merge the base b
 If nothing needed changing, the run goes back to the branch you were on and removes the one it
 made.
 
+A program — Jig UI, a script that upgrades many projects — runs `jig upgrade --json` and reads what
+the run did instead of these lines: the outcome, the branch, the commit and the pull request, and
+the steps the release asks for by hand ([Reading Jig as data](/reading-jig-as-data#upgrading-a-project)).
+
 `jig upgrade --dry-run` never stops and never makes a branch — `jig status`, `jig verify` and
 `jig doctor` rely on it. It prints what would stop a real run as `note: a real upgrade would stop:
 …` lines instead.

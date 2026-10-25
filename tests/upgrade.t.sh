@@ -2107,3 +2107,96 @@ test_upgrade_a_terminal_reader_still_hears_what_is_not_installed() {
   assert_contains "$OUT" "      install .ai/templates/NEWTHING.md"
   rm -rf "$src"
 }
+
+# --- jig upgrade --json (task upgrade-json) ----------------------------------
+
+# _up_json <args> — run jig with stdout in OUT and stderr in ERR, apart.
+_up_json() {
+  local o e
+  o=$(mktemp "${TMPDIR:-/tmp}/jig-up-out.XXXXXX")
+  e=$(mktemp "${TMPDIR:-/tmp}/jig-up-err.XXXXXX")
+  set +e
+  jig "$@" >"$o" 2>"$e"
+  RC=$?
+  set -e
+  OUT=$(cat "$o")
+  ERR=$(cat "$e")
+  rm -f "$o" "$e"
+}
+
+# One envelope on stdout, the text form on stderr, and the data a program acts
+# on: what changed and how far git went, at agent.git commit. The source is
+# newer than this jig, so the run is handed off and the newer one's data lands
+# in this envelope.
+test_upgrade_json_reports_a_committed_upgrade() {
+  _unit_project
+  jig config set --local agent.git commit >/dev/null
+  local src from sha
+  src=$(_unit_source)
+  from=$(sed -n 's/^jig.version: //p' .ai/manifest)
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | grep -c .)" "stdout held more than one line: $OUT"
+  sha=$(git rev-parse HEAD)
+  assert_contains "$OUT" '"data":{"mode":"copy","dry_run":false,"from":"'"$from"'","to":"9.9.9","outcome":"upgraded","files":{"placed":'
+  assert_contains "$OUT" '"git":{"level":"commit","branch":"jig/upgrade-9.9.9","commit":"'"$sha"'","pushed":false,"pull_request":null,"merged":false}'
+  assert_contains "$OUT" '"would_stop":[]}'
+  assert_contains "$ERR" "committed "
+  assert_contains "$ERR" "handing the upgrade to 9.9.9"
+
+  rm -rf "$src"
+}
+
+test_upgrade_json_reports_a_staged_upgrade_and_a_dry_run() {
+  _unit_project
+  local src
+  src=$(_unit_source)
+
+  _up_json upgrade --from "$src" --dry-run --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"dry_run":true'
+  assert_contains "$OUT" '"outcome":"planned"'
+  assert_contains "$OUT" '"git":null'
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"staged"'
+  assert_contains "$OUT" '"git":{"level":"none","branch":"jig/upgrade-9.9.9","commit":null,"pushed":false'
+
+  rm -rf "$src"
+}
+
+# A refusal before anything is touched is an envelope a program can act on.
+test_upgrade_json_refuses_a_blocked_run_with_its_code() {
+  _unit_project
+  local src head
+  src=$(_unit_source)
+  head=$(git rev-parse HEAD)
+  printf 'work\n' >> README.md 2>/dev/null || printf 'work\n' > README.md
+  git add README.md
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"upgrade-blocked","message":"upgrade: nothing was changed:\n  - the working tree has uncommitted changes'
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src"
+}
+
+test_upgrade_json_reports_nothing_to_do_and_refuses_an_argument_as_usage() {
+  _unit_project
+  _up_json upgrade --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"nothing-to-do"'
+  assert_contains "$OUT" '"git":null'
+
+  _up_json upgrade --bogus --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"upgrade: unknown argument: --bogus"}'
+  _up_json upgrade --json --from
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"upgrade: --from requires a value"}'
+}
+
