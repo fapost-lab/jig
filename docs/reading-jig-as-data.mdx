@@ -219,7 +219,9 @@ person, and may be reworded. The kinds cover a stopped autopilot run (`autopilot
 requests to review, merge or close (`pull-request-waiting`, `pull-request-was-open`,
 `pull-request-of-abandoned-task`), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
 `closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
-and a newer jig (`release-available`).
+a newer jig (`release-available`), and a project whose own Jig is older than the one on your machine
+(`upgrade-available` — the item a program lists to show which projects need `jig upgrade`; it alone
+carries `"versions": {"from": "0.32.0", "to": "0.33.0"}`, the project's Jig and your machine's).
 
 Pull request items are as old as the last `jig housekeeping` run; `housekeeping.stale` is `true`
 when that run is older than your housekeeping cadence or the forge did not answer, so one may be

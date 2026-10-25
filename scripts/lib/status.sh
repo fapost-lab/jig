@@ -1952,6 +1952,20 @@ _status_attention() {
       "jig self-update, then jig upgrade"
   fi
 
+  # 0b. This project's Jig is older than the one on this machine (task
+  # status-json-upgrade-available): the text report says so in its
+  # `framework versions:` line, and a program reading many projects needs the
+  # same as an item. Only when both are release versions and this machine's
+  # is newer; the other direction is `jig self-update`, which the release
+  # item already names.
+  local up_from up_to
+  if up_from=$(_status_project_behind); then
+    up_to=${up_from#* }
+    up_from=${up_from%% *}
+    _status_attn upgrade-available project "" "" "Jig in this project is older than on this machine" \
+      "this project runs $up_from; this machine has $up_to" "jig upgrade"
+  fi
+
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     _status_rec "$rec"
@@ -2184,7 +2198,7 @@ _status_attention_phase_stops() {
 
 # _status_json [--json] — the producer json_run runs for `jig status --json`.
 _status_json() {
-  local arg attn rec kind stype sid tasks title detail todo url objs="" o t tl hk stale root
+  local arg attn rec kind stype sid tasks title detail todo url objs="" o t tl hk stale root vers
   for arg in "$@"; do
     [ "$arg" = --json ] || jig_fail usage "status --json: unknown argument: $arg (usage: jig status --json)"
   done
@@ -2231,7 +2245,14 @@ REC
     json_quote "$title"; o="$o,\"title\":$_JSON"
     json_str_or_null "$detail"; o="$o,\"detail\":$_JSON"
     json_quote "$todo"; o="$o,\"todo\":$_JSON"
-    json_str_or_null "$url"; o="$o,\"url\":$_JSON}"
+    json_str_or_null "$url"; o="$o,\"url\":$_JSON"
+    # The one kind with data of its own: both versions, so a program shows
+    # them without reading `detail`, whose words may change.
+    if [ "$kind" = upgrade-available ] && vers=$(_status_project_behind); then
+      json_quote "${vers%% *}"; o="$o,\"versions\":{\"from\":$_JSON"
+      json_quote "${vers#* }"; o="$o,\"to\":$_JSON}"
+    fi
+    o="$o}"
     objs="$objs${objs:+,}$o"
   done <<ATTN
 $attn
@@ -2683,6 +2704,23 @@ _status_framework_versions() {
   # Not both orderable as release versions (e.g. a "dev" branch checkout), or
   # some other non-directional disagreement: no basis to name a direction.
   printf '%s\n' "hint: run \`jig self-update\`, then \`jig upgrade --dry-run\`"
+}
+
+# _status_project_behind — "<project> <global>" when this project's installed
+# Jig (the manifest's jig.version) is an older release than the global
+# framework this checkout uses; fails, printing nothing, otherwise — no
+# manifest, no global, equal, newer, or a version that is not a release.
+# Read, never run, as _status_framework_versions reads it.
+_status_project_behind() {
+  local project global_exe global
+  manifest_exists || return 1
+  project=$(manifest_header_get jig.version) || return 1
+  global_exe=$(jig_global_executable) || return 1
+  global=$(jig_declared_version "${global_exe%/scripts/jig}") || return 1
+  jig_release_version "v$global" >/dev/null 2>&1 || return 1
+  jig_release_version "v$project" >/dev/null 2>&1 || return 1
+  jig_version_newer "$global" "$project" || return 1
+  printf '%s %s\n' "$project" "$global"
 }
 
 # _status_latest_release_available — the version housekeeping's daily
