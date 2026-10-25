@@ -278,6 +278,7 @@ The kinds, in the order they are listed:
 | `kind` | `subject` | Needs a person because |
 |---|---|---|
 | `release-available` | project | a newer jig is out (`.ai/runtime/latest-release`, written by housekeeping) |
+| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine; `todo` is `jig upgrade`, and the item alone carries `versions: {from, to}` — the project's and the machine's |
 | `phase-stopped` | phase | tasks of a phase run stopped; answered once, in the coordinator's session |
 | `autopilot-stopped` | task | an autopilot run stopped with a question |
 | `gate-waiting` | task | a T3/T4 design waits at its human gate |

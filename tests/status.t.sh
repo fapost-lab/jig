@@ -820,6 +820,40 @@ test_status_framework_versions_mismatch_global_newer() {
   rm -rf "$stub_root" "$stub_bin"
 }
 
+# _st_upgrade_item <global-version> — `jig status --json` with a global jig
+# of that version on PATH; OUT holds the JSON, ITEM the upgrade-available
+# item or nothing (task status-json-upgrade-available).
+_st_upgrade_item() {
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$1\"")
+  OUT=$(env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status --json 2>/dev/null)
+  ITEM=$(printf '%s' "$OUT" | grep -o '{"kind":"upgrade-available"[^}]*}[^}]*}' || true)
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+# A program listing many projects learns from the JSON which need `jig
+# upgrade`: the item names both versions, and only for an older project.
+test_status_json_names_a_project_behind_this_machines_jig() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version
+  version=$(_status_project_version)
+  _st_upgrade_item 9.0.0
+  assert_contains "$ITEM" '"subject":{"type":"project"'
+  assert_contains "$ITEM" "\"detail\":\"this project runs $version; this machine has 9.0.0\""
+  assert_contains "$ITEM" '"todo":"jig upgrade"'
+  assert_contains "$OUT" "\"versions\":{\"from\":\"$version\",\"to\":\"9.0.0\"}"
+
+  _st_upgrade_item "$version"
+  assert_eq "" "$ITEM" "an up-to-date project was told to upgrade"
+  _st_upgrade_item 0.0.1
+  assert_eq "" "$ITEM" "a project newer than this machine was told to upgrade"
+  _st_upgrade_item dev
+  assert_eq "" "$ITEM" "a non-release global named a direction"
+}
+
 test_status_framework_versions_mismatch_project_newer() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
@@ -1497,6 +1531,8 @@ test_status_html_is_self_contained_and_follows_the_colour_scheme() {
 
 test_status_html_empty_project_shows_every_section_and_its_empty_state() {
   fixture_jig_repo
+  # No global jig: one newer than this checkout would be something to do.
+  PATH=$(_status_path_without_jig)
   run jig status --html
   assert_eq 0 "$RC"
   local page
@@ -3210,6 +3246,8 @@ _st_json() {
 
 test_status_json_says_when_nothing_needs_you() {
   fixture_jig_repo
+  # No global jig: one newer than this checkout would be something to do.
+  PATH=$(_status_path_without_jig)
   mkdir -p .ai/runtime
   printf 'at: 2026-10-15T08:00:00Z\nproposals: 0\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
   _st_json
@@ -3313,9 +3351,10 @@ test_status_json_and_the_page_name_the_same_items() {
   # A newer jig is out than the one on PATH (test_status_html_shows_a_card_for_a_new_release).
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
-  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="0.1.0"')
+  # It is newer than this project's too, so the project is also behind it.
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"')
   p=$(_status_path_without_jig "$path_dir")
-  printf 'latest=0.2.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
+  printf 'latest=9.1.0\nchecked_at=2026-09-30T00:00:00Z\n' > .ai/runtime/latest-release
   env PATH="$p" "$JIG_BIN" status --html >/dev/null
   printf 'at: 2026-10-15T08:00:00Z\nproposals: 2\nsources_changed: 1\npending: 0\n' > .ai/runtime/status-counts
   env PATH="$p" "$JIG_BIN" status --refresh
@@ -3333,7 +3372,7 @@ test_status_json_and_the_page_name_the_same_items() {
   # a minute between them.
   json_cards=$(_st_json_cards "$OUT" kinds.txt | status_stop_ages_masked)
   kinds=$(tr '\n' ' ' < kinds.txt)
-  assert_eq "release-available phase-stopped autopilot-stopped gate-changed gate-waiting git-step pull-request-waiting pull-request-was-open pull-request-of-abandoned-task needs-consolidation wrong-base closed-unmerged worktree-kept knowledge-proposed sources-changed " "$kinds"
+  assert_eq "release-available upgrade-available phase-stopped autopilot-stopped gate-changed gate-waiting git-step pull-request-waiting pull-request-was-open pull-request-of-abandoned-task needs-consolidation wrong-base closed-unmerged worktree-kept knowledge-proposed sources-changed " "$kinds"
   assert_eq "$page_cards" "$json_cards"
   # The badge is the stopped kinds' and only theirs.
   assert_eq 2 "$(printf '%s\n' "$needs" | grep -c '<span class="badge warn">autopilot stopped</span>')"
