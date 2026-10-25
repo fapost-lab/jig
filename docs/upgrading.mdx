@@ -13,6 +13,10 @@ jig upgrade --dry-run    # in a project: what would change
 jig upgrade              # in a project: update its copy of Jig
 ```
 
+Or say *"upgrade Jig"* to your agent in the project: the `jig-upgrade` skill updates the tool when a
+newer release is out, runs the upgrade with a dry run first, does the steps the release asks for by
+hand where it can, and asks you before it touches anything that would stop the upgrade.
+
 `jig doctor` tells you when it is worth running the first of these: its `latest release` line asks
 the tool's own origin for the newest published tag and reports one of three things — a newer release
 is out (with the two commands above as the fix), this is already the newest, or it could not check

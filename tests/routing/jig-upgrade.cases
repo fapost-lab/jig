@@ -1,0 +1,8 @@
+# jig-upgrade: bringing a project's Jig up to the version on this machine.
++ upgrade Jig in this project
++ update Jig to the latest version
++ jig upgrade
++ bring Jig up to date here
+- plan the next release
+- set up Jig for this project
+- change my personal settings
