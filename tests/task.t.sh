@@ -1244,12 +1244,20 @@ test_task_resume_with_stale_revision_is_refused_and_changes_nothing() {
   assert_eq "$state_before" "$(cat .ai/workspace/tasks/T-1/state)" "a refused resume changed the state"
   _tr_rev
   assert_eq "$now" "$REV" "a refused resume moved the revision"
+  # The new state was built before the claim; the refusal takes it away.
+  assert_eq "" "$(_tr_state_tmp)" "a refused --json resume left its new state behind"
 
   # The text form refuses the same way.
   run jig task resume T-1 --revision "$old"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "the clone changed since revision $old"
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+  assert_eq "" "$(_tr_state_tmp)" "a refused resume left its new state behind"
+}
+
+# _tr_state_tmp — the temporary state files left in T-1's workspace, if any.
+_tr_state_tmp() {
+  (cd .ai/workspace/tasks/T-1 && ls -a) | grep '^state\.tmp' || true
 }
 
 test_task_resume_json_unknown_task_is_not_found() {
@@ -1319,6 +1327,15 @@ test_task_resume_json_stash_conflict_leaves_the_task_paused() {
   assert_eq stash-conflict "$(_tr_code)"
   assert_contains "$OUT" "stash apply failed"
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+  # Refused after the claim, with the new state already built: it goes too.
+  assert_eq "" "$(_tr_state_tmp)" "a stash-conflict resume left its new state behind"
+
+  # The text form, run where the producer is no subshell, cleans up as well.
+  git checkout -q -- conflict.txt 2>/dev/null || true
+  printf 'different change\n' > conflict.txt
+  run jig task resume T-1
+  assert_eq 1 "$RC"
+  assert_eq "" "$(_tr_state_tmp)" "a stash-conflict text resume left its new state behind"
 }
 
 test_task_resume_json_with_stash_reports_its_sha_applied() {
