@@ -8,6 +8,26 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.35.0 — 2026-10-26
+
+A paused task can be resumed by a program. Jig UI can now take a task off pause from the clone's
+main checkout, against the revision it read, and read the answer as data.
+
+- **`jig task resume` takes `--revision` and `--json`.** The resume is checked against the clone
+  revision the way queue writes are: anything written in the clone since your read refuses it with
+  `stale-revision`, and nothing changes. With `--json` it answers with the task as
+  `jig task list --json` lists it and what the resume found — days paused, the stash, uncommitted
+  files and overlap with the base. A refusal says why in a code: `not-found`, `not-paused`,
+  `wrong-checkout` or `stash-conflict`. See
+  [Resuming a paused task](/reading-jig-as-data#resuming-a-paused-task).
+- **Resume runs from any checkout when nothing was stashed.** It used to refuse unless the task's
+  branch was checked out where you ran it. Now that check applies only when the pause put work
+  aside with `--stash`, because the stash is applied where you run it. A pause your agent made for a
+  request stashes nothing, so a task in its own worktree is resumed from the main checkout.
+- **The resume report describes the task's checkout.** `uncommitted:` and `overlap:` are read where
+  the task's branch is checked out — here or its worktree — or from the branch's commits, not from
+  whatever checkout you ran the command in.
+
 ## 0.34.0 — 2026-10-26
 
 Many projects, kept up to date. Jig now tells a program which projects run an older Jig than your
