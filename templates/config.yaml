@@ -35,6 +35,9 @@ git.branch_template: task/{id}        # {id} is the task id; validated by git it
 #   `git worktree remove` by hand deletes it silently — see https://jig.fapost.in/working-with-tasks
 # worktree.share: [packages]          # directories shared, not copied: each entry links to this checkout's
 #   for separate repositories under edit; must be in .gitignore — see the same page
+# worktree.setup: make worktree-setup   # the project's command run in a new worktree after share and carry
+#   on this machine, never fatal; told JIG_TASK_ID, JIG_OWNER_CHECKOUT, JIG_SHARED, JIG_DANGLING
+# worktree.setup_timeout: 10m          # worktree.setup is stopped after this; 0 waits for ever
 forge: auto                           # auto | github | gitlab | none
 # task.issue_pattern: '[A-Z][A-Z0-9]*-[0-9]+'   # the tracker issue a task id starts with
 #   (SRD-2455-fix-login); '[0-9]+' for GitHub or GitLab issues. Unset, no issue is read.

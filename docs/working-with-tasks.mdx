@@ -219,6 +219,13 @@ copies what each worktree must have its own of. Never carry a folder of separate
 you edit — a copy is a second clone, and its commits go when the worktree goes; share it instead,
 as [described below](#sharing-a-folder-of-packages-you-edit).
 
+**A carry copies what this checkout has, not what your lock file says.** Usually they are the same.
+They are not when this checkout runs a local development setup: after `composer dev:link`, say,
+`vendor/acme/*` are links into `packages/`, and the copy keeps them — leading nowhere in a worktree
+that does not share `packages/`, or to whatever your package checkouts hold right now in one that
+does. A project like that brings its worktrees back to the lock with
+[its own command](#finishing-a-worktree-with-your-own-command).
+
 Jig only carries what your project keeps out of Git, and it checks rather than assumes: after
 placing something it asks Git what it now sees in the worktree, and takes straight back out
 anything Git noticed, telling you to add that path to `.gitignore` first. The reason is narrow but
@@ -284,9 +291,10 @@ that: a copy gives the worktree a second clone of every package, work done there
 the checkout beside it, and `git worktree remove` deletes an ignored folder without a word,
 commits included.
 
-Declare such a folder as shared instead. You do not have to spot it yourself: when a folder that
-Git ignores holds separate repositories and nothing shares it, `jig status` and `jig task start
---worktree` name it and the line to add.
+Declare such a folder as shared instead — for every task, as below, or only for the tasks that
+edit it, as [the next section](#sharing-for-one-task) shows. You do not have to spot it yourself:
+when a folder that Git ignores holds separate repositories and nothing shares it, `jig status` and
+`jig task start --worktree` name it and both ways to share it.
 
 ```yaml
 # .ai/config.yaml
@@ -315,6 +323,72 @@ Two things to know:
 
 If `packages/` is tracked by your project's Git, the worktree already has it and the declaration
 does nothing.
+
+### Sharing for one task
+
+Sharing for every task has a cost: each task then runs against whatever your package checkouts
+hold right now — their current branches, not the versions your lock file pins — and with every
+package that a local overlay adds. A task that only changes the project itself is better off
+without them. Share the folder only with the task that edits the packages:
+
+```bash
+jig task start add-sso --worktree --share packages
+```
+
+Or, when a task already running finds out that it needs them:
+
+```bash
+jig task bootstrap add-sso --share packages
+```
+
+The task remembers it, so every later `jig task bootstrap` keeps the links and adds packages that
+appeared since. The rules are those of `worktree.share`: the folder must be in `.gitignore`, and a
+folder you create inside the worktree's copy is that worktree's own. Asking for a folder the
+project already shares changes nothing. A share cannot be taken back from a running task.
+
+### Finishing a worktree with your own command
+
+Some state cannot be copied right. A `vendor/` built for a local development setup is the common
+case: see the warning [above](#several-agents-at-once). Name a command of your project, and Jig runs
+it in every new worktree, after the share and the carry:
+
+```yaml
+# .ai/config.yaml
+worktree.setup: make worktree-setup
+```
+
+What to know about it:
+
+- **It runs on this machine**, in the worktree's folder, with `sh -c` and nothing on its input.
+  Never through [`run.exec`](/configuration): that setting
+  is personal, and this line is the project's. If your project lives in a container, the command
+  reaches it itself — a `make` target can read the container's name from a personal file that
+  `worktree.carry` brings along, since the carry has already happened when the command starts.
+- **It is told what it needs** in its environment: `JIG_TASK_ID`; `JIG_OWNER_CHECKOUT`, the
+  checkout the worktree was made from; `JIG_SHARED`, the folders shared with this worktree,
+  separated by spaces; and `JIG_DANGLING`, one per line, the links inside carried paths that lead
+  nowhere in this worktree. That last one is the `dev:link` case: Composer treats such a package as
+  installed and leaves it alone, so remove those links before `composer install`. Jig does not
+  remove them itself — what a link is for is your project's to know.
+- **A typical command** checks `JIG_SHARED`: empty, it removes the links in `JIG_DANGLING` and runs
+  `composer install`, so the task runs on the lock's versions; with `packages` in it, it links the
+  local packages the way your development setup does.
+- **It runs again with every `jig task bootstrap`**, so write it to be safe to repeat. In a
+  [phase run](/autopilot#running-a-whole-phase) it may run in several worktrees at the same
+  time; Composer and npm caches handle that, and Jig does not take turns for it.
+- **It is stopped after `worktree.setup_timeout`**, 10 minutes by default, together with every
+  process it started on this machine — and so it is when Jig itself is interrupted. A process a
+  container started inside itself may not hear that, and under Git Bash on Windows only the
+  command's own shell is sure to be stopped.
+- **It is never fatal.** If it fails or is stopped, the task is started anyway and Jig says how to
+  try again. The failure stays on the task — `setup=failed (exit 1)` in `jig status`, a `setup:`
+  line in `jig task route` — until a `jig task bootstrap` succeeds.
+- **Files it leaves that Git can see are named**, not removed: a worktree holding them can never be
+  cleaned up, so add them to `.gitignore` or have the command not make them.
+
+Once a project has a `worktree.setup`, `jig status` stops suggesting `worktree.share` — preparing
+worktrees is then the project's own business — and `jig task start --worktree` still names
+`--share` for a task that edits the packages.
 
 ## Seeing where things stand
 

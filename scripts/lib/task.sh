@@ -57,8 +57,8 @@ _task_usage() {
   case "${1:-}" in
     '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
-    start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap]\n' ;;
-    bootstrap) printf 'usage: jig task bootstrap <id>\n' ;;
+    start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
+    bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
     set)
       printf 'usage: jig task set <id> <key> <value>\n'
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
@@ -1092,17 +1092,29 @@ _task_new_body() {
 task_start() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage start)"
-  local id="$1" worktree=0 bootstrap=1
+  local id="$1" worktree=0 bootstrap=1 share
   shift
+  _TASK_ADD_SHARES=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --worktree) worktree=1; shift ;;
       --no-bootstrap) bootstrap=0; shift ;;
+      --share)
+        [ $# -ge 2 ] || jig_die "task start: --share needs a directory"
+        share=$(_task_share_arg "task start" "$2") || exit 1
+        _TASK_ADD_SHARES="$_TASK_ADD_SHARES$share
+"
+        shift 2
+        ;;
       *) jig_die "task start: unknown argument: $1" ;;
     esac
   done
   [ "$bootstrap" = 1 ] || [ "$worktree" = 1 ] \
     || jig_die "task start: --no-bootstrap says what not to carry into a worktree; it needs --worktree"
+  [ -z "$_TASK_ADD_SHARES" ] || [ "$worktree" = 1 ] \
+    || jig_die "task start: --share gives a worktree a directory of this checkout; it needs --worktree"
+  [ -z "$_TASK_ADD_SHARES" ] || [ "$bootstrap" = 1 ] \
+    || jig_die "task start: --share is done by the bootstrap that --no-bootstrap skips; drop one of them"
   local dir
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task start"
@@ -1244,7 +1256,7 @@ _task_start_in_worktree() {
   # the tree and the branch -- is exactly what `jig task bootstrap` needs to
   # try again (adr-20260924-a-worktree-carries-what-git-does-not).
   if [ "$bootstrap" = 1 ]; then
-    _task_carry_into "$JIG_PROJECT" "$path" "task start"
+    _task_carry_into "$JIG_PROJECT" "$path" "task start" "$id"
   fi
 
   _task_base_hint "$id" "$base"
@@ -1318,7 +1330,7 @@ _task_move_to_worktree() {
   path=$(cd -P "$path" && pwd -P) || jig_die "task start: cannot resolve worktree $path"
 
   if [ "$bootstrap" = 1 ]; then
-    _task_carry_into "$JIG_PROJECT" "$path" "task start"
+    _task_carry_into "$JIG_PROJECT" "$path" "task start" "$id"
   fi
 
   _task_paused_hint "$id" " there"
@@ -1340,17 +1352,65 @@ _task_undo_move() {
     || jig_info "task start: could not put this checkout back on $2 (a worktree is still at $3); remove it with \`git worktree remove\`, then \`git switch $2\`"
 }
 
-# _task_carry_into <owner-abs> <tree-abs> <verb> — load the bootstrap library
-# and carry the declared state into a task worktree. A wrapper so that
+# _task_carry_into <owner-abs> <tree-abs> <verb> <id> — load the bootstrap
+# library and carry the declared state into a task worktree. A wrapper so that
 # `task start --worktree` and `task bootstrap` load the same two libraries the
 # same way, and so that every other task command pays for neither (verify.sh
 # sources profiles.sh on the same terms).
+#
+# The directories asked for with `--share` (_TASK_ADD_SHARES) join the task's
+# `share` here, right before the bootstrap that mirrors them, so a start that
+# died earlier records none. The project's `worktree.setup` outcome is kept as
+# `setup`: a failure stays visible in `jig status` and `jig task route` after
+# the warning has scrolled away, until a bootstrap finishes the worktree
+# (adr-20261026-a-worktree-is-finished-by-the-projects-command).
 _task_carry_into() {
+  local id="$4" dir shares one
   # shellcheck source=lib/profiles.sh
   . "$JIG_LIB/profiles.sh"
   # shellcheck source=lib/bootstrap.sh
   . "$JIG_LIB/bootstrap.sh"
-  jig_bootstrap_worktree "$1" "$2" "$3"
+  dir=$(task_dir "$id")
+  shares=$(task_state_get "$id" share | tr ',' '\n')
+  if [ -n "${_TASK_ADD_SHARES:-}" ]; then
+    while IFS= read -r one; do
+      [ -n "$one" ] || continue
+      jig_has_line "$one" "$shares" || shares="$shares${shares:+
+}$one"
+    done <<EOF
+$_TASK_ADD_SHARES
+EOF
+    _task_rewrite_state "$dir" share "$(printf '%s' "$shares" | tr '\n' ',')"
+  fi
+  jig_bootstrap_worktree "$1" "$2" "$3" "$id" "$shares"
+  # No command ran — the project has none now — so an outcome left from one
+  # that had failed describes nothing any more and goes.
+  if [ -n "$_JIG_SETUP_OUTCOME" ]; then
+    _task_rewrite_state "$dir" setup "$_JIG_SETUP_OUTCOME"
+  elif [ -n "$(task_state_get "$id" setup)" ]; then
+    _task_rewrite_state_remove "$dir" setup
+  fi
+}
+
+# _task_share_arg <verb> <dir> — <dir> as a task's `share` keeps it: no
+# trailing slash. Refuses what cannot be one entry of a comma-separated state
+# value or a directory of this checkout; the bootstrap checks the rest — that
+# git ignores it, that it is not `.ai/` — as it does for `worktree.share`.
+_task_share_arg() {
+  local verb="$1" dir="$2"
+  while :; do
+    case "$dir" in
+      ?*/) dir=${dir%/} ;;
+      *) break ;;
+    esac
+  done
+  case "$dir" in
+    '' | /* | *,* | *[[:space:]]* | .. | ../* | */../* | */.. | . | ./*)
+      printf '%s: --share takes a directory of this checkout, relative and without commas or blanks: %s\n' "$verb" "$2" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$dir"
 }
 
 # task_bootstrap <id> — carry the declared state into the task's existing
@@ -1372,9 +1432,21 @@ _task_carry_into() {
 task_bootstrap() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage bootstrap)"
-  local id="$1" dir branch tree owner workspace
+  local id="$1" dir branch tree owner workspace share
   shift
-  [ $# -eq 0 ] || jig_die "task bootstrap: unknown argument: $1"
+  _TASK_ADD_SHARES=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --share)
+        [ $# -ge 2 ] || jig_die "task bootstrap: --share needs a directory"
+        share=$(_task_share_arg "task bootstrap" "$2") || exit 1
+        _TASK_ADD_SHARES="$_TASK_ADD_SHARES$share
+"
+        shift 2
+        ;;
+      *) jig_die "task bootstrap: unknown argument: $1" ;;
+    esac
+  done
 
   dir=$(task_dir "$id")
   _task_guard_write "$id" "task bootstrap"
@@ -1394,7 +1466,7 @@ task_bootstrap() {
   [ -d "$owner" ] || jig_die "task bootstrap: cannot find the checkout that owns $id"
   [ "$owner" != "$tree" ] || jig_die "task bootstrap: $id is not in a worktree of its own"
 
-  _task_carry_into "$owner" "$tree" "task bootstrap"
+  _task_carry_into "$owner" "$tree" "task bootstrap" "$id"
 }
 
 # _task_base_hint <id> <base> — a task cut from anything but the project's base
@@ -1519,7 +1591,7 @@ task_set() {
       ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
-      | route_evidence | class_lowered_from | class_lowered_reason \
+      | route_evidence | class_lowered_from | class_lowered_reason | share | setup \
       | executor_implement_runtime_source | executor_review_runtime_source \
       | executor_implement_model_source | executor_review_model_source)
       jig_die "task set: key is not writable: $key" ;;
@@ -3308,6 +3380,7 @@ $(_task_route_depth "$id")
 EOF
   printf 'class: %s\n' "${class:--}"
   printf 'depth: %s (%s)\n' "$depth" "$source"
+  _task_route_setup_line "$id"
   if ! _task_valid_class "$class"; then
     printf 'route: none until the task is classified (jig task set %s class Tn)\n' "$id"
     return 0
@@ -3324,6 +3397,19 @@ EOF
   if [ -n "$from" ]; then
     printf 'lowered: from %s: %s\n' "$from" "$(task_state_get "$id" class_lowered_reason)"
   fi
+}
+
+# _task_route_setup_line <id> — a line when the project's `worktree.setup`
+# did not finish the task's worktree; nothing when it did or never ran. Shown
+# by `task route` because that is what a coordinator reads after a start
+# (adr-20261026-a-worktree-is-finished-by-the-projects-command).
+_task_route_setup_line() {
+  local setup
+  setup=$(task_state_get "$1" setup)
+  case "$setup" in
+    '' | ok) ;;
+    *) printf 'setup: %s — the worktree is not finished; fix worktree.setup and run jig task bootstrap %s\n' "$setup" "$1" ;;
+  esac
 }
 
 # --- route evidence (adr-20261004-a-route-stage-is-proven-by-its-record) -------

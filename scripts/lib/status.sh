@@ -363,6 +363,12 @@ EOF
     # (adr-20261004-a-route-stage-is-proven-by-its-record).
     [ -z "$_ST_LOWERED" ] || line="$line lowered=$_ST_LOWERED"
     [ -z "$_ST_WT" ] || line="$line $_ST_WT_NOTE"
+    # Only a failure is shown: a worktree the project's own command could not
+    # finish stays named until a `jig task bootstrap` finishes it.
+    case "$_ST_SETUP" in
+      '' | ok) ;;
+      *) line="$line setup=$_ST_SETUP" ;;
+    esac
     # Same rule as `jig task list`: the base only where it is not the project's.
     if [ -n "$_ST_BASE" ] && [ "$_ST_BASE" != "$default_base" ]; then
       line="$line base=$_ST_BASE"
@@ -1260,10 +1266,10 @@ _status_task_rows() {
   awk '
     function out() {
       if (have)
-        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
+        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
           v["task_id"], v["class"], v["status"], v["paused"], v["paused_reason"],
           v["branch"], v["base_branch"], v["autopilot"], v["pr_url"], v["knowledge_consolidated"],
-          v["route_depth"], v["class_lowered_from"], v["issue"]
+          v["route_depth"], v["class_lowered_from"], v["issue"], v["setup"]
     }
     FNR == 1 { out(); split("", v); split("", seen); have = 1 }
     /^[^:]+:/ {
@@ -1284,7 +1290,7 @@ _status_task_rows() {
 # `page`, also the answers only the page shows: the gate of a T3/T4 design
 # (_task_gate_state) and the autopilot run (_task_autopilot_facts).
 _status_live_collect() {
-  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered issue
+  local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup
   local wt wt_note receipt gate facts depth setting us="$_STATUS_US"
   _STATUS_FINISHED=0
   _STATUS_LIVE=""
@@ -1293,7 +1299,7 @@ _status_live_collect() {
   setting=$(_task_route_setting)
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc own_depth lowered issue <<EOF
+    IFS="$us" read -r id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup <<EOF
 $row
 EOF
     case "$status" in
@@ -1321,7 +1327,7 @@ EOF
     # person's route.depth, read once above.
     depth=$(_task_route_depth_of "$own_depth" "$setting")
     depth=${depth%%$'\t'*}
-    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$depth$us$lowered$us$issue$us$facts
+    _STATUS_LIVE="$_STATUS_LIVE$id$us$class$us$status$us$paused$us$reason$us$branch$us$base$us$autopilot$us$pr_url$us$kc$us$wt$us$wt_note$us$receipt$us$gate$us$depth$us$lowered$us$issue$us$setup$us$facts
 "
   done <<EOF
 $(_status_task_rows)
@@ -1335,10 +1341,12 @@ EOF
 # route depth (_task_route_depth): `full` or `lean`. _ST_LOWERED is the class
 # the task was lowered from (`class_lowered_from`), empty when it never was.
 # _ST_ISSUE is the task's tracker issue (`issue`), empty when it has none.
+# _ST_SETUP is the outcome of the project's `worktree.setup` in the task's
+# worktree (`setup`): `ok`, a failure, or empty when none ran.
 _status_rec() {
   IFS="$_STATUS_US" read -r _ST_ID _ST_CLASS _ST_STATUS _ST_PAUSED _ST_REASON _ST_BRANCH _ST_BASE \
     _ST_AUTOPILOT _ST_PR_URL _ST_KC _ST_WT _ST_WT_NOTE _ST_RECEIPT _ST_GATE _ST_DEPTH _ST_LOWERED _ST_ISSUE \
-    _ST_APFACTS <<EOF
+    _ST_SETUP _ST_APFACTS <<EOF
 $1
 EOF
 }
@@ -2756,12 +2764,17 @@ _status_latest_release_available() {
 
 # _status_share_hint — a line per directory `worktree.share` should name and
 # does not (jig_share_candidates): without it a task worktree has no packages.
-# The key is the team's, in .ai/config.yaml, so it is named, not written.
+# The key is the team's, in .ai/config.yaml, so it is named, not written; the
+# other road, sharing it for one task, is named beside it. A project with a
+# `worktree.setup` has taken preparing its worktrees on itself, so the line is
+# not shown there; `task start --worktree` still names the per-task road
+# (adr-20261026-a-worktree-is-finished-by-the-projects-command).
 _status_share_hint() {
   local dir
+  [ -z "$(cfg worktree.setup)" ] || return 0
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
-    printf '%s\n' "hint: $dir/ holds separate repositories a task worktree cannot reach; add \`worktree.share: [$dir]\` to $JIG_AI_DIR/config.yaml"
+    printf '%s\n' "hint: $dir/ holds separate repositories a task worktree cannot reach; for a task that edits them: \`jig task bootstrap <id> --share $dir\`; for every task: add \`worktree.share: [$dir]\` to $JIG_AI_DIR/config.yaml"
   done <<EOF
 $(jig_share_candidates "$JIG_PROJECT")
 EOF

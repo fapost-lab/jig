@@ -993,8 +993,8 @@ test_share_counts_the_relative_target_through_a_tracked_link() {
   assert_relative_link "$OUT/lib/packages/alpha" index.php
 }
 
-# A directory of repositories nobody declared is named at the moment its
-# absence bites: the worktree just made has no packages.
+# A directory of repositories nobody declared is named when the worktree is
+# made, with the road for a task that edits it: sharing it for that task.
 test_bootstrap_names_a_directory_worktree_share_should_name() {
   bootstrap_setup_nested
   share_repo packages/alpha
@@ -1002,7 +1002,7 @@ test_bootstrap_names_a_directory_worktree_share_should_name() {
 
   run_split jig task start T-1 --worktree
   assert_eq 0 "$RC"
-  assert_contains "$ERR" "packages/ holds separate repositories this worktree cannot reach; add \`worktree.share: [packages]\` to .ai/config.yaml"
+  assert_contains "$ERR" "packages/ is not shared with this worktree; if this task edits it: \`jig task bootstrap T-1 --share packages\`"
 }
 
 # The named risk, measured on 2026-09-24 with `carry`: a commit and an
@@ -1184,4 +1184,204 @@ test_share_links_a_file_entry_only_by_a_symlink() {
   ) || rc=$?
   assert_eq 2 "$rc" "a file was not refused where only junctions can be made"
   assert_no_file wt/README.md
+}
+
+# --- sharing for one task -------------------------------------------------------
+# (adr-20261026-a-worktree-is-finished-by-the-projects-command)
+
+test_share_for_one_task_mirrors_and_is_recorded() {
+  bootstrap_setup_nested
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+
+  run_split jig task start T-1 --worktree --share packages/
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_symlink "$wt/packages/alpha"
+  assert_not_contains "$ERR" "is not shared with this worktree"
+  assert_eq "packages" "$(jig task show T-1 | sed -n 's/^share: //p')"
+
+  # Another task, started without it, does not get it.
+  run_split jig task start T-2 --worktree
+  assert_eq 0 "$RC"
+  [ ! -e "$OUT/packages" ] || fail "a task that did not ask got the shared directory"
+}
+
+test_share_added_to_a_running_task_by_bootstrap() {
+  bootstrap_setup_nested
+  share_repo packages/alpha
+  jig task new T-1 >/dev/null
+  run_split jig task start T-1 --worktree
+  local wt="$OUT"
+  [ ! -e "$wt/packages" ] || fail "shared before it was asked for"
+
+  run_split jig task bootstrap T-1 --share packages
+  assert_eq 0 "$RC"
+  assert_symlink "$wt/packages/alpha"
+  # Asked twice, and shared by the project as well: one entry, no warning.
+  printf 'worktree.share: [packages]\n' >> .ai/config.yaml
+  run_split jig task bootstrap T-1 --share packages
+  assert_eq 0 "$RC"
+  assert_eq "packages" "$(jig task show T-1 | sed -n 's/^share: //p')"
+  assert_not_contains "$ERR" "declared more than once"
+}
+
+test_share_refuses_what_cannot_be_a_directory_here() {
+  bootstrap_setup_nested
+  jig task new T-1 >/dev/null
+  run_split jig task start T-1 --share packages
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "it needs --worktree"
+  run_split jig task start T-1 --worktree --no-bootstrap --share packages
+  assert_eq 1 "$RC"
+  run_split jig task start T-1 --worktree --share ../elsewhere
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "--share takes a directory of this checkout"
+  run_split jig task start T-1 --worktree --share a,b
+  assert_eq 1 "$RC"
+  run jig task set T-1 share packages
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "key is not writable: share"
+}
+
+# --- worktree.setup -------------------------------------------------------------
+
+# setup_cmd <command> — declare the project's worktree.setup.
+setup_cmd() {
+  printf 'worktree.setup: %s\n' "$1" >> .ai/config.yaml
+}
+
+test_setup_runs_in_the_worktree_after_carry_and_share_with_its_environment() {
+  bootstrap_setup_php
+  share_repo packages/alpha
+  mkdir -p vendor/acme
+  # One link alive in the owner, one that will dangle in a worktree that does
+  # not share packages: the composer dev:link case.
+  ln -s ../../packages/alpha vendor/acme/alpha
+  ln -s ../../packages/gone vendor/acme/gone
+  printf 'personal\n' > .env
+  printf 'worktree.carry: [.env]\n' >> .ai/config.yaml
+  setup_cmd 'sh ./setup.sh'
+  # shellcheck disable=SC2016
+  printf '%s\n' \
+    'echo "on stdout"' \
+    '{ echo "id=$JIG_TASK_ID"; echo "owner=$JIG_OWNER_CHECKOUT"; echo "shared=$JIG_SHARED"; echo "pwd=$(pwd -P)";' \
+    '  echo "env=$(cat .env)"; echo "dangling<<"; printf "%s\n" "$JIG_DANGLING"; echo ">>"; } > .ai/runtime/setup.out' \
+    > setup.sh
+  git add setup.sh
+  git commit -q -m "setup script"
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  # stdout carries the worktree's path and nothing else.
+  assert_eq "1" "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+  assert_contains "$ERR" "on stdout"
+  local got
+  got=$(cat "$wt/.ai/runtime/setup.out")
+  assert_contains "$got" "id=T-1"
+  assert_contains "$got" "owner=$(pwd -P)"
+  assert_contains "$got" "shared="
+  assert_contains "$got" "pwd=$wt"
+  assert_contains "$got" "env=personal"
+  # Without packages shared both links dangle in the worktree.
+  assert_contains "$got" "vendor/acme/alpha"
+  assert_contains "$got" "vendor/acme/gone"
+  assert_eq "ok" "$(jig task show T-1 | sed -n 's/^setup: //p')"
+
+  # Shared, alpha resolves and only the link to nowhere is named.
+  run_split jig task bootstrap T-1 --share packages
+  assert_eq 0 "$RC"
+  got=$(cat "$wt/.ai/runtime/setup.out")
+  assert_contains "$got" "shared=packages"
+  assert_contains "$got" "vendor/acme/gone"
+  assert_not_contains "$got" "vendor/acme/alpha"
+}
+
+test_setup_failure_is_not_fatal_and_stays_visible_until_a_bootstrap_succeeds() {
+  bootstrap_setup_nested
+  setup_cmd 'test -f .ai/runtime/fixed || exit 3'
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT"
+  assert_contains "$ERR" "worktree.setup exited 3; fix it and run \`jig task bootstrap T-1\`"
+  run jig task route T-1
+  assert_contains "$OUT" "setup: failed (exit 3)"
+  run jig status
+  assert_contains "$OUT" "setup=failed (exit 3)"
+
+  : > "$wt/.ai/runtime/fixed"
+  run_split jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  run jig task route T-1
+  assert_not_contains "$OUT" "setup:"
+  run jig status
+  assert_not_contains "$OUT" "setup="
+
+  # A failure left by a command the project has since dropped goes with it.
+  rm "$wt/.ai/runtime/fixed"
+  run_split jig task bootstrap T-1
+  assert_contains "$(jig task show T-1)" "setup: failed (exit 3)"
+  grep -v '^worktree.setup:' .ai/config.yaml > config.tmp && mv config.tmp .ai/config.yaml
+  run_split jig task bootstrap T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$(jig task show T-1)" "setup:"
+}
+
+test_setup_is_told_only_the_shares_the_worktree_has() {
+  bootstrap_setup_nested
+  share_repo packages/alpha
+  # shellcheck disable=SC2016
+  setup_cmd 'echo "shared=[$JIG_SHARED]" > .ai/runtime/setup.out'
+  jig task new T-1 >/dev/null
+
+  # `libs` is asked for and does not exist here: not shared, not told.
+  run_split jig task start T-1 --worktree --share packages --share libs
+  assert_eq 0 "$RC"
+  assert_eq "shared=[packages]" "$(cat "$OUT/.ai/runtime/setup.out")"
+}
+
+test_setup_is_stopped_at_its_timeout_with_everything_it_started() {
+  bootstrap_setup_nested
+  setup_cmd 'sleep 30 & echo $! > .ai/runtime/child; wait'
+  printf 'worktree.setup_timeout: 1s\n' >> .ai/config.yaml
+  jig task new T-1 >/dev/null
+
+  local started
+  started=$(date +%s)
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  [ $(( $(date +%s) - started )) -lt 20 ] || fail "task start waited for the command past its limit"
+  assert_contains "$ERR" "worktree.setup did not finish in 1s and was stopped"
+  assert_eq "timed out (1s)" "$(jig task show T-1 | sed -n 's/^setup: //p')"
+  local child
+  child=$(cat "$OUT/.ai/runtime/child")
+  sleep 1
+  if kill -0 "$child" 2>/dev/null; then
+    kill "$child" 2>/dev/null
+    fail "the command's own child outlived the timeout"
+  fi
+}
+
+test_setup_names_what_it_left_for_git_and_is_skipped_by_no_bootstrap() {
+  bootstrap_setup_nested
+  setup_cmd 'echo x > left-behind.txt'
+  jig task new T-1 >/dev/null
+  jig task new T-2 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  assert_contains "$ERR" "worktree.setup left files git can see"
+  assert_contains "$ERR" "left-behind.txt"
+  # Named, never taken back: the file is the project's.
+  assert_file "$OUT/left-behind.txt"
+
+  run_split jig task start T-2 --worktree --no-bootstrap
+  assert_eq 0 "$RC"
+  [ ! -e "$OUT/left-behind.txt" ] || fail "--no-bootstrap still ran worktree.setup"
+  assert_eq "" "$(jig task show T-2 | sed -n 's/^setup: //p')"
 }
