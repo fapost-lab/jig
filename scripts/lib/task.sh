@@ -4705,6 +4705,11 @@ _task_ship_branch_refusal() {
   return 0
 }
 
+# The body file task_ship writes for a major release's draft; script-global
+# because the exit cleanup that removes it runs after the function returned
+# (conventions/shell.md).
+_TASK_SHIP_BODY_TMP=""
+
 task_ship() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
@@ -4818,7 +4823,40 @@ EOF
     return 0
   fi
 
-  jig_ship_pr "task ship" "$branch" "$base" "$message_file" "$title" "$body_file" "$draft"
+  # A change that raises the version into the default branch is a release,
+  # whoever planned it: its merge follows `release.merge` as an epic's final
+  # pull request does (spec_ship_final), and a `major` one opens as a draft
+  # for a person (adr-20261026-a-task-that-raises-the-version-is-a-release).
+  # An epic is not the default branch: there the release is the epic's own.
+  local raise="" r_file r_old r_new r_level release_hold="" pr_draft="$draft"
+  if [ "$base" = "$(cfg git.base_branch main)" ]; then
+    raise=$(jig_release_raise "$(jig_base_ref "$base")")
+  fi
+  if [ -n "$raise" ]; then
+    IFS=$'\t' read -r r_file r_old r_new r_level <<EOF
+$raise
+EOF
+    printf 'task ship: this change raises the version in %s: %s -> %s\n' "$r_file" "$r_old" "$r_new"
+    if [ "$level" = merge ] && [ "$draft" -eq 0 ]; then
+      if [ "$(jig_release_merge)" != agent ]; then
+        release_hold="release.merge is human in this clone; the release's merge is the person's"
+      elif ! _task_nobody_answers "$id"; then
+        release_hold="this change raises the version; outside an unattended run a release's merge is the human's"
+      elif [ "$r_level" = major ]; then
+        release_hold="a major release needs a human; the pull request is a draft"
+        pr_draft=1
+        _TASK_SHIP_BODY_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-task-body.XXXXXX")
+        jig_cleanup_add "$_TASK_SHIP_BODY_TMP"
+        {
+          printf 'Needs a human: major release?\n\n'
+          if [ -n "$body_file" ]; then cat "$body_file"; else tail -n +2 "$message_file"; fi
+        } > "$_TASK_SHIP_BODY_TMP"
+        body_file="$_TASK_SHIP_BODY_TMP"
+      fi
+    fi
+  fi
+
+  jig_ship_pr "task ship" "$branch" "$base" "$message_file" "$title" "$body_file" "$pr_draft"
   # The pull request's address, kept so the status page can link it the
   # moment it exists. A fact about what ship did, not a merge state: whether
   # it was merged is still derived by housekeeping every run (ADR-0005).
@@ -4829,6 +4867,10 @@ EOF
   [ "$level" = merge ] || return 0
   if [ "$draft" -eq 1 ]; then
     printf 'not merged: a draft pull request is never merged\n'
+    return 0
+  fi
+  if [ -n "$release_hold" ]; then
+    printf 'not merged: %s\n' "$release_hold"
     return 0
   fi
   # The task's own gates once more, right before the merge: the merge is the

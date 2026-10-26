@@ -193,9 +193,12 @@ Some settings are a matter of personal taste rather than project policy. Put the
   approval and architecture review of T3/T4 are never trimmed. Local only: it is your time you are
   trading. One task can differ: `jig task new <id> --lean`, or `jig task set <id> route_depth full`.
   See [A lighter route](/concepts#a-lighter-route).
-- `release.merge` — who merges an epic's final pull request, which is the release, in an unattended
-  run at `agent.git: merge`: `agent` (the default) merges it once CI passed, `human` opens it and
-  leaves the merge to you. It changes nothing for task pull requests; local only.
+- `release.merge` — who merges a release in an unattended run at `agent.git: merge`: `agent` (the
+  default) merges it once CI passed, `human` opens the pull request and leaves the merge to you. A
+  release is an epic's final pull request, or a task whose change raises the version into the
+  default branch (`VERSION`, or the `version` of `package.json`, `composer.json`, `pyproject.toml`
+  or `Cargo.toml` at the repository's root). Outside an unattended run a release is always yours to
+  merge, and a `major` one always is. Other task pull requests are not affected; local only.
 - `run.exec` — where this machine runs the project's checks: `auto` (the default: Jig finds out),
   `host`, or the command that reaches the project's container. Local only: the place is a property
   of your machine, not of the project. See [Where checks run](#where-checks-run).

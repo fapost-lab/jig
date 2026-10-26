@@ -124,7 +124,8 @@ contributor's agent starts committing.
 > other work. `jig upgrade`, housekeeping's remote sweep and every ship outside a run keep
 > `agent.git`. It is read when the ship runs, not recorded at `start`, so lowering it halfway is
 > obeyed at once; a set but invalid value refuses rather than falling back to `agent.git`.
-> `release.merge: human` still keeps an epic's final merge the person's. `task ship`, `spec ship`,
+> `release.merge: human` still keeps an epic's final merge the person's, and since 2026-10-26 the
+> merge of a task that raises the version too (adr-20261026-a-task-that-raises-the-version-is-a-release). `task ship`, `spec ship`,
 > `jig task route`, `jig task autopilot start` and `jig status` name the level and the key it came
 > from. Rejected: a `--level` flag on `ship` (the agent would choose its own rights) and recording
 > the level in the task's state at `start` (a person could not take a right back from a run in
