@@ -69,3 +69,15 @@ published tag cannot be taken back.
   decision.
 - Monorepos whose versions live below the root (`packages/*/package.json`) are not recognised.
 - The list is code: a new kind of manifest is a change to `JIG_VERSION_FILES` and `_jig_version_in`.
+
+> **Amendment (2026-10-26, review findings of the first change).** The first file whose version
+> *went up* decides, not the first that declares one: an unchanged `VERSION` no longer hides a raised
+> `package.json`. Two `X.Y.Z` versions are compared as numbers (`jig_version_newer`), so an equal or
+> lower one raises nothing; any other change of a version that is not `X.Y.Z` is still `major`.
+> `pyproject.toml` is read only in `[project]` or `[tool.poetry]`, `Cargo.toml` only in `[package]`,
+> a header up to its first `]` and a basic or literal string; a line opening with `[` inside a multi-line
+> string or array still starts a table, so such a file can hide its version (a miss, never a false release).
+> `VERSION` skips blank lines, CRLF ones included. The fork point is the later of the merge-bases
+> with `origin/<base>` and the local `<base>`, so a stale remote-tracking ref does not take a raise
+> merged in from a fresher base for the task's own. The checks run in `spec_ship_final`'s order:
+> outside an unattended run first, then `release.merge`, then `major`.

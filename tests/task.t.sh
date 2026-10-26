@@ -3830,6 +3830,7 @@ test_task_ship_unknown_task_dies() {
 #                ship from a worktree reads that worktree's)
 #   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
 #   gh-merge.rc  the exit code of `pr merge` (default: 0)
+#   gh-existing  the pull request `pr list` finds open (default: none)
 # `pr create` and `pr merge` record their arguments in gh-create.argv and
 # gh-merge.argv; `pr create` also copies the body it was given to
 # gh-create.body.
@@ -3843,7 +3844,7 @@ printf '%s\n' "\$*" >> "\$d/gh.log"
 val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
 case "\$1 \$2" in
   "auth status") exit 0 ;;
-  "pr list") printf 'null\n' ;;
+  "pr list") val gh-existing null ;;
   "pr create")
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-create.argv"
@@ -4222,15 +4223,23 @@ test_task_ship_merge_level_with_no_forge_leaves_the_merge_to_the_human() {
 
 # --- a release shipped as a task (adr-20261026-a-task-that-raises-the-version-is-a-release)
 
-# rship_setup <file> <old> <new> — mship_setup on GitHub where <file> declares
-# version <old> on main before T-1 is cut, and the task's change raises it to
-# <new>. Nobody answers (`autopilot.unattended`), so a release may be merged
-# at all; each test sets `release.merge` and what else differs.
+# rship_setup <file> <old> <new> [<other> <version>] — mship_setup on GitHub
+# where <file> declares version <old> on main before T-1 is cut, and the
+# task's change raises it to <new>; <other>, when given, declares <version> on
+# main too and is left alone. Nobody answers (`autopilot.unattended`), so a
+# release may be merged at all; each test sets `release.merge` and what else
+# differs.
 rship_setup() {
   local file="$1" old="$2" new="$3"
   task_setup_clean
+  ship_cfg forge github
+  git add .ai/config.yaml
   rship_write "$file" "$old"
-  git add "$file"
+  git add "${file%+*}"
+  if [ $# -ge 5 ]; then
+    rship_write "$4" "$5"
+    git add "$4"
+  fi
   git commit -q -m "fixture: version $old"
   git clone -q --bare . origin.git
   git remote add origin "$PWD/origin.git"
@@ -4238,7 +4247,6 @@ rship_setup() {
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
   printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
-  ship_cfg forge github
   mship_stub_gh
   ship_cfg_local agent.git merge
   ship_cfg_local agent.ci_timeout 0
@@ -4246,16 +4254,21 @@ rship_setup() {
   task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   rship_write "$file" "$new"
-  git add "$file"
+  git add "${file%+*}"
 }
 
-# rship_write <file> <version> — <file> declaring <version> the way its kind
-# does.
+# rship_write <file>[+<variant>] <version> — <file> declaring <version> the
+# way its kind does; a variant writes the same file another way.
 rship_write() {
   mkdir -p "$(dirname "$1")"
   case "$1" in
     scripts/lib/version.sh) printf '#!/bin/sh\nJIG_VERSION="%s"\n' "$2" > "$1" ;;
-    package.json) printf '{\n  "name": "example",\n  "version": "%s",\n  "dependencies": {}\n}\n' "$2" > "$1" ;;
+    package.json | composer.json) printf '{\n  "name": "example",\n  "version": "%s",\n  "dependencies": {}\n}\n' "$2" > "$1" ;;
+    pyproject.toml) printf '[tool.other]\nversion = "9"\n\n[project]\nname = "example"\nversion = "%s"\n' "$2" > "$1" ;;
+    Cargo.toml) printf '[workspace]\nmembers = ["a"]\n\n[workspace.dependencies.foo]\nversion = "%s"\n' "$2" > "$1" ;;
+    VERSION+crlf) printf '\r\n%s\r\n' "$2" > VERSION ;;
+    Cargo.toml+package) printf '[package]\nname = "example"\nversion = "%s"\n' "$2" > Cargo.toml ;;
+    pyproject.toml+poetry) printf "[ tool.poetry ] # metadata\nname = 'example'\nversion = '%s'\n" "$2" > pyproject.toml ;;
     *) printf '%s\n' "$2" > "$1" ;;
   esac
 }
@@ -4369,6 +4382,182 @@ test_task_ship_version_raise_into_an_epic_is_not_a_release() {
   assert_eq 0 "$RC"
   assert_not_contains "$OUT" "raises the version"
   assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# The first file whose version went up decides, not the first that declares
+# one: an unchanged VERSION does not hide a raised package.json.
+test_task_ship_release_in_a_later_version_file_is_recognised() {
+  rship_setup package.json 1.4.0 1.5.0 VERSION 1.0.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in package.json: 1.4.0 -> 1.5.0"
+  assert_contains "$OUT" "not merged: release.merge is human"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_recognises_a_raised_composer_json() {
+  rship_setup composer.json 2.0.0 2.0.1
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in composer.json: 2.0.0 -> 2.0.1"
+  assert_no_file gh-merge.argv
+}
+
+# Only [project] (or [tool.poetry]) names the package's version: a `version`
+# line of another table above it is not read.
+test_task_ship_reads_pyproject_version_from_its_project_table() {
+  rship_setup pyproject.toml 1.0.0 1.1.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in pyproject.toml: 1.0.0 -> 1.1.0"
+  assert_no_file gh-merge.argv
+}
+
+# A dependency's version in a workspace Cargo.toml is not the package's.
+test_task_ship_cargo_dependency_version_is_not_a_release() {
+  rship_setup Cargo.toml 1.0.0 2.0.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+test_task_ship_version_file_with_a_blank_crlf_first_line_is_read() {
+  rship_setup VERSION+crlf 1.0.0 1.1.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in VERSION: 1.0.0 -> 1.1.0"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_recognises_a_raised_cargo_package() {
+  rship_setup Cargo.toml+package 0.4.0 0.5.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "this change raises the version in Cargo.toml: 0.4.0 -> 0.5.0"
+  assert_no_file gh-merge.argv
+}
+
+# [tool.poetry] written with spaces and a comment, its version in a literal
+# (single-quoted) string.
+test_task_ship_recognises_a_raised_poetry_version() {
+  rship_setup pyproject.toml+poetry 1.0.0 1.0.1
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "this change raises the version in pyproject.toml: 1.0.0 -> 1.0.1"
+  assert_no_file gh-merge.argv
+}
+
+# The same version written another way raises nothing.
+test_task_ship_same_version_written_with_a_v_is_not_a_release() {
+  rship_setup VERSION 1.0.0 v1.0.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# A version that is not X.Y.Z cannot be compared as numbers: any change of it
+# is a major release.
+test_task_ship_two_part_version_change_counts_as_major() {
+  rship_setup VERSION 1.0 1.1
+  ship_cfg_local release.merge agent
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not merged: a major release needs a human; the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+# A version that goes down raises nothing (a release never goes back,
+# ADR-0034); the ship is an ordinary one.
+test_task_ship_lowered_version_is_not_a_release() {
+  rship_setup VERSION 1.5.0 1.4.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# origin/main is stale here, the local main is not, and the task merged the
+# local main with its raise: that raise is main's, not the task's.
+test_task_ship_raise_merged_in_from_a_fresher_main_is_not_the_tasks() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.0
+  ship_cfg_local release.merge human
+  local stale
+  stale=$(git rev-parse refs/remotes/origin/main)
+  git checkout -q main
+  rship_write scripts/lib/version.sh 0.34.0
+  git commit -q -am "release 0.34.0"
+  git push -q origin main
+  git update-ref refs/remotes/origin/main "$stale"
+  git checkout -q task/T-1
+  git merge -q --no-edit main
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# The order of spec ship: outside an unattended run a release is the human's,
+# whatever release.merge says.
+test_task_ship_attended_release_names_the_attended_reason_first() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+  ship_cfg_local autopilot.unattended false
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: this change raises the version; outside an unattended run a release's merge is the human's"
+  assert_not_contains "$OUT" "release.merge is human"
+}
+
+test_task_ship_draft_release_says_the_raise_and_is_not_merged() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge agent
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in scripts/lib/version.sh: 0.33.0 -> 0.34.0"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+# A second ship finds the pull request already open; the release is still
+# held.
+test_task_ship_release_is_still_held_when_the_pr_is_already_open() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  printf 'https://github.com/example/example/pull/99\n' > gh-existing
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99 (already open)"
+  assert_contains "$OUT" "not merged: release.merge is human"
+  assert_no_file gh-merge.argv
 }
 
 test_task_ship_merge_level_invalid_ci_timeout_dies() {

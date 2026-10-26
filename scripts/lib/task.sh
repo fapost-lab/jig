@@ -4830,7 +4830,7 @@ EOF
   # An epic is not the default branch: there the release is the epic's own.
   local raise="" r_file r_old r_new r_level release_hold="" pr_draft="$draft"
   if [ "$base" = "$(cfg git.base_branch main)" ]; then
-    raise=$(jig_release_raise "$(jig_base_ref "$base")")
+    raise=$(jig_release_raise "$base")
   fi
   if [ -n "$raise" ]; then
     IFS=$'\t' read -r r_file r_old r_new r_level <<EOF
@@ -4838,10 +4838,10 @@ $raise
 EOF
     printf 'task ship: this change raises the version in %s: %s -> %s\n' "$r_file" "$r_old" "$r_new"
     if [ "$level" = merge ] && [ "$draft" -eq 0 ]; then
-      if [ "$(jig_release_merge)" != agent ]; then
-        release_hold="release.merge is human in this clone; the release's merge is the person's"
-      elif ! _task_nobody_answers "$id"; then
+      if ! _task_nobody_answers "$id"; then
         release_hold="this change raises the version; outside an unattended run a release's merge is the human's"
+      elif [ "$(jig_release_merge)" != agent ]; then
+        release_hold="release.merge is human in this clone; the release's merge is the person's"
       elif [ "$r_level" = major ]; then
         release_hold="a major release needs a human; the pull request is a draft"
         pr_draft=1
