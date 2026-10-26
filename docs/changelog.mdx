@@ -8,6 +8,35 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.34.0 — 2026-10-26
+
+Many projects, kept up to date. Jig now tells a program which projects run an older Jig than your
+machine, a program can run the upgrade and read what it did, and your agent upgrades a project when
+you ask. A release made as a plain task now waits for you, unless an unattended run may merge it.
+
+- **`jig status --json` names a project that needs an upgrade.** A new item, `upgrade-available`,
+  appears on the status page and in `--json` when the project's Jig is an older release than the one
+  on your machine; it carries both versions and `jig upgrade` as the thing to do. Jig UI lists the
+  projects to upgrade from it. See [What needs you](/reading-jig-as-data#what-needs-you).
+- **`jig upgrade --json`.** The upgrade runs as before, its text goes to stderr, and stdout holds the
+  result: from and to, the outcome (`upgraded`, `staged`, `nothing-to-do`, `incomplete`, and
+  `planned` for a dry run), the branch, commit and pull request, the steps the release asks for by
+  hand, and for a dry run what would stop a real one. An upgrade that cannot start answers with the
+  code `upgrade-blocked` and every reason. See
+  [Upgrading a project](/reading-jig-as-data#upgrading-a-project).
+- **"Upgrade Jig" to your agent.** The new `jig-upgrade` skill updates the tool when a newer release
+  is out (it asks `jig doctor`, never reads silence as "up to date"), dry-runs the upgrade, runs it,
+  and does the steps the release asks for by hand where it can. Anything that would stop the upgrade
+  — your uncommitted changes, a task's branch checked out — it names and asks about, never works
+  around.
+- **A release made as a task follows `release.merge`.** `jig task ship` merged a change that raised
+  the version even with `release.merge: human`, as 0.33.0 was. A change into the default branch that
+  raises the version in `scripts/lib/version.sh`, `VERSION`, `package.json`, `composer.json`,
+  `pyproject.toml` (`[project]` or `[tool.poetry]`) or `Cargo.toml` (`[package]`) is now a release: it
+  is merged only in an unattended run with `release.merge: agent`, and a major one never — it is
+  opened as a draft. See
+  [`release.merge`](/configuration).
+
 ## 0.33.0 — 2026-10-24
 
 A repair release. On Ubuntu 25.10 and later Jig's locks and counters did not exclude anyone, and a
