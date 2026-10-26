@@ -3831,7 +3831,8 @@ test_task_ship_unknown_task_dies() {
 #   gh-repo      merge-commit, squash and rebase allowed (default: true true true)
 #   gh-merge.rc  the exit code of `pr merge` (default: 0)
 # `pr create` and `pr merge` record their arguments in gh-create.argv and
-# gh-merge.argv.
+# gh-merge.argv; `pr create` also copies the body it was given to
+# gh-create.body.
 mship_stub_gh() {
   local dir="$PWD"
   mkdir -p stub-bin
@@ -3843,7 +3844,14 @@ val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
 case "\$1 \$2" in
   "auth status") exit 0 ;;
   "pr list") printf 'null\n' ;;
-  "pr create") shift 2; printf '%s\n' "\$@" > "\$d/gh-create.argv"; printf 'https://github.com/example/example/pull/99\n' ;;
+  "pr create")
+    shift 2
+    printf '%s\n' "\$@" > "\$d/gh-create.argv"
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = --body-file ]; then cat "\$2" > "\$d/gh-create.body"; fi
+      shift
+    done
+    printf 'https://github.com/example/example/pull/99\n' ;;
   "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
   "repo view") val gh-repo "true true true" ;;
   "pr checks") val gh-checks pass ;;
@@ -4210,6 +4218,157 @@ test_task_ship_merge_level_with_no_forge_leaves_the_merge_to_the_human() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "no forge available; the pull request is the human's"
   assert_contains "$OUT" "not merged: no forge available; the merge is the human's"
+}
+
+# --- a release shipped as a task (adr-20261026-a-task-that-raises-the-version-is-a-release)
+
+# rship_setup <file> <old> <new> — mship_setup on GitHub where <file> declares
+# version <old> on main before T-1 is cut, and the task's change raises it to
+# <new>. Nobody answers (`autopilot.unattended`), so a release may be merged
+# at all; each test sets `release.merge` and what else differs.
+rship_setup() {
+  local file="$1" old="$2" new="$3"
+  task_setup_clean
+  rship_write "$file" "$old"
+  git add "$file"
+  git commit -q -m "fixture: version $old"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  ship_cfg_local autopilot.unattended true
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  rship_write "$file" "$new"
+  git add "$file"
+}
+
+# rship_write <file> <version> — <file> declaring <version> the way its kind
+# does.
+rship_write() {
+  mkdir -p "$(dirname "$1")"
+  case "$1" in
+    scripts/lib/version.sh) printf '#!/bin/sh\nJIG_VERSION="%s"\n' "$2" > "$1" ;;
+    package.json) printf '{\n  "name": "example",\n  "version": "%s",\n  "dependencies": {}\n}\n' "$2" > "$1" ;;
+    *) printf '%s\n' "$2" > "$1" ;;
+  esac
+}
+
+test_task_ship_release_is_not_merged_when_release_merge_is_human() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in scripts/lib/version.sh: 0.33.0 -> 0.34.0"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "not merged: release.merge is human in this clone; the release's merge is the person's"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_release_is_merged_when_release_merge_is_agent() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.1
+  ship_cfg_local release.merge agent
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+}
+
+test_task_ship_major_release_opens_a_draft_and_is_not_merged() {
+  rship_setup scripts/lib/version.sh 1.2.3 2.0.0
+  ship_cfg_local release.merge agent
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_eq "Needs a human: major release?" "$(head -n 1 gh-create.body)"
+  assert_contains "$(cat gh-create.body)" "Body line one."
+  assert_contains "$OUT" "not merged: a major release needs a human; the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+# A version that cannot be read as numbers is taken as major: a mistake
+# never merges a release.
+test_task_ship_unreadable_version_counts_as_major() {
+  rship_setup VERSION 1.0.0 next
+  ship_cfg_local release.merge agent
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: a major release needs a human; the pull request is a draft"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_release_is_not_merged_in_an_attended_ship() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge agent
+  ship_cfg_local autopilot.unattended false
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: this change raises the version; outside an unattended run a release's merge is the human's"
+  assert_no_file gh-merge.argv
+}
+
+# Any project, not only Jig's own source: a raised package.json is a release.
+test_task_ship_recognises_a_raised_package_json() {
+  rship_setup package.json 1.4.0 1.5.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "this change raises the version in package.json: 1.4.0 -> 1.5.0"
+  assert_contains "$OUT" "not merged: release.merge is human"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_change_that_keeps_the_version_is_merged_as_before() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.0
+  ship_cfg_local release.merge human
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# A file that declares a version for the first time raises nothing.
+test_task_ship_first_version_declaration_is_not_a_release() {
+  mship_setup github
+  ship_cfg_local release.merge human
+  ship_cfg_local autopilot.unattended true
+  rship_write VERSION 0.1.0
+  git add VERSION
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# A task into an epic is not the release: the epic's final pull request is.
+test_task_ship_version_raise_into_an_epic_is_not_a_release() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+  git branch -q epic/x main
+  git push -q origin epic/x
+  sed 's|^base_branch:.*|base_branch: epic/x|' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "raises the version"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
 }
 
 test_task_ship_merge_level_invalid_ci_timeout_dies() {

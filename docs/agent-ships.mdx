@@ -230,7 +230,8 @@ jig config set agent.git pr autopilot.git merge --local
 
 With that, a task you ship yourself stops at an open pull request, and a run merges its own once CI
 passed. The other way round (`agent.git: merge`, `autopilot.git: pr`) a run stops at the pull
-request. `release.merge: human` still keeps an epic's final merge yours.
+request. `release.merge: human` still keeps every release's merge yours: an epic's final pull request,
+and a task whose change raises the version.
 
 You can see which one decides: `jig status` prints `autopilot.git: merge (from autopilot.git)` or
 `(from agent.git)`, `jig task route <id>` and `jig task autopilot <id> start` print
@@ -270,6 +271,11 @@ What stays yours at every level:
   `merge` (`autopilot.git`, or `agent.git` when that is not set) does it — with a merge commit, once CI passed and every roadmap item is done — and never
   for a `major` release, which it opens as a draft for you. Set `release.merge: human` in
   `.ai/config.local.yaml` and even that run leaves the merge to you.
+- **A release made as a task.** A task whose change raises the version into the default branch —
+  `VERSION`, or the `version` of `package.json`, `composer.json`, `pyproject.toml` or `Cargo.toml` at
+  the repository's root — is a release too, and `jig task ship` merges it by the same rule: only in
+  an unattended run, only with `release.merge: agent`, never a `major` one, which it opens as a
+  draft. It says so: `task ship: this change raises the version in package.json: 1.4.0 -> 1.5.0`.
 - **Protected epic branches.** The epic is never pushed to after it is cut: the finish goes on a
   branch cut from it, `finish/<id>`, and the pull request into main comes from there, so a
   repository that protects `epic/*` like main needs no bypass.

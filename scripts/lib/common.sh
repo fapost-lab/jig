@@ -560,6 +560,59 @@ jig_git_show_path() {
   git -C "$JIG_PROJECT" show "$sha:$2"
 }
 
+# The files a project declares its version in, at the repository's root, in
+# the order they are asked: Jig's own source first, then the common manifests.
+# One list for every reader of "this change raises the version"
+# (adr-20261026-a-task-that-raises-the-version-is-a-release).
+JIG_VERSION_FILES="scripts/lib/version.sh VERSION package.json composer.json pyproject.toml Cargo.toml"
+
+# _jig_version_in <file> — the version the content on stdin declares, read the
+# way <file>'s kind writes it; nothing when it declares none.
+_jig_version_in() {
+  case "$1" in
+    scripts/lib/version.sh)
+      sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' | head -n 1 ;;
+    VERSION)
+      awk 'NF { gsub(/^[ \t]+|[ \t\r]+$/, ""); print; exit }' ;;
+    package.json | composer.json)
+      sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1 ;;
+    *)
+      sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1 ;;
+  esac
+}
+
+# jig_release_raise <base-ref> — whether HEAD raises the version the project
+# declares, against the point it forked from <base-ref> (what the forge's pull
+# request compares). Prints `<file><TAB><old><TAB><new><TAB><level>` or
+# nothing. The first file of JIG_VERSION_FILES that declares a version at HEAD
+# decides; a file that declared none at the fork point raises nothing. <level>
+# is `major` when the first number grew, or when either side is not a number:
+# a version nobody can read is never merged as a lesser release. Anything git
+# cannot answer is "not a release" — the ship goes on as it did before.
+jig_release_raise() {
+  local base_ref="$1" fork f new old a b level
+  fork=$(git -C "$JIG_PROJECT" merge-base "$base_ref" HEAD 2>/dev/null) || return 0
+  [ -n "$fork" ] || return 0
+  for f in $JIG_VERSION_FILES; do
+    new=$(jig_git_show_path HEAD "$f" 2>/dev/null | _jig_version_in "$f")
+    [ -n "$new" ] || continue
+    old=$(jig_git_show_path "$fork" "$f" 2>/dev/null | _jig_version_in "$f")
+    [ -n "$old" ] && [ "$old" != "$new" ] || return 0
+    a=${old#v}
+    a=${a%%.*}
+    b=${new#v}
+    b=${b%%.*}
+    level=major
+    case "$a$b" in
+      *[!0-9]*) ;;
+      *) [ -z "$a" ] || [ -z "$b" ] || [ "$((10#$b))" -gt "$((10#$a))" ] || level=minor-or-patch ;;
+    esac
+    printf '%s\t%s\t%s\t%s\n' "$f" "$old" "$new" "$level"
+    return 0
+  done
+  return 0
+}
+
 # jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
 # refs/heads/<name> and refs/remotes/origin/<name>, or HEAD when neither exists.
 #

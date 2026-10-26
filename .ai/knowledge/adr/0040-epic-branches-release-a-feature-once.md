@@ -148,3 +148,8 @@ decisions answer. It stands on a base per task (ADR-0039).
 > Not added: a full-platform CI run before the owner merges. The final pull request is judged by the
 > same scope rules as any pull request, against the default branch and so over the whole epic's
 > diff; the shards skipped on the phases' pull requests into the epic are decided again there.
+
+> **Amendment (2026-10-26).** "Task pull requests stay under `agent.git`" no longer holds for a task
+> whose change raises the version into the default branch: that change is a release, and
+> `jig task ship` applies `release.merge`, the unattended condition and the `major` draft exactly as
+> the final pull request does (adr-20261026-a-task-that-raises-the-version-is-a-release).
