@@ -470,6 +470,6 @@ Refusals: `upgrade-blocked` before anything is touched; `usage` for an argument 
 not take or `--from` without its value; `not-initialised` and `not-a-repository` as everywhere. Any
 other refusal — a source that is not a Jig checkout, a project in link mode where links cannot be
 made — reads `failed`. A failure after the commit (the push, the pull request or the merge) also
-reads `failed` and carries no data: the commit and the branch are already there, and running
-`jig upgrade` again on that branch carries the run on.
+reads `failed` and carries no data: the commit and the branch are already there, and the push or
+the pull request is left to the person — a second run stages nothing and ends `nothing-to-do`.
 

@@ -419,6 +419,22 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.33.0 to 0.34.0
+
+Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
+change. The upgrade brings new scripts, a new skill, `jig-upgrade`, new text for the `jig-release` and
+`jig-setup` skills, and a paragraph about `jig-upgrade` in Jig's section of your `AGENTS.md`; a copy
+you edited yourself is handled as every edited framework
+file is ([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** At `agent.git: merge`, a task whose change raises the project's version —
+a release — is no longer merged by `jig task ship` unless an unattended run may merge it
+(`release.merge: agent`). It ends with an open pull request and
+`not merged: this change raises the version; outside an unattended run a release's merge is the
+human's`, or in an unattended run with `release.merge: human`, `not merged: release.merge is human in
+this clone; the release's merge is the person's`; a major one is opened as a draft. Asking your agent
+to "upgrade Jig" now runs the `jig-upgrade` skill.
+
 ## From 0.32.0 to 0.33.0
 
 Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
