@@ -2732,9 +2732,11 @@ jig_relpath_from() {
 # package). Composer's path repositories under `packages/` are the case; a
 # `vendor/<vendor>/<package>/.git` from --prefer-source is two levels down and
 # is not. Read by `jig status` and by a worktree's bootstrap, which say so
-# (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it).
+# (adr-20261002-a-worktree-shares-a-directory-by-mirroring-it). [extra] is a
+# newline list of directories shared besides the key — a task's own `share` —
+# which count as declared.
 jig_share_candidates() {
-  local root="$1" entry dir child declared="" one
+  local root="$1" extra="${2:-}" entry dir child declared="" one
   # Declared the way the bootstrap reads them: `packages/` names `packages`.
   while IFS= read -r one; do
     while :; do
@@ -2747,6 +2749,7 @@ jig_share_candidates() {
 "
   done <<EOF
 $(cfg_list_lines worktree.share)
+$extra
 EOF
   while IFS= read -r entry; do
     dir=${entry%/}

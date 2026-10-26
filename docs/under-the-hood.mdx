@@ -124,7 +124,14 @@ it waits for and why, and a pause asked of it that it has not honoured yet.
   real folder of that name whose entries are links to this checkout's, and `jig task bootstrap`
   links in entries added since. Only a path the worktree does not already have is touched;
   a path under `.ai/` is always refused. Never fatal: a carry that fails partway leaves the worktree and its branch exactly as they
-  are, for `jig task bootstrap` to try again.
+  are, for `jig task bootstrap` to try again. A task started with `--share <dir>` gets that folder
+  the same way, for itself alone.
+- **`worktree.setup`**, when your project sets it, is run by both after the share and the carry:
+  `sh -c` in the worktree, on this machine, with nothing on its input. **That is running your
+  project's code** too — the command your `.ai/config.yaml` names. It is stopped, with every process
+  it started, after `worktree.setup_timeout` (10 minutes by default). Never fatal, and nothing it
+  leaves is taken back: Jig names what Git can see afterwards and keeps a failure on the task until
+  a `jig task bootstrap` succeeds.
 
 ### Git
 

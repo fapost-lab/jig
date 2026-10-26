@@ -77,7 +77,13 @@ A new worktree also gets whatever `vendor/`, `node_modules/` or `.env` your proj
 [`worktree.carry`](/configuration#git-and-branches)) declare, and links to the folders
 `worktree.share` names — see
 [carrying state into a worktree](/working-with-tasks#several-agents-at-once). Add `--no-bootstrap`
-to skip that for this run, or repeat it later with `jig task bootstrap booking-message`.
+to skip that for this run, or repeat it later with `jig task bootstrap booking-message`. Then your
+project's own [`worktree.setup`](/working-with-tasks#finishing-a-worktree-with-your-own-command)
+runs, if it has one.
+
+`--share packages` gives this one task the links to `packages/` that `worktree.share` gives every
+task; `jig task bootstrap booking-message --share packages` adds them to a task already running.
+See [sharing for one task](/working-with-tasks#sharing-for-one-task).
 
 ## Pause and resume
 

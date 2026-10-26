@@ -47,10 +47,19 @@ test_status_hints_a_directory_of_repositories_worktree_share_should_name() {
 
   run jig status
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "hint: packages/ holds separate repositories a task worktree cannot reach; add \`worktree.share: [packages]\` to .ai/config.yaml"
+  assert_contains "$OUT" "hint: packages/ holds separate repositories a task worktree cannot reach; for a task that edits them: \`jig task bootstrap <id> --share packages\`; for every task: add \`worktree.share: [packages]\` to .ai/config.yaml"
   assert_not_contains "$OUT" "hint: vendor/"
   assert_not_contains "$OUT" "hint: linked/"
   assert_not_contains "$OUT" "hint: seen/"
+
+  # A project that finishes its worktrees with its own command has taken this
+  # on itself: no hint.
+  cp .ai/config.yaml config.before
+  printf 'worktree.setup: make worktree-setup\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "holds separate repositories"
+  cp config.before .ai/config.yaml
 
   # Declared with the slash the docs show it with, as the bootstrap reads it.
   printf 'worktree.share: [packages/]\n' >> .ai/config.yaml

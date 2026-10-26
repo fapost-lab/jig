@@ -319,3 +319,11 @@ python, and is a separate decision.
   time (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees). A refusal in the carry is
   still arguable — it would stop the second clone from ever existing — but it is no longer the
   only thing standing between a person and losing work.
+
+## Amendment (2026-10-26): the carry copies the owner's state, and the project may finish it
+
+"The result is exactly what already works next door" is true of the owning checkout, not of the
+lock file: a checkout running a local development setup (`composer dev:link`, an overlay) hands
+that setup to every worktree. "Nothing is ever installed" still holds for Jig. A project may now
+name its own command, `worktree.setup`, which runs after the carry and brings the worktree to what
+the task needs (adr-20261026-a-worktree-is-finished-by-the-projects-command).

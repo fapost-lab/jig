@@ -125,3 +125,11 @@ and through housekeeping, and the same scenario under `carry` is what loses the 
   the worktree, into the mirror, and from there into the owner's checkout: the carried `vendor/`
   and the shared `packages/` meet without either knowing about the other.
 - `jig_config_keys`, `schemas/config.md` and `templates/config.yaml` gain `worktree.share`.
+
+## Amendment (2026-10-26): a directory can be shared for one task
+
+`worktree.share` shares a directory with every task, and with it the current branches of every
+package checkout. A task can now share one for itself alone — `jig task start <id> --worktree
+--share <dir>`, or `jig task bootstrap <id> --share <dir>` later — kept as the task's `share`
+and mirrored by the same steps. The hint for an unshared directory names that road first
+(adr-20261026-a-worktree-is-finished-by-the-projects-command).
