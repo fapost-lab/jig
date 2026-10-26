@@ -89,6 +89,9 @@ jig task resume booking-message
 Add `--stash` to the pause command when you also need to put uncommitted work aside. Resume reports
 what changed while the task was paused. Read that report before continuing.
 
+Resume runs in any checkout, unless the pause stashed work: then run it where the task's branch is
+checked out (its worktree, if it has one), because that is where the stash is applied.
+
 When an agent is working on the task, on autopilot or in an ordinary session, ask it to pause
 instead:
 

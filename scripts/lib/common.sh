@@ -2211,6 +2211,22 @@ jig_revision_read() {
   printf '%s\n' "${_JIG_REV:-0}"
 }
 
+# jig_revision_valid <value> — zero when <value> is a revision a caller may
+# send with `--revision`: digits without a leading zero, or `0`. `08` is not
+# one, and the shell would read it as octal. Shared by every write checked
+# against the caller's revision (`jig queue`, `jig task resume`).
+jig_revision_valid() {
+  case "$1" in
+    0) return 0 ;;
+    [1-9]*)
+      case "$1" in
+        *[!0-9]*) return 1 ;;
+      esac
+      return 0 ;;
+  esac
+  return 1
+}
+
 # _jig_revision_clear <dir> <below> <names> — remove the names in <names> that
 # are below <below>: best effort, at most 16 a time, never a failure. A reader
 # takes the highest name, so a leftover is clutter, not a wrong answer. Each

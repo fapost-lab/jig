@@ -140,8 +140,8 @@ jig queue request <task-id> pause --reason "Need to check the copy first"
 
 The agent finishes the stage it is on and, instead of starting the next one, pauses the task and
 ends its session. The request waits until then, however long the stage takes; `jig queue cancel
-<task-id> pause` takes it back. To continue, run `jig task resume <task-id>` in the task's worktree
-and start a new session there: the run picks up at the stage it had not started. A paused run is
+<task-id> pause` takes it back. To continue, run `jig task resume <task-id>` — from any checkout,
+since a requested pause stashes nothing — and start a new session in the task's worktree: the run picks up at the stage it had not started. A paused run is
 not a stop, so there is no question to answer.
 
 ## The report
