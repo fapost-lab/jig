@@ -468,8 +468,9 @@ jig_autopilot_parallel() {
 # jig_release_merge — print release.merge, who merges a release (an epic's
 # final pull request, or a task that raises the version) in an unattended run
 # at `agent.git: merge`: `agent` (the default, as before) or `human`, which
-# opens it and leaves the merge — the release — to the person. Exit 1 with the value read for anything else, which every
-# reader takes as `human`: a mistake never merges a release.
+# opens it and leaves the merge — the release — to the person. Exit 1 with
+# the value read for anything else, which every reader takes as `human`: a
+# mistake never merges a release.
 jig_release_merge() {
   local value
   value=$(cfg release.merge agent)
