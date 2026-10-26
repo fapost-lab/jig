@@ -10,7 +10,7 @@ paths:
   - "scripts/lib/status.sh"
   - "schemas/state.md"
 summary: Why pause is a field, ambiguity exits 2, and resume reports overlap rather than distance.
-reviewed_at: 2026-09-11
+reviewed_at: 2026-10-26
 ---
 # ADR-0012: Resume is ambiguous or exact, never a guess; pause is a field
 
@@ -76,3 +76,22 @@ session, and nothing stopped a new task from starting on another task's dirty tr
 > **Amendment (2026-09-11).** The dirty-tree refusal now belongs to `jig task start`, not
 > `jig task new`, and has no `--force` override: since ADR-0026 as amended, filing a task
 > no longer touches the checkout, and starting one is what cuts the branch. See ADR-0026.
+
+> **Amendment (2026-10-26, task `resume-json-revision`, issue #295).** `jig task resume` checks the
+> branch only when the pause recorded a stash. The check existed so the stash lands on the task's
+> branch; without one, resume writes the task's state and nothing else, so it runs in any checkout,
+> and a task in its own worktree is resumed from the clone's main checkout — where Jig UI runs. A
+> stash is still applied only in this checkout, never through `git -C <worktree>` into a tree the
+> caller cannot see; elsewhere it is refused `wrong-checkout`, named by the place (the worktree that
+> has the branch) rather than the branch. A pause made for a request (`--if-requested`) never
+> stashes, so the case a program meets is always the state-only one; a `--state-only` flag was
+> rejected because with a stash it would clear the pause and leave the work hidden in the stash.
+> Resume is a write checked against a revision, like `jig queue`'s
+> (adr-20261019-the-queue-is-one-file-written-against-a-revision): `--revision <n>` or the revision
+> it reads first, the new state built whole, the claim, then the stash, then the move — claimed
+> before the stash, because a stale claim after an applied stash would leave the task paused and a
+> retry would apply the stash twice; a stash that fails after the claim costs one raise and writes
+> nothing. It takes `--json`, and refuses with `not-found`, `not-paused`, `wrong-checkout`,
+> `stash-conflict` and `stale-revision` (schemas/json.md). Its `uncommitted` and `overlap` report
+> the task's checkout — this one, its worktree, or, checked out nowhere, the branch's commits — not
+> the checkout it ran in.

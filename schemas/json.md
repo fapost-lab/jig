@@ -43,8 +43,11 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
-| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`). Read again and decide again; nothing was written |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, or an item, dependency or request that is not in the queue where the command needs it |
+| `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
+| `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
+| `stash-conflict` | `jig task resume` could not apply the task's stash (`git stash apply` failed, usually on conflicts); the task stays paused and the stash entry is kept |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. `message` lists every reason, one per line, each with what to do |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
@@ -158,9 +161,10 @@ A `consolidated` task offers nothing, an `abandoned` one only `reopen` — excep
 The rule is one-way. An action offered is one its command accepts on the task's state, because the
 table asks the command's own guard; the table may withhold more than a command refuses (a finished
 task, a design already approved, a merged pull request). What a command refuses for reasons that are
-not the task's state is checked when it runs, never here: the checkout it runs in (`resume` and
-`ship` run where the task's branch is checked out — its `worktree`, when it has one; `start` wants a
-clean, unoccupied checkout), what is staged, the network, and the value a person types (`set-class`
+not the task's state is checked when it runs, never here: the checkout it runs in (`ship` runs where
+the task's branch is checked out — its `worktree`, when it has one — and so does `resume` when the
+pause recorded a stash, which it applies there; a `resume` without a stash runs in any checkout;
+`start` wants a clean, unoccupied checkout), what is staged, the network, and the value a person types (`set-class`
 lowering a class needs `--reason`, and is refused below T3 where nobody answers). `close` is judged
 by the forge cache, never the forge: a cache that says `merged` is final, and one behind the forge
 withholds a close until the next `jig housekeeping`.
@@ -439,6 +443,40 @@ domains it does not accept, and a `--goal` that is empty, holds a line break, st
 stands beside `--from`; `not-initialised` and `not-a-repository` as everywhere. Any other refusal —
 a worktree that keeps a task directory of its own, a `--from` file that cannot be read — reads
 `failed`. Nothing is written on a refusal.
+
+## `jig task resume --json`
+
+`jig task resume <id> [--revision <n>] --json` ends a task's pause and answers with the task and
+what the resume found. The write is checked against a revision as a `jig queue` write is: with
+`--revision <n>`, the `revision` of the read the caller decided on; without it, the revision the
+command reads as it starts. When anything was written in the clone since, the resume is refused with
+`stale-revision` and changes nothing. A landed resume raises the revision by two (the claim and the
+write). `--json` may stand anywhere among the arguments; without it the command prints its report,
+as it always has.
+
+Without a stash the resume writes only the task's state, so it runs in any checkout: a task in its
+own worktree is resumed from the clone's main checkout. When the pause recorded a stash
+(`jig task pause --stash`), the stash is applied in this checkout, which must then be on the task's
+branch.
+
+```json
+{"task": <task>, "resume": {"paused_days": 3, "stash": {"sha": "9f2c…", "applied": true}, "uncommitted": 2, "overlap": ["scripts/lib/task.sh"]}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it — the same object, every field and its `actions` — read after the write: `paused` is `false` |
+| `resume.paused_days` | integer | whole days since the task was paused; `0` when the pause has no date |
+| `resume.stash` | object or null | the stash the pause recorded, `{"sha", "applied"}`; `applied` is always `true` in an answer, since a stash that does not apply is a refusal. `null` when the pause recorded none |
+| `resume.uncommitted` | integer or null | files that differ from HEAD in the checkout the task's branch is checked out in — this one, or its worktree; `null` when the branch is checked out nowhere, or for a task never started, this checkout's count |
+| `resume.overlap` | array of strings or null | files the task changed that also changed on its base since they parted, sorted; `[]` when none; `null` when no base or merge base was found. Read in the task's checkout, its uncommitted changes counted; from the branch's commits alone when it is checked out nowhere |
+
+Refusals: `usage` for an argument the command does not take, a `--revision` without a value or that
+is not a revision (digits without a leading zero), and an id outside the grammar; `not-found` for no
+such task; `not-paused`, `wrong-checkout`, `stash-conflict` and `stale-revision` as in the table
+above; `not-initialised` and `not-a-repository` as everywhere. Every refusal but `stash-conflict`
+happens before anything is written; `stash-conflict` happens after the revision was claimed (it is
+raised by one) and leaves the state as it was.
 
 ## `jig upgrade --json`
 

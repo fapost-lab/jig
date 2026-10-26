@@ -66,6 +66,9 @@ be reworded.
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
 | `not-found` | the task or epic named does not exist, or is not in the queue where the command needs it |
 | `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
+| `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
+| `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
+| `stash-conflict` | the stash the pause put aside did not apply. The task stays paused and the stash is kept — the person resolves it in the task's checkout |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
 | `failed` | anything else: the message says what |
 
@@ -320,6 +323,31 @@ While it waits, `jig task list --json` shows it on the task as `pause_request`, 
 `requested_at` for the age you show beside it, and offers `cancel-pause-request` instead of
 `request-pause`. Asking twice is refused with `already-exists`, and the first request keeps its time.
 Asking a task that is already paused, or finished, is refused.
+
+## Resuming a paused task
+
+A paused task offers `resume`. Send it with the revision you read:
+
+```bash
+jig task resume booking-message --revision 1792079790 --json
+```
+
+A pause an agent made for a request puts nothing aside, so the resume only clears the pause and runs
+in any checkout — your program may run it in the clone's main checkout even when the task works in
+a worktree of its own. A pause a person made with `--stash` put their uncommitted work aside; that
+resume applies it, so it must run where the task's branch is checked out, and from anywhere else it
+is refused with `wrong-checkout`.
+
+The answer is the task as `jig task list --json` lists it, now with `"paused":false`, and what the
+resume found:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"task":{"id":"booking-message","paused":false,"…":"…"},"resume":{"paused_days":2,"stash":null,"uncommitted":0,"overlap":["src/booking/message.ts"]}}}
+```
+
+`overlap` lists the files the task changed that also changed on its base while it was paused — worth
+showing before the person continues. A resume somebody else made first is refused with
+`not-paused`; any other write in the clone since your read, with `stale-revision`.
 
 ## Filing a task
 

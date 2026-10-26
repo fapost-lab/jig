@@ -1126,15 +1126,253 @@ test_task_resume_not_paused_dies() {
   assert_contains "$OUT" "not paused"
 }
 
-test_task_resume_wrong_branch_refuses_and_changes_nothing() {
+test_task_resume_with_stash_on_wrong_branch_refuses_and_changes_nothing() {
+  task_setup_clean
+  task_started T-1
+  printf 'dirty change\n' >> README.md
+  jig task pause T-1 --stash >/dev/null
+  git checkout -q -b other
+
+  run jig task resume T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "switch to task/T-1 first"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+  assert_not_contains "$(cat README.md)" "dirty change"
+}
+
+# Without a recorded stash there is nothing to apply, so where it runs does not
+# matter: the pause is cleared from any branch.
+test_task_resume_without_stash_succeeds_from_another_branch() {
   task_setup_clean
   task_started T-1
   jig task pause T-1 >/dev/null
   git checkout -q -b other
 
   run jig task resume T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "resumed T-1"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
+  assert_eq "other" "$(git symbolic-ref --short HEAD)"
+}
+
+# --- resume --json and --revision --------------------------------------------------
+
+# _tr_rev — REV <- the clone's revision, as a read reports it.
+_tr_rev() {
+  REV=$(jig task list --json 2>/dev/null | sed -n 's/^{"schema":1,"revision":\([0-9][0-9]*\),.*/\1/p')
+  [ -n "$REV" ] || fail "no revision in the task list"
+}
+
+# _tr_json <args...> — `jig task resume <args> --json`; stdout in OUT, stderr
+# in ERR, status in RC.
+_tr_json() {
+  run_split jig task resume "$@" --json
+}
+
+# _tr_code — the error.code of the envelope in OUT.
+_tr_code() {
+  printf '%s\n' "$OUT" | sed -n 's/.*"error":{"code":"\([^"]*\)".*/\1/p'
+}
+
+# _tr_data — the data of the envelope in OUT, without the envelope's head.
+_tr_data() {
+  printf '%s\n' "$OUT" | sed -e 's/^{"schema":1,"revision":[0-9]*,"generated_at":"[^"]*","data"://' -e 's/}$//'
+}
+
+# _tr_task_of_list — the task object a one-task `jig task list --json` prints.
+_tr_task_of_list() {
+  jig task list --json | sed -e 's/.*"data":{"tasks":\[//' -e 's/\],"hidden".*//'
+}
+
+# A paused task on its branch, a clean tree, no stash.
+_tr_paused_task() {
+  task_setup_clean
+  task_started T-1
+  jig task pause T-1 >/dev/null
+}
+
+test_task_resume_json_success_has_the_task_and_what_resume_found() {
+  _tr_paused_task
+  _tr_json T-1
+  assert_eq 0 "$RC"
+  assert_eq "" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"T-1"'
+  assert_contains "$OUT" '"paused":false'
+  # No stash, a clean tree on the task's branch, overlap checked and empty.
+  assert_contains "$OUT" ',"resume":{"paused_days":0,"stash":null,"uncommitted":0,"overlap":[]}}'
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
+  # The task in the data is the one a listing prints after the resume.
+  local in_data
+  in_data=$(_tr_data | sed -e 's/^{"task"://' -e 's/,"resume":{.*//')
+  assert_eq "$(_tr_task_of_list)" "$in_data" "data.task differs from the task list"
+}
+
+test_task_resume_json_raises_the_revision_by_two() {
+  _tr_paused_task
+  _tr_rev
+  local before=$REV
+  _tr_json T-1
+  assert_eq 0 "$RC"
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "a resume must raise the clone revision by exactly two"
+}
+
+test_task_resume_with_current_revision_succeeds() {
+  _tr_paused_task
+  _tr_rev
+  _tr_json T-1 --revision "$REV"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"paused":false'
+  # --json and --revision in either order.
+  jig task pause T-1 >/dev/null
+  _tr_rev
+  run_split jig task resume --json T-1 --revision "$REV"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"paused":false'
+}
+
+test_task_resume_with_stale_revision_is_refused_and_changes_nothing() {
+  _tr_paused_task
+  _tr_rev
+  local old=$((REV + 7)) state_before now
+  state_before=$(cat .ai/workspace/tasks/T-1/state)
+  now=$REV
+  _tr_json T-1 --revision "$old"
   assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_eq "$state_before" "$(cat .ai/workspace/tasks/T-1/state)" "a refused resume changed the state"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused resume moved the revision"
+
+  # The text form refuses the same way.
+  run jig task resume T-1 --revision "$old"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+}
+
+test_task_resume_json_unknown_task_is_not_found() {
+  task_setup
+  _tr_json NOPE
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_tr_code)"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_resume_json_not_paused_is_refused() {
+  task_setup
+  task_started T-1
+  _tr_json T-1
+  assert_eq 1 "$RC"
+  assert_eq not-paused "$(_tr_code)"
+  assert_contains "$OUT" "not paused: T-1"
+}
+
+test_task_resume_json_bad_arguments_are_usage() {
+  _tr_paused_task
+  _tr_json T-1 --revision 08
+  assert_eq usage "$(_tr_code)" "08: $OUT"
+  _tr_json T-1 --revision x
+  assert_eq usage "$(_tr_code)" "x: $OUT"
+  _tr_json T-1 --revision
+  assert_eq usage "$(_tr_code)" "no value: $OUT"
+  _tr_json T-1 --revision ""
+  assert_eq usage "$(_tr_code)" "empty: $OUT"
+  _tr_json T-1 --bogus
+  assert_eq usage "$(_tr_code)" "unknown arg: $OUT"
+  assert_eq 1 "$RC"
+  _tr_json "bad!id"
+  assert_eq usage "$(_tr_code)" "bad id: $OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+}
+
+test_task_resume_json_with_stash_on_wrong_branch_is_wrong_checkout() {
+  task_setup_clean
+  task_started T-1
+  printf 'dirty change\n' >> README.md
+  jig task pause T-1 --stash >/dev/null
+  git checkout -q -b other
+  _tr_rev
+  local before=$REV
+  _tr_json T-1
+  assert_eq 1 "$RC"
+  assert_eq wrong-checkout "$(_tr_code)"
   assert_contains "$OUT" "switch to task/T-1 first"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+  _tr_rev
+  assert_eq "$before" "$REV" "a refused resume moved the revision"
+}
+
+test_task_resume_json_stash_conflict_leaves_the_task_paused() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  printf 'line one\n' > conflict.txt
+  git add conflict.txt
+  git commit -q -m "add conflict.txt"
+  printf 'task change\n' > conflict.txt
+  jig task pause T-1 --stash >/dev/null
+  printf 'different change\n' > conflict.txt
+
+  _tr_json T-1
+  assert_eq 1 "$RC"
+  assert_eq stash-conflict "$(_tr_code)"
+  assert_contains "$OUT" "stash apply failed"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+}
+
+test_task_resume_json_with_stash_reports_its_sha_applied() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  printf 'dirty change\n' >> README.md
+  jig task pause T-1 --stash >/dev/null
+  local sha
+  sha=$(sed -n 's/^paused_stash:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  [ -n "$sha" ] || fail "paused_stash was not recorded"
+
+  _tr_json T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "\"stash\":{\"sha\":\"$sha\",\"applied\":true}"
+  assert_contains "$(cat README.md)" "dirty change"
+}
+
+# A task whose branch is checked out in another worktree, resumed from the main
+# checkout: nothing to apply, so it succeeds, and the uncommitted count is the
+# worktree's, not this checkout's.
+test_task_resume_without_stash_from_main_checkout_reads_the_worktree() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'a\n' > "$wt/wt-one.txt"
+  printf 'b\n' > "$wt/wt-two.txt"
+  jig task pause T-1 >/dev/null
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+
+  _tr_json T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"paused":false'
+  assert_contains "$OUT" '"stash":null,"uncommitted":2,'
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
+}
+
+test_task_resume_with_stash_for_a_branch_in_a_worktree_names_the_worktree() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  local wt sha
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  jig task pause T-1 >/dev/null
+  # Record a stash by hand: this checkout holds no work of its own to stash.
+  printf 'dirty\n' >> README.md
+  sha=$(git stash create)
+  git checkout -q README.md
+  printf 'paused_stash: %s\n' "$sha" >> .ai/workspace/tasks/T-1/state
+
+  _tr_json T-1
+  assert_eq 1 "$RC"
+  assert_eq wrong-checkout "$(_tr_code)"
+  assert_contains "$OUT" "checked out in"
+  assert_contains "$OUT" "repo.worktrees/T-1"
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
 }
 

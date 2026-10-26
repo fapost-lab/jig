@@ -379,17 +379,8 @@ _queue_write() {
       *) jig_fail usage "queue $sub: unexpected argument: $1" ;;
     esac
   done
-  # A revision is digits without a leading zero: `08` is not one, and the
-  # shell would read it as octal.
   [ -z "$rev_given" ] || [ -n "$rev" ] || jig_fail usage "queue: --revision is empty"
-  case "$rev" in
-    '' | 0) ;;
-    [1-9]*)
-      case "$rev" in
-        *[!0-9]*) jig_fail usage "queue: --revision is not a revision: $rev" ;;
-      esac ;;
-    *) jig_fail usage "queue: --revision is not a revision: $rev" ;;
-  esac
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "queue: --revision is not a revision: $rev"
   case "$sub" in
     set)
       [ -n "$prio" ] || jig_fail usage "queue set: --priority is required"
