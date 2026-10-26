@@ -419,6 +419,18 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.35.0 to 0.36.0
+
+Nothing to do by hand. The installer and the skills did not change; the upgrade brings new scripts,
+and its report names two settings your `.ai/config.yaml` does not mention yet, `worktree.setup` and
+`worktree.setup_timeout` — both work without a line.
+
+**What you will notice.** Starting a task worktree in a project with an unshared folder of separate
+repositories no longer warns you, at the start, to add `worktree.share`; it says, as information,
+how to share the folder with that task (`jig task bootstrap <id> --share <dir>`). A project that shares `packages/`
+with every task and runs a local development setup there may want to move to `--share` and a
+[`worktree.setup`](/working-with-tasks#finishing-a-worktree-with-your-own-command) instead.
+
 ## From 0.34.0 to 0.35.0
 
 Nothing on the checklist the upgrade itself prints. The installer, `.ai/config.yaml` and the skills
