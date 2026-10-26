@@ -46,3 +46,16 @@ then delete the `paused_stash:` line from `.ai/workspace/tasks/<id>/state` and r
 `jig task resume <id>`. Without a stash to apply it only ends the pause. Editing that file by hand is
 the exception here, because nothing else ends this pause; the stash entry stays in `git stash list`
 in case you want it back.
+
+{/* Closed by task setup-stop-on-git-bash. */}
+### Under Git Bash a stopped worktree setup may leave its processes running
+
+**What you see.** On Windows, a `worktree.setup` that reaches `worktree.setup_timeout`, or that is
+running when you interrupt `jig task start` or `jig task bootstrap`, is reported as stopped, but
+what it started — `make`, `composer`, `docker exec` — can go on running.
+
+**What it costs.** A stuck command keeps its process and whatever it holds, such as a lock on
+Composer's cache, and the next `jig task bootstrap` may then wait on it or fail.
+
+**What to do instead.** End the left-over processes in the Task Manager before running
+`jig task bootstrap` again. On macOS and Linux the whole command is stopped.

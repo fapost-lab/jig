@@ -8,6 +8,30 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.36.0 — 2026-10-26
+
+A task worktree can be finished by your project's own command, and a folder of packages can be
+shared with just the task that edits them. Until now a worktree got a copy of this checkout's
+`vendor/` — after `composer dev:link`, links into `packages/` — so a task ran either on dangling
+links or on whatever your package checkouts held, never on your lock file.
+
+- **`worktree.setup` runs your command in a new worktree.** After the share and the carry,
+  `jig task start --worktree` and every `jig task bootstrap` run it in the worktree, on this machine.
+  It is told the task, the checkout the worktree came from, the folders shared with it
+  (`JIG_SHARED`) and the carried links that lead nowhere (`JIG_DANGLING`), so one command can put a
+  task on the lock's versions or on your local packages. It is stopped after
+  `worktree.setup_timeout` (10 minutes), is never fatal, and a failure stays on the task —
+  `setup=failed (exit 1)` in `jig status`, a `setup:` line in `jig task route` — until a bootstrap
+  succeeds. See
+  [Finishing a worktree with your own command](/working-with-tasks#finishing-a-worktree-with-your-own-command).
+- **`--share <dir>` shares a folder with one task.** `jig task start <id> --worktree --share
+  packages`, or `jig task bootstrap <id> --share packages` for a task already running, gives that
+  task the links `worktree.share` gives every task. See
+  [Sharing for one task](/working-with-tasks#sharing-for-one-task).
+- **The hint about an unshared folder of repositories changed.** Starting a worktree names
+  `--share` for a task that edits it, as an information line rather than a warning. `jig status`
+  names both ways to share it, and stays quiet once the project has a `worktree.setup`.
+
 ## 0.35.0 — 2026-10-26
 
 A paused task can be resumed by a program. Jig UI can now take a task off pause from the clone's
