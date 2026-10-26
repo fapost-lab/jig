@@ -419,6 +419,15 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.34.0 to 0.35.0
+
+Nothing on the checklist the upgrade itself prints. The installer, `.ai/config.yaml` and the skills
+did not change; the upgrade brings new scripts.
+
+**What you will notice.** `jig task resume <id>` no longer refuses with `switch to <branch> first`
+when the pause stashed nothing: it ends the pause from any checkout. A pause made with `--stash`
+still has to be resumed where the task's branch is checked out.
+
 ## From 0.33.0 to 0.34.0
 
 Nothing on the checklist the upgrade itself prints. The installer and `.ai/config.yaml` did not
