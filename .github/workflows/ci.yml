@@ -496,3 +496,43 @@ jobs:
             "smoke-windows=${{ needs.smoke-windows.result }}" \
             "changelog=${{ needs.changelog.result }}" \
             "epic-pr=${{ needs.epic-pr.result }}"
+
+  # Tells the owner when main is red (.github/scripts/red-main.sh, which has
+  # tests and a header with the rules): one open issue labelled `red-main`
+  # while main fails, a comment on it for each further red run, and closed by
+  # the next green one. GitHub's own notification of the issue is the alert,
+  # so no secret is needed. After #318 main failed three times and nobody
+  # knew until a release turned out never to have been tagged.
+  #
+  # It reads `ci-ok`, whose verdict gathers the suite, and `release`, where a
+  # red main costs a release. It is the one job outside `ci-ok`'s `needs`: it
+  # runs after the verdict and decides nothing about a merge. Only main's own
+  # runs report, the push and the nightly one; a pull request's red is its
+  # author's to see. A light run tested nothing, so its green leaves the
+  # issue open: only a full run says main is green again.
+  red-main:
+    needs: [scope, ci-ok, release]
+    if: >-
+      always() && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Open, update or close the red-main issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          FULL: ${{ needs.scope.outputs.full }}
+        run: |
+          .github/scripts/red-main.sh \
+            "ci-ok=${{ needs.ci-ok.result }}" \
+            "release=${{ needs.release.result }}"

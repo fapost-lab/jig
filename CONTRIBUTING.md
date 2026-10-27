@@ -205,6 +205,12 @@ nobody will send, and the pull request cannot be merged although its CI is green
 changed without touching the branch rules: the share count is in the job names, and `ci-ok`'s name
 never moves.
 
+One job stands outside `ci-ok`'s `needs`: `red-main`, which runs after it on main's pushes and
+nightly runs and decides nothing about a merge. While main is red it keeps one open issue labelled
+`red-main` — opened by the first red run, commented on by each further one, closed by the next
+green full run (`.github/scripts/red-main.sh`). GitHub's notification of that issue is how a red
+main reaches the maintainer; watch the repository to receive it.
+
 ### Routing evals
 
 A runtime picks a skill by its `description:`, so the descriptions have tests of their own.
