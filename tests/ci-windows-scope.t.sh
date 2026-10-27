@@ -223,6 +223,40 @@ test_ci_windows_scope_ci_change_runs_windows() {
   assert_contains "$OUT" "windows (.github/workflows/ci.yml decides which platforms CI runs)"
 }
 
+# A release runs on every platform before it merges: 0.36.0 was declared by a
+# pull request that skipped the Windows shards, failed on main, and was never
+# tagged. The rule reads the JIG_VERSION line, not the file.
+test_ci_windows_scope_version_bump_runs_windows() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  cw_write "$repo" scripts/lib/version.sh 'JIG_VERSION="0.1.0"'
+  cw_commit "$repo" "version 0.1.0"
+  base=$(cw_head "$repo")
+
+  cw_write "$repo" scripts/lib/version.sh 'JIG_VERSION="0.2.0"'
+  cw_write "$repo" docs/changelog.mdx '## 0.2.0'
+  cw_commit "$repo" "release 0.2.0"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "windows (scripts/lib/version.sh changes JIG_VERSION"
+}
+
+test_ci_windows_scope_version_file_without_a_bump_is_skipped() {
+  local repo="$PWD/repo" base
+  cw_new_repo "$repo"
+  cw_write "$repo" scripts/lib/version.sh 'JIG_VERSION="0.1.0"'
+  cw_commit "$repo" "version 0.1.0"
+  base=$(cw_head "$repo")
+
+  printf '%s\n' 'JIG_VERSION="0.1.0"' 'jig_version_lt() { :; }' > "$repo/scripts/lib/version.sh"
+  cw_commit "$repo" "a helper beside the version"
+
+  run cw_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "skip (1 changed files touch nothing Windows decides differently)"
+}
+
 # Only the workflows decide which platforms run. A script under .github/ that
 # CI executes on ubuntu-latest alone — the release tag, the epic gate, the
 # changelog gate — is ordinary code, read by the content rules like any other,

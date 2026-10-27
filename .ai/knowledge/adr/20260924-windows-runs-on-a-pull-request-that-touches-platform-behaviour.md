@@ -9,8 +9,9 @@ paths:
   - .github/workflows/ci.yml
   - .github/scripts/ci-windows-scope.sh
   - tests/ci-windows-scope.t.sh
-summary: "Why the full Windows suite runs on a pull request whose diff touches line endings, MSYS paths, directory links, a Windows-only file or a CI workflow, and passes over the rest: the signal, the numbers behind it, and why it matches no literal carriage return."
-reviewed_at: 2026-09-25
+  - .github/scripts/main-green-check.sh
+summary: "Why the full Windows suite runs on a pull request whose diff touches line endings, MSYS paths, directory links, a Windows-only file, a CI workflow or JIG_VERSION, and passes over the rest: the signal, the numbers behind it, why it matches no literal carriage return, and why a release also waits for a green main."
+reviewed_at: 2026-10-27
 ---
 # Windows runs on a pull request whose diff touches platform behaviour
 
@@ -185,3 +186,16 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
 > file list is now read with `-c core.quotePath=false`, and a test plants a non-ASCII name.
 > A path holding a double quote or a newline is still quoted whatever that setting says;
 > closing that too means reading the list NUL-separated.
+
+> **Amendment (2026-10-27).** "A miss costs a red `main`, not a released defect" did not hold for
+> a release. 0.36.0 was declared by #319, a pull request whose diff — `scripts/lib/version.sh` and
+> pages under `docs/` — touched nothing these rules match, so the shards were skipped there as on
+> #318 before it; the Windows suite failed only on `main`, the `release` job skipped, and the
+> documentation site, built from `main`, announced a version nobody could install. The miss cost
+> a declared release with no tag. A changed `JIG_VERSION=` line in `scripts/lib/version.sh` is now
+> a rule of its own, the one rule about what a change is for rather than what it touches: a
+> release runs on every platform before it merges. Its companion is
+> `.github/scripts/main-green-check.sh`, run by the `changelog` job: a pull request declaring a
+> version not yet tagged is refused while the latest completed `ci` run on `main` is not green,
+> because the code that already broke `main` is not in the pull request's diff and its own run
+> cannot see it.

@@ -49,8 +49,9 @@ tests/routing/**                routing::
 
 # A library is tested through every script that sources it, not only the
 # first one that did: release-lib.sh decides "already released" for the
-# release tag, the epic gate and the changelog gate alike.
-.github/scripts/release-lib.sh  release-tag:: epic-pr-check:: changelog-check::
+# release tag, the epic gate, the changelog gate and the main-is-green gate
+# alike.
+.github/scripts/release-lib.sh  release-tag:: epic-pr-check:: changelog-check:: main-green-check::
 # CI configuration is exercised by CI itself, not by tests/run.sh — except the
 # one thing a run cannot see about its own file: a Windows suite whose shares
 # do not cover it runs what it was told and reports green on the part it ran.
