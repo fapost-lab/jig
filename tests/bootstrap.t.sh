@@ -1252,25 +1252,26 @@ setup_cmd() {
   printf 'worktree.setup: %s\n' "$1" >> .ai/config.yaml
 }
 
-test_setup_runs_in_the_worktree_after_carry_and_share_with_its_environment() {
-  bootstrap_setup_php
-  share_repo packages/alpha
-  mkdir -p vendor/acme
-  # One link alive in the owner, one that will dangle in a worktree that does
-  # not share packages: the composer dev:link case.
-  ln -s ../../packages/alpha vendor/acme/alpha
-  ln -s ../../packages/gone vendor/acme/gone
-  printf 'personal\n' > .env
-  printf 'worktree.carry: [.env]\n' >> .ai/config.yaml
+# setup_script_writes_its_environment — a setup.sh that records what
+# worktree.setup is told in .ai/runtime/setup.out, committed and declared.
+setup_script_writes_its_environment() {
   setup_cmd 'sh ./setup.sh'
   # shellcheck disable=SC2016
   printf '%s\n' \
     'echo "on stdout"' \
     '{ echo "id=$JIG_TASK_ID"; echo "owner=$JIG_OWNER_CHECKOUT"; echo "shared=$JIG_SHARED"; echo "pwd=$(pwd -P)";' \
-    '  echo "env=$(cat .env)"; echo "dangling<<"; printf "%s\n" "$JIG_DANGLING"; echo ">>"; } > .ai/runtime/setup.out' \
+    '  echo "env=$(cat .env 2>/dev/null)"; echo "dangling<<"; printf "%s\n" "$JIG_DANGLING"; echo ">>"; } > .ai/runtime/setup.out' \
     > setup.sh
   git add setup.sh
   git commit -q -m "setup script"
+}
+
+test_setup_runs_in_the_worktree_after_carry_and_share_with_its_environment() {
+  bootstrap_setup_php
+  share_repo packages/alpha
+  printf 'personal\n' > .env
+  printf 'worktree.carry: [.env]\n' >> .ai/config.yaml
+  setup_script_writes_its_environment
   jig task new T-1 >/dev/null
 
   run_split jig task start T-1 --worktree
@@ -1286,16 +1287,41 @@ test_setup_runs_in_the_worktree_after_carry_and_share_with_its_environment() {
   assert_contains "$got" "shared="
   assert_contains "$got" "pwd=$wt"
   assert_contains "$got" "env=personal"
+  assert_eq "ok" "$(jig task show T-1 | sed -n 's/^setup: //p')"
+
+  run_split jig task bootstrap T-1 --share packages
+  assert_eq 0 "$RC"
+  got=$(cat "$wt/.ai/runtime/setup.out")
+  assert_contains "$got" "shared=packages"
+}
+
+# The composer dev:link case: a carried vendor/ holds links into packages/,
+# which dangle in a worktree that does not share it. A test about links
+# themselves: Git Bash copies on `ln -s` by default, and makes no link at all
+# to a target that does not exist.
+test_setup_is_told_the_carried_links_that_dangle() {
+  skip_unless_symlinks
+  bootstrap_setup_php
+  share_repo packages/alpha
+  mkdir -p vendor/acme
+  ln -s ../../packages/alpha vendor/acme/alpha
+  ln -s ../../packages/gone vendor/acme/gone 2>/dev/null || true
+  [ -L vendor/acme/gone ] || skip "a link to a missing target cannot be made here"
+  setup_script_writes_its_environment
+  jig task new T-1 >/dev/null
+
+  run_split jig task start T-1 --worktree
+  assert_eq 0 "$RC"
+  local wt="$OUT" got
   # Without packages shared both links dangle in the worktree.
+  got=$(cat "$wt/.ai/runtime/setup.out")
   assert_contains "$got" "vendor/acme/alpha"
   assert_contains "$got" "vendor/acme/gone"
-  assert_eq "ok" "$(jig task show T-1 | sed -n 's/^setup: //p')"
 
   # Shared, alpha resolves and only the link to nowhere is named.
   run_split jig task bootstrap T-1 --share packages
   assert_eq 0 "$RC"
   got=$(cat "$wt/.ai/runtime/setup.out")
-  assert_contains "$got" "shared=packages"
   assert_contains "$got" "vendor/acme/gone"
   assert_not_contains "$got" "vendor/acme/alpha"
 }
