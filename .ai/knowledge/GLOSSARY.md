@@ -96,20 +96,38 @@ The hosting service that owns pull/merge requests — GitHub via `gh`, GitLab vi
 Optional (ADR-0002): when absent, unauthenticated or configured `forge: none`,
 Housekeeping falls through to git ancestry. Informal synonyms: host, remote, provider.
 
+## Archive
+
+Ending a task without ending its Workspace: `status` becomes `archived`, and the directory stays
+at `.ai/workspace/tasks/<task-id>/` with no time limit. Done by `jig task archive <id>` (reason
+`manual`) and by Housekeeping, for an abandoned task older than `abandoned_ttl` and for an idle one
+older than `stale_after` (reasons `abandoned`, `stale`); undone by `jig task unarchive <id>`.
+Hidden from live lists, listed by `jig task list --status archived`
+(adr-20261027-a-task-nobody-finished-is-archived-not-purged). Informal synonyms: shelve.
+
+## Archived
+
+The `status` of an archived task, and a State only `jig task archive` and Housekeeping write.
+The state keeps `archived_at`, `archived_reason` and `archived_from`, the status to return to.
+Other readers treat it like `abandoned`.
+
 ## Trash
 
-`.ai/runtime/trash/<date>/<task-id>/`, where a purged Workspace is moved rather than
+`.ai/runtime/trash/<date>/<task-id>/`, where a purged Workspace of a closed task is moved rather than
 deleted. Recovery is a plain `mv` back for `trash_ttl` days (ADR-0006). Never committed.
 
 ## Purge
 
-Ending a Workspace's life, in two stages: move to Trash, then permanent deletion once
-`trash_ttl` expires. "Purged" is not a State — the directory is simply gone (ADR-0005).
+Ending the life of a closed task's Workspace, in two stages: move to Trash, then permanent
+deletion once `trash_ttl` expires. Only a `consolidated` and merged task is purged; one nobody
+finished is Archived instead. "Purged" is not a State — the directory is simply gone (ADR-0005).
 
 ## STALE_CANDIDATE
 
-A report-only flag on a Workspace older than `stale_after`. It never triggers deletion:
-semantic lifecycle has priority over TTL (domains/housekeeping). Informal synonyms: stale, old.
+A flag on an `active` or `ready` Workspace older than `stale_after` that Housekeeping could not
+Archive because it has a worktree or a checked-out branch with changes. Any other stale task is
+Archived. It never triggers deletion: semantic lifecycle has priority over TTL
+(domains/housekeeping). Informal synonyms: stale, old.
 
 ## Session Hook
 

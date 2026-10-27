@@ -45,9 +45,9 @@ forge: auto                           # auto | github | gitlab | none
 
 housekeeping.cadence: 1d              # session hook runs housekeeping if last run is older
 housekeeping.fetch: true              # allow `git fetch` during housekeeping
-housekeeping.trash_ttl: 7d            # trash entries older than this are deleted
-housekeeping.abandoned_ttl: 14d       # abandoned workspaces are purged after this
-housekeeping.stale_after: 60d         # older active tasks are reported as STALE_CANDIDATE
+housekeeping.trash_ttl: 7d            # trash entries (closed tasks, removed specs) older than this are deleted
+housekeeping.abandoned_ttl: 14d       # an abandoned task is archived after this (kept, not deleted)
+housekeeping.stale_after: 60d         # an untouched active/ready task is archived after this
 
 # checkout.busy_ttl: 12h              # how long a record of work in this checkout still counts
 #   as a live session; every jig run refreshes its own, and an older one is ignored, never deleted

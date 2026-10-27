@@ -139,7 +139,16 @@ test_measure_counts_classes_and_outcomes() {
   run jig measure
   assert_contains "$OUT" "process:    3 tasks (3 live, 0 recorded at purge)"
   assert_contains "$OUT" "class: T0 0, T1 1, T2 0, T3 2, T4 0, unclassified 0"
-  assert_contains "$OUT" "outcome: consolidated 2, abandoned 0, active 1, ready 0, other 0"
+  assert_contains "$OUT" "outcome: consolidated 2, abandoned 0, archived 0, active 1, ready 0, other 0"
+}
+
+test_measure_counts_an_archived_task_as_its_own_outcome() {
+  fixture_jig_repo
+  fixture_task one main active class:T1
+  fixture_task two main archived class:T1
+
+  run jig measure
+  assert_contains "$OUT" "outcome: consolidated 0, abandoned 0, archived 1, active 1, ready 0, other 0"
 }
 
 test_measure_counts_a_task_without_a_class_as_unclassified() {

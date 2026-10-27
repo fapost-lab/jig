@@ -314,8 +314,10 @@ Task workspaces are temporary and are cleaned up without anyone remembering to:
 - a task whose change was merged is flagged until it is closed; once closed, its workspace moves to
   `.ai/runtime/trash/`, and is deleted from there after a retention period (7 days by default);
 - a task whose remote state cannot be determined keeps its workspace;
-- an abandoned task's workspace goes to the trash after 14 days, whatever its remote state;
-- old active tasks are only reported, never deleted for their age.
+- an abandoned task is archived after 14 days, whatever its remote state, and an active or ready
+  one nobody touched for 60 days is archived too: its workspace stays, without a time limit, and
+  `jig task unarchive` brings it back;
+- no task is ever deleted for its age.
 
 Housekeeping is started by a Claude Code session hook or a scheduler you choose
 ([Configuration](/configuration#when-housekeeping-runs)); the agent also shows you, at the start of

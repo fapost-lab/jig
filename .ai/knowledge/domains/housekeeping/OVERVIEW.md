@@ -27,7 +27,13 @@ evidence it inferred itself.
   `unknown`. Derived every run, never written into a task's `state` (ADR-0005).
 - Applying the lifecycle policy — a pure function of `status`, remote state,
   `paused` and age, which is why the whole table is testable without a repository.
-- The two-stage **Purge**: move to **Trash**, delete only after `trash_ttl` (ADR-0006).
+- The two-stage **Purge** of a closed task: move to **Trash**, delete only after `trash_ttl`
+  (ADR-0006).
+- The **Archive** of a task nobody finished: an abandoned task older than `abandoned_ttl`, or an
+  `active`/`ready` one untouched for longer than `stale_after`, is archived through the task
+  domain's `_task_archive`, not deleted, and kept without a time limit
+  (adr-20261027-a-task-nobody-finished-is-archived-not-purged). Its log line is `action=archive
+  reason=abandoned|stale`; a dry run prints `would-archive`.
 - The audit trail: `.ai/runtime/housekeeping.log`, one line per decision including
   `via=` (the deciding tier), and the `.ai/runtime/last-housekeeping` stamp. A **purge**
   line additionally carries the task's own `class=`, `created=` and `consolidated=`
@@ -88,8 +94,10 @@ Read these before changing anything here; each is a rule someone paid for.
 
 - **Nothing is destroyed on `unknown`** (RULES.md). Every uncertainty in this
   domain must resolve *towards* `unknown`, never away from it. The one exception is a
-  task a human abandoned: `housekeeping_decide` purges it after `abandoned_ttl` whatever
-  its remote state (ADR-0005), through trash.
+  task a human abandoned: `housekeeping_decide` archives it after `abandoned_ttl` whatever
+  its remote state (ADR-0005 as amended), keeping the workspace. Archiving deletes nothing, which
+  is why a stale `active` or `ready` task may be archived too, and why one with a worktree (or its
+  branch checked out with changes) stays flagged `STALE_CANDIDATE`: a person may be working there.
 - **No path is deleted or moved without validation** (RULES.md, ADR-0006). Use
   `task_dir`/`_task_valid_id` — the single choke point — and never transcribe a regex.
   ADR-0006's own text carried a wrong pattern for two phases; the code was right.
@@ -151,8 +159,10 @@ Read these before changing anything here; each is a rule someone paid for.
 ## Boundaries
 
 Outside: what a `status` value *means* and who may write it — that is the `task` domain
-(ADR-0005, ADR-0012). Housekeeping only reads `state`, and writes nothing into it. That
-still holds now that the purge line copies three of its fields: they are copied into this
+(ADR-0005, ADR-0012). Housekeeping reads `state` and writes nothing into it, with one exception:
+it archives, by calling the task domain's writer (`_task_archive`), which sets `status` and the
+three archive keys (adr-20261027-a-task-nobody-finished-is-archived-not-purged). It never writes
+`state` itself. The purge line copies three of the task's fields: they are copied into this
 domain's log, never back into the task's file.
 
 **The report on stdout is for people and is not an interface.** It is printed once

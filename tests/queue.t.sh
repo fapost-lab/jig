@@ -662,6 +662,10 @@ test_queue_request_refuses_by_the_tasks_state() {
   _q_json request b pause
   assert_eq failed "$(_q_code)"
   assert_contains "$OUT" "task b is abandoned"
+  jig task archive c >/dev/null 2>&1 || fail "archive failed"
+  _q_json request c pause
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "task c is archived"
   _q_json request nobody pause
   assert_eq not-found "$(_q_code)"
   _q_json request epic:big pause
@@ -854,6 +858,17 @@ test_queue_next_orders_levels_by_the_top_level_position() {
   jig queue remove a >/dev/null
   _qn_next
   assert_contains "$NEXT" "next: task:t2 — "
+}
+
+test_queue_next_reads_an_archived_dependency_as_broken() {
+  fixture_jig_repo
+  _qn_task w new
+  _qn_task shelved started archived
+  jig queue set w --priority 1 >/dev/null
+  jig queue depend w --on shelved --reason "r shelved" >/dev/null
+  _q_json next
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:shelved","state":"broken","reason":"r shelved"}'
 }
 
 test_queue_next_reads_a_task_dependency_by_what_is_known_of_it() {

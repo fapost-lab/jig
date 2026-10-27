@@ -178,29 +178,58 @@ test_housekeeping_decide_unknown_preserves_every_status() {
   done
 }
 
-test_housekeeping_decide_abandoned_purges_only_past_ttl() {
+test_housekeeping_decide_abandoned_archives_only_past_ttl() {
   assert_eq "preserve" "$(hk_decide abandoned unknown "" 14 14 60)" "at the ttl"
-  assert_eq "purge" "$(hk_decide abandoned unknown "" 15 14 60)" "past the ttl"
+  assert_eq "archive" "$(hk_decide abandoned unknown "" 15 14 60)" "past the ttl"
 }
 
-test_housekeeping_decide_abandoned_purges_regardless_of_remote() {
+test_housekeeping_decide_abandoned_archives_regardless_of_remote() {
   local remote
   for remote in merged open closed unknown; do
-    assert_eq "purge" "$(hk_decide abandoned "$remote" "" 30 14 60)" "abandoned on $remote"
+    assert_eq "archive" "$(hk_decide abandoned "$remote" "" 30 14 60)" "abandoned on $remote"
   done
 }
 
-test_housekeeping_decide_stale_candidate_is_report_only() {
-  # Old and unmerged: flagged, never purged. Semantic lifecycle beats TTL.
-  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide active unknown "" 99 14 60)"
-  assert_eq "preserve needs-consolidation,STALE_CANDIDATE" \
-    "$(hk_decide active merged "" 99 14 60)"
+test_housekeeping_decide_stale_unfinished_task_is_archived() {
+  assert_eq "preserve" "$(hk_decide active unknown "" 60 14 60)" "at stale_after"
+  assert_eq "archive" "$(hk_decide active unknown "" 61 14 60)" "past stale_after"
+  assert_eq "archive" "$(hk_decide ready unknown "" 61 14 60)"
+  assert_eq "archive" "$(hk_decide active unknown true 99 14 60)" "paused or not"
 }
 
-test_housekeeping_decide_stale_candidate_absent_when_purging() {
-  # An abandoned workspace past both TTLs is purged; flagging it stale as
-  # well would put a "look at this" marker on a directory that just moved.
-  assert_eq "purge" "$(hk_decide abandoned unknown "" 99 14 60)"
+test_housekeeping_decide_stale_task_with_a_flag_or_a_pull_request_is_not_archived() {
+  # Semantic lifecycle beats age: a merged, closed or open pull request has
+  # something to say, so the task is flagged, never archived.
+  assert_eq "preserve needs-consolidation,STALE_CANDIDATE" \
+    "$(hk_decide active merged "" 99 14 60)"
+  assert_eq "preserve abandoned?,STALE_CANDIDATE" "$(hk_decide active closed "" 99 14 60)"
+  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide active open "" 99 14 60)"
+  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide ready open true 99 14 60)"
+}
+
+test_housekeeping_decide_consolidated_is_never_archived() {
+  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide consolidated unknown "" 99 14 60)"
+  assert_eq "purge" "$(hk_decide consolidated merged "" 99 14 60)"
+}
+
+test_housekeeping_decide_archive_carries_no_stale_flag() {
+  # The task is set aside by this very decision; a "look at this" marker on it
+  # would say the opposite.
+  assert_eq "archive" "$(hk_decide abandoned unknown "" 99 14 60)"
+  assert_eq "archive" "$(hk_decide active unknown "" 99 14 60)"
+}
+
+test_housekeeping_decide_archived_is_preserved_and_never_stale() {
+  assert_eq "preserve" "$(hk_decide archived unknown "" 1 14 60)"
+  assert_eq "preserve" "$(hk_decide archived unknown "" 999 14 60)"
+  assert_eq "preserve" "$(hk_decide archived open "" 999 14 60)"
+  assert_eq "preserve" "$(hk_decide archived closed "" 999 14 60)"
+}
+
+test_housekeeping_decide_archived_merged_needs_consolidation() {
+  # Its work landed after all.
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged "" 1 14 60)"
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged true 999 14 60)"
 }
 
 test_housekeeping_decide_abandoned_is_never_flagged_for_consolidation() {
@@ -238,7 +267,7 @@ test_housekeeping_decide_paused_consolidated_merged_still_purges() {
 }
 
 test_housekeeping_decide_paused_is_still_reported_stale() {
-  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide active unknown true 99 14 60)"
+  assert_eq "preserve STALE_CANDIDATE" "$(hk_decide active open true 99 14 60)"
 }
 
 # --- ancestry (design.md §2) -------------------------------------------------
@@ -389,14 +418,125 @@ test_housekeeping_never_purges_on_unknown_remote() {
   assert_not_contains "$OUT" "removed ("
 }
 
-test_housekeeping_purges_abandoned_past_ttl_only() {
+test_housekeeping_archives_abandoned_past_ttl_only() {
   hk_setup
   fixture_task old-one "no-such-branch" abandoned "updated_at:$(hk_days_ago 30)"
   fixture_task young-one "no-such-branch" abandoned "updated_at:$(hk_days_ago 3)"
 
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  # Archived in place: the workspace stays, nothing goes to the trash.
+  assert_file_contains .ai/workspace/tasks/old-one/state "status: archived"
+  assert_file_contains .ai/workspace/tasks/old-one/state "archived_reason: abandoned"
+  assert_file_contains .ai/workspace/tasks/old-one/state "archived_from: abandoned"
+  assert_file_contains .ai/workspace/tasks/young-one/state "status: abandoned"
+  assert_no_file ".ai/runtime/trash/$(date +%Y-%m-%d)"
+  assert_contains "$OUT" "action=archive reason=abandoned"
+  assert_contains "$OUT" "archived (1):"
+  assert_contains "$OUT" "jig task list --status archived"
+  assert_contains "$OUT" "jig task unarchive <id>"
+  assert_file_contains .ai/runtime/housekeeping.log "task=old-one status=abandoned remote=unknown via=none action=archive reason=abandoned"
+}
+
+test_housekeeping_archives_a_stale_active_task() {
+  hk_setup
+  fixture_task old-one "no-such-branch" active "updated_at:$(hk_days_ago 90)"
+  fixture_task young-one "no-such-branch" active "updated_at:$(hk_days_ago 3)"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/old-one/state "status: archived"
+  assert_file_contains .ai/workspace/tasks/old-one/state "archived_reason: stale"
+  assert_file_contains .ai/workspace/tasks/old-one/state "archived_from: active"
+  assert_file_contains .ai/workspace/tasks/young-one/state "status: active"
+  assert_contains "$OUT" "action=archive reason=stale"
+  assert_not_contains "$OUT" "STALE_CANDIDATE"
+}
+
+test_housekeeping_does_not_archive_a_stale_task_with_a_worktree() {
+  hk_setup
+  git branch wt-br
+  git worktree add -q ../wt-stale wt-br >/dev/null 2>&1 || fail "could not add a worktree"
+  # Work of its own, so the branch does not read as merged into main.
+  printf 'work\n' > ../wt-stale/work.txt
+  git -C ../wt-stale add work.txt
+  hk_tick
+  git -C ../wt-stale commit -q -m "work"
+  fixture_task wt "wt-br" active "updated_at:$(hk_days_ago 90)"
+
+  run jig housekeeping --verbose
+  assert_file_contains .ai/workspace/tasks/wt/state "status: active"
+  assert_contains "$OUT" "flags=STALE_CANDIDATE"
+  assert_not_contains "$OUT" "action=archive"
+  assert_dir ../wt-stale
+}
+
+test_housekeeping_does_not_archive_a_stale_task_with_an_open_pull_request() {
+  hk_setup
+  hk_cfg forge github
+  git branch op
+  hk_stub_gh "op$(printf '\t')main$(printf '\t')OPEN"
+  fixture_task op "op" active "updated_at:$(hk_days_ago 90)"
+
+  run jig housekeeping --verbose
+  assert_file_contains .ai/workspace/tasks/op/state "status: active"
+  assert_contains "$OUT" "remote=open via=forge"
+  assert_contains "$OUT" "flags=STALE_CANDIDATE"
+  assert_not_contains "$OUT" "action=archive"
+}
+
+test_housekeeping_keeps_an_archived_task_and_never_flags_it_stale() {
+  hk_setup
+  fixture_task shelved "no-such-branch" abandoned "updated_at:$(hk_days_ago 90)"
   run jig housekeeping
-  assert_no_file .ai/workspace/tasks/old-one/state
-  assert_dir .ai/workspace/tasks/young-one
+  assert_file_contains .ai/workspace/tasks/shelved/state "status: archived"
+  local before
+  before=$(cat .ai/workspace/tasks/shelved/state)
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/shelved/state)"
+  assert_contains "$OUT" "shelved status=archived"
+  assert_not_contains "$OUT" "STALE_CANDIDATE"
+  assert_not_contains "$OUT" "action=archive"
+  assert_contains "$OUT" "already in the archive (1):"
+}
+
+test_housekeeping_flags_an_archived_task_whose_work_merged() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task landed "commit-merged" archived "archived_from:active" "archived_reason:stale"
+
+  run jig housekeeping --verbose
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "landed status=archived remote=merged"
+  assert_contains "$OUT" "flags=needs-consolidation"
+  assert_file_contains .ai/workspace/tasks/landed/state "status: archived"
+}
+
+test_housekeeping_dry_run_archives_nothing() {
+  hk_setup
+  fixture_task old-one "no-such-branch" abandoned "updated_at:$(hk_days_ago 30)"
+  fixture_task stale-one "no-such-branch" active "updated_at:$(hk_days_ago 90)"
+
+  run jig housekeeping --dry-run --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "old-one status=abandoned remote=unknown via=none action=would-archive reason=abandoned"
+  assert_contains "$OUT" "stale-one status=active remote=unknown via=none action=would-archive reason=stale"
+  assert_file_contains .ai/workspace/tasks/old-one/state "status: abandoned"
+  assert_file_contains .ai/workspace/tasks/stale-one/state "status: active"
+  assert_no_file .ai/runtime/housekeeping.log
+}
+
+test_housekeeping_still_purges_a_consolidated_merged_task_to_trash() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_no_file .ai/workspace/tasks/ff/state
+  assert_dir ".ai/runtime/trash/$(date +%Y-%m-%d)"
 }
 
 # --- dry run -----------------------------------------------------------------
@@ -2527,8 +2667,8 @@ test_housekeeping_report_groups_tasks_by_outcome() {
   assert_contains "$OUT" "kept, cannot tell whether it landed (2):"
   assert_contains "$OUT" "  worked on main directly, which leaves no trace of landing: trunk"
   assert_contains "$OUT" "  its branch gone-merged no longer exists: gone"
-  assert_contains "$OUT" "abandoned, waiting to expire (1):"
-  assert_contains "$OUT" "  expires in 12 days: old"
+  assert_contains "$OUT" "abandoned, waiting to go to the archive (1):"
+  assert_contains "$OUT" "  goes to the archive in 12 days: old"
   # The per-task decision lines are for --verbose only.
   assert_not_contains "$OUT" "status="
 

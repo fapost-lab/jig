@@ -21,9 +21,9 @@ Absent keys take the default. Paths are not configurable.
 | `task.issue_pattern` | - | | the tracker issue at the start of a task id, as an extended regular expression awk reads (one pair of surrounding quotes is removed): `[A-Z][A-Z0-9]*-[0-9]+` for YouTrack, Jira or Linear, `[0-9]+` for GitHub or GitLab issues. Anchored at the id's first character, it counts only when its longest match ends at the end of the id or before `-`, `_` or `.`. `jig task new` writes the match to the task's `issue`, and `jig task ship` names it in the commit's first line and the pull request title. Unset, no issue is read from any id (adr-20261010-a-task-carries-its-tracker-issue) |
 | `housekeeping.cadence` | `1d` | yes | session hook runs housekeeping when the last run is older |
 | `housekeeping.fetch` | `true` | yes | allow `git fetch` during housekeeping |
-| `housekeeping.trash_ttl` | `7d` | yes | trash entries older than this are deleted |
-| `housekeeping.abandoned_ttl` | `14d` | yes | abandoned workspaces are purged after this |
-| `housekeeping.stale_after` | `60d` | yes | older active tasks are reported as `STALE_CANDIDATE` |
+| `housekeeping.trash_ttl` | `7d` | yes | trash entries (workspaces of closed tasks, removed specs) older than this are deleted |
+| `housekeeping.abandoned_ttl` | `14d` | yes | an abandoned task is moved to the archive after this (kept there without a time limit) |
+| `housekeeping.stale_after` | `60d` | yes | an `active` or `ready` task untouched for longer is moved to the archive; one with a worktree is flagged `STALE_CANDIDATE` instead |
 | `checkout.busy_ttl` | `12h` | yes | how long a checkout's record of work in progress still counts as a live session (adr-20260924-a-checkout-records-what-is-happening-in-it) |
 | `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr`, `merge` — `merge` also merges the pull request once CI passed, never past branch protection; an epic's only in an unattended run (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level, adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |

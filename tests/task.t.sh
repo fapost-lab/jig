@@ -388,7 +388,7 @@ test_task_new_json_answers_with_the_filed_task() {
   assert_eq "" "$ERR"
   _tl_cut_actions
   # The filed task is the object `task list --json` lists for it.
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
   local actions=$ACTIONS
   _tl_json
   _tl_cut_actions
@@ -8402,8 +8402,8 @@ test_task_list_json_pins_a_task_with_every_fact() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -8412,15 +8412,15 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq 12 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"housekeeping":null}}' "$OUT"
+  assert_eq 14 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
 test_task_list_json_with_no_tasks_is_an_empty_list() {
   task_setup
   _tl_json
   assert_eq 0 "$RC"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[],"hidden":0,"housekeeping":null}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
 # Which tasks are listed is the text listing's rule, with the count of what it
@@ -8638,7 +8638,7 @@ _tl_agree() {
   _tl_json --all
   assert_eq 0 "$RC" "$ERR"
   rows=$(_tl_action_rows)
-  assert_eq 12 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  assert_eq 14 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
   saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
   # The queue too: a pause request written by one command must not change
   # what the next is judged on.
@@ -8693,7 +8693,7 @@ EOF
 test_task_actions_of_a_task_not_started_agree_with_their_commands() {
   task_setup_clean
   jig task new fresh >/dev/null
-  _tl_agree fresh "start pause request-pause set-class abandon"
+  _tl_agree fresh "start pause request-pause set-class abandon archive"
 }
 
 # An attended run stopped at a T3 gate, on a paused task started here: the
@@ -8708,7 +8708,7 @@ test_task_actions_at_a_gate_and_a_stop_agree_with_their_commands() {
 the design
 EOF
   printf 'autopilot: stopped\nautopilot_mode: attended\nautopilot_repairs: 1\npaused: true\n' >> .ai/workspace/tasks/big/state
-  _tl_agree big "resume approve-gate answer-stop set-class abandon"
+  _tl_agree big "resume approve-gate answer-stop set-class abandon archive"
 }
 
 # A pending pause request: it can be cancelled and not asked again; a direct
@@ -8718,7 +8718,7 @@ test_task_actions_of_a_pause_request_agree_with_their_commands() {
   task_setup_clean
   jig task new asked >/dev/null
   jig queue request asked pause --reason "standup" >/dev/null
-  _tl_agree asked "start pause cancel-pause-request set-class abandon"
+  _tl_agree asked "start pause cancel-pause-request set-class abandon archive"
   local at
   at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
   _tl_json
@@ -8742,7 +8742,7 @@ EOF
   sed 's/^knowledge_consolidated: false/knowledge_consolidated: true/' .ai/workspace/tasks/run/state > s.tmp
   mv s.tmp .ai/workspace/tasks/run/state
   printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 2\n' >> .ai/workspace/tasks/run/state
-  _tl_agree run "pause request-pause set-class close abandon"
+  _tl_agree run "pause request-pause set-class close abandon archive"
   _tl_json --all
   assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft"'
   assert_contains "$OUT" '"id":"ship","command":"jig task ship run --message-file <file>","offered":false,"reason":"task ship: the route of run (T3) is missing: '
@@ -8792,7 +8792,7 @@ EOF
 test_task_actions_of_finished_tasks_offer_only_reopen() {
   task_setup_clean
   fixture_task gone "" abandoned
-  _tl_agree gone "reopen"
+  _tl_agree gone "archive reopen"
   rm -rf .ai/workspace/tasks/gone
   fixture_task done-1 "" consolidated
   _tl_agree done-1 ""
@@ -8904,7 +8904,7 @@ test_task_actions_of_an_invalid_git_level_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git bogus
   jig task new lvl >/dev/null
-  _tl_agree lvl "start pause request-pause set-class abandon"
+  _tl_agree lvl "start pause request-pause set-class abandon archive"
   _tl_json
   assert_contains "$OUT" '"reason":"task ship: invalid agent.git: bogus (expected none|commit|push|pr|merge)"}'
 }
@@ -9177,4 +9177,142 @@ test_task_receipt_format_without_since_review_dies() {
   run jig task receipt T-1 --check --format paths
   [ "$RC" -ne 0 ] || fail "expected a non-zero exit"
   assert_contains "$OUT" "--format goes with --since-review"
+}
+
+# --- archive (adr-20261027-a-task-nobody-finished-is-archived-not-purged) ----
+
+# _ta_get <id> <key> — a task's state value, read from the file.
+_ta_get() {
+  sed -n "s/^$2: //p" ".ai/workspace/tasks/$1/state" | head -n 1
+}
+
+test_task_archive_keeps_the_workspace_and_records_why() {
+  task_setup_clean
+  fixture_task old-1 "" active "updated_at:2026-01-01"
+  jig task archive old-1 >/dev/null
+  assert_eq archived "$(_ta_get old-1 status)"
+  assert_eq manual "$(_ta_get old-1 archived_reason)"
+  assert_eq active "$(_ta_get old-1 archived_from)"
+  assert_eq "$(date +%Y-%m-%d)" "$(_ta_get old-1 archived_at)"
+  assert_file .ai/workspace/tasks/old-1/state
+}
+
+test_task_unarchive_returns_the_status_it_had_and_refreshes_updated_at() {
+  task_setup_clean
+  local from
+  for from in active ready abandoned; do
+    fixture_task "from-$from" "" "$from" "updated_at:2026-01-01"
+    jig task archive "from-$from" >/dev/null
+    assert_eq "$from" "$(_ta_get "from-$from" archived_from)"
+    jig task unarchive "from-$from" >/dev/null
+    assert_eq "$from" "$(_ta_get "from-$from" status)"
+    assert_eq "" "$(_ta_get "from-$from" archived_at)"
+    assert_eq "" "$(_ta_get "from-$from" archived_reason)"
+    assert_eq "" "$(_ta_get "from-$from" archived_from)"
+    assert_eq "$(date +%Y-%m-%d)" "$(_ta_get "from-$from" updated_at)"
+  done
+}
+
+test_task_archive_refusals() {
+  task_setup_clean
+  fixture_task done-1 "" consolidated
+  run jig task archive done-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task archive: task done-1 is consolidated"
+  fixture_task old-1 "" active
+  jig task archive old-1 >/dev/null
+  run jig task archive old-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already archived"
+  fixture_task live-1 "" active
+  run jig task unarchive live-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task unarchive: task live-1 is not archived"
+  run jig task archive
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task archive <id>"
+  run jig task unarchive
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task unarchive <id>"
+}
+
+test_task_set_cannot_write_or_move_an_archive() {
+  task_setup_clean
+  fixture_task live-1 "" active
+  run jig task set live-1 status archived
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig task archive live-1"
+  assert_eq active "$(_ta_get live-1 status)"
+  local key
+  for key in archived_at archived_reason archived_from; do
+    run jig task set live-1 "$key" x
+    assert_eq 1 "$RC" "$key"
+  done
+  jig task archive live-1 >/dev/null
+  run jig task set live-1 status active
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig task unarchive live-1"
+  run jig task abandon live-1
+  assert_eq 1 "$RC"
+  assert_eq archived "$(_ta_get live-1 status)"
+}
+
+test_task_list_hides_the_archive_and_points_at_it() {
+  task_setup_clean
+  fixture_task live-1 "" active
+  fixture_task old-1 "" active
+  fixture_task gone-1 "" abandoned
+  jig task archive old-1 >/dev/null
+  run jig task list
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "live-1"
+  assert_not_contains "$OUT" "old-1"
+  assert_contains "$OUT" "(1 finished; jig task list --all)"
+  assert_contains "$OUT" "archived: 1 (jig task list --status archived)"
+  run jig task list --status archived
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "old-1 class="
+  assert_contains "$OUT" "status=archived"
+  assert_contains "$OUT" "archived_at=$(date +%Y-%m-%d) archived_reason=manual"
+  assert_not_contains "$OUT" "live-1"
+  # Only the archive exists: the listing still says so.
+  rm -rf .ai/workspace/tasks/live-1 .ai/workspace/tasks/gone-1
+  run jig task list
+  assert_contains "$OUT" "no live tasks"
+  assert_contains "$OUT" "archived: 1 (jig task list --status archived)"
+}
+
+test_task_list_json_carries_the_archive() {
+  task_setup_clean
+  fixture_task live-1 "" active
+  fixture_task gone-1 "" abandoned
+  fixture_task old-1 "" ready
+  jig task archive old-1 >/dev/null
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  # hidden is every task left out; archived is the part of it in the archive.
+  assert_contains "$OUT" '"hidden":2,"archived":1,'
+  assert_eq 'live-1' "$(_tl_ids)"
+  assert_contains "$OUT" '"archived_at":null,"archived_reason":null,"archived_from":null'
+  _tl_json --status archived
+  assert_eq 'old-1' "$(_tl_ids)"
+  assert_contains "$OUT" '"status":"archived"'
+  assert_contains "$OUT" "\"archived_at\":\"$(date +%Y-%m-%d)\",\"archived_reason\":\"manual\",\"archived_from\":\"ready\""
+  _tl_json --all
+  assert_contains "$OUT" '"hidden":0,"archived":0,'
+}
+
+test_task_actions_of_an_archived_task_offer_only_unarchive() {
+  task_setup_clean
+  fixture_task old-1 "" active
+  jig task archive old-1 >/dev/null
+  _tl_agree old-1 "unarchive"
+}
+
+test_task_actions_of_an_archived_task_with_a_pause_request_offer_its_cancel() {
+  task_setup_clean
+  fixture_task old-2 "" active
+  jig queue request old-2 pause >/dev/null
+  jig task archive old-2 >/dev/null
+  _tl_agree old-2 "cancel-pause-request unarchive"
 }

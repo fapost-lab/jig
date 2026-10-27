@@ -9,7 +9,7 @@ paths:
   - "scripts/lib/housekeeping.sh"
   - "schemas/state.md"
 summary: Why task status is local and remote merge state is derived, never stored.
-reviewed_at: 2026-09-30
+reviewed_at: 2026-10-27
 ---
 # ADR-0005: Task `status` is local-only; merge state is derived, never stored as truth
 
@@ -68,3 +68,9 @@ The spec also had no path for a PR closed without merge.
 > same pull request merged — the two can disagree about the same fact for as long as the
 > forge stays unreachable. That asymmetry is intentional: closing a task early cannot be
 > taken back for free, so refusing on an inconclusive answer is the side to be wrong on.
+
+> **Amendment (2026-10-27).** `status` gains a fifth value, `archived`, and an abandoned task is no
+> longer purged after `abandoned_ttl`: housekeeping archives it (and an idle `active` or `ready`
+> task after `stale_after`), keeping the workspace in place with no time limit. `archived` is written
+> only by `jig task archive` and housekeeping, never by `jig task set`. See
+> adr-20261027-a-task-nobody-finished-is-archived-not-purged.
