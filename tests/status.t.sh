@@ -2276,6 +2276,25 @@ test_status_forgets_a_closed_pull_request_flag_once_the_task_is_abandoned() {
   assert_contains "$needs" "The pull request was closed without merging</h3><p><code>unanswered</code>"
 }
 
+test_status_treats_an_archived_task_as_answered_for_a_closed_pull_request_but_not_for_consolidation() {
+  fixture_jig_repo
+  # An archived task is out of the work, so "abandoned?" is answered; its merged
+  # work still needs closing (adr-20261027-a-task-nobody-finished-is-archived-not-purged).
+  fixture_task shelved task/shelved archived "class:T2" "archived_at:2026-10-01" "archived_reason:stale" "archived_from:active"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=shelved status=active remote=closed via=forge action=preserve flags=abandoned?\n'
+    printf '2026-09-25T12:00:00Z task=shelved status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_not_contains "$needs" "The pull request was closed without merging</h3><p><code>shelved</code>"
+  assert_contains "$needs" "Merged: the task can be closed</h3><p><code>shelved</code>"
+}
+
 test_status_still_borrows_what_only_the_forge_knows() {
   fixture_jig_repo
   # Closed exactly like the task whose consolidation card disappears above,
@@ -2466,6 +2485,37 @@ test_status_page_says_when_pull_request_data_is_stale() {
   rm .ai/runtime/housekeeping.log
   run jig status --html
   assert_contains "$(cat .ai/runtime/status.html)" "Housekeeping has not run yet"
+}
+
+test_status_counts_an_archived_task_apart_from_the_finished() {
+  fixture_jig_repo
+  fixture_task live-1 task/live-1 active "class:T1"
+  fixture_task done-1 task/done-1 consolidated
+  fixture_task old-1 task/old-1 archived "archived_at:2026-10-01" "archived_reason:stale" "archived_from:active"
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "(1 finished; jig task list --all)"
+  assert_contains "$OUT" "archived: 1 (jig task list --status archived)"
+  assert_not_contains "$OUT" "old-1"
+
+  run jig status --html
+  local page
+  page=$(cat .ai/runtime/status.html)
+  assert_contains "$page" '<details id="archived"><summary>Archive (1)</summary>'
+  assert_contains "$page" "<code>old-1</code>"
+  assert_contains "$page" "<td>2026-10-01</td><td>stale</td>"
+  assert_contains "$page" "1 finished, not listed"
+}
+
+test_status_omits_the_archive_when_nothing_is_archived() {
+  fixture_jig_repo
+  fixture_task live-1 task/live-1 active "class:T1"
+
+  run jig status
+  assert_not_contains "$OUT" "archived:"
+  run jig status --html
+  assert_not_contains "$(cat .ai/runtime/status.html)" 'id="archived"'
 }
 
 test_status_page_orders_running_tasks_and_folds_paused_ones() {

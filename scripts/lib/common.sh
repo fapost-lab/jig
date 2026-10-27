@@ -2585,14 +2585,14 @@ jig_pause_request_refusal() {
 }
 
 # jig_pause_request_state_refusal <id> — the part of the refusal above that
-# comes from the task's own state (paused, consolidated, abandoned), or
+# comes from the task's own state (paused, consolidated, abandoned, archived), or
 # nothing. `jig queue request` refuses it with `failed`, and only a refusal
 # past it — a request already pending — with `already-exists`.
 jig_pause_request_state_refusal() {
   local id="$1" status
   status=$(_jig_task_state_value "$id" status)
   case "$status" in
-    consolidated | abandoned)
+    consolidated | abandoned | archived)
       printf 'queue request: task %s is %s\n' "$id" "$status"
       return 0 ;;
   esac

@@ -1154,6 +1154,33 @@ EOF
   assert_eq "consolidated" "$(sed -n 's/^status:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)"
 }
 
+test_spec_link_refuses_an_archived_task() {
+  spec_link_fixture
+  jig task archive T-1 >/dev/null 2>&1
+  run jig spec link rel T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec link: T-1 is archived; only a live task is linked"
+}
+
+test_spec_remove_keeps_an_archived_task_untouched() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf '%s\n' '- [ ] `T-1` — item' > .ai/specs/alpha/roadmap.md
+  jig task new T-1 >/dev/null
+  cat >> .ai/workspace/tasks/T-1/task.md <<'EOF'
+Spec: .ai/specs/alpha/
+EOF
+  jig task archive T-1 >/dev/null
+  cp .ai/workspace/tasks/T-1/task.md task.before
+
+  run jig spec remove alpha
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "kept           T-1 (archived)"
+  cmp -s .ai/workspace/tasks/T-1/task.md task.before \
+    || fail "an archived task's task.md was modified"
+}
+
 test_spec_remove_keeps_abandoned_task_untouched() {
   fixture_jig_repo
   mkdir -p .ai/specs/alpha
@@ -2683,6 +2710,29 @@ RM
   assert_not_contains "$OUT" "blocker"
 }
 
+test_spec_plan_hints_unarchive_for_an_archived_task() {
+  epic_setup
+  plan_spec alpha <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+
+## Waves
+
+1. Alpha
+RM
+  git add -A
+  git commit -q -m "spec"
+  jig task new T-a >/dev/null
+  jig task archive T-a >/dev/null
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}T-a${tab}archived${tab}no${tab}false${tab}-${tab}unarchive${tab}Alpha"
+}
+
 test_spec_plan_reports_running_paused_autopilot_and_abandoned_tasks() {
   epic_setup
   plan_spec alpha <<'RM'
@@ -3597,6 +3647,19 @@ test_spec_ship_final_ignores_an_abandoned_task_of_the_epic() {
   git branch task/t-9 "$c"
   mkdir -p .ai/workspace/tasks/t-9
   printf 'task_id: t-9\nstatus: abandoned\nbranch: task/t-9\nbase_branch: epic/idea-x\n' > .ai/workspace/tasks/t-9/state
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+}
+
+test_spec_ship_final_ignores_an_archived_task_of_the_epic() {
+  mfin_finished idea-x
+  local c
+  c=$(git commit-tree -p HEAD -m "shelved work" "HEAD^{tree}")
+  git branch task/t-9 "$c"
+  mkdir -p .ai/workspace/tasks/t-9
+  printf 'task_id: t-9\nstatus: archived\nbranch: task/t-9\nbase_branch: epic/idea-x\n' > .ai/workspace/tasks/t-9/state
 
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 0 "$RC"

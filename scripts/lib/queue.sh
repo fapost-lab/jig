@@ -764,7 +764,7 @@ _queue_next_task_fact() {
 # target stands at: finished, open, broken or unknown.
 #
 # A task is finished when it is consolidated or housekeeping saw it merged;
-# broken when it was abandoned or its workspace is gone (the dependency can
+# broken when it was abandoned or archived or its workspace is gone (the dependency can
 # never be met — the person drops it); open when housekeeping saw its pull
 # request open or closed unmerged; unknown otherwise, which is what a task
 # housekeeping never ran for answers. An epic is open or finished by its
@@ -781,7 +781,8 @@ _queue_next_dep_state() {
       st=$(_jig_task_state_value "$id" status)
       case "$st" in
         consolidated) printf 'finished'; return 0 ;;
-        abandoned) printf 'broken'; return 0 ;;
+        # An archived task is out of the work (adr-20261027-a-task-nobody-finished-is-archived-not-purged).
+        abandoned | archived) printf 'broken'; return 0 ;;
       esac
       case "$merged" in *" $id "*) printf 'finished'; return 0 ;; esac
       case "$open_ids" in *" $id "*) printf 'open'; return 0 ;; esac

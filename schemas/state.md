@@ -18,7 +18,10 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `class_lowered_from` | `jig task set <id> class <Tn> --reason` | the highest class the task was lowered from; removed when the class is raised back to it or above. Shown by `jig task route`, `jig status` (`lowered=Tn`), the status page and the autopilot report. `task set` refuses it (adr-20261004-a-route-stage-is-proven-by-its-record) |
 | `class_lowered_reason` | same | the one-line reason given with the latest lowering. `task set` refuses it |
 | `route_evidence` | `jig task new` | `required`: the task was filed under the route-evidence check, so `status ready`, `knowledge_consolidated true` and `task ship` refuse while a stage of its route left no record. Absent on a task filed before the check: the same list is printed as a warning and the gate passes. `task set` refuses it (adr-20261004-a-route-stage-is-proven-by-its-record) |
-| `status` | skills via `jig task set` | `active`, `ready`, `consolidated`, `abandoned`. `consolidated` means the task is **closed**: written by `jig-consolidate` after the task's change has landed, or at the end of the route for a task whose landing cannot be observed — no `branch`, or `branch` equal to the base branch (ADR-0030) |
+| `status` | skills via `jig task set` | `active`, `ready`, `consolidated`, `abandoned` (written via `jig task set`), and `archived` (never via `jig task set`: only `jig task archive` and housekeeping write it, and `task set` refuses to change the status of an archived task; `jig task unarchive` returns it). `consolidated` means the task is **closed**: written by `jig-consolidate` after the task's change has landed, or at the end of the route for a task whose landing cannot be observed — no `branch`, or `branch` equal to the base branch (ADR-0030) |
+| `archived_at` | `jig task archive`, housekeeping | `YYYY-MM-DD`: the day the task was archived. Present only while `status` is `archived`. `task set` refuses it (adr-20261027-a-task-nobody-finished-is-archived-not-purged) |
+| `archived_reason` | same | `abandoned` (housekeeping, older than `housekeeping.abandoned_ttl`), `stale` (housekeeping, untouched longer than `housekeeping.stale_after`) or `manual` (`jig task archive`). `task set` refuses it |
+| `archived_from` | same | the status the task had before, `active`, `ready` or `abandoned`; `jig task unarchive` returns it. `task set` refuses it |
 | `knowledge_consolidated` | `jig-consolidate` skill via `jig task set` | `true`, `false`. `true` means the knowledge decision is recorded — `NO_DURABLE_KNOWLEDGE` included — at the end of every route, before the commit (ADR-0030) |
 | `autopilot` | `jig task autopilot` | `on`, `stopped`, `done`; absent when the task never ran on autopilot. `task set` refuses it (adr-20260921-autopilot-runs-a-task-to-its-stops) |
 | `autopilot_repairs` | `jig task autopilot` | repairs used in the current run, `0`–`2`; `repair` refuses a third with exit 3 and sets `autopilot: stopped`; attended `resume` resets it to `0`; an exceptional unattended resume on a direct human answer preserves it and refuses when it is already `2`. `task set` refuses it |
@@ -67,8 +70,9 @@ receipt — redraws the status page at the end of the command, once the page exi
 (`jig_status_page_touch`, adr-20260924-the-status-page-keeps-the-readers-place).
 
 `jig task list` shows only live tasks (`active`, `ready`, paused included) unless
-`--all` or `--status <s>` is given; `consolidated` and `abandoned` accumulate on a
-long-lived branch and would otherwise crowd out the work in flight.
+`--all` or `--status <s>` is given; `consolidated`, `abandoned` and `archived` accumulate on a
+long-lived branch and would otherwise crowd out the work in flight. `jig task list` and `jig status`
+say how many are archived: `archived: N (jig task list --status archived)`.
 
 ## Workspace files
 

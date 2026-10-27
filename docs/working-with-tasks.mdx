@@ -93,7 +93,8 @@ Small work — a typo, a one-file fix that fits in one session — needs no work
 | **active** | Being worked on. |
 | **ready** | Checked: tests pass and the goal is met. Waiting to be merged. |
 | **consolidated** | Closed: merged, and what it taught the project is recorded. |
-| **abandoned** | Stopped for good. |
+| **abandoned** | Stopped. Comes back with `jig task set <id> status active`. |
+| **archived** | Put away: abandoned for a while, or untouched for two months. Hidden from the lists, never deleted. |
 
 **Paused** is a mark on an active or ready task, not a state of its own: it says the work was
 set aside, with a reason, and it comes back where it was.
@@ -111,8 +112,9 @@ is closed without your yes.
 <Accordion title="How finished task notes are cleaned up">
 What is left behind is cleaned up automatically. The workspace of a closed task is moved to a trash
 folder, and deleted from there after a week. A task whose remote state cannot be determined keeps its
-workspace. An abandoned task's workspace goes to the trash after two weeks, whatever its
-remote state. The trigger is a Claude Code session hook
+workspace. An abandoned task, and one nobody touched for two months, is archived instead of deleted: its notes stay
+where they were, the task leaves your lists, and `jig task list --status archived` shows it and
+`jig task unarchive <id>` brings it back. You can archive a task yourself with `jig task archive <id>`. The trigger is a Claude Code session hook
 or a scheduler you choose ([Configuration](/configuration)).
 </Accordion>
 

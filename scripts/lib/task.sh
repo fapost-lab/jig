@@ -27,6 +27,8 @@ cmd_task() {
     start) task_start "$@" ;;
     bootstrap) task_bootstrap "$@" ;;
     abandon) task_abandon "$@" ;;
+    archive) task_archive "$@" ;;
+    unarchive) task_unarchive "$@" ;;
     pause) task_pause "$@" ;;
     resume) task_resume "$@" ;;
     list) task_list "$@" ;;
@@ -55,7 +57,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
@@ -64,6 +66,8 @@ _task_usage() {
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
       ;;
     abandon) printf 'usage: jig task abandon <id>\n' ;;
+    archive) printf 'usage: jig task archive <id>\n' ;;
+    unarchive) printf 'usage: jig task unarchive <id>\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
     resume) printf 'usage: jig task resume <id> [--revision <n>] [--json]\n' ;;
     list) printf 'usage: jig task list [--all] [--status <status>] [--goals] [--json]\n' ;;
@@ -145,7 +149,17 @@ _task_valid_class() {
 
 _task_valid_status() {
   case "$1" in
-    active | ready | consolidated | abandoned) return 0 ;;
+    active | ready | consolidated | abandoned | archived) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The reasons a task is archived (adr-20261027-a-task-nobody-finished-is-
+# archived-not-purged): housekeeping's two, after abandoned_ttl and after
+# stale_after, and a person's own `jig task archive`.
+_task_valid_archived_reason() {
+  case "$1" in
+    abandoned | stale | manual) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1575,7 +1589,15 @@ task_set() {
 
   case "$key" in
     class) _task_valid_class "$value" || jig_die "task set: invalid class: $value" ;;
-    status) _task_valid_status "$value" || jig_die "task set: invalid status: $value" ;;
+    status)
+      _task_valid_status "$value" || jig_die "task set: invalid status: $value"
+      # `archived` has a command of its own, which records when, why and what
+      # it was; a status written by hand would leave unarchive nothing to
+      # return to, and an archived task changes status only by unarchive.
+      [ "$value" != archived ] || jig_die "task set: a task is archived by jig task archive $id"
+      [ "$(task_state_get "$id" status)" != archived ] \
+        || jig_die "task set: task $id is archived; run jig task unarchive $id first"
+      ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     route_depth) _cfg_route_depth "$value" || jig_die "task set: invalid route_depth: $value (full or lean)" ;;
@@ -1591,6 +1613,7 @@ task_set() {
       ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
+      | archived_at | archived_reason | archived_from \
       | route_evidence | class_lowered_from | class_lowered_reason | share | setup \
       | executor_implement_runtime_source | executor_review_runtime_source \
       | executor_implement_model_source | executor_review_model_source)
@@ -1766,6 +1789,58 @@ _task_set_class() {
 task_abandon() {
   [ $# -eq 1 ] || jig_die "$(_task_usage abandon)"
   task_set "$1" status abandoned
+}
+
+# task_archive <id> — a person's archive of a task nobody will finish now
+# (adr-20261027-a-task-nobody-finished-is-archived-not-purged). The workspace
+# stays where it is, kept without a limit; only the status changes, and the
+# branch, worktree, pull request and queue place are left alone.
+task_archive() {
+  [ $# -eq 1 ] || jig_die "$(_task_usage archive)"
+  jig_require_init
+  _task_archive "$1" manual
+}
+
+# _task_archive <id> <reason> — the one writer of `archived`, shared with
+# housekeeping, which archives through it rather than writing state itself.
+# `archived_from` is what unarchive returns to. A consolidated task is refused:
+# its work is already in git, and its workspace is purged, not kept.
+_task_archive() {
+  local id="$1" reason="$2" dir status
+  _task_valid_archived_reason "$reason" || jig_die "task archive: invalid reason: $reason"
+  dir=$(task_dir "$id")
+  _task_guard_write "$id" "task archive"
+  status=$(task_state_get "$id" status)
+  case "$status" in
+    active | ready | abandoned) ;;
+    archived) jig_die "task archive: task $id is already archived" ;;
+    *) jig_die "task archive: task $id is $status; only an unfinished task is archived" ;;
+  esac
+  _task_rewrite_state "$dir" archived_from "$status"
+  _task_rewrite_state "$dir" archived_reason "$reason"
+  _task_rewrite_state "$dir" archived_at "$(jig_today)"
+  _task_rewrite_state "$dir" status archived
+}
+
+# task_unarchive <id> — return an archived task to the status it had. The
+# write refreshes `updated_at`, so the next housekeeping run does not find it
+# stale and archive it again.
+task_unarchive() {
+  [ $# -eq 1 ] || jig_die "$(_task_usage unarchive)"
+  jig_require_init
+  local id="$1" dir from
+  dir=$(task_dir "$id")
+  _task_guard_write "$id" "task unarchive"
+  [ "$(task_state_get "$id" status)" = archived ] || jig_die "task unarchive: task $id is not archived"
+  from=$(task_state_get "$id" archived_from)
+  case "$from" in
+    active | ready | abandoned) ;;
+    *) from=active ;;
+  esac
+  _task_rewrite_state "$dir" status "$from"
+  _task_rewrite_state_remove "$dir" archived_from
+  _task_rewrite_state_remove "$dir" archived_reason
+  _task_rewrite_state_remove "$dir" archived_at
 }
 
 # --- autopilot run (design.md, .ai/workspace/tasks/autopilot-run) --------------
@@ -3952,8 +4027,11 @@ _task_list() {
   fi
 
   local base="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
-  local dir id class status branch base_branch default_base paused issue line lines="" hidden worktrees wt
-  hidden=$_TASK_LIST_HIDDEN
+  local dir id class status branch base_branch default_base paused issue line lines="" hidden archived worktrees wt
+  # `hidden` counts the finished tasks alone in the text; the archive has a
+  # line of its own.
+  hidden=$((_TASK_LIST_HIDDEN - _TASK_LIST_ARCHIVED))
+  archived=$_TASK_LIST_ARCHIVED
   worktrees=$(_task_worktrees)
   # The base is shown only where it is not the project's: a listing where
   # every line says base=main says nothing.
@@ -3984,6 +4062,9 @@ _task_list() {
       line="$line base=$base_branch"
     fi
     [ "$paused" = "true" ] && line="$line paused"
+    if [ "$status" = archived ]; then
+      line="$line archived_at=$(task_state_get "$id" archived_at) archived_reason=$(task_state_get "$id" archived_reason)"
+    fi
     # The goal rides on the line through the sort, after a unit separator,
     # and is put on a line of its own below it once sorted.
     [ "$goals" -eq 0 ] || line="$line"$'\037'"goal: $(_task_goal "${dir}task.md")"
@@ -3996,26 +4077,33 @@ EOF
   if [ -z "$lines" ]; then
     if [ "$hidden" -gt 0 ]; then
       printf 'no live tasks (%d finished; jig task list --all)\n' "$hidden"
-    else
+    elif [ "$archived" -eq 0 ]; then
       printf 'no tasks\n'
+    else
+      printf 'no live tasks\n'
     fi
+    [ "$archived" -gt 0 ] && printf 'archived: %d (jig task list --status archived)\n' "$archived"
     return 0
   fi
   printf '%s\n' "$lines" | sort | awk -F '\037' '{ print $1; if (NF > 1) print "  " $2 }'
   [ "$hidden" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$hidden"
+  [ "$archived" -gt 0 ] && printf 'archived: %d (jig task list --status archived)\n' "$archived"
   return 0
 }
 
 # _task_list_select <show_all> <want_status> — which tasks `task list` shows,
 # in the text and the JSON form alike: _TASK_LIST_IDS gets their ids, one per
-# line, and _TASK_LIST_HIDDEN how many finished tasks were left out. Called as
+# line, _TASK_LIST_HIDDEN how many finished or archived tasks were left out and
+# _TASK_LIST_ARCHIVED how many of those were archived. Called as
 # a plain command, never through $(...), so both globals reach the caller.
 _TASK_LIST_IDS=""
 _TASK_LIST_HIDDEN=0
+_TASK_LIST_ARCHIVED=0
 _task_list_select() {
   local show_all="$1" want_status="$2" dir id status
   _TASK_LIST_IDS=""
   _TASK_LIST_HIDDEN=0
+  _TASK_LIST_ARCHIVED=0
   for dir in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/; do
     [ -f "${dir}state" ] || continue
     id=$(basename "$dir")
@@ -4027,6 +4115,10 @@ _task_list_select() {
       [ "$status" = "$want_status" ] || continue
     elif [ "$show_all" -eq 0 ] && ! _task_is_live "$status"; then
       _TASK_LIST_HIDDEN=$((_TASK_LIST_HIDDEN + 1))
+      # The archive is a subset of what is hidden, counted on its own so the
+      # listing can point at it (adr-20261027-a-task-nobody-finished-is-
+      # archived-not-purged).
+      [ "$status" != archived ] || _TASK_LIST_ARCHIVED=$((_TASK_LIST_ARCHIVED + 1))
       continue
     fi
     _TASK_LIST_IDS="$_TASK_LIST_IDS$id
@@ -4105,7 +4197,9 @@ EOF
   # newline (json_quote escapes both), so the id column is the whole key.
   printf '%s' "$rows" | sed '/^$/d' | LC_ALL=C sort -t "$t" -k1,1 | cut -f2- \
     | awk 'NR > 1 { printf "," } { printf "%s", $0 }'
-  printf '],"hidden":%s,"housekeeping":' "$_TASK_LIST_HIDDEN"
+  # `hidden` stays every task left out; `archived` is the part of it that the
+  # archive holds.
+  printf '],"hidden":%s,"archived":%s,"housekeeping":' "$_TASK_LIST_HIDDEN" "$_TASK_LIST_ARCHIVED"
   run=$(hklog_last_run)
   if [ -z "$run" ]; then
     printf 'null'
@@ -4161,6 +4255,9 @@ _task_list_json_task() {
   fi
   json_str_or_null "$created"; o="$o,\"created_at\":$_JSON"
   json_str_or_null "$updated"; o="$o,\"updated_at\":$_JSON"
+  json_str_or_null "$(task_state_get "$id" archived_at)"; o="$o,\"archived_at\":$_JSON"
+  json_str_or_null "$(task_state_get "$id" archived_reason)"; o="$o,\"archived_reason\":$_JSON"
+  json_str_or_null "$(task_state_get "$id" archived_from)"; o="$o,\"archived_from\":$_JSON"
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
   base=$(jig_task_base "$id")
   json_quote "$base"; o="$o,\"base_branch\":$_JSON"
@@ -4266,7 +4363,7 @@ EOF
 #
 # The rows, in their order; the ids are a contract. The pause request rows ask
 # the guards `jig queue request|cancel` asks (common.sh), which read the queue.
-_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop set-class ship close abandon reopen"
+_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop set-class ship close abandon archive unarchive reopen"
 
 # _task_actions <id> <pr-state> — one line per row of the table:
 # `<action><TAB><true|false><TAB><command><TAB><reason>`, the reason empty
@@ -4297,15 +4394,26 @@ _task_actions() {
       ship) command="jig task ship $id --message-file <file>" ;;
       close) command="jig task set $id status consolidated" ;;
       abandon) command="jig task abandon $id" ;;
+      archive) command="jig task archive $id" ;;
+      unarchive) command="jig task unarchive $id" ;;
       reopen) command="jig task set $id status active" ;;
     esac
     case "$status:$action" in
       abandoned:reopen) ;;
+      # An abandoned task can be archived and an unfinished one too; a
+      # consolidated task is not (its work is in git, its workspace is
+      # purged) and an archived one already is
+      # (adr-20261027-a-task-nobody-finished-is-archived-not-purged).
+      active:archive | ready:archive | abandoned:archive) ;;
+      consolidated:archive) reason="task archive: task $id is consolidated; only an unfinished task is archived" ;;
+      archived:archive) reason="task archive: task $id is already archived" ;;
+      archived:unarchive) ;;
+      *:unarchive) reason="task unarchive: task $id is not archived" ;;
       # A request left on a finished task — made during its last stage, or
       # before it was closed — can still be taken back.
-      consolidated:cancel-pause-request | abandoned:cancel-pause-request)
+      consolidated:cancel-pause-request | abandoned:cancel-pause-request | archived:cancel-pause-request)
         reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
-      consolidated:* | abandoned:*) reason="task $id is $status" ;;
+      consolidated:* | abandoned:* | archived:*) reason="task $id is $status" ;;
       *:reopen) reason="task $id is $status, not abandoned" ;;
       *:start) reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id") ;;
       *:pause) reason=$(_task_actions_guard "$id" "$action" _task_pause_refusal "$id") ;;

@@ -410,6 +410,7 @@ $_STATUS_LIVE
 EOF
   [ "$found" = 1 ] || printf '%s\n' "no active tasks"
   [ "$_STATUS_FINISHED" -gt 0 ] && printf '(%d finished; jig task list --all)\n' "$_STATUS_FINISHED"
+  [ "$_STATUS_ARCHIVED" -gt 0 ] && printf 'archived: %d (jig task list --status archived)\n' "$_STATUS_ARCHIVED"
   # Which queued task to take next, when the clone keeps a queue.
   _status_next_line
 
@@ -1246,6 +1247,11 @@ _status_activity_fold() {
 _STATUS_LIVE=""
 _STATUS_LIVE_READY=""
 _STATUS_FINISHED=0
+# Archived tasks are neither live nor finished
+# (adr-20261027-a-task-nobody-finished-is-archived-not-purged): counted apart
+# and kept as ids, one per line, for the page's Archive block.
+_STATUS_ARCHIVED=0
+_STATUS_ARCHIVED_IDS=""
 _STATUS_WORKTREES=""
 _STATUS_DEFAULT_BASE=""
 _STATUS_US=$(printf '\037')
@@ -1293,6 +1299,8 @@ _status_live_collect() {
   local page="${1:-}" row id class status paused reason branch base autopilot pr_url kc own_depth lowered issue setup
   local wt wt_note receipt gate facts depth setting us="$_STATUS_US"
   _STATUS_FINISHED=0
+  _STATUS_ARCHIVED=0
+  _STATUS_ARCHIVED_IDS=""
   _STATUS_LIVE=""
   _STATUS_WORKTREES=$(_task_worktrees)
   _STATUS_DEFAULT_BASE=$(cfg git.base_branch main)
@@ -1304,6 +1312,11 @@ $row
 EOF
     case "$status" in
       active | ready) ;;
+      archived)
+        _STATUS_ARCHIVED=$((_STATUS_ARCHIVED + 1))
+        _STATUS_ARCHIVED_IDS="$_STATUS_ARCHIVED_IDS$id
+"
+        continue ;;
       *) _STATUS_FINISHED=$((_STATUS_FINISHED + 1)); continue ;;
     esac
     [ "$paused" = true ] || reason=""
@@ -2090,7 +2103,7 @@ OPEN
       url=$(task_state_get "$id" pr_url)
       live=$(task_state_get "$id" status)
     fi
-    if [ "$live" = abandoned ]; then
+    if [ "$live" = abandoned ] || [ "$live" = archived ]; then
       # `task abandon` never touches the forge, so a task the person gave up
       # on keeps its pull request. The flag stands -- only the forge knows
       # whether it is still open -- but the ask does not: work nobody wants is
@@ -2443,10 +2456,38 @@ EOF
     _status_html_task_table "$paused_rows"
     printf '</details>\n'
   fi
+  if [ "$_STATUS_ARCHIVED" -gt 0 ]; then
+    _status_html_archive
+  fi
   if [ "$_STATUS_FINISHED" -gt 0 ]; then
     printf '<p class="muted">%d finished, not listed (<code>jig task list --all</code>).</p>\n' "$_STATUS_FINISHED"
   fi
   printf '</section>\n'
+}
+
+# _status_html_archive -- the collapsed "Archive (N)" block: one row per
+# archived task, its goal, when and why it was archived. Read from the state
+# at draw time, not carried in _STATUS_LIVE: an archived task is nobody's
+# work in flight, and few enough that a read each is cheap.
+_status_html_archive() {
+  local id dir goal at why
+  printf '<details id="archived"><summary>Archive (%d)</summary>\n' "$_STATUS_ARCHIVED"
+  printf '<div class="scroll"><table>\n<tr><th>Task</th><th>Goal</th><th>Archived</th><th>Reason</th></tr>\n'
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    goal="" at="" why=""
+    if jig_valid_id "$id"; then
+      dir=$(task_dir "$id") || dir=""
+      [ -z "$dir" ] || goal=$(_task_goal "$dir/task.md")
+      at=$(task_state_get "$id" archived_at)
+      why=$(task_state_get "$id" archived_reason)
+    fi
+    printf '<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>\n' \
+      "$(_status_h "$id")" "$(_status_h "$goal")" "$(_status_h "$at")" "$(_status_h "$why")"
+  done <<EOF
+$_STATUS_ARCHIVED_IDS
+EOF
+  printf '</table></div>\n</details>\n'
 }
 
 # _status_html_task_groups <rows> — "<id><TAB><row>" lines, already in the

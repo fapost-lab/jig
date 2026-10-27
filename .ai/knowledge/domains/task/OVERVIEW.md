@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-10-21
+reviewed_at: 2026-10-27
 ---
 # Task
 
@@ -43,9 +43,20 @@ changes task state or decides the next stage. `task artifact`, which writes one,
 state only to refresh `updated_at`: a date is not a lifecycle field, and no status, class
 or gate moves because a document was rewritten.
 
+## Archived tasks
+
+`archived` is a `status` that, like `paused`, no `jig task set` writes. `jig task archive <id>`
+(from `active`, `ready` or `abandoned`; not `consolidated`) sets it with the script-owned keys
+`archived_at`, `archived_reason` (`abandoned`, `stale`, `manual`) and `archived_from`; `jig task
+unarchive <id>` returns `archived_from`, removes the keys and refreshes `updated_at`. The workspace
+does not move, and branch, worktree, pull request, pause stash and queue place are untouched. Every
+other reader treats `archived` like `abandoned`; lists hide it unless asked for it with
+`--status archived`.
+
 ## Where this domain ends
 
-`jig housekeeping` reads this domain's `state` files and never writes them (ADR-0005).
+`jig housekeeping` reads this domain's `state` files and writes them only to archive: it calls
+`_task_archive`, and the writer stays here (adr-20261027-a-task-nobody-finished-is-archived-not-purged).
 It now also copies `class`, `created_at` and `knowledge_consolidated` onto its purge line,
 so `jig measure` can count a task whose workspace no longer exists (ADR-0027). Renaming a
 field here therefore empties a column in a report two domains away, silently — the

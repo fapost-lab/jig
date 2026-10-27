@@ -174,10 +174,13 @@ installed itself.
 Everything a script deletes, it first proves is its own:
 
 - **Workspaces** are never deleted directly. Housekeeping moves one to `.ai/runtime/trash/` when its
-  task is closed after a confirmed merge, or when the task was abandoned more than
-  `housekeeping.abandoned_ttl` (14 days) ago — **an abandoned task goes to the trash whatever its
-  remote state**. A task whose remote state cannot be determined is otherwise always kept. Trash
-  entries are deleted after `housekeeping.trash_ttl` (7 days). Age alone never removes an active task.
+  task is closed after a confirmed merge, and trash entries are deleted after
+  `housekeeping.trash_ttl` (7 days). A task nobody finished is not deleted at all: once it was
+  abandoned more than `housekeeping.abandoned_ttl` (14 days) ago — whatever its remote state — or
+  has gone untouched for `housekeeping.stale_after` (60 days), housekeeping **archives** it. Its
+  status becomes `archived`, the workspace stays where it was with no time limit, and
+  `jig task unarchive` returns it. A task whose remote state cannot be determined is otherwise always
+  kept. Age alone never removes a task.
 - **Paths** are deleted only after being checked to lie inside `.ai/` and to look like a workspace or
   a trash entry. Task, spec, profile, adapter and domain names are validated before any path is built
   from them.

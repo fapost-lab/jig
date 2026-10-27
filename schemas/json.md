@@ -98,7 +98,8 @@ nothing, since the goal is always in the data.
 | Field | Value |
 |---|---|
 | `tasks` | one object per task, sorted by id |
-| `hidden` | how many finished tasks (`consolidated`, `abandoned`) the selection left out; `0` with `--all` or `--status` |
+| `hidden` | how many finished tasks (`consolidated`, `abandoned`, `archived`) the selection left out; `0` with `--all` or `--status` |
+| `archived` | how many of the `hidden` tasks are `archived`, so a reader knows whether there is anything to ask for with `--status archived`; `0` with `--all` or `--status archived` (they are in `tasks`) |
 | `housekeeping` | the last `jig housekeeping` run the flags below come from: `ran_at` (UTC) and `forge` (`github`, `gitlab`, `none`, `failed`, or `null` for a log older than the field); `null` when housekeeping never ran in this checkout |
 
 A task:
@@ -107,7 +108,10 @@ A task:
 |---|---|---|
 | `id` | string | the task id |
 | `class` | string or null | `T0`–`T4`; `null` while unclassified |
-| `status` | string | `active`, `ready`, `consolidated`, `abandoned` (schemas/state.md) |
+| `status` | string | `active`, `ready`, `consolidated`, `abandoned`, `archived` (schemas/state.md). `archived` is compatible with schema 1 because an archived task appears only to a caller who asks for it (`--status archived` or `--all`); a reader that lists the default selection never meets the value |
+| `archived_at` | string or null | `YYYY-MM-DD`; `null` unless `status` is `archived` |
+| `archived_reason` | string or null | `abandoned`, `stale` or `manual`; `null` unless archived |
+| `archived_from` | string or null | the status before the archive, `active`, `ready` or `abandoned`; `null` unless archived |
 | `issue` | string or null | the tracker issue the id starts with |
 | `goal` | string or null | the first paragraph under `## Goal` in `task.md`, joined into one line, HTML comments (`<!-- … -->`) left out; `null` when nothing is left |
 | `knowledge_consolidated` | boolean | the knowledge decision is recorded |
@@ -153,9 +157,11 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `ship` | `jig task ship <id> --message-file <file>` | the git level (`agent.git`, or `autopilot.git` for a run) is not `none`, the knowledge decision is recorded, no P0/P1 finding blocks, the review receipt is current, the route has its records, the task is started on a branch other than its base, and its pull request is not merged |
 | `close` | `jig task set <id> status consolidated` | the knowledge decision is recorded, and the task opened no pull request or the forge cache says it merged |
 | `abandon` | `jig task abandon <id>` | the task is live |
+| `archive` | `jig task archive <id>` | the task is `active`, `ready` or `abandoned` |
+| `unarchive` | `jig task unarchive <id>` | the task is `archived` |
 | `reopen` | `jig task set <id> status active` | the task is `abandoned` |
 
-A `consolidated` task offers nothing, an `abandoned` one only `reopen` — except, for both,
+A `consolidated` task offers nothing, an `abandoned` one only `reopen` and `archive`, an `archived` one only `unarchive` — except, for both,
 `cancel-pause-request` while a pause of it is still requested.
 
 The rule is one-way. An action offered is one its command accepts on the task's state, because the
@@ -408,7 +414,7 @@ documentation's ("Order the work"); this is the shape.
 | `next.started` | boolean | `true` when the task has its branch and base commit |
 | `reason` | string or null | `null` when `next` is set; otherwise why there is none: `waiting` (a candidate waits for a dependency), `paused` (the queued tasks left are paused or have a pause request) or `empty` (nothing queued is a task to take) |
 | `waiting` | array | every dependency not finished that holds a candidate back, each `{"ref", "on", "state", "reason"}`; `ref` is the one that waits as the queue stores it (a task, or the epic its tasks inherit the dependency from), `on` what it waits for, `reason` the reason given, `[]` for none |
-| `waiting[].state` | string | `open` (not done yet), `broken` (the target was abandoned or is gone, so the wait never ends: drop it with `jig queue undepend`) or `unknown` (nothing says; `jig housekeeping` may) |
+| `waiting[].state` | string | `open` (not done yet), `broken` (the target was abandoned, is archived or is gone, so the wait never ends: drop it with `jig queue undepend`) or `unknown` (nothing says; `jig housekeeping` may) |
 | `not_queued` | integer | how many active, unpaused tasks have no item in the queue |
 
 A candidate is a queued task whose state is `active`, not paused and with no pause request. Tasks

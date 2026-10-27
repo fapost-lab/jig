@@ -708,6 +708,19 @@ test_checkout_start_is_not_refused_by_an_abandoned_task() {
   assert_eq 0 "$RC"
 }
 
+# An archived task is out of the work too, whatever branch it still names.
+test_checkout_start_is_not_refused_by_an_archived_task() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  jig task new T-2 >/dev/null
+  jig task archive T-1 >/dev/null
+  assert_file .ai/runtime/working/T-1
+
+  run jig task start T-2
+  assert_eq 0 "$RC"
+}
+
 # One session that finishes a task, goes back to the base and starts the next
 # is not occupying the tree: the finished task's branch is not HEAD any more.
 # (`ready`, not consolidated: the task has not landed yet.)

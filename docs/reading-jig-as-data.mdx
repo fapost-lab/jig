@@ -79,7 +79,14 @@ New codes may appear, for refusals that today read `failed`. Treat a code you do
 
 `jig task list --json` lists the same tasks as `jig task list` with the same flags: unfinished ones
 by default, everything with `--all`, one status with `--status <status>`. `data.hidden` says how many
-finished tasks were left out.
+finished tasks were left out, and `data.archived` how many of those are archived.
+
+A task Jig put away has `status: "archived"`, and three fields say how: `archived_at` (a date),
+`archived_reason` (`abandoned`, `stale` or `manual`) and `archived_from` (the status before); they are
+`null` on every other task. The value is new, but schema 1 stands: archived tasks are left out of the
+default selection, so a program appears to see one only when it asks with `--status archived` or
+`--all`. To show an archive column, ask for `jig task list --json --status archived`; an archived
+task offers only the `unarchive` action.
 
 Each task carries what Jig knows about it:
 
@@ -145,6 +152,8 @@ buttons without knowing Jig's rules. Every task carries the same twelve actions,
 | `close` | Close a task whose work has landed |
 | `abandon` | Give the task up |
 | `reopen` | Take back an abandoned task |
+| `archive` | Put an active, ready or abandoned task away, without deleting it |
+| `unarchive` | Bring an archived task back to the status it had |
 
 `offered` is `true` when Jig would accept the action now, and `command` is the Jig command that does
 it, with the values you supply written as `<text>`, `<Tn>` or `<file>`. When `offered` is `false`,
@@ -254,7 +263,7 @@ The queue holds order, not the tasks themselves: read it together with `jig task
 and join a `task` item to a task by `id`, and an `epic` item to `jig spec list --json` by the
 spec's `id`. All of them carry the same `revision` when nothing was written between the reads, and
 the one you send with a change is the `revision` of the queue read you showed. An item whose task
-is finished, or gone, stays in the queue until it is removed; it has no match in the default task
+is finished, archived, or gone, stays in the queue until it is removed; it has no match in the default task
 list, so join against `jig task list --json --all` or show it as it is.
 
 ### Which task is next

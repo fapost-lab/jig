@@ -21,7 +21,7 @@ jig status
 jig doctor
 ```
 
-`task list` shows the tasks; `task current` looks for the task on this branch. When several match,
+`task list` shows the tasks, and says how many are archived (`jig task list --status archived` lists them); `task current` looks for the task on this branch. When several match,
 choose an explicit ID. `status` summarizes the project and `doctor` checks its setup.
 A script can read the same task list as JSON with `jig task list --json`, the specs with
 `jig spec list --json`, the queue with `jig queue list --json`, and what needs you with
@@ -113,6 +113,19 @@ skill. A stage without a skill of its own, such as a plan, reads none, so the re
 the stage after it. The request waits until then, or until you cancel it. Resume as above, and start
 a new session to continue.
 
+## Archive and unarchive
+
+```bash
+jig task archive booking-message
+jig task list --status archived
+jig task unarchive booking-message
+```
+
+An archived task leaves the lists but is not deleted: its notes stay in `.ai/workspace/tasks/`, and
+its branch, worktree and pull request are not touched. You can archive an active, ready or abandoned
+task. Housekeeping does the same for an abandoned task after `housekeeping.abandoned_ttl` and for an
+idle one after `housekeeping.stale_after`. `unarchive` returns the task to the status it had.
+
 ## Order the work
 
 ```bash
@@ -157,7 +170,7 @@ tasks that do not wait the lowest priority number goes first, with a task withou
 same priority a task already started goes before one not started; after that comes the place in
 the queue, a task on an epic taking its epic's place. When no task can be taken it says why:
 every queued task waits for a dependency, is paused, or there is none. A wait that can never end
-(`broken`: the task it waits for was abandoned or is gone) comes with the command that drops it;
+(`broken`: the task it waits for was abandoned, archived or is gone) comes with the command that drops it;
 one Jig cannot tell (`unknown`) with the one that may find out. The last line counts the active
 tasks that are not in the queue. `jig queue next --json` gives the same answer to a program
 ([Reading Jig as data](/reading-jig-as-data#which-task-is-next)).

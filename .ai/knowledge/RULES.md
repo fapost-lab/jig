@@ -110,13 +110,16 @@
   protects is `irm … | iex`, where a warning scrolls past unread. Beside the deletion paragraph
   above, this is the other half of the same idea: what the installer may remove, and where it
   may write at all. (adr-20260926-the-installer-refuses-a-folder-it-must-not-own)
-- Housekeeping never destroys a workspace whose remote state is `unknown`, with one exception
-  decided in ADR-0005: a task a human ended with `jig task abandon` (directly, or through
-  `jig spec remove --abandon-unstarted`) is moved to trash once it is older than
-  `housekeeping.abandoned_ttl`, whatever its remote state — the abandonment answered the question
-  `unknown` leaves open. It goes through trash like any purge (ADR-0006), a worktree only by
-  `git worktree remove` without `--force`, and its branch and commits are never touched.
-  (`domains/housekeeping`)
+- Housekeeping never destroys a workspace whose remote state is `unknown`, and it never deletes a task
+  nobody finished. A task a human ended with `jig task abandon` (directly, or through
+  `jig spec remove --abandon-unstarted`), once older than `housekeeping.abandoned_ttl`, and an
+  `active` or `ready` task untouched for longer than `housekeeping.stale_after` (no worktree, no
+  other flag, remote state not `open`, `merged` or `closed`), is **archived**: its `status` becomes
+  `archived` and its workspace stays where it is, without a time limit. Only `consolidated` and
+  merged tasks are purged to trash (ADR-0006). The worktree of an abandoned task goes only by
+  `git worktree remove` without `--force`; branch, commits and pull request are never touched, and
+  `jig task unarchive` undoes the archive. (adr-20261027-a-task-nobody-finished-is-archived-not-purged,
+  `domains/housekeeping`)
 - Nothing under `.ai/workspace/` or `.ai/runtime/` is ever committed.
 - `init` and `upgrade` never overwrite existing knowledge or user-modified files. (ADR-0003)
   The one region of a project-owned file either of them writes is `AGENTS.md`'s marked
