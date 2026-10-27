@@ -56,7 +56,14 @@
 #     is checked on them. Only the workflows: a script under .github/ that CI
 #     executes on ubuntu-latest alone (the release tag, the epic gate, the
 #     changelog gate) is ordinary code and is read by the content rules like
-#     any other, and a checklist under .github/ is prose.
+#     any other, and a checklist under .github/ is prose;
+#   - a release: a changed `JIG_VERSION=` line in scripts/lib/version.sh. A
+#     version is tagged only by a main run on which every platform passed, so
+#     a pull request that raises it and skips Windows is a release whose fate
+#     is decided after the merge. 0.36.0 was exactly that: #318 and #319
+#     skipped the shards, Windows failed on main, the `release` job skipped,
+#     and the version was declared with no tag. This is the one rule about
+#     what a change is for rather than what it touches.
 #
 # What the rules deliberately do not match is the atomic-write idiom itself,
 # `file.tmp.$$` then `mv`. conventions/shell.md asks for it, and its stated
@@ -173,6 +180,17 @@ main() {
       *.ps1 | *jig.cmd | *gitattributes) _decide windows "$path is Windows-specific" ;;
     esac
   done < "$files"
+
+  # A release. Only the JIG_VERSION line counts, so a change to the helpers
+  # version.sh also holds is read by the content rules like any other. The
+  # pipeline writes to a file and its grep reads to the end, for the reason
+  # the loop below explains.
+  if grep -qxF 'scripts/lib/version.sh' "$files"; then
+    git diff -U0 "$base" HEAD -- scripts/lib/version.sh 2>/dev/null \
+      | grep -E '^[+-]JIG_VERSION=' > "$hunks" || :
+    [ ! -s "$hunks" ] \
+      || _decide windows "scripts/lib/version.sh changes JIG_VERSION, and a release is tagged only when every platform passed"
+  fi
 
   while IFS= read -r path; do
     [ -n "$path" ] || continue

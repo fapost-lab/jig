@@ -260,8 +260,14 @@ fails the job. Nobody tags by hand (ADR-0034).
 A release is planned with the `jig-release` skill: it proposes which live tasks go in and at what
 level, builds them on a release epic, and has a task of its own write the notes against the merged
 pull requests' diffs (adr-20261002-a-release-is-a-spec-with-an-epic).
-After the merge, watch CI on `main` until the tag exists: some Windows jobs run only there, and a red
-`main` gets no tag.
+A red `main` gets no tag, so a release pull request has to show, before it merges, that the tag
+will follow. CI holds it to two things. A change to `JIG_VERSION` runs the whole suite on every
+platform, Windows (Git Bash) included, whatever else the diff touches
+(`.github/scripts/ci-windows-scope.sh`). And the `changelog` job refuses a pull request that changes
+`JIG_VERSION` while the latest completed `ci` run on `main` is not green, naming that run
+(`.github/scripts/main-green-check.sh`): fix `main` first, then re-run the job. A run on `main` still
+in progress is not waited for — the latest completed one decides. Both checks answer when the pull
+request's CI runs, not at the merge, so after the merge watch CI on `main` until the tag exists.
 
 A release that changes installation on Windows also goes through
 [`.github/WINDOWS_RELEASE_CHECKLIST.md`](.github/WINDOWS_RELEASE_CHECKLIST.md).

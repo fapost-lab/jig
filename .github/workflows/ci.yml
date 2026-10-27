@@ -256,7 +256,8 @@ jobs:
   # It runs on main (a release waits for every share), by hand, nightly, and on
   # a pull request whose diff touches something Windows decides differently —
   # line endings, MSYS path translation, directory links, a file that exists
-  # only for Windows, or a change that names the platform itself. That
+  # only for Windows, a change that names the platform itself, or a release
+  # (a change to JIG_VERSION), so a version is tested here before it merges. That
   # decision is .github/scripts/ci-windows-scope.sh, which has tests and a
   # header explaining the rules; the `scope` job runs it and this job reads
   # one output. Every other pull request is covered by smoke-windows below,
@@ -443,14 +444,32 @@ jobs:
   # The check turns itself on when a branch raises JIG_VERSION and off again
   # once that version is tagged, so a pull request that leaves the version
   # alone passes without reading the page.
+  #
+  # The second step asks the other question a release has to answer before it
+  # merges, on a pull request that changes JIG_VERSION: whether main can tag
+  # it at all. The `release` job tags only a main
+  # run on which every job passed, so a version raised into a red main is
+  # declared and never released — 0.36.0 was. It reads the latest completed
+  # run of this workflow on main, which is why this job may read actions; the
+  # rules are in .github/scripts/main-green-check.sh, which has tests.
   changelog:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v7
 
       - name: Check the changelog describes the version this branch declares
         run: .github/scripts/changelog-check.sh
+
+      # The base sha goes through env, like every value from the event.
+      - name: Check main is green before releasing onto it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: .github/scripts/main-green-check.sh "$PR_BASE"
 
   # The one context a branch rule can require. A matrix job's name cannot be:
   # `test` is named ${{ matrix.os }} ${{ matrix.shard }}, and when `scope`
