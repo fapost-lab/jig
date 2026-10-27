@@ -388,7 +388,7 @@ test_task_new_json_answers_with_the_filed_task() {
   assert_eq "" "$ERR"
   _tl_cut_actions
   # The filed task is the object `task list --json` lists for it.
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":{\"id\":\"T-1\",\"class\":\"T1\",\"status\":\"active\",\"issue\":null,\"goal\":\"File \\\"it\\\" from the page\",\"knowledge_consolidated\":false,\"paused\":false,\"pause_request\":null,\"created_at\":\"$today\",\"updated_at\":\"$today\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":null,\"base_branch\":\"main\",\"worktree\":null,\"gate\":null,\"autopilot\":null,\"pull_request\":null,\"housekeeping_flags\":[]}}}" "$OUT"
   local actions=$ACTIONS
   _tl_json
   _tl_cut_actions
@@ -8403,7 +8403,7 @@ test_task_list_json_pins_a_task_with_every_fact() {
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
   assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -8413,7 +8413,7 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
   assert_eq 14 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
 test_task_list_json_with_no_tasks_is_an_empty_list() {
@@ -9315,4 +9315,283 @@ test_task_actions_of_an_archived_task_with_a_pause_request_offer_its_cancel() {
   jig queue request old-2 pause >/dev/null
   jig task archive old-2 >/dev/null
   _tl_agree old-2 "cancel-pause-request unarchive"
+}
+
+# --- merge (adr-20261027-an-absorbed-task-is-archived-with-its-receiver) -------
+
+# _tm_pair — two live tasks with a document each; `from` has a goal.
+_tm_pair() {
+  task_setup_clean
+  jig task new from-1 --class T1 --goal "Do the from work" >/dev/null
+  jig task new to-1 --class T1 --goal "Do the to work" >/dev/null
+  printf 'analysis of from\n' > .ai/workspace/tasks/from-1/analysis.md
+}
+
+test_task_merge_whole_copies_documents_records_both_ends_and_archives() {
+  _tm_pair
+  run jig task merge from-1 --into to-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "task merge: from-1 absorbed into to-1; from-1 is archived" "$OUT"
+  assert_file .ai/workspace/tasks/to-1/absorbed/from-1/analysis.md
+  assert_file .ai/workspace/tasks/to-1/absorbed/from-1/task.md
+  assert_eq "analysis of from" "$(cat .ai/workspace/tasks/to-1/absorbed/from-1/analysis.md)"
+  assert_contains "$(cat .ai/workspace/tasks/to-1/task.md)" "## Absorbed: from-1 (whole)"
+  assert_contains "$(cat .ai/workspace/tasks/to-1/task.md)" "Do the from work"
+  assert_contains "$(cat .ai/workspace/tasks/to-1/task.md)" "Its documents: absorbed/from-1/."
+  assert_eq "from-1" "$(_ta_get to-1 absorbs)"
+  assert_eq "to-1" "$(_ta_get from-1 absorbed_into)"
+  assert_eq archived "$(_ta_get from-1 status)"
+  assert_eq absorbed "$(_ta_get from-1 archived_reason)"
+  assert_eq active "$(_ta_get from-1 archived_from)"
+  assert_eq active "$(_ta_get to-1 status)"
+}
+
+test_task_merge_keeps_what_the_absorbed_task_itself_absorbed() {
+  _tm_pair
+  jig task new deep-1 --goal "Deep" >/dev/null
+  printf 'deep doc\n' > .ai/workspace/tasks/deep-1/notes.md
+  jig task merge deep-1 --into from-1 >/dev/null
+  jig task merge from-1 --into to-1 >/dev/null
+  assert_file .ai/workspace/tasks/to-1/absorbed/from-1/absorbed/deep-1/notes.md
+}
+
+test_task_merge_adds_each_absorbed_task_to_the_list_once() {
+  _tm_pair
+  jig task new more-1 >/dev/null
+  jig task merge from-1 --into to-1 >/dev/null
+  jig task merge more-1 --into to-1 >/dev/null
+  assert_eq "from-1,more-1" "$(_ta_get to-1 absorbs)"
+}
+
+test_task_merge_partial_leaves_the_source_live() {
+  _tm_pair
+  run jig task merge from-1 --into to-1 --partial
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "to-1 takes part of from-1; from-1 stays open"
+  assert_eq active "$(_ta_get from-1 status)"
+  assert_eq "to-1" "$(_ta_get from-1 partly_in)"
+  assert_eq "from-1" "$(_ta_get to-1 absorbs_partly)"
+  assert_eq "" "$(_ta_get to-1 absorbs)"
+  assert_eq "" "$(_ta_get from-1 absorbed_into)"
+  assert_file .ai/workspace/tasks/to-1/absorbed/from-1/analysis.md
+  assert_contains "$(cat .ai/workspace/tasks/to-1/task.md)" "## Absorbed: from-1 (partly)"
+  assert_contains "$(cat .ai/workspace/tasks/from-1/task.md)" "## Partly in to-1"
+}
+
+test_task_merge_partial_can_be_repeated() {
+  _tm_pair
+  jig task merge from-1 --into to-1 --partial >/dev/null
+  printf 'more\n' > .ai/workspace/tasks/from-1/design.md
+  run jig task merge from-1 --into to-1 --partial
+  assert_eq 0 "$RC" "$OUT"
+  assert_file .ai/workspace/tasks/to-1/absorbed/from-1/design.md
+  assert_eq "from-1" "$(_ta_get to-1 absorbs_partly)"
+}
+
+test_task_merge_accepts_an_abandoned_source_and_a_ready_receiver() {
+  _tm_pair
+  jig task abandon from-1 >/dev/null
+  fixture_task ready-1 "" ready
+  run jig task merge from-1 --into ready-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq abandoned "$(_ta_get from-1 archived_from)"
+}
+
+test_task_merge_refusals() {
+  _tm_pair
+  fixture_task done-1 "" consolidated
+  fixture_task gone-1 "" abandoned
+  fixture_task old-1 "" active
+  jig task archive old-1 >/dev/null
+
+  run jig task merge from-1 --into from-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a task cannot absorb itself"
+
+  run jig task merge from-1 --into done-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task done-1 is consolidated; only a live task absorbs another"
+  run jig task merge from-1 --into old-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task old-1 is archived"
+  run jig task merge from-1 --into gone-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task gone-1 is abandoned"
+
+  run jig task merge done-1 --into to-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task done-1 is consolidated; only an unfinished task is absorbed"
+  run jig task merge old-1 --into to-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task old-1 is archived; only an unfinished task is absorbed"
+
+  run jig task merge from-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task merge <from> --into <to> [--partial]"
+  run jig task merge from-1 --into
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--into requires a value"
+  run jig task merge from-1 --into to-1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unknown argument: --bogus"
+  run jig task merge
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "usage: jig task merge"
+
+  # Nothing was written by any of the refusals.
+  assert_eq active "$(_ta_get from-1 status)"
+  assert_eq "" "$(_ta_get to-1 absorbs)"
+  assert_no_file .ai/workspace/tasks/to-1/absorbed
+}
+
+test_task_merge_refuses_a_second_whole_merge_of_the_same_task() {
+  _tm_pair
+  jig task merge from-1 --into to-1 >/dev/null
+  jig task unarchive from-1 >/dev/null
+  run jig task merge from-1 --into to-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "to-1 already holds documents of from-1"
+}
+
+test_task_merge_of_an_unknown_task_fails() {
+  _tm_pair
+  run jig task merge nope --into to-1
+  assert_eq 1 "$RC"
+  run jig task merge from-1 --into nope
+  assert_eq 1 "$RC"
+}
+
+test_task_set_refuses_the_merge_keys() {
+  task_setup_clean
+  fixture_task live-1 "" active
+  local key
+  for key in absorbed_into absorbs partly_in absorbs_partly; do
+    run jig task set live-1 "$key" x
+    assert_eq 1 "$RC" "$key"
+    assert_contains "$OUT" "key is not writable: $key"
+  done
+}
+
+test_task_unarchive_after_a_whole_merge_restores_the_source_and_keeps_the_receivers_record() {
+  _tm_pair
+  jig task merge from-1 --into to-1 >/dev/null
+  jig task unarchive from-1 >/dev/null
+  assert_eq active "$(_ta_get from-1 status)"
+  assert_eq "" "$(_ta_get from-1 absorbed_into)"
+  assert_eq "" "$(_ta_get from-1 archived_reason)"
+  assert_eq "from-1" "$(_ta_get to-1 absorbs)"
+}
+
+test_task_list_names_the_merge_links() {
+  _tm_pair
+  jig task new part-1 >/dev/null
+  jig task merge from-1 --into to-1 >/dev/null
+  jig task merge part-1 --into to-1 --partial >/dev/null
+  run jig task list --status archived
+  assert_contains "$OUT" "from-1 class="
+  assert_contains "$OUT" " absorbed_into=to-1"
+  run jig task list
+  assert_contains "$OUT" " absorbs=from-1"
+  assert_contains "$OUT" " absorbs_partly=part-1"
+  assert_contains "$OUT" " partly_in=to-1"
+}
+
+test_task_list_json_carries_the_merge_links() {
+  _tm_pair
+  jig task new part-1 >/dev/null
+  jig task merge from-1 --into to-1 >/dev/null
+  jig task merge part-1 --into to-1 --partial >/dev/null
+  jig task new more-1 >/dev/null
+  jig task merge more-1 --into to-1 >/dev/null
+  _tl_json --all
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"absorbed_into":"to-1","absorbs":[],"absorbs_partly":[],"partly_in":[]'
+  assert_contains "$OUT" '"absorbed_into":null,"absorbs":["from-1","more-1"],"absorbs_partly":["part-1"],"partly_in":[]'
+  assert_contains "$OUT" '"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":["to-1"]'
+}
+
+test_task_merge_writes_no_queue_file_when_there_is_none() {
+  _tm_pair
+  jig task merge from-1 --into to-1 >/dev/null
+  assert_no_file .ai/runtime/queue
+}
+
+test_task_usage_names_merge() {
+  run jig task
+  assert_contains "$OUT" "unarchive|merge|pause"
+  run jig task merge --help
+  assert_contains "$OUT" "usage: jig task merge <from> --into <to> [--partial]"
+}
+
+# _tm_ship_absorbed <issue> — the issue-named receiver SRD-1-main, set up for a
+# ship, with an absorbed task carrying <issue>.
+_tm_ship_absorbed() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-1-main
+  fixture_task SRD-7-other "" active "issue:$1"
+  jig task merge SRD-7-other --into SRD-1-main >/dev/null
+}
+
+test_task_ship_names_the_absorbed_issues_in_the_commit() {
+  _tm_ship_absorbed SRD-7
+  ship_cfg_local agent.git commit
+  run jig task ship SRD-1-main --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "absorbed issues named: SRD-7"
+  assert_eq "Absorbs: SRD-7" "$(git log -1 --format=%b | sed '/^$/d' | tail -n 1)"
+  # The task's own message file is left as written.
+  assert_not_contains "$(cat msg.txt)" "Absorbs:"
+}
+
+test_task_ship_names_a_numeric_absorbed_issue_with_a_hash() {
+  _tm_ship_absorbed 45
+  ship_cfg_local agent.git commit
+  run jig task ship SRD-1-main --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Absorbs: #45" "$(git log -1 --format=%b | sed '/^$/d' | tail -n 1)"
+}
+
+test_task_ship_does_not_repeat_an_absorbs_line() {
+  _tm_ship_absorbed SRD-7
+  ship_cfg_local agent.git commit
+  printf 'Fix the login form\n\nBody.\n\nAbsorbs: SRD-7\n' > msg.txt
+  run jig task ship SRD-1-main --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "absorbed issues named"
+  assert_eq 1 "$(git log -1 --format=%b | grep -c '^Absorbs: ')"
+}
+
+test_task_ship_names_the_partly_absorbed_issues_and_skips_tasks_without_one() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-1-main
+  fixture_task SRD-7-other "" active "issue:SRD-7"
+  fixture_task plain-1 "" active
+  jig task merge SRD-7-other --into SRD-1-main --partial >/dev/null
+  jig task merge plain-1 --into SRD-1-main >/dev/null
+  ship_cfg_local agent.git commit
+  run jig task ship SRD-1-main --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Absorbs: SRD-7" "$(git log -1 --format=%b | sed '/^$/d' | tail -n 1)"
+}
+
+test_task_ship_without_absorbed_issues_adds_no_line() {
+  issue_ship_setup '[A-Z]+-[0-9]+' SRD-1-main
+  fixture_task plain-1 "" active
+  jig task merge plain-1 --into SRD-1-main >/dev/null
+  ship_cfg_local agent.git commit
+  run jig task ship SRD-1-main --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$(git log -1 --format=%B)" "Absorbs:"
+}
+
+test_task_ship_names_the_absorbed_issues_in_the_pull_request_body() {
+  _tm_ship_absorbed SRD-7
+  ship_cfg forge github
+  git add .ai/config.yaml
+  mship_stub_gh
+  ship_cfg_local agent.git pr
+  printf 'PR body.\n' > body.txt
+  run jig task ship SRD-1-main --message-file msg.txt --body-file body.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Absorbs: SRD-7" "$(sed '/^$/d' gh-create.body | tail -n 1)"
+  assert_eq "PR body." "$(head -n 1 gh-create.body)"
+  assert_eq "PR body." "$(cat body.txt)"
 }

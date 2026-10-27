@@ -29,6 +29,7 @@ cmd_task() {
     abandon) task_abandon "$@" ;;
     archive) task_archive "$@" ;;
     unarchive) task_unarchive "$@" ;;
+    merge) task_merge "$@" ;;
     pause) task_pause "$@" ;;
     resume) task_resume "$@" ;;
     list) task_list "$@" ;;
@@ -57,7 +58,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
@@ -68,6 +69,7 @@ _task_usage() {
     abandon) printf 'usage: jig task abandon <id>\n' ;;
     archive) printf 'usage: jig task archive <id>\n' ;;
     unarchive) printf 'usage: jig task unarchive <id>\n' ;;
+    merge) printf 'usage: jig task merge <from> --into <to> [--partial]\n' ;;
     pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
     resume) printf 'usage: jig task resume <id> [--revision <n>] [--json]\n' ;;
     list) printf 'usage: jig task list [--all] [--status <status>] [--goals] [--json]\n' ;;
@@ -159,7 +161,7 @@ _task_valid_status() {
 # stale_after, and a person's own `jig task archive`.
 _task_valid_archived_reason() {
   case "$1" in
-    abandoned | stale | manual) return 0 ;;
+    abandoned | stale | manual | absorbed) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1614,6 +1616,7 @@ task_set() {
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
       | archived_at | archived_reason | archived_from \
+      | absorbed_into | absorbs | partly_in | absorbs_partly \
       | route_evidence | class_lowered_from | class_lowered_reason | share | setup \
       | executor_implement_runtime_source | executor_review_runtime_source \
       | executor_implement_model_source | executor_review_model_source)
@@ -1841,6 +1844,122 @@ task_unarchive() {
   _task_rewrite_state_remove "$dir" archived_from
   _task_rewrite_state_remove "$dir" archived_reason
   _task_rewrite_state_remove "$dir" archived_at
+  # An absorbed task that comes back is its own task again; the receiver
+  # keeps `absorbs` as the record of the documents it took.
+  _task_rewrite_state_remove "$dir" absorbed_into
+}
+
+# _task_list_add <list> <id> — <list>, comma-separated, with <id> added once.
+_task_list_add() {
+  case ",$1," in
+    *",$2,"*) printf '%s\n' "$1" ;;
+    ,,) printf '%s\n' "$2" ;;
+    *) printf '%s,%s\n' "$1" "$2" ;;
+  esac
+}
+
+# _task_json_ids <list> — a comma-separated list of task ids as a JSON array
+# in _JSON, `[]` when empty.
+_task_json_ids() {
+  local list="$1" out="" one
+  local IFS=,
+  for one in $list; do
+    [ -n "$one" ] || continue
+    json_quote "$one"
+    out="${out:+$out,}$_JSON"
+  done
+  _JSON="[$out]"
+}
+
+# task_merge <from> --into <to> [--partial] — record that <to> does <from>'s
+# work (adr-20261027-an-absorbed-task-is-archived-with-its-receiver). <from>'s
+# documents are copied to <to>/absorbed/<from>/ and named in <to>'s task.md.
+# Whole: <from> is archived with reason `absorbed` and `absorbed_into`, and its
+# queue waits move to <to>. Partial: <from> stays live with `partly_in`. Both
+# ends record the link (`absorbs`, `absorbs_partly`). The tracker is never
+# called: `task ship` of <to> names the absorbed issues.
+task_merge() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage merge)"
+  local from="$1" to="" partial=0
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --into) [ $# -ge 2 ] || jig_die "task merge: --into requires a value"; to="$2"; shift 2 ;;
+      --partial) partial=1; shift ;;
+      *) jig_die "task merge: unknown argument: $1" ;;
+    esac
+  done
+  [ -n "$to" ] || jig_die "$(_task_usage merge)"
+  [ "$from" != "$to" ] || jig_die "task merge: a task cannot absorb itself: $from"
+
+  local from_dir to_dir from_root to_root from_status to_status
+  from_dir=$(task_dir "$from")
+  to_dir=$(task_dir "$to")
+  _task_guard_write "$from" "task merge"
+  _task_guard_write "$to" "task merge"
+  from_status=$(task_state_get "$from" status)
+  to_status=$(task_state_get "$to" status)
+  case "$to_status" in
+    active | ready) ;;
+    *) jig_die "task merge: task $to is $to_status; only a live task absorbs another" ;;
+  esac
+  case "$from_status" in
+    active | ready | abandoned) ;;
+    *) jig_die "task merge: task $from is $from_status; only an unfinished task is absorbed" ;;
+  esac
+
+  # The queue first: a wait that would close a cycle refuses there, before
+  # anything is copied, written or archived.
+  if [ "$partial" -eq 0 ]; then
+    # shellcheck source=lib/queue.sh
+    . "$JIG_LIB/queue.sh"
+    queue_absorb "$from" "$to"
+  fi
+
+  # The copy: every document of <from>, with whatever <from> itself absorbed,
+  # under the receiver's workspace. Both roots are the guarded physical ones,
+  # and the destination is built from two validated ids only.
+  from_root=$(_task_workspace_root "$from" "task merge") || return 1
+  to_root=$(_task_workspace_root "$to" "task merge") || return 1
+  local dest="$to_root/absorbed/$from" f
+  [ ! -e "$dest" ] || [ "$partial" -eq 1 ] \
+    || jig_die "task merge: $to already holds documents of $from in absorbed/$from"
+  mkdir -p "$dest" || jig_die "task merge: cannot create absorbed/$from in $to"
+  for f in "$from_root"/*.md; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    cp "$f" "$dest/" || jig_die "task merge: cannot copy ${f##*/} into $to"
+  done
+  if [ -d "$from_root/absorbed" ] && [ ! -L "$from_root/absorbed" ]; then
+    cp -R "$from_root/absorbed" "$dest/" || jig_die "task merge: cannot copy what $from absorbed into $to"
+  fi
+
+  local goal note how
+  goal=$(_task_goal "$from_root/task.md")
+  how="whole"
+  [ "$partial" -eq 0 ] || how="partly"
+  note=$(mktemp "${TMPDIR:-/tmp}/jig-merge.XXXXXX")
+  jig_cleanup_add "$note"
+  {
+    printf '\n## Absorbed: %s (%s)\n\n' "$from" "$how"
+    [ -z "$goal" ] || printf '%s\n\n' "$goal"
+    printf 'Its documents: absorbed/%s/.\n' "$from"
+  } > "$note"
+  task_artifact append "$to" task --from "$note" >/dev/null
+
+  if [ "$partial" -eq 1 ]; then
+    _task_rewrite_state "$to_dir" absorbs_partly "$(_task_list_add "$(task_state_get "$to" absorbs_partly)" "$from")"
+    _task_rewrite_state "$from_dir" partly_in "$(_task_list_add "$(task_state_get "$from" partly_in)" "$to")"
+    printf '\n## Partly in %s\n\nPart of this work is done by %s; its task.md says which.\n' "$to" "$to" > "$note"
+    task_artifact append "$from" task --from "$note" >/dev/null
+    printf 'task merge: %s takes part of %s; %s stays open\n' "$to" "$from" "$from"
+    return 0
+  fi
+
+  _task_rewrite_state "$to_dir" absorbs "$(_task_list_add "$(task_state_get "$to" absorbs)" "$from")"
+  _task_rewrite_state "$from_dir" absorbed_into "$to"
+  _task_archive "$from" absorbed
+  printf 'task merge: %s absorbed into %s; %s is archived\n' "$from" "$to" "$from"
 }
 
 # --- autopilot run (design.md, .ai/workspace/tasks/autopilot-run) --------------
@@ -4065,6 +4184,12 @@ _task_list() {
     if [ "$status" = archived ]; then
       line="$line archived_at=$(task_state_get "$id" archived_at) archived_reason=$(task_state_get "$id" archived_reason)"
     fi
+    # What `jig task merge` linked, both ends (comma-separated ids, no spaces).
+    local link key
+    for key in absorbed_into absorbs absorbs_partly partly_in; do
+      link=$(task_state_get "$id" "$key")
+      [ -z "$link" ] || line="$line $key=$link"
+    done
     # The goal rides on the line through the sort, after a unit separator,
     # and is put on a line of its own below it once sorted.
     [ "$goals" -eq 0 ] || line="$line"$'\037'"goal: $(_task_goal "${dir}task.md")"
@@ -4258,6 +4383,10 @@ _task_list_json_task() {
   json_str_or_null "$(task_state_get "$id" archived_at)"; o="$o,\"archived_at\":$_JSON"
   json_str_or_null "$(task_state_get "$id" archived_reason)"; o="$o,\"archived_reason\":$_JSON"
   json_str_or_null "$(task_state_get "$id" archived_from)"; o="$o,\"archived_from\":$_JSON"
+  json_str_or_null "$(task_state_get "$id" absorbed_into)"; o="$o,\"absorbed_into\":$_JSON"
+  _task_json_ids "$(task_state_get "$id" absorbs)"; o="$o,\"absorbs\":$_JSON"
+  _task_json_ids "$(task_state_get "$id" absorbs_partly)"; o="$o,\"absorbs_partly\":$_JSON"
+  _task_json_ids "$(task_state_get "$id" partly_in)"; o="$o,\"partly_in\":$_JSON"
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
   base=$(jig_task_base "$id")
   json_quote "$base"; o="$o,\"base_branch\":$_JSON"
@@ -5146,6 +5275,30 @@ EOF
       printf "task ship: issue %s added to the message's first line\n" "$issue"
     fi
     [ -z "$title" ] || title=$(_task_issue_subject "$title" "$issue")
+  fi
+
+  # The issues of the tasks this one absorbed (`jig task merge`), named once at
+  # the end of the commit and of the pull request's body: the tracker links
+  # them from there, as it links the task's own. Jig never calls the tracker.
+  local absorbed_refs="" one one_issue
+  for one in $(printf '%s,%s' "$(task_state_get "$id" absorbs)" "$(task_state_get "$id" absorbs_partly)" | tr ',' ' '); do
+    one_issue=$(task_state_get "$one" issue 2>/dev/null) || one_issue=""
+    [ -n "$one_issue" ] || continue
+    absorbed_refs="${absorbed_refs:+$absorbed_refs, }$(_task_issue_ref "$one_issue")"
+  done
+  if [ -n "$absorbed_refs" ] && ! grep -q '^Absorbs: ' "$message_file"; then
+    msg_tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-msg.XXXXXX")
+    jig_cleanup_add "$msg_tmp"
+    { cat "$message_file"; printf '\nAbsorbs: %s\n' "$absorbed_refs"; } > "$msg_tmp"
+    message_file="$msg_tmp"
+    if [ -n "$body_file" ] && ! grep -q '^Absorbs: ' "$body_file"; then
+      local body_tmp
+      body_tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-body.XXXXXX")
+      jig_cleanup_add "$body_tmp"
+      { cat "$body_file"; printf '\nAbsorbs: %s\n' "$absorbed_refs"; } > "$body_tmp"
+      body_file="$body_tmp"
+    fi
+    printf 'task ship: absorbed issues named: %s\n' "$absorbed_refs"
   fi
 
   _task_ship_unverified_notice

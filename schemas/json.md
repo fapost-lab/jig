@@ -110,8 +110,12 @@ A task:
 | `class` | string or null | `T0`–`T4`; `null` while unclassified |
 | `status` | string | `active`, `ready`, `consolidated`, `abandoned`, `archived` (schemas/state.md). `archived` is compatible with schema 1 because an archived task appears only to a caller who asks for it (`--status archived` or `--all`); a reader that lists the default selection never meets the value |
 | `archived_at` | string or null | `YYYY-MM-DD`; `null` unless `status` is `archived` |
-| `archived_reason` | string or null | `abandoned`, `stale` or `manual`; `null` unless archived |
+| `archived_reason` | string or null | `abandoned`, `stale`, `manual` or `absorbed`; `null` unless archived |
 | `archived_from` | string or null | the status before the archive, `active`, `ready` or `abandoned`; `null` unless archived |
+| `absorbed_into` | string or null | the task that absorbed this one whole; `null` otherwise |
+| `absorbs` | array of strings | ids of the tasks this one absorbed whole; `[]` when none |
+| `absorbs_partly` | array of strings | ids of the tasks this one takes part of; `[]` when none |
+| `partly_in` | array of strings | ids of the tasks that take part of this one; `[]` when none |
 | `issue` | string or null | the tracker issue the id starts with |
 | `goal` | string or null | the first paragraph under `## Goal` in `task.md`, joined into one line, HTML comments (`<!-- … -->`) left out; `null` when nothing is left |
 | `knowledge_consolidated` | boolean | the knowledge decision is recorded |

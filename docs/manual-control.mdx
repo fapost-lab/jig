@@ -126,6 +126,24 @@ its branch, worktree and pull request are not touched. You can archive an active
 task. Housekeeping does the same for an abandoned task after `housekeeping.abandoned_ttl` and for an
 idle one after `housekeeping.stale_after`. `unarchive` returns the task to the status it had.
 
+## Merge a task into another
+
+```bash
+jig task merge booking-message --into booking-notifications
+jig task merge booking-message --into booking-notifications --partial
+```
+
+When one task turns out to do another's work, merge it. The documents of `booking-message` are
+copied, not moved, to `absorbed/booking-message/` in the receiving task's notes, and the receiver's
+`task.md` gets a section that names them. Without `--partial` the absorbed task is archived (reason
+`absorbed`) and anything in the queue that waited on it waits on the receiver instead; `jig task
+unarchive` brings it back. With `--partial` the task stays open and both sides note the overlap;
+the queue is left alone. The receiving task must be active or ready, and a merge that would make the
+queue wait in a circle is refused before anything changes.
+
+Jig does not touch your tracker. When the receiving task ships, its commit and pull request name the
+absorbed tasks' issues in an `Absorbs:` line, so the tracker's own integration can link or close them.
+
 ## Order the work
 
 ```bash

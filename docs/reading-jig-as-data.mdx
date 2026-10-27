@@ -88,6 +88,11 @@ default selection, so a program appears to see one only when it asks with `--sta
 `--all`. To show an archive column, ask for `jig task list --json --status archived`; an archived
 task offers only the `unarchive` action.
 
+Merging tasks (`jig task merge`) adds four more fields to every task: `absorbed_into` (the receiving
+task's id, or `null`) and the arrays `absorbs`, `absorbs_partly` and `partly_in` (empty when there is
+nothing to say). A task absorbed whole is archived with `archived_reason: "absorbed"`. These are
+additions, so schema 1 stands.
+
 Each task carries what Jig knows about it:
 
 ```json
