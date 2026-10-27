@@ -512,6 +512,30 @@ test_housekeeping_flags_an_archived_task_whose_work_merged() {
   assert_contains "$OUT" "landed status=archived remote=merged"
   assert_contains "$OUT" "flags=needs-consolidation"
   assert_file_contains .ai/workspace/tasks/landed/state "status: archived"
+  # The close starts at unarchive, so the report says so.
+  assert_contains "$OUT" "merged after it was archived, run jig task unarchive landed, then jig-consolidate"
+  assert_not_contains "$OUT" "merged but not consolidated"
+}
+
+test_housekeeping_keeps_a_task_it_cannot_archive_and_goes_on_to_the_rest() {
+  hk_setup
+  fixture_task good-one "no-such-branch" active "updated_at:$(hk_days_ago 90)"
+  fixture_task bad-one "no-such-branch" active "updated_at:$(hk_days_ago 90)"
+  # A workspace nobody can write into: the state rewrite fails, the archive
+  # writer dies, and that must be one task's refusal, not the run's.
+  [ "$(id -u)" != 0 ] || skip "root writes into a read-only directory"
+  chmod 555 .ai/workspace/tasks/bad-one
+
+  run jig housekeeping --verbose
+  chmod 755 .ai/workspace/tasks/bad-one
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "housekeeping: bad-one was not archived: "
+  assert_contains "$OUT" "action needed: a task could not be archived"
+  assert_file_contains .ai/workspace/tasks/bad-one/state "status: active"
+  assert_file_contains .ai/workspace/tasks/good-one/state "status: archived"
+  assert_file_contains .ai/workspace/tasks/good-one/state "archived_reason: stale"
+  assert_file_contains .ai/runtime/housekeeping.log "task=bad-one status=active remote=unknown via=none action=preserve"
+  assert_file_contains .ai/runtime/housekeeping.log "task=good-one status=active remote=unknown via=none action=archive reason=stale"
 }
 
 test_housekeeping_dry_run_archives_nothing() {

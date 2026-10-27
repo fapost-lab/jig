@@ -104,7 +104,7 @@ cmd_housekeeping() {
     _hk_log "--- run $(date -u +%Y-%m-%dT%H:%M:%SZ) forge=$_HK_FORGE_TOKEN"
   fi
 
-  local needs_consolidation=0 wrong_base=0 found=0 keep_branches=""
+  local needs_consolidation=0 wrong_base=0 archive_refused=0 found=0 keep_branches="" archive_err
   local reason state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
 
   # Worktrees tasks were started in, from git's own list, read once per run.
@@ -252,8 +252,20 @@ EOF
       # The only writer of `archived` is the task domain's; housekeeping asks it
       # and never writes the state itself. The workspace stays where it is
       # (adr-20261027-a-task-nobody-finished-is-archived-not-purged).
+      # A refusal there is one task's, not the run's: the writer dies, so it is
+      # asked in a subshell, and a task it refused is kept and reported while
+      # the run goes on to the rest, its report and its log. Its exit status is
+      # not the proof: errexit is off in a tested command, so a failed write
+      # inside would go unnoticed. The state it leaves is asked instead.
       if [ "$action" = "archive" ] && [ "$dry" != 1 ]; then
-        _task_archive "$tid" "$reason"
+        archive_err=$( (_task_archive "$tid" "$reason") 2>&1 >/dev/null) || true
+        if [ "$(task_state_get "$tid" status)" != archived ]; then
+          [ -n "$archive_err" ] || archive_err="its state was not written"
+          printf 'housekeeping: %s was not archived: %s\n' "$tid" "${archive_err#jig: error: }" >&2
+          action="preserve"
+          reason=""
+          archive_refused=1
+        fi
       fi
 
       # A workspace that stays keeps its branch: ancestry, the epic's final
@@ -308,7 +320,10 @@ $task_base
   if [ "$wrong_base" = 1 ]; then
     printf 'action needed: check the tasks flagged wrong-base; their work landed outside their base\n'
   fi
-  if [ "$needs_consolidation" = 1 ] || [ "$wrong_base" = 1 ]; then
+  if [ "$archive_refused" = 1 ]; then
+    printf 'action needed: a task could not be archived; the reason is above\n'
+  fi
+  if [ "$needs_consolidation" = 1 ] || [ "$wrong_base" = 1 ] || [ "$archive_refused" = 1 ]; then
     return 3
   fi
   return 0
@@ -1619,7 +1634,16 @@ _hk_record() {
         group="waiting"
         note="waiting for $base to reach $_HK_DEFAULT_BASE${_HK_WT_NOTE:+, $_HK_WT_NOTE}"
         ;;
-      *,needs-consolidation,*) group="needs"; note="merged but not consolidated, run jig-consolidate" ;;
+      *,needs-consolidation,*)
+        group="needs"
+        # An archived task changes status only by unarchive, so the close it
+        # needs starts there.
+        if [ "$st" = archived ]; then
+          note="merged after it was archived, run jig task unarchive $tid, then jig-consolidate"
+        else
+          note="merged but not consolidated, run jig-consolidate"
+        fi
+        ;;
       *,abandoned?,*) group="needs"; note="pull request closed, run jig task abandon or reopen it" ;;
       *)
         case "$st" in

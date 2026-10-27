@@ -66,7 +66,7 @@ records the link in both states. A fully absorbed task is an archived task with 
   and `absorbed_into` carry it.
 - **Archive on the receiver's consolidation.** Rejected: until then the absorbed task sits in every
   live list and the queue, and the copy has already happened. If the merge was a mistake, `unarchive`
-  undoes it.
+  brings the task back (see Consequences for what it does not take back).
 - **Close the issues through the tracker API.** Rejected: it is an outward-facing write to a system
   Jig has never called, with its own credentials and failure modes. The `Absorbs:` line lets the
   tracker's own integration do it where the person's team already trusts it.
@@ -77,7 +77,13 @@ records the link in both states. A fully absorbed task is an archived task with 
 
 ## Consequences
 
-- Absorbing a task takes one command and loses nothing; undoing it is `jig task unarchive`.
+- Absorbing a task takes one command and loses nothing. `jig task unarchive` brings the task back,
+  but not all of the merge: the queue waits that moved to the receiver stay there (put them back with
+  `jig queue depend`), and the receiver keeps its copy and its `absorbs`.
+- A merge is safe to run again. Everything that can refuse is asked before anything is written, and a
+  copy left in `absorbed/<from>/` by a merge that stopped midway, or by one taken back, is refreshed
+  rather than refused. Only regular files are copied; a link in `<from>`'s workspace is left behind
+  (amended 2026-10-27, task archive-review-followups).
 - The reasons for archiving grow to four, and every reader of `archived_reason` must tolerate
   `absorbed` (schemas/state.md, schemas/json.md).
 - `task ship` reads the state of other tasks (the absorbed ones' `issue`), a small new coupling inside

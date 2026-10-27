@@ -9444,13 +9444,77 @@ test_task_merge_refusals() {
   assert_no_file .ai/workspace/tasks/to-1/absorbed
 }
 
-test_task_merge_refuses_a_second_whole_merge_of_the_same_task() {
+test_task_merge_a_second_whole_merge_of_the_same_task_refreshes_the_copy() {
   _tm_pair
   jig task merge from-1 --into to-1 >/dev/null
   jig task unarchive from-1 >/dev/null
+  printf 'newer analysis\n' > .ai/workspace/tasks/from-1/analysis.md
+  run jig task merge from-1 --into to-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq archived "$(_ta_get from-1 status)"
+  assert_eq "to-1" "$(_ta_get from-1 absorbed_into)"
+  assert_eq "from-1" "$(_ta_get to-1 absorbs)"
+  assert_eq "newer analysis" "$(cat .ai/workspace/tasks/to-1/absorbed/from-1/analysis.md)"
+}
+
+test_task_merge_is_not_blocked_by_a_leftover_copy() {
+  _tm_pair
+  mkdir -p .ai/workspace/tasks/to-1/absorbed/from-1
+  printf 'stale\n' > .ai/workspace/tasks/to-1/absorbed/from-1/analysis.md
+  run jig task merge from-1 --into to-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "analysis of from" "$(cat .ai/workspace/tasks/to-1/absorbed/from-1/analysis.md)"
+  assert_eq archived "$(_ta_get from-1 status)"
+}
+
+test_task_merge_refuses_when_absorbed_is_a_link() {
+  _tm_pair
+  fixture_task dep-1 "" active
+  jig queue depend dep-1 --on from-1 --reason "needs from" >/dev/null
+  local before
+  before=$(cat .ai/runtime/queue)
+  mkdir -p "outside-dir/elsewhere"
+  ln -s "$PWD/outside-dir/elsewhere" .ai/workspace/tasks/to-1/absorbed
   run jig task merge from-1 --into to-1
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "to-1 already holds documents of from-1"
+  assert_contains "$OUT" "is a link; remove it first"
+  assert_eq active "$(_ta_get from-1 status)"
+  assert_eq "" "$(_ta_get to-1 absorbs)"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+  assert_eq "" "$(ls "outside-dir/elsewhere")"
+}
+
+test_task_merge_refuses_when_the_destination_is_a_link() {
+  _tm_pair
+  fixture_task dep-1 "" active
+  jig queue depend dep-1 --on from-1 --reason "needs from" >/dev/null
+  local before
+  before=$(cat .ai/runtime/queue)
+  mkdir -p "outside-dir/elsewhere" .ai/workspace/tasks/to-1/absorbed
+  ln -s "$PWD/outside-dir/elsewhere" .ai/workspace/tasks/to-1/absorbed/from-1
+  run jig task merge from-1 --into to-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is a link; remove it first"
+  assert_eq active "$(_ta_get from-1 status)"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+  assert_eq "" "$(ls "outside-dir/elsewhere")"
+}
+
+test_task_merge_leaves_links_in_the_sources_absorbed_tree_behind() {
+  _tm_pair
+  mkdir -p .ai/workspace/tasks/from-1/absorbed/old-1/sub "outside-dir/outside"
+  printf 'old doc\n' > .ai/workspace/tasks/from-1/absorbed/old-1/analysis.md
+  printf 'deep\n' > .ai/workspace/tasks/from-1/absorbed/old-1/sub/deep.md
+  printf 'secret\n' > "outside-dir/outside/secret.md"
+  ln -s "$PWD/outside-dir/outside/secret.md" .ai/workspace/tasks/from-1/absorbed/old-1/link.md
+  ln -s "$PWD/outside-dir/outside" .ai/workspace/tasks/from-1/absorbed/old-1/linkdir
+  run jig task merge from-1 --into to-1
+  assert_eq 0 "$RC" "$OUT"
+  local d=.ai/workspace/tasks/to-1/absorbed/from-1/absorbed/old-1
+  assert_eq "old doc" "$(cat $d/analysis.md)"
+  assert_eq "deep" "$(cat $d/sub/deep.md)"
+  [ ! -e "$d/link.md" ] && [ ! -L "$d/link.md" ] || fail "a file link was copied"
+  [ ! -e "$d/linkdir" ] && [ ! -L "$d/linkdir" ] || fail "a directory link was copied"
 }
 
 test_task_merge_of_an_unknown_task_fails() {
