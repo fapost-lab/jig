@@ -8,7 +8,7 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
-## 0.36.0 — 2026-10-26
+## 0.36.0 — 2026-10-27
 
 A task worktree can be finished by your project's own command, and a folder of packages can be
 shared with just the task that edits them. Until now a worktree got a copy of this checkout's
@@ -31,6 +31,12 @@ links or on whatever your package checkouts held, never on your lock file.
 - **The hint about an unshared folder of repositories changed.** Starting a worktree names
   `--share` for a task that edits it, as an information line rather than a warning. `jig status`
   names both ways to share it, and stays quiet once the project has a `worktree.setup`.
+- **Housekeeping deletes merged branches on the remote in one push.** It used to push once per
+  branch, plus an `ls-remote` when a push failed. Over HTTPS each of those calls can open your
+  credential helper's dialog — on macOS a Keychain prompt after a Homebrew upgrade of git — so a
+  dozen merged branches meant dozens of prompts every day. A run now makes at most two calls to the
+  remote, however many branches it deletes, and a branch that moved after its merge is still kept
+  ([#317](https://github.com/fapost-lab/jig/issues/317)).
 
 ## 0.35.0 — 2026-10-26
 
