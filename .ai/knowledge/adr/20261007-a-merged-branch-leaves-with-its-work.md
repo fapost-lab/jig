@@ -14,6 +14,7 @@ paths:
   - scripts/lib/task.sh
   - scripts/lib/spec.sh
 summary: Why Jig deletes a branch it made once its work has landed, with git branch -d first and a lease push on origin second, and never a branch that is not its own or still in use.
+reviewed_at: 2026-10-27
 ---
 # A branch Jig made leaves once its work has landed, and git does the deleting
 
@@ -99,3 +100,12 @@ On by default; `git.delete_merged_branches: false` (a local key) keeps every bra
 > the fallback past a refusal of `-d`: a branch whose upstream someone else pruned goes when its tip
 > is in the head of the pull request the forge reported merged, and the consequence "the person
 > deletes it" no longer holds for it. (adr-20261010-a-gone-upstream-defers-to-the-merged-head)
+
+> **Amendment (2026-10-27).** Housekeeping deletes origin's copies in one push per run, not one
+> per branch: every lease the sweep would have pushed goes into a single `git push --porcelain`
+> after its loop, without `--atomic`, so a failed lease keeps that branch only
+> (`jig_branches_leave_origin`, common.sh). The per-branch `ls-remote` after a failed push is gone
+> from the sweep — its own `ls-remote` already said where origin's branch was. Over HTTPS each
+> network call goes through the credential helper, and a helper that asks the person (a macOS
+> Keychain dialog `GIT_TERMINAL_PROMPT=0` does not stop) asked up to twice per branch
+> (issue #317). `jig_ship_leave` still leaves one branch, with its `ls-remote` fallback.

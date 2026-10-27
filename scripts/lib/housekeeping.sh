@@ -1022,14 +1022,16 @@ _hk_branch_forge_merged() {
 # past its refusal, only a tip inside the merged pull request's head; origin
 # is touched only with a merged pull request whose head is where origin's
 # branch still is, and an origin/ ref whose branch origin no longer has (one
-# `ls-remote` per run) is dropped after the local branch.
+# `ls-remote` per run) is dropped after the local branch. Origin's copies go
+# together, in one lease push after the loop (jig_branches_leave_origin): a
+# run makes two network calls however many branches it deletes (issue #317).
 #
 # Only in the clone's main checkout: a worktree borrows `tasks/`, finds no
 # workspace of its own, and would take every task's branch for an orphan.
 # Off with git.delete_merged_branches: false; nothing remote below agent.git
 # or autopilot.git push, without housekeeping.fetch, on a dry run, or without origin.
 _hk_branch_sweep() {
-  local dry="$1" keep="$2" lvl def_ref remote_ok=0 remote_rights=0 heads="" b tip sha merged landed have_local have_track rsha line
+  local dry="$1" keep="$2" lvl def_ref remote_ok=0 remote_rights=0 heads="" b tip sha merged landed have_local have_track rsha out origin_go=()
   cfg_bool git.delete_merged_branches true || return 0
   [ "$(jig_config_clone_root)" = "$JIG_PROJECT" ] || return 0
   def_ref=$(jig_base_ref "$_HK_DEFAULT_BASE")
@@ -1092,16 +1094,15 @@ _hk_branch_sweep() {
     if [ -z "$sha" ] || [ -z "$rsha" ] || [ "$sha" != "$rsha" ]; then
       sha=""
     fi
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      printf '%s\n' "$line"
-      case "$line" in
-        *": deleted branch $b on origin") _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=delete" ;;
-        *": deleted branch $b") _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=delete" ;;
-        *": kept branch $b on origin"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=keep" ;;
-        *": kept branch $b"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=keep" ;;
-      esac
-    done < <(jig_branch_leave housekeeping "$b" "$sha" "$merged")
+    # Here the local branch only; origin's copy waits for the one push after
+    # the loop, and only if the local branch is gone (jig_branch_leave says
+    # why that order is the safety).
+    out=$(jig_branch_leave housekeeping "$b" "" "$merged")
+    _hk_branch_say "$b" "$out"
+    case "$out" in
+      *": kept branch $b:"*) ;;
+      *) [ -z "$sha" ] || origin_go+=("$b" "$sha") ;;
+    esac
     # A cache of a branch origin no longer has, dropped once the local branch
     # is gone (it was what `-d` compared that branch against).
     if [ "$remote_ok" = 1 ] && [ "$have_track" = 1 ] && [ -z "$rsha" ] \
@@ -1112,7 +1113,32 @@ _hk_branch_sweep() {
       git -C "$JIG_PROJECT" for-each-ref --format='%(refname:strip=2)' refs/heads/ 2>/dev/null
       git -C "$JIG_PROJECT" for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/ 2>/dev/null
     } | grep -vx 'HEAD' | LC_ALL=C sort -u)
+  if [ "${#origin_go[@]}" -gt 0 ]; then
+    out=$(jig_branches_leave_origin housekeeping "${origin_go[@]}")
+    while [ "${#origin_go[@]}" -ge 2 ]; do
+      _hk_branch_say "${origin_go[0]}" "$(printf '%s\n' "$out" | grep -F " branch ${origin_go[0]} on origin" || true)"
+      origin_go=("${origin_go[@]:2}")
+    done
+  fi
   return 0
+}
+
+# _hk_branch_say <branch> <lines> — print what jig_branch_leave or
+# jig_branches_leave_origin said about <branch>, and log each outcome.
+_hk_branch_say() {
+  local b="$1" line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s\n' "$line"
+    case "$line" in
+      *": deleted branch $b on origin") _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=delete" ;;
+      *": deleted branch $b") _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=delete" ;;
+      *": kept branch $b on origin"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=origin action=keep" ;;
+      *": kept branch $b"*) _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) branch=$b where=local action=keep" ;;
+    esac
+  done <<EOF
+$2
+EOF
 }
 
 # --- purge -------------------------------------------------------------------

@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-10-15
+reviewed_at: 2026-10-27
 ---
 # Housekeeping
 
@@ -70,7 +70,10 @@ evidence it inferred itself.
   squash merge through (hence `fetch --no-prune`); when somebody else's prune took that upstream
   and `-d` refuses, the forge's merged head vouches for a tip that is it or its ancestor
   (`update-ref -d` at that tip, adr-20261010-a-gone-upstream-defers-to-the-merged-head); origin only at `agent.git` `push` or above,
-  with a merged pull request whose head is where origin's branch still is, by a lease push. A purged task's branch goes in the run that purged it, as
+  with a merged pull request whose head is where origin's branch still is, by a lease push — one
+  for the whole sweep, after the local branches, so a run makes at most two network calls (its
+  `ls-remote` and that push) however many branches it deletes: over HTTPS each call may cost the
+  person a credential-helper dialog (issue #317). A purged task's branch goes in the run that purged it, as
   its worktree does. Lines `branch=<b> where=local|origin action=delete|keep`, without `task=`.
 - Judging each task against **its own base** (`jig_task_base`, ADR-0039): ancestry, the
   "branch is the base" rule, the unknown reason and the reflog of own work all use it, bases
