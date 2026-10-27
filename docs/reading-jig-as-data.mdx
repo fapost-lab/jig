@@ -82,7 +82,7 @@ by default, everything with `--all`, one status with `--status <status>`. `data.
 finished tasks were left out, and `data.archived` how many of those are archived.
 
 A task Jig put away has `status: "archived"`, and three fields say how: `archived_at` (a date),
-`archived_reason` (`abandoned`, `stale` or `manual`) and `archived_from` (the status before); they are
+`archived_reason` (`abandoned`, `stale`, `manual` or `absorbed`) and `archived_from` (the status before); they are
 `null` on every other task. The value is new, but schema 1 stands: archived tasks are left out of the
 default selection, so a program appears to see one only when it asks with `--status archived` or
 `--all`. To show an archive column, ask for `jig task list --json --status archived`; an archived
@@ -143,7 +143,7 @@ carries none, so there `ci` is `null`.
 ## What a person may do next
 
 `actions` lists what a person can do with the task right now, so a dashboard can show the right
-buttons without knowing Jig's rules. Every task carries the same twelve actions, in the same order:
+buttons without knowing Jig's rules. Every task carries the same fourteen actions, in the same order:
 
 | `id` | What it does |
 |---|---|
@@ -156,9 +156,9 @@ buttons without knowing Jig's rules. Every task carries the same twelve actions,
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
 | `close` | Close a task whose work has landed |
 | `abandon` | Give the task up |
-| `reopen` | Take back an abandoned task |
 | `archive` | Put an active, ready or abandoned task away, without deleting it |
 | `unarchive` | Bring an archived task back to the status it had |
+| `reopen` | Take back an abandoned task |
 
 `offered` is `true` when Jig would accept the action now, and `command` is the Jig command that does
 it, with the values you supply written as `<text>`, `<Tn>` or `<file>`. When `offered` is `false`,

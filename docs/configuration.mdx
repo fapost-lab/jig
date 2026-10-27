@@ -63,7 +63,7 @@ task called `2026-10-notes`.
 | `housekeeping.fetch` | `true` | Whether housekeeping may run `git fetch` to see the latest remote state. |
 | `housekeeping.trash_ttl` | `7d` | How long the workspace of a closed task stays in `.ai/runtime/trash/` before it is deleted. |
 | `housekeeping.abandoned_ttl` | `14d` | How long an abandoned task stays in your lists before it goes to the archive. Archived tasks are kept without a time limit, and `jig task unarchive <id>` brings one back. |
-| `housekeeping.stale_after` | `60d` | An active or ready task nobody touched for this long is moved to the archive (a task with a worktree is only reported as possibly stale). Nothing is deleted: `jig task unarchive <id>` brings it back. |
+| `housekeeping.stale_after` | `60d` | An active or ready task nobody touched for this long is moved to the archive (a task with a pull request, a worktree or uncommitted changes on its branch is only reported as possibly stale). Nothing is deleted: `jig task unarchive <id>` brings it back. |
 
 ### Working in one checkout
 

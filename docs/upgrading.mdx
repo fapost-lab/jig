@@ -419,6 +419,25 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.36.0 to 0.37.0
+
+Nothing to do by hand. The installer and `.ai/config.yaml` did not change, and no new setting appears
+in the upgrade's report: `housekeeping.abandoned_ttl` and `housekeeping.stale_after` keep their keys
+and defaults. The upgrade brings new scripts, new text for the `jig-setup` skill and new comments for
+those two settings in the config template; a copy of the skill you edited yourself is handled as
+every edited framework file is ([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** Housekeeping no longer deletes work nobody finished. The next run after the
+upgrade archives, instead of sending to the trash, an abandoned task past `housekeeping.abandoned_ttl`
+(14 days by default), and an active or ready task that nobody touched for `housekeeping.stale_after`
+(60 days) and has no pull request, no flag and no worktree. An archived task keeps its notes with no
+time limit and drops out of `jig task list`, which says how many there are; `jig task list --status
+archived` shows them and `jig task unarchive <id>` brings one back. A task that used to be only flagged as possibly stale
+now moves to the archive, with the default `housekeeping.stale_after` or your own. Tasks already in `.ai/runtime/trash/` follow the old schedule. A program that reads
+`jig task list --json` sees new fields and the actions `archive` and `unarchive`; schema 1 stands and
+archived tasks are left out unless asked for. The new command `jig task merge <from> --into <to>`
+merges one task into another ([Merge a task into another](/manual-control#merge-a-task-into-another)).
+
 ## From 0.35.0 to 0.36.0
 
 Nothing to do by hand. The installer and the skills did not change; the upgrade brings new scripts,

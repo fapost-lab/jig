@@ -136,9 +136,10 @@ jig task merge booking-message --into booking-notifications --partial
 When one task turns out to do another's work, merge it. The documents of `booking-message` are
 copied, not moved, to `absorbed/booking-message/` in the receiving task's notes, and the receiver's
 `task.md` gets a section that names them. Without `--partial` the absorbed task is archived (reason
-`absorbed`) and anything in the queue that waited on it waits on the receiver instead; `jig task
-unarchive` brings it back. With `--partial` the task stays open and both sides note the overlap;
-the queue is left alone. The receiving task must be active or ready, and a merge that would make the
+`absorbed`) and anything in the queue that waited on it waits on the receiver instead. `jig task
+unarchive` brings the task back, but not the queue waits that moved: put them back with `jig queue
+depend`. A merge can always be run again. With `--partial` the task stays open and both sides note
+the overlap; the queue is left alone. The receiving task must be active or ready, and a merge that would make the
 queue wait in a circle is refused before anything changes.
 
 Jig does not touch your tracker. When the receiving task ships, its commit and pull request name the
