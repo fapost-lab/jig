@@ -2230,6 +2230,30 @@ test_status_forgets_a_consolidation_flag_the_task_state_disproves() {
   assert_contains "$OUT" "needs consolidation: 1 task(s)"
 }
 
+test_status_card_for_an_archived_task_that_merged_says_to_unarchive_first() {
+  fixture_jig_repo
+  fixture_task shelved task/shelved archived "class:T2" "archived_from:active" "archived_reason:stale"
+  fixture_task open-still task/open-still active "class:T2"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=shelved status=archived remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=open-still status=active remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_contains "$needs" "<code>shelved</code>"
+  assert_contains "$needs" "<code>open-still</code>"
+  assert_contains "$needs" "It is archived: run jig task unarchive shelved, then tell the agent to close it (jig-consolidate)."
+  assert_contains "$needs" "Tell the agent to close this task (jig-consolidate)."
+  assert_not_contains "$needs" "unarchive open-still"
+  run jig status
+  assert_contains "$OUT" "needs consolidation: 2 task(s)"
+}
+
 test_status_forgets_a_worktree_flag_once_that_worktree_is_gone() {
   fixture_jig_repo
   local here

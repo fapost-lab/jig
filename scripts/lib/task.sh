@@ -1909,7 +1909,18 @@ task_merge() {
     *) jig_die "task merge: task $from is $from_status; only an unfinished task is absorbed" ;;
   esac
 
-  # The queue first: a wait that would close a cycle refuses there, before
+  # Everything that can refuse is asked before anything is written. Both
+  # roots are the guarded physical ones, and the destination is built from two
+  # validated ids only. A copy already there — a merge that stopped midway, or
+  # one taken back by unarchive — is refreshed, not refused, so the command
+  # can always be run again.
+  from_root=$(_task_workspace_root "$from" "task merge") || return 1
+  to_root=$(_task_workspace_root "$to" "task merge") || return 1
+  local dest="$to_root/absorbed/$from"
+  [ ! -L "$to_root/absorbed" ] && [ ! -L "$dest" ] \
+    || jig_die "task merge: absorbed/$from in $to is a link; remove it first"
+
+  # The queue next: a wait that would close a cycle refuses there, before
   # anything is copied, written or archived.
   if [ "$partial" -eq 0 ]; then
     # shellcheck source=lib/queue.sh
@@ -1918,20 +1929,23 @@ task_merge() {
   fi
 
   # The copy: every document of <from>, with whatever <from> itself absorbed,
-  # under the receiver's workspace. Both roots are the guarded physical ones,
-  # and the destination is built from two validated ids only.
-  from_root=$(_task_workspace_root "$from" "task merge") || return 1
-  to_root=$(_task_workspace_root "$to" "task merge") || return 1
-  local dest="$to_root/absorbed/$from" f
-  [ ! -e "$dest" ] || [ "$partial" -eq 1 ] \
-    || jig_die "task merge: $to already holds documents of $from in absorbed/$from"
+  # as regular files only — a link is left behind, never followed or copied
+  # as a link that would lead out of the receiver's workspace.
   mkdir -p "$dest" || jig_die "task merge: cannot create absorbed/$from in $to"
+  local f rel
   for f in "$from_root"/*.md; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     cp "$f" "$dest/" || jig_die "task merge: cannot copy ${f##*/} into $to"
   done
   if [ -d "$from_root/absorbed" ] && [ ! -L "$from_root/absorbed" ]; then
-    cp -R "$from_root/absorbed" "$dest/" || jig_die "task merge: cannot copy what $from absorbed into $to"
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      if [ -d "$from_root/$rel" ]; then
+        mkdir -p "$dest/$rel" || jig_die "task merge: cannot create $rel in $to"
+      else
+        cp "$from_root/$rel" "$dest/$rel" || jig_die "task merge: cannot copy $rel into $to"
+      fi
+    done < <(cd "$from_root" && find absorbed \( -type d -o -type f \) | LC_ALL=C sort)
   fi
 
   local goal note how

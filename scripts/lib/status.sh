@@ -2148,8 +2148,30 @@ PRS
   wrong=$(hklog_flagged_ids wrong-base)
   closed=$(hklog_flagged_ids 'abandoned?')
   kept=$(hklog_flagged_ids worktree-kept)
-  _status_attention_per_task needs-consolidation "$nc" "Merged: the task can be closed" "$hk_note" \
+  # An archived task whose work merged after all is closed the same way, but
+  # it changes status only by unarchive, so its card says that first.
+  local nc_live="" nc_archived="" one
+  while IFS= read -r one; do
+    [ -n "$one" ] || continue
+    if [ "$(task_state_get "$one" status 2>/dev/null)" = archived ]; then
+      nc_archived="$nc_archived$one
+"
+    else
+      nc_live="$nc_live$one
+"
+    fi
+  done <<IDS
+$nc
+IDS
+  _status_attention_per_task needs-consolidation "$nc_live" "Merged: the task can be closed" "$hk_note" \
     "Tell the agent to close this task (jig-consolidate)."
+  while IFS= read -r one; do
+    [ -n "$one" ] || continue
+    _status_attn needs-consolidation task "$one" "$one" "Merged: the task can be closed" "$hk_note" \
+      "It is archived: run jig task unarchive $one, then tell the agent to close it (jig-consolidate)."
+  done <<IDS
+$nc_archived
+IDS
   _status_attention_per_task wrong-base "$wrong" "The work landed on a different branch than planned" "$hk_note" \
     "Check where its pull request was merged; the details are in .ai/runtime/housekeeping.log."
   _status_attention_per_task closed-unmerged "$closed" "The pull request was closed without merging" "$hk_note" \
