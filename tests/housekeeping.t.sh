@@ -3318,6 +3318,126 @@ test_housekeeping_keeps_origins_branch_that_moved_after_the_merge() {
   rm -rf "$remote"
 }
 
+# A second squash-merged branch beside hk_squash_origin's; prints its tip.
+hk_squash_another() {
+  local b="$1"
+  hk_tick
+  git checkout -q -b "$b" main
+  printf 'sq2\n' > sq2.txt
+  git add sq2.txt
+  git commit -q -m "more squash work"
+  git push -q -u origin "$b" 2>/dev/null
+  git rev-parse HEAD
+  git checkout -q main
+  hk_tick
+  git merge --squash "$b" >/dev/null
+  git commit -q -m "squashed $b"
+  git push -q origin main
+}
+
+# A git that counts its pushes in stub-bin/pushes, and before a porcelain push
+# runs stub-bin/before-push when there is one.
+hk_stub_git_pushes() {
+  local real
+  real=$(command -v git)
+  mkdir -p stub-bin
+  : > stub-bin/pushes
+  cat > stub-bin/git <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    push) printf 'push\n' >> "$PWD/stub-bin/pushes"
+          [ ! -x "$PWD/stub-bin/before-push" ] || "$PWD/stub-bin/before-push"
+          break ;;
+  esac
+done
+exec "$real" "\$@"
+STUB
+  chmod +x stub-bin/git
+}
+
+# Every branch the sweep deletes on origin goes in one push, not one each
+# (issue #317): over HTTPS each network call may cost the person a dialog.
+test_housekeeping_deletes_merged_branches_on_origin_in_one_push() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip tip2 t
+  t=$(printf '\t')
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  tip2=$(hk_squash_another task/sq2)
+  hk_stub_gh_rows "task/sq${t}main${t}MERGED${t}$tip
+task/sq2${t}main${t}MERGED${t}$tip2"
+  hk_stub_git_pushes
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq on origin"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq2 on origin"
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's task/sq is still there"; fi
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq2; then fail "origin's task/sq2 is still there"; fi
+  if git show-ref --verify --quiet refs/remotes/origin/task/sq2; then fail "origin/task/sq2 is still here"; fi
+  assert_eq 1 "$(grep -c push stub-bin/pushes)"
+  assert_file_contains .ai/runtime/housekeeping.log "branch=task/sq where=origin action=delete"
+  assert_file_contains .ai/runtime/housekeeping.log "branch=task/sq2 where=origin action=delete"
+  rm -rf "$remote"
+}
+
+# Pushed to between the sweep's ls-remote and its push: that lease fails, and
+# the other branch is deleted all the same — no --atomic.
+test_housekeeping_one_failed_lease_holds_back_no_other_branch() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip tip2 t
+  t=$(printf '\t')
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  tip2=$(hk_squash_another task/sq2)
+  hk_stub_gh_rows "task/sq${t}main${t}MERGED${t}$tip
+task/sq2${t}main${t}MERGED${t}$tip2"
+  hk_stub_git_pushes
+  printf '#!/usr/bin/env bash\ngit -C "%s" update-ref refs/heads/task/sq2 "%s"\n' \
+    "$remote" "$(git rev-parse main)" > stub-bin/before-push
+  chmod +x stub-bin/before-push
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch task/sq on origin"
+  assert_contains "$OUT" "housekeeping: kept branch task/sq2 on origin: it is no longer at the merged commit, or origin refused"
+  if git -C "$remote" show-ref --verify --quiet refs/heads/task/sq; then fail "origin's task/sq is still there"; fi
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq2 || fail "origin's moved task/sq2 was deleted"
+  assert_file_contains .ai/runtime/housekeeping.log "branch=task/sq2 where=origin action=keep"
+  rm -rf "$remote"
+}
+
+# A local branch `-d` refuses keeps origin's copy too, though origin's is at
+# the merged head: the local commit past it is nowhere else.
+test_housekeeping_keeps_origins_branch_when_the_local_one_is_kept() {
+  hk_setup
+  git add -A
+  git commit -q -m "jig init snapshot"
+  local remote tip
+  remote=$(hk_squash_origin task/sq)
+  tip=$(git rev-parse task/sq)
+  hk_stub_gh_rows "task/sq$(printf '\t')main$(printf '\t')MERGED$(printf '\t')$tip"
+  hk_tick
+  git checkout -q task/sq
+  printf 'more\n' >> sq.txt
+  git commit -q -am "local only"
+  git checkout -q main
+  hk_stub_git_pushes
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: kept branch task/sq: git does not see all of its commits merged"
+  git show-ref --verify --quiet refs/heads/task/sq || fail "a branch with local work was deleted"
+  git -C "$remote" show-ref --verify --quiet refs/heads/task/sq || fail "origin's branch went with the local one kept"
+  assert_eq 0 "$(grep -c push stub-bin/pushes || true)"
+  rm -rf "$remote"
+}
+
 # An open pull request from the same branch means it is in use, whatever an
 # earlier merged one says.
 test_housekeeping_keeps_a_branch_with_an_open_pull_request() {

@@ -57,7 +57,8 @@
   with its upstream; past a refusal of `-d` only a branch whose tip is the head of a pull
   request the forge reported merged, or an ancestor of it, by `git update-ref -d` at that tip
   (adr-20261010-a-gone-upstream-defers-to-the-merged-head). On origin a push with `--force-with-lease` at the head of a pull request
-  the forge reported merged, so a branch that moved after the merge stays; when origin no longer
+  the forge reported merged, so a branch that moved after the merge stays — one push for every
+  branch a caller lets go, never `--atomic`, through `jig_branches_leave_origin`; when origin no longer
   has it, `git branch -d -r` drops the stale `origin/` ref once the local branch is gone — there,
   or in `_hk_branch_sweep` for an `origin/` ref with no local branch, checked by one `ls-remote`
   per run. Two callers: `jig_ship_leave`, right after a merge `jig upgrade`, `jig task ship` or `jig spec
