@@ -24,6 +24,9 @@
 # Input, from the environment (set by the job from `github` and `needs`):
 #   FULL      scope's `full` output ('true' or 'false')
 #   WINDOWS   scope's `windows` output
+#   REUSE     scope's `reuse` output: 'true' when a pull request's run already
+#             tested this tree (.github/scripts/ci-reuse.sh) and the suite's
+#             jobs skip; only a full push may say so
 #   EVENT     github.event_name
 #   BASE_REF  github.base_ref   (pull requests only)
 #   HEAD_REF  github.head_ref   (pull requests only)
@@ -36,7 +39,7 @@ _ok_fail() { printf 'ci-ok: %s\n' "$*"; exit 1; }
 
 main() {
   local pair job result expect failed=0
-  local full="${FULL:-}" windows="${WINDOWS:-}" event="${EVENT:-}"
+  local full="${FULL:-}" windows="${WINDOWS:-}" reuse="${REUSE:-}" event="${EVENT:-}"
   local base="${BASE_REF:-}" head="${HEAD_REF:-}"
 
   [ $# -gt 0 ] || _ok_fail "no job results were reported"
@@ -48,6 +51,11 @@ main() {
     [ "${pair#*=}" = success ] || _ok_fail "scope ended as '${pair#*=}'; the scope of the change is unknown"
   done
   case "$full" in true | false) ;; *) _ok_fail "scope published no 'full' answer ('$full')" ;; esac
+  # Reuse skips the suite, so it is held to the one case scope asks it in: a
+  # full push. Anywhere else a 'true' would skip a suite nobody tested.
+  if [ "$reuse" = true ] && { [ "$event" != push ] || [ "$full" != true ]; }; then
+    _ok_fail "scope reused a tested tree on a $event run with full=$full; only a full push may"
+  fi
 
   for pair in "$@"; do
     job="${pair%%=*}"
@@ -64,11 +72,11 @@ main() {
         ;;
       test | smoke-windows)
         expect=skip
-        if [ "$full" = true ]; then expect=run; fi
+        if [ "$full" = true ] && [ "$reuse" != true ]; then expect=run; fi
         ;;
       test-windows)
         expect=skip
-        if [ "$full" = true ] && [ "$windows" = true ]; then expect=run; fi
+        if [ "$full" = true ] && [ "$windows" = true ] && [ "$reuse" != true ]; then expect=run; fi
         ;;
       changelog)
         expect=skip

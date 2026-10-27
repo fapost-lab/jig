@@ -250,7 +250,10 @@ other pages under `docs/`: a page that describes behaviour the release changed i
 capability the release added gets a place where a user will look for it — a line removed is as
 welcome as a line added.
 
-Raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request that should become the release:
+Raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request of the release's last task —
+the one that should become the release — together with its changelog entry. A separate pull request
+that only raises the version is the exception, for a release with nothing left to change but the
+version: it costs a run of the whole suite of its own. The version is
 `major.minor.patch` without leading zeros — patch for a fix, minor for a new capability, major for a
 change that breaks commands, the `.ai/` layout, `init`/`upgrade` or the installer (before `1.0.0`,
 such a change raises minor). After the merge, CI runs the tests and tags `v<JIG_VERSION>` itself; a
@@ -268,6 +271,15 @@ platform, Windows (Git Bash) included, whatever else the diff touches
 (`.github/scripts/main-green-check.sh`): fix `main` first, then re-run the job. A run on `main` still
 in progress is not waited for — the latest completed one decides. Both checks answer when the pull
 request's CI runs, not at the merge, so after the merge watch CI on `main` until the tag exists.
+
+A release costs one run of the suite when its pull request is up to date with `main` at the merge.
+`main`'s run then finds that the pull request's full run — every platform, Windows included —
+already tested the very tree `main` now has, skips the suite and goes straight to tagging
+(`.github/scripts/ci-reuse.sh`,
+adr-20261027-main-is-not-retested-when-a-pull-request-tested-its-tree). When `main` moved after the
+branch last merged it, `main` tests everything as before and the tag waits for that run; to avoid
+it, merge `main` into the branch and let its run finish before merging. The nightly run tests the
+whole suite on `main` whatever happened.
 
 A release that changes installation on Windows also goes through
 [`.github/WINDOWS_RELEASE_CHECKLIST.md`](.github/WINDOWS_RELEASE_CHECKLIST.md).

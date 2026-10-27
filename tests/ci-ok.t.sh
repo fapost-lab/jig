@@ -7,11 +7,13 @@
 # fails would refuse every light change.
 
 # co_run <full> <windows> <event> <base-ref> <head-ref> <job=result>... — run
-# the script the way the `ci-ok` job does.
+# the script the way the `ci-ok` job does. CO_REUSE, when set, is scope's
+# `reuse` output.
 co_run() {
   local full="$1" windows="$2" event="$3" base="$4" head="$5"
   shift 5
-  run env FULL="$full" WINDOWS="$windows" EVENT="$event" BASE_REF="$base" HEAD_REF="$head" \
+  run env FULL="$full" WINDOWS="$windows" REUSE="${CO_REUSE:-}" EVENT="$event" \
+    BASE_REF="$base" HEAD_REF="$head" \
     "$JIG_HOME/.github/scripts/ci-ok.sh" "$@"
 }
 
@@ -134,6 +136,46 @@ test_ci_ok_fails_on_a_failed_or_cancelled_job_wherever_it_is() {
   done
 }
 
+# A push whose tree a pull request's run already tested (scope's `reuse`):
+# the suite's jobs skip by decision, and the run passes on to `release`.
+test_ci_ok_passes_a_reused_push_with_the_suite_skipped() {
+  CO_REUSE=true co_run true true push "" "" \
+    scope=success knowledge=skipped test=skipped test-windows=skipped \
+    smoke-windows=skipped changelog=skipped epic-pr=skipped
+  assert_eq 0 "$RC" "$OUT"
+  # Reuse lets the suite skip; it does not make a run that happened wrong.
+  CO_REUSE=true co_run true true push "" "" \
+    scope=success knowledge=skipped test=success test-windows=success \
+    smoke-windows=success changelog=skipped epic-pr=skipped
+  assert_eq 0 "$RC" "$OUT"
+  # Without reuse the same skips are undecided.
+  CO_REUSE=false co_run true true push "" "" \
+    scope=success knowledge=skipped test=skipped test-windows=skipped \
+    smoke-windows=skipped changelog=skipped epic-pr=skipped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "'test' was skipped"
+}
+
+# Reuse is asked on a full push only; a 'true' anywhere else would skip a
+# suite nothing tested, so the verdict refuses it outright.
+test_ci_ok_refuses_reuse_outside_a_full_push() {
+  CO_REUSE=true co_run true true pull_request main feature \
+    scope=success knowledge=skipped test=skipped test-windows=skipped \
+    smoke-windows=skipped changelog=success epic-pr=skipped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "only a full push may"
+  CO_REUSE=true co_run true true schedule "" "" \
+    scope=success knowledge=skipped test=skipped test-windows=skipped \
+    smoke-windows=skipped changelog=skipped epic-pr=skipped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "only a full push may"
+  CO_REUSE=true co_run false false push "" "" \
+    scope=success knowledge=success test=skipped test-windows=skipped \
+    smoke-windows=skipped changelog=skipped epic-pr=skipped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "only a full push may"
+}
+
 test_ci_ok_fails_when_scope_itself_did_not_succeed() {
   co_run "" "" push "" "" scope=failure knowledge=skipped test=skipped \
     test-windows=skipped smoke-windows=skipped changelog=skipped epic-pr=skipped
@@ -179,11 +221,11 @@ test_ci_ok_expectations_match_the_conditions_in_the_workflow() {
   {
     grep -qF "knowledge: needs: scope if: needs.scope.outputs.full != 'true'" <<< "$flat" ||
       fail "the condition of knowledge changed; update ci-ok.sh"
-    grep -qF "name: \${{ matrix.os }} \${{ matrix.shard }} needs: scope if: needs.scope.outputs.full == 'true' runs-on:" <<< "$flat" ||
+    grep -qF "name: \${{ matrix.os }} \${{ matrix.shard }} needs: scope if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true' runs-on:" <<< "$flat" ||
       fail "the condition of test changed; update ci-ok.sh"
-    grep -qF "if: needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'" <<< "$flat" ||
+    grep -qF "if: >- needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true' && needs.scope.outputs.reuse != 'true' runs-on: windows-latest" <<< "$flat" ||
       fail "the condition of test-windows changed; update ci-ok.sh"
-    grep -qF "name: windows-latest smoke (install.ps1) needs: scope if: needs.scope.outputs.full == 'true'" <<< "$flat" ||
+    grep -qF "name: windows-latest smoke (install.ps1) needs: scope if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true' runs-on:" <<< "$flat" ||
       fail "the condition of smoke-windows changed; update ci-ok.sh"
     grep -qF "changelog: if: github.event_name == 'pull_request'" <<< "$flat" ||
       fail "the condition of changelog changed; update ci-ok.sh"
