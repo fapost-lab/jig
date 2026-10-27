@@ -8,6 +8,52 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.37.0 — 2026-10-27
+
+Work nobody finished is put away instead of deleted, and a task that another one solved can be merged
+into it. Until now housekeeping deleted an abandoned task's notes after `abandoned_ttl` and the trash
+period, and a task that a newer one had made redundant either sat in your lists for ever or was
+abandoned with its documents lost.
+
+- **Housekeeping archives unfinished tasks instead of deleting them.** An abandoned task past
+  `housekeeping.abandoned_ttl` no longer goes to the trash and then away: it gets the new status
+  `archived`, and its notes stay in `.ai/workspace/tasks/<id>/` with no time limit. An active or ready
+  task nobody touched for `housekeeping.stale_after` (60 days unless you changed it) is now archived
+  too, where it used to be only flagged `STALE_CANDIDATE` — unless it has a pull
+  request, a flag of its own or a worktree, or its branch is checked out with changes; those are
+  still only flagged. Only the workspace of a task that was closed after a merge still passes through
+  the trash. An archived task leaves your lists; `jig task list` and `jig status` say how many there
+  are (`archived: N`), the status page has an "Archive" block, and `jig task list --status archived`
+  shows them. See [Archive and unarchive](/manual-control#archive-and-unarchive) and
+  [Housekeeping](/configuration#housekeeping).
+- **`jig task archive <id>` and `jig task unarchive <id>`.** Put an active, ready or abandoned task
+  away by hand, and bring it back to the status it had. `jig task set` cannot write or leave
+  `archived`. A task archived while its work was merged anyway is reported by housekeeping and the
+  status page with `jig task unarchive <id>` first, since closing it starts there.
+- **`jig task merge <from> --into <to>` merges a task into another.** The documents of `<from>` are
+  copied to `<to>`'s notes under `absorbed/<from>/`, `<to>`'s `task.md` gets an `## Absorbed: <from>`
+  section, `<from>` is archived with the reason `absorbed`, and queue waits on and of `<from>` move to
+  `<to>`; a move that would close a circle refuses the whole merge before anything changes. With
+  `--partial` the task stays open, both sides note the overlap and the queue is untouched. When the
+  receiving task ships, its commit and pull request carry an `Absorbs: <issue>` line, so your
+  tracker's own integration can link them; Jig never calls a tracker. A merge can always be run again,
+  and `unarchive` brings the task back but not the queue waits that moved. See
+  [Merge a task into another](/manual-control#merge-a-task-into-another).
+- **A task that cannot be archived no longer ends the housekeeping run.** The task is kept, named on
+  the error stream as `housekeeping: <id> was not archived: …`, the run goes on with the rest, and
+  it exits 3 with `action needed: a task could not be archived`.
+- **A program sees the archive and the links.** `jig task list --json` has `archived_at`,
+  `archived_reason` (`abandoned`, `stale`, `manual` or `absorbed`), `archived_from`,
+  `absorbed_into`, `absorbs`, `absorbs_partly` and `partly_in` on every task, a count of archived
+  tasks in `data.archived`, and the actions `archive` and `unarchive`. Schema 1 stands: archived tasks
+  appear only when asked for with `--status archived` or `--all`
+  ([Reading Jig as data](/reading-jig-as-data#tasks)).
+- **For people who release Jig itself.** CI opens one issue, labelled `red-main`, when `main` goes red
+  and closes it when a full run is green again. A pull request that raises the version runs the
+  Windows shards and is refused while the latest completed run on `main` is not green. A push to
+  `main` whose pull request already tested the same tree on every platform skips the suite and goes
+  straight on to tagging. Nothing here changes what an installed Jig does.
+
 ## 0.36.0 — 2026-10-27
 
 A task worktree can be finished by your project's own command, and a folder of packages can be

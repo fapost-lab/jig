@@ -57,6 +57,7 @@ If the trouble turns out to be Jig itself rather than your project, see [Known i
 | `wrong-base` in the housekeeping report | A task's pull request was merged into a branch other than its base. It is kept; check where the work went. |
 | Tasks that are merged but not closed | Say *"close what's merged"*; the agent asks you about each one. |
 | The status page does not change | Look at the time at its top. If it is recent, nothing changed. If it is old, you may have an older copy open — open it again with `jig status --open`; in Firefox, automatic reloading can be turned off by the setting `accessibility.blockautorefresh`. |
+| `jig housekeeping` says `<id> was not archived: …` and exits 3 | The task could not be archived; the message after the colon says why — for example its notes could not be written (a read-only folder, a full disk). The task is kept as it was; fix the cause and run `jig housekeeping` again. |
 | The status page says pull request data is *stale* | Run `jig housekeeping`; it asks GitHub or GitLab again. |
 
 ## Verification and upgrades
