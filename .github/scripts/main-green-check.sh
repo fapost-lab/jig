@@ -11,9 +11,12 @@
 # a red main is a release that will not happen, so it is refused until main is
 # fixed.
 #
-# Like changelog-check.sh, it turns itself on only when the branch declares a
-# version that has no release tag on origin yet; every other pull request
-# passes without asking GitHub anything.
+# It turns itself on only when the pull request changes JIG_VERSION against
+# its base; every other pull request passes without asking GitHub anything.
+# Not, as changelog-check.sh does, whenever the declared version has no tag:
+# after a release is declared and main goes red, that is every pull request,
+# the one that repairs main included, and the check would lock main red. The
+# pull request that changes the version is the one that declares a release.
 #
 # What counts is the latest *completed* run of the `ci` workflow on main —
 # push, nightly or manual alike. A run still in progress is not waited for and
@@ -34,7 +37,7 @@
 # Environment: GITHUB_REPOSITORY (owner/name; set by Actions) and GH_TOKEN for
 # `gh`.
 #
-# Usage: .github/scripts/main-green-check.sh
+# Usage: .github/scripts/main-green-check.sh <base-commit>
 set -eu
 set -o pipefail
 
@@ -44,22 +47,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/../../scripts/lib" && pwd)"
 # shellcheck source=../../scripts/lib/common.sh
 . "$LIB_DIR/common.sh"
-# shellcheck source=release-lib.sh
-. "$SCRIPT_DIR/release-lib.sh"
+
+# version_at <commit> — the JIG_VERSION scripts/lib/version.sh declares at
+# <commit>, read with the same shape jig_declared_version accepts; empty when
+# the file or the line is not there.
+version_at() {
+  local text
+  text=$(git show "$1:scripts/lib/version.sh" 2>/dev/null) || return 0
+  printf '%s\n' "$text" | sed -n 's/^JIG_VERSION="\([^" ]\{1,\}\)"[[:space:]]*$/\1/p'
+}
 
 main() {
-  local repo version remote_tags existing slug answer conclusion url
-  [ $# -eq 0 ] || _main_green_die "takes no arguments (usage: main-green-check.sh)"
+  local base="${1:-}" repo version before slug answer conclusion url
+  [ $# -eq 1 ] && [ -n "$base" ] \
+    || _main_green_die "usage: main-green-check.sh <base-commit>"
 
   repo=$(git rev-parse --show-toplevel 2>/dev/null) \
     || _main_green_die "not inside a git repository"
   version=$(jig_declared_version "$repo") \
     || _main_green_die "cannot read a single JIG_VERSION=\"...\" line from scripts/lib/version.sh"
 
-  remote_tags=$(git -C "$repo" ls-remote --tags origin 2>/dev/null) \
-    || _main_green_die "cannot list the tags of origin"
-  if existing=$(release_existing_tag "$version" "$remote_tags"); then
-    printf 'main-green-check: %s is already released, this pull request releases nothing\n' "$existing"
+  # actions/checkout fetches one commit, so the base is fetched when it is
+  # missing. A base that cannot be read refuses: unmeasurable is not a pass.
+  git -C "$repo" cat-file -e "$base^{commit}" 2>/dev/null \
+    || git -C "$repo" fetch -q --depth=1 origin "$base" 2>/dev/null \
+    || _main_green_die "cannot read the base commit $base"
+  before=$(cd "$repo" && version_at "$base")
+
+  if [ "$before" = "$version" ]; then
+    printf 'main-green-check: JIG_VERSION stays %s, this pull request releases nothing\n' "$version"
     return 0
   fi
 

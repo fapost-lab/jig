@@ -195,7 +195,9 @@ already skip the tests those two guard by capability (`skip_unless_symlinks`,
 > a declared release with no tag. A changed `JIG_VERSION=` line in `scripts/lib/version.sh` is now
 > a rule of its own, the one rule about what a change is for rather than what it touches: a
 > release runs on every platform before it merges. Its companion is
-> `.github/scripts/main-green-check.sh`, run by the `changelog` job: a pull request declaring a
-> version not yet tagged is refused while the latest completed `ci` run on `main` is not green,
-> because the code that already broke `main` is not in the pull request's diff and its own run
-> cannot see it.
+> `.github/scripts/main-green-check.sh`, run by the `changelog` job: a pull request that changes
+> `JIG_VERSION` against its base is refused while the latest completed `ci` run on `main` is not
+> green, because the code that already broke `main` is not in the pull request's diff and its own
+> run cannot see it. It keys on the change, not on an untagged version: once a release is declared
+> and `main` is red, every pull request carries the untagged version, the one repairing `main`
+> included.
