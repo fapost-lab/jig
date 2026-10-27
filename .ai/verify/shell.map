@@ -54,7 +54,9 @@ tests/routing/**                routing::
 # CI configuration is exercised by CI itself, not by tests/run.sh — except the
 # one thing a run cannot see about its own file: a Windows suite whose shares
 # do not cover it runs what it was told and reports green on the part it ran.
-.github/workflows/**            ci-workflow::
+# And the second copies some scripts keep of it: ci-ok.sh of each job's `if:`,
+# ci-reuse.sh of the Windows shares' name, each held to the file by its tests.
+.github/workflows/**            ci-workflow:: ci-ok:: ci-reuse::
 
 install.ps1                     install::
 tests/*.t.ps1                   install::

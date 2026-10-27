@@ -54,6 +54,15 @@ jobs:
   # that one's changes would otherwise never be measured. Every success
   # covered the changes since the success before it, so nothing falls
   # between two runs.
+  #
+  # A full push to main then asks one more question: whether a pull
+  # request's run already tested this very tree, the whole suite on every
+  # platform (.github/scripts/ci-reuse.sh, which has tests and a header with
+  # the argument). When it did, `reuse` is true, the suite's jobs skip, and
+  # the run goes straight on to `release`: a release merged from an
+  # up-to-date pull request costs one run of the suite, not two
+  # (adr-20261027-main-is-not-retested-when-a-pull-request-tested-its-tree).
+  # The nightly run, a manual one and an epic branch never reuse.
   scope:
     runs-on: ubuntu-latest
     permissions:
@@ -62,6 +71,7 @@ jobs:
     outputs:
       full: ${{ steps.scope.outputs.full }}
       windows: ${{ steps.scope.outputs.windows }}
+      reuse: ${{ steps.scope.outputs.reuse }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,6 +82,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
           BRANCH: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -93,6 +104,21 @@ jobs:
           case "$line" in
             light*) echo "full=false" >> "$GITHUB_OUTPUT" ;;
             *) echo "full=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          # Whether a pull request's run already tested this tree. Asked on
+          # a full push to main only; a light run tests nothing anyway.
+          reuse="test ($EVENT to $BRANCH is always tested)"
+          case "$EVENT:$BRANCH:$line" in
+            push:main:full*)
+              reuse=$(.github/scripts/ci-reuse.sh "$BEFORE") \
+                || reuse="test (ci-reuse.sh failed; testing everything)"
+              ;;
+          esac
+          echo "reuse: $reuse"
+          case "$reuse" in
+            reuse*) echo "reuse=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "reuse=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
           # Whether the Windows shards run, per
@@ -147,7 +173,7 @@ jobs:
   test:
     name: ${{ matrix.os }} ${{ matrix.shard }}
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       # Every share always reports. A failure in one is information about that
@@ -265,7 +291,9 @@ jobs:
   test-windows:
     name: windows-latest (Git Bash) ${{ matrix.shard }}/${{ strategy.job-total }}
     needs: scope
-    if: needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'
+    if: >-
+      needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true'
+      && needs.scope.outputs.reuse != 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
@@ -312,7 +340,7 @@ jobs:
   smoke-windows:
     name: windows-latest smoke (install.ps1)
     needs: scope
-    if: needs.scope.outputs.full == 'true'
+    if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true'
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -393,6 +421,11 @@ jobs:
   # Only a full run tags: a light one tested nothing, and a version bump whose
   # own run was replaced in the queue waits for the next full run — the next
   # code merge or the nightly one — instead of being tagged untested.
+  #
+  # A run whose scope found the tree already tested by a pull request
+  # (`reuse`) skips the suite and still tags: a skipped job is neither a
+  # failure nor a cancellation, and the tree the tag names passed every
+  # platform in that pull request's run.
   release:
     needs: [scope, test, test-windows, smoke-windows]
     if: >-
@@ -503,6 +536,7 @@ jobs:
         env:
           FULL: ${{ needs.scope.outputs.full }}
           WINDOWS: ${{ needs.scope.outputs.windows }}
+          REUSE: ${{ needs.scope.outputs.reuse }}
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           HEAD_REF: ${{ github.head_ref }}
@@ -528,7 +562,9 @@ jobs:
   # runs after the verdict and decides nothing about a merge. Only main's own
   # runs report, the push and the nightly one; a pull request's red is its
   # author's to see. A light run tested nothing, so its green leaves the
-  # issue open: only a full run says main is green again.
+  # issue open: only a full run says main is green again. A run that reused
+  # a pull request's run is full: that run tested this tree on every
+  # platform.
   red-main:
     needs: [scope, ci-ok, release]
     if: >-
