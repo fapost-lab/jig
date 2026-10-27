@@ -109,7 +109,16 @@ Hidden from live lists, listed by `jig task list --status archived`
 
 The `status` of an archived task, and a State only `jig task archive` and Housekeeping write.
 The state keeps `archived_at`, `archived_reason` and `archived_from`, the status to return to.
-Other readers treat it like `abandoned`.
+Other readers treat it like `abandoned`. `archived_reason` is `abandoned`, `stale`, `manual` or
+`absorbed` (see Absorbed).
+
+## Absorbed
+
+A task another task does the work of (`jig task merge <from> --into <to>`). Its documents are
+copied to `<to>/absorbed/<from>/` and named in `<to>`'s `task.md`; `<to>` records `absorbs`, and a
+wholly absorbed task is Archived with reason `absorbed` and `absorbed_into`. A partly absorbed task
+stays live with `partly_in`, and `<to>` records `absorbs_partly`. Not a status of its own
+(adr-20261027-an-absorbed-task-is-archived-with-its-receiver). Informal synonyms: merged, folded in.
 
 ## Trash
 

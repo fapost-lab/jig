@@ -53,6 +53,19 @@ does not move, and branch, worktree, pull request, pause stash and queue place a
 other reader treats `archived` like `abandoned`; lists hide it unless asked for it with
 `--status archived`.
 
+## Absorbed tasks
+
+`jig task merge <from> --into <to> [--partial]` records that `<to>` does `<from>`'s work. The
+documents of `<from>` are copied (never moved) to `<to>/absorbed/<from>/` and `<to>`'s `task.md`
+gets a `## Absorbed: <from> (whole|partly)` section. A whole merge sets `absorbs` on `<to>` and
+`absorbed_into` on `<from>`, archives `<from>` with reason `absorbed` and re-points its queue waits
+at `<to>` (`queue_absorb`; a cycle refuses the merge before anything is written). A partial merge
+leaves `<from>` live with `partly_in` and `<to>` with `absorbs_partly`, and the queue alone. The
+four keys are script-owned. `<to>` must be `active` or `ready`; `<from>` must not be `consolidated`
+or archived. `jig task unarchive` removes `absorbed_into` and leaves `absorbs` as history. `jig task
+ship` names the absorbed tasks' issues in an `Absorbs:` line; Jig never calls the tracker
+(adr-20261027-an-absorbed-task-is-archived-with-its-receiver).
+
 ## Where this domain ends
 
 `jig housekeeping` reads this domain's `state` files and writes them only to archive: it calls

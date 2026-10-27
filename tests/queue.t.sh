@@ -1117,3 +1117,65 @@ test_queue_next_reads_and_changes_nothing() {
   _q_rev
   assert_eq "$rev" "$REV"
 }
+
+# --- jig task merge moves the waits (adr-20261027-an-absorbed-task-is-archived-with-its-receiver)
+
+# _qm_deps — the dep lines of the queue as `<ref> <on>`, sorted.
+_qm_deps() {
+  awk -F '\t' '$1 == "dep" { print $2, $3 }' .ai/runtime/queue | sort
+}
+
+test_task_merge_moves_the_waits_on_the_absorbed_task_to_the_receiver() {
+  _q_setup a b c
+  jig queue depend c --on a --reason "needs a" >/dev/null
+  jig task merge a --into b >/dev/null
+  assert_eq "task:c task:b" "$(_qm_deps)"
+  assert_contains "$(grep '^dep' .ai/runtime/queue)" "needs a"
+}
+
+test_task_merge_moves_the_waits_of_the_absorbed_task_to_the_receiver() {
+  _q_setup a b c
+  jig queue depend a --on c --reason "a needs c" >/dev/null
+  jig task merge a --into b >/dev/null
+  assert_eq "task:b task:c" "$(_qm_deps)"
+}
+
+test_task_merge_drops_a_wait_between_the_two() {
+  _q_setup a b
+  jig queue depend a --on b --reason "x" >/dev/null
+  jig task merge a --into b >/dev/null
+  assert_eq "" "$(_qm_deps)"
+}
+
+test_task_merge_refuses_when_the_moved_waits_would_close_a_cycle() {
+  _q_setup a b c
+  # c waits for a; b waits for c. Moving "c waits for a" onto b gives c -> b -> c.
+  jig queue depend c --on a --reason "x" >/dev/null
+  jig queue depend b --on c --reason "y" >/dev/null
+  local before state_a state_b
+  before=$(cat .ai/runtime/queue)
+  state_a=$(cat .ai/workspace/tasks/a/state)
+  state_b=$(cat .ai/workspace/tasks/b/state)
+  run jig task merge a --into b
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "would close a cycle"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+  assert_eq "$state_a" "$(cat .ai/workspace/tasks/a/state)"
+  assert_eq "$state_b" "$(cat .ai/workspace/tasks/b/state)"
+  assert_no_file .ai/workspace/tasks/b/absorbed
+}
+
+test_task_merge_partial_leaves_the_queue_alone() {
+  _q_setup a b c
+  jig queue depend c --on a --reason "needs a" >/dev/null
+  local before
+  before=$(cat .ai/runtime/queue)
+  jig task merge a --into b --partial >/dev/null
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+}
+
+test_task_merge_without_a_queue_writes_none() {
+  _q_setup a b
+  jig task merge a --into b >/dev/null
+  assert_no_file .ai/runtime/queue
+}
