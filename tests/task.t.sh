@@ -9468,6 +9468,7 @@ test_task_merge_is_not_blocked_by_a_leftover_copy() {
 }
 
 test_task_merge_refuses_when_absorbed_is_a_link() {
+  skip_unless_symlinks
   _tm_pair
   fixture_task dep-1 "" active
   jig queue depend dep-1 --on from-1 --reason "needs from" >/dev/null
@@ -9485,6 +9486,7 @@ test_task_merge_refuses_when_absorbed_is_a_link() {
 }
 
 test_task_merge_refuses_when_the_destination_is_a_link() {
+  skip_unless_symlinks
   _tm_pair
   fixture_task dep-1 "" active
   jig queue depend dep-1 --on from-1 --reason "needs from" >/dev/null
@@ -9501,6 +9503,7 @@ test_task_merge_refuses_when_the_destination_is_a_link() {
 }
 
 test_task_merge_leaves_links_in_the_sources_absorbed_tree_behind() {
+  skip_unless_symlinks
   _tm_pair
   mkdir -p .ai/workspace/tasks/from-1/absorbed/old-1/sub "outside-dir/outside"
   printf 'old doc\n' > .ai/workspace/tasks/from-1/absorbed/old-1/analysis.md

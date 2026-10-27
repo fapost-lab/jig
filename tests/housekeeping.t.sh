@@ -518,6 +518,7 @@ test_housekeeping_flags_an_archived_task_whose_work_merged() {
 }
 
 test_housekeeping_keeps_a_task_it_cannot_archive_and_goes_on_to_the_rest() {
+  skip_unless_readonly_dirs
   hk_setup
   fixture_task good-one "no-such-branch" active "updated_at:$(hk_days_ago 90)"
   fixture_task bad-one "no-such-branch" active "updated_at:$(hk_days_ago 90)"
