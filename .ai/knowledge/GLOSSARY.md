@@ -222,6 +222,16 @@ The per-task record of documents the Agent stated it has read:
 never committed. It records a claim of reading, not comprehension (ADR-0015).
 Informal synonyms: acknowledgements, read tracking.
 
+## Task Link
+
+A `Linked: <ref>` line in a task's `task.md` naming a task (`<repo>#<task-id>`) or a spec
+(`<repo>#spec/<spec-id>`) in a neighbouring repository, `<repo>` being a path from the clone's
+main checkout. `jig context resolve` for the task lists the linked documents on `linked:` lines,
+or says the link is `unreachable`, and the Context Ledger tracks them. Not a Linked Source, which
+is a knowledge stub adopting a file of this repository
+(adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link). The `<ref>` part alone is a
+task reference. Informal synonyms: cross-repository link, neighbour link.
+
 ## Verify Scope
 
 A narrowing passed to `jig verify`, expressed as a list of changed files rather than a

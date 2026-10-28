@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-10-29
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -140,3 +140,9 @@ so it cannot live where everything is read as describing it.
 > task whose state carries `autopilot_phase` — otherwise the wave's branches would rewrite
 > neighbouring roadmap lines and conflict. `jig spec plan` does not need the marks: a merged, closed
 > task already reads as merged (adr-20260922-a-phase-run-is-coordinated).
+
+> **Amendment (2026-10-29).** A spec still never resolves as knowledge, but a task can point at one
+> in a neighbouring repository with a `Linked: <repo>#spec/<id>` line, and that task's
+> `jig context resolve` then lists the spec's `spec.md` and `roadmap.md` on `linked:` lines — the
+> work points at it, as above, now across a repository boundary
+> (adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link).

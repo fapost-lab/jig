@@ -226,6 +226,11 @@ already. Run the stage that is missing, not the ones the author has done.
 - **A task linked to a spec** carries a `Spec: .ai/specs/<id>/ — Phase <n>` line: it was filed
   from that spec's roadmap. Read every file of the spec as input and check the premises the task
   rests on, as for any written design. The roadmap items that name the task are its boundary.
+- **A task that continues work in a neighbouring repository** — a package next to the project,
+  a sibling service — gets a `Linked: <repo>#<task-id>` (or `<repo>#spec/<spec-id>`) line in the
+  `task.md` you file, `<repo>` being the path from this clone's main checkout
+  (`packages/fapost-saas`). `jig context resolve` then lists that task's documents on `linked:`
+  lines; read them as input. An `unreachable:` line means they are not on this machine: say so.
 
 ## Human gate (T3, T4)
 

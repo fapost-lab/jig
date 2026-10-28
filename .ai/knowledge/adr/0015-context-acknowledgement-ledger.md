@@ -7,7 +7,7 @@ domains:
   - context
 paths:
   - scripts/lib/context.sh
-reviewed_at: 2026-09-16
+reviewed_at: 2026-10-29
 summary: Why reading knowledge is acknowledged per task, and what that ledger does not prove.
 ---
 # ADR-0015: Reading knowledge is acknowledged in a per-task ledger, and the ledger claims nothing more
@@ -92,3 +92,9 @@ anyone reports it as more than one.
 > outside `.ai/knowledge/` only when it is the `source:` of an active or accepted stub — never any
 > file of the repository. A selected stub with a missing source fails resolution before anything is
 > hashed, so one missing file cannot fail the batch hash of every tracked document.
+
+> **Amendment (2026-10-29).** A task's `Linked:` lines name a task or spec in a neighbouring
+> repository, and the documents they reach are tracked too: the ledger holds their absolute path,
+> and `jig context acknowledge` takes an absolute path only when the task's links give it at that
+> moment. A link back to the task itself gives nothing, so its own artifacts stay untracked
+> (adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link).

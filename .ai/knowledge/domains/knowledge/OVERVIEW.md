@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-09-18
+reviewed_at: 2026-10-29
 ---
 # Knowledge
 
@@ -39,6 +39,10 @@ them an agent has to read.
   new one), and an untracked rule file is copied with a secret scan (`new --copy`).
 - Which documents a task must read, how much of each, and the record that it did:
   resolution by selectors, the catalog, and the context ledger (ADR-0014, ADR-0015).
+- A task's links to a neighbouring repository's task or spec: the `linked:` lines of resolve
+  and the ledger's tracking of those documents. The reference grammar lives in `common.sh`
+  (`jig_task_ref`) because a task command reads it too; Jig only ever reads the neighbour
+  (adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link).
 
 ## Boundaries
 

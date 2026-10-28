@@ -2009,3 +2009,171 @@ test_context_resolve_prints_the_context_when_the_pause_is_refused() {
   assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/t1/state)"
   assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:t1\tpause')"
 }
+
+# --- links to a neighbouring repository's task or spec -----------------------------------
+# adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link
+
+# ctx_neighbour <repo> <task-id> — a neighbouring repository's task workspace
+# with a task.md and a design.md, the way a package under packages/ keeps one.
+# Only the files resolve reads: the neighbour need not be a git repository.
+ctx_neighbour() {
+  mkdir -p "$1/.ai/workspace/tasks/$2"
+  printf '# %s\n' "$2" > "$1/.ai/workspace/tasks/$2/task.md"
+  printf '# design of %s\n' "$2" > "$1/.ai/workspace/tasks/$2/design.md"
+}
+
+# ctx_link <task-id> <ref> — append a `Linked:` line to the task's task.md.
+ctx_link() {
+  printf 'Linked: %s\n' "$2" >> ".ai/workspace/tasks/$1/task.md"
+}
+
+test_context_resolve_lists_a_linked_tasks_documents_marked_by_source() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_neighbour packages/saas up
+  ctx_link T-1 packages/saas#up
+  local d
+  d="$(pwd -P)/packages/saas/.ai/workspace/tasks/up"
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "linked:    $d/task.md  (packages/saas#up)"
+  assert_contains "$OUT" "linked:    $d/design.md  (packages/saas#up)"
+  assert_not_contains "$OUT" "plan.md"
+}
+
+test_context_resolve_lists_a_linked_specs_documents() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  mkdir -p ../other/.ai/specs/big
+  printf '# spec\n' > ../other/.ai/specs/big/spec.md
+  printf '# roadmap\n' > ../other/.ai/specs/big/roadmap.md
+  ctx_link T-1 ../other#spec/big
+  local d
+  d="$(cd ../other && pwd -P)/.ai/specs/big"
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "linked:    $d/spec.md  (../other#spec/big)"
+  assert_contains "$OUT" "linked:    $d/roadmap.md  (../other#spec/big)"
+}
+
+test_context_resolve_says_plainly_when_a_link_reaches_nothing() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  mkdir -p packages/empty
+  ctx_link T-1 packages/gone#up
+  ctx_link T-1 packages/empty#up
+  ctx_link T-1 packages/empty#spec/big
+  ctx_link T-1 /abs/path#up
+  ctx_link T-1 packages/empty
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "linked:    packages/gone#up  unreachable: no repository at"
+  assert_contains "$OUT" "linked:    packages/empty#up  unreachable: no task up in"
+  assert_contains "$OUT" "linked:    packages/empty#spec/big  unreachable: no spec big in"
+  assert_contains "$OUT" "linked:    /abs/path#up  unreachable: malformed link: the repository path must be relative"
+  assert_contains "$OUT" "linked:    packages/empty  unreachable: malformed link: no # between"
+}
+
+test_context_links_are_read_only_for_a_task() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_neighbour packages/saas up
+  ctx_link T-1 packages/saas#up
+
+  run jig context resolve --no-task --files README.md
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "linked:"
+}
+
+test_context_a_worktree_resolves_links_from_the_main_checkout() {
+  mkdir repo || return 1
+  cd repo || return 1
+  ctx_setup
+  printf 'packages/\n' >> .gitignore
+  git add -A
+  git commit -q -m "jig init snapshot"
+  jig task new T-1 >/dev/null
+  ctx_neighbour packages/saas up
+  ctx_link T-1 packages/saas#up
+  local d
+  d="$(pwd -P)/packages/saas/.ai/workspace/tasks/up"
+
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null) || fail "task start --worktree failed"
+  assert_no_file "$wt/packages/saas/.ai/workspace/tasks/up/task.md"
+  cd "$wt" || return 1
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "linked:    $d/design.md  (packages/saas#up)"
+}
+
+test_context_ledger_tracks_linked_documents_and_their_changes() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_neighbour packages/saas up
+  ctx_link T-1 packages/saas#up
+  local d
+  d="$(pwd -P)/packages/saas/.ai/workspace/tasks/up"
+
+  run jig context guard --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "  $d/design.md"
+  assert_contains "$OUT" "  $d/task.md"
+
+  run bash -c '"$JIG_BIN" context pending --task T-1 | "$JIG_BIN" context acknowledge --task T-1 --files -'
+  assert_eq 0 "$RC" "$OUT"
+  run jig context guard --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$(printf '%s\t%s' "$(git hash-object "$d/design.md")" "$d/design.md")" \
+    "$(grep "/design.md" .ai/workspace/tasks/T-1/context)"
+
+  run jig context resolve --task T-1
+  assert_contains "$OUT" "linked:    $d/design.md  (packages/saas#up)"
+
+  printf 'a decision changed\n' >> "$d/design.md"
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "linked:    $d/design.md  (packages/saas#up; changed since acknowledged)"
+  assert_contains "$OUT" "linked:    $d/task.md  (packages/saas#up)"
+
+  run jig context guard --task T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context guard: 1 of"
+  assert_contains "$OUT" "  $d/design.md"
+}
+
+test_context_acknowledge_takes_only_the_absolute_paths_a_link_reaches() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_neighbour packages/saas up
+  printf 'secret\n' > packages/saas/notes.md
+  ctx_link T-1 packages/saas#up
+  local root
+  root=$(pwd -P)
+
+  run jig context acknowledge --task T-1 --files "$root/packages/saas/notes.md"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "an absolute path only for a document a Linked: line of the task reaches"
+
+  run jig context acknowledge --task T-1 --files "$root/packages/saas/.ai/workspace/tasks/up/task.md"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "acknowledged 1 document(s) for T-1"
+}
+
+test_context_a_link_back_to_the_task_itself_gives_nothing() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/T-1/design.md
+  ctx_link T-1 '.#T-1'
+
+  run jig context resolve --task T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "linked:    .#T-1  unreachable: this is the task itself"
+  run jig context pending --task T-1
+  assert_not_contains "$OUT" "design.md"
+}
