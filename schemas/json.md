@@ -245,11 +245,12 @@ An item — the counts above are the sum of its fields, read in the same pass:
 |---|---|---|
 | `text` | string | the line after its checkbox, indented continuation lines joined with a space; tabs become spaces and trailing whitespace is dropped |
 | `checked` | boolean | `[x]` or `[X]` |
+| `done` | boolean | what the item counted as: `checked`, or its `task` is known in this checkout to have merged — `consolidated`, or logged `remote=merged` by the newest housekeeping run (schemas/spec.md) |
 | `task` | string or null | the backticked task id the text starts with, followed by a dash — the pattern `filed` counts; `null` otherwise. Read from checked items too |
 | `fog` | boolean | the text starts with `fog:` |
 
-`done` counts the checked items, `filed` the unchecked ones with a `task`, `fog` the unchecked ones
-with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
+`done` counts the items whose `done` is `true`, `filed` the other unchecked ones with a `task`,
+`fog` the unchecked ones with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
 fetch, every other one from this checkout.
 
 ## `jig status --json`

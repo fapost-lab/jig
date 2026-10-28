@@ -16,7 +16,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-autopilot/references/phase-run.md
 summary: Why a roadmap phase runs under a coordinator that owns the spec, files each wave in one unpushed epic commit, ships every task and checks roadmap items after the merge, and what autopilot.parallel counts.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-10-28
 ---
 # A roadmap phase runs wave by wave under a coordinator that owns the spec, ships every task and keeps the merge queue
 
@@ -62,7 +62,14 @@ the orchestration itself has to be a skill.
   and names the coordinator. The coordinator runs it in the epic checkout after each merge, and the
   edit travels with the next wave's filing commit. This refines ADR-0035's "the checkmark lands with
   the work": in a phase run the work of the wave is what lands, and the marks follow it. `spec plan`
-  does not need them — a merged, closed task already reads as merged.
+  does not need them — a merged, closed task already reads as merged. Neither do the progress
+  counts (amended 2026-10-28): the status page reads an open epic's roadmap from its remote, where
+  the marks arrive only with the next wave's pull request, so `spec_phase_counts` — behind the page,
+  `jig spec list` and its `--json` — counts an unchecked item done when its task merged, by the
+  same offline rule `spec plan` reads (`spec_merged_task_ids`: `consolidated`, or `remote=merged` in
+  the newest housekeeping run). The lifecycle — `roadmap complete`, `spec close`, `spec epic
+  --finish`, the final ship — still reads the checkboxes, so the marks remain the coordinator's to
+  make.
 - **`autopilot.parallel`, local-only, default 2, 1 to 16.** It counts the agents *building* a task
   of the open wave: run `on`, knowledge not consolidated. A task waiting its turn to ship holds no
   slot, and the short-lived agents that repair the queue — a red check, a merge conflict — are
