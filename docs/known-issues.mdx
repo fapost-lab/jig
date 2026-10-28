@@ -23,15 +23,4 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-{/* Closed by task setup-stop-on-git-bash. */}
-### Under Git Bash a stopped worktree setup may leave its processes running
-
-**What you see.** On Windows, a `worktree.setup` that reaches `worktree.setup_timeout`, or that is
-running when you interrupt `jig task start` or `jig task bootstrap`, is reported as stopped, but
-what it started — `make`, `composer`, `docker exec` — can go on running.
-
-**What it costs.** A stuck command keeps its process and whatever it holds, such as a lock on
-Composer's cache, and the next `jig task bootstrap` may then wait on it or fail.
-
-**What to do instead.** End the left-over processes in the Task Manager before running
-`jig task bootstrap` again. On macOS and Linux the whole command is stopped.
+No fault is known today. When one is found, it goes here.
