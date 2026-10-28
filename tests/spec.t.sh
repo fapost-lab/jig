@@ -2395,6 +2395,83 @@ test_spec_list_output_unchanged_for_a_roadmap_mixing_phases_and_non_phase_sectio
   assert_eq "mixed   Mixed Sections   roadmap 3/8 done, 3 filed, fog 1" "$OUT"
 }
 
+# --- done from task state (spec_merged_task_ids) -------------------------------
+#
+# An unchecked item counts done once its task is known to have merged — closed,
+# or seen merged by the newest housekeeping run — the rule `spec plan` reads, so
+# a phase run's progress shows before the coordinator's checkmarks reach the
+# epic's remote. Ids are compared as strings: `a.b` closed says nothing of `axb`.
+
+# _merged_roadmap_spec — a spec with one item of every kind the rule tells
+# apart, and the task state behind them.
+_merged_roadmap_spec() {
+  mkdir -p .ai/specs/merged
+  printf '# Merged\n' > .ai/specs/merged/spec.md
+  # shellcheck disable=SC2016 # backticked task ids, literal
+  printf '%s\n' '## Phase 1 — One' '' '- [x] `t-1` — checked' '- [ ] `t-2` — closed, unchecked' \
+    '- [ ] `t-3` — merged by housekeeping, unchecked' '- [ ] `t-4` — filed, still active' \
+    '- [ ] `axb` — filed, a dotted id closed elsewhere' > .ai/specs/merged/roadmap.md
+  fixture_task t-2 task/t-2 consolidated
+  fixture_task t-4 task/t-4 active
+  fixture_task a.b task/a.b consolidated
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-21T10:00:00Z forge=none\n'
+    printf '2026-09-21T10:00:01Z task=t-3 status=ready remote=merged via=ancestry action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+}
+
+test_spec_list_counts_an_item_done_when_its_task_merged() {
+  fixture_jig_repo
+  _merged_roadmap_spec
+  run jig spec list
+  assert_eq 0 "$RC"
+  assert_eq "merged   Merged   roadmap 3/5 done, 2 filed, fog 0" "$OUT"
+}
+
+# In a `--worktree` checkout the tasks directory is a link to the owner's
+# (_task_link_workspace): the closed tasks behind it count all the same, for the
+# counts and for `spec plan`.
+test_spec_list_counts_closed_tasks_through_a_linked_workspace() {
+  fixture_jig_repo
+  _merged_roadmap_spec
+  mv .ai/workspace/tasks "$JIG_TEST_TMP.owner-tasks"
+  ln -s "$JIG_TEST_TMP.owner-tasks" .ai/workspace/tasks
+  run jig spec list
+  assert_eq 0 "$RC"
+  assert_eq "merged   Merged   roadmap 3/5 done, 2 filed, fog 0" "$OUT"
+  printf '\n## Waves\n\n1. `t-2`\n' >> .ai/specs/merged/roadmap.md
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan merged --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "item${tab}1${tab}t-2${tab}consolidated${tab}closed${tab}"
+  rm -rf "$JIG_TEST_TMP.owner-tasks"
+}
+
+test_spec_list_json_says_which_items_count_done() {
+  fixture_jig_repo
+  _merged_roadmap_spec
+  _sl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"progress":{"done":3,"total":5,"filed":2,"fog":0}'
+  assert_contains "$OUT" '{"text":"`t-1` — checked","checked":true,"done":true,"task":"t-1","fog":false}'
+  assert_contains "$OUT" '{"text":"`t-2` — closed, unchecked","checked":false,"done":true,"task":"t-2","fog":false}'
+  assert_contains "$OUT" '{"text":"`t-3` — merged by housekeeping, unchecked","checked":false,"done":true,"task":"t-3","fog":false}'
+  assert_contains "$OUT" '{"text":"`t-4` — filed, still active","checked":false,"done":false,"task":"t-4","fog":false}'
+  assert_contains "$OUT" '{"text":"`axb` — filed, a dotted id closed elsewhere","checked":false,"done":false,"task":"axb","fog":false}'
+}
+
+# The lifecycle still reads the checkboxes: a spec whose last items merged but
+# are unchecked is not complete, and closing it still names them as leftovers.
+test_spec_close_still_reads_checkboxes_when_items_merged() {
+  fixture_jig_repo
+  _merged_roadmap_spec
+  run jig spec close merged
+  assert_contains "$OUT" "t-2"
+  assert_dir .ai/specs/merged
+}
+
 # --- the live status page (jig_status_page_touch, common.sh) ------------------
 
 test_spec_status_page_new_spec_appears_on_the_page() {
@@ -3931,7 +4008,7 @@ ROADMAP
 
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"loose item before any phase","checked":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"text":"`t-1` — shipped","checked":true,"task":"t-1","fog":false},{"text":"`t-2` — filed, and wrapped onto a second line","checked":false,"task":"t-2","fog":false},{"text":"fog: not yet clear","checked":false,"task":null,"fog":true},{"text":"plain item","checked":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}]}]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"loose item before any phase","checked":false,"done":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"text":"`t-1` — shipped","checked":true,"done":true,"task":"t-1","fog":false},{"text":"`t-2` — filed, and wrapped onto a second line","checked":false,"done":false,"task":"t-2","fog":false},{"text":"fog: not yet clear","checked":false,"done":false,"task":null,"fog":true},{"text":"plain item","checked":false,"done":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}]}]}}' "$OUT"
   # The text form of the same spec is what it always was.
   run jig spec list
   assert_eq 'idea-x   Idea "X"   roadmap 1/5 done, 1 filed, fog 1 (on epic/idea-x)' "$OUT"
@@ -3944,7 +4021,7 @@ test_spec_list_json_says_null_for_every_fact_a_spec_does_not_have() {
   printf 'no heading\n' > .ai/specs/c-half/spec.md
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"one","checked":false,"task":null,"fog":false}]}]},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]}]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"one","checked":false,"done":false,"task":null,"fog":false}]}]},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]}]}}' "$OUT"
 }
 
 test_spec_list_json_with_no_specs_is_an_empty_list() {
@@ -3977,7 +4054,7 @@ ROADMAP
   _sl_json
   assert_eq 0 "$RC" "$ERR"
   assert_contains "$OUT" '"epic":{"branch":"epic/idea-x","state":"open","checked_out":false,"missing":false,"ref":"refs/heads/epic/idea-x"},"progress":{"done":1,"total":1,"filed":0,"fog":0}'
-  assert_contains "$OUT" '"items":[{"text":"`t-1` — first","checked":true,"task":"t-1","fog":false}]'
+  assert_contains "$OUT" '"items":[{"text":"`t-1` — first","checked":true,"done":true,"task":"t-1","fog":false}]'
   run jig spec list
   assert_contains "$OUT" "epic/idea-x — progress is on the epic"
 }
@@ -4068,7 +4145,7 @@ test_spec_list_json_items_agree_with_counts_on_edge_lines() {
   printf '## Phase 1 — One\r\n\r\n- [ ] `-` — dash id\r\n- [ ] `t-1` — real\r\n' | _sl_spec idea-x 'Idea X'
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" '"phases":[{"phase":1,"title":"One","done":0,"total":2,"filed":2,"fog":0,"items":[{"text":"`-` — dash id","checked":false,"task":"-","fog":false},{"text":"`t-1` — real","checked":false,"task":"t-1","fog":false}]}]'
+  assert_contains "$OUT" '"phases":[{"phase":1,"title":"One","done":0,"total":2,"filed":2,"fog":0,"items":[{"text":"`-` — dash id","checked":false,"done":false,"task":"-","fog":false},{"text":"`t-1` — real","checked":false,"done":false,"task":"t-1","fog":false}]}]'
   JIG_SP_ITEMS=1 run jig spec list
   assert_eq 'idea-x   Idea X   roadmap 0/2 done, 2 filed, fog 0' "$OUT"
 }

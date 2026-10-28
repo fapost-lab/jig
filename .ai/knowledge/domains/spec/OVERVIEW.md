@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
   - "skills/jig-release/**"
-reviewed_at: 2026-10-20
+reviewed_at: 2026-10-28
 ---
 # Spec
 
@@ -80,7 +80,11 @@ its epic is the task's `base_branch`.
 `status.sh` consumes `spec_count` and `spec_epic_status`, never recounts, and its status page renders
 `spec_list_rows` — the unformatted rows `spec list` aligns — so the page and `spec list` cannot disagree
 about a spec's state. The counting rules for roadmap lines live in `spec_phase_counts` only: it counts
-per `## Phase <n>` section, and `spec_progress` is its sum. The page's progress by phase is
+per `## Phase <n>` section, and `spec_progress` is its sum. An unchecked item whose task merged counts
+as done there, and "merged" has one source, `spec_merged_task_ids` — a `consolidated` workspace state, or
+`remote=merged` in the newest housekeeping run — which `spec plan` reads too, so the page, `spec list`
+and the plan cannot disagree about a wave. The lifecycle — `roadmap complete`, `spec_leftovers`,
+`spec_unchecked_items` — reads the checkboxes alone and never this rule. The page's progress by phase is
 `spec_phase_rows`, which reads the roadmap of a spec with an open epic from the epic's ref when the
 checkout is elsewhere — progress is made there (ADR-0040) — without fetching, and names that branch.
 A command that changes a spec redraws the status page (`jig_status_page_touch`). Both the page and
@@ -95,9 +99,9 @@ alone, byte for byte as before.
 nothing or several items, or an item two entries name, is reported as a `problem` row and never
 resolved by guessing — a wave holding one never counts as merged. Waves are one list over the whole
 roadmap, so an earlier phase's unmerged item holds a later phase's wave. It learns task state from the
-workspace `state` file and "merged" only from what is already answered: a checked item, a
-`consolidated` task (ADR-0030), or `remote=merged` in the newest run of `.ai/runtime/housekeeping.log`
-— never a fetch or a forge call. Its `--format tsv` rows (`parallel`, `wave`, `item`, `blocker`, `problem`, shapes in
+workspace `state` file and "merged" only from what is already answered: a checked item, or
+`spec_merged_task_ids` — a `consolidated` task (ADR-0030), or `remote=merged` in the newest run of
+`.ai/runtime/housekeeping.log` — never a fetch or a forge call. Its `--format tsv` rows (`parallel`, `wave`, `item`, `blocker`, `problem`, shapes in
 the comment above `spec_plan`) are what a phase-run coordinator reads: a changed column is a changed
 contract.
 
@@ -129,7 +133,7 @@ spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut fr
 - `scripts/lib/spec.sh` — `cmd_spec`, `spec_new`, `spec_resume`, `_spec_cut_own_branch`,
   `_spec_switch_to_existing_branch`, `_spec_refuse_dirty_tree`, `_spec_require_default_branch`,
   `spec_template`, `spec_list`, `spec_list_rows`,
-  `spec_progress`, `spec_phase_counts`, `spec_phase_items`, `_spec_list_json`, `spec_phase_rows`, `spec_roadmap_ref`, `spec_plan`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
+  `spec_progress`, `spec_phase_counts`, `spec_merged_task_ids`, `spec_phase_items`, `_spec_list_json`, `spec_phase_rows`, `spec_roadmap_ref`, `spec_plan`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
   `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_ship_final_ready`, `spec_release_check`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`; `jig_ship_*`,

@@ -2578,6 +2578,22 @@ test_status_page_shows_spec_progress_by_phase() {
   assert_not_contains "$specs" "Waves"
 }
 
+# A closed task's unchecked item counts done on the page: the rule `spec plan`
+# reads (spec_merged_task_ids), so a phase run's merged wave shows at once.
+test_status_page_counts_a_closed_tasks_unchecked_item_done() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/idea-m
+  printf '%s\n' '# Idea M' > .ai/specs/idea-m/spec.md
+  # shellcheck disable=SC2016 # backticked task ids, literal
+  printf '%s\n' '# Roadmap' '' '## Phase 1 — First' '' '- [ ] `t-1` — merged' '- [ ] `t-2` — open' \
+    > .ai/specs/idea-m/roadmap.md
+  fixture_task t-1 task/t-1 consolidated
+  run jig status --html
+  local specs
+  specs=$(status_page_section "$(cat .ai/runtime/status.html)" specs)
+  assert_contains "$specs" '<tr><td>1</td><td>First</td><td><span class="bar"><span style="width: 50%"></span></span>1/2 done</td><td>1</td><td>0</td></tr>'
+}
+
 test_status_page_reads_the_phases_of_an_open_epic_from_its_branch() {
   status_epic_setup
   jig spec new idea-x >/dev/null
