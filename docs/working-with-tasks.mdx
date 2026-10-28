@@ -326,6 +326,31 @@ Two things to know:
 If `packages/` is tracked by your project's Git, the worktree already has it and the declaration
 does nothing.
 
+### A task that continues work in a neighbouring repository
+
+When a task picks up where a task in one of those packages left off — its design, the contract
+it settled — say so in the task's `task.md`:
+
+```text
+Linked: packages/fapost-saas#tenant-suspend-delete
+Linked: packages/fapost-saas#spec/saas-production
+```
+
+The part before `#` is the path from your main checkout to the other repository (`..` is fine
+for one beside it); after it comes a task id, or `spec/` and a spec id. Each time the agent asks
+which documents to read, the other task's `task.md`, `design.md` and other notes — or the spec's
+`spec.md` and `roadmap.md` — come back on `linked:` lines with the link they came from:
+
+```text
+linked:    /home/you/app/packages/fapost-saas/.ai/workspace/tasks/tenant-suspend-delete/design.md  (packages/fapost-saas#tenant-suspend-delete)
+```
+
+The agent records reading them like knowledge, so when someone edits that design later, the line
+says `changed since acknowledged` and the agent has to read it again before implementing. A task's
+notes live only on the machine where it was filed: on another clone, or when the folder is not
+there, the line says `unreachable:` and why. Jig only reads the other repository; it never writes
+there, and the other task does not learn about yours.
+
 ### Sharing for one task
 
 Sharing for every task has a cost: each task then runs against whatever your package checkouts
