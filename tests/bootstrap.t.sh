@@ -1393,6 +1393,48 @@ test_setup_is_stopped_at_its_timeout_with_everything_it_started() {
   fi
 }
 
+# Under Git Bash a native program the command started hears no signal, so the
+# stop ends the Windows process tree first. Git Bash cannot run here: uname and
+# taskkill are stubs, the winpid lookup is replaced, and only the call is checked.
+test_setup_stop_ends_the_windows_tree_under_git_bash() {
+  bootstrap_setup_nested
+  local bin="$JIG_TEST_TMP.bin" log="$JIG_TEST_TMP.taskkill"
+  mkdir -p "$bin"
+  # shellcheck disable=SC2016 # the stub expands these, not this shell
+  printf '#!/bin/sh\nprintf "%%s|" "$@" >> "%s"; printf "%%s\\n" "$MSYS2_ARG_CONV_EXCL" >> "%s"\n' \
+    "$log" "$log" > "$bin/taskkill"
+  chmod +x "$bin/taskkill"
+
+  local uname_out
+  for uname_out in MINGW64_NT-10.0 Linux; do
+    printf '#!/bin/sh\necho %s\n' "$uname_out" > "$bin/uname"
+    chmod +x "$bin/uname"
+    rm -f "$log"
+    (
+      PATH="$bin:$PATH"
+      # shellcheck disable=SC2034
+      JIG_AI_DIR=.ai
+      # shellcheck disable=SC2329
+      jig_info() { :; }
+      # shellcheck disable=SC2329
+      jig_warn() { :; }
+      # shellcheck source=/dev/null
+      . "$JIG_HOME/scripts/lib/bootstrap.sh"
+      # shellcheck disable=SC2329
+      _bootstrap_winpid() { echo 4242; }
+      sleep 30 &
+      _JIG_SETUP_PID=$!
+      _bootstrap_setup_stop
+      wait "$!" 2>/dev/null
+      exit 0
+    )
+    case "$uname_out" in
+      MINGW*) assert_eq '/T|/F|/PID|4242|*' "$(cat "$log" 2>/dev/null)" ;;
+      *) [ ! -e "$log" ] || fail "taskkill was called outside Git Bash: $(cat "$log")" ;;
+    esac
+  done
+}
+
 test_setup_names_what_it_left_for_git_and_is_skipped_by_no_bootstrap() {
   bootstrap_setup_nested
   setup_cmd 'echo x > left-behind.txt'
