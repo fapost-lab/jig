@@ -1150,6 +1150,17 @@ task_start() {
     fi
     jig_die "$refusal"
   fi
+  # A brief with no goal: work begun on an empty template asks the questions
+  # the person already answered somewhere else. T3/T4 are refused (their gate
+  # reads the design that the goal feeds), lower classes are warned. Only a
+  # task not yet started is asked; moving a started one into a worktree is not
+  # a beginning.
+  refusal=$(_task_start_goal_refusal "$id")
+  [ -z "$refusal" ] || jig_die "$refusal"
+  if ! _task_has_goal "$dir/task.md"; then
+    # shellcheck disable=SC2016 # the backticks quote a command for the reader
+    jig_warn "$(printf 'task start: %s has no goal: `## Goal` in task.md is empty; write it with `jig task artifact write %s task --from <file>`' "$id" "$id")"
+  fi
   if [ -n "$existing" ]; then
     jig_info "task start: $id recorded $existing when it was filed, with no fork point; starting it now"
   fi
@@ -1211,6 +1222,23 @@ _task_start_refusal() {
   [ -n "$branch" ] && [ -n "$(task_state_get "$id" base_commit)" ] || return 0
   # shellcheck disable=SC2016 # the backticks quote a command for the reader
   printf 'task start: already started on %s; to give it a worktree of its own: `jig task start %s --worktree`\n' "$branch" "$id"
+}
+
+# _task_start_goal_refusal <id> — why `jig task start <id>` refuses a T3/T4
+# task whose task.md has no goal (_task_has_goal), or nothing. Lower classes,
+# and a task with no class, are only warned by the command. Asked by the
+# command and by the actions table, after _task_start_refusal.
+_task_start_goal_refusal() {
+  local id="$1" class
+  class=$(task_state_get "$id" class)
+  case "$class" in
+    T3 | T4) ;;
+    *) return 0 ;;
+  esac
+  _task_has_goal "$(task_dir "$id")/task.md" && return 0
+  # shellcheck disable=SC2016 # the backticks quote a command for the reader
+  printf 'task start: %s is %s and has no goal: `## Goal` in task.md is empty; write it first with `jig task artifact write %s task --from <file>`\n' \
+    "$id" "$class" "$id"
 }
 
 # _task_start_in_worktree <id> <dir> — start the task on its own branch in a
@@ -4558,7 +4586,9 @@ _task_actions() {
         reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
       consolidated:* | abandoned:* | archived:*) reason="task $id is $status" ;;
       *:reopen) reason="task $id is $status, not abandoned" ;;
-      *:start) reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id") ;;
+      *:start)
+        reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id")
+        [ -n "$reason" ] || reason=$(_task_actions_guard "$id" "$action" _task_start_goal_refusal "$id") ;;
       *:pause) reason=$(_task_actions_guard "$id" "$action" _task_pause_refusal "$id") ;;
       *:resume) reason=$(_task_actions_guard "$id" "$action" _task_resume_refusal "$id") ;;
       *:request-pause) reason=$(_task_actions_guard "$id" "$action" jig_pause_request_refusal "$id") ;;
@@ -4638,6 +4668,13 @@ _task_goal() {
   ' "$1")
   [ -n "$goal" ] || goal="(none)"
   printf '%s\n' "$goal"
+}
+
+# _task_has_goal <task.md> — true when the brief has a goal by _task_goal's
+# reading: what `task list --goals` shows as `(none)` is what `task start`
+# warns about, or refuses for T3/T4.
+_task_has_goal() {
+  [ "$(_task_goal "$1")" != "(none)" ]
 }
 
 task_show() {

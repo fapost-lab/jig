@@ -85,6 +85,12 @@ T0 and T1 that fit in one session need no workspace. Otherwise:
 The id is short and kebab-case, derived from the work (`fix-trigger-idempotency`), not a
 ticket number unless the project uses one. Fill in `task.md`: goal, scope, notes.
 
+**The goal comes before the start.** `task start` warns when `## Goal` is empty or holds only the
+template's comment, and refuses a T3 or T4 task until it is written. Write it from what you were
+given — `task new --goal` or `--from`, or `jig task artifact write <id> task --from <file>` — and
+never invent one: with nothing that says what the task is for, ask, and an unattended run that
+cannot ask ends there with a report naming what is missing.
+
 **Two commands, because filing and beginning are different acts.** `task new` records the
 intent: no branch, no checkout change. `task start` cuts the branch and records the commit
 it forked from, which is why it belongs at the moment work actually begins — a fork point

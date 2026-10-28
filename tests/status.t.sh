@@ -2059,7 +2059,7 @@ test_status_page_shows_the_stage_and_repairs_of_a_running_autopilot() {
 
 test_status_page_shows_a_design_waiting_at_its_gate_until_it_is_approved() {
   fixture_jig_repo
-  jig task new big --class T3 >/dev/null
+  jig task new big --class T3 --goal "The goal." >/dev/null
   jig task start big >/dev/null
   run jig status --html
   assert_not_contains "$(cat .ai/runtime/status.html)" "A design is waiting" "no design yet, nothing to decide"
