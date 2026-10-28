@@ -4450,6 +4450,131 @@ test_task_ship_merge_level_does_not_merge_a_pr_at_another_commit() {
   assert_no_file gh-merge.argv
 }
 
+# --- open findings handed to a triage task
+# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task) -----------------
+
+# triage_findings — on T-1, two findings left for later (a P2 and a P3, open)
+# and two that are not (a P2 and a P1, closed). Recorded before the route's
+# records, as a review records them before its receipt.
+triage_findings() {
+  local f
+  jig task finding add T-1 --severity P2 --where src/scrub.sh:12 --summary "the message scrub path has no test" >/dev/null
+  f=$(jig task finding add T-1 --severity P2 --where src/a.sh --summary "closed P2 summary")
+  jig task finding set T-1 "$f" closed
+  jig task finding add T-1 --severity P3 --where - --summary "events without a hint are not scrubbed" >/dev/null
+  f=$(jig task finding add T-1 --severity P1 --where src/b.sh:1 --summary "closed P1 summary")
+  jig task finding set T-1 "$f" closed
+}
+
+# triage_ship_setup <level> [findings] — ship_setup at <level> with GitHub
+# stubbed (merging on green checks), T-1's findings recorded when the second
+# argument is `findings`, the route done and the knowledge decision recorded.
+triage_ship_setup() {
+  ship_setup
+  ship_cfg forge github
+  # Staged with the change, so a second ship finds nothing left unstaged.
+  git add .ai/config.yaml
+  mship_stub_gh
+  ship_cfg_local agent.git "$1"
+  ship_cfg_local agent.ci_timeout 0
+  [ "${2:-}" != findings ] || triage_findings
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+test_task_ship_hands_open_findings_to_one_triage_task_verbatim() {
+  triage_ship_setup pr findings
+  local ledger md
+  ledger=$(cat .ai/workspace/tasks/T-1/findings)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  md=.ai/workspace/tasks/T-1-findings/task.md
+  assert_file "$md"
+  assert_file_contains "$md" "# Triage the open findings of T-1"
+  assert_file_contains "$md" "- Task: T-1"
+  assert_file_contains "$md" "- Pull request: https://github.com/example/example/pull/99"
+  assert_file_contains "$md" "- F1 · P2 · src/scrub.sh:12 — the message scrub path has no test"
+  assert_file_contains "$md" "- F3 · P3 · - — events without a hint are not scrubbed"
+  assert_not_contains "$(cat "$md")" "closed P2 summary"
+  assert_not_contains "$(cat "$md")" "closed P1 summary"
+  # Filed, not started, and linked both ways.
+  assert_file_contains .ai/workspace/tasks/T-1-findings/state "triage_of: T-1"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1-findings/state)" "branch:"
+  assert_file_contains .ai/workspace/tasks/T-1/state "triage_task: T-1-findings"
+  # The source ledger is the one the review's receipt pinned, byte for byte.
+  assert_eq "$ledger" "$(cat .ai/workspace/tasks/T-1/findings)"
+
+  run jig task findings T-1
+  assert_contains "$OUT" "handed to T-1-findings: 2 open P2/P3"
+}
+
+test_task_ship_hands_findings_over_and_still_merges() {
+  triage_ship_setup merge findings
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  assert_file .ai/workspace/tasks/T-1-findings/task.md
+}
+
+test_task_ship_a_second_ship_files_no_second_triage_task() {
+  triage_ship_setup pr findings
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  local md
+  md=$(cat .ai/workspace/tasks/T-1-findings/task.md)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: 2 open finding(s) already handed to T-1-findings"
+  assert_eq "$md" "$(cat .ai/workspace/tasks/T-1-findings/task.md)"
+  assert_eq "1" "$(find .ai/workspace/tasks -maxdepth 1 -name 'T-1-*' | wc -l | tr -d ' ')"
+}
+
+test_task_ship_without_open_findings_files_no_triage_task() {
+  triage_ship_setup pr
+  jig task finding add T-1 --severity P2 --where - --summary "fixed and closed" >/dev/null
+  jig task finding set T-1 F1 closed
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "handed"
+  assert_no_file .ai/workspace/tasks/T-1-findings/state
+}
+
+test_task_ship_files_no_triage_task_without_a_pull_request_or_for_a_draft() {
+  triage_ship_setup commit findings
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stopped at commit"
+  assert_not_contains "$OUT" "handed"
+  assert_no_file .ai/workspace/tasks/T-1-findings/state
+
+  ship_cfg_local agent.git pr
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "handed"
+  assert_no_file .ai/workspace/tasks/T-1-findings/state
+}
+
+test_task_ship_leaves_a_taken_triage_id_alone_and_ships() {
+  triage_ship_setup pr findings
+  jig task new T-1-findings >/dev/null
+  local before
+  before=$(cat .ai/workspace/tasks/T-1-findings/task.md)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: warning: 2 open finding(s) not handed over: task T-1-findings already exists and is not their triage"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/T-1-findings/task.md)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "triage_task:"
+}
+
 test_task_ship_draft_opens_a_draft_and_never_merges() {
   mship_setup github
 

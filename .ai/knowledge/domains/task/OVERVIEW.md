@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-10-27
+reviewed_at: 2026-10-29
 ---
 # Task
 
@@ -275,6 +275,12 @@ and who gave it: `human`, or `agent` in an unattended run, where `--by agent` is
 run's `autopilot_mode` (recorded by `autopilot start`) is `unattended` — and `pr_url`, written by
 `task ship` when it opened or found a pull request. `pr_url` is what ship
 did, not a merge state: ADR-0005 still holds, and housekeeping still derives whether it merged.
+Right after `pr_url` (never for `--draft`), `task ship` hands the open P2/P3 to one triage task,
+`<id>-findings`, filed through `"$JIG_SELF" task new` as a process of its own and never stopping the
+ship, and links the two with `triage_task` and `triage_of`; the source ledger is left as the
+receipt pinned it (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+`_task_open_minor_findings` is the one reader of "open P2/P3" for ship, `task findings` and the
+autopilot's `end` message.
 
 **The review receipt stands on the same three gates** (adr-20260921-review-receipt-pins-what-was-reviewed).
 After the findings check, each gate asks one staleness function whether the task's own change (`diff`: the content difference
