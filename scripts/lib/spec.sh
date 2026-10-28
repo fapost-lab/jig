@@ -282,11 +282,15 @@ spec_progress() {
 # `<phase>\t<title>\t<done>\t<total>\t<filed>\t<fog>` line each. The one place
 # the counting rules for roadmap lines live (schemas/spec.md).
 #
-# An item is a checkbox line. Done is a checked one. Filed is an unchecked item
-# whose text starts with a backticked task id followed by a dash — the id alone
-# is not enough, because an item may just as well open with a backticked
-# command name. Fog is an unchecked item whose text starts with `fog:`. Wave
-# lines are a numbered list, not checkboxes, so they are never counted.
+# An item is a checkbox line. Done is a checked one, or an unchecked one whose
+# task is known to have merged (spec_merged_task_ids — the rule `spec plan`
+# reads too): in a phase run the coordinator's checkmarks reach the epic's
+# remote only with the next pull request, and the work they mark is already
+# there. Filed is an unchecked item whose text starts with a backticked task id
+# followed by a dash — the id alone is not enough, because an item may just as
+# well open with a backticked command name — and whose task has not merged. Fog
+# is an unchecked item whose text starts with `fog:`. Wave lines are a numbered
+# list, not checkboxes, so they are never counted.
 #
 # A `## Phase <n> — <title>` heading opens phase <n>, listed even while it has
 # no items. Items under any other `##` heading, or before the first one, are
@@ -296,15 +300,19 @@ spec_progress() {
 #
 # With `items` as the second argument (spec_phase_items) each counted item is
 # also printed, before the line of its section, as
-# `item\t<checked 0|1>\t=<task-id>\t<fog 0|1>\t<text>`, `=` alone for no task
-# id — a mark no id can be, since `-` is one the pattern takes: the task id and the
+# `item\t<checked 0|1>\t<done 0|1>\t=<task-id>\t<fog 0|1>\t<text>`, `=` alone for
+# no task id — a mark no id can be, since `-` is one the pattern takes: <done> is
+# what the item counted as, the task id and the
 # fog mark by the same patterns the counts use, read from checked items too,
 # and the text as written after the checkbox, its indented continuation lines
 # joined with a space. Without it the output is the counts alone.
 spec_phase_counts() {
-  local items=0
+  local items=0 merged
   [ "${2:-}" != items ] || items=1
-  awk -v items="$items" '
+  merged=" $(spec_merged_task_ids | cut -f1 | tr '\n' ' ') "
+  # The set reaches awk through the environment: a `-v` value has its escapes
+  # expanded.
+  JIG_SP_MERGED="$merged" awk -v items="$items" '
     function reset() { done = 0; total = 0; filed = 0; fog = 0 }
     function flush() {
       if (phase != "-" || total > 0)
@@ -314,10 +322,10 @@ spec_phase_counts() {
       if (!pending) return
       gsub(/\t/, " ", itext)
       sub(/[[:space:]]+$/, "", itext)
-      printf "item\t%d\t=%s\t%d\t%s\n", ichecked, itid, ifog, itext
+      printf "item\t%d\t%d\t=%s\t%d\t%s\n", ichecked, idone, itid, ifog, itext
       pending = 0
     }
-    BEGIN { phase = "-"; title = ""; reset(); pending = 0 }
+    BEGIN { phase = "-"; title = ""; reset(); pending = 0; merged = ENVIRON["JIG_SP_MERGED"] }
     /^##[[:space:]]/ {
       emit(); flush(); reset()
       h = $0
@@ -346,10 +354,13 @@ spec_phase_counts() {
       if (text ~ /^`[A-Za-z0-9._-]+`[[:space:]]+(—|-|--)[[:space:]]/) {
         tid = substr(text, 2); sub(/`.*$/, "", tid)
       } else if (text ~ /^fog:/) isfog = 1
-      if (checked) done++
+      # Ids are compared as strings: index(), never a pattern a `.` in an id
+      # would widen.
+      isdone = checked || (tid != "" && index(merged, " " tid " ") > 0)
+      if (isdone) done++
       else if (tid != "") filed++
       else if (isfog) fog++
-      if (items == 1) { pending = 1; ichecked = checked; itid = tid; ifog = isfog; itext = text }
+      if (items == 1) { pending = 1; ichecked = checked; idone = isdone; itid = tid; ifog = isfog; itext = text }
       next
     }
     pending && /^[[:space:]]+[^[:space:]]/ {
@@ -548,13 +559,15 @@ _spec_json_phases() {
   local sd=0 st=0 sf=0 sg=0
   while IFS=$'\t' read -r f1 f2 f3 f4 f5 f6; do
     if [ "$f1" = item ]; then
-      # f2 checked, f3 `=` and the task id, f4 fog, f5 the text (no tab in it).
-      json_quote "$f5"
+      # f2 checked, f3 done, f4 `=` and the task id, f5 fog, f6 the text (no
+      # tab in it).
+      json_quote "$f6"
       items="$items$isep{\"text\":$_JSON"
       if [ "$f2" = 1 ]; then items="$items,\"checked\":true"; else items="$items,\"checked\":false"; fi
-      if [ "$f3" = = ]; then _JSON=null; else json_quote "${f3#=}"; fi
+      if [ "$f3" = 1 ]; then items="$items,\"done\":true"; else items="$items,\"done\":false"; fi
+      if [ "$f4" = = ]; then _JSON=null; else json_quote "${f4#=}"; fi
       items="$items,\"task\":$_JSON"
-      if [ "$f4" = 1 ]; then items="$items,\"fog\":true}"; else items="$items,\"fog\":false}"; fi
+      if [ "$f5" = 1 ]; then items="$items,\"fog\":true}"; else items="$items,\"fog\":false}"; fi
       isep=","
       continue
     fi
@@ -979,7 +992,8 @@ _spec_plan_parse() {
 _spec_plan_enrich() {
   local merged_ids line iphase wave checked tid ikind ititle
   local state merged paused autopilot building tdir st
-  merged_ids=" $(_spec_plan_hk_merged | tr '\n' ' ') "
+  # " <id>:<why> " pairs from the shared rule; an id holds no colon or space.
+  merged_ids=" $(spec_merged_task_ids | tr '\t\n' ': ') "
   while IFS= read -r line; do
     case "$line" in
       item$'\t'*) ;;
@@ -1012,22 +1026,60 @@ ROW
         if [ "$autopilot" = on ] && [ "$(spec_task_state "$tdir" knowledge_consolidated)" != true ]; then
           building=1
         fi
-        if [ "$merged" = no ] && [ "$st" = consolidated ]; then
-          merged=closed
-        fi
       else
         state=no-workspace
         [ "$checked" != 1 ] || state="done"
       fi
       if [ "$merged" = no ]; then
+        # Quoted, the id is matched as a string, never as a pattern.
         case "$merged_ids" in
-          *" $tid "*) merged=housekeeping ;;
+          *" $tid:closed "*) merged=closed ;;
+          *" $tid:housekeeping "*) merged=housekeeping ;;
         esac
       fi
     fi
     printf 'item\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$iphase" "$wave" "$tid" "$state" "$merged" "$paused" "$autopilot" "$building" "$ititle"
   done
+}
+
+# spec_merged_task_ids — the tasks whose work is known to have merged, one
+# `<task-id>\t<closed|housekeeping>` line each: `closed` for a task whose
+# workspace `state` says `consolidated` (ADR-0030 closes a task only after its
+# change landed), then `housekeeping` for an id the newest housekeeping run
+# logged `remote=merged` and that is not closed. The one rule every reader of
+# "merged" shares — the roadmap counts (spec_phase_counts) and `spec plan` —
+# read offline: no fetch, no forge call. Both sources are local and
+# gitignored, so a clone holding neither knows only the roadmap's checkmarks.
+spec_merged_task_ids() {
+  local ws closed=""
+  # A roadmap read outside a project (a library sourced on its own) has no
+  # tasks to ask.
+  [ -n "${JIG_PROJECT:-}" ] && [ -n "${JIG_AI_DIR:-}" ] || return 0
+  ws="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  # A glob, not find: in a `--worktree` checkout the tasks directory is a
+  # link to the owner's (_task_link_workspace), and find does not descend it.
+  set -- "$ws"/*/state
+  if [ -f "$1" ]; then
+    closed=$(awk '
+      FNR == 1 { seen = 0 }
+      !seen && /^status:/ {
+        seen = 1
+        v = $0; sub(/^status:[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v)
+        if (v == "consolidated") {
+          d = FILENAME; sub(/\/state$/, "", d); sub(/^.*\//, "", d)
+          print d
+        }
+      }
+    ' "$@" 2>/dev/null) || closed=""
+  fi
+  {
+    [ -z "$closed" ] || printf '%s\n' "$closed" | awk '{ print "c\t" $0 }'
+    _spec_plan_hk_merged | awk '{ print "h\t" $0 }'
+  } | awk -F '\t' '
+    $1 == "c" { if (!($2 in seen)) { seen[$2] = 1; printf "%s\tclosed\n", $2 } ; next }
+    $1 == "h" { if (!($2 in seen)) { seen[$2] = 1; printf "%s\thousekeeping\n", $2 } }
+  '
 }
 
 # _spec_plan_hk_merged — the task ids the newest housekeeping run found merged

@@ -30,6 +30,7 @@ is prose to the script, including the numbered `## Waves` list.
 | Line | Counted as |
 |---|---|
 | `- [x] …` | done |
+| ``- [ ] `task-id` — goal``, its task merged | done: the task is known to have merged, below |
 | ``- [ ] `task-id` — goal`` | filed: a backticked id of the task id grammar, then whitespace, a dash (`—`, `-` or `--`) and whitespace |
 | `- [ ] fog: area — why` | fog |
 | `- [ ] anything else` | a planned item, not filed |
@@ -40,7 +41,20 @@ A line that opens with a backticked command rather than a task id, like
 
 `jig spec list` prints `roadmap <done>/<total> done, <filed> filed, fog <fog>`. `jig spec list
 --json` gives the same counts by section with their items (schemas/json.md), from the same pass
-over the roadmap.
+over the roadmap, and the status page shows them by phase.
+
+Done is where the work is, not only where the checkbox is: an unchecked item whose task is known to
+have merged counts as done. Merged is read offline and by one rule (`spec_merged_task_ids`), the one
+`spec plan` reads below: the task is `consolidated` in this checkout's workspace, or the newest
+housekeeping run logged it `remote=merged`. Both are local and gitignored, so a clone without the
+task's workspace and without a housekeeping run counts only the checkboxes; no branch or forge is
+asked. In a phase run this is what lets the status page, which reads an open epic from its remote,
+show a merged wave before the coordinator's checkmarks reach that remote
+(adr-20260922-a-phase-run-is-coordinated).
+
+The lifecycle reads the checkboxes alone: `roadmap complete` after `jig spec done`, the leftovers of
+`jig spec close` and `jig spec epic --finish`, and the final ship's unchecked items. Closing a spec
+is a change to the repository, and the marks are what it carries.
 
 ### Waves
 
@@ -58,8 +72,9 @@ never counts as merged, so every later wave waits until the list is fixed. Items
 listed under their phase and never start.
 
 The rule is strict: wave N opens only when every item of every wave numbered below it has
-merged — whichever phase that item is in. Merged is read offline: the item is checked, its task is
-`consolidated`, or the newest housekeeping run logged it `remote=merged`.
+merged — whichever phase that item is in. Merged is read offline: the item is checked, or its task
+merged by the rule the counts read above — `consolidated`, or logged `remote=merged` by the newest
+housekeeping run.
 
 ## Conventions the script does not check
 
