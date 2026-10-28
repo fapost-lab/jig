@@ -47,7 +47,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-found` | a reference names no task or epic of this clone, or an item, dependency or request that is not in the queue where the command needs it |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
-| `stash-conflict` | `jig task resume` could not apply the task's stash (`git stash apply` failed, usually on conflicts); the task stays paused and the stash entry is kept |
+| `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. `message` lists every reason, one per line, each with what to do |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
@@ -485,8 +485,11 @@ Refusals: `usage` for an argument the command does not take, a `--revision` with
 is not a revision (digits without a leading zero), and an id outside the grammar; `not-found` for no
 such task; `not-paused`, `wrong-checkout`, `stash-conflict` and `stale-revision` as in the table
 above; `not-initialised` and `not-a-repository` as everywhere. Every refusal but `stash-conflict`
-happens before anything is written; `stash-conflict` happens after the revision was claimed (it is
-raised by one) and leaves the state as it was.
+happens before anything is written. `stash-conflict` for unresolved conflicts already in the checkout
+happens before anything is written too; for an apply that fails it happens after the revision was
+claimed (it is raised by one). An apply that refused leaves the state as it was; one that merged the
+stash with conflicts, or wrote part of it, records `paused_stash_applied` (schemas/state.md), so the resume after the
+person resolved them ends the pause without applying the stash again.
 
 ## `jig upgrade --json`
 

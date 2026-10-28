@@ -23,30 +23,6 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-{/* Closed by task resume-after-stash-conflict. */}
-### A resume whose stash conflicted can never be retried
-
-**What you see.** You paused a task with `--stash`, and while it was paused a file the stash holds
-changed. `jig task resume <id>` refuses:
-
-```
-jig: error: task resume: git stash apply failed for <sha> (conflicts); resolve them, then run `jig task resume <id>` again
-```
-
-You resolve the conflict and run it again, as it says, and it fails the same way — whether you only
-staged the resolution or committed it and left the tree clean. The task stays paused.
-
-**What it costs.** Every retry applies the same stash again, on top of your resolution, so the
-conflict comes back: the file holds conflict markers again, with your resolution as one side of
-them, and you have to resolve it a second time. The stash entry itself is kept. No Jig command ends
-this pause.
-
-**What to do instead.** Do not retry. Resolve the conflict — again, if a retry already put it back —
-then delete the `paused_stash:` line from `.ai/workspace/tasks/<id>/state` and run
-`jig task resume <id>`. Without a stash to apply it only ends the pause. Editing that file by hand is
-the exception here, because nothing else ends this pause; the stash entry stays in `git stash list`
-in case you want it back.
-
 {/* Closed by task setup-stop-on-git-bash. */}
 ### Under Git Bash a stopped worktree setup may leave its processes running
 
