@@ -211,6 +211,9 @@ the background at most once per `housekeeping.cadence`.
 - **Reading is recorded, not proven.** The agent records which documents it has read per task, so a
   changed document becomes unread again. That record says the agent claimed to read it — nothing
   more.
+- **A task can link a neighbouring repository's task or spec** with a `Linked:` line in its
+  `task.md`. Jig only reads that repository — the listed documents, nothing else — and never
+  writes to it. Its documents are recorded like knowledge, so an edit there becomes unread here.
 
 ## Measurement
 

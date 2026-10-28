@@ -49,6 +49,9 @@ A helper that two commands must never disagree about lives in `lib/common.sh` in
 `jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`
 ("which spec does this task follow, and is it on an epic" — `task start` and `spec` both read them),
+`jig_task_ref`, `jig_task_ref_dir` and `jig_task_links` ("which task or spec in a neighbouring
+repository does this reference name, and where are its documents" — `context` reads a task's
+`Linked:` lines with them, and a moved task's target is the same grammar),
 `jig_fresh_base_ref` ("which commit is the freshest base to cut from"), `jig_knowledge_docs` and
 `jig_knowledge_is_global` ("which files are knowledge documents"), `jig_knowledge_source`
 ("is this document a stub for an existing file") and `jig_knowledge_read_path` ("which file does an agent
