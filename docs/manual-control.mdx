@@ -98,6 +98,11 @@ what changed while the task was paused. Read that report before continuing.
 Resume runs in any checkout, unless the pause stashed work: then run it where the task's branch is
 checked out (its worktree, if it has one), because that is where the stash is applied.
 
+If the stashed work conflicts with what changed while the task was paused, resume leaves the
+conflicts in your files and keeps the task paused. Resolve them, `git add` the files (or commit
+them), and run `jig task resume` again: it remembers that the stash is already in your files, does
+not apply it a second time, and ends the pause. The stash entry stays in `git stash list` either way.
+
 When an agent is working on the task, on autopilot or in an ordinary session, ask it to pause
 instead:
 

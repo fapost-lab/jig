@@ -68,7 +68,7 @@ be reworded.
 | `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
 | `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
-| `stash-conflict` | the stash the pause put aside did not apply. The task stays paused and the stash is kept — the person resolves it in the task's checkout |
+| `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
 | `failed` | anything else: the message says what |
 

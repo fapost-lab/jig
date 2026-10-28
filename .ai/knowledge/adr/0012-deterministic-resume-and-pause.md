@@ -10,7 +10,7 @@ paths:
   - "scripts/lib/status.sh"
   - "schemas/state.md"
 summary: Why pause is a field, ambiguity exits 2, and resume reports overlap rather than distance.
-reviewed_at: 2026-10-26
+reviewed_at: 2026-10-28
 ---
 # ADR-0012: Resume is ambiguous or exact, never a guess; pause is a field
 
@@ -95,3 +95,15 @@ session, and nothing stopped a new task from starting on another task's dirty tr
 > `stash-conflict` and `stale-revision` (schemas/json.md). Its `uncommitted` and `overlap` report
 > the task's checkout — this one, its worktree, or, checked out nowhere, the branch's commits — not
 > the checkout it ran in.
+
+> **Amendment (2026-10-28, task `resume-after-stash-conflict`).** A failed `git stash apply` is two
+> different failures. When git refuses and applies nothing, resume writes nothing, as above. When it
+> merges the stash with conflicts, the stash is already in the tree, and a retry that applied it again
+> would merge it on top of the person's resolution for ever; resume then records the SHA as
+> `paused_stash_applied`, keeps the task paused and refuses `stash-conflict`. The next resume with
+> that record does not apply the stash: it refuses, before the claim and writing nothing, while
+> unmerged paths remain, and otherwise ends the pause and removes the record with `paused`. Unmerged
+> paths already in the checkout refuse before the claim too, and an apply that stops part way without
+> conflicts (an untracked file of the stash that now exists) but changed the tree is recorded the same way, so a refusal git would make anyway is
+> never mistaken for a merged stash. The record is the only witness: once the resolution is
+> committed the tree is clean, and nothing in git says the stash was ever applied.
