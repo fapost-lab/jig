@@ -136,6 +136,14 @@ A P3 is never fixed after the review: it stays open and is listed in the pull re
 not cost another review round. If you want one fixed, ask — it is then an ordinary edit followed by a
 re-review.
 
+Small findings left open do not get lost when the pull request is merged — by you, or by an agent
+allowed to merge. When the agent opens the pull request, Jig files one task, `<task-id>-findings`,
+holding every open P2 and P3 word for word with a link to the pull request. It is not started and
+not in the queue, so no agent takes it on its own: it waits for you to go through the findings —
+file a task for one, or set it aside with a reason. Shipping the same task again files no second
+one. Something the project's knowledge should now say is not left as a finding: the agent writes it
+down before the commit.
+
 A P0 or P1 stops the task from being finished. Until it is resolved, the agent cannot mark the task
 ready, record what the project should remember, or commit and open the pull request
 ([Letting the agent ship](/agent-ships)). A fix alone does not resolve it: the agent fixes the

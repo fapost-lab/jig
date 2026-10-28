@@ -2693,6 +2693,18 @@ _task_blocking_findings() {
   ' "$file"
 }
 
+# _task_open_minor_findings <id> — the ledger lines, as they are, of every P2
+# or P3 still `open`: what a review left for later, and what `task ship` hands
+# to a triage task. `fixed` is not among them: it waits for a re-review, it was
+# not left for later. One reader, for ship, `task findings` and the autopilot's
+# `end` message alike. Empty when the task has no ledger.
+_task_open_minor_findings() {
+  local file
+  file="$(task_dir "$1")/findings"
+  [ -f "$file" ] || return 0
+  awk -F '\t' '($2 == "P2" || $2 == "P3") && $3 == "open"' "$file"
+}
+
 # _task_gate_blocking_message <id> <blocking-lines> — the refusal text for a
 # gate that found <blocking-lines> (as _task_blocking_findings prints them)
 # non-empty: names every blocking finding and how to clear one (design §4).
@@ -2886,6 +2898,14 @@ task_findings() {
       if ($7 != "") line = line" reason="$7
       print line
     }' "$file"
+  fi
+  # Where the open P2/P3 went, once a ship handed them over: the ledger keeps
+  # them `open`, since the review's receipt pins it.
+  local triage open
+  triage=$(task_state_get "$id" triage_task)
+  if [ -n "$triage" ]; then
+    open=$(_task_open_minor_findings "$id")
+    [ -z "$open" ] || printf 'handed to %s: %s open P2/P3\n' "$triage" "$(_task_count_lines "$open")"
   fi
   printf 'blocking: %s\n' "$bcount"
   return 0
@@ -5237,6 +5257,89 @@ _task_ship_branch_refusal() {
   return 0
 }
 
+# _task_triage_id <id> — the id of the triage task that takes <id>'s open
+# P2/P3: `<id>-findings`. Derived, so a repeated ship finds the one it filed.
+_task_triage_id() {
+  printf '%s-findings\n' "$1"
+}
+
+# _task_ship_triage <id> <pr-url> — hand <id>'s open P2/P3
+# (_task_open_minor_findings) to one triage task, filed not started and not
+# queued, with the findings verbatim, the pull request and the source task
+# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). Links the two
+# in state: `triage_task` on <id>, `triage_of` on the triage task. The source
+# ledger is left as it is: the review's receipt pins its hash, and the merge
+# that follows rechecks the receipt. Idempotent: a triage task already filed
+# for <id> is named and left alone, new findings included — its task.md may be
+# a person's by now. Never stops the ship: whatever goes wrong is a warning,
+# and the findings are still in the pull request's body. Prints nothing when
+# there is nothing to hand over.
+_task_ship_triage() {
+  local id="$1" url="$2" open n tid tdir sdir known md err rc=0
+  open=$(_task_open_minor_findings "$id") || open=""
+  [ -n "$open" ] || return 0
+  n=$(_task_count_lines "$open")
+  sdir=$(task_dir "$id")
+  tid=$(_task_triage_id "$id")
+  if ! _task_valid_id "$tid"; then
+    printf 'task ship: warning: %s open finding(s) not handed over: %s is not a valid task id\n' "$n" "$tid"
+    return 0
+  fi
+  tdir=$(task_dir "$tid")
+
+  known=$(task_state_get "$id" triage_task)
+  if [ -n "$known" ] && _task_valid_id "$known" && [ -f "$(task_dir "$known")/state" ]; then
+    printf 'task ship: %s open finding(s) already handed to %s\n' "$n" "$known"
+    return 0
+  fi
+  if [ -e "$tdir" ]; then
+    if [ "$(task_state_get "$tid" triage_of)" = "$id" ]; then
+      _task_rewrite_state "$sdir" triage_task "$tid"
+      printf 'task ship: %s open finding(s) already handed to %s\n' "$n" "$tid"
+    else
+      printf 'task ship: warning: %s open finding(s) not handed over: task %s already exists and is not their triage\n' "$n" "$tid"
+    fi
+    return 0
+  fi
+
+  md=$(mktemp "${TMPDIR:-/tmp}/jig-triage-md.XXXXXX")
+  jig_cleanup_add "$md"
+  err=$(mktemp "${TMPDIR:-/tmp}/jig-triage-err.XXXXXX")
+  jig_cleanup_add "$err"
+  _task_triage_md "$id" "$url" "$open" > "$md"
+  # A process of its own, not task_new in this one: it brings its own checks
+  # (a worktree whose workspace would lose the task refuses) and its own
+  # cleanup, and its refusal must not end this ship.
+  (cd "$JIG_PROJECT" && bash "$JIG_SELF" task new "$tid" --from "$md") >/dev/null 2>"$err" || rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -f "$tdir/state" ]; then
+    printf 'task ship: warning: %s open finding(s) not handed over: %s\n' "$n" \
+      "$(sed -n '$s/^jig: error: //;$p' "$err")"
+    return 0
+  fi
+  _task_rewrite_state "$tdir" triage_of "$id"
+  _task_rewrite_state "$sdir" triage_task "$tid"
+  printf 'task ship: %s open finding(s) handed to task %s\n' "$n" "$tid"
+}
+
+# _task_triage_md <id> <pr-url> <findings> — the triage task's task.md, from
+# the ledger lines <findings> as _task_open_minor_findings prints them. In
+# English, like every brief a script writes: it cannot know its reader.
+_task_triage_md() {
+  local id="$1" url="$2" open="$3"
+  printf '# Triage the open findings of %s\n\n' "$id"
+  printf '## Goal\n\n'
+  printf 'Decide each open finding of %s with a person: file a task for it, or dismiss it with a reason.\n\n' "$id"
+  printf '## Source\n\n'
+  printf -- '- Task: %s\n' "$id"
+  printf -- '- Pull request: %s\n' "$url"
+  # shellcheck disable=SC2016 # the backticks quote a command for the reader
+  printf -- '- Handed over by `jig task ship %s` on %s\n\n' "$id" "$(jig_today)"
+  printf '## Findings\n\n'
+  printf '%s\n' "$open" | awk -F '\t' 'NF { print "- " $1 " · " $2 " · " $4 " — " $5 }'
+  printf '\n## Notes\n\n'
+  printf '<!-- What was decided for each finding: the task filed for it, or why it was dismissed. -->\n'
+}
+
 # The body file task_ship writes for a major release's draft; script-global
 # because the exit cleanup that removes it runs after the function returned
 # (conventions/shell.md).
@@ -5417,7 +5520,16 @@ EOF
   # moment it exists. A fact about what ship did, not a merge state: whether
   # it was merged is still derived by housekeeping every run (ADR-0005).
   case "$JIG_SHIP_URL" in
-    https://*) _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL" ;;
+    https://*)
+      _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL"
+      # The open P2/P3 go to one triage task once a pull request exists to
+      # link, before the merge and before the autopilot's `end` names it
+      # (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). A draft
+      # is not a finished task: its findings are still its own.
+      if [ "$draft" -eq 0 ]; then
+        _task_ship_triage "$id" "$JIG_SHIP_URL"
+      fi
+      ;;
   esac
 
   [ "$level" = merge ] || return 0

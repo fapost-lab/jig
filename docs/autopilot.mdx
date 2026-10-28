@@ -191,7 +191,7 @@ third is what the agent needs, chose, or how the run ended. The mark says which:
 |---|---|
 | `⏸` | The run stopped and is waiting for your answer |
 | `⛔` | A run without stops stopped — nothing waits for you; it ends as a draft pull request |
-| `✅` | The run ended: merged, not merged and why, or ready for your commit — with the pull request link when there is one |
+| `✅` | The run ended: merged, not merged and why, or ready for your commit — with the number of small review findings left open and the task that holds them (`2 open findings → task fix-login-redirect-findings`), and the pull request link, when there are any |
 | `🤖` | A run without stops approved its own design, or decided something for you |
 
 Nothing is sent when the run starts, moves to the next stage or fixes something: those need nothing
