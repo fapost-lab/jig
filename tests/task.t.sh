@@ -2144,6 +2144,70 @@ test_task_start_records_the_commit_it_forked_from() {
   assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $head_before"
 }
 
+# --- a brief with no goal (the same reading as `task list --goals`) ---------
+
+test_task_start_warns_when_a_t2_task_has_no_goal() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warning: task start: T-1 has no goal"
+  assert_contains "$OUT" "jig task artifact write T-1 task --from <file>"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+}
+
+test_task_start_is_quiet_about_a_task_with_a_goal() {
+  task_setup
+  jig task new T-1 --class T2 --goal "The widget renders." >/dev/null
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "has no goal"
+}
+
+test_task_start_refuses_a_t3_task_whose_goal_is_only_the_template_comment() {
+  task_setup
+  local head_before
+  head_before=$(git symbolic-ref --short HEAD)
+  jig task new T-1 --class T3 >/dev/null
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: T-1 is T3 and has no goal"
+  assert_contains "$OUT" "jig task artifact write T-1 task --from <file>"
+  # Nothing was started: no branch, no fork point, the checkout where it was.
+  assert_eq "$head_before" "$(git symbolic-ref --short HEAD)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "base_commit:"
+
+  # Writing the goal is the way past it.
+  jig task artifact write T-1 task --from - >/dev/null <<'EOF'
+# T-1
+
+## Goal
+
+The tenant can be decommissioned.
+EOF
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "has no goal"
+}
+
+test_task_start_worktree_refuses_a_t4_task_with_no_goal() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: T-1 is T4 and has no goal"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "base_commit:"
+  assert_eq "" "$(git branch --list task/T-1)"
+}
+
+test_task_actions_withhold_start_from_a_t3_task_with_no_goal() {
+  task_setup_clean
+  jig task new big --class T3 >/dev/null
+  _tl_agree big "pause request-pause set-class abandon archive"
+  _tl_json
+  assert_contains "$OUT" "is T3 and has no goal"
+}
+
 test_task_start_branch_is_cut_from_the_base_branch_not_head() {
   # A task is work proposed against the base. Starting it wherever the
   # checkout happened to be is how a task inherits an unrelated history.
@@ -5472,7 +5536,7 @@ test_task_receipt_check_counts_an_unreadable_tree_as_changed() {
 
 test_task_receipt_architecture_review_stage() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   run jig task receipt T-1 --stage architecture-review
   assert_eq 0 "$RC"
@@ -5553,7 +5617,7 @@ test_task_receipt_check_none_for_t0_through_t3() {
 
 test_task_receipt_check_none_required_for_t4() {
   task_setup
-  jig task new T-1 --class T4 >/dev/null
+  jig task new T-1 --class T4 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
@@ -5937,7 +6001,7 @@ test_task_receipt_check_stale_after_a_findings_change_names_findings() {
 
 test_task_receipt_t4_design_hash_covers_spec_and_alternatives() {
   task_setup
-  jig task new T-1 --class T4 >/dev/null
+  jig task new T-1 --class T4 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
   printf '# spec\n' > .ai/workspace/tasks/T-1/spec.md
@@ -6003,7 +6067,7 @@ test_task_set_knowledge_consolidated_refuses_stale_receipt() {
 
 test_task_set_status_ready_refuses_t4_without_a_receipt() {
   task_setup
-  jig task new T-1 --class T4 >/dev/null
+  jig task new T-1 --class T4 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   task_route_class T-1
   run jig task set T-1 status ready
@@ -6013,7 +6077,7 @@ test_task_set_status_ready_refuses_t4_without_a_receipt() {
 
 test_task_set_status_ready_refuses_t3_without_an_architecture_review() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf 'design\n' > .ai/workspace/tasks/T-1/design.md
   jig task gate T-1 approved >/dev/null
@@ -6909,7 +6973,7 @@ test_task_gate_refused_for_unclassified() {
 
 test_task_gate_refused_without_design_md() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
 
   run jig task gate T-1 approved
@@ -6919,7 +6983,7 @@ test_task_gate_refused_without_design_md() {
 
 test_task_gate_refused_for_a_decision_other_than_approved() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
 
@@ -6937,7 +7001,7 @@ test_task_gate_unknown_task_dies() {
 
 test_task_gate_approved_writes_state_matching_the_receipts_design_pin() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
 
@@ -6970,7 +7034,7 @@ test_task_set_refuses_gate_and_pr_url_keys() {
 
 test_task_status_page_gate_waiting_approved_and_changed_states() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
   jig status --html >/dev/null
@@ -7244,7 +7308,7 @@ test_task_autopilot_unattended_repair_limit_still_stops_with_exit_3() {
 
 test_task_gate_by_agent_in_an_unattended_run_records_who_approved() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
   unattended_local
@@ -7259,7 +7323,7 @@ test_task_gate_by_agent_in_an_unattended_run_records_who_approved() {
 
 test_task_gate_by_agent_is_refused_outside_an_unattended_run() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
 
@@ -7276,7 +7340,7 @@ test_task_gate_by_agent_is_refused_outside_an_unattended_run() {
 
 test_task_gate_records_a_human_by_default() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
   run jig task gate T-1 approved
@@ -7729,7 +7793,7 @@ test_task_artifacts_full_t2_keeps_the_plan_stage() {
 # route_task [<task new args>] — T-1 filed with <args> and started.
 route_task() {
   task_setup
-  jig task new T-1 "$@" >/dev/null
+  jig task new T-1 --goal "The goal." "$@" >/dev/null
   jig task start T-1 >/dev/null
 }
 
@@ -8702,7 +8766,7 @@ test_task_actions_of_a_task_not_started_agree_with_their_commands() {
 test_task_actions_at_a_gate_and_a_stop_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git commit
-  jig task new big --class T3 >/dev/null
+  jig task new big --class T3 --goal "The goal." >/dev/null
   jig task start big >/dev/null
   jig task artifact write big design --from - >/dev/null <<EOF
 the design
@@ -8734,7 +8798,7 @@ test_task_actions_of_an_unattended_run_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git commit
   ship_cfg_local autopilot.unattended true
-  jig task new run --class T3 >/dev/null
+  jig task new run --class T3 --goal "The goal." >/dev/null
   jig task start run >/dev/null
   jig task artifact write run design --from - >/dev/null <<EOF
 the design
