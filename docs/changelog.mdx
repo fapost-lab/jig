@@ -90,6 +90,19 @@ Jig was installed in on one person's machine stopped `jig upgrade` on everybody 
   `.ai/runtime/forge-cache` lines carry two more columns, the pull request's head commit and its
   address; a line written before reads as it did. See
   [Reading Jig as data](/reading-jig-as-data#upgrading-a-project).
+- **A re-review stays narrow when only a global knowledge document moved.** `jig task receipt
+  <id> --since-review` used to answer `full` whenever the knowledge the review read changed, and
+  every task's consolidation edits `GLOSSARY.md`, `ARCHITECTURE.md` or `RULES.md`, so merging the
+  base branch in forced a full re-review almost every time. The receipt now lists each knowledge
+  document it read; when only global documents changed, the answer is `narrow` and the diff of each
+  follows the change since the review. A document matched through the task's own files or domains,
+  or one that newly applies or no longer does, still means `full`. See
+  [Inspect the change and its review](/manual-control#inspect-the-change-and-its-review).
+- **A task's documents can be read as data.** `jig task artifacts <id> --json` lists all twelve
+  kinds of task document with their state (`present`, `empty`, `missing` or `unavailable`), size
+  and time of the last change, and `jig task artifact read <id> <kind> [--json]` prints one of them.
+  Both find the workspace of a task in a worktree too, which only Jig knows how to reach. See
+  [Reading Jig as data](/reading-jig-as-data).
 
 ## 0.38.1 — 2026-10-29
 
