@@ -30,6 +30,7 @@ is prose to the script, including the numbered `## Waves` list.
 | Line | Counted as |
 |---|---|
 | `- [x] …` | done |
+| ``- [ ] `task-id` — goal``, its task merged | done: the task is known to have merged, below |
 | ``- [ ] `task-id` — goal`` | filed: a backticked id of the task id grammar, then whitespace, a dash (`—`, `-` or `--`) and whitespace |
 | `- [ ] fog: area — why` | fog |
 | `- [ ] anything else` | a planned item, not filed |
@@ -40,7 +41,20 @@ A line that opens with a backticked command rather than a task id, like
 
 `jig spec list` prints `roadmap <done>/<total> done, <filed> filed, fog <fog>`. `jig spec list
 --json` gives the same counts by section with their items (schemas/json.md), from the same pass
-over the roadmap.
+over the roadmap, and the status page shows them by phase.
+
+Done is where the work is, not only where the checkbox is: an unchecked item whose task is known to
+have merged counts as done. Merged is read offline and by one rule (`spec_merged_task_ids`), the one
+`spec plan` reads below: the task is `consolidated` in this checkout's workspace, or the newest
+housekeeping run logged it `remote=merged`. Both are local and gitignored, so a clone without the
+task's workspace and without a housekeeping run counts only the checkboxes; no branch or forge is
+asked. In a phase run this is what lets the status page, which reads an open epic from its remote,
+show a merged wave before the coordinator's checkmarks reach that remote
+(adr-20260922-a-phase-run-is-coordinated).
+
+The lifecycle reads the checkboxes alone: `roadmap complete` after `jig spec done`, the leftovers of
+`jig spec close` and `jig spec epic --finish`, and the final ship's unchecked items. Closing a spec
+is a change to the repository, and the marks are what it carries.
 
 ### Waves
 
@@ -58,8 +72,9 @@ never counts as merged, so every later wave waits until the list is fixed. Items
 listed under their phase and never start.
 
 The rule is strict: wave N opens only when every item of every wave numbered below it has
-merged — whichever phase that item is in. Merged is read offline: the item is checked, its task is
-`consolidated`, or the newest housekeeping run logged it `remote=merged`.
+merged — whichever phase that item is in. Merged is read offline: the item is checked, or its task
+merged by the rule the counts read above — `consolidated`, or logged `remote=merged` by the newest
+housekeeping run.
 
 ## Conventions the script does not check
 
@@ -69,6 +84,10 @@ merged — whichever phase that item is in. Merged is read offline: the item is 
 - No dates and no point estimates.
 - A `task-id` is added when the item's task is filed; `[x]` is set by `jig spec done` when that
   task's knowledge decision is recorded, never by hand.
+- An item whose task was abandoned or moved is closed by `jig spec drop`: `[x]`, and its last line
+  ends in ` — moved to <repo>#<task-id> (<YYYY-MM-DD>): <reason>` or
+  ` — dropped (<YYYY-MM-DD>): <reason>`. It counts as done and as closed, like any `[x]`; the why is
+  in its text (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows).
 
 ## The `Spec:` line in a task
 
@@ -97,6 +116,38 @@ An item names the task when its text starts with the backticked id and a dash �
 grammar above — compared as a string. Run when the knowledge decision is recorded, before the
 commit (ADR-0035).
 
+## `jig spec drop <task-id>`
+
+Closes the roadmap items that name an abandoned task. `jig task abandon` runs it for a task with a
+`Spec:` line; a phase run's coordinator runs it in the epic checkout for an item a task branch could
+not touch. The day, the reason and the move's target are read from the task's `state`
+(`abandoned_at`, `abandoned_reason`, `moved_to`).
+
+| Situation | Result |
+|---|---|
+| task not `abandoned` (nor `archived` from `abandoned`) | error: abandon it first |
+| in the branch of a task whose state has `autopilot_phase` | exit 3: the coordinator closes the item after the merge |
+| HEAD is the task's own branch (here or in its worktree): one it was started on, other than its base and `git.base_branch` | exit 3: run it in a checkout of the task's base |
+| no `Spec:` line | `spec drop: <id> is not linked to a spec`, exit 0 |
+| the spec is being removed by `spec remove --abandon-unstarted` | `nothing to rewrite`, exit 0; no branch is switched |
+| spec with an open epic, HEAD is not the epic | exit 3: run it in a checkout of the epic |
+| spec without an epic, task based on `git.base_branch`, HEAD neither that branch nor `spec/<spec-id>` | exit 3: run it on either |
+| the same, HEAD is `git.base_branch` | as `spec resume`: a dirty tree is refused (error), then `spec/<spec-id>` is switched to (local or origin) or cut, `switched to spec/<spec-id>`; HEAD stays there. Nothing to close: no switch. A `spec/<spec-id>` that does not name the task while the default branch does: switched back, exit 3, naming the merge to make first |
+| task based on another branch, HEAD is not it | exit 3: run it in a checkout of that branch |
+| unchecked items name the task | each becomes `[x]` with the suffix after its last line, continuation lines included, written atomically; the lines are printed, then how the change lands (below) |
+| every item naming it is checked | `already closed`, exit 0, file unchanged |
+| no item names it | `nothing to rewrite`, exit 0 |
+| spec or its `roadmap.md` not here | `nothing to rewrite`, exit 0 |
+| two specs linked | error |
+
+The suffix starts with a dash between spaces, where a wave entry's title ends, so a wave that names the
+item still does. How the edit lands: on an epic, a commit there by whoever ran it, as a phase run's
+checkmarks are. On `spec/<spec-id>`, a local commit of `roadmap.md` alone (`Close <task-id> in the
+roadmap of <spec-id>`), then `jig spec ship <spec-id>` from that branch — except at git level `none`
+(`spec ship`'s level), and when `roadmap.md` already held uncommitted changes or is not tracked yet;
+then the edit stays in the tree of `spec/<spec-id>` and the line says so. The default branch's roadmap
+is never edited.
+
 ## `jig spec link <spec-id> <task-id>`
 
 Writes the `Spec:` line into a task that is already filed, under the first `# ` heading of its
@@ -118,7 +169,7 @@ Report lines, one per decision:
 
 | Line | Meaning |
 |---|---|
-| `abandoned <id> (not started)` | with `--abandon-unstarted`: no `branch`, or `branch` without `base_commit`; done through `jig task abandon`, before unlinking |
+| `abandoned <id> (not started)` | with `--abandon-unstarted`: no `branch`, or `branch` without `base_commit`; done through `jig task abandon --reason "spec <spec-id> removed"`, before unlinking |
 | `unlinked <id>` | an open linked task lost its `Spec:` lines for this spec; the rest of `task.md` is unchanged |
 | `kept <id> (consolidated\|abandoned)` | closed tasks keep their line |
 | `kept <id> (links to more than one spec)` | conflict, untouched |

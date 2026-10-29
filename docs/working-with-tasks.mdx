@@ -93,7 +93,7 @@ Small work — a typo, a one-file fix that fits in one session — needs no work
 | **active** | Being worked on. |
 | **ready** | Checked: tests pass and the goal is met. Waiting to be merged. |
 | **consolidated** | Closed: merged, and what it taught the project is recorded. |
-| **abandoned** | Stopped. Comes back with `jig task set <id> status active`. |
+| **abandoned** | Stopped, with the reason recorded. Comes back with `jig task set <id> status active`. |
 | **archived** | Put away: abandoned for a while, untouched for two months, or absorbed into another task with `jig task merge`. Hidden from the lists, never deleted. |
 
 **Paused** is a mark on an active or ready task, not a state of its own: it says the work was
@@ -108,6 +108,24 @@ knowledge travels in the same pull request as the code.
 A merge alone does not close a task: a fix can still follow it. At the start of a session the agent
 checks which of your tasks were merged, names each one and asks whether it can be closed. Nothing
 is closed without your yes.
+
+### Giving a task up, or moving it elsewhere
+
+Tell the agent why, and it runs `jig task abandon <id> --reason "<why>"`. When the work belongs to
+another repository — a neighbouring package, say — it adds `--moved-to <repo>#<task-id>` (the same
+form as a `Linked:` line, a path from your main checkout), and prints the command that files the task
+there; Jig never writes to the other repository.
+
+The reason goes where the next agent reads it. If the task came from a spec's roadmap, the item that
+named it is closed in place — checked, with ` — moved to … (<date>): <why>` or ` — dropped (<date>):
+<why>` at its end — so nobody starts the work here again because the plan still said so. A task from
+a spec cannot be abandoned without a reason. Jig never edits the roadmap on your main branch: for a
+spec built on an epic the item is rewritten in a checkout of the epic, and you commit it there; for any
+other spec Jig switches to the spec's own branch, `spec/<spec-id>` — as `jig spec resume` does — makes
+the edit and commits it there, and `jig spec ship <spec-id>` sends it on. (If your agent may not commit,
+the edit waits on that branch for your commit.) Anywhere else — on the task's own branch, say — the item
+is left alone and Jig prints where to run `jig spec drop <id>`. In a roadmap phase run the coordinator
+runs it, after the merge.
 
 <Accordion title="How finished task notes are cleaned up">
 What is left behind is cleaned up automatically. The workspace of a closed task is moved to a trash
@@ -135,6 +153,14 @@ severity:
 A P3 is never fixed after the review: it stays open and is listed in the pull request, so a nit does
 not cost another review round. If you want one fixed, ask — it is then an ordinary edit followed by a
 re-review.
+
+Small findings left open do not get lost when the pull request is merged — by you, or by an agent
+allowed to merge. When the agent opens the pull request, Jig files one task, `<task-id>-findings`,
+holding every open P2 and P3 word for word with a link to the pull request. It is not started and
+not in the queue, so no agent takes it on its own: it waits for you to go through the findings —
+file a task for one, or set it aside with a reason. Shipping the same task again files no second
+one. Something the project's knowledge should now say is not left as a finding: the agent writes it
+down before the commit.
 
 A P0 or P1 stops the task from being finished. Until it is resolved, the agent cannot mark the task
 ready, record what the project should remember, or commit and open the pull request
@@ -326,6 +352,33 @@ Two things to know:
 If `packages/` is tracked by your project's Git, the worktree already has it and the declaration
 does nothing.
 
+### A task that continues work in a neighbouring repository
+
+When a task picks up where a task in one of those packages left off — its design, the contract
+it settled — say so in the task's `task.md`:
+
+```text
+Linked: packages/fapost-saas#tenant-suspend-delete
+Linked: packages/fapost-saas#spec/saas-production
+```
+
+The part before `#` is the path from your main checkout to the other repository (`..` is fine
+for one beside it); after it comes a task id, or `spec/` and a spec id. Each time the agent asks
+which documents to read, the other task's `task.md`, `design.md` and other notes — or the spec's
+`spec.md` and `roadmap.md` — come back on `linked:` lines with the link they came from:
+
+```text
+linked:    /home/you/app/packages/fapost-saas/.ai/workspace/tasks/tenant-suspend-delete/design.md  (packages/fapost-saas#tenant-suspend-delete)
+```
+
+The agent records reading them like knowledge, so when someone edits that design later, the line
+says `changed since acknowledged` and the agent has to read it again before implementing. A task's
+notes live only on the machine where it was filed: on another clone, or when the folder is not
+there, the line says `unreachable:` and why. Jig only reads the other repository; it never writes
+there, and the other task does not learn about yours. A finished review does not follow an edit
+there: the review stays current, and the pull request can still be opened, even though the agent is
+asked to read the changed document again.
+
 ### Sharing for one task
 
 Sharing for every task has a cost: each task then runs against whatever your package checkouts
@@ -456,7 +509,9 @@ It answers four questions, in this order:
    specification come last, under *Other tasks*; `jig status` at a terminal groups its Tasks section
    the same way. Paused tasks are folded away below.
 3. **Specifications.** How far every roadmap has got, phase by phase. For a specification built on
-   its own branch, the progress is read from that branch as your copy of it last saw it.
+   its own branch, the progress is read from that branch as your copy of it last saw it. An item
+   whose task was closed here, or that the last housekeeping saw merged, counts as done even before
+   its checkmark reaches that branch.
 4. **Details.** The counts at a glance, and the complete `jig status` text, folded away at the bottom.
 
 **Why some data is marked stale.** Whether a pull request is open or merged comes from housekeeping,

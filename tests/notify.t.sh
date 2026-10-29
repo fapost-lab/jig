@@ -227,6 +227,45 @@ test_notify_end_sends_its_text_and_the_pull_request() {
   assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\tend\tnot merged: CI failed')"
 }
 
+# adr-20261029-a-ship-hands-open-findings-to-one-triage-task: `end` names the
+# open P2/P3 a ship handed over, and the triage task that holds them.
+test_notify_end_names_the_open_findings_and_their_triage_task() {
+  nt_setup
+  jig task finding add T-1 --severity P2 --where - --summary "one" >/dev/null
+  jig task finding add T-1 --severity P3 --where - --summary "two" >/dev/null
+  jig task finding add T-1 --severity P2 --where - --summary "three" >/dev/null
+  jig task finding set T-1 F3 closed
+  {
+    printf 'triage_task: T-1-findings\n'
+    printf 'pr_url: https://github.com/example/shop/pull/7\n'
+  } >> .ai/workspace/tasks/T-1/state
+  run jig task autopilot T-1 end --reason 'merged'
+  assert_eq 0 "$RC"
+  nt_wait
+  assert_contains "$(cat "$NT_STUB/text")" "$(printf 'merged\n2 open findings → task T-1-findings\nhttps://github.com/example/shop/pull/7')"
+}
+
+test_notify_end_names_open_findings_no_triage_task_holds() {
+  nt_setup
+  jig task finding add T-1 --severity P3 --where - --summary "one" >/dev/null
+  run jig task autopilot T-1 end --reason 'merged'
+  assert_eq 0 "$RC"
+  nt_wait
+  assert_eq "1 open finding, not handed to a triage task" "$(tail -n 1 "$NT_STUB/text")"
+}
+
+test_notify_end_without_open_findings_adds_no_line() {
+  nt_setup
+  jig task finding add T-1 --severity P3 --where - --summary "one" >/dev/null
+  jig task finding set T-1 F1 dismissed --reason "not worth it"
+  printf 'triage_task: T-1-findings\n' >> .ai/workspace/tasks/T-1/state
+  run jig task autopilot T-1 end --reason 'merged'
+  assert_eq 0 "$RC"
+  nt_wait
+  assert_not_contains "$(cat "$NT_STUB/text")" "open finding"
+  assert_eq "merged" "$(tail -n 1 "$NT_STUB/text")"
+}
+
 test_notify_end_without_a_reason_never_claims_a_merge() {
   nt_setup
   run jig task autopilot T-1 end

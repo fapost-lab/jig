@@ -1771,6 +1771,109 @@ jig_task_epic() {
   return 0
 }
 
+# --- task references and links ------------------------------------------------
+#
+# A task reference names a task or a spec in a repository next to this one
+# (adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link):
+#
+#   <repo>#<task-id>          a task in <repo>
+#   <repo>#spec/<spec-id>     a spec in <repo>
+#
+# <repo> is a path relative to the clone's main checkout (jig_config_clone_root),
+# not to a worktree: a worktree lacks what the main checkout ignores, such as
+# `packages/`. `..` is allowed — a neighbour may sit beside the clone, not
+# inside it — but not an absolute path, `~`, a drive letter, a backslash,
+# whitespace or a second `#`. The ids follow jig_valid_id. This is the one
+# grammar every reader of a reference uses: a task's `Linked:` lines today,
+# and a moved task's target (`jig task abandon --moved-to`).
+
+_JIG_REF_REPO=""
+_JIG_REF_KIND=""
+_JIG_REF_ID=""
+_JIG_REF_DIR=""
+_JIG_REF_ERROR=""
+
+# jig_task_ref <ref> — parse a task reference. Sets _JIG_REF_REPO,
+# _JIG_REF_KIND (`task` or `spec`) and _JIG_REF_ID; returns 1 with
+# _JIG_REF_ERROR saying what is wrong. Sets variables rather than printing:
+# a caller in `$(...)` would lose them.
+jig_task_ref() {
+  local ref="$1" repo id kind=task
+  _JIG_REF_REPO=""
+  _JIG_REF_KIND=""
+  _JIG_REF_ID=""
+  _JIG_REF_DIR=""
+  _JIG_REF_ERROR=""
+  case "$ref" in
+    *'#'*'#'*) _JIG_REF_ERROR="more than one #"; return 1 ;;
+    *'#'*) ;;
+    *) _JIG_REF_ERROR="no # between the repository and the id"; return 1 ;;
+  esac
+  repo=${ref%%#*}
+  id=${ref#*#}
+  case "$repo" in
+    '') _JIG_REF_ERROR="no repository path before #"; return 1 ;;
+    /* | '~'* | [A-Za-z]:*) _JIG_REF_ERROR="the repository path must be relative to the clone's main checkout"; return 1 ;;
+    *[[:space:]\\]*) _JIG_REF_ERROR="the repository path may not hold whitespace or a backslash"; return 1 ;;
+  esac
+  case "$id" in
+    spec/*) kind=spec; id=${id#spec/} ;;
+  esac
+  jig_valid_id "$id" || { _JIG_REF_ERROR="not a valid $kind id: $id"; return 1; }
+  _JIG_REF_REPO=$repo
+  _JIG_REF_KIND=$kind
+  _JIG_REF_ID=$id
+}
+
+# jig_task_ref_dir — after jig_task_ref, find the directory holding the
+# referenced task's workspace or spec. Sets _JIG_REF_DIR to its absolute path
+# (the repository part canonical, `cd -P`); returns 1 with _JIG_REF_ERROR when
+# the repository or the task or spec is not there. Not being there is an
+# ordinary answer — another clone, another machine, a workspace that is
+# local to the machine that filed the task — never a reason to die. Reads
+# only: nothing is ever written to the other repository.
+jig_task_ref_dir() {
+  local root dir abs
+  _JIG_REF_DIR=""
+  root=$(jig_config_clone_root)
+  dir="$root/$_JIG_REF_REPO"
+  if [ ! -d "$dir" ] || ! abs=$(cd -P "$dir" 2>/dev/null && pwd -P); then
+    _JIG_REF_ERROR="no repository at $dir"
+    return 1
+  fi
+  if [ "$_JIG_REF_KIND" = spec ]; then
+    dir="$abs/$JIG_AI_DIR/specs/$_JIG_REF_ID"
+    if [ ! -f "$dir/spec.md" ] && [ ! -f "$dir/roadmap.md" ]; then
+      _JIG_REF_ERROR="no spec $_JIG_REF_ID in $abs"
+      return 1
+    fi
+  else
+    dir="$abs/$JIG_AI_DIR/workspace/tasks/$_JIG_REF_ID"
+    if [ ! -f "$dir/task.md" ]; then
+      _JIG_REF_ERROR="no task $_JIG_REF_ID in $abs (a task workspace exists only in the clone that filed it)"
+      return 1
+    fi
+  fi
+  _JIG_REF_DIR=$dir
+}
+
+# jig_task_links <task.md> — the references a task links to, one per line, as
+# written: each whole line `Linked: <ref>`, trimmed. Not validated here — a
+# reader says what is wrong with a line rather than skipping it in silence.
+jig_task_links() {
+  [ -f "$1" ] || return 0
+  awk '
+    {
+      sub(/\r$/, "")
+      if ($0 !~ /^Linked:[[:space:]]/) next
+      v = $0
+      sub(/^Linked:[[:space:]]+/, "", v)
+      sub(/[[:space:]]+$/, "", v)
+      if (v != "") print v
+    }
+  ' "$1"
+}
+
 # jig_tracked_changes — the tracked-and-uncommitted lines of
 # `git status --porcelain`, never the untracked ones (`??`): untracked files
 # are not work in progress (build output, a spec nobody started yet), only a

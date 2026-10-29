@@ -73,6 +73,11 @@ By default, this switches to a task branch from the project's configured base. F
 working copy, use `jig task start booking-message --worktree` instead, then work in the directory
 it prints. Tasks linked to a spec with an open epic start from that epic.
 
+Starting looks at the goal first — the same paragraph `jig task list --goals` shows. When `## Goal`
+in `task.md` is empty or holds only the template's comment, a T0–T2 task starts with a warning, and a
+T3 or T4 task is refused until the goal is written: put it in `task.md` with
+`jig task artifact write booking-message task --from <file>` and start again.
+
 A new worktree also gets whatever `vendor/`, `node_modules/` or `.env` your project's profiles (and
 [`worktree.carry`](/configuration#git-and-branches)) declare, and links to the folders
 `worktree.share` names — see

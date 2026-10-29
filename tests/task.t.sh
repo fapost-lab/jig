@@ -796,6 +796,101 @@ test_task_abandon_sets_status() {
   assert_file_contains .ai/workspace/tasks/T-1/state "status: abandoned"
 }
 
+# The why of an abandon lands in `state`, where `task show` and the next agent
+# read it, not only in a task.md note
+# (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows).
+test_task_abandon_records_reason_and_move() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task abandon T-1 --reason "lives in monitoring" --moved-to "../monitoring#sentry-errors"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task abandon: T-1 abandoned, moved to ../monitoring#sentry-errors"
+  # Nothing is there in the fixture: the command that files it is printed.
+  assert_contains "$OUT" "file it there yourself: (cd ../monitoring && jig task new sentry-errors)"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: abandoned"
+  assert_file_contains .ai/workspace/tasks/T-1/state "abandoned_reason: lives in monitoring"
+  assert_file_contains .ai/workspace/tasks/T-1/state "moved_to: ../monitoring#sentry-errors"
+  assert_file_contains .ai/workspace/tasks/T-1/state "abandoned_at: $(date +%Y-%m-%d)"
+
+  # A second abandon refines the record; a move not repeated is a move no more.
+  run jig task abandon T-1 --reason "not needed"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/workspace/tasks/T-1/state "abandoned_reason: not needed"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "moved_to:"
+}
+
+test_task_abandon_refuses_a_bad_reference_or_reason() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task abandon T-1 --moved-to "/abs/repo#x"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task abandon: --moved-to /abs/repo#x: the repository path must be relative"
+  run jig task abandon T-1 --moved-to "repo-without-hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no # between the repository and the id"
+  run jig task abandon T-1 --reason ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--reason must not be empty"
+  run jig task abandon T-1 --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task abandon: unknown argument: --bogus"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+}
+
+# A spec-linked task says why, and `task set` is no way around it.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_abandon_of_a_spec_linked_task_needs_a_reason() {
+  task_setup
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf '%s\n' '- [ ] `T-1` — the thing' > .ai/specs/alpha/roadmap.md
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  run jig task abandon T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task abandon: T-1 is linked to spec alpha; say why: jig task abandon T-1 --reason <text>"
+  run jig task set T-1 status abandoned
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: T-1 is linked to a spec; abandon it with jig task abandon T-1 --reason <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: active"
+
+  run jig task abandon T-1 --reason "superseded" --moved-to "packages/mon#spec/monitoring"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 closed in .ai/specs/alpha/roadmap.md"
+  assert_contains "$OUT" "add it to that spec yourself"
+  assert_eq '- [x] `T-1` — the thing — moved to packages/mon#spec/monitoring ('"$(date +%Y-%m-%d)"'): superseded' \
+    "$(cat .ai/specs/alpha/roadmap.md)"
+}
+
+# Taken back, a task loses the record of why it was given up; the closed
+# roadmap item is the person's to reopen, and they are told so.
+# shellcheck disable=SC2016 # the roadmap's backticks are literal
+test_task_reopen_clears_the_abandon_record() {
+  task_setup
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf '%s\n' '- [ ] `T-1` — the thing' > .ai/specs/alpha/roadmap.md
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-1/task.md
+  jig task abandon T-1 --reason "later" >/dev/null 2>&1
+  run jig task set T-1 status active
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "reopen that item by hand"
+  local st
+  st=$(cat .ai/workspace/tasks/T-1/state)
+  assert_not_contains "$st" "abandoned_reason:"
+  assert_not_contains "$st" "abandoned_at:"
+  # A task linking two specs is linked all the same.
+  jig task new T-2 >/dev/null
+  printf 'Spec: .ai/specs/alpha/\nSpec: .ai/specs/beta/\n' >> .ai/workspace/tasks/T-2/task.md
+  run jig task abandon T-2
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "say why"
+  run jig task list --json
+  assert_contains "$OUT" '"command":"jig task abandon T-2 --reason <text>"'
+  run jig task set T-1 abandoned_reason x
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: key is not writable: abandoned_reason"
+}
+
 # --- list -------------------------------------------------------------------------
 
 test_task_list_empty() {
@@ -2275,6 +2370,70 @@ test_task_start_records_the_commit_it_forked_from() {
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
   assert_file_contains .ai/workspace/tasks/T-1/state "base_commit: $head_before"
+}
+
+# --- a brief with no goal (the same reading as `task list --goals`) ---------
+
+test_task_start_warns_when_a_t2_task_has_no_goal() {
+  task_setup
+  jig task new T-1 --class T2 >/dev/null
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warning: task start: T-1 has no goal"
+  assert_contains "$OUT" "jig task artifact write T-1 task --from <file>"
+  assert_eq "task/T-1" "$(git symbolic-ref --short HEAD)"
+}
+
+test_task_start_is_quiet_about_a_task_with_a_goal() {
+  task_setup
+  jig task new T-1 --class T2 --goal "The widget renders." >/dev/null
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "has no goal"
+}
+
+test_task_start_refuses_a_t3_task_whose_goal_is_only_the_template_comment() {
+  task_setup
+  local head_before
+  head_before=$(git symbolic-ref --short HEAD)
+  jig task new T-1 --class T3 >/dev/null
+  run jig task start T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: T-1 is T3 and has no goal"
+  assert_contains "$OUT" "jig task artifact write T-1 task --from <file>"
+  # Nothing was started: no branch, no fork point, the checkout where it was.
+  assert_eq "$head_before" "$(git symbolic-ref --short HEAD)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "base_commit:"
+
+  # Writing the goal is the way past it.
+  jig task artifact write T-1 task --from - >/dev/null <<'EOF'
+# T-1
+
+## Goal
+
+The tenant can be decommissioned.
+EOF
+  run jig task start T-1
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "has no goal"
+}
+
+test_task_start_worktree_refuses_a_t4_task_with_no_goal() {
+  task_setup
+  jig task new T-1 --class T4 >/dev/null
+  run jig task start T-1 --worktree
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task start: T-1 is T4 and has no goal"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "base_commit:"
+  assert_eq "" "$(git branch --list task/T-1)"
+}
+
+test_task_actions_withhold_start_from_a_t3_task_with_no_goal() {
+  task_setup_clean
+  jig task new big --class T3 >/dev/null
+  _tl_agree big "pause request-pause set-class abandon archive"
+  _tl_json
+  assert_contains "$OUT" "is T3 and has no goal"
 }
 
 test_task_start_branch_is_cut_from_the_base_branch_not_head() {
@@ -4519,6 +4678,131 @@ test_task_ship_merge_level_does_not_merge_a_pr_at_another_commit() {
   assert_no_file gh-merge.argv
 }
 
+# --- open findings handed to a triage task
+# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task) -----------------
+
+# triage_findings — on T-1, two findings left for later (a P2 and a P3, open)
+# and two that are not (a P2 and a P1, closed). Recorded before the route's
+# records, as a review records them before its receipt.
+triage_findings() {
+  local f
+  jig task finding add T-1 --severity P2 --where src/scrub.sh:12 --summary "the message scrub path has no test" >/dev/null
+  f=$(jig task finding add T-1 --severity P2 --where src/a.sh --summary "closed P2 summary")
+  jig task finding set T-1 "$f" closed
+  jig task finding add T-1 --severity P3 --where - --summary "events without a hint are not scrubbed" >/dev/null
+  f=$(jig task finding add T-1 --severity P1 --where src/b.sh:1 --summary "closed P1 summary")
+  jig task finding set T-1 "$f" closed
+}
+
+# triage_ship_setup <level> [findings] — ship_setup at <level> with GitHub
+# stubbed (merging on green checks), T-1's findings recorded when the second
+# argument is `findings`, the route done and the knowledge decision recorded.
+triage_ship_setup() {
+  ship_setup
+  ship_cfg forge github
+  # Staged with the change, so a second ship finds nothing left unstaged.
+  git add .ai/config.yaml
+  mship_stub_gh
+  ship_cfg_local agent.git "$1"
+  ship_cfg_local agent.ci_timeout 0
+  [ "${2:-}" != findings ] || triage_findings
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+test_task_ship_hands_open_findings_to_one_triage_task_verbatim() {
+  triage_ship_setup pr findings
+  local ledger md
+  ledger=$(cat .ai/workspace/tasks/T-1/findings)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  md=.ai/workspace/tasks/T-1-findings/task.md
+  assert_file "$md"
+  assert_file_contains "$md" "# Triage the open findings of T-1"
+  assert_file_contains "$md" "- Task: T-1"
+  assert_file_contains "$md" "- Pull request: https://github.com/example/example/pull/99"
+  assert_file_contains "$md" "- F1 · P2 · src/scrub.sh:12 — the message scrub path has no test"
+  assert_file_contains "$md" "- F3 · P3 · - — events without a hint are not scrubbed"
+  assert_not_contains "$(cat "$md")" "closed P2 summary"
+  assert_not_contains "$(cat "$md")" "closed P1 summary"
+  # Filed, not started, and linked both ways.
+  assert_file_contains .ai/workspace/tasks/T-1-findings/state "triage_of: T-1"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1-findings/state)" "branch:"
+  assert_file_contains .ai/workspace/tasks/T-1/state "triage_task: T-1-findings"
+  # The source ledger is the one the review's receipt pinned, byte for byte.
+  assert_eq "$ledger" "$(cat .ai/workspace/tasks/T-1/findings)"
+
+  run jig task findings T-1
+  assert_contains "$OUT" "handed to T-1-findings: 2 open P2/P3"
+}
+
+test_task_ship_hands_findings_over_and_still_merges() {
+  triage_ship_setup merge findings
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  assert_file .ai/workspace/tasks/T-1-findings/task.md
+}
+
+test_task_ship_a_second_ship_files_no_second_triage_task() {
+  triage_ship_setup pr findings
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  local md
+  md=$(cat .ai/workspace/tasks/T-1-findings/task.md)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: 2 open finding(s) already handed to T-1-findings"
+  assert_eq "$md" "$(cat .ai/workspace/tasks/T-1-findings/task.md)"
+  assert_eq "1" "$(find .ai/workspace/tasks -maxdepth 1 -name 'T-1-*' | wc -l | tr -d ' ')"
+}
+
+test_task_ship_without_open_findings_files_no_triage_task() {
+  triage_ship_setup pr
+  jig task finding add T-1 --severity P2 --where - --summary "fixed and closed" >/dev/null
+  jig task finding set T-1 F1 closed
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "handed"
+  assert_no_file .ai/workspace/tasks/T-1-findings/state
+}
+
+test_task_ship_files_no_triage_task_without_a_pull_request_or_for_a_draft() {
+  triage_ship_setup commit findings
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stopped at commit"
+  assert_not_contains "$OUT" "handed"
+  assert_no_file .ai/workspace/tasks/T-1-findings/state
+
+  ship_cfg_local agent.git pr
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "handed"
+  assert_no_file .ai/workspace/tasks/T-1-findings/state
+}
+
+test_task_ship_leaves_a_taken_triage_id_alone_and_ships() {
+  triage_ship_setup pr findings
+  jig task new T-1-findings >/dev/null
+  local before
+  before=$(cat .ai/workspace/tasks/T-1-findings/task.md)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: warning: 2 open finding(s) not handed over: task T-1-findings already exists and is not their triage"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/T-1-findings/task.md)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "triage_task:"
+}
+
 test_task_ship_draft_opens_a_draft_and_never_merges() {
   mship_setup github
 
@@ -5605,7 +5889,7 @@ test_task_receipt_check_counts_an_unreadable_tree_as_changed() {
 
 test_task_receipt_architecture_review_stage() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   run jig task receipt T-1 --stage architecture-review
   assert_eq 0 "$RC"
@@ -5686,7 +5970,7 @@ test_task_receipt_check_none_for_t0_through_t3() {
 
 test_task_receipt_check_none_required_for_t4() {
   task_setup
-  jig task new T-1 --class T4 >/dev/null
+  jig task new T-1 --class T4 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   run jig task receipt T-1 --check
   assert_eq 1 "$RC"
@@ -6070,7 +6354,7 @@ test_task_receipt_check_stale_after_a_findings_change_names_findings() {
 
 test_task_receipt_t4_design_hash_covers_spec_and_alternatives() {
   task_setup
-  jig task new T-1 --class T4 >/dev/null
+  jig task new T-1 --class T4 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
   printf '# spec\n' > .ai/workspace/tasks/T-1/spec.md
@@ -6136,7 +6420,7 @@ test_task_set_knowledge_consolidated_refuses_stale_receipt() {
 
 test_task_set_status_ready_refuses_t4_without_a_receipt() {
   task_setup
-  jig task new T-1 --class T4 >/dev/null
+  jig task new T-1 --class T4 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   task_route_class T-1
   run jig task set T-1 status ready
@@ -6146,7 +6430,7 @@ test_task_set_status_ready_refuses_t4_without_a_receipt() {
 
 test_task_set_status_ready_refuses_t3_without_an_architecture_review() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf 'design\n' > .ai/workspace/tasks/T-1/design.md
   jig task gate T-1 approved >/dev/null
@@ -7042,7 +7326,7 @@ test_task_gate_refused_for_unclassified() {
 
 test_task_gate_refused_without_design_md() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
 
   run jig task gate T-1 approved
@@ -7052,7 +7336,7 @@ test_task_gate_refused_without_design_md() {
 
 test_task_gate_refused_for_a_decision_other_than_approved() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
 
@@ -7070,7 +7354,7 @@ test_task_gate_unknown_task_dies() {
 
 test_task_gate_approved_writes_state_matching_the_receipts_design_pin() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
 
@@ -7103,7 +7387,7 @@ test_task_set_refuses_gate_and_pr_url_keys() {
 
 test_task_status_page_gate_waiting_approved_and_changed_states() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design v1\n' > .ai/workspace/tasks/T-1/design.md
   jig status --html >/dev/null
@@ -7377,7 +7661,7 @@ test_task_autopilot_unattended_repair_limit_still_stops_with_exit_3() {
 
 test_task_gate_by_agent_in_an_unattended_run_records_who_approved() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
   unattended_local
@@ -7392,7 +7676,7 @@ test_task_gate_by_agent_in_an_unattended_run_records_who_approved() {
 
 test_task_gate_by_agent_is_refused_outside_an_unattended_run() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
 
@@ -7409,7 +7693,7 @@ test_task_gate_by_agent_is_refused_outside_an_unattended_run() {
 
 test_task_gate_records_a_human_by_default() {
   task_setup
-  jig task new T-1 --class T3 >/dev/null
+  jig task new T-1 --class T3 --goal "The goal." >/dev/null
   jig task start T-1 >/dev/null
   printf '# design\n' > .ai/workspace/tasks/T-1/design.md
   run jig task gate T-1 approved
@@ -7862,7 +8146,7 @@ test_task_artifacts_full_t2_keeps_the_plan_stage() {
 # route_task [<task new args>] — T-1 filed with <args> and started.
 route_task() {
   task_setup
-  jig task new T-1 "$@" >/dev/null
+  jig task new T-1 --goal "The goal." "$@" >/dev/null
   jig task start T-1 >/dev/null
 }
 
@@ -8835,7 +9119,7 @@ test_task_actions_of_a_task_not_started_agree_with_their_commands() {
 test_task_actions_at_a_gate_and_a_stop_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git commit
-  jig task new big --class T3 >/dev/null
+  jig task new big --class T3 --goal "The goal." >/dev/null
   jig task start big >/dev/null
   jig task artifact write big design --from - >/dev/null <<EOF
 the design
@@ -8867,7 +9151,7 @@ test_task_actions_of_an_unattended_run_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git commit
   ship_cfg_local autopilot.unattended true
-  jig task new run --class T3 >/dev/null
+  jig task new run --class T3 --goal "The goal." >/dev/null
   jig task start run >/dev/null
   jig task artifact write run design --from - >/dev/null <<EOF
 the design

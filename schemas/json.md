@@ -160,7 +160,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `set-class` | `jig task set <id> class <Tn>` | the task is live |
 | `ship` | `jig task ship <id> --message-file <file>` | the git level (`agent.git`, or `autopilot.git` for a run) is not `none`, the knowledge decision is recorded, no P0/P1 finding blocks, the review receipt is current, the route has its records, the task is started on a branch other than its base, and its pull request is not merged |
 | `close` | `jig task set <id> status consolidated` | the knowledge decision is recorded, and the task opened no pull request or the forge cache says it merged |
-| `abandon` | `jig task abandon <id>` | the task is live |
+| `abandon` | `jig task abandon <id>`, with ` --reason <text>` for a task whose `task.md` has a `Spec:` line | the task is live |
 | `archive` | `jig task archive <id>` | the task is `active`, `ready` or `abandoned` |
 | `unarchive` | `jig task unarchive <id>` | the task is `archived` |
 | `reopen` | `jig task set <id> status active` | the task is `abandoned` |
@@ -245,11 +245,12 @@ An item — the counts above are the sum of its fields, read in the same pass:
 |---|---|---|
 | `text` | string | the line after its checkbox, indented continuation lines joined with a space; tabs become spaces and trailing whitespace is dropped |
 | `checked` | boolean | `[x]` or `[X]` |
+| `done` | boolean | what the item counted as: `checked`, or its `task` is known in this checkout to have merged — `consolidated`, or logged `remote=merged` by the newest housekeeping run (schemas/spec.md) |
 | `task` | string or null | the backticked task id the text starts with, followed by a dash — the pattern `filed` counts; `null` otherwise. Read from checked items too |
 | `fog` | boolean | the text starts with `fog:` |
 
-`done` counts the checked items, `filed` the unchecked ones with a `task`, `fog` the unchecked ones
-with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
+`done` counts the items whose `done` is `true`, `filed` the other unchecked ones with a `task`,
+`fog` the unchecked ones with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
 fetch, every other one from this checkout.
 
 ## `jig status --json`

@@ -64,8 +64,9 @@ quietly in force.
 Beyond that, ideas with no start date: a link from each requirement in a specification to the check
 that proves it; accepting a known failure with a reason and an end date rather than switching the
 check off; a separate security pass for the riskiest tasks; noticing an unattended run that has
-gone silent; knowledge shared between several repositories; and knowledge that lives in a section
-of an existing file rather than a whole one.
+gone silent; knowledge shared between several repositories — a task can already read a
+neighbouring repository's task or spec (0.38.0), but not its `.ai/knowledge/`; and knowledge that
+lives in a section of an existing file rather than a whole one.
 
 ## Beside Jig: Jig UI
 
@@ -76,5 +77,6 @@ commands and contracts — the JSON form described in [Reading Jig as data](/rea
 works exactly as it does without it. What its next phase needs from Jig — the queue, pause
 requests and filing a task from a program — is in 0.31.0, so that phase can start on it; resuming a
 paused task from a program is in 0.35.0; the archive and the links between merged tasks are in
-`jig task list --json` from 0.37.0. Its plans
+`jig task list --json` from 0.37.0; whether a roadmap item counts as done, merged work included, is
+in `jig spec list --json` from 0.38.0. Its plans
 live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).

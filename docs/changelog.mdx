@@ -8,6 +8,52 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.38.0 — 2026-10-29
+
+What one agent knew now reaches the next one: the goal of a task, a neighbouring repository's
+design, the small review findings nobody fixed, and why a task was given up. Until now each of them
+could sit where the next agent does not read — a template-only `task.md`, another repository, a
+merged pull request's body, a gitignored note — and the status page showed a spec standing still
+while its tasks merged.
+
+- **`jig task start` asks for the goal.** A task whose `## Goal` is empty, or holds only the
+  template's comment, starts with a warning; a T3 or T4 task is refused until the goal is written.
+  `jig task list --json` refuses `start` the same way. See
+  [File a task, then start it](/manual-control#file-a-task-then-start-it).
+- **A task can link a task or spec in a neighbouring repository.** A
+  `Linked: <repo>#<task-id>` or `Linked: <repo>#spec/<spec-id>` line in `task.md` — `<repo>` a path
+  from your main checkout — makes `jig context resolve` list that task's notes, or the spec's
+  `spec.md` and `roadmap.md`, on `linked:` lines. The agent records reading them like knowledge, so an
+  edit there shows as `changed since acknowledged`; what is not on this machine shows as
+  `unreachable:`. Jig only reads the other repository. See
+  [A task that continues work in a neighbouring repository](/working-with-tasks#a-task-that-continues-work-in-a-neighbouring-repository).
+- **A spec's progress counts merged work, not only checkboxes.** `jig spec list`, `jig spec list
+  --json` and the status page count a roadmap item done when its task is closed in this clone or the
+  last `jig housekeeping` saw it merged, even before its checkmark reaches the branch you read — in a
+  phase run the checkmarks reach the epic's remote only with the next pull request. Each item in
+  `jig spec list --json` has a new `done` field ([Reading Jig as data](/reading-jig-as-data)).
+- **Open small findings go to one triage task.** When `jig task ship` opens a pull request (not a
+  draft) and P2 or P3 findings are still open, it files one task, `<task-id>-findings`, with each of
+  them word for word and a link to the pull request — not started and not queued, so it waits for
+  you. A second ship files no second one. `jig task findings` says where they went, and the
+  autopilot's `end` message in Telegram names the count and the task. See
+  [Review findings](/working-with-tasks#review-findings).
+- **Giving a task up records why, and its roadmap item follows.** `jig task abandon <id> --reason
+  "<why>"` stores the reason; `--moved-to <repo>#<task-id>` says where the work went and prints the
+  command that files it there. For a task from a spec, the new `jig spec drop <id>` checks its roadmap
+  item and appends ` — moved to … (<date>): <why>` or ` — dropped (<date>): <why>` — in a checkout of
+  the epic, or on `spec/<spec-id>` for a spec without one, which `jig task abandon` on your main
+  branch switches your checkout to and leaves it on; the roadmap on your main branch is never
+  edited. A task linked to a spec is now refused by `jig task abandon` without `--reason`, and by
+  `jig task set <id> status abandoned`. See
+  [Giving a task up, or moving it elsewhere](/working-with-tasks#giving-a-task-up-or-moving-it-elsewhere).
+- **A resume whose stash conflicted can be retried.** After `jig task resume` left the stash's
+  conflicts in your files, resolving them and running it again ends the pause instead of applying
+  the stash a second time. See [Pause and resume](/manual-control#pause-and-resume).
+- **A stopped worktree setup stops on Windows too.** Under Git Bash, a `worktree.setup` stopped at
+  `worktree.setup_timeout`, or still running when Jig is interrupted, now has the Windows process
+  tree it started — `php` under `composer`, `docker` — ended before its group is signalled.
+
 ## 0.37.0 — 2026-10-27
 
 Work nobody finished is put away instead of deleted, and a task that another one solved can be merged

@@ -147,7 +147,7 @@ buttons without knowing Jig's rules. Every task carries the same fourteen action
 
 | `id` | What it does |
 |---|---|
-| `start` | Start a task that was filed for later |
+| `start` | Start a task that was filed for later; refused for a T3 or T4 task whose `task.md` has no goal |
 | `pause`, `resume` | Set the task aside, and pick it up again |
 | `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back |
 | `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
@@ -155,7 +155,7 @@ buttons without knowing Jig's rules. Every task carries the same fourteen action
 | `set-class` | Change the task's class |
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
 | `close` | Close a task whose work has landed |
-| `abandon` | Give the task up |
+| `abandon` | Give the task up; its `command` asks for `--reason <text>` when the task is linked to a spec |
 | `archive` | Put an active, ready or abandoned task away, without deleting it |
 | `unarchive` | Bring an archived task back to the status it had |
 | `reopen` | Take back an abandoned task |
@@ -190,9 +190,9 @@ phases, the items of each phase, and how far it has come.
       "title": "Book a table",
       "done": 1, "total": 3, "filed": 1, "fog": 1,
       "items": [
-        {"text": "`booking-form` — the form", "checked": true, "task": "booking-form", "fog": false},
-        {"text": "`booking-message` — the confirmation", "checked": false, "task": "booking-message", "fog": false},
-        {"text": "fog: reminders by text message", "checked": false, "task": null, "fog": true}
+        {"text": "`booking-form` — the form", "checked": true, "done": true, "task": "booking-form", "fog": false},
+        {"text": "`booking-message` — the confirmation", "checked": false, "done": false, "task": "booking-message", "fog": false},
+        {"text": "fog: reminders by text message", "checked": false, "done": false, "task": null, "fog": true}
       ]
     }
   ]
@@ -200,7 +200,10 @@ phases, the items of each phase, and how far it has come.
 ```
 
 `progress` is the same count `jig spec list` prints, and the sum of the phases. Each item says
-whether it is checked, which task it names, if any, and whether it is still fog.
+whether it is checked, whether it counts as done, which task it names, if any, and whether it is
+still fog. An item counts as done when it is checked, or when the task it names is known on this
+machine to have merged — closed, or seen merged by the last `jig housekeeping` — even before its
+checkbox reaches the branch you read.
 
 A spec built on an epic branch keeps its roadmap there. When you read it from another branch, the
 phases come from the epic's branch as your repository last fetched it — `epic.ref` names it — and

@@ -66,7 +66,7 @@ _task_usage() {
       printf 'usage: jig task set <id> <key> <value>\n'
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
       ;;
-    abandon) printf 'usage: jig task abandon <id>\n' ;;
+    abandon) printf 'usage: jig task abandon <id> [--reason <text>] [--moved-to <repo>#<task-id>|<repo>#spec/<spec-id>]\n' ;;
     archive) printf 'usage: jig task archive <id>\n' ;;
     unarchive) printf 'usage: jig task unarchive <id>\n' ;;
     merge) printf 'usage: jig task merge <from> --into <to> [--partial]\n' ;;
@@ -1150,6 +1150,17 @@ task_start() {
     fi
     jig_die "$refusal"
   fi
+  # A brief with no goal: work begun on an empty template asks the questions
+  # the person already answered somewhere else. T3/T4 are refused (their gate
+  # reads the design that the goal feeds), lower classes are warned. Only a
+  # task not yet started is asked; moving a started one into a worktree is not
+  # a beginning.
+  refusal=$(_task_start_goal_refusal "$id")
+  [ -z "$refusal" ] || jig_die "$refusal"
+  if ! _task_has_goal "$dir/task.md"; then
+    # shellcheck disable=SC2016 # the backticks quote a command for the reader
+    jig_warn "$(printf 'task start: %s has no goal: `## Goal` in task.md is empty; write it with `jig task artifact write %s task --from <file>`' "$id" "$id")"
+  fi
   if [ -n "$existing" ]; then
     jig_info "task start: $id recorded $existing when it was filed, with no fork point; starting it now"
   fi
@@ -1211,6 +1222,23 @@ _task_start_refusal() {
   [ -n "$branch" ] && [ -n "$(task_state_get "$id" base_commit)" ] || return 0
   # shellcheck disable=SC2016 # the backticks quote a command for the reader
   printf 'task start: already started on %s; to give it a worktree of its own: `jig task start %s --worktree`\n' "$branch" "$id"
+}
+
+# _task_start_goal_refusal <id> — why `jig task start <id>` refuses a T3/T4
+# task whose task.md has no goal (_task_has_goal), or nothing. Lower classes,
+# and a task with no class, are only warned by the command. Asked by the
+# command and by the actions table, after _task_start_refusal.
+_task_start_goal_refusal() {
+  local id="$1" class
+  class=$(task_state_get "$id" class)
+  case "$class" in
+    T3 | T4) ;;
+    *) return 0 ;;
+  esac
+  _task_has_goal "$(task_dir "$id")/task.md" && return 0
+  # shellcheck disable=SC2016 # the backticks quote a command for the reader
+  printf 'task start: %s is %s and has no goal: `## Goal` in task.md is empty; write it first with `jig task artifact write %s task --from <file>`\n' \
+    "$id" "$class" "$id"
 }
 
 # _task_start_in_worktree <id> <dir> — start the task on its own branch in a
@@ -1599,6 +1627,16 @@ task_set() {
       [ "$value" != archived ] || jig_die "task set: a task is archived by jig task archive $id"
       [ "$(task_state_get "$id" status)" != archived ] \
         || jig_die "task set: task $id is archived; run jig task unarchive $id first"
+      # A spec-linked task is abandoned by its own command, which records why
+      # and closes the roadmap item that names it
+      # (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows);
+      # writing the status by hand would leave the roadmap saying the work is
+      # still here.
+      if [ "$value" = abandoned ] && [ "$_TASK_ABANDONING" -eq 0 ] \
+         && [ "$(task_state_get "$id" status)" != abandoned ] \
+         && [ -n "$(_task_spec_id "$id")" ]; then
+        jig_die "task set: $id is linked to a spec; abandon it with jig task abandon $id --reason <text>"
+      fi
       ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
@@ -1616,6 +1654,7 @@ task_set() {
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash | paused_stash_applied \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
       | archived_at | archived_reason | archived_from \
+      | abandoned_at | abandoned_reason | moved_to \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
       | route_evidence | class_lowered_from | class_lowered_reason | share | setup \
       | executor_implement_runtime_source | executor_review_runtime_source \
@@ -1677,10 +1716,15 @@ task_set() {
   fi
   [ "$has_reason" -eq 0 ] || jig_die "task set: --reason is only for lowering a class"
 
+  local was=""
+  [ "$key" != status ] || was=$(task_state_get "$id" status)
   if [ "$value" = inherit ]; then
     _task_rewrite_state_remove "$dir" "$key"
   else
     _task_rewrite_state "$dir" "$key" "$value"
+  fi
+  if [ "$was" = abandoned ] && [ "$value" != abandoned ]; then
+    _task_abandon_keys_clear "$id" "$dir"
   fi
 }
 
@@ -1789,9 +1833,115 @@ _task_set_class() {
   fi
 }
 
+# task_abandon <id> [--reason <text>] [--moved-to <ref>] — give a task up, and
+# say why where the next agent reads it
+# (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows). The
+# reason, the day and the move's target go into `state`; a task linked to a
+# spec must give a reason, and the roadmap item that names it is then closed by
+# `jig spec drop`, run through the dispatcher as `spec remove` runs this
+# command: task.sh does not source spec.sh. The target is parsed by
+# jig_task_ref, the one grammar of a reference, and never written to: when it
+# is not there yet, the command that files it there is printed.
+_TASK_ABANDONING=0
 task_abandon() {
-  [ $# -eq 1 ] || jig_die "$(_task_usage abandon)"
-  task_set "$1" status abandoned
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage abandon)"
+  local id="$1" reason="" has_reason=0 moved="" sid dir out rc
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task abandon: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      --moved-to)
+        [ $# -ge 2 ] || jig_die "task abandon: --moved-to requires a value"
+        moved="$2"; shift 2 ;;
+      *) jig_die "task abandon: unknown argument: $1 ($(_task_usage abandon))" ;;
+    esac
+  done
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task abandon: unknown task: $id"
+  if [ "$has_reason" -eq 1 ]; then
+    [ -n "$reason" ] || jig_die "task abandon: --reason must not be empty"
+    _task_finding_valid_field "$reason" || jig_die "task abandon: --reason must be a single line with no tab"
+  fi
+  if [ -n "$moved" ]; then
+    jig_task_ref "$moved" || jig_die "task abandon: --moved-to $moved: $_JIG_REF_ERROR"
+  fi
+  sid=$(_task_spec_id "$id")
+  if [ -n "$sid" ] && [ "$has_reason" -eq 0 ]; then
+    jig_die "task abandon: $id is linked to spec $sid; say why: jig task abandon $id --reason <text> [--moved-to <repo>#<task-id>]"
+  fi
+
+  # The status goes through task_set, which keeps every refusal it has
+  # (archived, a planted link); the linked-task refusal there is for a
+  # status written by hand, so it is asked only when this is not a re-abandon.
+  if [ "$(task_state_get "$id" status)" != abandoned ]; then
+    _TASK_ABANDONING=1
+    task_set "$id" status abandoned
+    _TASK_ABANDONING=0
+  else
+    _task_guard_write "$id" "task abandon"
+  fi
+  _task_rewrite_state "$dir" abandoned_at "$(jig_today)"
+  if [ "$has_reason" -eq 1 ]; then
+    _task_rewrite_state "$dir" abandoned_reason "$reason"
+  else
+    _task_rewrite_state_remove "$dir" abandoned_reason
+  fi
+  if [ -n "$moved" ]; then
+    _task_rewrite_state "$dir" moved_to "$moved"
+  else
+    _task_rewrite_state_remove "$dir" moved_to
+  fi
+  printf 'task abandon: %s abandoned%s\n' "$id" "${moved:+, moved to $moved}"
+
+  if [ -n "$moved" ] && ! jig_task_ref_dir; then
+    if [ "$_JIG_REF_KIND" = spec ]; then
+      printf 'moved: %s is not there (%s); nothing is written there, so add it to that spec yourself\n' "$moved" "$_JIG_REF_ERROR"
+    else
+      printf 'moved: %s is not there (%s); file it there yourself: (cd %s && jig task new %s)\n' \
+        "$moved" "$_JIG_REF_ERROR" "$_JIG_REF_REPO" "$_JIG_REF_ID"
+    fi
+  fi
+
+  [ -n "$sid" ] || return 0
+  rc=0
+  out=$(cd "$JIG_PROJECT" && JIG_INTERNAL_REDRAW=1 "$JIG_SELF" spec drop "$id" 2>&1) || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  if [ "$rc" -eq 3 ]; then
+    # Not here: a phase run's coordinator closes the item after the merge, or
+    # a checkout of the base does (the line above names the command).
+    return 0
+  fi
+  [ "$rc" -eq 0 ] \
+    || jig_die "task abandon: $id is abandoned, but its roadmap item was not rewritten (above); fix that and run jig spec drop $id"
+}
+
+# _task_spec_id <id> — the spec a task's task.md links to, `(more than one)`
+# for a task.md linking two — a link all the same, which the refusals that
+# read this must see, and `spec drop` names the conflict — or nothing.
+_task_spec_id() {
+  local md
+  md="$(task_dir "$1")/task.md"
+  [ -f "$md" ] || return 0
+  jig_spec_link "$md" 2>/dev/null || printf '%s\n' '(more than one)'
+}
+
+# _task_abandon_keys_clear <id> <dir> — a task taken back from `abandoned`
+# loses the record of why it was abandoned: on a live task it would be a false
+# fact. The roadmap item `spec drop` closed is not reopened here; a person
+# does that, and is told so.
+_task_abandon_keys_clear() {
+  local id="$1" dir="$2" had sid
+  had=$(task_state_get "$id" abandoned_at)
+  _task_rewrite_state_remove "$dir" abandoned_at
+  _task_rewrite_state_remove "$dir" abandoned_reason
+  _task_rewrite_state_remove "$dir" moved_to
+  sid=$(_task_spec_id "$id")
+  if [ -n "$had" ] && [ -n "$sid" ]; then
+    jig_info "task set: $id is live again; if $JIG_AI_DIR/specs/$sid/roadmap.md closed its item as dropped or moved, reopen that item by hand"
+  fi
 }
 
 # task_archive <id> — a person's archive of a task nobody will finish now
@@ -2665,6 +2815,18 @@ _task_blocking_findings() {
   ' "$file"
 }
 
+# _task_open_minor_findings <id> — the ledger lines, as they are, of every P2
+# or P3 still `open`: what a review left for later, and what `task ship` hands
+# to a triage task. `fixed` is not among them: it waits for a re-review, it was
+# not left for later. One reader, for ship, `task findings` and the autopilot's
+# `end` message alike. Empty when the task has no ledger.
+_task_open_minor_findings() {
+  local file
+  file="$(task_dir "$1")/findings"
+  [ -f "$file" ] || return 0
+  awk -F '\t' '($2 == "P2" || $2 == "P3") && $3 == "open"' "$file"
+}
+
 # _task_gate_blocking_message <id> <blocking-lines> — the refusal text for a
 # gate that found <blocking-lines> (as _task_blocking_findings prints them)
 # non-empty: names every blocking finding and how to clear one (design §4).
@@ -2858,6 +3020,14 @@ task_findings() {
       if ($7 != "") line = line" reason="$7
       print line
     }' "$file"
+  fi
+  # Where the open P2/P3 went, once a ship handed them over: the ledger keeps
+  # them `open`, since the review's receipt pins it.
+  local triage open
+  triage=$(task_state_get "$id" triage_task)
+  if [ -n "$triage" ]; then
+    open=$(_task_open_minor_findings "$id")
+    [ -z "$open" ] || printf 'handed to %s: %s open P2/P3\n' "$triage" "$(_task_count_lines "$open")"
   fi
   printf 'blocking: %s\n' "$bcount"
   return 0
@@ -4579,7 +4749,11 @@ _task_actions() {
       set-class) command="jig task set $id class <Tn>" ;;
       ship) command="jig task ship $id --message-file <file>" ;;
       close) command="jig task set $id status consolidated" ;;
-      abandon) command="jig task abandon $id" ;;
+      abandon)
+        # A spec-linked task is refused without a reason; the placeholder
+        # tells a reader of the table to ask for one.
+        command="jig task abandon $id"
+        [ -z "$(_task_spec_id "$id")" ] || command="$command --reason <text>" ;;
       archive) command="jig task archive $id" ;;
       unarchive) command="jig task unarchive $id" ;;
       reopen) command="jig task set $id status active" ;;
@@ -4601,7 +4775,9 @@ _task_actions() {
         reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
       consolidated:* | abandoned:* | archived:*) reason="task $id is $status" ;;
       *:reopen) reason="task $id is $status, not abandoned" ;;
-      *:start) reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id") ;;
+      *:start)
+        reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id")
+        [ -n "$reason" ] || reason=$(_task_actions_guard "$id" "$action" _task_start_goal_refusal "$id") ;;
       *:pause) reason=$(_task_actions_guard "$id" "$action" _task_pause_refusal "$id") ;;
       *:resume) reason=$(_task_actions_guard "$id" "$action" _task_resume_refusal "$id") ;;
       *:request-pause) reason=$(_task_actions_guard "$id" "$action" jig_pause_request_refusal "$id") ;;
@@ -4681,6 +4857,13 @@ _task_goal() {
   ' "$1")
   [ -n "$goal" ] || goal="(none)"
   printf '%s\n' "$goal"
+}
+
+# _task_has_goal <task.md> — true when the brief has a goal by _task_goal's
+# reading: what `task list --goals` shows as `(none)` is what `task start`
+# warns about, or refuses for T3/T4.
+_task_has_goal() {
+  [ "$(_task_goal "$1")" != "(none)" ]
 }
 
 task_show() {
@@ -5243,6 +5426,89 @@ _task_ship_branch_refusal() {
   return 0
 }
 
+# _task_triage_id <id> — the id of the triage task that takes <id>'s open
+# P2/P3: `<id>-findings`. Derived, so a repeated ship finds the one it filed.
+_task_triage_id() {
+  printf '%s-findings\n' "$1"
+}
+
+# _task_ship_triage <id> <pr-url> — hand <id>'s open P2/P3
+# (_task_open_minor_findings) to one triage task, filed not started and not
+# queued, with the findings verbatim, the pull request and the source task
+# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). Links the two
+# in state: `triage_task` on <id>, `triage_of` on the triage task. The source
+# ledger is left as it is: the review's receipt pins its hash, and the merge
+# that follows rechecks the receipt. Idempotent: a triage task already filed
+# for <id> is named and left alone, new findings included — its task.md may be
+# a person's by now. Never stops the ship: whatever goes wrong is a warning,
+# and the findings are still in the pull request's body. Prints nothing when
+# there is nothing to hand over.
+_task_ship_triage() {
+  local id="$1" url="$2" open n tid tdir sdir known md err rc=0
+  open=$(_task_open_minor_findings "$id") || open=""
+  [ -n "$open" ] || return 0
+  n=$(_task_count_lines "$open")
+  sdir=$(task_dir "$id")
+  tid=$(_task_triage_id "$id")
+  if ! _task_valid_id "$tid"; then
+    printf 'task ship: warning: %s open finding(s) not handed over: %s is not a valid task id\n' "$n" "$tid"
+    return 0
+  fi
+  tdir=$(task_dir "$tid")
+
+  known=$(task_state_get "$id" triage_task)
+  if [ -n "$known" ] && _task_valid_id "$known" && [ -f "$(task_dir "$known")/state" ]; then
+    printf 'task ship: %s open finding(s) already handed to %s\n' "$n" "$known"
+    return 0
+  fi
+  if [ -e "$tdir" ]; then
+    if [ "$(task_state_get "$tid" triage_of)" = "$id" ]; then
+      _task_rewrite_state "$sdir" triage_task "$tid"
+      printf 'task ship: %s open finding(s) already handed to %s\n' "$n" "$tid"
+    else
+      printf 'task ship: warning: %s open finding(s) not handed over: task %s already exists and is not their triage\n' "$n" "$tid"
+    fi
+    return 0
+  fi
+
+  md=$(mktemp "${TMPDIR:-/tmp}/jig-triage-md.XXXXXX")
+  jig_cleanup_add "$md"
+  err=$(mktemp "${TMPDIR:-/tmp}/jig-triage-err.XXXXXX")
+  jig_cleanup_add "$err"
+  _task_triage_md "$id" "$url" "$open" > "$md"
+  # A process of its own, not task_new in this one: it brings its own checks
+  # (a worktree whose workspace would lose the task refuses) and its own
+  # cleanup, and its refusal must not end this ship.
+  (cd "$JIG_PROJECT" && bash "$JIG_SELF" task new "$tid" --from "$md") >/dev/null 2>"$err" || rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -f "$tdir/state" ]; then
+    printf 'task ship: warning: %s open finding(s) not handed over: %s\n' "$n" \
+      "$(sed -n '$s/^jig: error: //;$p' "$err")"
+    return 0
+  fi
+  _task_rewrite_state "$tdir" triage_of "$id"
+  _task_rewrite_state "$sdir" triage_task "$tid"
+  printf 'task ship: %s open finding(s) handed to task %s\n' "$n" "$tid"
+}
+
+# _task_triage_md <id> <pr-url> <findings> — the triage task's task.md, from
+# the ledger lines <findings> as _task_open_minor_findings prints them. In
+# English, like every brief a script writes: it cannot know its reader.
+_task_triage_md() {
+  local id="$1" url="$2" open="$3"
+  printf '# Triage the open findings of %s\n\n' "$id"
+  printf '## Goal\n\n'
+  printf 'Decide each open finding of %s with a person: file a task for it, or dismiss it with a reason.\n\n' "$id"
+  printf '## Source\n\n'
+  printf -- '- Task: %s\n' "$id"
+  printf -- '- Pull request: %s\n' "$url"
+  # shellcheck disable=SC2016 # the backticks quote a command for the reader
+  printf -- '- Handed over by `jig task ship %s` on %s\n\n' "$id" "$(jig_today)"
+  printf '## Findings\n\n'
+  printf '%s\n' "$open" | awk -F '\t' 'NF { print "- " $1 " · " $2 " · " $4 " — " $5 }'
+  printf '\n## Notes\n\n'
+  printf '<!-- What was decided for each finding: the task filed for it, or why it was dismissed. -->\n'
+}
+
 # The body file task_ship writes for a major release's draft; script-global
 # because the exit cleanup that removes it runs after the function returned
 # (conventions/shell.md).
@@ -5423,7 +5689,16 @@ EOF
   # moment it exists. A fact about what ship did, not a merge state: whether
   # it was merged is still derived by housekeeping every run (ADR-0005).
   case "$JIG_SHIP_URL" in
-    https://*) _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL" ;;
+    https://*)
+      _task_rewrite_state "$dir" pr_url "$JIG_SHIP_URL"
+      # The open P2/P3 go to one triage task once a pull request exists to
+      # link, before the merge and before the autopilot's `end` names it
+      # (adr-20261029-a-ship-hands-open-findings-to-one-triage-task). A draft
+      # is not a finished task: its findings are still its own.
+      if [ "$draft" -eq 0 ]; then
+        _task_ship_triage "$id" "$JIG_SHIP_URL"
+      fi
+      ;;
   esac
 
   [ "$level" = merge ] || return 0
