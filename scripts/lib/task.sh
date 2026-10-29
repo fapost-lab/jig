@@ -3291,8 +3291,25 @@ _task_receipt_diff_hash() {
 # merge base — changes it. Fails when it cannot be computed; "-" when there is
 # no merge base to find the task's files from.
 _task_receipt_context_hash() {
-  local id="$1" dir="$2" mb files full own domains matched path lines=""
-  mb=$(_task_review_merge_base "$id" "$dir") || { printf -- '-\n'; return 0; }
+  local id="$1" dir="$2" lines
+  _task_review_merge_base "$id" "$dir" >/dev/null || { printf -- '-\n'; return 0; }
+  lines=$(_task_receipt_context_lines "$id" "$dir") || return 1
+  if [ -n "$lines" ]; then
+    printf '%s\n' "$lines"
+  fi | git hash-object --stdin
+}
+
+# _task_receipt_context_lines <id> <dir> [--write] — the "<path> <content
+# hash>" lines _task_receipt_context_hash hashes, sorted, one per document the
+# review relied on; nothing when there is no merge base. The receipt keeps
+# them as `context_doc:` lines so `--since-review` can tell which document
+# moved (adr-20261029-a-global-knowledge-edit-narrows-a-re-review). With
+# `--write` each document's content is also stored as a blob — the same id
+# jig_hash gives, `--no-filters` — so the re-review can be shown what changed
+# in it; the gates call this without `--write` and write nothing.
+_task_receipt_context_lines() {
+  local id="$1" dir="$2" write="${3:-}" mb files full own domains matched path hash lines=""
+  mb=$(_task_review_merge_base "$id" "$dir") || return 0
   files=$(_task_review_changed_files "$id" "$dir") || return 1
   full=$(_task_review_tree "$dir" --all) || return 1
   own=$(git -C "$dir" diff-tree -r --no-renames --name-only "$mb" "$full" \
@@ -3310,19 +3327,24 @@ _task_receipt_context_hash() {
     [ -n "$path" ] || continue
     if jig_has_line "$path" "$own"; then
       git -C "$dir" cat-file -e "$mb:$path" 2>/dev/null || continue
-      lines="$lines$path $(git -C "$dir" cat-file --filters "$mb:$path" | jig_hash_stdin)
-"
-      continue
-    fi
-    if [ -f "$dir/$path" ]; then
-      lines="$lines$path $(jig_hash "$dir/$path")
-"
+      if [ "$write" = --write ]; then
+        hash=$(git -C "$dir" cat-file --filters "$mb:$path" | git -C "$dir" hash-object -w --no-filters --stdin) || return 1
+      else
+        hash=$(git -C "$dir" cat-file --filters "$mb:$path" | jig_hash_stdin)
+      fi
+    elif [ -f "$dir/$path" ]; then
+      if [ "$write" = --write ]; then
+        hash=$(git -C "$dir" hash-object -w --no-filters -- "$path") || return 1
+      else
+        hash=$(jig_hash "$dir/$path")
+      fi
     else
-      lines="$lines$path -
-"
+      hash=-
     fi
+    lines="$lines$path $hash
+"
   done < <(printf '%s\n' "$matched")
-  printf '%s' "$lines" | LC_ALL=C sort | git hash-object --stdin
+  printf '%s' "$lines" | LC_ALL=C sort
 }
 
 # _task_receipt_design_hash <id> — the receipt's `design` field: the hash of
@@ -3539,6 +3561,12 @@ task_receipt_write() {
   tree=$(_task_review_tree "$review_dir") || jig_die "task receipt: could not read the working tree"
   diff=$(_task_receipt_diff_hash "$id" "$review_dir") || jig_die "task receipt: could not read the task's change"
   context=$(_task_receipt_context_hash "$id" "$review_dir") || jig_die "task receipt: could not resolve the knowledge for the task's change"
+  # Which documents `context` hashed, with their content stored, so a re-review
+  # can tell a global document moving from the set under the task's files moving
+  # (adr-20261029-a-global-knowledge-edit-narrows-a-re-review). Never compared.
+  local context_docs
+  context_docs=$(_task_receipt_context_lines "$id" "$review_dir" --write) \
+    || jig_die "task receipt: could not resolve the knowledge for the task's change"
   # What `diff` was measured from: read by `task receipt --since-review`, never
   # compared (adr-20261019-a-re-review-reads-what-changed-since-review).
   merge_base=$(_task_review_merge_base "$id" "$review_dir") || merge_base=""
@@ -3570,6 +3598,7 @@ task_receipt_write() {
     printf 'head: %s\n' "$head"
     printf 'design: %s\n' "$design"
     printf 'findings: %s\n' "$findings"
+    [ -z "$context_docs" ] || printf '%s\n' "$context_docs" | sed 's/^/context_doc: /'
   } > "$tmp"
   mv "$tmp" "$file"
   jig_record_changed
@@ -3619,12 +3648,15 @@ task_receipt_check() {
 # the task never touched is left out.
 #
 # Exit 0 with `re-review: narrow (...)` and the interdiff when only the task's
-# diff or the ledger moved; exit 0 with `re-review: none` when the receipt is
-# current; exit 1 with `re-review: full — <why>` when the re-review must read
-# everything: no receipt, the design or the knowledge under the review moved,
-# or what the receipt pinned can no longer be read. With `paths` only the
-# interdiff's files are printed, and the verdict of none or full goes to
-# stderr, so the list can be piped into `jig context resolve`.
+# diff, the ledger or a global knowledge document moved — then the diff of each
+# such document follows the interdiff; exit 0 with `re-review: none` when the
+# receipt is current; exit 1 with `re-review: full — <why>` when the re-review
+# must read everything: no receipt, the design moved, the documents resolved for
+# the task's files changed as a set or in one that is not global
+# (_task_since_review_knowledge), or what the receipt pinned can no longer be
+# read. With `paths` only the interdiff's code files are printed, and the
+# verdict of none or full goes to stderr, so the list can be piped into
+# `jig context resolve`.
 _task_receipt_since_review() {
   local id="$1" format="$2" changed dir old_tree old_mb new_tree old_files new_files paths diffed files="" path
   if [ ! -f "$(task_dir "$id")/receipt" ]; then
@@ -3646,8 +3678,16 @@ _task_receipt_since_review() {
   fi
   case ", $changed, " in
     *", design, "*) _task_since_review_full "$format" "the approved design changed since the review"; return 1 ;;
-    *", context, "*) _task_since_review_full "$format" "the knowledge the review relied on changed"; return 1 ;;
     *", tree, "*) _task_since_review_full "$format" "the receipt predates the task's own diff; it pins the whole tree"; return 1 ;;
+  esac
+  _TASK_SR_KNOWLEDGE=""
+  case ", $changed, " in
+    *", context, "*)
+      if ! _task_since_review_knowledge "$id" "$dir"; then
+        _task_since_review_full "$format" "$_TASK_SR_WHY"
+        return 1
+      fi
+      ;;
   esac
   old_tree=$(_task_receipt_get "$id" tree)
   old_mb=$(_task_receipt_get "$id" merge_base)
@@ -3682,8 +3722,71 @@ _task_receipt_since_review() {
   printf 're-review: narrow (%s)\n' "$changed"
   printf 'task: %s\nreviewed: %s (tree %s)\n' "$id" "$(_task_receipt_get "$id" reviewed_at)" "$old_tree"
   printf 'changed since review: %s paths\n' "$(printf '%s' "$files" | sed '/^$/d' | wc -l | tr -d ' ')"
-  [ -n "$files" ] || return 0
-  printf '%s' "$files" | tr '\n' '\0' | (cd "$dir" && xargs -0 git --literal-pathspecs diff --no-color --no-ext-diff "$old_tree" "$new_tree" --)
+  if [ -n "$files" ]; then
+    printf '%s' "$files" | tr '\n' '\0' | (cd "$dir" && xargs -0 git --literal-pathspecs diff --no-color --no-ext-diff "$old_tree" "$new_tree" --)
+  fi
+  [ -n "$_TASK_SR_KNOWLEDGE" ] || return 0
+  printf 'knowledge changed since review: %s documents\n' "$(printf '%s' "$_TASK_SR_KNOWLEDGE" | sed '/^$/d' | wc -l | tr -d ' ')"
+  local old_hash new_hash
+  while IFS=$'\t' read -r path old_hash new_hash; do
+    [ -n "$path" ] || continue
+    printf 'knowledge: %s\n' "$path"
+    git -C "$dir" diff --no-color --no-ext-diff "$old_hash" "$new_hash"
+  done < <(printf '%s' "$_TASK_SR_KNOWLEDGE")
+}
+
+# _task_since_review_knowledge <id> <dir> — whether a re-review may stay narrow
+# although `context` moved (adr-20261029-a-global-knowledge-edit-narrows-a-re-review).
+# It may when the same documents resolve for the task's files as at the review
+# and only global ones (jig_knowledge_is_global) changed: those resolve for any
+# file, so an edit to them is most often another task's consolidation, and the
+# re-reviewer is shown it. Sets _TASK_SR_KNOWLEDGE to "<path>\t<old>\t<new>"
+# lines, one per changed global document, and returns 0; otherwise sets
+# _TASK_SR_WHY to the reason the re-review must be full and returns 1 — a
+# document that newly resolves or no longer does, a changed document that
+# resolves through the task's paths or domains, a receipt that does not list
+# its documents, or content the review read that is no longer stored.
+_task_since_review_knowledge() {
+  local id="$1" dir="$2" old new old_paths new_paths path hash old_hash moved=""
+  _TASK_SR_KNOWLEDGE=""
+  _TASK_SR_WHY="the knowledge the review relied on changed"
+  old=$(sed -n 's/^context_doc:[[:space:]]*//p' "$(task_dir "$id")/receipt")
+  if [ -z "$old" ]; then
+    _TASK_SR_WHY="the knowledge the review relied on changed, and the receipt does not list which documents it read"
+    return 1
+  fi
+  new=$(_task_receipt_context_lines "$id" "$dir" --write) || {
+    _TASK_SR_WHY="could not resolve the knowledge for the task's change"
+    return 1
+  }
+  old_paths=$(printf '%s\n' "$old" | sed 's/ [^ ]*$//' | LC_ALL=C sort -u)
+  new_paths=$(printf '%s\n' "$new" | sed '/^$/d' | sed 's/ [^ ]*$//' | LC_ALL=C sort -u)
+  if [ "$old_paths" != "$new_paths" ]; then
+    path=$(LC_ALL=C comm -3 <(printf '%s\n' "$old_paths") <(printf '%s\n' "$new_paths") | sed 's/^[[:space:]]*//' | sed -n 1p)
+    _TASK_SR_WHY="a document resolves for the task's files that did not at the review, or no longer does: $path"
+    return 1
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    hash=${path##* }
+    path=${path% *}
+    old_hash=$(printf '%s\n' "$old" | awk -v p="$path" '{ h = $NF; sub(/ [^ ]*$/, ""); if ($0 == p) { print h; exit } }')
+    [ "$hash" != "$old_hash" ] || continue
+    if ! jig_knowledge_is_global "$JIG_PROJECT/$path"; then
+      _TASK_SR_WHY="$path, which resolves for the task's files, changed since the review"
+      return 1
+    fi
+    if [ "$hash" = - ] || [ "$old_hash" = - ] \
+      || ! git -C "$dir" cat-file -e "$old_hash^{blob}" 2>/dev/null; then
+      _TASK_SR_WHY="what the review read in $path is no longer in the repository"
+      return 1
+    fi
+    moved="$moved$(printf '%s\t%s\t%s' "$path" "$old_hash" "$hash")
+"
+  done < <(printf '%s\n' "$new")
+  [ -n "$moved" ] || return 1
+  _TASK_SR_KNOWLEDGE=$moved
+  return 0
 }
 
 # _task_since_review_full <format> <why> — the `re-review: full` verdict of

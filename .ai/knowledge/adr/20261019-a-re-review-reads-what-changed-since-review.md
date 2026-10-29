@@ -11,6 +11,7 @@ paths:
   - scripts/lib/task.sh
   - "skills/jig-review/**"
   - "skills/jig-architecture-review/**"
+reviewed_at: 2026-10-29
 ---
 # A re-review reads what changed since the review, when the script says it may; a P3 is not fixed after it
 
@@ -74,3 +75,8 @@ the claim the receipt exists to check.
 - The narrowing is honoured by the skill, not enforced. That is safe because a reviewer may always read
   more than the interdiff, and nothing a gate relies on depends on how much was read.
 - Reverting is `git revert`: an extra `merge_base:` line is harmless to the old code.
+
+> **Amendment (2026-10-29).** A `context` change no longer forces `full` by itself: when the documents
+> resolved for the task's files are the same set and only global ones (`GLOSSARY.md`, `ARCHITECTURE.md`,
+> `RULES.md`) changed, the re-review is `narrow` and is shown their diff. See
+> adr-20261029-a-global-knowledge-edit-narrows-a-re-review.

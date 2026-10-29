@@ -9558,7 +9558,135 @@ test_task_receipt_since_review_is_full_when_the_knowledge_changed() {
 
   run jig task receipt T-1 --since-review
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "re-review: full — the knowledge the review relied on changed"
+  assert_contains "$OUT" "re-review: full — .ai/knowledge/rule-work.md, which resolves for the task's files, changed since the review"
+}
+
+# --- re-review width from the knowledge (adr-20261029-a-global-knowledge-edit-narrows-a-re-review)
+
+# _since_review_base_commits <shell> — run <shell> on the base branch, commit
+# what it changed and merge the base into task/T-1: another task's
+# consolidation arriving with a merge of main.
+_since_review_base_commits() {
+  local base
+  base=$(git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^task/' | head -1)
+  git checkout -q "$base"
+  eval "$1"
+  git add -A
+  git commit -q -m "the base moves the knowledge"
+  git checkout -q task/T-1
+  git merge -q --no-edit "$base"
+}
+
+test_task_receipt_lists_the_documents_the_review_read() {
+  task_setup_clean
+  _task_receipt_commit_work_convention
+  jig task new T-1 --class T2 >/dev/null
+  jig task start T-1 >/dev/null
+  printf 'one\n' > work.txt
+  git add work.txt
+  git commit -q -m "task work"
+  jig task receipt T-1 --stage review >/dev/null
+
+  local docs hash
+  docs=$(sed -n 's/^context_doc:[[:space:]]*//p' .ai/workspace/tasks/T-1/receipt)
+  assert_contains "$docs" ".ai/knowledge/RULES.md "
+  assert_contains "$docs" ".ai/knowledge/rule-work.md "
+  hash=$(printf '%s\n' "$docs" | sed -n 's|^\.ai/knowledge/RULES.md ||p')
+  assert_eq "$(git hash-object --no-filters .ai/knowledge/RULES.md)" "$hash"
+  git cat-file -e "$hash^{blob}" || fail "the content the review read is not stored: $hash"
+}
+
+test_task_receipt_since_review_is_narrow_when_only_a_global_document_changed() {
+  _since_review_setup
+  _since_review_base_commits "printf 'a rule from another task\n' >> .ai/knowledge/RULES.md"
+
+  run jig task receipt T-1 --check
+  assert_eq 1 "$RC" "a global edit still stales the receipt: $OUT"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "re-review: narrow (context)"
+  assert_contains "$OUT" "changed since review: 0 paths"
+  assert_contains "$OUT" "knowledge changed since review: 1 documents"
+  assert_contains "$OUT" "knowledge: .ai/knowledge/RULES.md"
+  assert_contains "$OUT" "+a rule from another task"
+}
+
+test_task_receipt_since_review_is_narrow_with_the_task_diff_and_a_global_edit() {
+  _since_review_setup
+  _since_review_base_commits "printf 'more architecture\n' >> .ai/knowledge/ARCHITECTURE.md"
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "re-review: narrow (diff, context)"
+  assert_contains "$OUT" "diff --git a/work.txt b/work.txt"
+  assert_contains "$OUT" "knowledge: .ai/knowledge/ARCHITECTURE.md"
+  assert_contains "$OUT" "+more architecture"
+}
+
+test_task_receipt_since_review_ignores_a_new_adr_for_other_files() {
+  _since_review_setup
+  _since_review_base_commits "mkdir -p .ai/knowledge/adr
+cat > .ai/knowledge/adr/20260101-elsewhere.md <<'EOF2'
+---
+id: adr-20260101-elsewhere
+type: adr
+status: accepted
+paths:
+  - elsewhere/**
+summary: Not about the task's files.
+---
+# Elsewhere
+EOF2
+printf 'the closing route\n' >> .ai/knowledge/ARCHITECTURE.md"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "re-review: narrow (context)"
+  assert_contains "$OUT" "knowledge changed since review: 1 documents"
+  assert_not_contains "$OUT" "elsewhere"
+}
+
+test_task_receipt_since_review_is_full_when_a_document_newly_resolves() {
+  _since_review_setup
+  _since_review_base_commits "cat > .ai/knowledge/rule-work.md <<'EOF2'
+---
+id: rule-work
+type: convention
+status: accepted
+paths:
+  - work.txt
+summary: Work files follow this.
+---
+# Work files
+EOF2"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — a document resolves for the task's files that did not at the review, or no longer does: .ai/knowledge/rule-work.md"
+}
+
+test_task_receipt_since_review_is_full_for_a_receipt_without_its_documents() {
+  _since_review_setup
+  sed '/^context_doc:/d' .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  _since_review_base_commits "printf 'a rule\n' >> .ai/knowledge/RULES.md"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the receipt does not list which documents it read"
+}
+
+test_task_receipt_since_review_paths_format_leaves_the_knowledge_out() {
+  _since_review_setup
+  _since_review_base_commits "printf 'a rule\n' >> .ai/knowledge/RULES.md"
+  printf 'two\n' > work.txt
+
+  run jig task receipt T-1 --since-review --format paths
+  assert_eq 0 "$RC"
+  assert_eq "work.txt" "$OUT"
 }
 
 test_task_receipt_since_review_is_full_for_a_legacy_tree_receipt() {

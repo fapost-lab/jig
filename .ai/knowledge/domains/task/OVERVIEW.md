@@ -298,7 +298,9 @@ writing must join that exclusion, or every task will read as unreviewed at its l
 `jig task receipt <id> --since-review` reads the same staleness answer and never gates: it narrows a
 re-review to the interdiff from the receipt's `tree`, limited to the task's files then (from the
 receipt's `merge_base`) and now, only when nothing but `diff` or `findings` moved, and answers `full`
-otherwise (adr-20261019-a-re-review-reads-what-changed-since-review). It lives on `task receipt`, not
+otherwise (adr-20261019-a-re-review-reads-what-changed-since-review). A `context` move stays narrow
+when the receipt's `context_doc` lines show the same documents resolving and only global ones changed;
+their diff follows the interdiff (adr-20261029-a-global-knowledge-edit-narrows-a-re-review). It lives on `task receipt`, not
 `task changes`, because ADR-0022 keeps that one an inventory from an explicit `--base`.
 
 **An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
