@@ -44,7 +44,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, or an item, dependency or request that is not in the queue where the command needs it |
+| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, or a task document the task does not have (`jig task artifact read`) |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
@@ -503,6 +503,67 @@ happens before anything is written too; for an apply that fails it happens after
 claimed (it is raised by one). An apply that refused leaves the state as it was; one that merged the
 stash with conflicts, or wrote part of it, records `paused_stash_applied` (schemas/state.md), so the resume after the
 person resolved them ends the pause without applying the stash again.
+
+## `jig task artifacts --json`
+
+`jig task artifacts <id> --json` lists the documents in a task's workspace — the one
+`_task_workspace_root` resolves, so a task in its own worktree is read where Jig keeps it, from that
+worktree or from the main checkout. `--json` may stand anywhere among the arguments. It is a listing,
+not the route report the text form prints: it asks nothing of the task's class, and `--provided` (a
+caller's claim) cannot be combined with it.
+
+```json
+{"task": "<id>", "artifacts": [<artifact>, ...]}
+```
+
+`artifacts` holds every kind `jig task artifact` writes, always all twelve, in this order: `task`,
+`discovery`, `spec`, `alternatives`, `design`, `plan`, `review`, `verification`, `handoff`,
+`knowledge-map`, `commit-message`, `pr-body`. A kind not written yet is listed as `missing`, never
+left out; a kind added later is added to the list, which is compatible.
+
+| Field | Type | Value |
+|---|---|---|
+| `kind` | string | one of the kinds above |
+| `state` | string | `present` (a readable, non-empty regular file in the workspace), `empty` (a regular file with nothing in it), `missing` (no file), `unavailable` (something Jig will not read: a link out of the workspace or one it cannot follow, a directory, a file it may not read) |
+| `reason` | string or null | for `unavailable`, why, in the words the text form prints in parentheses (`outside workspace`, `symlink loop`, `unreadable link`, `missing parent`, `missing or not a regular file`, `unreadable`); `null` otherwise |
+| `updated_at` | string or null | the file's modification time, UTC `YYYY-MM-DDTHH:MM:SSZ`, for `present` and `empty`; `null` otherwise |
+| `bytes` | integer or null | the file's size in bytes, for `present` and `empty`; `null` otherwise |
+
+`present` is the fact the text form reports as `present`: presence proves nothing about approval
+or quality (ADR-0020). The read writes nothing and does not raise the revision.
+
+Refusals: `not-found` for no such task; `usage` for a missing id, an id outside the grammar, an
+unknown argument and `--provided` beside `--json`; `not-initialised` and `not-a-repository` as
+everywhere. A workspace link Jig does not accept (one leading anywhere but this task's workspace in
+another worktree of this repository) reads `failed`.
+
+## `jig task artifact read --json`
+
+`jig task artifact read <id> <kind> --json` answers with one document of a task's workspace,
+resolved as `jig task artifacts --json` resolves it. `<kind>` is one of the twelve kinds above.
+`--json` may stand anywhere among the arguments; without it the command prints the document's bytes
+as they are.
+
+```json
+{"task": "<id>", "kind": "plan", "updated_at": "2026-10-29T09:12:40Z", "bytes": 2221, "content": "# Plan\n..."}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | string | the task id |
+| `kind` | string | the kind asked for |
+| `updated_at` | string or null | the file's modification time, UTC; `null` when it cannot be read |
+| `bytes` | integer or null | the file's size in bytes; `null` when it cannot be read |
+| `content` | string | the whole file as a string, trailing newlines included; `""` for an `empty` document |
+
+The envelope's `revision` is the one `jig task artifacts --json` reports while nothing is written,
+so a consumer reads the list and a document under one revision. The read writes nothing.
+
+Refusals: `not-found` for no such task, and for a kind the task has no document of (`missing`);
+`usage` for an unknown kind, a missing or extra argument, an id outside the grammar, and `--json`
+with `write` or `append` (it goes with `read` only); `not-initialised` and `not-a-repository` as
+everywhere. A document Jig will not read (`unavailable` in the list) reads `failed`, its reason in
+the message.
 
 ## `jig upgrade --json`
 

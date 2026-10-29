@@ -167,6 +167,12 @@ about the worktree road are easy to get wrong from inside this domain's code:
   `git worktree list` names for this repository (ADR-0029, amendment of 2026-10-04), and
   `task artifacts` and `task artifact` both go through it. A third command
   that reaches an artifact adds a call, never a second copy of the check (RULES.md).
+  Inside the workspace, whether one artifact may be read — links followed without
+  `readlink -f`, never out of the workspace, a regular readable file — is
+  `_task_artifact_locate`'s answer, shared by the text report, `task artifacts --json`
+  and `task artifact read`. Those two are how a program reads a task's documents
+  (schemas/json.md): it never looks for the files, since only Jig knows where a
+  worktree task's workspace is.
 - Writing an artifact is `task artifact write|append`, not a shell redirection, and the
   reason is the worktree. An agent's editing tools refuse a path that resolves outside
   their sandbox, which the link does; telling agents in prose to use shell there is a rule

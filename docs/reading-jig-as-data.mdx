@@ -5,13 +5,16 @@ description: "Read your project's tasks, specs and what needs you from a script,
 
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
-`--json`. Today `jig task list`, `jig spec list`, `jig status`, `jig queue list` and `jig queue next` offer it, and
+`--json`. Today `jig task list`, `jig task artifacts`, `jig task artifact read`, `jig spec list`, `jig status`,
+`jig queue list` and `jig queue next` offer it, and
 `jig queue`, `jig task new` and `jig upgrade` answer in it when they write; more commands will, in the
 same form.
 
 ```bash
 jig task list --json
 jig task list --json --all
+jig task artifacts <id> --json
+jig task artifact read <id> plan --json
 jig spec list --json
 jig status --json
 jig queue list --json
@@ -64,7 +67,7 @@ be reworded.
 | `not-a-repository` | it ran outside a Git repository |
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
-| `not-found` | the task or epic named does not exist, or is not in the queue where the command needs it |
+| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, or the task has no such document yet (`jig task artifact read`) |
 | `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
 | `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
@@ -401,6 +404,42 @@ An id Jig does not accept — a space, a leading dash — and a goal that is emp
 
 The full field list is in the repository, in
 [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
+
+## A task's documents
+
+A task keeps its documents — `task.md`, the analysis, the design, the plan, the review and the
+rest — in its workspace. When the task runs in a worktree, only Jig knows where that workspace really
+is, so a program asks Jig instead of looking for the files:
+
+```bash
+jig task artifacts booking-message --json
+```
+
+The answer lists every kind of document Jig knows, always all twelve and always in the same order,
+so a page can show a fixed set and mark what is not written yet:
+
+```json
+{"schema":1,"revision":1792405174,"generated_at":"2026-10-29T10:22:28Z","data":{"task":"booking-message","artifacts":[{"kind":"task","state":"present","reason":null,"updated_at":"2026-10-29T09:12:40Z","bytes":1365},{"kind":"discovery","state":"missing","reason":null,"updated_at":null,"bytes":null},...]}}
+```
+
+`state` is `present`, `empty` (the file is there with nothing in it), `missing` (not written yet) or
+`unavailable` (there is something Jig will not read — a link out of the workspace, a directory — and
+`reason` says what). `updated_at` and `bytes` are the file's, for `present` and `empty`.
+
+Open one of them with:
+
+```bash
+jig task artifact read booking-message plan --json
+```
+
+```json
+{"schema":1,"revision":1792405174,"generated_at":"2026-10-29T10:22:30Z","data":{"task":"booking-message","kind":"plan","updated_at":"2026-10-29T09:12:40Z","bytes":2221,"content":"# Plan\n\n..."}}
+```
+
+`content` is the Markdown exactly as it is in the file. A document not written yet is refused as
+`not-found`, and so is a task the clone does not have. Both commands only read: the `revision` stays
+where it was, and comparing it tells you when to read again. Without `--json`, `jig task artifact
+read` prints the document itself.
 
 ## Upgrading a project
 

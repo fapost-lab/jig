@@ -23,7 +23,8 @@ jig doctor
 
 `task list` shows the tasks, and says how many are archived (`jig task list --status archived` lists them); `task current` looks for the task on this branch. When several match,
 choose an explicit ID. `status` summarizes the project and `doctor` checks its setup.
-A script can read the same task list as JSON with `jig task list --json`, the specs with
+A script can read the same task list as JSON with `jig task list --json`, a task's documents with
+`jig task artifacts <id> --json` and `jig task artifact read <id> <kind> --json`, the specs with
 `jig spec list --json`, the queue with `jig queue list --json`, and what needs you with
 `jig status --json`; see
 [Reading Jig as data](/reading-jig-as-data).
