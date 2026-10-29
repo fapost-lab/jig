@@ -147,7 +147,7 @@ buttons without knowing Jig's rules. Every task carries the same fourteen action
 
 | `id` | What it does |
 |---|---|
-| `start` | Start a task that was filed for later |
+| `start` | Start a task that was filed for later; refused for a T3 or T4 task whose `task.md` has no goal |
 | `pause`, `resume` | Set the task aside, and pick it up again |
 | `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back |
 | `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
@@ -155,7 +155,7 @@ buttons without knowing Jig's rules. Every task carries the same fourteen action
 | `set-class` | Change the task's class |
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
 | `close` | Close a task whose work has landed |
-| `abandon` | Give the task up |
+| `abandon` | Give the task up; its `command` asks for `--reason <text>` when the task is linked to a spec |
 | `archive` | Put an active, ready or abandoned task away, without deleting it |
 | `unarchive` | Bring an archived task back to the status it had |
 | `reopen` | Take back an abandoned task |

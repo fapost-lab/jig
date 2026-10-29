@@ -419,6 +419,33 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.37.0 to 0.38.0
+
+Nothing to do by hand. The installer and `.ai/config.yaml` did not change, and no new setting appears
+in the upgrade's report. The upgrade brings new scripts and new text for the `jig-task`,
+`jig-review`, `jig-consolidate` and `jig-autopilot` skills; a copy of a skill you edited yourself is
+handled as every edited framework file is
+([What the upgrade does](#what-the-upgrade-does-and-what-it-leaves-alone)).
+
+**What you will notice.** Three commands refuse what they used to accept: `jig task start` for a T3
+or T4 task with no goal in its `task.md`, and, for a task linked to a spec, `jig task abandon`
+without `--reason` and `jig task set <id> status abandoned`. Abandoning a task from a spec without an epic, on
+your main branch, switches your checkout to `spec/<spec-id>` and leaves it there, with the roadmap
+edit committed when your git level allows; `jig spec ship <spec-id>` sends it on. A task abandoned
+before the upgrade keeps its roadmap item as it was; run `jig task abandon <id> --reason "<why>"` on
+it to record the reason and close the item — after `jig task unarchive <id>` if housekeeping has
+archived it already, which it does `housekeeping.abandoned_ttl` (14 days) after the abandon. The first `jig task ship` with open P2 or P3 findings files a
+`<task-id>-findings` task. `jig spec list` and the status page may show a spec further along than
+before, because merged tasks now count. A program that reads `jig spec list --json` sees a new `done`
+field on each item.
+
+**A pause that was already stuck.** If `jig task resume` on 0.37.0 left a stash's conflicts in your
+files and the task is still paused, the first resume on 0.38.0 does not know the stash is already
+there: it applies it once more and the conflicts come back. Resolve them, `git add` the files and
+resume again; that resume ends the pause. To skip the second resolution, delete the `paused_stash:`
+line from `.ai/workspace/tasks/<id>/state` before that first resume: without a stash to apply, the
+resume only ends the pause, and the stash entry stays in `git stash list`.
+
 ## From 0.36.0 to 0.37.0
 
 Nothing to do by hand. The installer and `.ai/config.yaml` did not change, and no new setting appears

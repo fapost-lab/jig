@@ -375,7 +375,9 @@ The agent records reading them like knowledge, so when someone edits that design
 says `changed since acknowledged` and the agent has to read it again before implementing. A task's
 notes live only on the machine where it was filed: on another clone, or when the folder is not
 there, the line says `unreachable:` and why. Jig only reads the other repository; it never writes
-there, and the other task does not learn about yours.
+there, and the other task does not learn about yours. A finished review does not follow an edit
+there: the review stays current, and the pull request can still be opened, even though the agent is
+asked to read the changed document again.
 
 ### Sharing for one task
 
@@ -507,7 +509,9 @@ It answers four questions, in this order:
    specification come last, under *Other tasks*; `jig status` at a terminal groups its Tasks section
    the same way. Paused tasks are folded away below.
 3. **Specifications.** How far every roadmap has got, phase by phase. For a specification built on
-   its own branch, the progress is read from that branch as your copy of it last saw it.
+   its own branch, the progress is read from that branch as your copy of it last saw it. An item
+   whose task was closed here, or that the last housekeeping saw merged, counts as done even before
+   its checkmark reaches that branch.
 4. **Details.** The counts at a glance, and the complete `jig status` text, folded away at the bottom.
 
 **Why some data is marked stale.** Whether a pull request is open or merged comes from housekeeping,
