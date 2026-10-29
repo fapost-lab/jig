@@ -7704,11 +7704,11 @@ test_task_gate_records_a_human_by_default() {
   assert_contains "$OUT" "task gate: invalid --by: robot (expected human|agent)"
 }
 
-test_task_set_refuses_autopilot_mode_and_gate_by_keys() {
+test_task_set_refuses_script_owned_run_and_triage_keys() {
   task_setup
   jig task new T-1 --class T3 >/dev/null
   local key
-  for key in autopilot_mode gate_by; do
+  for key in autopilot_mode gate_by triage_task triage_of; do
     run jig task set T-1 "$key" x
     assert_eq 1 "$RC"
     assert_contains "$OUT" "task set: key is not writable: $key"
