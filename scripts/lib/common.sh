@@ -566,7 +566,10 @@ _JIG_TS_FOUND=0
 # jig_read_snapshot_begin / jig_read_snapshot_end — open and close the read
 # path's snapshot: task state, the queue's lines and the configuration are
 # read once per process in between. Only a command that writes nothing in
-# between opens one.
+# between opens one. A snapshot holds one project: its caches are keyed by task
+# id and config key, not by JIG_PROJECT, so nothing on the read path may switch
+# JIG_PROJECT while a snapshot is open (as _task_touched_in does for another
+# checkout); such a read must run outside it or in a subshell of its own.
 jig_read_snapshot_begin() {
   jig_task_state_forget
   _jig_queue_cache_drop
