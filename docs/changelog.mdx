@@ -8,6 +8,89 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.39.0 — 2026-10-29
+
+An upgrade that ends in a pull request is followed to the end, and a project upgrades on every
+machine, whoever installed it. Until now `jig status` forgot an upgrade's pull request as soon as
+it was opened and offered the upgrade again, and a committed `.ai/manifest` that named the folder
+Jig was installed in on one person's machine stopped `jig upgrade` on everybody else's.
+
+<Danger>
+  **A project on Jig 0.38.1 or older: run its first upgrade to 0.39.0 with the Jig on your machine,
+  by its full path.** The fix below lives in the new Jig, but `jig upgrade` in a project is run by
+  the project's own copy — the old one. Where `.ai/manifest` has a `jig.source:` line naming a
+  folder that is not on your machine (such as `/Users/<someone>/.local/share/jig`),
+  `.ai/scripts/jig upgrade` stops with
+  `upgrade: cannot determine the framework source root; pass --from <dir>`. So does asking your
+  agent to "upgrade Jig", and a `jig` shell function or alias that runs the project's copy first.
+  Do it once, in the project's root folder, with the paths the installer uses:
+
+  macOS and Linux:
+
+  ```bash
+  ~/.local/bin/jig self-update
+  ~/.local/bin/jig upgrade
+  ```
+
+  Windows, in Git Bash:
+
+  ```bash
+  ~/.local/share/jig/scripts/jig self-update
+  ~/.local/share/jig/scripts/jig upgrade
+  ```
+
+  Then `.ai/scripts/jig version` prints `jig 0.39.0` and `.ai/manifest` says
+  `jig.source: global`. Finish the upgrade as usual
+  ([Upgrading](/upgrading#from-0381-to-0390)); from then on a plain `jig upgrade` works.
+</Danger>
+
+- **A project upgrades from the Jig on your machine, wherever it was installed from.** `jig upgrade`
+  now looks for the Jig to copy from in order: the checkout the running `jig` belongs to, the source
+  `.ai/manifest` records when that folder is a Jig checkout here, then the `jig` your `PATH` finds.
+  That last one is never used when it is older than the project's Jig — that would be a downgrade —
+  and the refusal then asks for `jig self-update`. When nothing is found, the message says where it
+  looked, never the recorded path. The manifest now records the Jig on your machine as
+  `jig.source: global`, which each machine reads as its own Jig, instead of the folder it lives in;
+  an old manifest needs no editing — the first upgrade that places a file writes `global`. See
+  [What the upgrade does](/upgrading#what-the-upgrade-does-and-what-it-leaves-alone).
+- **`jig status` follows an upgrade's pull request.** When an upgrade ended in a pull request, the
+  plain `jig status` shows an `upgrade pull request:` line while it is open, and again once it is
+  merged but your base branch here still has the old Jig. It reads what the last `jig housekeeping` heard from your forge, so it is
+  as fresh as that run.
+- **`jig upgrade --land` brings a merged upgrade in.** Once the upgrade's pull request is merged, it
+  asks the forge, puts you on the base branch, fast-forwards it to origin's and deletes the
+  upgrade's branch — on origin too when your agent may push. While the pull request is open, with
+  uncommitted changes, on a branch other than the base or the upgrade's, or with a base branch that
+  cannot be fast-forwarded to origin's, it refuses and changes nothing. See
+  [An upgrade is a change of its own](/upgrading#an-upgrade-is-a-change-of-its-own).
+- **`jig task ship` ships the change instead of refusing it.** With nothing staged it now stages the
+  changes to files Git already tracks and lists them; it used to refuse. It never stages a new file
+  for you: with nothing staged, a new file that is neither staged nor in `.gitignore` is a refusal
+  that names it, and nothing is sent. When something is staged, that is the commit, and it warns
+  about every change it left out. `jig spec ship` and the upgrade still commit only what is staged.
+  See [Choose what the agent can do](/agent-ships#when-the-agent-cannot-finish).
+- **`jig spec list` is fast again.** 0.38.0, which began counting merged tasks in a spec's progress,
+  read every task's state and the whole housekeeping log once per spec, so the listing slowed down
+  with every spec and with the size of `.ai/runtime/housekeeping.log`. It now reads them once per
+  listing, and only the newest run of the log. Measured on a real project with 20 specs and an
+  8.8 MB housekeeping log: `jig spec list --json` took 6.8 s on 0.38.1 against 0.76 s on 0.37.0. A
+  separate measurement of CPU time on a real project, on a machine at a load average of 130–200,
+  gave about 1.2 s now, against 8.4 s on 0.38.1 and 1.0 s on 0.37.0. `jig status` and
+  `jig task list --json` now read only the newest housekeeping run too; that was not measured.
+- **The housekeeping log stops growing.** Every `jig housekeeping` run now trims
+  `.ai/runtime/housekeeping.log` to the last ten runs, each with every record and at most 200
+  other lines of output, and of older runs keeps only the purge lines `jig measure` reads, so its
+  history is unchanged. On a copy of a real project's log that took 8.8 MB down to 91 KB. The log
+  is rewritten in place, and a trim that fails leaves it as it was. See
+  [What a removed worktree takes with it](/working-with-tasks#what-a-removed-worktree-takes-with-it).
+- **A program sees the upgrade's pull request.** `jig status --json` has two new kinds,
+  `upgrade-pull-request-waiting` and `upgrade-pull-request-merged`, with `pull_request` and
+  `versions` fields, and holds back `upgrade-available` while one stands; `jig upgrade --land
+  --json` reports `landed` or `nothing-to-do`, and refuses as `not-merged` or `upgrade-blocked`.
+  `.ai/runtime/forge-cache` lines carry two more columns, the pull request's head commit and its
+  address; a line written before reads as it did. See
+  [Reading Jig as data](/reading-jig-as-data#upgrading-a-project).
+
 ## 0.38.1 — 2026-10-29
 
 - **`jig task list` and `jig status --json` read each task once.** Each field of a task's state used

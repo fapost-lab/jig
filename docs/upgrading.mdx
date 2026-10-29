@@ -155,8 +155,11 @@ order does not change: do it once, and read every release between yours and the 
     ```
 
     Once the pull request is merged (by you or a colleague), come back to your base branch, if you
-    are not on it already, and take the merge in. These are two separate commands; run them one
-    after the other.
+    are not on it already, and take the merge in. When the pull request is on GitHub or GitLab and
+    `gh` or `glab` is signed in, one command does that and the branch deletion below:
+    `jig upgrade --land`, which refuses, changing nothing, while the pull request is still open
+    ([more](#an-upgrade-is-a-change-of-its-own)). By hand, these are two separate commands; run them
+    one after the other.
 
     ```bash
     git switch main
@@ -439,6 +442,63 @@ Two kinds of project work differently. One that uses a single branch
 (`git.branch_per_task: false`) gets the commit on the branch it is on, and nothing is pushed. One
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
+
+## From 0.38.1 to 0.39.0
+
+0.38.1 asked nothing by hand, so this section covers an upgrade from 0.38.0 as well.
+
+<Danger>
+  **Run the first upgrade to 0.39.0 with the Jig on your machine, by its full path.** This is for a
+  project whose Jig is 0.38.1 or older and either stops with
+  `upgrade: cannot determine the framework source root; pass --from <dir>`, or has a `jig.source:`
+  line in `.ai/manifest` naming a folder that is not on your machine — usually another person's,
+  such as `/Users/<someone>/.local/share/jig`. 0.39.0 fixes that, but `jig upgrade` in a project
+  is run by the project's own copy, which is still the old one: `.ai/scripts/jig upgrade` keeps
+  failing, and so does asking your agent to "upgrade Jig", and a `jig` shell function or alias that
+  runs the project's copy first. Do it once, in the project's root folder, with the paths the
+  installer uses:
+
+  macOS and Linux:
+
+  ```bash
+  ~/.local/bin/jig self-update
+  ~/.local/bin/jig upgrade
+  ```
+
+  Windows, in Git Bash:
+
+  ```bash
+  ~/.local/share/jig/scripts/jig self-update
+  ~/.local/share/jig/scripts/jig upgrade
+  ```
+
+  The first command brings the Jig on your machine to 0.39.0; the second upgrades the project from
+  it. Check the result: `.ai/scripts/jig version` prints `jig 0.39.0`, and `.ai/manifest` says
+  `jig.source: global`. Then finish the upgrade as
+  [after any upgrade](#after-an-upgrade-what-to-do-in-order), from step 3. From then on the
+  project's own copy upgrades by itself, and a plain `jig upgrade` works.
+</Danger>
+
+If `.ai/manifest` names your own folder instead of `global`, no `jig` on your `PATH` led to the one
+you ran — the installer puts it there for new terminals, so open one and check with `jig version`.
+The upgrade itself is done, and it harms nobody from now on: a copy of 0.39.0 or newer reads a
+folder that is not on its machine as that machine's Jig, and the next upgrade that places a file
+writes `global`. A project whose `jig.source:` already names a folder on your machine, or `.`, is
+not affected, and upgrades as before.
+
+Nothing else to do by hand. The installer and `.ai/config.yaml` did not change, and no new setting
+appears in the upgrade's report. The upgrade brings new scripts and new text for the
+`jig-consolidate` skill.
+
+**What you will notice.** `jig upgrade` writes `jig.source: global` into `.ai/manifest` the first
+time it places a file; commit it with the rest. After an upgrade that ended in a pull request,
+`jig status` shows an `upgrade pull request:` line until the merge is here, and
+`jig upgrade --land` brings it here
+([An upgrade is a change of its own](#an-upgrade-is-a-change-of-its-own)). `jig task ship` with
+nothing staged now stages the changes to tracked files and ships them, where it used to refuse, and
+refuses instead when a new file is neither staged nor ignored: stage the new files a task added, or
+add them to `.gitignore`. A program that reads `jig status --json` may see the two new
+`upgrade-pull-request-*` kinds, and no `upgrade-available` while one stands.
 
 ## From 0.37.0 to 0.38.0
 
