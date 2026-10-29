@@ -1785,7 +1785,7 @@ jig_task_epic() {
 # inside it — but not an absolute path, `~`, a drive letter, a backslash,
 # whitespace or a second `#`. The ids follow jig_valid_id. This is the one
 # grammar every reader of a reference uses: a task's `Linked:` lines today,
-# a moved task's target next.
+# and a moved task's target (`jig task abandon --moved-to`).
 
 _JIG_REF_REPO=""
 _JIG_REF_KIND=""

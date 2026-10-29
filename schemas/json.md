@@ -160,7 +160,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `set-class` | `jig task set <id> class <Tn>` | the task is live |
 | `ship` | `jig task ship <id> --message-file <file>` | the git level (`agent.git`, or `autopilot.git` for a run) is not `none`, the knowledge decision is recorded, no P0/P1 finding blocks, the review receipt is current, the route has its records, the task is started on a branch other than its base, and its pull request is not merged |
 | `close` | `jig task set <id> status consolidated` | the knowledge decision is recorded, and the task opened no pull request or the forge cache says it merged |
-| `abandon` | `jig task abandon <id>` | the task is live |
+| `abandon` | `jig task abandon <id>`, with ` --reason <text>` for a task whose `task.md` has a `Spec:` line | the task is live |
 | `archive` | `jig task archive <id>` | the task is `active`, `ready` or `abandoned` |
 | `unarchive` | `jig task unarchive <id>` | the task is `archived` |
 | `reopen` | `jig task set <id> status active` | the task is `abandoned` |

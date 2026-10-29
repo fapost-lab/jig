@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -696,6 +696,167 @@ EOF
   run jig spec "done" T-1
   assert_eq 0 "$RC"
   assert_contains "$OUT" "spec done: T-1 checked in .ai/specs/alpha/roadmap.md"
+}
+
+# --- spec drop: an abandoned task's item says why ---------------------------
+# (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows)
+
+spec_drop_fixture() {
+  fixture_jig_repo
+  jig task new T-1 >/dev/null
+  mkdir -p .ai/specs/alpha
+  printf '# Alpha\n' > .ai/specs/alpha/spec.md
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-1/task.md
+  cat > .ai/specs/alpha/roadmap.md <<'EOF'
+## Phase 1 — First
+
+- [ ] `T-1` — Sentry reporting (after: `T-0`)
+  wired to the error handler
+- [ ] `T-2` — other thing
+
+## Waves
+
+1. Sentry reporting; T-2
+EOF
+}
+
+test_spec_drop_refuses_a_live_task() {
+  spec_drop_fixture
+  run jig spec drop T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 is active; abandon it first: jig task abandon T-1 --reason <text>"
+  grep -q '^- \[ \] `T-1`' .ai/specs/alpha/roadmap.md || fail "a live task's item was changed"
+}
+
+# The suffix ends the item — after its continuation line — and starts with a
+# dash between spaces, so the wave that names the item by title still does.
+test_spec_drop_closes_the_item_after_its_last_line_and_the_wave_still_names_it() {
+  spec_drop_fixture
+  run jig task abandon T-1 --reason "lives in monitoring"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 closed in .ai/specs/alpha/roadmap.md"
+  # Left dirty on the default branch, the edit would make the next task start
+  # refuse: it is landed by `spec ship`, from a branch of its own.
+  assert_contains "$OUT" "spec drop: land it with jig spec ship alpha --message-file <file>"
+  local today
+  today=$(date +%Y-%m-%d)
+  grep -q '^- \[x\] `T-1` — Sentry reporting (after: `T-0`)$' .ai/specs/alpha/roadmap.md \
+    || fail "T-1's item was not checked, or its first line changed"
+  grep -q "^  wired to the error handler — dropped ($today): lives in monitoring\$" .ai/specs/alpha/roadmap.md \
+    || fail "the suffix does not end T-1's item: $(cat .ai/specs/alpha/roadmap.md)"
+  grep -q '^- \[ \] `T-2` — other thing$' .ai/specs/alpha/roadmap.md || fail "T-2's item was changed"
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "problem"
+  assert_contains "$OUT" "item${tab}1${tab}T-1${tab}abandoned${tab}roadmap${tab}"
+  # A closed item counts as done: the why is in its text.
+  run jig spec list
+  assert_contains "$OUT" "roadmap 1/2 done, 1 filed"
+
+  # Run again: nothing left to rewrite.
+  run jig spec drop T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 already closed in .ai/specs/alpha/roadmap.md"
+}
+
+# Until the item is closed it is not done: an abandoned task never counts as
+# merged, so the plan holds the wave and the spec cannot close over it.
+test_spec_drop_an_unclosed_abandoned_item_holds_the_wave_and_the_close() {
+  spec_drop_fixture
+  # Abandoned in a phase run's task branch: the item stays for the coordinator.
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  jig task start T-1 >/dev/null
+  jig task autopilot T-1 start --phase alpha/1 >/dev/null
+  run jig task abandon T-1 --reason "moved" --moved-to "../mon#T-9"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "the coordinator rewrites its roadmap item after the merge, in the epic checkout: jig spec drop T-1"
+  grep -q '^- \[ \] `T-1`' .ai/specs/alpha/roadmap.md || fail "the roadmap was changed in a phase run's task branch"
+  run jig spec drop T-1
+  assert_eq 3 "$RC"
+
+  local tab
+  tab=$(printf '\t')
+  run jig spec plan alpha --phase 1 --format tsv
+  assert_contains "$OUT" "item${tab}1${tab}T-1${tab}abandoned${tab}no${tab}"
+  assert_contains "$OUT" "${tab}abandoned${tab}Sentry reporting"
+  run jig spec close alpha
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "item: \`T-1\` — Sentry reporting"
+
+  # The coordinator, in its own checkout, closes it.
+  git checkout -q main
+  run jig spec drop T-1
+  assert_eq 0 "$RC"
+  grep -q "wired to the error handler — moved to ../mon#T-9 ($(date +%Y-%m-%d)): moved\$" .ai/specs/alpha/roadmap.md \
+    || fail "the coordinator's drop did not close T-1's item: $(cat .ai/specs/alpha/roadmap.md)"
+}
+
+# A spec with no roadmap yet is an ordinary state: the abandon, and the
+# `spec remove --abandon-unstarted` that runs it, go through.
+test_spec_drop_of_a_spec_with_no_roadmap_is_not_an_error() {
+  spec_drop_fixture
+  rm .ai/specs/alpha/roadmap.md
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: .ai/specs/alpha/ has no roadmap.md here; nothing to rewrite"
+
+  jig task new T-2 >/dev/null
+  printf 'Spec: .ai/specs/alpha/\n' >> .ai/workspace/tasks/T-2/task.md
+  run jig spec remove alpha --abandon-unstarted
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "abandoned      T-2 (not started)"
+  assert_file_contains .ai/workspace/tasks/T-2/state "abandoned_reason: spec alpha removed"
+}
+
+# On the task's own branch — here or in its worktree — the edit would never
+# reach the base: the item waits for a checkout of the base.
+test_spec_drop_refuses_on_the_tasks_own_branch() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  jig task start T-1 >/dev/null
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 is checked out here on its own branch, which never ships; run jig spec drop T-1 in a checkout of main"
+  grep -q '^- \[ \] `T-1`' .ai/specs/alpha/roadmap.md || fail "the roadmap was changed on the task's own branch"
+  git checkout -q main
+  run jig spec drop T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 closed in .ai/specs/alpha/roadmap.md"
+}
+
+# Only a checkout of the task's base holds the roadmap the change lands on;
+# anywhere else the item waits for one.
+test_spec_drop_refuses_off_the_tasks_base() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  git checkout -q -b elsewhere
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: T-1 lands on main, which is not checked out here; run jig spec drop T-1 in a checkout of main"
+  grep -q '^- \[ \] `T-1`' .ai/specs/alpha/roadmap.md || fail "the roadmap was changed off the task's base"
+}
+
+# On an epic the change lands the way a phase run's checkmarks do: a local
+# commit the next pull request into the epic carries.
+test_spec_drop_on_an_epic_names_a_commit_there() {
+  spec_drop_fixture
+  printf 'Destination: done.\n\nEpic: epic/alpha\n' | cat - .ai/specs/alpha/roadmap.md > r.tmp && mv r.tmp .ai/specs/alpha/roadmap.md
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  git checkout -q -b epic/alpha
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: commit .ai/specs/alpha/roadmap.md on epic/alpha now; the next pull request into epic/alpha carries it"
+}
+
+test_spec_drop_with_no_item_naming_the_task_is_not_an_error() {
+  spec_drop_fixture
+  printf '%s\n' '- [ ] `T-2` — other thing' > .ai/specs/alpha/roadmap.md
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: no item in .ai/specs/alpha/roadmap.md names T-1; nothing to rewrite"
 }
 
 # A run that is not part of a phase run is untouched: the agent still checks
@@ -996,7 +1157,7 @@ test_spec_link_refuses_a_started_task() {
 
 test_spec_link_refuses_a_closed_task() {
   spec_link_fixture
-  jig task abandon T-1 >/dev/null 2>&1
+  jig task abandon T-1 --reason "not needed" >/dev/null 2>&1
   run jig spec link rel T-1
   assert_eq 1 "$RC"
   assert_contains "$OUT" "spec link: T-1 is abandoned; only a live task is linked"
@@ -1190,7 +1351,7 @@ test_spec_remove_keeps_abandoned_task_untouched() {
   cat >> .ai/workspace/tasks/T-1/task.md <<'EOF'
 Spec: .ai/specs/alpha/
 EOF
-  jig task abandon T-1 >/dev/null
+  jig task abandon T-1 --reason "not needed" >/dev/null
   cp .ai/workspace/tasks/T-1/task.md task.before
 
   run jig spec remove alpha
