@@ -8,6 +8,19 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.38.1 — 2026-10-29
+
+- **`jig task list` and `jig status --json` read each task once.** Each field of a task's state used
+  to cost a process of its own, so the listing slowed down with every task you filed; the output is
+  the same as before, byte for byte. Measured as the median of five runs on macOS (bash 3.2, arm64),
+  on a machine heavily loaded by other work, so the absolute times are pessimistic: in Jig's own
+  repository (14 tasks) `jig task list --all --json` went from 4.66 s to 0.71 s and
+  `jig status --json` from 0.65 s to 0.55 s; in a generated, synthetic project of 40 tasks,
+  `jig task list --all --json` went from 10.23 s to 0.98 s and `jig status --json` from 1.21 s to
+  0.78 s.
+- **`jig task set` names `triage_task` and `triage_of` as Jig's own.** It refused them before as an
+  unknown key; it now says `key is not writable`, as it does for the other keys only Jig writes.
+
 ## 0.38.0 — 2026-10-29
 
 What one agent knew now reaches the next one: the goal of a task, a neighbouring repository's
