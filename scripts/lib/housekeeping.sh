@@ -14,7 +14,7 @@
 # it lives in these run-scoped globals and in the log.
 _HK_VIA=""          # tier that decided the last remote state: forge|ancestry|none
 _HK_FORGE_KIND=""   # github|gitlab|none — resolved once per run
-_HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state><TAB><head-commit>" lines, fetched once per run (C1)
+_HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state><TAB><head-commit><TAB><url>" lines, fetched once per run (C1)
 _HK_STALE_REMOTE=0  # 1 when the fetch or the forge tier could not answer
 _HK_FORGE_TOKEN=""  # github|gitlab|none|failed — the run marker's forge= field
 _HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
@@ -660,10 +660,11 @@ _hk_check_latest_release() {
 # call per run, not per task: this command may fire at the start of every
 # agent session.
 #
-# One row per pull request: `<head>\t<base>\t<state>\t<head-commit>`. The
-# fourth column is read only by the branch sweep (_hk_branch_sweep), as the
+# One row per pull request: `<head>\t<base>\t<state>\t<head-commit>\t<url>`.
+# The fourth column is read by the branch sweep (_hk_branch_sweep), as the
 # commit a merged branch may be deleted at on origin; a row without it never
-# deletes anything there.
+# deletes anything there. The fourth and fifth go into the forge cache, where
+# `jig status` names an upgrade's pull request by them (lib/forgecache.sh).
 _hk_forge_init() {
   _HK_FORGE_PRS=""
   _HK_FORGE_KIND=$(jig_forge_kind) || exit 1
@@ -672,14 +673,15 @@ _hk_forge_init() {
   case "$_HK_FORGE_KIND" in
     github)
       _HK_FORGE_PRS=$(gh pr list --state all --limit 200 \
-        --json headRefName,baseRefName,state,headRefOid \
-        --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)\t\(.headRefOid)"' 2>/dev/null || printf '__failed__')
+        --json headRefName,baseRefName,state,headRefOid,url \
+        --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)\t\(.headRefOid)\t\(.url)"' 2>/dev/null || printf '__failed__')
       ;;
     gitlab)
       # A row needs a branch and a state; jig_glab_fields (common.sh) splits
-      # glab's compact array and drops objects without a source branch.
+      # glab's compact array and drops objects without a source branch. The
+      # merge request's own web_url, not its author's, which comes first.
       _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
-        | jig_glab_fields source_branch target_branch state sha \
+        | jig_glab_fields source_branch target_branch state sha web_url@/merge_requests/ \
         | awk -F '\t' '$3 != ""' \
         || printf '__failed__')
       ;;
@@ -753,7 +755,8 @@ _HK_PR_STATE_AWK='
 
 # _hk_forge_cache_write — keep what this run heard from the forge in the forge
 # cache (lib/forgecache.sh) for the reads that never ask it: one line per pull
-# request, `<head>\t<base>\t<state>\t<ci>\t<fetched_at>`, the state normalised
+# request, `<head>\t<base>\t<state>\t<ci>\t<fetched_at>\t<head-commit>\t<url>`,
+# the state normalised
 # as _hk_forge_state normalises it. Only after a list the forge answered: a run
 # without a forge or with a failed one leaves the last cache as it is, every
 # entry still carrying the time it was heard. Never fails the run.
@@ -779,7 +782,10 @@ _hk_forge_cache_write() {
       c = "-"
       if (s == "open" && (($2 FS $3) in ci)) c = ci[$2 FS $3]
       if (c != "green" && c != "red" && c != "pending" && c != "none") c = "-"
-      print $2 "\t" $3 "\t" s "\t" c "\t" at
+      h = $5; u = $6
+      if (h !~ /^[0-9a-f]+$/) h = "-"
+      if (u == "" || u ~ /[[:space:]]/ || u == "null") u = "-"
+      print $2 "\t" $3 "\t" s "\t" c "\t" at "\t" h "\t" u
     }') || return 0
   forgecache_write "$rows"
 }

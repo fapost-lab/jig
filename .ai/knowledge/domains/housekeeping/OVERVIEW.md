@@ -40,8 +40,10 @@ evidence it inferred itself.
   (`_hk_task_facts`), read before the workspace moves: the purge is the last moment those
   facts exist anywhere (ADR-0027).
 - The **forge cache**, `.ai/runtime/forge-cache` (`lib/forgecache.sh`, schemas/json.md): what
-  the run heard from the forge about each pull request — `<head> <base> <state> <ci> <fetched_at>`
-  — kept for `jig task list --json`, which never asks the forge itself. States come from the list
+  the run heard from the forge about each pull request —
+  `<head> <base> <state> <ci> <fetched_at> <head_commit> <url>`, the last two `-` when unknown and
+  absent from a line an older run wrote — kept for `jig task list --json` and `jig status` (its
+  `upgrade-pull-request-*` items), which never ask the forge themselves. States come from the list
   the forge tier already fetches; on GitHub a second list call asks the checks of the open pull
   requests only (about 1 s, where the check rollup for all 200 in the first call cost 13 s instead
   of 2), so a run makes two calls whatever the number of tasks. Written atomically after a list the

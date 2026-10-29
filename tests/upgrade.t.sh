@@ -2200,3 +2200,287 @@ test_upgrade_json_reports_nothing_to_do_and_refuses_an_argument_as_usage() {
   assert_contains "$OUT" '"error":{"code":"usage","message":"upgrade: --from requires a value"}'
 }
 
+
+# --- jig upgrade --land (task upgrade-land) ------------------------------------
+
+# _land_project <state> [squash] [gitlab] — an installed project on main with
+# an origin, GitHub (or GitLab) as the forge and agent.git pr, whose upgrade to 9.9.9 went out as a
+# pull request: branch jig/upgrade-9.9.9 pushed with its upstream, this
+# checkout back on main at the old Jig. With <state> merged, origin's main
+# has the upgrade — by fast-forward, or as a commit of its own with `squash`,
+# as a forge's squash merge leaves it. A fake `gh` answers `pr list` with the
+# pull request in <state>, a fake `glab` `mr list` with it as GitLab's JSON
+# (its author's web_url first), and both record their calls in stub-bin/calls. Sets
+# LAND_REMOTE (the bare remote; the caller removes it) and LAND_SHA (the
+# branch's head); puts stub-bin/ on PATH for the caller through LAND_PATH.
+_land_project() {
+  local state="$1" squash="${2:-}" forge="${3:-github}" dir work glab_state
+  _unit_project
+  sed "s|^forge:.*|forge: $forge|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git commit -q -am "fixture: github is the forge"
+  LAND_REMOTE=$(mktemp -d "${TMPDIR:-/tmp}/jig-remote.XXXXXX")
+  git init -q --bare "$LAND_REMOTE"
+  git remote add origin "$LAND_REMOTE"
+  git push -q origin main
+  git fetch -q origin
+  git branch -q --set-upstream-to=origin/main main
+  jig config set --local agent.git pr >/dev/null
+  git checkout -q -b jig/upgrade-9.9.9
+  sed 's/^jig\.version: .*/jig.version: 9.9.9/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "Upgrade Jig to 9.9.9"
+  git push -q -u origin jig/upgrade-9.9.9
+  LAND_SHA=$(git rev-parse HEAD)
+  git checkout -q main
+  if [ "$state" = merged ]; then
+    if [ -n "$squash" ]; then
+      work=$(mktemp -d "${TMPDIR:-/tmp}/jig-land-work.XXXXXX")
+      git clone -q "$LAND_REMOTE" "$work"
+      ( cd "$work" && git checkout -q main \
+        && sed 's/^jig\.version: .*/jig.version: 9.9.9/' .ai/manifest > manifest.tmp \
+        && mv manifest.tmp .ai/manifest && git commit -q -am "Upgrade Jig to 9.9.9 (#12)" \
+        && git push -q origin main )
+      rm -rf "$work"
+    else
+      git push -q origin "$LAND_SHA:refs/heads/main"
+    fi
+  fi
+  dir="$PWD"
+  mkdir -p stub-bin
+  printf 'jig/upgrade-9.9.9\t%s\t%s\thttps://github.com/example/example/pull/12\n' \
+    "$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')" "$LAND_SHA" > stub-bin/prs
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$dir/stub-bin/calls"
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") cat "$dir/stub-bin/prs" ;;
+  *) exit 1 ;;
+esac
+STUB
+  glab_state=$state
+  [ "$state" != open ] || glab_state=opened
+  printf '[{"iid":12,"source_branch":"jig/upgrade-9.9.9","target_branch":"main","state":"%s","author":{"web_url":"https://gitlab.com/someone"},"sha":"%s","web_url":"https://gitlab.com/example/example/-/merge_requests/12"}]\n' \
+    "$glab_state" "$LAND_SHA" > stub-bin/mrs
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$dir/stub-bin/calls"
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "mr list") cat "$dir/stub-bin/mrs" ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x stub-bin/gh stub-bin/glab
+  printf 'stub-bin/\nmanifest.tmp\n' >> .git/info/exclude
+  LAND_PATH="$PWD/stub-bin:$PATH"
+}
+
+# The merged upgrade is brought here from main: fast-forwarded to origin's,
+# the branch let go here and on origin, at the head the forge merged.
+test_upgrade_land_brings_a_merged_upgrade_here() {
+  _land_project merged
+  PATH=$LAND_PATH
+
+  run jig upgrade --land
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "upgrade: landed jig/upgrade-9.9.9 (https://github.com/example/example/pull/12); on main at"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9 on origin"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse HEAD)"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9"
+  if git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the local branch is still here"; fi
+  if git -C "$LAND_REMOTE" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the branch is still on origin"; fi
+  assert_contains "$(cat stub-bin/calls)" "pr list --state all --base main"
+
+  # Landed once, there is nothing left to land.
+  run jig upgrade --land
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "upgrade: no merged upgrade waits to be brought here"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# A squash merge leaves the branch out of main's history; standing on the
+# upgrade branch itself, --land still goes back to main and lets it go.
+test_upgrade_land_from_the_upgrade_branch_after_a_squash_merge() {
+  _land_project merged squash
+  PATH=$LAND_PATH
+  git checkout -q jig/upgrade-9.9.9
+
+  run jig upgrade --land
+  assert_eq 0 "$RC"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse HEAD)"
+  assert_contains "$(git log -1 --format=%s)" "(#12)"
+  assert_contains "$OUT" "upgrade: deleted branch jig/upgrade-9.9.9"
+  if git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9; then fail "the local branch is still here"; fi
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# An open pull request is not landed: nothing moves, and the refusal names it.
+test_upgrade_land_refuses_an_upgrade_not_merged_yet() {
+  _land_project open
+  PATH=$LAND_PATH
+  local head
+  head=$(git rev-parse HEAD)
+
+  run jig upgrade --land
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the pull request of jig/upgrade-9.9.9 is not merged yet (https://github.com/example/example/pull/12)"
+  assert_contains "$OUT" "Nothing was changed"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  _up_json upgrade --land --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-merged","message":"upgrade --land: the pull request of jig/upgrade-9.9.9 is not merged yet'
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# Uncommitted work and a checkout on somebody else's branch stop it, both
+# named at once; nothing is stashed and nothing moves.
+test_upgrade_land_refuses_a_dirty_tree_on_another_branch() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local head
+  git checkout -q -b task/elsewhere
+  printf 'work\n' >> README.md
+  head=$(git rev-parse HEAD)
+
+  _up_json upgrade --land --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"upgrade-blocked","message":"upgrade --land: nothing was changed:\n  - the working tree has uncommitted changes'
+  assert_contains "$OUT" '\n  - this checkout is on task/elsewhere, not on main or jig/upgrade-9.9.9'
+  assert_eq task/elsewhere "$(git symbolic-ref --short HEAD)"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  assert_contains "$(git diff --name-only)" README.md
+  [ -z "$(git stash list)" ] || fail "something was stashed"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# A main here with a commit origin's does not have cannot be fast-forwarded,
+# and is never forced.
+test_upgrade_land_refuses_a_base_that_cannot_be_fast_forwarded() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local head
+  git commit -q --allow-empty -m "local only"
+  head=$(git rev-parse HEAD)
+
+  run jig upgrade --land
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "main here has commits origin/main does not have, so it cannot be fast-forwarded"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# The data a program gates its buttons on: the shape of `jig upgrade --json`,
+# with what --land did beside it. Below agent.git push, origin is not touched.
+test_upgrade_land_json_reports_a_landed_upgrade() {
+  _land_project merged
+  PATH=$LAND_PATH
+  jig config set --local agent.git commit >/dev/null
+  local from
+  from=$(sed -n 's/^jig.version: //p' .ai/manifest)
+
+  _up_json upgrade --land --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | grep -c .)" "stdout held more than one line: $OUT"
+  assert_contains "$OUT" '"data":{"mode":"copy","dry_run":false,"from":"'"$from"'","to":"9.9.9","outcome":"landed","files":null,"git":{"level":"commit","branch":"jig/upgrade-9.9.9","commit":"'"$(git rev-parse HEAD)"'","pushed":true,"pull_request":"https://github.com/example/example/pull/12","merged":true},"land":{"base":"main","branch_deleted":true,"origin_branch_deleted":false},"manual_steps":[],"would_stop":[]}}'
+  assert_contains "$ERR" "upgrade: landed jig/upgrade-9.9.9"
+  git -C "$LAND_REMOTE" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "origin's branch was deleted below agent.git push"
+
+  _up_json upgrade --land --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"nothing-to-do","files":null,"git":null,"land":null'
+
+  rm -rf "$LAND_REMOTE"
+}
+
+test_upgrade_land_takes_no_other_argument() {
+  _unit_project
+  _up_json upgrade --land --dry-run --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"usage","message":"upgrade: --land takes no other argument: --dry-run"}'
+}
+
+# GitLab answers as a merge request, whose own web_url follows its author's.
+test_upgrade_land_asks_gitlab_for_the_merge_request() {
+  _land_project merged "" gitlab
+  PATH=$LAND_PATH
+
+  run jig upgrade --land
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "upgrade: landed jig/upgrade-9.9.9 (https://gitlab.com/example/example/-/merge_requests/12)"
+  assert_contains "$(cat stub-bin/calls)" "mr list --all --target-branch main"
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse HEAD)"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# With git.delete_merged_branches false the upgrade still lands; its branch stays.
+test_upgrade_land_keeps_the_branch_when_the_key_is_off() {
+  _land_project merged
+  PATH=$LAND_PATH
+  jig config set --local git.delete_merged_branches false >/dev/null
+
+  _up_json upgrade --land --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"outcome":"landed"'
+  assert_contains "$OUT" '"land":{"base":"main","branch_deleted":false,"origin_branch_deleted":false}'
+  assert_eq "$(git rev-parse origin/main)" "$(git rev-parse HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the local branch was deleted"
+  git -C "$LAND_REMOTE" show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "origin's branch was deleted"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# On the upgrade branch with main checked out in another worktree, git could
+# not switch here: refused, nothing moved.
+test_upgrade_land_refuses_a_base_checked_out_elsewhere() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local wt
+  git checkout -q jig/upgrade-9.9.9
+  wt=$(mktemp -d "${TMPDIR:-/tmp}/jig-land-wt.XXXXXX")
+  rmdir "$wt"
+  git worktree add -q "$wt" main
+
+  run jig upgrade --land
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "main is checked out in another worktree; run \`jig upgrade --land\` there"
+  assert_eq jig/upgrade-9.9.9 "$(git symbolic-ref --short HEAD)"
+
+  git worktree remove --force "$wt"
+  rm -rf "$LAND_REMOTE"
+}
+
+# The forge says merged, but origin/main here does not have the upgrade (a
+# fetch that failed only warns): nothing is called landed, the branch stays.
+test_upgrade_land_refuses_an_origin_base_without_the_upgrade() {
+  _land_project open
+  PATH=$LAND_PATH
+  local head
+  sed 's/\tOPEN\t/\tMERGED\t/' stub-bin/prs > stub-bin/prs.new
+  mv stub-bin/prs.new stub-bin/prs
+  head=$(git rev-parse HEAD)
+
+  _up_json upgrade --land --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"upgrade-blocked"'
+  assert_contains "$OUT" "origin/main here does not record Jig 9.9.9 yet"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  rm -rf "$LAND_REMOTE"
+}
+

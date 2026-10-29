@@ -2967,17 +2967,14 @@ STUB
   git remote add origin https://github.com/example/example.git 2>/dev/null || true
 }
 
-# The cache's rows with fetched_at replaced by T once its form is checked.
+# The cache's rows with fetched_at, the fifth column, replaced by T once its
+# form is checked.
 hk_cache_rows() {
-  local at
-  sed '/^#/d' .ai/runtime/forge-cache | while IFS= read -r line; do
-    at=${line##*"$(printf '\t')"}
-    case "$at" in
-      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
-      *) printf 'bad fetched_at: %s\n' "$line"; continue ;;
-    esac
-    printf '%s\tT\n' "${line%"$(printf '\t')"*}"
-  done
+  sed '/^#/d' .ai/runtime/forge-cache | awk -F '\t' -v OFS='\t' '
+    $5 !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ {
+      print "bad fetched_at: " $0; next
+    }
+    { $5 = "T"; print }'
 }
 
 test_housekeeping_keeps_the_forge_answer_in_the_forge_cache() {
@@ -2985,7 +2982,7 @@ test_housekeeping_keeps_the_forge_answer_in_the_forge_cache() {
   t=$(printf '\t')
   hk_setup
   hk_cfg forge github
-  hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa
+  hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa${t}https://github.com/example/example/pull/1
 task/b${t}epic/x${t}MERGED${t}bbb
 task/c${t}main${t}CLOSED${t}ccc
 task/d${t}main${t}OPEN${t}ddd" "task/a${t}main${t}green
@@ -2995,10 +2992,11 @@ task/d${t}main${t}weird"
   assert_file .ai/runtime/forge-cache
   # Normalised states; CI for open requests only, and `-` for a word the cache
   # does not know rather than whatever the forge said.
-  assert_eq "task/a${t}main${t}open${t}green${t}T
-task/b${t}epic/x${t}merged${t}-${t}T
-task/c${t}main${t}closed${t}-${t}T
-task/d${t}main${t}open${t}-${t}T" "$(hk_cache_rows)"
+  # The head and the address follow, `-` where the forge said nothing.
+  assert_eq "task/a${t}main${t}open${t}green${t}T${t}aaa${t}https://github.com/example/example/pull/1
+task/b${t}epic/x${t}merged${t}-${t}T${t}bbb${t}-
+task/c${t}main${t}closed${t}-${t}T${t}ccc${t}-
+task/d${t}main${t}open${t}-${t}T${t}ddd${t}-" "$(hk_cache_rows)"
   # Two list calls for the run, whatever the number of tasks.
   assert_eq 2 "$(grep -c '^pr list' stub-bin/calls)"
   assert_contains "$(cat stub-bin/calls)" "--state open"
@@ -3014,7 +3012,7 @@ test_housekeeping_forge_cache_keeps_states_when_the_checks_do_not_answer() {
   hk_cfg forge github
   hk_stub_gh_lists "task/a${t}main${t}OPEN${t}aaa" FAIL
   run jig housekeeping
-  assert_eq "task/a${t}main${t}open${t}-${t}T" "$(hk_cache_rows)"
+  assert_eq "task/a${t}main${t}open${t}-${t}T${t}aaa${t}-" "$(hk_cache_rows)"
 }
 
 # A run that heard nothing — the forge failed, there is none, or the run is
@@ -3060,7 +3058,7 @@ test_housekeeping_forge_cache_from_gitlab_has_no_ci() {
 printf '%s\n' "\$*" >> "$PWD/stub-bin/calls"
 case "\$1" in
   auth) exit 0 ;;
-  mr) printf '[{"iid":1,"source_branch":"task/a","target_branch":"main","state":"opened","sha":"aaa"},{"iid":2,"source_branch":"task/b","target_branch":"main","state":"merged","sha":"bbb"}]\n' ;;
+  mr) printf '[{"iid":1,"source_branch":"task/a","target_branch":"main","state":"opened","author":{"web_url":"https://gitlab.com/someone"},"sha":"aaa","web_url":"https://gitlab.com/example/example/-/merge_requests/1"},{"iid":2,"source_branch":"task/b","target_branch":"main","state":"merged","sha":"bbb"}]\n' ;;
 esac
 STUB
   chmod +x stub-bin/glab
@@ -3070,8 +3068,9 @@ STUB
   git remote add origin https://gitlab.com/example/example.git
 
   run jig housekeeping
-  assert_eq "task/a${t}main${t}open${t}-${t}T
-task/b${t}main${t}merged${t}-${t}T" "$(hk_cache_rows)"
+  # The merge request's own address, not its author's, which comes first.
+  assert_eq "task/a${t}main${t}open${t}-${t}T${t}aaa${t}https://gitlab.com/example/example/-/merge_requests/1
+task/b${t}main${t}merged${t}-${t}T${t}bbb${t}-" "$(hk_cache_rows)"
   assert_eq 1 "$(grep -c '^mr ' stub-bin/calls)"
 }
 
