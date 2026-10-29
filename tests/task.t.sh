@@ -3841,6 +3841,15 @@ ship_cfg() {
   mv .ai/config.yaml.tmp .ai/config.yaml
 }
 
+# ship_exclude_fixture — the test's own scaffolding (the bare origin, the gh
+# stub and what it logs) is not a new file of the task's: kept out of what
+# `task ship` reads as new files through .git/info/exclude, never .gitignore,
+# which is tracked. msg.txt stays visible on purpose: ship must leave the
+# message file out by itself.
+ship_exclude_fixture() {
+  printf '%s\n' origin.git stub-bin 'gh-*' 'glab-*' '*.log' '*.argv' '*.tmp' >> .git/info/exclude
+}
+
 # ship_setup — a clean repository with a bare `origin`, task T-1 filed and
 # started on its own branch, and a commit message ready in msg.txt.
 # `agent.git` is left unset (default `none`) and `knowledge_consolidated`
@@ -3852,6 +3861,7 @@ ship_setup() {
   git fetch -q origin
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
+  ship_exclude_fixture
   printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
 }
 
@@ -3871,6 +3881,7 @@ ship_setup_forge() {
   git fetch -q origin
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
+  ship_exclude_fixture
   printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
   ship_stub_gh ""
 }
@@ -4103,15 +4114,14 @@ test_task_ship_empty_index_with_a_clean_tree_ships_the_earlier_commit() {
   assert_eq "$head_before" "$(git rev-parse HEAD)"
 }
 
-# Nothing to commit is an outcome, not a line in the log (common.sh,
-# jig_ship_commit). The branch here carries a commit of its own, so the order
-# check below would pass and the pull request would not even look wrong: it
-# would carry the earlier commit and not the change, and at `agent.git: merge`
-# nothing afterwards would notice — a pull request without the change has
-# nothing to make CI red, so it goes green and merges itself.
-test_task_ship_unstaged_change_refuses_and_ships_nothing() {
+# An empty index is the agent that forgot `git add`, not a choice to ship
+# nothing (adr-20261029-task-ship-stages-tracked-changes-and-refuses-new-files):
+# ship stages the tracked changes itself, so the change goes out with the
+# ship rather than being left in the working tree. The commit message file
+# sits untracked in the tree, as an agent's often does, and is never staged.
+test_task_ship_stages_tracked_changes_when_nothing_is_staged() {
   ship_setup_forge
-  ship_cfg_local agent.git merge
+  ship_cfg_local agent.git push
   task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
@@ -4120,11 +4130,64 @@ test_task_ship_unstaged_change_refuses_and_ships_nothing() {
 
   run jig task ship T-1 --message-file msg.txt
 
-  assert_eq 1 "$RC"
-  assert_contains "$OUT" "nothing is staged"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "nothing was staged; staged the tracked changes:"
   assert_contains "$OUT" "ship.txt"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_eq "" "$(git status --porcelain -- ship.txt)" "the change must be committed"
+  assert_contains "$(git show HEAD:ship.txt)" "the line the agent forgot to stage"
+  assert_contains "$(git status --porcelain -- msg.txt)" "?? msg.txt"
+}
+
+# A new file is where staging on the agent's behalf would cost the most: a
+# secret or a scratch file pushed to the forge is not taken back. So it is a
+# refusal, with nothing staged, committed or sent — never the earlier commit
+# pushed while the new file stays behind.
+test_task_ship_refuses_untracked_files_when_nothing_is_staged() {
+  ship_setup_forge
+  ship_cfg_local agent.git merge
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  git commit -q -m "committed by an earlier run"
+  printf 'tracked edit\n' >> ship.txt
+  printf 'new\n' > new.txt
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "nothing is staged, and these files are not tracked by git:"
+  assert_contains "$OUT" "new.txt"
+  assert_not_contains "$OUT" "msg.txt"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git diff --cached --name-only)" "nothing may be left staged"
   assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
   assert_no_file gh-calls.log "the forge must not be asked anything"
+}
+
+# A staged index is the agent's choice and is committed as it is; what it
+# leaves out is named, so a forgotten file is visible rather than silent.
+test_task_ship_names_what_a_staged_index_leaves_out() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  printf 'edit\n' >> .ai/config.yaml
+  printf 'left out\n' > other.txt
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "not part of this commit"
+  assert_contains "$OUT" ".ai/config.yaml"
+  assert_contains "$OUT" "other.txt"
+  assert_not_contains "$OUT" "msg.txt"
+  assert_contains "$(git status --porcelain -- .ai/config.yaml)" " M .ai/config.yaml"
 }
 
 # The order, not the wording (common.sh, "what a ship may send out"). Proved
@@ -4918,6 +4981,7 @@ rship_setup() {
   git fetch -q origin
   jig task new T-1 >/dev/null
   jig task start T-1 >/dev/null
+  ship_exclude_fixture
   printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
   mship_stub_gh
   ship_cfg_local agent.git merge
