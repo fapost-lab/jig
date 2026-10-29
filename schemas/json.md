@@ -49,7 +49,8 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
-| `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. `message` lists every reason, one per line, each with what to do |
+| `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. For `jig upgrade --land`: uncommitted changes, a checkout on another branch than the base or the upgrade's, the base checked out in another worktree, or a base that cannot be fast-forwarded to origin's. `message` lists every reason, one per line, each with what to do |
+| `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge. Nothing was changed; merge it and run the command again |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -190,10 +191,12 @@ pull requests — two calls a run, whatever the number of tasks. One line per pu
 first as the forge lists them, written atomically, `#` lines are comments:
 
 ```
-<head>	<base>	<state>	<ci>	<fetched_at>
+<head>	<base>	<state>	<ci>	<fetched_at>	<head_commit>	<url>
 ```
 
-`<ci>` is `-` when it was not asked. A task's entry is the first line for its branch and base, the
+`<ci>` is `-` when it was not asked; `<head_commit>` and `<url>`, the pull request's head and its
+address, are `-` when the forge did not say. A line written before those two columns existed ends
+at `<fetched_at>` and reads as if both were `-`. A task's entry is the first line for its branch and base, the
 join housekeeping's own remote state uses. A run whose forge did not answer, or that has no forge,
 leaves the last cache as it is: an old entry says how old it is through `fetched_at`, and is never
 refreshed by a reader. The file lives in the checkout that owns the task workspaces; a worktree
@@ -288,13 +291,17 @@ An item:
 | `detail` | string or null | why, for a person: the stop reason with its age, the housekeeping run a fact was borrowed from, a count |
 | `todo` | string | what the person should do, in plain words |
 | `url` | string or null | the pull request's address, for the pull request kinds when jig knows it |
+| `pull_request` | object | only on the two `upgrade-pull-request-*` kinds: `{"branch", "base", "state", "fetched_at"}` — the upgrade's branch (`jig/upgrade-<to>` or `jig/upgrade-<to>-<n>`), the base it goes into (`git.base_branch`), `open` or `merged`, and when housekeeping heard it from the forge |
+| `versions` | object | on `upgrade-available`, `{"from", "to"}`; on the two `upgrade-pull-request-*` kinds, `{"to"}`, the version the branch is named for (`null` when the name holds none) |
 
 The kinds, in the order they are listed:
 
 | `kind` | `subject` | Needs a person because |
 |---|---|---|
 | `release-available` | project | a newer jig is out (`.ai/runtime/latest-release`, written by housekeeping) |
-| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine; `todo` is `jig upgrade`, and the item alone carries `versions: {from, to}` — the project's and the machine's |
+| `upgrade-pull-request-waiting` | project | an upgrade's pull request is open: the forge cache's newest line for a `jig/upgrade-*` branch into `git.base_branch` says `open`, and the base branch here does not already record its version (as it does right after `jig upgrade --land`, before housekeeping hears the merge). Merge it, then `jig upgrade --land`. One item per such branch |
+| `upgrade-pull-request-merged` | project | an upgrade's pull request was merged, and the base branch here (`refs/heads/<git.base_branch>`) still records an older Jig than the version its branch is named for; `todo` is `jig upgrade --land`. A merged upgrade the base here already carries makes no item |
+| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine; `todo` is `jig upgrade`, and the item carries `versions: {from, to}` — the project's and the machine's. Not listed while an `upgrade-pull-request-*` item is: `jig upgrade` again would cut a second branch for the same upgrade |
 | `phase-stopped` | phase | tasks of a phase run stopped; answered once, in the coordinator's session |
 | `autopilot-stopped` | task | an autopilot run stopped with a question |
 | `gate-waiting` | task | a T3/T4 design waits at its human gate |
@@ -309,6 +316,11 @@ The kinds, in the order they are listed:
 | `worktree-kept` | task | a worktree was kept because it still holds work |
 | `knowledge-proposed` | project | knowledge documents wait for a decision |
 | `sources-changed` | project | adopted source files changed since they were approved |
+
+The two `upgrade-pull-request-*` kinds come from the forge cache (above), never from the forge
+itself, so they are as fresh as the last `jig housekeeping`; `jig upgrade --land` asks the forge
+before it changes anything. The plain `jig status` prints the same facts as `upgrade pull request:`
+lines.
 
 A new kind may be added without raising `schema`; a program shows an unknown kind by its `title`,
 `detail` and `todo`. The person-facing strings are not a contract: read `kind`, `subject` and
@@ -525,3 +537,37 @@ made — reads `failed`. A failure after the commit (the push, the pull request 
 reads `failed` and carries no data: the commit and the branch are already there, and the push or
 the pull request is left to the person — a second run stages nothing and ends `nothing-to-do`.
 
+## `jig upgrade --land --json`
+
+`jig upgrade --land` brings an upgrade that ended in a pull request here once the forge has merged
+it: it asks the forge for the pull requests of `jig/upgrade-*` branches into `git.base_branch`,
+fetches the base, checks the base branch out (from the base or from the upgrade's own branch),
+fast-forwards it to `origin/<base>` and lets the upgrade's branch go the way a merge Jig made itself
+does — here when git sees its work merged, and on origin, at the head the forge merged, only at
+`agent.git` `push` or above. It never stashes and never forces. `--land` takes no other argument
+but `--json`, and reads no framework source.
+
+The upgrade it lands is the newest merged one with something left to do here: its version not yet
+on the base branch here, or its branch still here. Standing on an upgrade branch, only that
+branch's pull request counts.
+
+```json
+{"mode": "copy", "dry_run": false, "from": "0.38.1", "to": "0.39.0", "outcome": "landed",
+ "files": null,
+ "git": {"level": "pr", "branch": "jig/upgrade-0.39.0", "commit": "<sha>", "pushed": true,
+         "pull_request": "<url>", "merged": true},
+ "land": {"base": "main", "branch_deleted": true, "origin_branch_deleted": true},
+ "manual_steps": [], "would_stop": []}
+```
+
+| Field | Meaning |
+|---|---|
+| `mode`, `dry_run`, `files`, `manual_steps`, `would_stop` | as in `jig upgrade --json`; `dry_run` is `false`, `files` `null`, the two lists empty |
+| `from`, `to` | the Jig the base branch here recorded before (`jig.version` in its manifest) and after the fast-forward; on `nothing-to-do` both are the base's |
+| `outcome` | `landed`, or `nothing-to-do` when no merged upgrade waits to be brought here (and none is open) |
+| `git` | on `landed`: `level` (`agent.git`), the upgrade's `branch`, the `commit` the base is on now, `pushed` and `merged` (both `true`), and the `pull_request` URL or `null`. `null` on `nothing-to-do` |
+| `land` | on `landed`: the `base` checked out, and whether the upgrade's branch was deleted here (`branch_deleted`) and on origin (`origin_branch_deleted`). A branch kept says why in the text on stderr. `null` on `nothing-to-do` |
+
+Refusals: `not-merged` when the pull request is still open; `upgrade-blocked` with every reason at
+once; `usage` for any other argument. Both change nothing. No origin, no signed-in forge CLI, or a
+forge that did not answer read `failed` and change nothing either.

@@ -162,7 +162,8 @@ Project Git operations use your Git remote. Shipping and housekeeping also use y
 command-line tool: with `forge: auto` and `gh` or `glab` installed and signed in, housekeeping lists pull requests
 to learn whether a task was merged — also during a dry run, which otherwise skips `git fetch`. Outside
 a dry run it lists the open ones' checks too (one more call on GitHub), and keeps what it heard in
-`.ai/runtime/forge-cache`, which `jig task list --json` reads instead of asking the forge.
+`.ai/runtime/forge-cache`, which `jig task list --json` and `jig status` read instead of asking the forge.
+`jig upgrade --land` asks the forge itself, once, before it changes anything.
 `forge: none` turns forge lookup off. Installation and self-update also access the framework
 source and releases; the Windows installer can download Git, as described above. Carrying state
 into a worktree touches no network either: a profile's `install` command is printed for you to

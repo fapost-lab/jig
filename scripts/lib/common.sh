@@ -1041,15 +1041,24 @@ jig_forge_kind() {
 # array, so it is split into one object per line first: a greedy `.*` across
 # the whole line would keep only the last merge request. Each field is taken
 # at its first occurrence, whatever the key order: nested objects (author,
-# assignees) carry a `state` of their own, later on. Housekeeping and
+# assignees) carry a `state` of their own, later on. A key written
+# `<key>@<text>` takes the first occurrence whose value contains <text>
+# instead: an object's `web_url` comes after its author's. Housekeeping and
 # jig_ship_pr both read `glab` through this, so they cannot disagree on it.
 jig_glab_fields() {
   sed 's/},[[:space:]]*{/}\
 {/g' | awk -v keys="$*" '
-    function field(key,   k) {
+    function field(key,   k, need, rest, v) {
+      need = ""
+      if (index(key, "@")) { need = substr(key, index(key, "@") + 1); key = substr(key, 1, index(key, "@") - 1) }
       k = "\"" key "\":\""
-      if (!match($0, k "[^\"]*\"")) return ""
-      return substr($0, RSTART + length(k), RLENGTH - length(k) - 1)
+      rest = $0
+      while (match(rest, k "[^\"]*\"")) {
+        v = substr(rest, RSTART + length(k), RLENGTH - length(k) - 1)
+        if (need == "" || index(v, need)) return v
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      return ""
     }
     BEGIN { n = split(keys, want, " ") }
     {

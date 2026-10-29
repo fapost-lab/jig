@@ -406,6 +406,18 @@ Branches that were already in progress get the upgrade when you merge the base b
 If nothing needed changing, the run goes back to the branch you were on and removes the one it
 made.
 
+Once you have merged the upgrade's pull request, bring it here in one step:
+
+```bash
+jig upgrade --land
+```
+
+It asks the forge whether the pull request is merged, puts you on the base branch, fast-forwards it
+to origin's and deletes the upgrade's branch, here and — when your agent may push — on origin. It
+refuses, changing nothing, while the pull request is still open, while you have uncommitted changes,
+when you are on another branch than the base or the upgrade's, or when your base branch has commits
+origin does not have. Until then `jig status` reminds you with an `upgrade pull request:` line.
+
 A program — Jig UI, a script that upgrades many projects — runs `jig upgrade --json` and reads what
 the run did instead of these lines: the outcome, the branch, the commit and the pull request, and
 the steps the release asks for by hand ([Reading Jig as data](/reading-jig-as-data#upgrading-a-project)).

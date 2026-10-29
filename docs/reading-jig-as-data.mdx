@@ -243,7 +243,12 @@ requests to review, merge or close (`pull-request-waiting`, `pull-request-was-op
 `closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
 a newer jig (`release-available`), and a project whose own Jig is older than the one on your machine
 (`upgrade-available` — the item a program lists to show which projects need `jig upgrade`; it alone
-carries `"versions": {"from": "0.32.0", "to": "0.33.0"}`, the project's Jig and your machine's).
+carries `"versions": {"from": "0.32.0", "to": "0.33.0"}`, the project's Jig and your machine's),
+and an upgrade that ended in a pull request: `upgrade-pull-request-waiting` while it is open,
+`upgrade-pull-request-merged` once it is merged but your base branch here still has the old Jig.
+Both carry `"pull_request": {"branch", "base", "state", "fetched_at"}` and `"versions": {"to"}`, and
+while one stands `upgrade-available` is not listed: what the project needs is the merge and
+`jig upgrade --land`, not a second upgrade.
 
 Pull request items are as old as the last `jig housekeeping` run; `housekeeping.stale` is `true`
 when that run is older than your housekeeping cadence or the forge did not answer, so one may be
@@ -412,6 +417,21 @@ request and whether it was merged. `manual_steps` lists what this release asks f
 can do those, a script cannot. `jig upgrade --dry-run --json` changes nothing and lists in
 `would_stop` what a real run would refuse for. Which projects need an upgrade at all is the
 `upgrade-available` item of `jig status --json` ([What needs you](#what-needs-you)).
+
+An upgrade at `agent.git: pr` ends with its pull request open and the project back on its base
+branch, still at the old Jig. `jig status --json` keeps saying so — `upgrade-pull-request-waiting`,
+then `upgrade-pull-request-merged` — so a program shows the state from the project, not from its
+own memory. Once it is merged, the program brings it in:
+
+```bash
+jig upgrade --land --json
+```
+
+It asks the forge, checks the base branch out, fast-forwards it to origin's and deletes the upgrade's
+branch. Its data has the shape of `jig upgrade --json` with `outcome` `landed` or `nothing-to-do`
+and a `land` object beside `git`. A pull request still open is refused as `not-merged`; uncommitted
+changes, a checkout on another branch or a base that cannot be fast-forwarded as `upgrade-blocked`.
+Neither changes anything.
 
 When the upgrade cannot start, it changes nothing and says why in its own code, with every reason in
 the message:

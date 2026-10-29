@@ -52,6 +52,8 @@ Usage: jig <command> [args]
   upgrade [--from <dir>] [--dry-run] [--json]
                                  update framework-owned files (manifest-aware); --json
                                  reports what it did as data (schemas/json.md)
+  upgrade --land [--json]        once an upgrade's pull request is merged: back on the
+                                 base branch, fast-forwarded, the upgrade branch let go
   status [--html | --open | --json]
                                  active tasks, housekeeping flags, drift;
                                  --html writes the status page to .ai/runtime/status.html,

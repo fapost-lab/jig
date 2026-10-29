@@ -3785,3 +3785,108 @@ test_status_json_is_unchanged_by_the_queue() {
   run jig status --json
   assert_not_contains "$OUT" "next:"
 }
+
+# --- an upgrade's pull request (task upgrade-land) ----------------------------
+
+# _st_upgrade_pr_repo — an installed project committed on main, no global jig
+# on PATH, saved counts with nothing to decide, and a forge cache holding the
+# lines given as arguments.
+_st_upgrade_pr_repo() {
+  fixture_jig_repo
+  git add -A
+  git commit -q -m "jig init"
+  PATH=$(_status_path_without_jig)
+  mkdir -p .ai/runtime
+  printf 'at: 2026-10-15T08:00:00Z\nproposals: 0\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+  printf '%s\n' "$@" > .ai/runtime/forge-cache
+}
+
+# An upgrade waiting for its merge is something a program keeps showing after
+# a restart: read from the forge cache, never from the program's memory.
+test_status_names_an_upgrade_pull_request_waiting_for_its_merge() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.9.9${t}main${t}open${t}pending${t}2026-10-20T10:00:00Z${t}abc123${t}https://github.com/o/r/pull/12" \
+    "task/other${t}main${t}open${t}green${t}2026-10-20T10:00:00Z${t}def456${t}https://github.com/o/r/pull/11"
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"attention":[{"kind":"upgrade-pull-request-waiting","subject":{"type":"project","id":null},"tasks":[],"title":"An upgrade of Jig waits for its pull request to be merged","detail":"jig/upgrade-9.9.9 into main, open as of 2026-10-20T10:00:00Z","todo":"Review and merge the pull request, then run jig upgrade --land to bring it here.","url":"https://github.com/o/r/pull/12","pull_request":{"branch":"jig/upgrade-9.9.9","base":"main","state":"open","fetched_at":"2026-10-20T10:00:00Z"},"versions":{"to":"9.9.9"}}]'
+
+  run jig status
+  assert_eq 0 "$RC"
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'upgrade pull request: jig/upgrade-9.9.9 into main open as of 2026-10-20T10:00:00Z (https://github.com/o/r/pull/12); merge it, then run `jig upgrade --land`'
+}
+
+# Merged on the forge, but main here still records the old Jig: the item asks
+# for `jig upgrade --land`. A cache line written before the head and url
+# columns existed still reads, with no url.
+test_status_names_a_merged_upgrade_not_brought_here() {
+  local t version
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.9.9-2${t}main${t}merged${t}-${t}2026-10-20T10:00:00Z"
+  version=$(_status_project_version)
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '{"kind":"upgrade-pull-request-merged","subject":{"type":"project","id":null},"tasks":[],"title":"An upgrade of Jig was merged but is not here yet","detail":"jig/upgrade-9.9.9-2 merged into main as of 2026-10-20T10:00:00Z; main here is still at '"$version"'","todo":"jig upgrade --land","url":null,"pull_request":{"branch":"jig/upgrade-9.9.9-2","base":"main","state":"merged","fetched_at":"2026-10-20T10:00:00Z"},"versions":{"to":"9.9.9"}}'
+
+  run jig status
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" "upgrade pull request: jig/upgrade-9.9.9-2 merged into main as of 2026-10-20T10:00:00Z, main here is still at $version; run \`jig upgrade --land\`"
+
+  # Once main here carries the version, the merged upgrade is history.
+  sed 's/^jig\.version: .*/jig.version: 9.9.9/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "landed"
+  _st_json
+  assert_not_contains "$OUT" "upgrade-pull-request"
+  run jig status
+  assert_not_contains "$OUT" "upgrade pull request:"
+}
+
+# Only Jig's own upgrade branches into the base, and only their newest pull
+# request: a closed one, one into another base and a branch of somebody
+# else's make no item.
+test_status_upgrade_pull_request_items_read_only_the_newest_into_the_base() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.9.9${t}main${t}closed${t}-${t}2026-10-21T10:00:00Z${t}-${t}-" \
+    "jig/upgrade-9.9.9${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}-" \
+    "jig/upgrade-8.8.8${t}develop${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}-" \
+    "my/upgrade-7.7.7${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}-"
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" "upgrade-pull-request"
+}
+
+# While an upgrade waits on its pull request, `upgrade-available` is not said:
+# a second `jig upgrade` would only cut a second branch for it (fapost-core
+# #322 and #323).
+test_status_json_holds_upgrade_available_back_while_an_upgrade_waits() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.0.0${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}https://github.com/o/r/pull/12"
+  _st_upgrade_item 9.0.0
+  assert_eq "" "$ITEM" "upgrade-available was offered beside the waiting upgrade"
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-waiting"'
+  rm -f .ai/runtime/forge-cache
+  _st_upgrade_item 9.0.0
+  assert_contains "$ITEM" '"kind":"upgrade-available"'
+}
+
+# Right after `jig upgrade --land` the cache may still say open: a base here
+# that already records the version makes no item. A branch name with no
+# version reads as `"to": null`.
+test_status_upgrade_waiting_is_quiet_once_the_base_has_its_version() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.9.9${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}-" \
+    "jig/upgrade-later${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}-"
+  sed 's/^jig\.version: .*/jig.version: 9.9.9/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "landed"
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"branch":"jig/upgrade-9.9.9"'
+  assert_contains "$OUT" '"pull_request":{"branch":"jig/upgrade-later","base":"main","state":"open","fetched_at":"2026-10-20T10:00:00Z"},"versions":{"to":null}}'
+}
