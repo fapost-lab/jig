@@ -77,6 +77,12 @@ Jig was installed in on one person's machine stopped `jig upgrade` on everybody 
   separate measurement of CPU time on a real project, on a machine at a load average of 130–200,
   gave about 1.2 s now, against 8.4 s on 0.38.1 and 1.0 s on 0.37.0. `jig status` and
   `jig task list --json` now read only the newest housekeeping run too; that was not measured.
+- **The housekeeping log stops growing.** Every `jig housekeeping` run now trims
+  `.ai/runtime/housekeeping.log` to the last ten runs, each with every record and at most 200
+  other lines of output, and of older runs keeps only the purge lines `jig measure` reads, so its
+  history is unchanged. On a copy of a real project's log that took 8.8 MB down to 91 KB. The log
+  is rewritten in place, and a trim that fails leaves it as it was. See
+  [What a removed worktree takes with it](/working-with-tasks#what-a-removed-worktree-takes-with-it).
 - **A program sees the upgrade's pull request.** `jig status --json` has two new kinds,
   `upgrade-pull-request-waiting` and `upgrade-pull-request-merged`, with `pull_request` and
   `versions` fields, and holds back `upgrade-available` while one stands; `jig upgrade --land
