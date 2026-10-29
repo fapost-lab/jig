@@ -183,6 +183,30 @@ jig() { "$JIG_BIN" "$@"; }
 # Run jig from the copy installed into the current project.
 jig_installed() { ".ai/scripts/jig" "$@"; }
 
+# path_without_jig [prepend-dir] — this run's PATH with every directory that
+# holds an executable `jig` left out, optionally with <prepend-dir> first. A
+# copy-mode install whose recorded source is gone reads from the global jig
+# (upgrade_source), so a test about "no source anywhere" must not find a
+# maintainer's real ~/.local/bin/jig — CI has none, and the same assertion
+# would pass there and fail on a laptop.
+path_without_jig() {
+  local prepend="${1:-}" dir out="" IFS=:
+  for dir in $PATH; do
+    [ -n "$dir" ] || continue
+    [ -x "$dir/jig" ] && continue
+    out="$out:$dir"
+  done
+  out="${out#:}"
+  if [ -n "$prepend" ]; then
+    printf '%s:%s\n' "$prepend" "$out"
+  else
+    printf '%s\n' "$out"
+  fi
+}
+
+# jig_installed_without_global ... — jig_installed with no global jig on PATH.
+jig_installed_without_global() { env PATH="$(path_without_jig)" ".ai/scripts/jig" "$@"; }
+
 # --- directory-link stubs (Windows Git Bash simulation) -----------------------
 #
 # On Windows Git Bash `ln -s` silently copies instead of linking, so

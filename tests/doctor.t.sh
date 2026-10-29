@@ -167,7 +167,7 @@ test_doctor_a_terminal_puts_a_failure_first() {
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
-  run env JIG_TERMINAL=1 NO_COLOR=1 .ai/scripts/jig doctor
+  run env JIG_TERMINAL=1 NO_COLOR=1 PATH="$(path_without_jig)" .ai/scripts/jig doctor
   assert_eq 1 "$RC"
   first=$(printf '%s\n' "$OUT" | sed -n 1p)
   assert_eq "fail  upgrade check: cannot determine pending state" "$first"
@@ -356,7 +356,8 @@ test_doctor_upgrade_check_fails_when_source_root_is_gone() {
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
-  run jig_installed doctor
+  # No global jig either: with one, upgrade_source reads from it.
+  run jig_installed_without_global doctor
   assert_eq 1 "$RC"
   assert_contains "$OUT" "fail  upgrade check: cannot determine pending state"
   # shellcheck disable=SC2016

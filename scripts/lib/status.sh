@@ -221,7 +221,7 @@ _status_report() {
   if manifest_exists; then
     local proj_version
     proj_version=$(manifest_header_get jig.version)
-    printf '%s\n' "manifest: version=$proj_version mode=$(manifest_header_get jig.mode) source=$(manifest_source)"
+    printf '%s\n' "manifest: version=$proj_version mode=$(manifest_header_get jig.mode) source=$(manifest_source 2>/dev/null || manifest_header_get jig.source)"
     _status_framework_versions "$proj_version"
     _status_upgrade_pr_lines
   else

@@ -21,7 +21,7 @@ paths:
   - templates/gitattributes
   - scripts/lib/section.sh
   - scripts/lib/output.sh
-reviewed_at: 2026-10-05
+reviewed_at: 2026-10-29
 ---
 # Install
 
@@ -111,7 +111,11 @@ project owns.
   on the way in.
 - The global framework: `install.sh` bootstraps a per-user checkout at the newest release
   tag, `jig self-update` moves it forward, and `jig status` compares the version it declares
-  with the project's installed one. Release tags are the update channel and `main` the
+  with the project's installed one. A plain `jig upgrade` finds its source in a fixed order
+  (`upgrade_source`): the checkout the running jig belongs to, the manifest's recorded source
+  when it is a checkout on this machine, then the global framework; the manifest records the
+  global framework as `jig.source: global`, never as the installing person's path
+  (adr-20261029-the-manifest-names-the-global-framework-not-its-path). Release tags are the update channel and `main` the
   development channel (ADR-0033). Moving the global framework never changes a project; only
   `upgrade` does.
 - Windows (ADR-0037): `install.ps1` brings Git for Windows, runs `install.sh --no-path`, puts
