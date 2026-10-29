@@ -62,6 +62,29 @@ If the trouble turns out to be Jig itself rather than your project, see [Known i
 
 ## Verification and upgrades
 
+<Danger>
+  **`upgrade: cannot determine the framework source root; pass --from <dir>` in a project on Jig
+  0.38.1 or older** usually means `.ai/manifest` has a `jig.source:` line naming another person's
+  folder. The project's own copy cannot get past it — nor can your agent, or a `jig` shell function
+  or alias that runs that copy. Run the upgrade once with the Jig on your machine, by its full path,
+  in the project's root folder. macOS and Linux:
+
+  ```bash
+  ~/.local/bin/jig self-update
+  ~/.local/bin/jig upgrade
+  ```
+
+  Windows, in Git Bash:
+
+  ```bash
+  ~/.local/share/jig/scripts/jig self-update
+  ~/.local/share/jig/scripts/jig upgrade
+  ```
+
+  Afterwards `.ai/manifest` says `jig.source: global` and a plain `jig upgrade` works. More in
+  [Upgrading](/upgrading#from-0381-to-0390).
+</Danger>
+
 | Symptom | What to do |
 |---|---|
 | Verification reports skips | The project's tools are missing — install its dependencies (`npm install`, `composer install`, a virtual environment …) and run it again. A skip is not a pass. |
@@ -79,5 +102,5 @@ If the trouble turns out to be Jig itself rather than your project, see [Known i
 | `upgrade` kept some files | You edited them; the report marks them `keep-modified` or `keep-conflict`. Compare with the new version and reconcile by hand. A file marked `already-placed` needs nothing from you: it already holds this version's bytes, and the run has just recorded that. |
 | `jig status` reports **drift** on framework files right after an upgrade | The upgrade was carried out by the version being replaced, which recorded the hashes the way it computed them. Run `jig upgrade` once more: the new code recognises the files as already placed, records them, and the drift goes. Nothing is wrong with the files themselves. |
 | `upgrade` says **N item(s) still not installed** | The run asked the install it had just made, and something is missing — usually because the upgrade was carried out by the older version, which did not know about every file the new one ships. Run `jig upgrade` again; the second run is done by the new code and finishes the job. |
-| `upgrade` cannot determine the framework source | The project's copy found no Jig to copy from: it is not a framework checkout, there is no `jig` on your `PATH`, and the source `.ai/manifest` records is not on this machine. Install Jig ([Install](/install)), or pass `--from /absolute/path/to/jig`. A copy older than this fix also stops here when the manifest names another person's path; run the upgrade with the Jig on your machine once (`~/.local/bin/jig upgrade`). |
+| `upgrade` cannot determine the framework source | The project's copy found no Jig to copy from: it is not a framework checkout, there is no `jig` on your `PATH`, and the source `.ai/manifest` records is not on this machine. Install Jig ([Install](/install)), or pass `--from /absolute/path/to/jig`. A project on Jig 0.38.1 or older also stops here, with `upgrade: cannot determine the framework source root; pass --from <dir>`, when the manifest names another person's folder: see the red box above this table. |
 | `upgrade` says `manifest unchanged` | It placed nothing, so the project stays on the checkout it was installed from. To move it onto the one you passed, run `jig init --from <dir>` (add `--link` in link mode). |

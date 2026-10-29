@@ -28,6 +28,12 @@ task reads as verified even if files changed afterwards, and a change can be shi
 that was earned by a different tree. The result gets pinned to its inputs, the way the review is,
 and a moved tree asks for a new run.
 
+**Following an upgrade's pull request must not hide or misreport.** 0.39.0 made `jig status` follow
+an upgrade's pull request and added `jig upgrade --land`. Three faults came with it: an old upgrade
+pull request left open hides a newer upgrade, a failing `glab` reads as nothing to land, and
+`--land` in a linked worktree on the upgrade's branch moves that worktree's checkout
+([Known issues](/known-issues)).
+
 ## Then: what costs you time
 
 **A second review round must not open a new front.** A repeat review already reads only what
@@ -80,5 +86,7 @@ paused task from a program is in 0.35.0; the archive and the links between merge
 `jig task list --json` from 0.37.0; whether a roadmap item counts as done, merged work included, is
 in `jig spec list --json` from 0.38.0; `jig task list --json` no longer starts processes for every
 field of every task from 0.38.1, so `jig task list --all --json` on a project with dozens of tasks takes about a second
-rather than about ten (measured on a synthetic project of 40 tasks; see the [changelog](/changelog)). Its plans
+rather than about ten (measured on a synthetic project of 40 tasks; see the [changelog](/changelog));
+an upgrade's pull request is in `jig status --json`, and `jig upgrade --land --json` brings it in once
+merged, from 0.39.0, so a program no longer has to remember it. Its plans
 live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).
