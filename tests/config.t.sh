@@ -705,7 +705,8 @@ _config_declared() {
 }
 
 # _config_read_sites — `<key><TAB><default>` for every literal call to a
-# config reader in the framework's own scripts, computed, not listed. Comment
+# config reader in the framework's own scripts, computed, not listed.
+# `cfg_v <var> <key> [default]` is read past its variable name. Comment
 # lines are skipped, and a key written as a variable cannot match, so a reader
 # called with one would go unseen — today none is, and the inventory test
 # below is what would notice it as a missing key.
@@ -716,7 +717,7 @@ _config_read_sites() {
         /^[[:space:]]*#/ { next }
         {
           line = $0
-          while (match(line, /(^|[^A-Za-z0-9_.])(cfg|cfg_bool|cfg_list|cfg_list_lines)[ \t]+[a-z][A-Za-z0-9_.]*/)) {
+          while (match(line, /(^|[^A-Za-z0-9_.])(cfg|cfg_bool|cfg_list|cfg_list_lines|cfg_v[ \t]+[A-Za-z_][A-Za-z0-9_]*)[ \t]+[a-z][A-Za-z0-9_.]*/)) {
             seg = substr(line, RSTART, RLENGTH)
             line = substr(line, RSTART + RLENGTH)
             n = split(seg, part, /[ \t]+/)

@@ -187,7 +187,11 @@ about the worktree road are easy to get wrong from inside this domain's code:
 listing does (`_task_list_select`, shared by both forms) and reads every value through the producer
 that already answers it — `task_state_get`, `_task_gate_state`, `_task_autopilot_facts`,
 `_task_autopilot_mode`, `_task_worktrees`, `_task_worktree_uncommitted`, `_task_goal`,
-`jig_task_base`, `hklog_flagged_ids` — never a parse of its own. So a state key renamed, or a word
+`jig_task_base`, `hklog_flagged_ids` — never a parse of its own. It asks them in their `_v` form
+(`task_state_var`, `_task_gate_state_v`, ...), which answers into a variable with the same text,
+inside a read snapshot (`jig_read_snapshot_begin`/`_end`, common.sh) that reads each state file,
+the queue and the config once; only a command that writes nothing opens one, and every state writer
+drops it (conventions/shell.md). So a state key renamed, or a word
 those producers print reworded, is a change to a published JSON shape: the whole-shape tests in
 `tests/task.t.sh` go red, and schemas/json.md changes with it, raising `schema` when a field is
 removed or retyped. Reading stays local: nothing on that path may call the forge or fetch.

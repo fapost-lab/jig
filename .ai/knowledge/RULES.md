@@ -147,7 +147,8 @@
   `skip`, never `pass`. (ADR-0013; a skip is not a pass)
 - No filesystem path is built from a name that has not been validated first: task ids,
   spec ids, profile names, adapter names and knowledge domain names are checked at the
-  single function that builds the path (`task_dir`, `spec_new` and the `spec_ids` walk,
+  single function that builds the path (`task_dir` and its `task_dir_v`; common.sh's state
+  readers `jig_task_state_var` and `jig_task_base_v`, which check with `jig_valid_id`; `spec_new` and the `spec_ids` walk,
   `spec_task_dir` and `spec_remove`, `profiles_dir`, `adapters_dir`, `km_domain_dir`), before
   any read, write or `sed` expression that embeds them. A path supplied by a caller rather
   than derived from a name is validated the same way at the point it is joined to the

@@ -9994,6 +9994,172 @@ test_task_list_json_carries_the_merge_links() {
   assert_contains "$OUT" '"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":["to-1"]'
 }
 
+# --- what a listing costs per task -------------------------------------------
+#
+# `task list --json` once started ~150 processes per task — a `$(...)` and an
+# awk for every field of `state`, the queue read twice, the config once per
+# key — and took 12 s on a project of 41 tasks. What these tests hold is the
+# shape that fixed it: a fixed number of processes per task, whatever fields
+# the task has. They count processes, not seconds: a time threshold is noise
+# in CI, on Windows above all.
+
+# _tl_forks <jig args> — run jig with them and print how many processes it
+# started: every new subshell (a `$(...)`, a `( )`) and every external
+# program. A DEBUG trap, inherited by functions and subshells (`set -T`) and
+# installed through BASH_ENV, notes a subshell by a BASH_SUBSHELL its shell did
+# not have before and an external program by `type -P`. The elements of a
+# pipeline go uncounted in bash 3.2; a fork per task would still show.
+_tl_forks() {
+  local probe="$JIG_TEST_TMP.forkprobe" log="$JIG_TEST_TMP.forks"
+  cat > "$probe" <<'PROBE'
+set -T
+_tlf_level=$BASH_SUBSHELL
+# Builtins and keywords, listed before the trap is set; a word in neither, and
+# no function, that PATH finds is an external program. Nothing is written to
+# a file but the log: pipeline elements run at once, and a shared scratch file
+# answered one of them with another's word.
+_tlf_names=" $(compgen -b | tr '\n' ' ') $(compgen -k | tr '\n' ' ') "
+_tlf_trap() {
+  local word glob=0
+  if [ "$_tlf_level" != "$BASH_SUBSHELL" ]; then
+    _tlf_level=$BASH_SUBSHELL
+    printf 'S\n' >> "$TLF_LOG"
+  fi
+  case $- in *f*) ;; *) glob=1; set -f ;; esac
+  # shellcheck disable=SC2086 # split into words on purpose
+  set -- $BASH_COMMAND
+  [ "$glob" = 0 ] || set +f
+  while :; do case "${1-}" in [A-Za-z_]*=*) shift ;; *) break ;; esac; done
+  word=${1-}
+  case "$word" in '' | *[\"\'\$\`\(\)\[\]\{\}\;\<\>\|\&]*) return 0 ;; esac
+  case "$_tlf_names" in *" $word "*) return 0 ;; esac
+  declare -F -- "$word" >/dev/null && return 0
+  type -P -- "$word" >/dev/null 2>&1 || return 0
+  printf 'E %s\n' "$word" >> "$TLF_LOG"
+  return 0
+}
+trap '_tlf_trap' DEBUG
+PROBE
+  : > "$log"
+  TLF_LOG="$log" BASH_ENV="$probe" "$JIG_BIN" "$@" >/dev/null 2>&1 || return 1
+  wc -l < "$log" | tr -d ' '
+}
+
+# _tl_same_cost <few> <many> — fail unless 4 tasks with many fields started
+# as many processes as 4 with few. One either way is allowed: what a run does
+# once (a revision claimed, a record written) need not land in the same run.
+_tl_same_cost() {
+  local d=$(($2 - $1))
+  [ "$d" -ge -1 ] && [ "$d" -le 1 ] \
+    || fail "processes for 4 tasks with many fields ($2) differ from 4 with few ($1)"
+}
+
+# _tl_live_tasks <prefix> <n> [key:value ...] — <n> live tasks, filed and not
+# started, with the extra state lines given.
+_tl_live_tasks() {
+  local prefix="$1" n="$2" i=1
+  shift 2
+  while [ "$i" -le "$n" ]; do
+    fixture_task "$prefix-$i" "" active "class:T2" "$@"
+    i=$((i + 1))
+  done
+}
+
+test_task_list_json_starts_a_fixed_number_of_processes_per_task() {
+  task_setup
+  local two six ten few many
+  _tl_live_tasks lean 2
+  # The first run sets up what every later run finds made (runtime records,
+  # the revision): counted, it would be read as a cost of the tasks.
+  _tl_forks task list --all --json >/dev/null || fail "task list --json failed under the probe"
+  two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_live_tasks more 4
+  six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  # The same tasks with every list field and a dozen more keys in state:
+  # what they cost must be what the bare ones cost.
+  _tl_live_tasks rich 4 "issue:X-1" "absorbs:a,b" "absorbs_partly:c" "partly_in:d" \
+    "gate_by:human" "autopilot_phase:s/1" "route_depth:lean" "domains:task" \
+    "paused_reason:none" "triage_task:t" "share:vendor" "setup:ok"
+  ten=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  few=$((six - two))
+  many=$((ten - six))
+  _tl_same_cost "$few" "$many"
+  # None per task: the listing forks for none of these tasks, so a process
+  # per task is a regression (one allowed for a once-per-run record).
+  [ "$few" -le 1 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
+}
+
+test_status_json_starts_a_fixed_number_of_processes_per_task() {
+  task_setup
+  local two six ten few many
+  _tl_live_tasks lean 2
+  # The first run sets up what every later run finds made (runtime records,
+  # the revision): counted, it would be read as a cost of the tasks.
+  _tl_forks status --json >/dev/null || fail "status --json failed under the probe"
+  two=$(_tl_forks status --json) || fail "status --json failed under the probe"
+  _tl_live_tasks more 4
+  six=$(_tl_forks status --json) || fail "status --json failed under the probe"
+  _tl_live_tasks rich 4 "issue:X-1" "absorbs:a,b" "partly_in:d" "gate_by:human" \
+    "route_depth:lean" "domains:task" "paused_reason:none" "setup:ok"
+  ten=$(_tl_forks status --json) || fail "status --json failed under the probe"
+  few=$((six - two))
+  many=$((ten - six))
+  _tl_same_cost "$few" "$many"
+  # One per live task, the receipt line (task_receipt_check), and one more
+  # allowed for a once-per-run record.
+  [ "$few" -le 5 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
+}
+
+# _ts_lib — run the rest of the arguments as a script with the libraries a
+# listing uses sourced, in this project.
+_ts_lib() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"; . "$JIG_LIB/task.sh"
+    JIG_PROJECT=$(pwd -P)
+    eval "$1"
+  ' _ "$1"
+}
+
+# The snapshot a read path holds never hides a write: every writer of a state
+# file drops it, so the next read sees the new value.
+test_task_state_snapshot_sees_a_write_made_after_it_was_loaded() {
+  task_setup
+  fixture_task snap "" active "class:T1"
+  local got
+  # shellcheck disable=SC2016 # the script expands in _ts_lib's shell
+  got=$(_ts_lib '
+    dir="$JIG_PROJECT/.ai/workspace/tasks/snap"
+    jig_read_snapshot_begin
+    task_state_var v snap status; printf "%s\n" "$v"
+    _task_rewrite_state "$dir" status ready
+    task_state_var v snap status; printf "%s\n" "$v"
+    _task_rewrite_state_remove "$dir" class
+    task_state_var v snap class; printf "[%s] %s\n" "$v" "$_JIG_TS_FOUND"
+    jig_read_snapshot_end
+    task_state_get snap status
+  ')
+  assert_eq "$(printf 'active\nready\n[] 0\nready')" "$got"
+}
+
+# One rule reads `state`, with or without the snapshot: the first `<key>:`
+# line, the value after the colon without its leading blanks — what the awk
+# this reader replaced printed, which the test asks too.
+test_task_state_reader_keeps_the_one_rule_of_the_format() {
+  task_setup
+  local dir=.ai/workspace/tasks/fmt key want plain snap
+  mkdir -p "$dir"
+  printf 'task_id: fmt\nclass:\t  T3\nclass: T1\nclass_lowered_from: T4\nempty:\nweird-key: w v \nspaced:   a  b  \nlast: no newline' > "$dir/state"
+  for key in task_id class class_lowered_from empty weird-key spaced last missing clas; do
+    want=$(awk -v k="$key:" 'index($0, k) == 1 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$dir/state")
+    plain=$(_ts_lib "task_state_get fmt '$key'")
+    snap=$(_ts_lib "jig_read_snapshot_begin; task_state_get fmt '$key'")
+    assert_eq "[$want]" "[$plain]" "task_state_get fmt $key"
+    assert_eq "[$want]" "[$snap]" "task_state_get fmt $key, from the snapshot"
+  done
+}
+
 test_task_merge_writes_no_queue_file_when_there_is_none() {
   _tm_pair
   jig task merge from-1 --into to-1 >/dev/null
