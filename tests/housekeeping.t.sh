@@ -3780,3 +3780,153 @@ test_housekeeping_dry_run_names_the_origin_deletion_only_where_a_run_would_make_
   assert_not_contains "$OUT" "on origin"
   rm -rf "$remote"
 }
+
+# --- the log is bounded (_hk_log_trim) ---------------------------------------
+
+# hk_purge_line <id> — a purge line as housekeeping writes it (the same shape
+# tests/measure.t.sh appends), on stdout.
+hk_purge_line() {
+  printf '2026-09-11T10:00:00Z task=%s status=consolidated remote=merged via=ancestry action=purge dest=.ai/runtime/trash/2026-09-11/%s class=T2 created=2026-09-01 consolidated=true\n' "$1" "$1"
+}
+
+# hk_seed_runs <n> — append <n> old runs to the log. Run k holds its marker and
+# one record line naming task r<k>, so a test can tell which runs survived.
+hk_seed_runs() {
+  local k=1 ts
+  mkdir -p .ai/runtime
+  while [ "$k" -le "$1" ]; do
+    ts=$(printf '2026-09-11T10:00:%02dZ' "$k")
+    printf -- '--- run %s forge=none\n' "$ts" >> .ai/runtime/housekeeping.log
+    printf '%s task=r%d status=active remote=unknown via=none action=preserve\n' "$ts" "$k" >> .ai/runtime/housekeeping.log
+    k=$((k + 1))
+  done
+}
+
+test_housekeeping_trim_keeps_ten_runs_and_every_purge_line() {
+  hk_setup
+  mkdir -p .ai/runtime
+  # A log older than markers: a purge line ahead of the first marker, and one
+  # inside the oldest run, which is dropped whole except for that line.
+  hk_purge_line pre-marker > .ai/runtime/housekeeping.log
+  hk_seed_runs 12
+  # Line 1 is the pre-marker purge, line 2 run 1's marker: splice a purge line
+  # in right after that marker.
+  { sed -n 1,2p .ai/runtime/housekeeping.log; hk_purge_line in-run-1; sed -n '3,$p' .ai/runtime/housekeeping.log; } > log.tmp
+  mv log.tmp .ai/runtime/housekeeping.log
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+
+  local log=.ai/runtime/housekeeping.log
+  # Ten previous runs and the one just made.
+  assert_eq 11 "$(grep -c '^--- run ' "$log")"
+  # Runs 1 and 2 are gone, 3 through 12 stay.
+  assert_eq 0 "$(grep -c 'task=r1 \|task=r2 ' "$log")"
+  assert_file_contains "$log" "task=r3 "
+  assert_file_contains "$log" "task=r12 "
+  # Both purge lines survive, ahead of everything else and in their order.
+  assert_eq "task=pre-marker" "$(sed -n 1p "$log" | awk '{print $2}')"
+  assert_eq "task=in-run-1" "$(sed -n 2p "$log" | awk '{print $2}')"
+  assert_eq 2 "$(grep -c 'action=purge' "$log")"
+
+  # `jig measure` still counts the purged tasks from the trimmed log.
+  run jig measure
+  assert_contains "$OUT" "2 recorded at purge"
+}
+
+test_housekeeping_trim_caps_output_but_keeps_every_record_and_is_idempotent() {
+  hk_setup
+  mkdir -p .ai/runtime
+  local log=.ai/runtime/housekeeping.log k=1
+  {
+    printf -- '--- run 2026-09-11T10:00:00Z forge=none\n'
+    while [ "$k" -le 250 ]; do
+      printf 'hook: fork: Too many open files (%d)\n' "$k"
+      k=$((k + 1))
+    done
+    printf '2026-09-11T10:00:01Z task=a status=active remote=unknown via=none action=preserve\n'
+    printf '2026-09-11T10:00:02Z task=b status=active remote=unknown via=none action=preserve\n'
+    k=251
+    while [ "$k" -le 500 ]; do
+      printf 'hook: fork: Too many open files (%d)\n' "$k"
+      k=$((k + 1))
+    done
+    printf '2026-09-11T10:00:03Z task=c status=active remote=unknown via=none action=preserve\n'
+  } > "$log"
+
+  jig housekeeping >/dev/null
+  assert_eq 200 "$(grep -c 'Too many open files' "$log")"
+  assert_eq 1 "$(grep -c '^housekeeping: log trimmed: ' "$log")"
+  assert_file_contains "$log" "housekeeping: log trimmed: 300 more lines of output in this run dropped"
+  assert_file_contains "$log" "task=a "
+  assert_file_contains "$log" "task=b "
+  assert_file_contains "$log" "task=c "
+  # The first 200 lines of output are the ones kept.
+  assert_file_contains "$log" "(200)"
+  assert_eq 0 "$(grep -c '(201)' "$log")"
+
+  # A second run trims again and changes nothing in what the first left: no
+  # second note, no further cut, the earlier part byte for byte.
+  cp "$log" first.snapshot
+  local n
+  n=$(wc -l < first.snapshot)
+  jig housekeeping >/dev/null
+  head -n "$n" "$log" > second.head
+  cmp -s first.snapshot second.head || fail "a second run changed the part of the log the first one left"
+  assert_eq 1 "$(grep -c '^housekeeping: log trimmed: ' "$log")"
+  assert_eq 200 "$(grep -c 'Too many open files' "$log")"
+}
+
+test_housekeeping_trim_rewrites_in_place_and_dry_run_leaves_the_log_alone() {
+  hk_setup
+  mkdir -p .ai/runtime
+  local log=.ai/runtime/housekeeping.log k=1
+  {
+    printf -- '--- run 2026-09-11T10:00:00Z forge=none\n'
+    while [ "$k" -le 500 ]; do
+      printf 'noise line %d\n' "$k"
+      k=$((k + 1))
+    done
+  } > "$log"
+  cp "$log" before.copy
+
+  run jig housekeeping --dry-run
+  assert_eq 0 "$RC"
+  cmp -s before.copy "$log" || fail "a dry run changed the log"
+
+  # An appender opened before the run, as the session hook's `>>` is: its
+  # later line must reach the log, not a file the trim renamed away. Asked of
+  # the behaviour rather than of an inode number, which Git Bash on NTFS does
+  # not report reliably.
+  local before_size after_size
+  before_size=$(wc -c < "$log")
+  exec 9>>"$log"
+  jig housekeeping >/dev/null
+  printf 'appended after the trim\n' >&9
+  exec 9>&-
+  after_size=$(wc -c < "$log")
+  grep -q '^appended after the trim$' "$log" || fail "the trim replaced the log instead of rewriting it"
+  [ "$after_size" -lt "$before_size" ] || fail "a runaway log did not shrink"
+}
+
+test_housekeeping_trim_leaves_a_small_log_untouched() {
+  # Nothing to cut: the log only grows by the new run, and no trim note appears.
+  hk_setup
+  hk_seed_runs 3
+  jig housekeeping >/dev/null
+  assert_eq 4 "$(grep -c '^--- run ' .ai/runtime/housekeeping.log)"
+  assert_eq 0 "$(grep -c 'log trimmed' .ai/runtime/housekeeping.log)"
+  assert_file_contains .ai/runtime/housekeeping.log "task=r1 "
+}
+
+test_status_still_reads_the_newest_run_after_a_trim() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" active
+  hk_seed_runs 12
+
+  jig housekeeping >/dev/null || true
+  assert_eq 11 "$(grep -c '^--- run ' .ai/runtime/housekeeping.log)"
+  run jig status
+  assert_contains "$OUT" "needs consolidation: 1 task(s)"
+}

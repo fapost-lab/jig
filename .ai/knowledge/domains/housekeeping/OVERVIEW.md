@@ -177,11 +177,20 @@ templates append stdout to the same `housekeeping.log`, so no report line may ca
 **The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
 block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
 (ADR-0027); `jig spec plan` and `jig spec list` read `remote=merged` from the newest block to
-tell which tasks merged. Its line shape is an interface with three consumers now, and nothing
-rotates it — so a reader of the newest block never reads the file: `hklog_last_run_lines` in
-`scripts/lib/hklog.sh` finds the last marker's byte offset with `grep -b` and cuts there with
-`tail -c`. One run of a session hook out of file descriptors once left 55 000 error lines in a
-log, 8.8 MB, and every reader that read it whole paid a third of a second for it. The one
+tell which tasks merged. Its line shape is an interface with three consumers now. A reader of
+the newest block never reads the file: `hklog_last_run_lines` in `scripts/lib/hklog.sh` finds
+the last marker's byte offset with `grep -b` and cuts there with `tail -c`. One run of a session
+hook out of file descriptors once left 55 000 error lines in a log, 8.8 MB, and every reader that
+read it whole paid a third of a second for it. So the log is also bounded: every non-dry run,
+under its lock and before its own marker, trims it (`_hk_log_trim`) to the 10 runs before it, and
+in each of them to every record (the marker, lines that start with a UTC time) plus at most
+200 other lines — the report and whatever stderr the hook appended — then one `housekeeping: log
+trimmed: <n> more lines …` note. From older runs only the `action=purge` lines stay, at the top
+in their order, which is why `jig measure` may still read the whole file: the history it reads
+is never trimmed; it alone still grows, by one line per purged task. A new reader of anything
+older than the newest run, or of a line that is not a record, has to change this trim first.
+The file is rewritten in place, never renamed over, because the hook and the schedulers hold
+it open for appending. The one
 free-form field is `ignored=` on a worktree removal, which lists paths: it comes last and
 carries no space, so a `key=value` reader that stops at the first space never meets it.
 The status page reads the newest block too — `remote=open` for pull requests waiting on a person,
