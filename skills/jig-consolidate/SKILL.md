@@ -151,6 +151,10 @@ the checkmark reaches the base branch in the same change as the work; for a task
 it says so and changes nothing. If it reports that no roadmap item names the task, the roadmap
 and the task disagree: ask the human, and do not edit the roadmap by hand.
 
+A task that was abandoned or moved instead of finished has no checkmark to earn: `jig task abandon
+<id> --reason` closed its item with why (`jig spec drop`). What the move decided about the system —
+which repository owns the concern — is knowledge like any other, recorded here, not in `task.md`.
+
 When it prints `roadmap complete`, the spec is closed in this same change: its decisions are knowledge
 now. Run the command it names. It first lists what knowledge does not hold — unchecked items, fog,
 open questions, untested assumptions; ask the human about each one, move it where they say (another

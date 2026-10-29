@@ -66,7 +66,7 @@ _task_usage() {
       printf 'usage: jig task set <id> <key> <value>\n'
       printf '       jig task set <id> class <Tn> --reason <text>   (a lower class than the current one)\n'
       ;;
-    abandon) printf 'usage: jig task abandon <id>\n' ;;
+    abandon) printf 'usage: jig task abandon <id> [--reason <text>] [--moved-to <repo>#<task-id>|<repo>#spec/<spec-id>]\n' ;;
     archive) printf 'usage: jig task archive <id>\n' ;;
     unarchive) printf 'usage: jig task unarchive <id>\n' ;;
     merge) printf 'usage: jig task merge <from> --into <to> [--partial]\n' ;;
@@ -1627,6 +1627,16 @@ task_set() {
       [ "$value" != archived ] || jig_die "task set: a task is archived by jig task archive $id"
       [ "$(task_state_get "$id" status)" != archived ] \
         || jig_die "task set: task $id is archived; run jig task unarchive $id first"
+      # A spec-linked task is abandoned by its own command, which records why
+      # and closes the roadmap item that names it
+      # (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows);
+      # writing the status by hand would leave the roadmap saying the work is
+      # still here.
+      if [ "$value" = abandoned ] && [ "$_TASK_ABANDONING" -eq 0 ] \
+         && [ "$(task_state_get "$id" status)" != abandoned ] \
+         && [ -n "$(_task_spec_id "$id")" ]; then
+        jig_die "task set: $id is linked to a spec; abandon it with jig task abandon $id --reason <text>"
+      fi
       ;;
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
@@ -1644,6 +1654,7 @@ task_set() {
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
       | archived_at | archived_reason | archived_from \
+      | abandoned_at | abandoned_reason | moved_to \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
       | route_evidence | class_lowered_from | class_lowered_reason | share | setup \
       | executor_implement_runtime_source | executor_review_runtime_source \
@@ -1705,10 +1716,15 @@ task_set() {
   fi
   [ "$has_reason" -eq 0 ] || jig_die "task set: --reason is only for lowering a class"
 
+  local was=""
+  [ "$key" != status ] || was=$(task_state_get "$id" status)
   if [ "$value" = inherit ]; then
     _task_rewrite_state_remove "$dir" "$key"
   else
     _task_rewrite_state "$dir" "$key" "$value"
+  fi
+  if [ "$was" = abandoned ] && [ "$value" != abandoned ]; then
+    _task_abandon_keys_clear "$id" "$dir"
   fi
 }
 
@@ -1817,9 +1833,115 @@ _task_set_class() {
   fi
 }
 
+# task_abandon <id> [--reason <text>] [--moved-to <ref>] — give a task up, and
+# say why where the next agent reads it
+# (adr-20261029-an-abandoned-task-says-why-and-its-roadmap-item-follows). The
+# reason, the day and the move's target go into `state`; a task linked to a
+# spec must give a reason, and the roadmap item that names it is then closed by
+# `jig spec drop`, run through the dispatcher as `spec remove` runs this
+# command: task.sh does not source spec.sh. The target is parsed by
+# jig_task_ref, the one grammar of a reference, and never written to: when it
+# is not there yet, the command that files it there is printed.
+_TASK_ABANDONING=0
 task_abandon() {
-  [ $# -eq 1 ] || jig_die "$(_task_usage abandon)"
-  task_set "$1" status abandoned
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage abandon)"
+  local id="$1" reason="" has_reason=0 moved="" sid dir out rc
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || jig_die "task abandon: --reason requires a value"
+        reason="$2"; has_reason=1; shift 2 ;;
+      --moved-to)
+        [ $# -ge 2 ] || jig_die "task abandon: --moved-to requires a value"
+        moved="$2"; shift 2 ;;
+      *) jig_die "task abandon: unknown argument: $1 ($(_task_usage abandon))" ;;
+    esac
+  done
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_die "task abandon: unknown task: $id"
+  if [ "$has_reason" -eq 1 ]; then
+    [ -n "$reason" ] || jig_die "task abandon: --reason must not be empty"
+    _task_finding_valid_field "$reason" || jig_die "task abandon: --reason must be a single line with no tab"
+  fi
+  if [ -n "$moved" ]; then
+    jig_task_ref "$moved" || jig_die "task abandon: --moved-to $moved: $_JIG_REF_ERROR"
+  fi
+  sid=$(_task_spec_id "$id")
+  if [ -n "$sid" ] && [ "$has_reason" -eq 0 ]; then
+    jig_die "task abandon: $id is linked to spec $sid; say why: jig task abandon $id --reason <text> [--moved-to <repo>#<task-id>]"
+  fi
+
+  # The status goes through task_set, which keeps every refusal it has
+  # (archived, a planted link); the linked-task refusal there is for a
+  # status written by hand, so it is asked only when this is not a re-abandon.
+  if [ "$(task_state_get "$id" status)" != abandoned ]; then
+    _TASK_ABANDONING=1
+    task_set "$id" status abandoned
+    _TASK_ABANDONING=0
+  else
+    _task_guard_write "$id" "task abandon"
+  fi
+  _task_rewrite_state "$dir" abandoned_at "$(jig_today)"
+  if [ "$has_reason" -eq 1 ]; then
+    _task_rewrite_state "$dir" abandoned_reason "$reason"
+  else
+    _task_rewrite_state_remove "$dir" abandoned_reason
+  fi
+  if [ -n "$moved" ]; then
+    _task_rewrite_state "$dir" moved_to "$moved"
+  else
+    _task_rewrite_state_remove "$dir" moved_to
+  fi
+  printf 'task abandon: %s abandoned%s\n' "$id" "${moved:+, moved to $moved}"
+
+  if [ -n "$moved" ] && ! jig_task_ref_dir; then
+    if [ "$_JIG_REF_KIND" = spec ]; then
+      printf 'moved: %s is not there (%s); nothing is written there, so add it to that spec yourself\n' "$moved" "$_JIG_REF_ERROR"
+    else
+      printf 'moved: %s is not there (%s); file it there yourself: (cd %s && jig task new %s)\n' \
+        "$moved" "$_JIG_REF_ERROR" "$_JIG_REF_REPO" "$_JIG_REF_ID"
+    fi
+  fi
+
+  [ -n "$sid" ] || return 0
+  rc=0
+  out=$(cd "$JIG_PROJECT" && JIG_INTERNAL_REDRAW=1 "$JIG_SELF" spec drop "$id" 2>&1) || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  if [ "$rc" -eq 3 ]; then
+    # Not here: a phase run's coordinator closes the item after the merge, or
+    # a checkout of the base does (the line above names the command).
+    return 0
+  fi
+  [ "$rc" -eq 0 ] \
+    || jig_die "task abandon: $id is abandoned, but its roadmap item was not rewritten (above); fix that and run jig spec drop $id"
+}
+
+# _task_spec_id <id> — the spec a task's task.md links to, `(more than one)`
+# for a task.md linking two — a link all the same, which the refusals that
+# read this must see, and `spec drop` names the conflict — or nothing.
+_task_spec_id() {
+  local md
+  md="$(task_dir "$1")/task.md"
+  [ -f "$md" ] || return 0
+  jig_spec_link "$md" 2>/dev/null || printf '%s\n' '(more than one)'
+}
+
+# _task_abandon_keys_clear <id> <dir> — a task taken back from `abandoned`
+# loses the record of why it was abandoned: on a live task it would be a false
+# fact. The roadmap item `spec drop` closed is not reopened here; a person
+# does that, and is told so.
+_task_abandon_keys_clear() {
+  local id="$1" dir="$2" had sid
+  had=$(task_state_get "$id" abandoned_at)
+  _task_rewrite_state_remove "$dir" abandoned_at
+  _task_rewrite_state_remove "$dir" abandoned_reason
+  _task_rewrite_state_remove "$dir" moved_to
+  sid=$(_task_spec_id "$id")
+  if [ -n "$had" ] && [ -n "$sid" ]; then
+    jig_info "task set: $id is live again; if $JIG_AI_DIR/specs/$sid/roadmap.md closed its item as dropped or moved, reopen that item by hand"
+  fi
 }
 
 # task_archive <id> — a person's archive of a task nobody will finish now
@@ -4584,7 +4706,11 @@ _task_actions() {
       set-class) command="jig task set $id class <Tn>" ;;
       ship) command="jig task ship $id --message-file <file>" ;;
       close) command="jig task set $id status consolidated" ;;
-      abandon) command="jig task abandon $id" ;;
+      abandon)
+        # A spec-linked task is refused without a reason; the placeholder
+        # tells a reader of the table to ask for one.
+        command="jig task abandon $id"
+        [ -z "$(_task_spec_id "$id")" ] || command="$command --reason <text>" ;;
       archive) command="jig task archive $id" ;;
       unarchive) command="jig task unarchive $id" ;;
       reopen) command="jig task set $id status active" ;;
