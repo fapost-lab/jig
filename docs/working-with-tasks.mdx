@@ -93,7 +93,7 @@ Small work — a typo, a one-file fix that fits in one session — needs no work
 | **active** | Being worked on. |
 | **ready** | Checked: tests pass and the goal is met. Waiting to be merged. |
 | **consolidated** | Closed: merged, and what it taught the project is recorded. |
-| **abandoned** | Stopped, with the reason recorded. Comes back with `jig task set <id> status active`. |
+| **abandoned** | Stopped. A task from a spec must say why (`--reason`); any other task may. Comes back with `jig task set <id> status active`, but a roadmap item `jig spec drop` closed stays closed — reopen it by hand, as Jig reminds you. |
 | **archived** | Put away: abandoned for a while, untouched for two months, or absorbed into another task with `jig task merge`. Hidden from the lists, never deleted. |
 
 **Paused** is a mark on an active or ready task, not a state of its own: it says the work was

@@ -18,7 +18,7 @@ while its tasks merged.
 
 - **`jig task start` asks for the goal.** A task whose `## Goal` is empty, or holds only the
   template's comment, starts with a warning; a T3 or T4 task is refused until the goal is written.
-  `jig task list --json` refuses `start` the same way. See
+  `jig task list --json` lists `start` as unavailable for it, with the same reason. See
   [File a task, then start it](/manual-control#file-a-task-then-start-it).
 - **A task can link a task or spec in a neighbouring repository.** A
   `Linked: <repo>#<task-id>` or `Linked: <repo>#spec/<spec-id>` line in `task.md` — `<repo>` a path

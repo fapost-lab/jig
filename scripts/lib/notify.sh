@@ -30,7 +30,8 @@
 #
 # Requires config.sh (cfg, jig_config_clone_root, jig_unattended, _cfg_chat_id,
 # JIG_CFG_MASK), and task.sh (task_dir, task_state_get, _task_goal,
-# _task_autopilot_mode, _task_likely_owner) for a task's messages and a waiting
+# _task_autopilot_mode, _task_likely_owner, _task_open_minor_findings,
+# _task_count_lines) for a task's messages and a waiting
 # session's; a phase run's (jig_notify_phase) need no task.sh.
 
 # jig_notify_token_ok <token> — exit 0 when <token> has a bot token's shape,
