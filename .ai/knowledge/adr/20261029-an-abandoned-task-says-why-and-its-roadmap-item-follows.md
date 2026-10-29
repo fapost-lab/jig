@@ -67,16 +67,32 @@ the task with the reason in its text.**
 - **Until it is closed, an abandoned task's item is not done.** `spec_merged_task_ids` does not learn
   `abandoned`: the item stays `filed`, `spec plan` shows it `abandoned` and holds its wave, and the
   lifecycle refuses to close the spec over it. The lie cannot outlive the spec.
-- **The edit is made only where it can land, and `spec drop` names how.** The change belongs on the
-  task's base (its `base_branch`, else the spec's open epic, else the configured base). Anywhere else —
-  the task's own branch, which never ships, or any other checkout — `spec drop` exits 3 and names the
-  command to run on a checkout of the base; the item waits there, unclosed and visible. On the base:
-  for an epic, a local commit on the epic, which the next pull request into it carries, the way a
-  phase run's checkmarks travel; for a spec with no epic, `jig spec ship <sid>`, which takes the
-  spec's own change from a branch of its own as far as `agent.git` allows
-  (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute). Left uncommitted on the
-  default branch the edit would make the next `task start` refuse — which is the door that names
-  `spec ship` too.
+- **The edit is made where jig edits a spec, and never on the default branch.** This is the rule of
+  adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute applied to one more edit, not an
+  exception to it:
+  - *A spec with an open epic* is edited on the epic, whose copy of the roadmap is the current one,
+    whatever base the task recorded. `spec drop` runs only in a checkout of it and asks for a commit
+    there, the way a phase run's coordinator commits its checkmarks
+    (adr-20260922-a-phase-run-is-coordinated).
+  - *A spec without one*, whose task belongs on the default branch, is edited on `spec/<sid>`. On
+    `spec/<sid>` the edit is made in place. On the default branch `spec drop` does what
+    `jig spec resume` does — refuses a dirty tree by `task start`'s rule, then switches to the existing
+    `spec/<sid>` (here or on origin) or cuts it — after first checking that an item is left to close, so
+    a no-op never moves HEAD. HEAD stays on `spec/<sid>`, as after `spec resume`. A `spec/<sid>` from
+    an earlier session that does not name the task, while the default branch does, closes nothing:
+    `spec drop` switches back and exits 3, naming the merge of the default branch to make first.
+  - On `spec/<sid>` the edit is committed there, locally, as a commit of `roadmap.md` alone (hooks run),
+    so that neither the default branch nor the tree holds it and the next `task start` is not refused.
+    Not at git level `none` (`agent.git`, or the run's level in an unattended clone, as `spec ship`
+    reads it), where committing is the person's, and not when `roadmap.md` already held uncommitted
+    changes, which belong to a `jig-idea` session on that branch and leave with its `spec ship`. Push
+    and the pull request stay with `jig spec ship <sid>`, which `spec drop` names.
+  - Anywhere else — the task's own branch, which never ships, a task worktree, any other branch —
+    `spec drop` exits 3 and names where to run it; `task abandon` still succeeds and the item waits,
+    unclosed and visible (above).
+  - `spec remove --abandon-unstarted` rewrites nothing and switches nothing: the roadmap leaves with
+    the spec, and a branch switch in the middle of that command would split it in two. It tells
+    `spec drop` so through `JIG_INTERNAL_SPEC_REMOVING=<sid>`.
 
 ## Alternatives
 
@@ -93,10 +109,15 @@ the task with the reason in its text.**
   the spec's end and is visible in the plan.
 - **File the task in the receiving repository.** Jig only reads a neighbour; writing there would be a
   second repository's lifecycle driven from this one.
-- **Commit and ship the roadmap edit from `task abandon` itself.** It would make one command commit,
-  branch and open a pull request at whatever `agent.git` allows, for a step `spec ship` already owns.
-- **Leave the edit for the next task's change to carry.** `task start` refuses a tree dirty under a
-  spec's directory, and a task worktree leaves the edit behind; the change would never land.
+- **Push and open the pull request for the roadmap edit from `task abandon` itself.** It would make one
+  command push and open a pull request at whatever `agent.git` allows, for a step `spec ship` already
+  owns. The local commit on `spec/<sid>` is the part that keeps the default branch and the tree clean;
+  the rest stays `spec ship`'s.
+- **Leave the edit uncommitted on the default branch for `spec ship` to pick up**, as the first version
+  of this decision did. It contradicted adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute:
+  `task start` refused the next task over it, `spec ship` refused it once a `spec/<sid>` existed, and a
+  task worktree left it behind for good. The owner chose, on 2026-10-29, that `spec drop` works on
+  `spec/<sid>` as `spec resume` does, and that ADR stands unchanged.
 
 ## Consequences
 
@@ -104,9 +125,10 @@ the task with the reason in its text.**
 - The roadmap says where a dropped item's work went, in the committed file every agent reads; the
   task's `state` says it too, for `task show`.
 - Reopening an abandoned task does not reopen its roadmap item: the person is told to reopen it by hand.
-- Abandoning a spec-linked task on the default branch leaves one more step: `jig spec ship <sid>`
-  (or, at `agent.git: none`, the person's commit). Until then `task start` refuses and names it. A
-  `spec/<sid>` branch that already exists makes that ship refuse, as it does for any spec change.
+- Abandoning a spec-linked task of a spec without an epic, on the default branch, moves HEAD to
+  `spec/<sid>` and, above `agent.git: none`, leaves a local commit there; `jig spec ship <sid>` from
+  that branch takes it the rest of the way. At `none` the edit waits uncommitted on `spec/<sid>`, never
+  on the default branch, and `task start` names `jig spec ship <sid>` until the person commits it.
 - Progress counts a dropped item as done. A count of dropped items, if anyone needs one, can be read
   from the suffix later without changing the grammar.
 - Rolling this back removes `spec drop`, two flags and three keys; closed items stay ordinary `[x]`

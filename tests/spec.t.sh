@@ -735,9 +735,10 @@ test_spec_drop_closes_the_item_after_its_last_line_and_the_wave_still_names_it()
   run jig task abandon T-1 --reason "lives in monitoring"
   assert_eq 0 "$RC"
   assert_contains "$OUT" "spec drop: T-1 closed in .ai/specs/alpha/roadmap.md"
-  # Left dirty on the default branch, the edit would make the next task start
-  # refuse: it is landed by `spec ship`, from a branch of its own.
-  assert_contains "$OUT" "spec drop: land it with jig spec ship alpha --message-file <file>"
+  # The edit is jig's, so it is made on the spec's own branch, never on the
+  # default one; at agent.git none committing it is the person's.
+  assert_contains "$OUT" "spec drop: switched to spec/alpha"
+  assert_contains "$OUT" "spec drop: agent.git is none in this clone; commit .ai/specs/alpha/roadmap.md on spec/alpha and open its pull request yourself"
   local today
   today=$(date +%Y-%m-%d)
   grep -q '^- \[x\] `T-1` — Sentry reporting (after: `T-0`)$' .ai/specs/alpha/roadmap.md \
@@ -835,12 +836,13 @@ test_spec_drop_refuses_off_the_tasks_base() {
   git checkout -q -b elsewhere
   run jig task abandon T-1 --reason "gone"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "spec drop: T-1 lands on main, which is not checked out here; run jig spec drop T-1 in a checkout of main"
+  assert_contains "$OUT" "spec drop: T-1 lands on main through spec/alpha, and neither is checked out here; run jig spec drop T-1 on main or on spec/alpha"
   grep -q '^- \[ \] `T-1`' .ai/specs/alpha/roadmap.md || fail "the roadmap was changed off the task's base"
+  assert_eq elsewhere "$(git symbolic-ref --short HEAD)"
 }
 
-# On an epic the change lands the way a phase run's checkmarks do: a local
-# commit the next pull request into the epic carries.
+# On an epic the change is made the way a phase run's checkmarks are: a
+# commit on the epic, by whoever runs it there.
 test_spec_drop_on_an_epic_names_a_commit_there() {
   spec_drop_fixture
   printf 'Destination: done.\n\nEpic: epic/alpha\n' | cat - .ai/specs/alpha/roadmap.md > r.tmp && mv r.tmp .ai/specs/alpha/roadmap.md
@@ -848,7 +850,8 @@ test_spec_drop_on_an_epic_names_a_commit_there() {
   git checkout -q -b epic/alpha
   run jig task abandon T-1 --reason "gone"
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "spec drop: commit .ai/specs/alpha/roadmap.md on epic/alpha now; the next pull request into epic/alpha carries it"
+  assert_contains "$OUT" "spec drop: commit .ai/specs/alpha/roadmap.md on epic/alpha now, as the checkmarks of a phase run are"
+  assert_eq epic/alpha "$(git symbolic-ref --short HEAD)"
 }
 
 test_spec_drop_with_no_item_naming_the_task_is_not_an_error() {
@@ -857,6 +860,146 @@ test_spec_drop_with_no_item_naming_the_task_is_not_an_error() {
   run jig task abandon T-1 --reason "gone"
   assert_eq 0 "$RC"
   assert_contains "$OUT" "spec drop: no item in .ai/specs/alpha/roadmap.md names T-1; nothing to rewrite"
+  # Nothing to close: the branch is not changed for nothing.
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+}
+
+# F6 of task-move-updates-roadmap: abandoned on the default branch, a spec
+# without an epic gets its roadmap edit on `spec/<sid>`, committed there, so
+# the default branch and the tree stay clean and the next task starts
+# (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute).
+test_spec_drop_on_the_default_branch_commits_on_the_spec_branch() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  sship_cfg_local agent.git commit
+  run jig task abandon T-1 --reason "lives in monitoring"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: switched to spec/alpha"
+  assert_contains "$OUT" "spec drop: T-1 closed in .ai/specs/alpha/roadmap.md"
+  assert_contains "$OUT" "on spec/alpha; land it with jig spec ship alpha --message-file <file>"
+  assert_eq spec/alpha "$(git symbolic-ref --short HEAD)"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)"
+  git show main:.ai/specs/alpha/roadmap.md | grep -q '^- \[ \] `T-1`' \
+    || fail "the default branch's roadmap was changed"
+  git show HEAD:.ai/specs/alpha/roadmap.md | grep -q '^- \[x\] `T-1`' \
+    || fail "the edit was not committed on spec/alpha"
+  assert_eq "Close T-1 in the roadmap of alpha" "$(git log -1 --format=%s)"
+  assert_eq 1 "$(git diff --name-only main HEAD | grep -c .)"
+
+  # The next task is not refused by what the abandon left behind.
+  jig task new T-3 >/dev/null
+  run jig task start T-3
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task/T-3"
+}
+
+# F7 of task-move-updates-roadmap: `spec/<sid>` is where a spec is edited, so
+# the drop is accepted there and made in place.
+test_spec_drop_on_the_spec_branch_is_accepted() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  git checkout -q -b spec/alpha
+  sship_cfg_local agent.git commit
+  run jig spec drop T-1
+  assert_eq 1 "$RC"
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "switched to"
+  assert_contains "$OUT" "spec drop: T-1 closed in .ai/specs/alpha/roadmap.md"
+  assert_contains "$OUT" "on spec/alpha; land it with jig spec ship alpha --message-file <file>"
+  assert_eq spec/alpha "$(git symbolic-ref --short HEAD)"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)"
+}
+
+# A `spec/<sid>` left by an earlier session is reused, as `spec resume` does,
+# and a roadmap that already holds that session's edits is not committed by
+# jig: they leave together with that session's `spec ship`.
+test_spec_drop_reuses_the_spec_branch_and_leaves_its_own_edits() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  git checkout -q -b spec/alpha
+  printf -- '- [ ] `T-4` — more\n' >> .ai/specs/alpha/roadmap.md
+  git commit -qam "more" >/dev/null
+  git checkout -q main
+  sship_cfg_local agent.git commit
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: switched to spec/alpha"
+  assert_eq "Close T-1 in the roadmap of alpha" "$(git log -1 --format=%s)"
+  grep -q '^- \[ \] `T-4`' .ai/specs/alpha/roadmap.md || fail "the existing spec/alpha was not reused"
+
+  jig task new T-5 >/dev/null
+  printf 'Spec: .ai/specs/alpha/ — Phase 1\n' >> .ai/workspace/tasks/T-5/task.md
+  printf -- '- [ ] `T-5` — five\n' >> .ai/specs/alpha/roadmap.md
+  run jig task abandon T-5 --reason "gone too"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: .ai/specs/alpha/roadmap.md holds changes not committed on spec/alpha yet; land them together with jig spec ship alpha --message-file <file>"
+  assert_eq "Close T-1 in the roadmap of alpha" "$(git log -1 --format=%s)"
+  grep -q '^- \[x\] `T-5`' .ai/specs/alpha/roadmap.md || fail "T-5's item was not closed"
+}
+
+# A project on one branch records the base itself as the task's branch: that
+# is not the task's own branch, and the drop goes ahead on spec/<sid>.
+test_spec_drop_in_a_project_on_one_branch_is_not_refused() {
+  spec_drop_fixture
+  sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp && mv c.tmp .ai/config.yaml
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  jig task start T-1 >/dev/null
+  assert_file_contains .ai/workspace/tasks/T-1/state "branch: main"
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "on its own branch"
+  assert_contains "$OUT" "spec drop: switched to spec/alpha"
+  grep -q '^- \[x\] `T-1`' .ai/specs/alpha/roadmap.md || fail "T-1's item was not closed"
+}
+
+# A `spec/<sid>` older than the item on the default branch closes nothing:
+# HEAD goes back, and the command says what to bring in first.
+test_spec_drop_with_a_stale_spec_branch_switches_back() {
+  spec_drop_fixture
+  printf -- '- [ ] `T-2` — other thing\n' > .ai/specs/alpha/roadmap.md
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  git branch spec/alpha
+  printf -- '- [ ] `T-1` — Sentry reporting\n' >> .ai/specs/alpha/roadmap.md
+  git commit -qam "file T-1" >/dev/null
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "spec drop: spec/alpha does not name T-1, main does; switched back to main. Merge main into spec/alpha, then run jig spec drop T-1 again"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)"
+  git checkout -q spec/alpha && git merge -q --ff-only main && git checkout -q main
+  run jig spec drop T-1
+  assert_eq 0 "$RC"
+  assert_eq spec/alpha "$(git symbolic-ref --short HEAD)"
+  grep -q '^- \[x\] `T-1`' .ai/specs/alpha/roadmap.md || fail "T-1's item was not closed after the merge"
+}
+
+# The switch is `spec resume`'s: a dirty tree on the default branch is
+# refused, and nothing moves.
+test_spec_drop_refuses_a_dirty_tree_on_the_default_branch() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  printf 'more\n' >> .ai/specs/alpha/spec.md
+  run jig task abandon T-1 --reason "gone"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec drop: uncommitted changes in the working tree"
+  assert_contains "$OUT" "task abandon: T-1 is abandoned, but its roadmap item was not rewritten"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  grep -q '^- \[ \] `T-1`' .ai/specs/alpha/roadmap.md || fail "the roadmap was changed on a dirty default branch"
+}
+
+# `spec remove --abandon-unstarted` takes the roadmap away with the spec: its
+# abandons rewrite nothing and switch no branch under it.
+test_spec_remove_abandons_without_switching_branches() {
+  spec_drop_fixture
+  git add -A >/dev/null && git commit -qm "spec" >/dev/null
+  sship_cfg_local agent.git commit
+  run jig spec remove alpha --abandon-unstarted
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "abandoned      T-1 (not started)"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  [ ! -d .ai/specs/alpha ] || fail "the spec was not moved"
+  assert_eq "" "$(git branch --list 'spec/*')"
 }
 
 # A run that is not part of a phase run is untouched: the agent still checks

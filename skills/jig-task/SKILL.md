@@ -211,7 +211,9 @@ A stage whose output the user already supplied is not re-run; see the next secti
 another repository, run `jig task abandon <id> --reason "<their why>"`, adding
 `--moved-to <repo>#<task-id>` (the `Linked:` form) for a move. The decision lives where the next
 agent reads it — the task's `state`, and the roadmap item `jig spec drop` closes for a spec-linked
-task — never only in a note in `task.md`, which is gitignored. When the move also changes what the
+task — never only in a note in `task.md`, which is gitignored. For a spec without an epic that leaves
+the checkout on `spec/<spec-id>`, with the edit committed when your git level allows; finish it with
+`jig spec ship <spec-id>`, as the command's last line says. When the move also changes what the
 project knows (which package owns a concern), record it in knowledge through `jig-consolidate`.
 
 ## When the task arrives written

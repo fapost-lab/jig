@@ -127,17 +127,26 @@ not touch. The day, the reason and the move's target are read from the task's `s
 |---|---|
 | task not `abandoned` (nor `archived` from `abandoned`) | error: abandon it first |
 | in the branch of a task whose state has `autopilot_phase` | exit 3: the coordinator closes the item after the merge |
-| HEAD is the task's own branch (here or in its worktree), or any branch but the task's base | exit 3: run it in a checkout of the task's base (its `base_branch`, else the spec's open epic, else `git.base_branch`) |
+| HEAD is the task's own branch (here or in its worktree): one it was started on, other than its base and `git.base_branch` | exit 3: run it in a checkout of the task's base |
 | no `Spec:` line | `spec drop: <id> is not linked to a spec`, exit 0 |
-| unchecked items name the task | each becomes `[x]` with the suffix after its last line, continuation lines included, written atomically; the lines are printed, then the base the change must be committed on |
+| the spec is being removed by `spec remove --abandon-unstarted` | `nothing to rewrite`, exit 0; no branch is switched |
+| spec with an open epic, HEAD is not the epic | exit 3: run it in a checkout of the epic |
+| spec without an epic, task based on `git.base_branch`, HEAD neither that branch nor `spec/<spec-id>` | exit 3: run it on either |
+| the same, HEAD is `git.base_branch` | as `spec resume`: a dirty tree is refused (error), then `spec/<spec-id>` is switched to (local or origin) or cut, `switched to spec/<spec-id>`; HEAD stays there. Nothing to close: no switch. A `spec/<spec-id>` that does not name the task while the default branch does: switched back, exit 3, naming the merge to make first |
+| task based on another branch, HEAD is not it | exit 3: run it in a checkout of that branch |
+| unchecked items name the task | each becomes `[x]` with the suffix after its last line, continuation lines included, written atomically; the lines are printed, then how the change lands (below) |
 | every item naming it is checked | `already closed`, exit 0, file unchanged |
 | no item names it | `nothing to rewrite`, exit 0 |
 | spec or its `roadmap.md` not here | `nothing to rewrite`, exit 0 |
 | two specs linked | error |
 
 The suffix starts with a dash between spaces, where a wave entry's title ends, so a wave that names the
-item still does. The line after the edit says how it lands: on an epic, a commit there that the next
-pull request into it carries; otherwise `jig spec ship <spec-id>`, from a branch of its own.
+item still does. How the edit lands: on an epic, a commit there by whoever ran it, as a phase run's
+checkmarks are. On `spec/<spec-id>`, a local commit of `roadmap.md` alone (`Close <task-id> in the
+roadmap of <spec-id>`), then `jig spec ship <spec-id>` from that branch — except at git level `none`
+(`spec ship`'s level), and when `roadmap.md` already held uncommitted changes or is not tracked yet;
+then the edit stays in the tree of `spec/<spec-id>` and the line says so. The default branch's roadmap
+is never edited.
 
 ## `jig spec link <spec-id> <task-id>`
 
