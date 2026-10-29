@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-10-27
+reviewed_at: 2026-10-29
 ---
 # Housekeeping
 
@@ -176,8 +176,12 @@ templates append stdout to the same `housekeeping.log`, so no report line may ca
 
 **The log is no longer only an audit trail.** `jig status` reads the newest `--- run`
 block; `jig measure` reads the whole file as the history of tasks whose workspace is gone
-(ADR-0027); `jig spec plan` reads `remote=merged` from the newest block to tell which of a
-phase's tasks merged. Its line shape is an interface with three consumers now, and nothing rotates it. The one
+(ADR-0027); `jig spec plan` and `jig spec list` read `remote=merged` from the newest block to
+tell which tasks merged. Its line shape is an interface with three consumers now, and nothing
+rotates it — so a reader of the newest block never reads the file: `hklog_last_run_lines` in
+`scripts/lib/hklog.sh` finds the last marker's byte offset with `grep -b` and cuts there with
+`tail -c`. One run of a session hook out of file descriptors once left 55 000 error lines in a
+log, 8.8 MB, and every reader that read it whole paid a third of a second for it. The one
 free-form field is `ignored=` on a worktree removal, which lists paths: it comes last and
 carries no space, so a `key=value` reader that stops at the first space never meets it.
 The status page reads the newest block too — `remote=open` for pull requests waiting on a person,

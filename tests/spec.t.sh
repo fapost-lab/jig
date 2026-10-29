@@ -3091,6 +3091,116 @@ RM
   assert_not_contains "$OUT" "blocker"
 }
 
+# --- what reading "merged" costs per spec ------------------------------------
+#
+# 0.38.1 asked which tasks merged once per spec: a pass over every task's state
+# and over the whole housekeeping log for each, 6.8 s for 20 specs and a 9 MB
+# log where 0.37.0 took 0.76. These tests hold the shape that fixed it, by
+# counting reads, not seconds — a time threshold is noise in CI.
+
+# _sm_reads <jig args> — run jig with them and print how many times a grep, an
+# awk or a tail was given the housekeeping log or a task's state to read. Shims
+# of the three, first on PATH, note each such call and run the real program.
+_sm_reads() {
+  local shims="$JIG_TEST_TMP.shims" log="$JIG_TEST_TMP.reads" prog real
+  mkdir -p "$shims"
+  for prog in grep awk tail; do
+    real=$(command -v "$prog")
+    cat > "$shims/$prog" <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    *housekeeping.log | */state) printf '%s\n' "$prog" >> "$log"; break ;;
+  esac
+done
+exec "$real" "\$@"
+SHIM
+    chmod +x "$shims/$prog"
+  done
+  : > "$log"
+  PATH="$shims:$PATH" "$JIG_BIN" "$@" > "$JIG_TEST_TMP.reads-out" 2>&1 || return 1
+  wc -l < "$log" | tr -d ' '
+}
+
+# _sm_specs <n> — <n> specs, each with an item for T-a, which only the newest
+# housekeeping run says merged, and one for T-b, which is closed.
+_sm_specs() {
+  local i=1
+  while [ "$i" -le "$1" ]; do
+    plan_spec "s$i" <<'RM'
+## Phase 1 — First
+
+- [ ] `T-a` — Alpha — goal
+- [ ] `T-b` — Bravo — goal
+- [ ] `T-c` — Charlie — goal
+RM
+    i=$((i + 1))
+  done
+}
+
+_sm_tasks() {
+  local t
+  for t in T-a T-b T-c; do jig task new "$t" >/dev/null; done
+  task_route_class T-b
+  jig task set T-b status ready >/dev/null
+  task_route_done T-b
+  jig task set T-b knowledge_consolidated true >/dev/null
+  jig task set T-b status consolidated >/dev/null
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run 2026-09-20T10:00:00Z forge=none\n'
+    printf '2026-09-20T10:00:01Z task=T-c status=active remote=merged via=ancestry action=preserve\n'
+    printf -- '--- run 2026-09-21T10:00:00Z forge=none\n'
+    printf '2026-09-21T10:00:01Z task=T-a status=active remote=merged via=ancestry action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+}
+
+test_spec_list_reads_merged_tasks_once_whatever_the_number_of_specs() {
+  fixture_jig_repo
+  _sm_tasks
+  _sm_specs 1
+  local one many
+  one=$(_sm_reads spec list --json) || fail "spec list --json failed: $(cat "$JIG_TEST_TMP.reads-out")"
+  _sm_specs 4
+  many=$(_sm_reads spec list --json) || fail "spec list --json failed: $(cat "$JIG_TEST_TMP.reads-out")"
+  # Zero would mean the shims saw nothing, and the comparison proved nothing.
+  [ "$one" -gt 0 ] || fail "no read of the log or a state was seen"
+  assert_eq "$one" "$many"
+  # The one read is the one every spec answers from: T-a (housekeeping) and
+  # T-b (closed) are done in each of the four, T-c (an older run) in none.
+  assert_eq 4 "$(grep -o '"progress":{"done":2,' "$JIG_TEST_TMP.reads-out" | wc -l | tr -d ' ')"
+
+  # The text listing walks every spec too.
+  _sm_specs 1
+  rm -rf .ai/specs/s2 .ai/specs/s3 .ai/specs/s4
+  one=$(_sm_reads spec list) || fail "spec list failed"
+  _sm_specs 4
+  many=$(_sm_reads spec list) || fail "spec list failed"
+  assert_eq "$one" "$many"
+  assert_contains "$(cat "$JIG_TEST_TMP.reads-out")" "s4"
+}
+
+# A log written before runs were marked is one run: read whole, as before.
+test_spec_list_counts_merged_from_a_log_with_no_run_marker() {
+  fixture_jig_repo
+  _sm_specs 1
+  jig task new T-a >/dev/null
+  mkdir -p .ai/runtime
+  printf '2026-09-20T10:00:01Z task=T-a status=active remote=merged via=ancestry action=preserve\n' \
+    > .ai/runtime/housekeeping.log
+  run jig spec list --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"text":"`T-a` — Alpha — goal","checked":false,"done":true'
+
+  # Under jig's own `set -eu -o pipefail`: grep finding no marker fails its
+  # pipeline, which once ended the reader before it printed a line.
+  run bash -c 'set -eu -o pipefail; . "$1"; hklog_last_run_lines "$2"; echo end' _ \
+    "$(dirname "$JIG_BIN")/lib/hklog.sh" .ai/runtime/housekeeping.log
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task=T-a"
+  assert_contains "$OUT" "end"
+}
+
 test_spec_plan_hints_unarchive_for_an_archived_task() {
   epic_setup
   plan_spec alpha <<'RM'
