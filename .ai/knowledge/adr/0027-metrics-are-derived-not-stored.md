@@ -8,7 +8,7 @@ paths:
   - scripts/lib/measure.sh
   - scripts/lib/housekeeping.sh
 summary: Why measurement is derived on demand rather than stored, and why the purge line records what outlives the task.
-reviewed_at: 2026-09-11
+reviewed_at: 2026-10-29
 ---
 # ADR-0027: Measurement is derived on demand, and the purge line is what outlives the task
 
@@ -100,6 +100,14 @@ already derives whether work landed, uses the answer for one decision and discar
   shape can no longer be changed freely, and **nothing rotates it** — a log that was
   previously incidental is now load-bearing and grows without bound. Retention for it is an
   open question this decision creates and does not answer.
+
+  > **Amendment (2026-10-29).** Answered: every non-dry housekeeping run trims the log under
+  > its lock, before its own marker (`_hk_log_trim`). The 10 runs before it stay, each with all
+  > its records and at most 200 other lines of output; of older runs only the `action=purge`
+  > lines stay, so the history this decision reads is never trimmed and `jig measure` reads the
+  > whole file as before; that history alone still grows, one line per purged task. A single
+  > session hook out of file descriptors had left 55 000 lines of stderr, 8.8 MB, in one
+  > project's log (domains/housekeeping).
 - Measurement starts now, not retroactively. A task needs `base_commit` (ADR-0026) and a
   surviving branch before its change can be sized, so every task created before that
   decision is permanently unmeasurable. The report states for how many tasks it could
