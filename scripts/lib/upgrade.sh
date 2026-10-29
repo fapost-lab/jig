@@ -211,7 +211,7 @@ _upgrade_same_dir() {
 _upgrade_records_source() {
   local recorded
   [ "$2" = 0 ] || return 0
-  recorded=$(manifest_source)
+  recorded=$(manifest_source 2>/dev/null) || recorded=""
   _upgrade_same_dir "$1" "$recorded"
 }
 
@@ -244,11 +244,82 @@ _upgrade_summary() {
 # another checkout, and the command that does change it. `init` is that
 # command: choosing where a project's framework comes from is an install
 # decision, and `upgrade` only carries an existing install forward.
+#
+# Silent when the recorded source is not a directory on this machine: then it
+# is most likely another person's install path in a committed manifest, which
+# is no checkout to stay on, and printing it would put a foreign path in this
+# run's report. The first upgrade that places a file replaces it
+# (adr-20261029-the-manifest-names-the-global-framework-not-its-path).
 _upgrade_kept_source_note() {
-  local source="$1" link_flag=""
+  local source="$1" link_flag="" recorded
+  recorded=$(manifest_source 2>/dev/null) || recorded=""
+  [ -n "$recorded" ] && [ -d "$recorded" ] || return 0
   if [ "$2" = link ]; then link_flag=" --link"; fi
-  _upgrade_note warn "nothing was placed from $source, so this project stays installed from $(manifest_source)" \
+  _upgrade_note warn "nothing was placed from $source, so this project stays installed from $recorded" \
     "to install it from that checkout instead, run \`jig init$link_flag --from $source\`"
+}
+
+# upgrade_source — the framework checkout a plain `jig upgrade` (no --from)
+# reads from on this machine, or nothing (exit 1) when there is none:
+#
+#   1. the checkout this jig runs from (jig_source_root): link mode, the
+#      global jig itself, a handed-off run;
+#   2. the source the manifest records, when it is a framework checkout here —
+#      "." is this project and "global" is already this machine's global
+#      framework (manifest_source);
+#   3. the global framework (jig_global_source): the Jig `jig status` compares
+#      this project with and `jig self-update` moves — but only when it is not
+#      older than this install (_upgrade_global_usable). An older global jig
+#      is no source for this project: reading from it would plan a downgrade,
+#      count it as pending, and have `jig verify` ask for it (ADR-0017).
+#
+# The recorded checkout is asked before the global one so that a project
+# somebody deliberately installed from another checkout keeps upgrading from
+# it while it exists; what changes is only the case that used to die — a
+# recorded path from another machine, or a checkout since deleted
+# (adr-20261029-the-manifest-names-the-global-framework-not-its-path).
+#
+# The age check applies whichever step reached the global framework: a
+# recorded "global" (or a recorded path that is this machine's global jig) is
+# the same checkout as step 3, and an older one is no source either way.
+upgrade_source() {
+  local src global
+  src=$(jig_source_root)
+  if [ -z "$src" ]; then
+    src=$(manifest_source 2>/dev/null) || src=""
+    if [ -n "$src" ] && ! jig_is_source_root "$src"; then src=""; fi
+    global=$(jig_global_source 2>/dev/null) || global=""
+    [ -n "$src" ] || src="$global"
+    if [ -n "$src" ] && _upgrade_same_dir "$src" "$global" \
+       && ! _upgrade_global_usable "$src"; then
+      src=""
+    fi
+  fi
+  [ -n "$src" ] || return 1
+  printf '%s\n' "$src"
+}
+
+# _upgrade_global_usable <global-source> — whether the global framework may
+# stand in for a recorded source that is not here: false only when both it and
+# this install declare release versions and it is the older. Anything it
+# cannot compare is allowed, as `--from` would be.
+_upgrade_global_usable() {
+  local global_v project_v
+  global_v=$(jig_declared_version "$1") || return 0
+  project_v=$(manifest_header_get jig.version) || return 0
+  ! jig_version_newer "$project_v" "$global_v"
+}
+
+# _upgrade_no_source_message — why a plain upgrade found nothing to read from,
+# naming where it looked and never the path the manifest records.
+_upgrade_no_source_message() {
+  local global
+  global=$(jig_global_source 2>/dev/null) || global=""
+  if [ -n "$global" ]; then
+    printf '%s\n' "upgrade: cannot determine the framework source root: the global jig ($(jig_declared_version "$global" 2>/dev/null || printf '?')) is older than this project ($(manifest_header_get jig.version)); run \`jig self-update\`, or pass --from <dir>"
+  else
+    printf '%s\n' "upgrade: cannot determine the framework source root: this jig is not a framework checkout, no global jig is on PATH, and the source the manifest records is not on this machine; install Jig or pass --from <dir>"
+  fi
 }
 
 # _upgrade_config_note <dry-run> — after a real run, one line when the
@@ -795,7 +866,10 @@ _upgrade_link() {
   if _upgrade_records_source "$source" "$created_count"; then
     record_source="$source"
   elif [ "$reconciled_count" != 0 ]; then
-    record_source=$(manifest_source)
+    # "global" on a machine without one resolves to nothing: keep the value
+    # as recorded rather than lose the reconciled record with it.
+    record_source=$(manifest_source 2>/dev/null) \
+      || record_source=$(manifest_header_get jig.source)
   fi
 
   if [ -n "$record_source" ]; then
@@ -1046,14 +1120,14 @@ EOF
 }
 
 # _upgrade_custom_profiles — active profile names (profiles_active) that are
-# not part of the project's recorded source (manifest_source): a profile
+# not part of the checkout a plain upgrade reads from (upgrade_source): a profile
 # somebody wrote themselves rather than one the framework ships. `generic` is
 # never included: it is the framework's own fallback and already declares
 # `verifies: nothing`. Silent (prints nothing) when the source cannot be
 # read, rather than guessing.
 _upgrade_custom_profiles() {
   local source p
-  source=$(manifest_source 2>/dev/null) || source=""
+  source=$(upgrade_source) || source=""
   [ -n "$source" ] || return 0
   for p in $(profiles_active); do
     [ "$p" != generic ] || continue
@@ -1408,11 +1482,9 @@ _upgrade_run() {
     [ -d "$from" ] || jig_die "upgrade: --from directory does not exist: $from"
     source=$(cd "$from" && pwd)
   else
-    source=$(jig_source_root)
-    [ -n "$source" ] || source=$(manifest_source)
-  fi
-  if [ -z "$source" ] || [ ! -d "$source" ]; then
-    jig_die "upgrade: cannot determine the framework source root; pass --from <dir>"
+    # Where it looked, never what the manifest records: that may be another
+    # machine's path, meaningless here.
+    source=$(upgrade_source) || jig_die "$(_upgrade_no_source_message)"
   fi
   jig_is_source_root "$source" \
     || jig_die "upgrade: not a framework source root (missing skills/, templates/ or scripts/jig): $source"

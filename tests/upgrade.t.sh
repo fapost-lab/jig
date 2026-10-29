@@ -632,9 +632,165 @@ test_upgrade_still_dies_without_from_when_source_root_gone() {
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
-  run jig_installed upgrade
+  # No global jig either: with one, upgrade_source reads from it.
+  run jig_installed_without_global upgrade
   assert_eq 1 "$RC"
   assert_contains "$OUT" "cannot determine the framework source root"
+}
+
+# --- the global framework as a source -------------------------------------------
+# (adr-20261029-the-manifest-names-the-global-framework-not-its-path)
+
+# _upgrade_global_path <framework-dir> — a PATH whose only `jig` is
+# <framework-dir>/scripts/jig, the way install.sh places it: a symlink in a bin
+# directory, or that scripts/ directory itself where `ln -s` cannot link
+# (jig_global_executable only recognises a path ending in /scripts/jig).
+_upgrade_global_path() {
+  local root="$1" bin
+  bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-global-bin.XXXXXX")
+  if ln -s "$root/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
+    path_without_jig "$bin"
+  else
+    path_without_jig "$root/scripts"
+  fi
+}
+
+# _upgrade_foreign_manifest — record another machine's install path as the
+# source, the way a colleague's committed upgrade leaves it (jig-ui,
+# 2026-10-29), and commit it.
+_upgrade_foreign_manifest() {
+  sed 's|^jig.source:.*|jig.source: /nonexistent/someone-else/.local/share/jig|' \
+    .ai/manifest > .ai/manifest.tmp
+  mv .ai/manifest.tmp .ai/manifest
+  git add .ai/manifest
+  git commit -q -m "manifest from another machine"
+}
+
+# The reported case: the manifest names a path that does not exist here, and
+# the project's own copy refused to upgrade although `jig status` had just
+# found the global jig and offered the upgrade.
+test_upgrade_reads_from_the_global_jig_when_the_recorded_source_is_not_here() {
+  _unit_project
+  _upgrade_foreign_manifest
+  local global path
+  global=$(_unit_source)
+  _unbump_source "$global" # same version: the project's copy does the work itself
+  global=$(cd "$global" && pwd -P)
+  path=$(_upgrade_global_path "$global")
+
+  run env PATH="$path" .ai/scripts/jig upgrade --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "install .claude/skills/jig-newthing/SKILL.md"
+  assert_not_contains "$OUT" "/nonexistent"
+
+  run env PATH="$path" .ai/scripts/jig upgrade
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "manifest updated"
+  assert_file .claude/skills/jig-newthing/SKILL.md
+  # The foreign path is replaced, and not by this machine's path either.
+  assert_file_contains .ai/manifest "jig.source: global"
+  assert_not_contains "$(cat .ai/manifest)" "/nonexistent"
+  assert_not_contains "$(cat .ai/manifest)" "$global"
+
+  rm -rf "$global"
+}
+
+# Nothing to read from: the refusal says where it looked and names no path the
+# manifest records — on this machine that path means nothing.
+test_upgrade_without_any_source_names_where_it_looked_not_the_foreign_path() {
+  _unit_project
+  _upgrade_foreign_manifest
+
+  run jig_installed_without_global upgrade
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "cannot determine the framework source root"
+  assert_contains "$OUT" "no global jig is on PATH"
+  assert_contains "$OUT" "pass --from <dir>"
+  assert_not_contains "$OUT" "/nonexistent"
+}
+
+# An older global jig is no stand-in for a recorded source that is not here:
+# reading from it would plan a downgrade, and `status`/`verify` would count it
+# as pending and ask for it. Pending stays unknown, as it was, and the refusal
+# names the way forward.
+test_upgrade_does_not_fall_back_to_an_older_global_jig() {
+  _unit_project
+  _upgrade_foreign_manifest
+  local global path
+  global=$(_unit_source)
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="0.0.1"/' "$global/scripts/lib/version.sh" > "$global/v.tmp"
+  mv "$global/v.tmp" "$global/scripts/lib/version.sh"
+  global=$(cd "$global" && pwd -P)
+  path=$(_upgrade_global_path "$global")
+
+  run env PATH="$path" .ai/scripts/jig upgrade --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "older than this project"
+  assert_contains "$OUT" "jig self-update"
+  assert_not_contains "$OUT" "/nonexistent"
+
+  run env PATH="$path" .ai/scripts/jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "pending"
+
+  rm -rf "$global"
+}
+
+# The same rule when the manifest records `global`: on a colleague's machine
+# with an older global jig, `global` is that older checkout, and it must not
+# be read from either.
+test_upgrade_does_not_read_a_recorded_global_that_is_older() {
+  _unit_project
+  sed 's|^jig.source:.*|jig.source: global|' .ai/manifest > .ai/manifest.tmp
+  mv .ai/manifest.tmp .ai/manifest
+  git add .ai/manifest
+  git commit -q -m "manifest names the global framework"
+  local global path
+  global=$(_unit_source)
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="0.0.1"/' "$global/scripts/lib/version.sh" > "$global/v.tmp"
+  mv "$global/v.tmp" "$global/scripts/lib/version.sh"
+  global=$(cd "$global" && pwd -P)
+  path=$(_upgrade_global_path "$global")
+
+  run env PATH="$path" .ai/scripts/jig upgrade --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "older than this project"
+  assert_contains "$OUT" "jig self-update"
+
+  run env PATH="$path" .ai/scripts/jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "pending"
+
+  rm -rf "$global"
+}
+
+# `global` names the global framework of whichever machine reads it: written
+# when the source is the global jig, read back as this machine's.
+test_init_from_the_global_jig_records_global_and_upgrade_reads_it() {
+  fixture_repo
+  local global path
+  global=$(mktemp -d "${TMPDIR:-/tmp}/jig-global-src.XXXXXX")
+  cp -R "$JIG_HOME"/. "$global"/
+  rm -rf "$global/.git"
+  global=$(cd "$global" && pwd -P)
+  path=$(_upgrade_global_path "$global")
+
+  run env PATH="$path" "$global/scripts/jig" init
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.source: global"
+  assert_not_contains "$(cat .ai/manifest)" "$global"
+
+  run env PATH="$path" .ai/scripts/jig upgrade --dry-run
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "manifest unchanged (dry run)"
+
+  # On a machine without a global jig, `global` names nothing: the same
+  # refusal as a missing path, never a crash.
+  run jig_installed_without_global upgrade --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "cannot determine the framework source root"
+
+  rm -rf "$global"
 }
 
 # New shared guidance must ship through real skills in both adapters/modes.

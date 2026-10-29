@@ -704,7 +704,8 @@ test_status_omits_pending_when_source_root_unknown() {
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
-  run jig_installed status
+  # No global jig either: with one, upgrade_source reads from it.
+  run jig_installed_without_global status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "drift: 0 modified, 0 missing"
   assert_not_contains "$OUT" "pending"

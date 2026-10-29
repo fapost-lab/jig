@@ -320,6 +320,15 @@ not edit, removes the ones Jig no longer ships unless you edited them, and keeps
 everything else — as one change of its own, on a branch of its own
 ([below](#an-upgrade-is-a-change-of-its-own)).
 
+"The Jig on your machine" is the one `jig status` compares the project with and `jig self-update`
+moves: the `jig` your `PATH` finds. `.ai/manifest` records it as `jig.source: global`, not as the
+folder it lives in, because the manifest is committed and that folder is yours — on a colleague's
+machine their own Jig is the one that counts. A manifest written by an older version may still name
+somebody's folder, such as `/Users/<name>/.local/share/jig`; nothing needs editing by hand. Where
+that folder does not exist the upgrade uses the Jig on your machine, and the first upgrade that
+places a file writes `global` in its place. If the Jig on your machine is older than the project's,
+it is not used — that would be a downgrade — and the upgrade asks you to run `jig self-update` first. `--from <dir>` still picks a checkout explicitly.
+
 **The first upgrade from 0.15.0 or older ends with a shell error.** Once the run has done its work,
 `.ai/scripts/jig` reports something like `line 133: cmd: unbound variable` — the wording and the
 line number depend on the version you came from, and from versions before 0.15.0 the closing summary

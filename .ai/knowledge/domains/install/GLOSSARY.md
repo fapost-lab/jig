@@ -16,7 +16,7 @@ paths:
   - scripts/lib/self-update.sh
   - .github/scripts/release-tag.sh
   - scripts/lib/section.sh
-reviewed_at: 2026-09-26
+reviewed_at: 2026-10-29
 ---
 # Install glossary
 
@@ -54,6 +54,10 @@ Informal synonyms: the Jig section, the managed block.
 mode, one hash line per installed path. Maintained by `init` and
 `upgrade`, never edited by hand. `init` chooses `jig.source`; `upgrade` writes it only for a
 source it actually installed from (adr-20260922-upgrade-records-the-source-it-installed-from).
+`jig.source` is `.` (the project is its own source), `global` (the Global framework of whichever
+machine reads it) or, for any other checkout, its path — never one person's install path for the
+global framework, because the file is committed
+(adr-20261029-the-manifest-names-the-global-framework-not-its-path).
 
 ## Drift
 
@@ -104,7 +108,9 @@ filters and not the object format, so both halves are needed
 
 The framework checkout behind the `jig` that `PATH` selects: `~/.local/share/jig` when
 installed by `install.sh`, a developer's own clone otherwise. `jig self-update` moves it; a
-project's installed copy is unaffected until `upgrade` (ADR-0033).
+project's installed copy is unaffected until `upgrade` (ADR-0033). `status`, `self-update` and
+`upgrade` find it the same way (`jig_global_executable`, `jig_global_source`); a plain `upgrade`
+reads from it when neither the running jig nor the manifest's recorded source is a checkout here.
 
 ## Release tag
 

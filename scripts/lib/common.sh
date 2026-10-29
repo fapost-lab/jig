@@ -389,6 +389,18 @@ jig_global_executable() {
   printf '%s\n' "$path"
 }
 
+# jig_global_source — the global framework: the checkout behind
+# jig_global_executable, physical, without the trailing /scripts/jig. Fails,
+# printing nothing, when there is none. The one answer to "which Jig is on this
+# machine" that `status`, `self-update` and `upgrade` share, and what a
+# manifest's `jig.source: global` names on whichever machine reads it
+# (adr-20261029-the-manifest-names-the-global-framework-not-its-path).
+jig_global_source() {
+  local exe
+  exe=$(jig_global_executable) || return 1
+  printf '%s\n' "${exe%/scripts/jig}"
+}
+
 # --- directory links ----------------------------------------------------------
 
 # How this machine links one directory to another: symlink, junction or none.

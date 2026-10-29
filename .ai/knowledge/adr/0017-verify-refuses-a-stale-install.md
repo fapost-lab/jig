@@ -11,7 +11,7 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/status.sh
 summary: Why a never-installed framework file is a gap drift cannot see, and why verify refuses to run across it.
-reviewed_at: 2026-09-09
+reviewed_at: 2026-10-29
 ---
 # ADR-0017: `pending` is a kind of gap, and `verify` refuses to run across it
 
@@ -54,7 +54,10 @@ profile's `verify.sh` is framework-owned and installed by the same mechanism.
 **Unknown is not zero.** When the framework source root cannot be resolved — a copy-mode
 install whose source checkout no longer exists on this machine — pending is unknown:
 `status` omits the field rather than printing `0 pending`, and `verify` runs the profiles
-normally. The check is best-effort and must never convert an absent source into a failure.
+normally. The check is best-effort and must never convert an absent source into a failure. Since
+adr-20261029-the-manifest-names-the-global-framework-not-its-path, a recorded source that is not
+on this machine is first replaced by the global framework when one is there and not older than the
+install; only without one is pending unknown.
 
 The count is computed from `jig upgrade --dry-run`, not from a second implementation of
 the decision table. One place decides what an upgrade would do; `status` and `verify` ask

@@ -425,7 +425,8 @@ test_verify_runs_profiles_when_source_root_unknown() {
   jig init --from "$src" --profiles generic >/dev/null
   rm -rf "$src"
 
-  run jig_installed verify
+  # No global jig either: with one, upgrade_source reads from it.
+  run jig_installed_without_global verify
   # Nothing that covers a stack took part — the fixture profile declares
   # `detect: always`, which is what a fallback is — so the run says nothing
   # was checked and does not refuse: there is nothing here to install.
