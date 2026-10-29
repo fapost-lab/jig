@@ -226,7 +226,8 @@ the project, and putting it in the shared file does nothing — one person's tru
 switched on for the whole team.
 
 The levels are enforced by a script rather than by the agent's good intentions: `jig task ship`
-commits only what was staged, never force-pushes, never skips your Git hooks, refuses before
+commits the task's change — what you staged, or with nothing staged the changes to tracked files,
+never a new file you did not stage — never force-pushes, never skips your Git hooks, refuses before
 the task's knowledge decision is recorded, and merges only at `merge`, only on green checks,
 and never past your repository's own branch protection
 ([Letting the agent ship](/agent-ships)).

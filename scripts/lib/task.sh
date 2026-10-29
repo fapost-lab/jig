@@ -5841,6 +5841,9 @@ task_ship() {
   [ "$has_message" -eq 1 ] || jig_die "task ship: --message-file is required"
   [ -f "$message_file" ] || jig_die "task ship: --message-file: no such file: $message_file"
   [ -z "$body_file" ] || [ -f "$body_file" ] || jig_die "task ship: --body-file: no such file: $body_file"
+  # The files as given, before any copy below replaces them: wherever they
+  # sit, they are the ship's inputs and never part of the change it stages.
+  local inputs_msg="$message_file" inputs_body="$body_file"
 
   local dir
   dir=$(task_dir "$id")
@@ -5926,8 +5929,9 @@ EOF
   # apart, "stopped at push" alone would not say whose setting stopped it.
   printf 'task ship: git level %s (%s)\n' "$level" "$key"
 
+  jig_ship_stage_tracked "task ship" "$inputs_msg" "$inputs_body"
   jig_ship_check_staged "task ship"
-  jig_ship_commit "task ship" "$message_file"
+  jig_ship_commit "task ship" "$message_file" "$inputs_msg" "$inputs_body"
 
   # Before the first step that leaves this machine (common.sh, "what a ship
   # may send out"). Asked here rather than just before the push: "this branch
