@@ -114,7 +114,10 @@ Pass `--body-file` when the task agent wrote a `pr-body.md`; without it the body
   the table below.
 
 After each merge: `jig task set <id> status consolidated`, `jig spec done <id>` **in the epic
-checkout**, `jig task autopilot <id> end --reason merged`, and fast-forward the epic. Asking for a phase run is
+checkout**, `jig task autopilot <id> end --reason merged`, and fast-forward the epic. A task of the
+wave that was abandoned instead (`spec plan` shows its item `abandoned`) gets `jig spec drop <id>`
+in the epic checkout in place of `spec done`: its branch could not close the item, and the edit is
+committed on the epic like a checkmark. Asking for a phase run is
 the person's yes to closing a task whose pull request merged, attended too — otherwise the plan
 cannot see the merge until housekeeping runs.
 

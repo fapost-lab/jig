@@ -93,7 +93,7 @@ Small work — a typo, a one-file fix that fits in one session — needs no work
 | **active** | Being worked on. |
 | **ready** | Checked: tests pass and the goal is met. Waiting to be merged. |
 | **consolidated** | Closed: merged, and what it taught the project is recorded. |
-| **abandoned** | Stopped. Comes back with `jig task set <id> status active`. |
+| **abandoned** | Stopped, with the reason recorded. Comes back with `jig task set <id> status active`. |
 | **archived** | Put away: abandoned for a while, untouched for two months, or absorbed into another task with `jig task merge`. Hidden from the lists, never deleted. |
 
 **Paused** is a mark on an active or ready task, not a state of its own: it says the work was
@@ -108,6 +108,24 @@ knowledge travels in the same pull request as the code.
 A merge alone does not close a task: a fix can still follow it. At the start of a session the agent
 checks which of your tasks were merged, names each one and asks whether it can be closed. Nothing
 is closed without your yes.
+
+### Giving a task up, or moving it elsewhere
+
+Tell the agent why, and it runs `jig task abandon <id> --reason "<why>"`. When the work belongs to
+another repository — a neighbouring package, say — it adds `--moved-to <repo>#<task-id>` (the same
+form as a `Linked:` line, a path from your main checkout), and prints the command that files the task
+there; Jig never writes to the other repository.
+
+The reason goes where the next agent reads it. If the task came from a spec's roadmap, the item that
+named it is closed in place — checked, with ` — moved to … (<date>): <why>` or ` — dropped (<date>):
+<why>` at its end — so nobody starts the work here again because the plan still said so. A task from
+a spec cannot be abandoned without a reason. Jig never edits the roadmap on your main branch: for a
+spec built on an epic the item is rewritten in a checkout of the epic, and you commit it there; for any
+other spec Jig switches to the spec's own branch, `spec/<spec-id>` — as `jig spec resume` does — makes
+the edit and commits it there, and `jig spec ship <spec-id>` sends it on. (If your agent may not commit,
+the edit waits on that branch for your commit.) Anywhere else — on the task's own branch, say — the item
+is left alone and Jig prints where to run `jig spec drop <id>`. In a roadmap phase run the coordinator
+runs it, after the merge.
 
 <Accordion title="How finished task notes are cleaned up">
 What is left behind is cleaned up automatically. The workspace of a closed task is moved to a trash
