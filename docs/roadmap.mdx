@@ -28,11 +28,6 @@ task reads as verified even if files changed afterwards, and a change can be shi
 that was earned by a different tree. The result gets pinned to its inputs, the way the review is,
 and a moved tree asks for a new run.
 
-**A resume whose stash conflicted must tell the truth.** It tells you to resolve the conflict and run
-it again, and the retry can never succeed: it applies the same stash a second time. The resume will
-recognise the stash it already applied and end the pause
-([known issue](/known-issues#a-resume-whose-stash-conflicted-can-never-be-retried)).
-
 ## Then: what costs you time
 
 **A second review round must not open a new front.** A repeat review already reads only what

@@ -1651,7 +1651,7 @@ task_set() {
           || jig_die "task set: invalid $key: $problem"
       fi
       ;;
-    task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash \
+    task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash | paused_stash_applied \
       | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | gate | gate_design | gate_by | pr_url \
       | archived_at | archived_reason | archived_from \
       | abandoned_at | abandoned_reason | moved_to \
@@ -4116,10 +4116,13 @@ task_pause() {
 # amendment of 2026-10-26 narrows it): the stash is applied here, so here must
 # be the task's checkout. Without a stash resume writes the task's state and
 # touches no checkout, so it runs anywhere — a task in its own worktree is
-# resumed from the main checkout. A failed stash apply clears nothing and
+# resumed from the main checkout. A failed stash apply ends no pause and
 # exits non-zero: a conflicted restore must not silently look like a
-# successful resume. `apply`, never `pop` — the stash entry survives as a
-# backup, which is why `paused_stash` itself is not cleared here.
+# successful resume. An apply that merged the stash with conflicts is
+# recorded (`paused_stash_applied`), so the resume after the resolution ends
+# the pause instead of applying the stash again (ADR-0012, amendment of
+# 2026-10-28). `apply`, never `pop` — the stash entry survives as a backup,
+# which is why `paused_stash` itself is not cleared here.
 #
 # The write is checked against the revision the caller read (`--revision`),
 # or the one this command reads before it reads the task, as a `jig queue`
@@ -4203,9 +4206,26 @@ _task_resume_body() {
     jig_fail wrong-checkout "task resume: $id has a stash to apply; switch to $state_branch first"
   fi
 
+  # A stash that a resume already merged into this tree with conflicts is
+  # recorded as `paused_stash_applied`: applying it again would merge it on
+  # top of the person's resolution, so the retry only waits for the conflicts
+  # to be gone. Unmerged paths refuse before the claim either way — git
+  # refuses an apply over an unresolved index, and no write follows.
+  local applied="" unmerged
+  [ -z "$sha" ] || [ "$(task_state_get "$id" paused_stash_applied)" != "$sha" ] || applied=$sha
+  if [ -n "$sha" ]; then
+    unmerged=$(_task_unmerged_paths)
+    if [ -n "$unmerged" ]; then
+      if [ -n "$applied" ]; then
+        jig_fail stash-conflict "task resume: the stash $sha is applied, and $(_task_count_lines "$unmerged") file(s) still have conflicts; resolve them and \`git add\` them, then run \`jig task resume $id\` again"
+      fi
+      jig_fail stash-conflict "task resume: this checkout has unresolved conflicts; resolve them before \`jig task resume $id\` applies its stash"
+    fi
+  fi
+
   local days tmp="$dir/state.tmp.$$" rc=0
   days=$(_task_days_since "$(task_state_get "$id" paused_at)")
-  _task_state_without "$dir" "$tmp" paused paused_at paused_reason
+  _task_state_without "$dir" "$tmp" paused paused_at paused_reason paused_stash_applied
 
   jig_revision_claim "$expected" || rc=$?
   case "$rc" in
@@ -4215,11 +4235,28 @@ _task_resume_body() {
   esac
 
   local stash_line=""
-  if [ -n "$sha" ]; then
+  if [ -n "$applied" ]; then
+    stash_line="stash: applied $sha, conflicts resolved (kept; drop with git stash drop $sha)"
+  elif [ -n "$sha" ]; then
+    local tree_before
+    tree_before=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null || true)
     if git -C "$JIG_PROJECT" stash apply "$sha" >/dev/null 2>&1; then
       stash_line="stash: applied $sha (kept; drop with git stash drop $sha)"
+    elif [ -n "$(_task_unmerged_paths)" ]; then
+      # Merged with conflicts: the stash is in the tree now. Recorded, so the
+      # retry after the resolution ends the pause instead of applying it again.
+      rm -f "$tmp"
+      _task_rewrite_state "$dir" paused_stash_applied "$sha"
+      jig_fail stash-conflict "task resume: git stash apply of $sha left conflicts; resolve them and \`git add\` them (or commit), then run \`jig task resume $id\` again; it will not apply the stash twice"
+    elif [ "$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null || true)" != "$tree_before" ]; then
+      # Stopped part way without conflicts — an untracked file of the stash
+      # that now exists in the tree, most often: what it wrote is in the
+      # tree, and applying it again would be refused over those changes.
+      rm -f "$tmp"
+      _task_rewrite_state "$dir" paused_stash_applied "$sha"
+      jig_fail stash-conflict "task resume: git stash apply of $sha stopped part way and applied only some of it; restore what is missing (its untracked files are in $sha^3), then run \`jig task resume $id\` again; it will not apply the stash twice"
     else
-      jig_fail stash-conflict "task resume: git stash apply failed for $sha (conflicts); resolve them, then run \`jig task resume $id\` again"
+      jig_fail stash-conflict "task resume: git stash apply failed for $sha and applied nothing; commit or move aside the changes in its way, then run \`jig task resume $id\` again"
     fi
   fi
 
@@ -4246,6 +4283,12 @@ _task_resume_body() {
     printf 'overlap: %s files you changed also changed on %s\n' "$k" "$(jig_task_base "$id")"
     printf '%s\n' "$overlap" | sed 's/^/  /'
   fi
+}
+
+# _task_unmerged_paths — the paths this checkout's index holds unmerged, one
+# per line; empty when there are none.
+_task_unmerged_paths() {
+  git -C "$JIG_PROJECT" diff --name-only --diff-filter=U 2>/dev/null || true
 }
 
 # _task_resume_json <id> <days> <stash-sha> <uncommitted> <overlap-known>

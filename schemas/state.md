@@ -48,11 +48,12 @@ Reference: ADR-0005, ADR-0008. Written only through `jig task`, atomically
 | `paused_at` | `jig task pause` | `YYYY-MM-DD` |
 | `paused_reason` | `jig task pause --reason`; for a pause request honoured at a stage boundary (`jig task pause --if-requested`, `jig task autopilot <id> stage`) `pause requested at <time>[: <reason>]` | one line of free text, optional |
 | `paused_stash` | `jig task pause --stash` | stash commit SHA; the SHA, never the `stash@{n}` index, which shifts |
+| `paused_stash_applied` | `jig task resume` | the `paused_stash` SHA, written when the resume's `git stash apply` merged the stash with conflicts, or stopped part way after writing some of it (an untracked file of the stash that now exists): the stash is in the tree, the task stays paused. The next resume with this value does not apply the stash again; it refuses while unmerged paths remain and otherwise ends the pause, removing this line with `paused` |
 | `created_at` | `jig task new` | `YYYY-MM-DD` |
 | `updated_at` | every `jig task set` | `YYYY-MM-DD` |
 
 `jig task set` accepts only `class`, `status`, `knowledge_consolidated`, `domains`,
-`route_depth` and the four `executor_*` keys above, and validates the value; every other key is refused, the four `paused*` keys included:
+`route_depth` and the four `executor_*` keys above, and validates the value; every other key is refused, the `paused*` keys included:
 they are written only by `jig task pause`, `jig task resume` and, for a pause request, `jig task
 autopilot <id> stage` (ADR-0012; adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary).
 Two values are refused on top of validation, to keep the order of ADR-0030: `status

@@ -1507,6 +1507,139 @@ test_task_resume_failed_apply_leaves_paused_set_and_exits_nonzero() {
   assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
 }
 
+# _tr_conflicted_resume — T-1 paused with a stash of conflict.txt, the same
+# line committed differently while it was paused, and a resume whose apply
+# merged the stash with conflicts. The tree holds the conflict markers.
+_tr_conflicted_resume() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  printf 'line one\n' > conflict.txt
+  git add conflict.txt
+  git commit -q -m "add conflict.txt"
+  printf 'task change\n' > conflict.txt
+  jig task pause T-1 --stash >/dev/null
+  printf 'base change\n' > conflict.txt
+  git commit -q -am "change conflict.txt while paused"
+  run jig task resume T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "left conflicts"
+  assert_contains "$(cat conflict.txt)" "<<<<<<<"
+}
+
+test_task_resume_after_a_conflicted_apply_records_it_and_stays_paused() {
+  _tr_conflicted_resume
+  local sha
+  sha=$(sed -n 's/^paused_stash:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused_stash_applied: $sha"
+  assert_eq "" "$(_tr_state_tmp)" "a conflicted resume left its new state behind"
+}
+
+test_task_resume_after_a_staged_resolution_ends_the_pause_without_applying_again() {
+  _tr_conflicted_resume
+  printf 'resolved\n' > conflict.txt
+  git add conflict.txt
+  run jig task resume T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "conflicts resolved"
+  assert_eq "resolved" "$(cat conflict.txt)" "the stash was applied a second time"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused_stash_applied:"
+  assert_contains "$(git stash list)" "jig: T-1"
+}
+
+test_task_resume_after_a_committed_resolution_ends_the_pause_on_a_clean_tree() {
+  _tr_conflicted_resume
+  printf 'resolved\n' > conflict.txt
+  git add conflict.txt
+  git commit -q -m "resolve conflict.txt"
+  local sha
+  sha=$(sed -n 's/^paused_stash:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  _tr_json T-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "\"stash\":{\"sha\":\"$sha\",\"applied\":true}"
+  assert_eq "" "$(git status --porcelain)" "the stash was applied a second time"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
+}
+
+test_task_resume_with_conflicts_still_unresolved_refuses_and_writes_nothing() {
+  _tr_conflicted_resume
+  local before
+  _tr_rev
+  before=$REV
+  _tr_json T-1
+  assert_eq 1 "$RC"
+  assert_eq stash-conflict "$(_tr_code)"
+  assert_contains "$OUT" "still have conflicts"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused: true"
+  _tr_rev
+  assert_eq "$before" "$REV" "a refused resume moved the revision"
+}
+
+# An apply that stops part way with no conflicts — a stashed untracked file
+# committed while paused — wrote the tracked change already: recorded too, so
+# the retry does not apply the stash over it.
+test_task_resume_after_an_apply_that_stopped_part_way_records_it() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  printf 'tracked change\n' >> README.md
+  printf 'untracked\n' > u.txt
+  jig task pause T-1 --stash >/dev/null
+  printf 'committed meanwhile\n' > u.txt
+  git add u.txt
+  git commit -q -m "add u.txt while paused"
+  local sha
+  sha=$(sed -n 's/^paused_stash:[[:space:]]*//p' .ai/workspace/tasks/T-1/state)
+  run jig task resume T-1
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "stopped part way"
+  assert_not_contains "$OUT" "applied nothing"
+  assert_file_contains .ai/workspace/tasks/T-1/state "paused_stash_applied: $sha"
+
+  run jig task resume T-1
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(grep -c 'tracked change' README.md)" "the stash was applied a second time"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
+}
+
+# Unmerged paths already in the checkout, no record: git would refuse the
+# apply anyway, so resume refuses before the claim and records nothing.
+test_task_resume_over_unresolved_conflicts_of_the_checkout_refuses_and_writes_nothing() {
+  task_setup_clean
+  jig task new T-1 >/dev/null
+  printf 'line one\n' > c.txt
+  git add c.txt
+  git commit -q -m "add c.txt"
+  git checkout -q -b side
+  printf 'side\n' > c.txt
+  git commit -q -am "side"
+  git checkout -q main
+  printf 'main\n' > c.txt
+  git commit -q -am "main"
+  printf 'task change\n' >> README.md
+  jig task pause T-1 --stash >/dev/null
+  git merge -q side >/dev/null 2>&1 || true
+  [ -n "$(git diff --name-only --diff-filter=U)" ] || fail "no unmerged path to test against"
+  local before
+  _tr_rev
+  before=$REV
+  _tr_json T-1
+  assert_eq 1 "$RC"
+  assert_eq stash-conflict "$(_tr_code)"
+  assert_contains "$OUT" "unresolved conflicts"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused_stash_applied:"
+  _tr_rev
+  assert_eq "$before" "$REV" "a refused resume moved the revision"
+}
+
+test_task_set_refuses_paused_stash_applied() {
+  task_setup
+  jig task new T-1 >/dev/null
+  run jig task set T-1 paused_stash_applied abc
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not writable"
+}
+
 # --- resume overlap is computed against the task's own base (ADR-0039) --------
 
 test_task_resume_overlap_computed_against_task_base() {
