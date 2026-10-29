@@ -63,7 +63,10 @@ Usage: jig <command> [args]
   task new|start|set|abandon ... task workspace and state (new files it, start begins it;
                                  abandon [--reason <text>] [--moved-to <repo>#<id>] says why)
   task changes <id> --base <ref> inventory all change layers; --files and --format paths
-  task artifacts <id> [...]      fixed-route inputs; --provided names conversation outputs
+  task artifacts <id> [...]      fixed-route inputs; --provided names conversation outputs;
+                                 --json lists every artifact kind as data (schemas/json.md)
+  task artifact write|append|read <id> <kind>
+                                 write a task document, or read one (read --json: as data)
   task finding add|set <id> ...  record a review finding and update its status
   task findings <id> [--blocking]  list findings; --blocking exits 1 while any block completion
   task ship <id> --message-file <f> [...]

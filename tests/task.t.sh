@@ -3508,6 +3508,198 @@ test_task_artifact_refuses_a_link_to_anywhere_else() {
   assert_no_file elsewhere/T-1/plan.md
 }
 
+# --- artifacts --json, artifact read (schemas/json.md) ------------------------
+
+# _ta_json <args...> — `jig task <args>` with stdout in OUT, stderr in ERR,
+# generated_at and revision replaced as _tn_json replaces them.
+_ta_json() {
+  run_split jig task "$@"
+  local rc=$RC err=$ERR
+  OUT=$(printf '%s\n' "$OUT" | sed -e 's/"generated_at":"[0-9TZ:-]*"/"generated_at":"T"/' -e 's/^{"schema":1,"revision":[0-9][0-9]*,/{"schema":1,"revision":"R",/')
+  RC=$rc
+  ERR=$err
+}
+
+test_task_artifacts_json_lists_every_kind_with_its_state() {
+  task_setup_clean
+  jig task new scoped >/dev/null
+  local root=.ai/workspace/tasks/scoped state
+  printf 'the plan\n' > "$root/plan.md"
+  : > "$root/review.md"
+  mkdir "$root/design.md"
+  # Fixed times, written in UTC, so the whole shape can be compared.
+  TZ=UTC touch -t 202001020304.05 "$root/task.md" "$root/plan.md" "$root/review.md"
+  local tbytes
+  tbytes=$(wc -c < "$root/task.md" | tr -d ' ')
+  state=$(cat "$root/state")
+  # The class is not asked: an unclassified task lists as well.
+  _ta_json artifacts scoped --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  local m='"reason":null,"updated_at":null,"bytes":null}'
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"task\":\"scoped\",\"artifacts\":[{\"kind\":\"task\",\"state\":\"present\",\"reason\":null,\"updated_at\":\"2020-01-02T03:04:05Z\",\"bytes\":$tbytes},{\"kind\":\"discovery\",\"state\":\"missing\",$m,{\"kind\":\"spec\",\"state\":\"missing\",$m,{\"kind\":\"alternatives\",\"state\":\"missing\",$m,{\"kind\":\"design\",\"state\":\"unavailable\",\"reason\":\"missing or not a regular file\",\"updated_at\":null,\"bytes\":null},{\"kind\":\"plan\",\"state\":\"present\",\"reason\":null,\"updated_at\":\"2020-01-02T03:04:05Z\",\"bytes\":9},{\"kind\":\"review\",\"state\":\"empty\",\"reason\":null,\"updated_at\":\"2020-01-02T03:04:05Z\",\"bytes\":0},{\"kind\":\"verification\",\"state\":\"missing\",$m,{\"kind\":\"handoff\",\"state\":\"missing\",$m,{\"kind\":\"knowledge-map\",\"state\":\"missing\",$m,{\"kind\":\"commit-message\",\"state\":\"missing\",$m,{\"kind\":\"pr-body\",\"state\":\"missing\",$m]}}" "$OUT"
+  # A read: nothing written, the revision where it was.
+  assert_eq "$state" "$(cat "$root/state")"
+  local r1 r2
+  r1=$(jig task artifacts scoped --json | sed -n 's/^{"schema":1,"revision":\([0-9]*\),.*/\1/p')
+  r2=$(jig task artifacts --json scoped | sed -n 's/^{"schema":1,"revision":\([0-9]*\),.*/\1/p')
+  assert_eq "$r1" "$r2"
+  # The text form keeps its bytes.
+  jig task set scoped class T2 >/dev/null
+  run jig task artifacts scoped
+  assert_contains "$OUT" 'design         unavailable (missing or not a regular file)'
+  assert_contains "$OUT" 'review         unavailable (empty)'
+  assert_contains "$OUT" 'plan           present'
+}
+
+test_task_artifacts_json_marks_a_link_out_of_the_workspace_unavailable() {
+  skip_unless_symlinks
+  task_setup_clean
+  jig task new scoped >/dev/null
+  echo external > external.md
+  ln -s "$PWD/external.md" .ai/workspace/tasks/scoped/design.md
+  _ta_json artifacts scoped --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '{"kind":"design","state":"unavailable","reason":"outside workspace","updated_at":null,"bytes":null}'
+  _ta_json artifact read scoped design --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"task artifact: design of scoped is unavailable (outside workspace)"}}'
+  run jig task artifact read scoped design
+  assert_eq 1 "$RC"
+  assert_not_contains "$OUT" external
+}
+
+test_task_artifacts_json_names_why_it_refused() {
+  task_setup_clean
+  jig task new scoped >/dev/null
+  _ta_json artifacts nope --json
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"not-found","message":"task artifacts: unknown task: nope"}}' "$OUT"
+  assert_eq 'jig: error: task artifacts: unknown task: nope' "$ERR"
+  _ta_json artifacts scoped --provided design --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task artifacts: --provided cannot be combined with --json"}}'
+  _ta_json artifacts scoped --bogus --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task artifacts: unknown argument: --bogus"}}'
+  _ta_json artifacts --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"usage: jig task artifacts <id>'
+  _ta_json artifacts "bad id!" --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task artifacts: invalid task id: bad id!"}}'
+}
+
+test_task_artifact_read_prints_the_document_as_it_is() {
+  task_setup_clean
+  jig task new scoped >/dev/null
+  local root=.ai/workspace/tasks/scoped
+  printf '# Plan\n\nSay "hi"\tthen\\go.\n\n' > "$root/plan.md"
+  TZ=UTC touch -t 202001020304.05 "$root/plan.md"
+  run jig task artifact read scoped plan
+  assert_eq 0 "$RC"
+  assert_eq "$(cat "$root/plan.md")" "$OUT"
+  # Byte for byte, trailing newlines included.
+  jig task artifact read scoped plan > out.md
+  cmp -s "$root/plan.md" out.md || fail "read changed the bytes"
+
+  _ta_json artifact read scoped plan --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"task":"scoped","kind":"plan","updated_at":"2020-01-02T03:04:05Z","bytes":'"$(wc -c < "$root/plan.md" | tr -d ' ')"',"content":"# Plan\n\nSay \"hi\"\tthen\\go.\n\n"}}' "$OUT"
+  # --json may stand anywhere.
+  _ta_json artifact --json read scoped plan
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"kind":"plan",'
+  # A control byte is escaped, and quoting stays linear in the document's
+  # size (a per-character pass took about a minute for 50 KB).
+  { printf 'esc \033[1m bold\001\n'; head -c 60000 /dev/zero | tr '\0' 'a'; printf '\n'; } > "$root/handoff.md"
+  _ta_json artifact read scoped handoff --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"content":"esc \u001b[1m bold\u0001\naaaa'
+  # An empty document reads as empty.
+  : > "$root/review.md"
+  _ta_json artifact read scoped review --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"bytes":0,"content":""}}'
+}
+
+test_task_artifact_read_names_why_it_refused() {
+  task_setup_clean
+  jig task new scoped >/dev/null
+  _ta_json artifact read scoped design --json
+  assert_eq 1 "$RC"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","error":{"code":"not-found","message":"task artifact: scoped has no design"}}' "$OUT"
+  _ta_json artifact read nope plan --json
+  assert_contains "$OUT" '"error":{"code":"not-found","message":"task artifact: unknown task: nope"}}'
+  _ta_json artifact read scoped bogus --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task artifact: unknown kind: bogus (one of: task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body)"}}'
+  _ta_json artifact read scoped --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"usage: jig task artifact write'
+  _ta_json artifact read scoped plan extra --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"usage: jig task artifact write'
+  _ta_json artifact write scoped plan --json < /dev/null
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task artifact: --json goes with read only"}}'
+  assert_no_file .ai/workspace/tasks/scoped/plan.md
+  _ta_json artifact read "bad id!" plan --json
+  assert_contains "$OUT" '"error":{"code":"usage","message":"task artifact: invalid task id: bad id!"}}'
+  run jig task artifact read scoped design
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'task artifact: scoped has no design'
+  run jig task artifact read scoped
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'usage: jig task artifact write'
+}
+
+# A worktree task's workspace is the owner's (ADR-0029): read from the
+# worktree through its link, and from the main checkout directly, both find it.
+test_task_artifacts_json_and_read_find_a_worktree_tasks_workspace() {
+  task_setup_nested
+  jig task new T-1 --class T2 >/dev/null
+  local wt
+  wt=$(jig task start T-1 --worktree 2>/dev/null)
+  printf 'plan in the workspace\n' > .ai/workspace/tasks/T-1/plan.md
+
+  _ta_json artifacts T-1 --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '{"kind":"plan","state":"present",'
+  _ta_json artifact read T-1 plan --json
+  assert_contains "$OUT" '"content":"plan in the workspace\n"}}'
+
+  set +e
+  OUT=$(cd "$wt" && jig task artifacts T-1 --json 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '{"kind":"plan","state":"present",'
+  set +e
+  OUT=$(cd "$wt" && jig task artifact read T-1 plan --json 2>&1)
+  RC=$?
+  set -e
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"content":"plan in the workspace\n"}}'
+}
+
+test_jig_utc_from_epoch_and_file_mtime() {
+  task_setup
+  # Expanded by the inner bash, not here.
+  # shellcheck disable=SC2016
+  local lib='. "$JIG_HOME/scripts/lib/common.sh"; '
+  run bash -c "$lib"'jig_utc_from_epoch 0; jig_utc_from_epoch 1577934245'
+  assert_eq 0 "$RC"
+  assert_eq "$(printf '1970-01-01T00:00:00Z\n2020-01-02T03:04:05Z')" "$OUT"
+  run bash -c "$lib"'jig_utc_from_epoch ""'
+  assert_eq 1 "$RC"
+  run bash -c "$lib"'jig_utc_from_epoch 12a'
+  assert_eq 1 "$RC"
+  # GNU's `-r` reads a file: a file named after the seconds must not win.
+  TZ=UTC touch -t 200001010000.00 1577934245
+  run bash -c "$lib"'jig_utc_from_epoch 1577934245'
+  assert_eq '2020-01-02T03:04:05Z' "$OUT"
+  printf x > f
+  TZ=UTC touch -t 202001020304.05 f
+  run bash -c "$lib"'jig_file_mtime f'
+  assert_eq 0 "$RC"
+  assert_eq 1577934245 "$OUT"
+  run bash -c "$lib"'jig_file_mtime no-such-file'
+  assert_eq 1 "$RC"
+}
+
 # The same refusal one level up. `task start --worktree` links the whole
 # `.ai/workspace/tasks` now, so a link at the parent is the usual shape, and
 # `-L` on the task's own path cannot see it: the check must judge the tasks

@@ -76,10 +76,11 @@ _task_usage() {
     show) printf 'usage: jig task show <id>\n' ;;
     current) printf 'usage: jig task current\n' ;;
     changes) printf 'usage: jig task changes <id> --base <ref> [--files <list>|-] [--format report|paths]\n' ;;
-    artifacts) printf 'usage: jig task artifacts <id> [--provided discovery,design,...]\n' ;;
+    artifacts) printf 'usage: jig task artifacts <id> [--provided discovery,design,...] | [--json]\n' ;;
     artifact)
       printf 'usage: jig task artifact write <id> <kind> [--from <file>|-]\n'
       printf '       jig task artifact append <id> <kind> [--from <file>|-]\n'
+      printf '       jig task artifact read <id> <kind> [--json]\n'
       printf '       <kind>: task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body\n'
       ;;
     finding)
@@ -5276,7 +5277,7 @@ task_changes() {
 _task_workspace_root() {
   local id="$1" cmd="$2" root tasks_root real
   root=$(task_dir "$id") || return 1
-  [ -f "$root/state" ] || jig_die "$cmd: unknown task: $id"
+  [ -f "$root/state" ] || jig_fail not-found "$cmd: unknown task: $id"
   tasks_root=$(_task_tasks_root "$cmd")
   if [ -L "$root" ]; then
     real=$(cd -P "$root" 2>/dev/null && pwd -P) || real=""
@@ -5326,26 +5327,46 @@ _task_artifact_kind() {
   case "$1" in discovery | spec | alternatives | design | plan | review | verification | handoff) return 0 ;; *) return 1 ;; esac
 }
 
-# Resolve links without readlink -f. Do not read an artifact outside the workspace.
-_task_artifact_fact() {
-  local root="$1" kind="$2" provided="$3" path target parent hops=0
-  if jig_has_line "$kind" "$provided"; then
-    printf 'provided-claim (caller must substantiate)\n'; return 0
-  fi
+# _task_artifact_locate <root> <kind> — where <kind>.md of the workspace
+# <root> really is, and whether it may be read. Sets, in the caller's shell
+# (called as a plain command, never inside $(...)):
+#   _TASK_ART_PATH    the physical path, links resolved; empty when unresolved
+#   _TASK_ART_STATE   present | empty | missing | unavailable
+#   _TASK_ART_REASON  why, in the words `task artifacts` prints in parentheses
+# The one check every reader of an artifact passes: the text report, the JSON
+# list and `task artifact read`. Links are resolved without readlink -f, and a
+# path that leaves the workspace is never read.
+_task_artifact_locate() {
+  local root="$1" kind="$2" path target parent hops=0
+  _TASK_ART_PATH="" _TASK_ART_STATE=unavailable _TASK_ART_REASON=""
   path="$root/$kind.md"
   while [ -L "$path" ]; do
     hops=$((hops + 1))
-    if [ "$hops" -gt 40 ]; then printf 'unavailable (symlink loop)\n'; return 0; fi
-    target=$(readlink "$path") || { printf 'unavailable (unreadable link)\n'; return 0; }
+    if [ "$hops" -gt 40 ]; then _TASK_ART_REASON="symlink loop"; return 0; fi
+    target=$(readlink "$path") || { _TASK_ART_REASON="unreadable link"; return 0; }
     case "$target" in /*) path="$target" ;; *) path="$(dirname "$path")/$target" ;; esac
   done
-  parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) || { printf 'unavailable (missing parent)\n'; return 0; }
+  parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) || { _TASK_ART_REASON="missing parent"; return 0; }
   path="$parent/$(basename "$path")"
-  case "$path" in "$root"/*) ;; *) printf 'unavailable (outside workspace)\n'; return 0 ;; esac
-  if [ ! -f "$path" ]; then printf 'unavailable (missing or not a regular file)\n'
-  elif [ ! -r "$path" ]; then printf 'unavailable (unreadable)\n'
-  elif [ ! -s "$path" ]; then printf 'unavailable (empty)\n'
-  else printf 'present\n'; fi
+  case "$path" in "$root"/*) ;; *) _TASK_ART_REASON="outside workspace"; return 0 ;; esac
+  _TASK_ART_PATH=$path
+  if [ ! -e "$path" ]; then _TASK_ART_STATE=missing; _TASK_ART_REASON="missing or not a regular file"
+  elif [ ! -f "$path" ]; then _TASK_ART_REASON="missing or not a regular file"
+  elif [ ! -r "$path" ]; then _TASK_ART_REASON="unreadable"
+  elif [ ! -s "$path" ]; then _TASK_ART_STATE=empty; _TASK_ART_REASON="empty"
+  else _TASK_ART_STATE=present; fi
+}
+
+# _task_artifact_fact <root> <kind> <provided> — the text report's word for
+# one artifact: `present`, `unavailable (<reason>)`, or the provided claim.
+_task_artifact_fact() {
+  local root="$1" kind="$2" provided="$3"
+  if jig_has_line "$kind" "$provided"; then
+    printf 'provided-claim (caller must substantiate)\n'; return 0
+  fi
+  _task_artifact_locate "$root" "$kind"
+  if [ "$_TASK_ART_STATE" = present ]; then printf 'present\n'
+  else printf 'unavailable (%s)\n' "$_TASK_ART_REASON"; fi
 }
 
 # stage|documentary inputs|unassessed semantic prerequisites, for <class> at
@@ -5365,7 +5386,19 @@ _task_artifact_route() {
   esac
 }
 
+# task_artifacts <id> [--provided ...] [--json] — `--json` anywhere runs the
+# JSON list instead (_task_artifacts_json), as the producer of json_run
+# (conventions/json-output.md).
 task_artifacts() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_artifacts_json "$@"
+      return
+    fi
+  done
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage artifacts)"
   local id="$1" root class provided="" seen=0 kinds kind fact stage inputs semantic availability facts="" t depth
@@ -5411,6 +5444,108 @@ task_artifacts() {
   printf 'Presence and provided claims do not prove approval, quality or completion; state unchanged.\n'
 }
 
+# _task_artifact_stat — _TASK_ART_PATH's mtime as UTC into _TASK_ART_AT and
+# its size in bytes into _TASK_ART_BYTES; each empty when it cannot be read.
+_task_artifact_stat() {
+  local mtime
+  _TASK_ART_AT="" _TASK_ART_BYTES=""
+  if mtime=$(jig_file_mtime "$_TASK_ART_PATH"); then
+    _TASK_ART_AT=$(jig_utc_from_epoch "$mtime") || _TASK_ART_AT=""
+  fi
+  _TASK_ART_BYTES=$(wc -c < "$_TASK_ART_PATH" 2>/dev/null | tr -d ' ') || _TASK_ART_BYTES=""
+}
+
+# _task_artifacts_json <id> [--json] — the producer of `task artifacts --json`
+# (schemas/json.md): every kind `task artifact` writes, in its order, each with
+# its state, the reason when it is unavailable, and for a file that is there its
+# mtime and size. A listing, not a route report: it asks nothing of the class,
+# and `--provided` (a claim from a conversation) has no place in it.
+_task_artifacts_json() {
+  local arg args=()
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
+  jig_require_init
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage artifacts)"
+  case "$1" in -*) jig_fail usage "$(_task_usage artifacts)" ;; esac
+  local id="$1" root kind out sep="" reason at bytes
+  shift
+  [ $# -eq 0 ] || case "$1" in
+    --provided) jig_fail usage "task artifacts: --provided cannot be combined with --json" ;;
+    *) jig_fail usage "task artifacts: unknown argument: $1" ;;
+  esac
+  _task_valid_id "$id" || jig_fail usage "task artifacts: invalid task id: $id"
+  root=$(_task_workspace_root "$id" "task artifacts") || return 1
+  json_quote "$id"
+  out="{\"task\":$_JSON,\"artifacts\":["
+  for kind in $_TASK_ARTIFACT_KINDS; do
+    _task_artifact_locate "$root" "$kind"
+    reason=null at=null bytes=null
+    case "$_TASK_ART_STATE" in
+      present | empty)
+        _task_artifact_stat
+        json_str_or_null "$_TASK_ART_AT"; at=$_JSON
+        json_int_or_null "$_TASK_ART_BYTES"; bytes=$_JSON
+        ;;
+      unavailable) json_quote "$_TASK_ART_REASON"; reason=$_JSON ;;
+    esac
+    out="$out$sep{\"kind\":\"$kind\",\"state\":\"$_TASK_ART_STATE\",\"reason\":$reason,\"updated_at\":$at,\"bytes\":$bytes}"
+    sep=,
+  done
+  printf '%s]}\n' "$out"
+}
+
+# _task_artifact_read <as_json> <id> <kind> — one artifact, read from where the
+# task's workspace really is (_task_workspace_root, ADR-0029): its bytes as
+# they are, or with <as_json> 1 an object holding them as a string beside its
+# mtime and size (schemas/json.md). Nothing is written. An empty artifact
+# reads as empty; a missing one is `not-found`; one the check refuses (a link
+# out of the workspace, not a regular file, unreadable) is `failed`.
+_task_artifact_read() {
+  local as_json="$1" id="$2" kind="$3" root content
+  _task_valid_id "$id" || jig_fail usage "task artifact: invalid task id: $id"
+  _task_artifact_writable_kind "$kind" \
+    || jig_fail usage "task artifact: unknown kind: $kind (one of: $_TASK_ARTIFACT_KINDS)"
+  root=$(_task_workspace_root "$id" "task artifact") || return 1
+  _task_artifact_locate "$root" "$kind"
+  case "$_TASK_ART_STATE" in
+    present | empty) ;;
+    missing) jig_fail not-found "task artifact: $id has no $kind" ;;
+    *) jig_die "task artifact: $kind of $id is unavailable ($_TASK_ART_REASON)" ;;
+  esac
+  if [ "$as_json" != 1 ]; then
+    cat "$_TASK_ART_PATH"
+    return 0
+  fi
+  _task_artifact_stat
+  # The sentinel keeps the trailing newlines $(...) would strip.
+  content=$(cat "$_TASK_ART_PATH" && printf x) || jig_die "task artifact: cannot read $kind of $id"
+  content=${content%x}
+  local out
+  json_quote "$id"; out="{\"task\":$_JSON,\"kind\":\"$kind\","
+  json_str_or_null "$_TASK_ART_AT"; out="$out\"updated_at\":$_JSON,"
+  json_int_or_null "$_TASK_ART_BYTES"; out="$out\"bytes\":$_JSON,"
+  json_quote "$content"
+  printf '%s"content":%s}\n' "$out" "$_JSON"
+}
+
+# _task_artifact_read_json <args...> — the producer json_run runs for
+# `task artifact … --json`: `--json` goes with `read` only.
+_task_artifact_read_json() {
+  local arg args=()
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
+  jig_require_init
+  [ "${1:-}" = read ] || jig_fail usage "task artifact: --json goes with read only"
+  shift
+  [ $# -eq 2 ] || jig_fail usage "$(_task_usage artifact)"
+  case "$1$2" in -*) jig_fail usage "$(_task_usage artifact)" ;; esac
+  _task_artifact_read 1 "$1" "$2"
+}
+
 # --- artifact writes (ADR-0029: a worktree never writes through the link) ----
 
 # The kinds `task artifact` will write. Wider than _task_artifact_kind above,
@@ -5424,8 +5559,10 @@ task_artifacts() {
 #     kept is broken. They are inputs to nothing `task artifacts` reports.
 # The two predicates stay separate on purpose — widening the `--provided`
 # vocabulary would let a caller claim an input that is never an input.
+_TASK_ARTIFACT_KINDS="task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body"
 _task_artifact_writable_kind() {
-  case "$1" in task | discovery | spec | alternatives | design | plan | review | verification | handoff | knowledge-map | commit-message | pr-body) return 0 ;; *) return 1 ;; esac
+  case "$1" in '' | *[!a-z-]*) return 1 ;; esac
+  case " $_TASK_ARTIFACT_KINDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
 # task_artifact write|append <id> <kind> [--from <file>|-]
@@ -5457,12 +5594,27 @@ _task_artifact_writable_kind() {
 # where a `{{TASK_ID}}` is text and not a placeholder. The duplication between
 # the two is one `mv`, and deliberate.
 task_artifact() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_artifact_read_json "$@"
+      return
+    fi
+  done
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage artifact)"
   local mode="$1"
   shift
   case "$mode" in
     write | append) ;;
+    read)
+      [ $# -eq 2 ] || jig_die "$(_task_usage artifact)"
+      case "$1$2" in -*) jig_die "$(_task_usage artifact)" ;; esac
+      _task_artifact_read 0 "$1" "$2"
+      return
+      ;;
     *) jig_die "$(_task_usage artifact)" ;;
   esac
   [ $# -ge 2 ] || jig_die "$(_task_usage artifact)"
@@ -5480,7 +5632,7 @@ task_artifact() {
     esac
   done
   _task_artifact_writable_kind "$kind" \
-    || jig_die "task artifact: unknown kind: $kind (one of: task discovery spec alternatives design plan review verification handoff knowledge-map commit-message pr-body)"
+    || jig_die "task artifact: unknown kind: $kind (one of: $_TASK_ARTIFACT_KINDS)"
 
   # Validated before the workspace is touched, so an unreadable source never
   # gets as far as the temporary file (task_new --from does the same).

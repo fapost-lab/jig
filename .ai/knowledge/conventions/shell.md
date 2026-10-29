@@ -9,7 +9,7 @@ paths:
   - "profiles/**"
   - "tests/**"
   - ".github/**"
-reviewed_at: 2026-10-28
+reviewed_at: 2026-10-29
 summary: Shell practices every Jig script follows, each one paid for by a real bug.
 ---
 # Shell conventions
@@ -51,6 +51,7 @@ bug during Phase 1; the rationale column says which.
 | Measure shell benchmarks under `bash`, not the interactive shell. | zsh does not word-split an unquoted parameter, so `for f in $files` runs **once** over the whole multi-line string. That turned "35 files hashed in 45 ms" into a measurement of one call, and led to the wrong conclusion that `git hash-object` was cheap; under `bash` it is ~13.6 ms per call and was the largest single cost of `jig init`. |
 | A space-separated list of globs is split with pathname expansion off (`set -f`, or `jp_path_matches`), never `for g in $list` alone. | Unquoted, `config/*` expands against the files on disk before `case` sees it: a deleted `config/app.php` no longer matched once only `config/database.php` existed, and a nested `config/a/b.php` never did. Five profiles lost their "send this change to the full set" rule that way (adr-20260918-profiles-narrow-per-check-with-project-tools). |
 | After splitting a newline list with `IFS=<newline>`, restore `IFS=$' \t\n'`, and a function that splits on spaces sets its own `local IFS`. | Every profile "restored" IFS to a newline again after passing a file list, so each later split on spaces — a list of triggers, a map decision with two filters — produced one token. The tests passed because no test took a file-list branch before a list split. |
+| A file's mtime is `jig_file_mtime` and seconds become UTC through `jig_utc_from_epoch` (common.sh); never a `stat` or `date -r` of your own. | `stat -f %m` under GNU prints a file-system block and fails, so the BSD-then-GNU pair is chosen on the value, not the exit status (it disabled `jig verify`'s lock on every GNU system once). For the date, GNU `date -d @<n>` goes first: GNU's `-r` takes a file, and a file named after the seconds would answer instead (task-artifacts-json). |
 | Glob matching against the tree uses `find -path` with `**` collapsed to `*`. | BSD and GNU `find -path` both match `*` across `/`, so one substitution covers any-depth and single-segment globs without `globstar`. |
 | A listing hides finished or superseded entries by default and counts them in a trailing line; `--all` shows everything. | Applies to `jig task list` and `jig context` alike. On a long-lived branch, done work outnumbers live work and crowds it out, and a listing nobody reads is worse than no listing. |
 | Under `set -e`, neither a loop body nor a function may end in `cmd && cmd`: the loop, or the function, takes that status, so one false condition aborts the caller before its own `return 0`. Use `if cmd; then ...; fi`. | Cost a silent `exit 1` with no output twice: in `profiles/shell/verify.sh` (loop body), and in `context.sh`'s `_ctx_parse_selectors` (last statement of the function), where it killed `context resolve\|pending\|guard` for every task with no domains — the common case. Note a probe that calls the function as `f && ...` cannot reproduce it — a condition context suspends `errexit` inside the callee. |

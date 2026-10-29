@@ -3397,6 +3397,13 @@ jig_verify_busy_ttl() {
 # output line by line and skips what is not numeric. This reads one file, so it
 # checks the value it got instead.
 _jig_verify_busy_mtime() {
+  jig_file_mtime "$1"
+}
+
+# jig_file_mtime <file> — the file's mtime in seconds since the epoch, or
+# nothing (status 1). The BSD-then-GNU pair, chosen on the value and never on
+# the exit status, for the reason _jig_verify_busy_mtime's comment above gives.
+jig_file_mtime() {
   local out
   out=$(stat -f '%m' "$1" 2>/dev/null) || out=""
   case "$out" in
@@ -3406,6 +3413,20 @@ _jig_verify_busy_mtime() {
     '' | *[!0-9]*) return 1 ;;
   esac
   printf '%s\n' "$out"
+}
+
+# jig_utc_from_epoch <seconds> — the time as UTC `YYYY-MM-DDTHH:MM:SSZ`, or
+# nothing (status 1). GNU `date -d @<n>` first: GNU's `-r` takes a file, so
+# the BSD form tried first would read a file that happens to be named <n>.
+jig_utc_from_epoch() {
+  local out
+  case "$1" in '' | *[!0-9]*) return 1 ;; esac
+  out=$(date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) \
+    || out=$(date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || out=""
+  case "$out" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) printf '%s\n' "$out" ;;
+    *) return 1 ;;
+  esac
 }
 
 # _jig_verify_busy_value <file> <key> — the first `<key>: <value>` line, read by the
