@@ -78,5 +78,7 @@ works exactly as it does without it. What its next phase needs from Jig — the 
 requests and filing a task from a program — is in 0.31.0, so that phase can start on it; resuming a
 paused task from a program is in 0.35.0; the archive and the links between merged tasks are in
 `jig task list --json` from 0.37.0; whether a roadmap item counts as done, merged work included, is
-in `jig spec list --json` from 0.38.0. Its plans
+in `jig spec list --json` from 0.38.0; `jig task list --json` no longer starts processes for every
+field of every task from 0.38.1, so its read of a project with dozens of tasks takes about a second
+rather than about ten (measured on a synthetic project of 40 tasks; see the [changelog](/changelog)). Its plans
 live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).
