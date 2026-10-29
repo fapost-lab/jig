@@ -115,24 +115,42 @@ _task_usage() {
 # task_dir <id> — absolute path of the task's workspace directory. Pure
 # string computation; does not check the workspace exists.
 task_dir() {
+  local dir
+  task_dir_v dir "$1"
+  printf '%s\n' "$dir"
+}
+
+# task_dir_v <var> <id> — task_dir's path into <var>, in the caller's shell,
+# for a reader that builds a task's path once per task of a listing.
+task_dir_v() {
   # Every subcommand goes through here, so an id like `..` or `../x` can never
   # resolve to a path outside the tasks directory (RULES.md invariant).
-  _task_valid_id "$1" || jig_die "invalid task id: $1"
-  printf '%s/%s/workspace/tasks/%s\n' "$JIG_PROJECT" "$JIG_AI_DIR" "$1"
+  _task_valid_id "$2" || jig_die "invalid task id: $2"
+  printf -v "$1" '%s/%s/workspace/tasks/%s' "$JIG_PROJECT" "$JIG_AI_DIR" "$2"
 }
 
 # task_state_get <id> <key> — print the value of <key> from the task's state
 # file, or nothing when the task or the key does not exist. Never dies:
 # callers that need "unknown task" to be an error check for the state file
 # themselves (see task_show, task_set).
+#
+# The format's one rule — the first `<key>:` line, its value after the colon
+# and any blanks — is jig_task_state_var's (common.sh), read with builtins
+# and, on a read path, from the snapshot of the file (jig_read_snapshot_begin).
 task_state_get() {
-  local id="$1" key="$2" file
-  file="$(task_dir "$id")/state"
-  [ -f "$file" ] || return 0
-  # One awk rather than `sed | head`: the first `<key>:` line, its value after
-  # the colon and any blanks. Half the processes for the most called reader in
-  # jig, which the status page's redraw runs after every task command.
-  awk -v k="$key:" 'index($0, k) == 1 { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$file"
+  local value
+  task_state_var value "$1" "$2"
+  [ "$_JIG_TS_FOUND" = 0 ] || printf '%s\n' "$value"
+}
+
+# task_state_var <var> <id> <key> — task_state_get's value into <var>, in the
+# caller's shell: no command substitution, no process. The form a reader that
+# asks several keys of many tasks uses. Dies on an invalid id, as task_dir.
+task_state_var() {
+  if [ -z "$2" ] || [ "$2" != "$_JIG_TS_CUR" ]; then
+    _task_valid_id "$2" || jig_die "invalid task id: $2"
+  fi
+  jig_task_state_var "$@"
 }
 
 # --- validation ---------------------------------------------------------------
@@ -357,7 +375,29 @@ _task_worktrees() {
 # _task_worktree_for <branch> <worktrees> — the path of the worktree that has
 # <branch> checked out, from a `_task_worktrees` listing; empty when none.
 _task_worktree_for() {
-  printf '%s\n' "$2" | awk -F '\t' -v b="$1" '!f && $1 == b { print $2; f = 1 }'
+  local path
+  _task_worktree_for_v path "$1" "$2"
+  [ -z "$path" ] || printf '%s\n' "$path"
+}
+
+# _task_worktree_for_v <var> <branch> <worktrees> — the same path into <var>,
+# in the caller's shell: the first line whose first tab-separated field is
+# <branch> gives its second.
+_task_worktree_for_v() {
+  local __twf_line __twf_t=$'\t'
+  printf -v "$1" '%s' ""
+  [ -n "$2" ] || return 0
+  while IFS= read -r __twf_line; do
+    case "$__twf_line" in
+      "$2$__twf_t"*)
+        __twf_line=${__twf_line#"$2$__twf_t"}
+        printf -v "$1" '%s' "${__twf_line%%"$__twf_t"*}"
+        return 0 ;;
+    esac
+  done <<EOF
+$3
+EOF
+  return 0
 }
 
 # _task_worktree_note <path> — how a task started in its own worktree is shown
@@ -373,7 +413,22 @@ _task_worktree_note() {
 # differ from its HEAD, as `git status --porcelain` counts them: the number
 # _task_worktree_note shows and `task list --json` reports.
 _task_worktree_uncommitted() {
-  _task_count_lines "$(git -C "$1" status --porcelain 2>/dev/null || true)"
+  local n
+  _task_worktree_uncommitted_v n "$1"
+  printf '%s\n' "$n"
+}
+
+# _task_worktree_uncommitted_v <var> <path> — the same count into <var>: one
+# git process, the lines counted in the shell.
+_task_worktree_uncommitted_v() {
+  local __twu_out __twu_line __twu_n=0
+  __twu_out=$(git -C "$2" status --porcelain 2>/dev/null || true)
+  while IFS= read -r __twu_line; do
+    [ -z "$__twu_line" ] || __twu_n=$((__twu_n + 1))
+  done <<EOF
+$__twu_out
+EOF
+  printf -v "$1" '%s' "$__twu_n"
 }
 
 # _task_worktree_holds <physical-path> <relative> — zero when <physical-path>
@@ -658,6 +713,7 @@ _task_rewrite_state() {
     }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
+  jig_task_state_forget
   jig_record_changed
 }
 
@@ -668,6 +724,7 @@ _task_rewrite_state_remove() {
   local dir="$1" key="$2" tmp="$1/state.tmp.$$"
   _task_state_without "$dir" "$tmp" "$key"
   mv "$tmp" "$dir/state"
+  jig_task_state_forget
   jig_record_changed
 }
 
@@ -720,6 +777,7 @@ _task_touch_state() {
     { print }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
+  jig_task_state_forget
   jig_record_changed
 }
 
@@ -1079,6 +1137,7 @@ _task_new_body() {
     jig_fail already-exists "task new: task already exists: $id"
   fi
   mv "$tmp" "$dir/state"
+  jig_task_state_forget
   jig_record_changed
 
   _task_write_task_md "$id" "$dir/task.md" "$from" "$goal"
@@ -1217,9 +1276,10 @@ task_start() {
 # both ask; what a start refuses by the checkout instead — a dirty tree, an
 # occupied HEAD, a base that cannot be found — is the command's alone.
 _task_start_refusal() {
-  local id="$1" branch
-  branch=$(task_state_get "$id" branch)
-  [ -n "$branch" ] && [ -n "$(task_state_get "$id" base_commit)" ] || return 0
+  local id="$1" branch base_commit
+  task_state_var branch "$id" branch
+  task_state_var base_commit "$id" base_commit
+  [ -n "$branch" ] && [ -n "$base_commit" ] || return 0
   # shellcheck disable=SC2016 # the backticks quote a command for the reader
   printf 'task start: already started on %s; to give it a worktree of its own: `jig task start %s --worktree`\n' "$branch" "$id"
 }
@@ -1229,13 +1289,14 @@ _task_start_refusal() {
 # and a task with no class, are only warned by the command. Asked by the
 # command and by the actions table, after _task_start_refusal.
 _task_start_goal_refusal() {
-  local id="$1" class
-  class=$(task_state_get "$id" class)
+  local id="$1" class dir
+  task_state_var class "$id" class
   case "$class" in
     T3 | T4) ;;
     *) return 0 ;;
   esac
-  _task_has_goal "$(task_dir "$id")/task.md" && return 0
+  task_dir_v dir "$id"
+  _task_has_goal "$dir/task.md" && return 0
   # shellcheck disable=SC2016 # the backticks quote a command for the reader
   printf 'task start: %s is %s and has no goal: `## Goal` in task.md is empty; write it first with `jig task artifact write %s task --from <file>`\n' \
     "$id" "$class" "$id"
@@ -1754,12 +1815,13 @@ task_set() {
 # free, and the refusal is retried by re-running this same command, not by
 # `jig housekeeping`, which never feeds this gate.
 _task_close_refusal() {
-  local id="$1" pr_state="$2" pr
-  if [ "$(task_state_get "$id" knowledge_consolidated)" != "true" ]; then
+  local id="$1" pr_state="$2" pr kc
+  task_state_var kc "$id" knowledge_consolidated
+  if [ "$kc" != "true" ]; then
     printf 'task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set %s knowledge_consolidated true\n' "$id"
     return 0
   fi
-  pr=$(task_state_get "$id" pr_url)
+  task_state_var pr "$id" pr_url
   [ -n "$pr" ] || return 0
   if [ "$pr_state" = forge ]; then
     pr_state=$(jig_pr_state "$pr") || return 1
@@ -1774,8 +1836,12 @@ _task_close_refusal() {
 # unattended and has not ended (`on` or `stopped`). Checked on the recorded
 # mode, so unsetting the key halfway through a run changes nothing about it.
 _task_run_unattended() {
-  case "$(task_state_get "$1" autopilot)" in
-    on | stopped) [ "$(_task_autopilot_mode "$1")" = unattended ] ;;
+  local run mode
+  task_state_var run "$1" autopilot
+  case "$run" in
+    on | stopped)
+      _task_autopilot_mode_v mode "$1"
+      [ "$mode" = unattended ] ;;
     *) return 1 ;;
   esac
 }
@@ -1922,10 +1988,19 @@ task_abandon() {
 # for a task.md linking two — a link all the same, which the refusals that
 # read this must see, and `spec drop` names the conflict — or nothing.
 _task_spec_id() {
-  local md
-  md="$(task_dir "$1")/task.md"
-  [ -f "$md" ] || return 0
-  jig_spec_link "$md" 2>/dev/null || printf '%s\n' '(more than one)'
+  local spec
+  _task_spec_id_v spec "$1"
+  [ -z "$spec" ] || printf '%s\n' "$spec"
+}
+
+# _task_spec_id_v <var> <id> — the same answer into <var>, in the caller's shell.
+_task_spec_id_v() {
+  local __tsi_md
+  printf -v "$1" '%s' ""
+  task_dir_v __tsi_md "$2"
+  __tsi_md="$__tsi_md/task.md"
+  [ -f "$__tsi_md" ] || return 0
+  jig_spec_link_v "$1" "$__tsi_md" || printf -v "$1" '%s' '(more than one)'
 }
 
 # _task_abandon_keys_clear <id> <dir> — a task taken back from `abandoned`
@@ -2172,9 +2247,16 @@ _task_autopilot_valid_stage() {
 # repaired).
 _task_autopilot_repairs() {
   local n
-  n=$(task_state_get "$1" autopilot_repairs)
-  case "$n" in '' | *[!0-9]*) n=0 ;; esac
+  _task_autopilot_repairs_v n "$1"
   printf '%s\n' "$n"
+}
+
+# _task_autopilot_repairs_v <var> <id> — the same count into <var>.
+_task_autopilot_repairs_v() {
+  local __tar_n
+  task_state_var __tar_n "$2" autopilot_repairs
+  case "$__tar_n" in '' | *[!0-9]*) __tar_n=0 ;; esac
+  printf -v "$1" '%s' "$__tar_n"
 }
 
 # _task_autopilot_log <id> <event> <text> — append one line to the run
@@ -2225,20 +2307,48 @@ _task_autopilot_note() {
 # <phase> is `autopilot_phase` when a coordinator started this run as one task
 # of a roadmap phase (adr-20260922-a-phase-run-is-coordinated).
 _task_autopilot_facts() {
-  local id="$1" state file
-  state=$(task_state_get "$id" autopilot)
-  [ -n "$state" ] || return 0
-  file="$(task_dir "$id")/autopilot"
-  {
-    if [ -f "$file" ]; then cat "$file"; fi
-  } | awk -F '\t' -v state="$state" -v repairs="$(_task_autopilot_repairs "$id")" \
-        -v phase="$(task_state_get "$id" autopilot_phase)" '
-    $2 == "start" || $2 == "resume" { stage = ""; stage_at = "" }
-    $2 == "stage" { stage = $3; stage_at = $1 }
-    $2 == "stop"  { stop = $3; stop_at = $1 }
-    function v(x) { return x == "" ? "-" : x }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", state, repairs, v(stage), v(stage_at), v(stop), v(stop_at), v(phase) }
-  '
+  local facts
+  _task_autopilot_facts_v facts "$1"
+  [ -z "$facts" ] || printf '%s\n' "$facts"
+}
+
+# _task_autopilot_facts_v <var> <id> — the same line into <var> (without its
+# newline), empty for a task that never started a run. The journal is read
+# in the shell, its fields split as `awk -F '\t'` splits them: the time, the
+# event, and the text up to the next tab.
+_task_autopilot_facts_v() {
+  local __taf_state __taf_file __taf_line __taf_at __taf_event __taf_text __taf_t=$'\t'
+  local __taf_stage="" __taf_stage_at="" __taf_stop="" __taf_stop_at="" __taf_repairs __taf_phase
+  printf -v "$1" '%s' ""
+  task_state_var __taf_state "$2" autopilot
+  [ -n "$__taf_state" ] || return 0
+  task_dir_v __taf_file "$2"
+  __taf_file="$__taf_file/autopilot"
+  if [ -f "$__taf_file" ]; then
+    while IFS= read -r __taf_line || [ -n "$__taf_line" ]; do
+      __taf_at=${__taf_line%%"$__taf_t"*}
+      __taf_event="" __taf_text=""
+      case "$__taf_line" in
+        *"$__taf_t"*)
+          __taf_line=${__taf_line#*"$__taf_t"}
+          __taf_event=${__taf_line%%"$__taf_t"*}
+          case "$__taf_line" in
+            *"$__taf_t"*)
+              __taf_line=${__taf_line#*"$__taf_t"}
+              __taf_text=${__taf_line%%"$__taf_t"*} ;;
+          esac ;;
+      esac
+      case "$__taf_event" in
+        start | resume) __taf_stage="" __taf_stage_at="" ;;
+        stage) __taf_stage=$__taf_text __taf_stage_at=$__taf_at ;;
+        stop) __taf_stop=$__taf_text __taf_stop_at=$__taf_at ;;
+      esac
+    done < "$__taf_file"
+  fi
+  _task_autopilot_repairs_v __taf_repairs "$2"
+  task_state_var __taf_phase "$2" autopilot_phase
+  printf -v "$1" '%s\t%s\t%s\t%s\t%s\t%s\t%s' "$__taf_state" "$__taf_repairs" \
+    "${__taf_stage:--}" "${__taf_stage_at:--}" "${__taf_stop:--}" "${__taf_stop_at:--}" "${__taf_phase:--}"
 }
 
 # jig task autopilot <id> start|stage|repair|stop|resume|end|report —
@@ -2367,11 +2477,17 @@ EOF
 # `unattended`, or `attended` for anything else, a run started before modes
 # existed included.
 _task_autopilot_mode() {
-  if [ "$(task_state_get "$1" autopilot_mode)" = unattended ]; then
-    printf 'unattended\n'
-  else
-    printf 'attended\n'
-  fi
+  local mode
+  _task_autopilot_mode_v mode "$1"
+  printf '%s\n' "$mode"
+}
+
+# _task_autopilot_mode_v <var> <id> — the same mode into <var>.
+_task_autopilot_mode_v() {
+  local __tam_mode
+  task_state_var __tam_mode "$2" autopilot_mode
+  [ "$__tam_mode" = unattended ] || __tam_mode=attended
+  printf -v "$1" '%s' "$__tam_mode"
 }
 
 # stage <name>: logs which stage the run just reached. Requires an active
@@ -2632,15 +2748,18 @@ _task_autopilot_resume() {
 # it after checking the answer itself; the actions table (_task_actions) asks
 # it with the `--by` the run's mode needs.
 _task_autopilot_resume_refusal() {
-  local id="$1" by="$2"
-  if [ "$(task_state_get "$id" autopilot)" != "stopped" ]; then
+  local id="$1" by="$2" run mode repairs
+  task_state_var run "$id" autopilot
+  if [ "$run" != "stopped" ]; then
     printf 'task autopilot resume: not stopped: %s\n' "$id"
     return 0
   fi
-  if [ "$(_task_autopilot_mode "$id")" = unattended ]; then
+  _task_autopilot_mode_v mode "$id"
+  _task_autopilot_repairs_v repairs "$id"
+  if [ "$mode" = unattended ]; then
     if [ "$by" != human ]; then
       printf 'task autopilot resume: an unattended run needs an actual human answer and --by human; otherwise ship a draft\n'
-    elif [ "$(_task_autopilot_repairs "$id")" -ge 2 ]; then
+    elif [ "$repairs" -ge 2 ]; then
       printf 'task autopilot resume: %s exhausted its unattended repair limit; ship a draft\n' "$id"
     fi
   elif [ -n "$by" ]; then
@@ -3465,9 +3584,10 @@ task_receipt_write() {
 # stale only when something cheap already moved. The gates ask without it.
 task_receipt_check() {
   local id="$1" mode="${2:-}" file changed class
-  file="$(task_dir "$id")/receipt"
+  task_dir_v file "$id"
+  file="$file/receipt"
   if [ ! -f "$file" ]; then
-    class=$(task_state_get "$id" class)
+    task_state_var class "$id" class
     if [ "$class" = T4 ]; then
       printf 'receipt: none (required for T4)\n'
       return 1
@@ -3608,12 +3728,19 @@ _task_route_depth() {
 # the rule. An invalid value anywhere reads as `full`: a mistake costs process,
 # never a stage.
 _task_route_depth_of() {
-  if _cfg_route_depth "$1"; then
-    printf '%s\ttask\n' "$1"
-  elif _cfg_route_depth "$2"; then
-    printf '%s\troute.depth\n' "$2"
+  local line
+  _task_route_depth_of_v line "$1" "$2"
+  printf '%s\n' "$line"
+}
+
+# _task_route_depth_of_v <var> <own> <setting> — the same line into <var>.
+_task_route_depth_of_v() {
+  if _cfg_route_depth "$2"; then
+    printf -v "$1" '%s\ttask' "$2"
+  elif _cfg_route_depth "$3"; then
+    printf -v "$1" '%s\troute.depth' "$3"
   else
-    printf 'full\troute.depth\n'
+    printf -v "$1" '%s' $'full\troute.depth'
   fi
 }
 
@@ -3950,9 +4077,11 @@ task_gate() {
 # approval. Shared with the actions table (_task_actions), which asks it for
 # `--by human`: the approval a person gives.
 _task_gate_refusal() {
-  local id="$1" by="$2" class
+  local id="$1" by="$2" class run mode repairs design
+  task_state_var run "$id" autopilot
   if [ "$by" = agent ]; then
-    if [ "$(task_state_get "$id" autopilot)" != on ] || [ "$(_task_autopilot_mode "$id")" != unattended ]; then
+    _task_autopilot_mode_v mode "$id"
+    if [ "$run" != on ] || [ "$mode" != unattended ]; then
       printf "task gate: --by agent is an unattended run's self-approval; %s has no unattended autopilot run on, so the gate is the human's\n" "$id"
       return 0
     fi
@@ -3962,26 +4091,28 @@ _task_gate_refusal() {
     # (adr-20261004-a-route-stage-is-proven-by-its-record). The clone's
     # setting alone does not refuse it: without a run the person working the
     # task is the one approving.
-    if [ "$(task_state_get "$id" autopilot)" = on ]; then
+    if [ "$run" = on ]; then
       printf "task gate: %s's run is unattended, so this approval is the agent's: jig task gate %s approved --by agent\n" "$id" "$id"
       return 0
     fi
     # Not on, so stopped.
-    if [ "$(_task_autopilot_repairs "$id")" -ge 2 ]; then
+    _task_autopilot_repairs_v repairs "$id"
+    if [ "$repairs" -ge 2 ]; then
       printf 'task gate: %s exhausted its unattended repair limit; ship a draft\n' "$id"
       return 0
     fi
     printf 'task gate: %s is stopped; if a human answered, run: jig task autopilot %s resume --answer <text> --by human; then approve with --by agent\n' "$id" "$id"
     return 0
   fi
-  class=$(task_state_get "$id" class)
+  task_state_var class "$id" class
   case "$class" in
     T3 | T4) ;;
     *)
       printf 'task gate: %s is %s; only T3 and T4 tasks have a human gate\n' "$id" "${class:-unclassified}"
       return 0 ;;
   esac
-  [ "$(_task_receipt_design_hash "$id")" != "-" ] || printf 'task gate: %s has no design.md to approve\n' "$id"
+  _task_design_hash_v design "$id"
+  [ "$design" != "-" ] || printf 'task gate: %s has no design.md to approve\n' "$id"
 }
 
 # _task_gate_state <id> — where a T3/T4 task stands at its human gate:
@@ -3989,20 +4120,59 @@ _task_gate_refusal() {
 # design moved after the approval), `approved`; nothing for a task without a
 # gate or without a design yet. The status page's "needs you" reads it.
 _task_gate_state() {
-  local id="$1" design
-  case "$(task_state_get "$id" class)" in
+  local gate
+  _task_gate_state_v gate "$1"
+  [ -z "$gate" ] || printf '%s\n' "$gate"
+}
+
+# _task_gate_state_v <var> <id> — the same answer into <var>.
+_task_gate_state_v() {
+  local __tgs_v __tgs_design
+  printf -v "$1" '%s' ""
+  task_state_var __tgs_v "$2" class
+  case "$__tgs_v" in
     T3 | T4) ;;
     *) return 0 ;;
   esac
-  design=$(_task_receipt_design_hash "$id")
-  [ "$design" != "-" ] || return 0
-  if [ "$(task_state_get "$id" gate)" != approved ]; then
-    printf 'waiting\n'
-  elif [ "$(task_state_get "$id" gate_design)" != "$design" ]; then
-    printf 'changed\n'
-  else
-    printf 'approved\n'
+  _task_design_hash_v __tgs_design "$2"
+  [ "$__tgs_design" != "-" ] || return 0
+  task_state_var __tgs_v "$2" gate
+  if [ "$__tgs_v" != approved ]; then
+    printf -v "$1" '%s' waiting
+    return 0
   fi
+  task_state_var __tgs_v "$2" gate_design
+  if [ "$__tgs_v" != "$__tgs_design" ]; then
+    printf -v "$1" '%s' changed
+  else
+    printf -v "$1" '%s' approved
+  fi
+}
+
+# _task_design_hash_v <var> <id> — _task_receipt_design_hash into <var>. On a
+# read path (a snapshot open, jig_read_snapshot_begin) the hash of a task is
+# worked out once: the listing's gate and its actions table both ask it.
+_TASK_DESIGN_MEMO=$'\n'
+_TASK_DESIGN_MEMO_GEN=""
+_task_design_hash_v() {
+  local __tdh_rest __tdh_hash __tdh_nl=$'\n' __tdh_t=$'\t'
+  if [ "$_TASK_DESIGN_MEMO_GEN" != "$_JIG_TS_GEN" ]; then
+    _TASK_DESIGN_MEMO=$'\n'
+    _TASK_DESIGN_MEMO_GEN=$_JIG_TS_GEN
+  fi
+  if [ "$_JIG_TS_ON" = 1 ]; then
+    case "$_TASK_DESIGN_MEMO" in
+      *"$__tdh_nl$2$__tdh_t"*)
+        __tdh_rest=${_TASK_DESIGN_MEMO#*"$__tdh_nl$2$__tdh_t"}
+        printf -v "$1" '%s' "${__tdh_rest%%"$__tdh_nl"*}"
+        return 0 ;;
+    esac
+  else
+    _TASK_DESIGN_MEMO=$'\n'
+  fi
+  __tdh_hash=$(_task_receipt_design_hash "$2")
+  [ "$_JIG_TS_ON" != 1 ] || _TASK_DESIGN_MEMO="$_TASK_DESIGN_MEMO$2$__tdh_t$__tdh_hash$__tdh_nl"
+  printf -v "$1" '%s' "$__tdh_hash"
 }
 
 # --- pause / resume ---------------------------------------------------------------
@@ -4012,10 +4182,14 @@ _task_gate_state() {
 # the actions table (_task_actions). Resume's other refusal — the checkout is
 # not on the task's branch — is the command's: it depends on where it runs.
 _task_pause_refusal() {
-  [ "$(task_state_get "$1" paused)" != "true" ] || printf 'task pause: already paused: %s\n' "$1"
+  local paused
+  task_state_var paused "$1" paused
+  [ "$paused" != "true" ] || printf 'task pause: already paused: %s\n' "$1"
 }
 _task_resume_refusal() {
-  [ "$(task_state_get "$1" paused)" = "true" ] || printf 'task resume: not paused: %s\n' "$1"
+  local paused
+  task_state_var paused "$1" paused
+  [ "$paused" = "true" ] || printf 'task resume: not paused: %s\n' "$1"
 }
 
 # Pause is a field, not a status (design §3): it is orthogonal to `status`
@@ -4261,6 +4435,7 @@ _task_resume_body() {
   fi
 
   mv "$tmp" "$dir/state"
+  jig_task_state_forget
   jig_record_changed
 
   # What the resume found, read in the task's checkout: uncommitted files only
@@ -4350,6 +4525,14 @@ task_list() {
 
 _task_list() {
   jig_require_init
+  # A read path: every task's state, the queue and the configuration are read
+  # once for the whole listing (jig_read_snapshot_begin).
+  jig_read_snapshot_begin
+  _task_list_run "$@"
+  jig_read_snapshot_end
+}
+
+_task_list_run() {
   local show_all=0 want_status="" goals=0 json=0
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -4382,44 +4565,50 @@ _task_list() {
   # The base is shown only where it is not the project's: a listing where
   # every line says base=main says nothing.
   default_base=$(cfg git.base_branch main)
+  local archived_at archived_reason goal
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     dir="$base/$id/"
-    class=$(task_state_get "$id" class)
-    status=$(task_state_get "$id" status)
-    branch=$(task_state_get "$id" branch)
-    paused=$(task_state_get "$id" paused)
+    task_state_var class "$id" class
+    task_state_var status "$id" status
+    task_state_var branch "$id" branch
+    task_state_var paused "$id" paused
     [ -n "$class" ] || class="-"
     line="$id class=$class status=$status"
-    issue=$(task_state_get "$id" issue)
+    task_state_var issue "$id" issue
     [ -z "$issue" ] || line="$line issue=$issue"
     # A task with no branch has not been started. Saying so is the whole
     # point of representing "not started" as an absence: without a marker the
     # listing shows it as indistinguishable from work in progress.
     if [ -n "$branch" ]; then
       line="$line branch=$branch"
-      wt=$(_task_worktree_for "$branch" "$worktrees")
+      _task_worktree_for_v wt "$branch" "$worktrees"
       [ -z "$wt" ] || line="$line $(_task_worktree_note "$wt")"
     else
       line="$line not-started"
     fi
-    base_branch=$(task_state_get "$id" base_branch)
+    task_state_var base_branch "$id" base_branch
     if [ -n "$base_branch" ] && [ "$base_branch" != "$default_base" ]; then
       line="$line base=$base_branch"
     fi
     [ "$paused" = "true" ] && line="$line paused"
     if [ "$status" = archived ]; then
-      line="$line archived_at=$(task_state_get "$id" archived_at) archived_reason=$(task_state_get "$id" archived_reason)"
+      task_state_var archived_at "$id" archived_at
+      task_state_var archived_reason "$id" archived_reason
+      line="$line archived_at=$archived_at archived_reason=$archived_reason"
     fi
     # What `jig task merge` linked, both ends (comma-separated ids, no spaces).
     local link key
     for key in absorbed_into absorbs absorbs_partly partly_in; do
-      link=$(task_state_get "$id" "$key")
+      task_state_var link "$id" "$key"
       [ -z "$link" ] || line="$line $key=$link"
     done
     # The goal rides on the line through the sort, after a unit separator,
     # and is put on a line of its own below it once sorted.
-    [ "$goals" -eq 0 ] || line="$line"$'\037'"goal: $(_task_goal "${dir}task.md")"
+    if [ "$goals" -ne 0 ]; then
+      _task_goal_v goal "${dir}task.md"
+      line="$line"$'\037'"goal: $goal"
+    fi
     lines="$lines
 $line"
   done <<EOF
@@ -4458,11 +4647,12 @@ _task_list_select() {
   _TASK_LIST_ARCHIVED=0
   for dir in "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"/*/; do
     [ -f "${dir}state" ] || continue
-    id=$(basename "$dir")
+    id=${dir%/}
+    id=${id##*/}
     # Same rule as _task_candidates_for_branch: skip, never die on, a
     # directory whose name is not a task id.
     _task_valid_id "$id" || continue
-    status=$(task_state_get "$id" status)
+    task_state_var status "$id" status
     if [ -n "$want_status" ]; then
       [ "$status" = "$want_status" ] || continue
     elif [ "$show_all" -eq 0 ] && ! _task_is_live "$status"; then
@@ -4531,15 +4721,15 @@ _task_list_json() {
   . "$JIG_LIB/hklog.sh"
   # shellcheck source=lib/forgecache.sh
   . "$JIG_LIB/forgecache.sh"
-  local worktrees flagged run ran_at forge t id rows=""
-  t=$(printf '\t')
+  local worktrees flagged run ran_at forge t=$'\t' id rows="" row
   worktrees=$(_task_worktrees)
   # What housekeeping last heard from the forge, read once per listing.
   _TASK_LIST_FORGE_CACHE=$(forgecache_read)
   flagged=$(_task_list_hk_flagged)
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    rows="$rows$id$t$(_task_list_json_task "$id" "$worktrees" "$flagged")
+    _task_list_json_task_v row "$id" "$worktrees" "$flagged"
+    rows="$rows$id$t$row
 "
   done <<EOF
 $_TASK_LIST_IDS
@@ -4572,27 +4762,38 @@ EOF
 # "<id><TAB><flag>" lines _task_list_json collected; both are read once per
 # listing, not once per task.
 _task_list_json_task() {
-  local id="$1" worktrees="$2" flagged="$3" line o t
+  local row
+  _task_list_json_task_v row "$@"
+  printf '%s\n' "$row"
+}
+
+# _task_list_json_task_v <var> <id> <worktrees> <flagged> — the same object
+# into <var>, built in the caller's shell. Every field comes through
+# task_state_var, from the snapshot of the task's file the listing holds, and
+# every helper answers into a variable: a fixed number of processes per task
+# however many fields it has — git for a worktree's count, the hashes of a
+# design, one subshell per guard of the actions table.
+_task_list_json_task_v() {
+  local __tlj_var="$1" id="$2" worktrees="$3" flagged="$4" line o t=$'\t' v
   local class status issue consolidated paused created updated branch base pr_url gate_by
-  local wt gate facts state repairs stage stage_at stop stop_at phase goal flag flags=""
-  t=$(printf '\t')
-  # Through task_state_get, the one reader of the state format.
-  class=$(task_state_get "$id" class)
-  status=$(task_state_get "$id" status)
-  issue=$(task_state_get "$id" issue)
-  consolidated=$(task_state_get "$id" knowledge_consolidated)
-  paused=$(task_state_get "$id" paused)
-  created=$(task_state_get "$id" created_at)
-  updated=$(task_state_get "$id" updated_at)
-  branch=$(task_state_get "$id" branch)
-  pr_url=$(task_state_get "$id" pr_url)
-  gate_by=$(task_state_get "$id" gate_by)
+  local wt n gate facts state repairs stage stage_at stop stop_at phase goal flag flags="" mode atext
+  task_state_var class "$id" class
+  task_state_var status "$id" status
+  task_state_var issue "$id" issue
+  task_state_var consolidated "$id" knowledge_consolidated
+  task_state_var paused "$id" paused
+  task_state_var created "$id" created_at
+  task_state_var updated "$id" updated_at
+  task_state_var branch "$id" branch
+  task_state_var pr_url "$id" pr_url
+  task_state_var gate_by "$id" gate_by
 
   json_quote "$id"; o="{\"id\":$_JSON"
   json_str_or_null "$class"; o="$o,\"class\":$_JSON"
   json_str_or_null "$status"; o="$o,\"status\":$_JSON"
   json_str_or_null "$issue"; o="$o,\"issue\":$_JSON"
-  goal=$(_task_goal "$(task_dir "$id")/task.md")
+  task_dir_v v "$id"
+  _task_goal_v goal "$v/task.md"
   [ "$goal" != "(none)" ] || goal=""
   json_str_or_null "$goal"; o="$o,\"goal\":$_JSON"
   json_bool "$consolidated"; o="$o,\"knowledge_consolidated\":$_JSON"
@@ -4607,27 +4808,28 @@ _task_list_json_task() {
   fi
   json_str_or_null "$created"; o="$o,\"created_at\":$_JSON"
   json_str_or_null "$updated"; o="$o,\"updated_at\":$_JSON"
-  json_str_or_null "$(task_state_get "$id" archived_at)"; o="$o,\"archived_at\":$_JSON"
-  json_str_or_null "$(task_state_get "$id" archived_reason)"; o="$o,\"archived_reason\":$_JSON"
-  json_str_or_null "$(task_state_get "$id" archived_from)"; o="$o,\"archived_from\":$_JSON"
-  json_str_or_null "$(task_state_get "$id" absorbed_into)"; o="$o,\"absorbed_into\":$_JSON"
-  _task_json_ids "$(task_state_get "$id" absorbs)"; o="$o,\"absorbs\":$_JSON"
-  _task_json_ids "$(task_state_get "$id" absorbs_partly)"; o="$o,\"absorbs_partly\":$_JSON"
-  _task_json_ids "$(task_state_get "$id" partly_in)"; o="$o,\"partly_in\":$_JSON"
+  task_state_var v "$id" archived_at; json_str_or_null "$v"; o="$o,\"archived_at\":$_JSON"
+  task_state_var v "$id" archived_reason; json_str_or_null "$v"; o="$o,\"archived_reason\":$_JSON"
+  task_state_var v "$id" archived_from; json_str_or_null "$v"; o="$o,\"archived_from\":$_JSON"
+  task_state_var v "$id" absorbed_into; json_str_or_null "$v"; o="$o,\"absorbed_into\":$_JSON"
+  task_state_var v "$id" absorbs; _task_json_ids "$v"; o="$o,\"absorbs\":$_JSON"
+  task_state_var v "$id" absorbs_partly; _task_json_ids "$v"; o="$o,\"absorbs_partly\":$_JSON"
+  task_state_var v "$id" partly_in; _task_json_ids "$v"; o="$o,\"partly_in\":$_JSON"
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
-  base=$(jig_task_base "$id")
+  jig_task_base_v base "$id"
   json_quote "$base"; o="$o,\"base_branch\":$_JSON"
 
   wt=""
-  [ -z "$branch" ] || wt=$(_task_worktree_for "$branch" "$worktrees")
+  [ -z "$branch" ] || _task_worktree_for_v wt "$branch" "$worktrees"
   if [ -n "$wt" ]; then
     json_quote "$wt"
-    o="$o,\"worktree\":{\"path\":$_JSON,\"uncommitted\":$(_task_worktree_uncommitted "$wt")}"
+    _task_worktree_uncommitted_v n "$wt"
+    o="$o,\"worktree\":{\"path\":$_JSON,\"uncommitted\":$n}"
   else
     o="$o,\"worktree\":null"
   fi
 
-  gate=$(_task_gate_state "$id")
+  _task_gate_state_v gate "$id"
   if [ -n "$gate" ]; then
     json_quote "$gate"; o="$o,\"gate\":{\"state\":$_JSON"
     # Who approved: nobody while it waits; an approval recorded before
@@ -4642,7 +4844,7 @@ _task_list_json_task() {
     o="$o,\"gate\":null"
   fi
 
-  facts=$(_task_autopilot_facts "$id")
+  _task_autopilot_facts_v facts "$id"
   if [ -n "$facts" ]; then
     IFS="$t" read -r state repairs stage stage_at stop stop_at phase <<EOF
 $facts
@@ -4654,7 +4856,8 @@ EOF
     [ "$phase" != "-" ] || phase=""
     json_quote "$state"; o="$o,\"autopilot\":{\"state\":$_JSON"
     # The mode the gates read: anything but `unattended` is attended.
-    json_quote "$(_task_autopilot_mode "$id")"; o="$o,\"mode\":$_JSON"
+    _task_autopilot_mode_v mode "$id"
+    json_quote "$mode"; o="$o,\"mode\":$_JSON"
     json_int_or_null "$repairs"; o="$o,\"repairs\":$_JSON"
     json_str_or_null "$stage"; o="$o,\"stage\":$_JSON"
     json_str_or_null "$stage_at"; o="$o,\"stage_at\":$_JSON"
@@ -4692,6 +4895,7 @@ EOF
   # the pull request's state as the forge cache holds it, never the forge's.
   local action offered command reason actions="" pr_state=""
   [ -z "$pr_url" ] || pr_state=$_FORGECACHE_STATE
+  _task_actions_v atext "$id" "$pr_state"
   while IFS="$t" read -r action offered command reason; do
     [ -n "$action" ] || continue
     json_quote "$action"; line="{\"id\":$_JSON"
@@ -4699,9 +4903,9 @@ EOF
     json_str_or_null "$reason"; line="$line,\"reason\":$_JSON}"
     actions="${actions:+$actions,}$line"
   done <<EOF
-$(_task_actions "$id" "$pr_state")
+$atext
 EOF
-  printf '%s,"actions":[%s]}\n' "$o" "$actions"
+  printf -v "$__tlj_var" '%s,"actions":[%s]}' "$o" "$actions"
 }
 
 # --- what a person may do next (adr-20261015-one-table-of-what-a-person-may-do)
@@ -4727,8 +4931,18 @@ _TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gat
 # task's pull request without asking the forge (the forge cache's state, or
 # empty); `close` and `ship` read it. Local reads only.
 _task_actions() {
-  local id="$1" pr_state="$2" status action command reason by=""
-  status=$(task_state_get "$id" status)
+  local out
+  _task_actions_v out "$1" "$2"
+  printf '%s' "$out"
+}
+
+# _task_actions_v <var> <id> <pr-state> — the same lines into <var>, in the
+# caller's shell. A guard still runs in a subshell of its own, so a guard that
+# fails withholds its row rather than ending the listing; it reads the task's
+# state from the snapshot it inherits.
+_task_actions_v() {
+  local __ta_out="" id="$2" pr_state="$3" status action command reason by="" mode spec gate
+  task_state_var status "$id" status
   for action in $_TASK_ACTIONS; do
     reason=""
     case "$action" in
@@ -4742,7 +4956,8 @@ _task_actions() {
         # The `--by human` an unattended run's resume needs, in the command
         # and in the guard alike.
         command="jig task autopilot $id resume --answer <text>"
-        if [ "$(_task_autopilot_mode "$id")" = unattended ]; then
+        _task_autopilot_mode_v mode "$id"
+        if [ "$mode" = unattended ]; then
           by=human
           command="$command --by human"
         fi ;;
@@ -4753,7 +4968,8 @@ _task_actions() {
         # A spec-linked task is refused without a reason; the placeholder
         # tells a reader of the table to ask for one.
         command="jig task abandon $id"
-        [ -z "$(_task_spec_id "$id")" ] || command="$command --reason <text>" ;;
+        _task_spec_id_v spec "$id"
+        [ -z "$spec" ] || command="$command --reason <text>" ;;
       archive) command="jig task archive $id" ;;
       unarchive) command="jig task unarchive $id" ;;
       reopen) command="jig task set $id status active" ;;
@@ -4772,52 +4988,96 @@ _task_actions() {
       # A request left on a finished task — made during its last stage, or
       # before it was closed — can still be taken back.
       consolidated:cancel-pause-request | abandoned:cancel-pause-request | archived:cancel-pause-request)
-        reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
+        _task_actions_ask_v reason "$id" "$action" jig_pause_cancel_refusal "$id" ;;
       consolidated:* | abandoned:* | archived:*) reason="task $id is $status" ;;
       *:reopen) reason="task $id is $status, not abandoned" ;;
       *:start)
-        reason=$(_task_actions_guard "$id" "$action" _task_start_refusal "$id")
-        [ -n "$reason" ] || reason=$(_task_actions_guard "$id" "$action" _task_start_goal_refusal "$id") ;;
-      *:pause) reason=$(_task_actions_guard "$id" "$action" _task_pause_refusal "$id") ;;
-      *:resume) reason=$(_task_actions_guard "$id" "$action" _task_resume_refusal "$id") ;;
-      *:request-pause) reason=$(_task_actions_guard "$id" "$action" jig_pause_request_refusal "$id") ;;
-      *:cancel-pause-request) reason=$(_task_actions_guard "$id" "$action" jig_pause_cancel_refusal "$id") ;;
+        _task_actions_ask_v reason "$id" "$action" _task_start_refusal "$id"
+        [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_start_goal_refusal "$id" ;;
+      *:pause) _task_actions_ask_v reason "$id" "$action" _task_pause_refusal "$id" ;;
+      *:resume) _task_actions_ask_v reason "$id" "$action" _task_resume_refusal "$id" ;;
+      *:request-pause) _task_actions_ask_v reason "$id" "$action" jig_pause_request_refusal "$id" ;;
+      *:cancel-pause-request) _task_actions_ask_v reason "$id" "$action" jig_pause_cancel_refusal "$id" ;;
       *:approve-gate)
-        reason=$(_task_actions_guard "$id" "$action" _task_gate_refusal "$id" human)
-        if [ -z "$reason" ] && [ "$(_task_gate_state "$id")" = approved ]; then
-          reason="task gate: $id's design is approved; nothing waits at its gate"
+        _task_actions_ask_v reason "$id" "$action" _task_gate_refusal "$id" human
+        if [ -z "$reason" ]; then
+          _task_gate_state_v gate "$id"
+          [ "$gate" != approved ] || reason="task gate: $id's design is approved; nothing waits at its gate"
         fi ;;
-      *:answer-stop) reason=$(_task_actions_guard "$id" "$action" _task_autopilot_resume_refusal "$id" "$by") ;;
+      *:answer-stop) _task_actions_ask_v reason "$id" "$action" _task_autopilot_resume_refusal "$id" "$by" ;;
       *:ship)
         if [ "$pr_state" = merged ]; then
           reason="task ship: $id's pull request is merged"
         else
           # In the command's order: the level, the gates, the branch.
-          reason=$(_task_actions_guard "$id" "$action" _task_ship_level_refusal "$id")
-          [ -n "$reason" ] || reason=$(_task_actions_guard "$id" "$action" _task_ship_refusal "$id" 0)
-          [ -n "$reason" ] || reason=$(_task_actions_guard "$id" "$action" _task_ship_branch_refusal "$id")
+          _task_actions_ask_v reason "$id" "$action" _task_ship_level_refusal "$id"
+          [ -n "$reason" ] || _task_actions_guard_v reason "$id" "$action" _task_ship_refusal "$id" 0
+          [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_ship_branch_refusal "$id"
         fi ;;
-      *:close) reason=$(_task_actions_guard "$id" "$action" _task_close_refusal "$id" "${pr_state:-unknown}") ;;
+      *:close) _task_actions_ask_v reason "$id" "$action" _task_close_refusal "$id" "${pr_state:-unknown}" ;;
     esac
     if [ -n "$reason" ]; then
-      printf '%s\tfalse\t%s\t%s\n' "$action" "$command" "$reason"
+      __ta_out="$__ta_out$action"$'\t'"false"$'\t'"$command"$'\t'"$reason"$'\n'
     else
-      printf '%s\ttrue\t%s\t\n' "$action" "$command"
+      __ta_out="$__ta_out$action"$'\t'"true"$'\t'"$command"$'\t'$'\n'
     fi
   done
+  printf -v "$1" '%s' "$__ta_out"
 }
 
 # _task_actions_guard <id> <action> <guard> [args] — what <guard> prints, or,
 # when it could not decide, a reason that withholds <action>: a guard that
 # fails never reads as "nothing refuses".
 _task_actions_guard() {
-  local id="$1" action="$2" out
-  shift 2
-  if out=$("$@"); then
-    printf '%s\n' "$out"
+  local out
+  _task_actions_guard_v out "$@"
+  printf '%s\n' "$out"
+}
+
+# _task_actions_guard_v <var> <id> <action> <guard> [args] — the same answer
+# into <var>: one subshell, the guard's own. For a guard that may fail or die
+# part way (the ship gates read the ledger, the receipt and git).
+_task_actions_guard_v() {
+  local __tag_var="$1" __tag_id="$2" __tag_action="$3" __tag_out
+  shift 3
+  if __tag_out=$("$@"); then
+    printf -v "$__tag_var" '%s' "$__tag_out"
   else
-    printf 'jig could not check whether %s may %s now\n' "$id" "$action"
+    printf -v "$__tag_var" 'jig could not check whether %s may %s now' "$__tag_id" "$__tag_action"
   fi
+}
+
+# _task_actions_ask_v <var> <id> <action> <guard> [args] — the same answer as
+# _task_actions_guard_v, from a guard run in this shell with its output in a
+# file: no process per row. Only for a guard that reads state and never dies
+# — every row but the ship gates. A non-zero exit still withholds the row.
+_TASK_ASK_FILE=""
+_TASK_ASK_LEVEL=""
+_task_actions_ask_v() {
+  local __taa_var="$1" __taa_id="$2" __taa_action="$3" __taa_out="" __taa_rc=0 __taa_nl=$'\n'
+  shift 3
+  if [ -z "$_TASK_ASK_FILE" ] || [ "$_TASK_ASK_LEVEL" != "${BASH_SUBSHELL:-0}" ]; then
+    _TASK_ASK_FILE=$(mktemp "${TMPDIR:-/tmp}/jig-guard.XXXXXX") || {
+      _task_actions_guard_v "$__taa_var" "$__taa_id" "$__taa_action" "$@"
+      return 0
+    }
+    _TASK_ASK_LEVEL=${BASH_SUBSHELL:-0}
+    jig_cleanup_add "$_TASK_ASK_FILE"
+  fi
+  "$@" > "$_TASK_ASK_FILE" || __taa_rc=$?
+  if [ "$__taa_rc" -ne 0 ]; then
+    printf -v "$__taa_var" 'jig could not check whether %s may %s now' "$__taa_id" "$__taa_action"
+    return 0
+  fi
+  IFS= read -r -d '' __taa_out < "$_TASK_ASK_FILE" || true
+  # What `$(...)` would have kept: every trailing newline dropped.
+  while :; do
+    case "$__taa_out" in
+      *"$__taa_nl") __taa_out=${__taa_out%"$__taa_nl"} ;;
+      *) break ;;
+    esac
+  done
+  printf -v "$__taa_var" '%s' "$__taa_out"
 }
 
 # _task_goal <task.md> — the first paragraph under the `## Goal` heading of a
@@ -4829,41 +5089,70 @@ _task_actions_guard() {
 # the heading of every brief filed without one, so it is dropped before a word
 # is kept, and a line that held only a comment does not end the paragraph.
 _task_goal() {
-  local goal=""
-  [ -f "$1" ] && goal=$(awk '
-    /^##[[:space:]]+Goal[[:space:]]*$/ { in_goal = 1; next }
-    !in_goal { next }
-    !incomment && /^#/ { exit }
-    {
-      line = $0
-      while (1) {
-        if (incomment) {
-          e = index(line, "-->")
-          if (e == 0) { line = ""; break }
-          line = substr(line, e + 3); incomment = 0
-        }
-        b = index(line, "<!--")
-        if (b == 0) break
-        rest = substr(line, b + 4)
-        e = index(rest, "-->")
-        if (e == 0) { line = substr(line, 1, b - 1); incomment = 1; break }
-        line = substr(line, 1, b - 1) substr(rest, e + 3)
-      }
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-      if (line == "") { if (text != "" && !incomment && $0 !~ /-->/) exit; next }
-      text = (text == "" ? line : text " " line)
-    }
-    END { print text }
-  ' "$1")
-  [ -n "$goal" ] || goal="(none)"
+  local goal
+  _task_goal_v goal "$1"
   printf '%s\n' "$goal"
+}
+
+# _task_goal_v <var> <task.md> — the same goal into <var>, read line by line
+# in the caller's shell: the listing asks it of every task.
+_task_goal_v() {
+  local __tg_raw __tg_line __tg_pre __tg_rest __tg_text="" __tg_in=0 __tg_comment=0
+  local __tg_head='^##[[:space:]]+Goal[[:space:]]*$'
+  if [ -f "$2" ]; then
+    while IFS= read -r __tg_raw || [ -n "$__tg_raw" ]; do
+      # The heading starts (or restarts) the goal wherever it is.
+      if [[ $__tg_raw =~ $__tg_head ]]; then
+        __tg_in=1
+        continue
+      fi
+      [ "$__tg_in" -eq 1 ] || continue
+      if [ "$__tg_comment" -eq 0 ]; then
+        case "$__tg_raw" in '#'*) break ;; esac
+      fi
+      __tg_line=$__tg_raw
+      while :; do
+        if [ "$__tg_comment" -eq 1 ]; then
+          case "$__tg_line" in
+            *'-->'*) __tg_line=${__tg_line#*-->}; __tg_comment=0 ;;
+            *) __tg_line=""; break ;;
+          esac
+        fi
+        case "$__tg_line" in
+          *'<!--'*) ;;
+          *) break ;;
+        esac
+        __tg_pre=${__tg_line%%<!--*}
+        __tg_rest=${__tg_line#*<!--}
+        case "$__tg_rest" in
+          *'-->'*) __tg_line=$__tg_pre${__tg_rest#*-->} ;;
+          *) __tg_line=$__tg_pre; __tg_comment=1; break ;;
+        esac
+      done
+      __tg_line=${__tg_line#"${__tg_line%%[![:space:]]*}"}
+      __tg_line=${__tg_line%"${__tg_line##*[![:space:]]}"}
+      if [ -z "$__tg_line" ]; then
+        if [ -n "$__tg_text" ] && [ "$__tg_comment" -eq 0 ]; then
+          case "$__tg_raw" in
+            *'-->'*) ;;
+            *) break ;;
+          esac
+        fi
+        continue
+      fi
+      __tg_text=${__tg_text:+$__tg_text }$__tg_line
+    done < "$2"
+  fi
+  printf -v "$1" '%s' "${__tg_text:-(none)}"
 }
 
 # _task_has_goal <task.md> — true when the brief has a goal by _task_goal's
 # reading: what `task list --goals` shows as `(none)` is what `task start`
 # warns about, or refuses for T3/T4.
 _task_has_goal() {
-  [ "$(_task_goal "$1")" != "(none)" ]
+  local goal
+  _task_goal_v goal "$1"
+  [ "$goal" != "(none)" ]
 }
 
 task_show() {
@@ -5310,25 +5599,33 @@ _task_ship_unverified_notice() {
 # who lowers either key halfway through a run is obeyed at once. Exit 1 when
 # the level is invalid, like jig_agent_git.
 _task_ship_git() {
-  local value
-  case "$(task_state_get "$1" autopilot)" in
+  local line rc=0
+  _task_ship_git_v line "$1" || rc=$?
+  printf '%s\n' "$line"
+  return "$rc"
+}
+
+# _task_ship_git_v <var> <id> — the same `<level><TAB><key>` into <var>, with
+# the same exit status, in the caller's shell.
+_task_ship_git_v() {
+  local __tsg_run __tsg_mode __tsg_value
+  task_state_var __tsg_run "$2" autopilot
+  case "$__tsg_run" in
     on)
-      jig_autopilot_git
+      jig_autopilot_git_v "$1"
       return
       ;;
     stopped)
-      if [ "$(_task_autopilot_mode "$1")" = unattended ]; then
-        jig_autopilot_git
+      _task_autopilot_mode_v __tsg_mode "$2"
+      if [ "$__tsg_mode" = unattended ]; then
+        jig_autopilot_git_v "$1"
         return
       fi
       ;;
   esac
-  if value=$(jig_agent_git); then
-    printf '%s\tagent.git\n' "$value"
-  else
-    printf '%s\tagent.git\n' "$value"
-    return 1
-  fi
+  cfg_v __tsg_value agent.git none
+  printf -v "$1" '%s\tagent.git' "$__tsg_value"
+  _cfg_agent_git_level "$__tsg_value"
 }
 
 # _task_ship_level_refusal <id> — why `jig task ship <id>` refuses at the git
@@ -5337,7 +5634,7 @@ _task_ship_git() {
 # (_task_actions); the command exits 3 for `none` and 1 for an invalid level.
 _task_ship_level_refusal() {
   local line level key rc=0
-  line=$(_task_ship_git "$1") || rc=$?
+  _task_ship_git_v line "$1" || rc=$?
   IFS=$'\t' read -r level key <<EOF
 $line
 EOF
@@ -5414,13 +5711,13 @@ _task_ship_refusal() {
 # the command and the actions table alike.
 _task_ship_branch_refusal() {
   local id="$1" branch base
-  branch=$(task_state_get "$id" branch)
+  task_state_var branch "$id" branch
   if [ -z "$branch" ]; then
     # shellcheck disable=SC2016 # the backticks quote a command for the reader
     printf 'task ship: %s has not been started (no branch); run `jig task start %s` first\n' "$id" "$id"
     return 0
   fi
-  base=$(jig_task_base "$id")
+  jig_task_base_v base "$id"
   [ "$branch" != "$base" ] \
     || printf "task ship: %s's branch is its own base (%s); nothing task-specific to ship\n" "$id" "$base"
   return 0
