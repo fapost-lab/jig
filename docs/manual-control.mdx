@@ -244,7 +244,9 @@ includes committed and local changes; it does not prove that every change belong
 Findings and the receipt tell you what was reviewed and whether that review still matches the work.
 A missing receipt can be expected before review or for a task whose route does not require one.
 When the receipt is stale, `--since-review` shows what changed since the review, and whether a repeat
-review may read only that (`narrow`) or must read everything (`full`, with the reason).
+review may read only that (`narrow`) or must read everything (`full`, with the reason). An edit to
+`GLOSSARY.md`, `ARCHITECTURE.md` or `RULES.md` alone keeps it narrow and shows that edit too; a
+change to a document written for the task's files, or to which documents apply to them, makes it full.
 
 ## Ask which knowledge applies
 
