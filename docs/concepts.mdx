@@ -172,6 +172,16 @@ pull request says it ran on the same model as the code. Every acceptance criteri
 and every serious problem the agent says it fixed is checked by undoing the fix and watching its
 test fail.
 
+**A code review reads two things, with two readers.** T2's review and T4's independent review are
+done by two helpers in turn, each reading only its own side. The first asks about *behaviour*: does
+the change do what was asked, which input breaks it, and can a guarantee the feature makes be
+walked around through some other path in the code. The second asks about *standards*: every rule
+your project wrote down — its decisions, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, linter
+settings — checked one by one against the change, plus a short list of well-known code smells
+(duplicated code, a misleading name, an abstraction nobody uses yet) that every project gets even
+with no rules of its own. A smell is only ever a small finding and never stops the task, and a rule
+your project wrote wins over it. A repeat review of a small fix uses one helper for both.
+
 **Every route ends in consolidation**, even a typo fix: the task decides what the project should
 remember, and records "nothing" explicitly when that is the answer.
 

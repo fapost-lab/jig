@@ -39,8 +39,9 @@ entered. End the session there — say the task is paused at their request and h
 (`jig task resume <id>`, then a new session); this is not a stop, so record none.
 
 - **Review in a fresh context.** Review and architecture review go to a reader who has not seen
-  the implementation, briefed as [jig-review](../jig-review/SKILL.md) §1 says. It records findings
-  and signs the receipt; you fix, set `fixed`, and a new reviewer does the re-review.
+  the implementation, briefed as [jig-review](../jig-review/SKILL.md) §1 says. A code review is two
+  readers at either depth, Behaviour then Standards, never side by side; only a `narrow` re-review
+  is one. They record findings and sign the receipt; you fix, set `fixed`, and a new reviewer does the re-review.
 - **A `delegate:` line for this session's runtime hands a stage to a helper** on the model it names — implement, review or
   both ([delegation](../jig-task/references/delegation.md)). Without one, you implement, and the
   review subagent runs on the session's model.

@@ -61,7 +61,10 @@ stage for inspection.
 ### External review
 
 Start a **new process** with no implementation history. Give it the task id, base,
-requirements, design, actual diff, applicable knowledge and the review skill. Codex uses
+requirements, design, actual diff, applicable knowledge, the rule files `jig-review` §1 names —
+those git does not track copied in from the main checkout, which the process cannot reach — the
+review skill and its axis. The `review` stage starts one process per axis, Behaviour and
+Standards; they may run side by side, since only the coordinator writes the ledger. Codex uses
 `codex -a never exec --cd <worktree> --sandbox read-only --ephemeral
 --ignore-user-config --disable multi_agent`. Claude uses `claude -p --restricted
 --strict-mcp-config --permission-mode plan --permission-prompts none
@@ -83,6 +86,8 @@ content, not the reviewer's identity.
 ## With a matching line
 
 Start a new subagent for the entire stage, with the value exactly as printed as its model.
+For the `review` stage that is two subagents, one per axis and one after the other, as
+`jig-review` §1 says; both take the printed model.
 Give it the task id, worktree path, base, stage skill, and approved design or plan. It runs
 the skill itself, reads the relevant knowledge, records findings and the review receipt, and
 returns a report. The coordinator checks `jig task findings <id>` and the receipt before
