@@ -3606,8 +3606,11 @@ test_task_artifact_read_prints_the_document_as_it_is() {
   _ta_json artifact --json read scoped plan
   assert_eq 0 "$RC" "$ERR"
   assert_contains "$OUT" '"kind":"plan",'
-  # A control byte is escaped, and quoting stays linear in the document's
-  # size (a per-character pass took about a minute for 50 KB).
+  # A control byte is escaped. The 60 KB body also stood for a regression of
+  # quoting that is linear in the document's size (a per-character pass took
+  # about a minute for 50 KB), but this check guards the escaping only: it
+  # passes with a quadratic json_quote too. The speed is watched by wall time
+  # (the suite's own run time), not asserted here.
   { printf 'esc \033[1m bold\001\n'; head -c 60000 /dev/zero | tr '\0' 'a'; printf '\n'; } > "$root/handoff.md"
   _ta_json artifact read scoped handoff --json
   assert_eq 0 "$RC" "$ERR"
@@ -4330,6 +4333,42 @@ test_task_ship_stages_tracked_changes_when_nothing_is_staged() {
   assert_eq "" "$(git status --porcelain -- ship.txt)" "the change must be committed"
   assert_contains "$(git show HEAD:ship.txt)" "the line the agent forgot to stage"
   assert_contains "$(git status --porcelain -- msg.txt)" "?? msg.txt"
+}
+
+# The message and the body are inputs to the ship, wherever the caller wrote
+# them: in a subdirectory and named relative, or outside the tree altogether,
+# neither counts as a new file that refuses the ship, and neither is staged.
+# A tracked file under .ai/workspace/ that was edited is never staged by the
+# `git add -u` either (RULES.md), whatever the index was before.
+test_task_ship_inputs_in_a_subdirectory_or_outside_the_tree_are_not_new_files() {
+  ship_setup_forge
+  ship_cfg_local agent.git push
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  git commit -q -m "committed by an earlier run"
+  printf 'the line the agent forgot to stage\n' >> ship.txt
+  rm -f msg.txt
+  mkdir -p notes
+  printf 'Body of the pull request.\n' > notes/body.txt
+  local outside
+  outside=$(mktemp -d "${TMPDIR:-/tmp}/jig-ship-out.XXXXXX")
+  printf 'Ship T-1\n\nMessage kept outside the tree.\n' > "$outside/msg.txt"
+  printf 'workspace note\n' > .ai/workspace/kept.md
+  git add -f .ai/workspace/kept.md
+  git commit -q -m "a tracked file under the workspace"
+  printf 'edited later\n' >> .ai/workspace/kept.md
+
+  run jig task ship T-1 --message-file "$outside/msg.txt" --body-file notes/body.txt
+
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "are not tracked by git"
+  assert_contains "$OUT" "nothing was staged; staged the tracked changes:"
+  assert_eq "" "$(git status --porcelain -- ship.txt)" "the tracked change must be committed"
+  assert_not_contains "$(git show --name-only --format= HEAD)" ".ai/workspace"
+  assert_contains "$(git status --porcelain -- .ai/workspace/kept.md)" " M .ai/workspace/kept.md"
+  assert_contains "$(git status --porcelain -- notes/body.txt)" "?? notes/"
+  rm -rf "$outside"
 }
 
 # A new file is where staging on the agent's behalf would cost the most: a
@@ -9815,6 +9854,39 @@ test_task_receipt_since_review_is_narrow_with_the_task_diff_and_a_global_edit() 
   assert_contains "$OUT" "diff --git a/work.txt b/work.txt"
   assert_contains "$OUT" "knowledge: .ai/knowledge/ARCHITECTURE.md"
   assert_contains "$OUT" "+more architecture"
+}
+
+# What the review read in a global document must still be there to be diffed
+# against: a stored blob that has been pruned, or a document that is gone
+# (its hash in the receipt is `-`), leaves nothing to show the re-reviewer, so it is full.
+test_task_receipt_since_review_is_full_when_the_stored_blob_is_pruned() {
+  _since_review_setup
+  sed 's|^\(context_doc:[[:space:]]*\.ai/knowledge/RULES.md\) .*|\1 1111111111111111111111111111111111111111|' \
+    .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  grep -q 'RULES.md 1111111111111111111111111111111111111111' .ai/workspace/tasks/T-1/receipt \
+    || fail "the fixture did not rewrite the receipt's hash"
+  _since_review_base_commits "printf 'a rule\n' >> .ai/knowledge/RULES.md"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — what the review read in .ai/knowledge/RULES.md is no longer in the repository"
+}
+
+test_task_receipt_since_review_is_full_when_the_review_read_a_document_that_was_absent() {
+  _since_review_setup
+  sed 's|^\(context_doc:[[:space:]]*\.ai/knowledge/GLOSSARY.md\) .*|\1 -|' \
+    .ai/workspace/tasks/T-1/receipt > receipt.tmp
+  cp receipt.tmp .ai/workspace/tasks/T-1/receipt
+  rm -f receipt.tmp
+  grep -q 'GLOSSARY.md -$' .ai/workspace/tasks/T-1/receipt \
+    || fail "the fixture did not rewrite the receipt's hash"
+  _since_review_base_commits "printf 'a term\n' >> .ai/knowledge/GLOSSARY.md"
+
+  run jig task receipt T-1 --since-review
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "re-review: full — what the review read in .ai/knowledge/GLOSSARY.md is no longer in the repository"
 }
 
 test_task_receipt_since_review_ignores_a_new_adr_for_other_files() {

@@ -3526,6 +3526,20 @@ test_spec_ship_remove_at_commit_cuts_close_branch_and_commits_only_the_spec() {
   assert_contains "$(git status --porcelain)" "?? stray.txt"
 }
 
+# jig_ship_commit is shared with task ship and upgrade: what a spec ship's
+# commit leaves out is named in a warning, not only left in the tree.
+test_spec_ship_names_what_its_commit_leaves_out() {
+  sship_closed idea-x
+  sship_cfg_local agent.git commit
+  printf 'stray\n' > stray.txt
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "spec ship: these changes are not part of this commit; stage them and ship again if they belong to it:"
+  assert_contains "$OUT" "stray.txt"
+  assert_not_contains "$OUT" "msg.txt"
+}
+
 test_spec_ship_remove_already_committed_on_the_default_branch_cuts_no_branch() {
   sship_closed idea-x
   sship_cfg_local agent.git commit
