@@ -3891,3 +3891,21 @@ test_status_upgrade_waiting_is_quiet_once_the_base_has_its_version() {
   assert_not_contains "$OUT" '"branch":"jig/upgrade-9.9.9"'
   assert_contains "$OUT" '"pull_request":{"branch":"jig/upgrade-later","base":"main","state":"open","fetched_at":"2026-10-20T10:00:00Z"},"versions":{"to":null}}'
 }
+
+# An upgrade pull request for an older version than this machine's Jig — one
+# nobody merged or closed — does not hide the newer upgrade; one for this
+# machine's version, or a newer one, still does (task upgrade-land-followups,
+# F6).
+test_status_json_offers_a_newer_upgrade_beside_an_old_waiting_one() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-8.0.0${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}https://github.com/o/r/pull/12"
+  _st_upgrade_item 9.0.0
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-waiting"'
+  assert_contains "$ITEM" '"kind":"upgrade-available"'
+  assert_contains "$OUT" '"versions":{"from":"'"$(_status_project_version)"'","to":"9.0.0"}'
+
+  printf '%s\n' "jig/upgrade-9.1.0${t}main${t}open${t}-${t}2026-10-20T10:00:00Z${t}-${t}-" > .ai/runtime/forge-cache
+  _st_upgrade_item 9.0.0
+  assert_eq "" "$ITEM" "upgrade-available was offered beside an upgrade to a newer version"
+}

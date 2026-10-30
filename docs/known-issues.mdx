@@ -23,40 +23,4 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-{/* Closed by task upgrade-land-findings (F6). */}
-### An old upgrade pull request left open hides a newer upgrade
-
-**What you see.** An upgrade's pull request that nobody merged or closed keeps `jig status` showing
-`upgrade pull request: … open`, even after `jig self-update` brought a newer Jig than the version
-that pull request is for. While it stands, `jig status --json` has no `upgrade-available` item for
-the project; the plain `jig status` still reports the versions apart.
-
-**What it costs.** A program that reads `jig status --json`, such as Jig UI, does not offer the newer
-upgrade.
-
-**What to do instead.** Merge the old pull request, or close it on GitHub or GitLab, and run
-`jig housekeeping`; the newer upgrade is offered again.
-
-{/* Closed by task upgrade-land-findings (F4). */}
-### On GitLab, `jig upgrade --land` says there is nothing to do when `glab` fails
-
-**What you see.** When `glab` cannot answer — signed out, no network — `jig upgrade --land` reads its
-failure as a list with no merge requests and ends with nothing to do, instead of saying the forge
-did not answer.
-
-**What it costs.** A merged upgrade looks as if it were not there to bring in, and your base branch
-stays on the old Jig.
-
-**What to do instead.** Check `glab auth status` and run `jig upgrade --land` again. On GitHub, a
-failing `gh` is reported as a failure.
-
-{/* Closed by task upgrade-land-findings (F5). */}
-### `jig upgrade --land` in a linked worktree on the upgrade's branch checks the base branch out there
-
-**What you see.** Run in a linked worktree that is on the upgrade's branch (`jig/upgrade-…`), while
-no other checkout has your base branch checked out, `jig upgrade --land` checks the base branch out
-in that worktree. A merge Jig makes itself never moves a linked worktree's checkout.
-
-**What it costs.** That worktree is left on your base branch instead of the branch it had.
-
-**What to do instead.** Run `jig upgrade --land` in the main checkout, where the upgrade itself runs.
+No fault is known today. When one is found, it goes here.

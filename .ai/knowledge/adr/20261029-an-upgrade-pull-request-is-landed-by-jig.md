@@ -10,7 +10,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/forgecache.sh
 summary: Why jig status follows an upgrade's pull request from the forge cache and jig upgrade --land brings a merged one here, and what it refuses.
-reviewed_at: 2026-10-29
+reviewed_at: 2026-10-30
 ---
 # ADR: An upgrade that ended in a pull request is followed by `jig status` and landed by `jig upgrade --land`
 
@@ -35,15 +35,21 @@ person's git work: switch to the base, pull, delete the branch. Jig UI may not r
   while `open` and the base here does not record its version yet — a landed upgrade goes quiet
   at once, before housekeeping hears the merge — and `upgrade-pull-request-merged` while `merged` and the base branch here still
   records an older Jig than the version the branch is named for. While either stands,
-  `upgrade-available` is not said.
+  `upgrade-available` is not said. (Amended 2026-10-30: only while it stands for this machine's
+  version or a newer one, or for a branch whose name holds no version. A pull request for an older
+  version — one nobody merged or closed — no longer hides the newer upgrade: it would have held it
+  back for good; task upgrade-land-followups.)
 - `jig upgrade --land` is the step after the merge. It asks the forge, because only the forge knows
   whether the pull request merged; refuses `not-merged` while it is open and `upgrade-blocked` for a
-  dirty tree, a checkout on another branch than the base or the upgrade's, a base checked out in
-  another worktree, or a base origin's cannot fast-forward — every reason at once, nothing changed.
+  dirty tree, a checkout on another branch than the base or the upgrade's, a linked worktree on the upgrade's
+  branch (amended 2026-10-30: it is never switched to the base, as `jig_ship_leave` never switches
+  one — run it in the main checkout), a base checked out in another worktree, or a base origin's
+  cannot fast-forward — every reason at once, nothing changed.
   Otherwise it checks the base out, fast-forwards it to `origin/<base>` and lets the upgrade's branch
   go through `jig_ship_leave`, as after a merge Jig made itself; the merged head is passed for origin
   only at `agent.git` `push` or above, as housekeeping's sweep does. It never stashes and never
-  forces.
+  forces. A forge CLI that fails is `the forge did not answer`, never an empty list: its exit status
+  is read on its own, not through the pipeline that parses its answer.
 
 ## Alternatives
 
