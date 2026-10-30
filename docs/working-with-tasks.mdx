@@ -158,15 +158,16 @@ Small findings left open do not get lost when the pull request is merged — by 
 allowed to merge. When the agent opens the pull request, Jig files one task, `<task-id>-findings`,
 holding every open P2 and P3 word for word with a link to the pull request. It is not started and
 not in the queue, so no agent takes it on its own: it waits for you to go through the findings —
-file a task for one, or set it aside with a reason. When every finding is decided, close it as done:
+file a task for one, or set it aside with a reason. Shipping the same task again files no second
+one. When every finding is decided, close it as done:
 
 ```bash
 jig task set <task-id>-findings status consolidated
 ```
 
-It needs no class and no review of its own, and it is listed as finished, not abandoned. Shipping the
-same task again files no second one. Something the project's knowledge should now say is not left as a finding: the agent writes it
-down before the commit.
+It needs no class and no review of its own, and it is listed as finished, not abandoned. Something
+the project's knowledge should now say is not left as a finding: the agent writes it down before
+the commit.
 
 A P0 or P1 stops the task from being finished. Until it is resolved, the agent cannot mark the task
 ready, record what the project should remember, or commit and open the pull request

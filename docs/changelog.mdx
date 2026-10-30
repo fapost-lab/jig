@@ -49,7 +49,7 @@ Jig was installed in on one person's machine stopped `jig upgrade` on everybody 
   ```
 
   Then `.ai/scripts/jig version` prints `jig 0.39.0` and `.ai/manifest` says
-  `jig.source: global`. Finish the upgrade as usual
+  `jig.source: global` when that Jig is the one on your `PATH` (else it names its folder). Finish the upgrade as usual
   ([Upgrading](/upgrading#from-0381-to-0390)); from then on a plain `jig upgrade` works.
 </Danger>
 
@@ -59,7 +59,8 @@ Jig was installed in on one person's machine stopped `jig upgrade` on everybody 
   That last one is never used when it is older than the project's Jig — that would be a downgrade —
   and the refusal then asks for `jig self-update`. When nothing is found, the message says where it
   looked, never the recorded path. The manifest now records the Jig on your machine as
-  `jig.source: global`, which each machine reads as its own Jig, instead of the folder it lives in;
+  `jig.source: global` when it is the one your `PATH` finds, which each machine reads as its own
+  Jig, instead of the folder it lives in;
   an old manifest needs no editing — the first upgrade that places a file writes `global`. See
   [What the upgrade does](/upgrading#what-the-upgrade-does-and-what-it-leaves-alone).
 - **`jig status` follows an upgrade's pull request.** When an upgrade ended in a pull request, the

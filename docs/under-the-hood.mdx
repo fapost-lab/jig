@@ -109,24 +109,23 @@ it waits for and why, and a pause asked of it that it has not honoured yet.
   `AGENTS.md` it writes one thing: the section between `<!-- jig:begin -->` and `<!-- jig:end -->`,
   and only while that section is still exactly what Jig last put there. Change a word inside it and
   Jig keeps your version from then on, saying `keep-modified AGENTS.md (Jig section)`; delete the
-  markers and nothing comes back. Each run ends with a summary line, and a run with nothing to place and
-  nothing to record leaves `.ai/manifest` alone — a project only starts using another checkout of Jig once an upgrade has
-  really installed from it.
+  markers and nothing comes back. Each run ends with a summary line, and a run with nothing to place
+  and nothing to record leaves `.ai/manifest` alone — a project only starts using another checkout
+  of Jig once an upgrade has really installed from it.
 - **`jig verify`** runs your project's own tools — test scripts, linters, `php artisan test`, Gradle
   or Maven wrappers. **That is running your project's code**, with whatever that code does; some
   toolchains download dependencies by themselves. Jig installs nothing. A missing tool is a skip,
   never a pass; when every check is skipped, the run still exits successfully, and the report says
-  what was skipped.
-- **`jig task start --worktree`**, and **`jig task bootstrap`**, which repeats it, carry into the
-  worktree whatever your project's checks need that Git does not track — `vendor/`, `node_modules`,
-  `.env` — as declared by the active profiles' `carry` and the project's own `worktree.carry`
-  in `.ai/config.yaml`. A folder named in `worktree.share` is not copied: the worktree gets a
-  real folder of that name whose entries are links to this checkout's, and `jig task bootstrap`
-  links in entries added since. Only a path the worktree does not already have is touched;
-  a path under `.ai/` is always refused. Never fatal: a carry that fails partway leaves the worktree and its branch exactly as they
-  are, for `jig task bootstrap` to try again. A task started with `--share <dir>` gets that folder
-  the same way, for itself alone.
-- **`worktree.setup`**, when your project sets it, is run by both after the share and the carry:
+what was skipped. - **`jig task start --worktree`**, and **`jig task bootstrap`**, which repeats it,
+carry into the worktree whatever your project's checks need that Git does not track — `vendor/`,
+`node_modules`, `.env` — as declared by the active profiles' `carry` and the project's own
+`worktree.carry` in `.ai/config.yaml`. A folder named in `worktree.share` is not copied: the
+worktree gets a real folder of that name whose entries are links to this checkout's, and `jig task
+bootstrap` links in entries added since. Only a path the worktree does not already have is touched;
+a path under `.ai/` is always refused. Never fatal: a carry that fails partway leaves the worktree
+and its branch exactly as they are, for `jig task bootstrap` to try again. A task started with
+`--share <dir>` gets that folder the same way, for itself alone. - **`worktree.setup`**, when your
+project sets it, is run by both after the share and the carry:
   `sh -c` in the worktree, on this machine, with nothing on its input. **That is running your
   project's code** too — the command your `.ai/config.yaml` names. It is stopped, with every process
   it started, after `worktree.setup_timeout` (10 minutes by default). Never fatal, and nothing it
@@ -146,28 +145,28 @@ it waits for and why, and a pause asked of it that it has not honoured yet.
 | `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, it has no uncommitted changes or lock, and no repository inside its ignored files holds work that is nowhere else |
 
 **No script commits or pushes on its own** — apart from the Windows installer's first commit in a
-repository it created, the only ones that do are `jig task ship` and `jig spec ship`, and only as far
-as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). They
-commit what is staged, push without `--force`, never skip hooks, and open a pull request with
-`gh` or `glab`. With nothing staged, `jig task ship` stages the changes to tracked files itself and
-lists them, and refuses while a new file is neither staged nor ignored — a new file is never staged
-for you. `jig spec ship` refuses an empty index while tracked files still hold changes. Nothing reaches your forge — no push, no pull request — until the
-branch is known to carry a commit your main branch does not. At `agent.git: merge`, shipping can also merge after the required checks pass;
-see [the merge level](/agent-ships#the-merge-level) for its conditions. Starting a task refuses when tracked files have uncommitted changes (untracked
-files do not block it), so one task's work cannot become another's first commit; shipping one reads
-the working tree by the same test, for the same reason.
+repository it created, the only ones that do are `jig task ship` and `jig spec ship`, and only as
+far as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). They
+commit what is staged, push without `--force`, never skip hooks, and open a pull request with `gh`
+or `glab`. With nothing staged, `jig task ship` stages the changes to tracked files itself and lists
+them, and refuses while a new file is neither staged nor ignored — a new file is never staged for
+you. `jig spec ship` refuses an empty index while tracked files still hold changes. Nothing reaches
+your forge — no push, no pull request — until the branch is known to carry a commit your main branch
+does not. At `agent.git: merge`, shipping can also merge after the required checks pass; see [the
+merge level](/agent-ships#the-merge-level) for its conditions. Starting a task refuses when tracked
+files have uncommitted changes (untracked files do not block it), so one task's work cannot become
+another's first commit; shipping one reads the working tree by the same test, for the same reason.
 
 ### Network
-
 Project Git operations use your Git remote. Shipping and housekeeping also use your forge's
-command-line tool: with `forge: auto` and `gh` or `glab` installed and signed in, housekeeping lists pull requests
-to learn whether a task was merged — also during a dry run, which otherwise skips `git fetch`. Outside
-a dry run it lists the open ones' checks too (one more call on GitHub), and keeps what it heard in
-`.ai/runtime/forge-cache`, which `jig task list --json` and `jig status` read instead of asking the forge.
-`jig upgrade --land` asks the forge itself, once, before it changes anything.
-`forge: none` turns forge lookup off. Installation and self-update also access the framework
-source and releases; the Windows installer can download Git, as described above. Carrying state
-into a worktree touches no network either: a profile's `install` command is printed for you to
+command-line tool: with `forge: auto` and `gh` or `glab` installed and signed in, housekeeping lists
+pull requests to learn whether a task was merged — also during a dry run, which otherwise skips `git
+fetch`. Outside a dry run it lists the open ones' checks too (one more call on GitHub), and keeps
+what it heard in `.ai/runtime/forge-cache`, which `jig task list --json` and `jig status` read
+instead of asking the forge. `jig upgrade --land` asks the forge itself, once, before it changes
+anything. `forge: none` turns forge lookup off. Installation and self-update also access the
+framework source and releases; the Windows installer can download Git, as described above. Carrying
+state into a worktree touches no network either: a profile's `install` command is printed for you to
 run, never executed, even when there is nothing to carry because the owning checkout is not
 installed itself.
 
