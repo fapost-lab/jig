@@ -12,6 +12,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-task/references/delegation.md
 summary: Why every review stage is done by a subagent or process that has not seen the implementation, attended or not, with a new reader per re-review; why T4 adds another model when the person set one, every criterion checked and fixed P0/P1 reverted until red; and why nothing records the reviewer's model.
+reviewed_at: 2026-10-30
 ---
 # Every review in a route is done by a reader who has not seen the implementation; T4's is extended
 
@@ -62,7 +63,8 @@ maintainer asked why the attended route did not use a fresh reviewer, and found 
 - **Let the agent choose another model for T4.** Rejected: the model is the person's choice and
   budget (adr-20261005), and the agent cannot know what they have.
 - **Two reviewers for T4.** Rejected for now: double the cost, and a second reviewer on the same
-  model mostly finds what the first did.
+  model mostly finds what the first did. (Revisited on 2026-10-30: two readers of *different*
+  axes, for every code review — see adr-20261030-a-review-reads-behaviour-and-standards-apart.)
 
 ## Consequences
 

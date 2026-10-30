@@ -294,6 +294,22 @@ session is where a stopped task of the phase is answered
 (adr-20261010-a-phase-run-stop-is-sent-by-spec-stop). Informal synonyms: the coordinating session, the
 orchestrator.
 
+## Review Axis
+
+One of the two things a code review (T2's review, T4's independent review) reads, each by its own
+fresh reader, one after the other: **Behaviour** — requirements, correctness, how a guarantee of the
+feature is bypassed — and **Standards** — every written rule that applies to the changed files,
+checked one by one, and the Code Smell Baseline. The architecture review is not split
+(adr-20261030-a-review-reads-behaviour-and-standards-apart). Informal synonyms: review pass,
+spec/standards review.
+
+## Code Smell Baseline
+
+The short list of code smells (after Fowler, *Refactoring*, chapter 3) the Standards reader checks in
+every project, in the code a task added or changed: `skills/jig-review/references/code-smells.md`. A
+smell is an assessment, P3 or at most P2, never blocking; a written project rule that allows it
+wins. Informal synonyms: smell list, default standards.
+
 ## Delegation
 
 Handing one stage of a task's route to a subagent on a model the person chose: `implement`, or
