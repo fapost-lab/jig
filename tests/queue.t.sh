@@ -773,7 +773,7 @@ test_queue_next_on_an_empty_queue_says_none() {
     'not queued: 1 task — jig queue set <id> --priority <p>')" "$NEXT"
   _q_json next
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" '"data":{"next":null,"reason":"empty","waiting":[],"not_queued":1}}'
+  assert_contains "$OUT" '"data":{"next":null,"reason":"empty","waiting":[],"taken":[],"not_queued":1}}'
   assert_no_file .ai/runtime/queue
   _qn_task a new closed
   jig queue set a --priority 1 >/dev/null
@@ -1072,14 +1072,14 @@ test_queue_next_json_shape_is_pinned() {
   assert_eq 0 "$RC" "$ERR"
   local pos
   pos=$(awk -F '\t' '$1 == "item" && $2 == "task:a" { print $4 }' .ai/runtime/queue)
-  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"next\":{\"ref\":\"task:a\",\"kind\":\"task\",\"id\":\"a\",\"level\":null,\"position\":$pos,\"priority\":2,\"started\":true},\"reason\":null,\"waiting\":[{\"ref\":\"task:b\",\"on\":\"task:c\",\"state\":\"unknown\",\"reason\":\"needs c\"}],\"not_queued\":1}}" \
+  assert_eq "{\"schema\":1,\"revision\":$REV,\"generated_at\":\"T\",\"data\":{\"next\":{\"ref\":\"task:a\",\"kind\":\"task\",\"id\":\"a\",\"level\":null,\"position\":$pos,\"priority\":2,\"started\":true},\"reason\":null,\"waiting\":[{\"ref\":\"task:b\",\"on\":\"task:c\",\"state\":\"unknown\",\"reason\":\"needs c\"}],\"taken\":[],\"not_queued\":1}}" \
     "$(printf '%s\n' "$OUT" | sed 's/"generated_at":"[^"]*"/"generated_at":"T"/')"
   # A task on an epic's level, with no priority.
   jig queue remove a >/dev/null
   jig queue remove b >/dev/null
   _q_json next
   assert_contains "$OUT" '"next":{"ref":"task:t1","kind":"task","id":"t1","level":"epic:big","position":'
-  assert_contains "$OUT" ',"priority":null,"started":true},"reason":null,"waiting":[],"not_queued":3}}'
+  assert_contains "$OUT" ',"priority":null,"started":true},"reason":null,"waiting":[],"taken":[],"not_queued":3}}'
 }
 
 test_queue_next_refuses_an_extra_argument_and_a_foreign_format() {
@@ -1178,4 +1178,153 @@ test_task_merge_without_a_queue_writes_none() {
   _q_setup a b
   jig task merge a --into b >/dev/null
   assert_no_file .ai/runtime/queue
+}
+
+# --- a task another session has taken ---------------------------------------------
+# (adr-20261030-a-task-another-session-works-on-is-not-advised)
+
+# _qt_take <id> <session> — session <session> works task <id>: it writes the
+# task's discovery, a command that takes the task.
+_qt_take() {
+  printf '# Discovery\n' > "$JIG_TEST_TMP.disc.md"
+  CLAUDE_CODE_SESSION_ID="$2" jig task artifact write "$1" discovery --from "$JIG_TEST_TMP.disc.md" >/dev/null \
+    || fail "artifact write as $2 failed"
+}
+
+test_queue_next_skips_a_task_another_session_has_taken() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task b new
+  jig queue set a --priority 1 >/dev/null
+  jig queue set b --priority 2 >/dev/null
+  _qt_take a other-session
+  assert_file .ai/runtime/taken/a/other-session
+  CLAUDE_CODE_SESSION_ID=this-session
+  export CLAUDE_CODE_SESSION_ID
+  _qn_next
+  local here since
+  here=$(pwd -P)
+  since=$(sed -n 's/^since: //p' .ai/runtime/taken/a/other-session)
+  assert_contains "$NEXT" "next: task:b — 2 of 2 on the top level, priority 2, not started"
+  assert_contains "$NEXT" "  task:a is taken by another session in $here, since $since, last active "
+  assert_not_contains "$NEXT" "other-session"
+  _q_json next
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"next":{"ref":"task:b",'
+  assert_contains "$OUT" "\"taken\":[{\"ref\":\"task:a\",\"checkout\":\"$here\",\"since\":\"$since\",\"idle_seconds\":"
+  assert_contains "$OUT" '"command":"task artifact write a discovery --from '
+  assert_not_contains "$OUT" "other-session"
+  # The listing says the same of the task.
+  run jig queue list
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "$(printf 'task:a  P1\n    taken by another session in %s, since %s' "$here" "$since")"
+  assert_not_contains "$OUT" "task:b  P2
+    taken"
+}
+
+test_queue_next_says_none_when_every_task_left_is_taken() {
+  fixture_jig_repo
+  _qn_task a new
+  jig queue set a --priority 1 >/dev/null
+  _qt_take a other-session
+  # A caller the runtime does not name holds nothing, so the record is another's.
+  _qn_next
+  assert_contains "$NEXT" "next: none — every queued task left is taken by another session"
+  assert_contains "$NEXT" "  task:a is taken by another session in "
+  _q_json next
+  assert_contains "$OUT" '"next":null,"reason":"taken","waiting":[],"taken":[{"ref":"task:a",'
+}
+
+test_queue_next_offers_the_callers_own_task() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task b new
+  jig queue set a --priority 1 >/dev/null
+  jig queue set b --priority 2 >/dev/null
+  _qt_take a this-session
+  CLAUDE_CODE_SESSION_ID=this-session
+  export CLAUDE_CODE_SESSION_ID
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — 1 of 2 on the top level, priority 1, not started"
+  assert_not_contains "$NEXT" "is taken"
+  _q_json next
+  assert_contains "$OUT" '"taken":[]'
+  # The newest live record holds the task: another session worked it since...
+  _qt_take a other-session
+  touch -t 202601010000 .ai/runtime/taken/a/this-session
+  _qn_next
+  assert_contains "$NEXT" "next: task:b — "
+  assert_contains "$NEXT" "  task:a is taken by another session"
+  # ...and working it again takes it back.
+  _qt_take a this-session
+  touch -t 202601010000 .ai/runtime/taken/a/other-session
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — "
+}
+
+test_queue_next_offers_a_task_whose_record_has_lapsed() {
+  fixture_jig_repo
+  _qn_task a new
+  jig queue set a --priority 1 >/dev/null
+  _qt_take a other-session
+  # Older than checkout.busy_ttl (12 hours by default).
+  touch -t 202001010000 .ai/runtime/taken/a/other-session
+  CLAUDE_CODE_SESSION_ID=this-session
+  export CLAUDE_CODE_SESSION_ID
+  _qn_next
+  assert_contains "$NEXT" "next: task:a — 1 of 1 on the top level, priority 1, not started"
+  assert_not_contains "$NEXT" "is taken"
+  run jig queue list
+  assert_not_contains "$OUT" "taken by"
+}
+
+test_queue_next_from_a_worktree_sees_a_task_taken_in_the_main_checkout() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task b new
+  jig queue set a --priority 1 >/dev/null
+  jig queue set b --priority 2 >/dev/null
+  git add -A >/dev/null
+  git commit -q -m "tasks"
+  _qt_take a other-session
+  local wt="$JIG_TEST_TMP.wttaken"
+  git worktree add -q -b side-taken "$wt"
+  mkdir -p "$wt/.ai/workspace"
+  ln -s "$(pwd -P)/.ai/workspace/tasks" "$wt/.ai/workspace/tasks"
+  (cd "$wt" && CLAUDE_CODE_SESSION_ID=this-session jig queue next > "$wt.out" 2>&1) \
+    || fail "worktree read failed: $(cat "$wt.out")"
+  assert_contains "$(cat "$wt.out")" "next: task:b — "
+  assert_contains "$(cat "$wt.out")" "  task:a is taken by another session in $(pwd -P), since "
+}
+
+test_queue_next_json_taken_item_shape_is_pinned() {
+  fixture_jig_repo
+  _qn_task a new
+  _qn_task b new
+  jig queue set a --priority 1 >/dev/null
+  jig queue set b --priority 2 >/dev/null
+  mkdir -p .ai/runtime/taken/a .ai/runtime/taken/b
+  printf 'checkout: /x/shop\nsince: 2026-10-30T15:09:12Z\ncommand: task set a class T1\n' > .ai/runtime/taken/a/s1
+  # A record without its keys: each one the record does not hold reads null.
+  printf 'other: 1\n' > .ai/runtime/taken/b/s2
+  _q_json next
+  assert_eq 0 "$RC" "$ERR"
+  local data
+  data=$(printf '%s\n' "$OUT" | sed 's/"idle_seconds":[0-9]*/"idle_seconds":N/g')
+  assert_contains "$data" '"next":null,"reason":"taken","waiting":[],"taken":[{"ref":"task:a","checkout":"/x/shop","since":"2026-10-30T15:09:12Z","idle_seconds":N,"command":"task set a class T1"},{"ref":"task:b","checkout":null,"since":null,"idle_seconds":N,"command":null}],"not_queued":0}}'
+  _qn_next
+  assert_contains "$NEXT" "  task:b is taken by another session, last active "
+}
+
+test_queue_next_sees_a_new_taken_record_as_a_new_revision() {
+  fixture_jig_repo
+  _qn_task a new
+  jig queue set a --priority 1 >/dev/null
+  _q_rev
+  local before=$REV
+  # `context resolve` writes no task state: only the taken record changes.
+  CLAUDE_CODE_SESSION_ID=other-session jig context resolve --task a >/dev/null 2>&1 || true
+  assert_file .ai/runtime/taken/a/other-session
+  _q_rev
+  [ "$REV" -gt "$before" ] || fail "revision did not rise: $before -> $REV"
 }

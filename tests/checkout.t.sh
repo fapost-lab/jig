@@ -772,3 +772,82 @@ test_checkout_start_on_a_shared_branch_is_not_refused() {
   run jig task start T-2
   assert_eq 0 "$RC"
 }
+
+# --- which session has taken which task, for the clone ------------------------
+# (adr-20261030-a-task-another-session-works-on-is-not-advised)
+
+# _ck_disc — a discovery file to write with `jig task artifact write`.
+_ck_disc() {
+  printf '# Discovery\n' > "$JIG_TEST_TMP.disc.md"
+  printf '%s\n' "$JIG_TEST_TMP.disc.md"
+}
+
+test_checkout_taken_record_is_written_by_a_command_that_works_the_task() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  CLAUDE_CODE_SESSION_ID=session-a
+  export CLAUDE_CODE_SESSION_ID
+  local disc
+  disc=$(_ck_disc)
+  run jig task artifact write T-1 discovery --from "$disc"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file .ai/runtime/taken/T-1/session-a
+  assert_file_contains .ai/runtime/taken/T-1/session-a "checkout: $(pwd -P)"
+  assert_file_contains .ai/runtime/taken/T-1/session-a "command: task artifact write T-1 discovery --from $disc"
+  local since
+  since=$(sed -n 's/^since: //p' .ai/runtime/taken/T-1/session-a)
+  case "$since" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) fail "since is not a UTC time: $since" ;;
+  esac
+
+  # `since` stays while the record is live...
+  sed 's/^since: .*/since: 2026-01-01T00:00:00Z/' .ai/runtime/taken/T-1/session-a > "$JIG_TEST_TMP.rec"
+  mv "$JIG_TEST_TMP.rec" .ai/runtime/taken/T-1/session-a
+  run jig context resolve --task T-1
+  assert_file_contains .ai/runtime/taken/T-1/session-a "since: 2026-01-01T00:00:00Z"
+  assert_file_contains .ai/runtime/taken/T-1/session-a "command: context resolve --task T-1"
+  # ...and starts again once it has lapsed.
+  touch -t 202001010000 .ai/runtime/taken/T-1/session-a
+  run jig task set T-1 class T1
+  assert_file_contains .ai/runtime/taken/T-1/session-a "command: task set T-1 class T1"
+  assert_not_contains "$(cat .ai/runtime/taken/T-1/session-a)" "since: 2026-01-01T00:00:00Z"
+}
+
+test_checkout_taken_record_is_not_written_by_reading_filing_or_ordering() {
+  checkout_setup
+  CLAUDE_CODE_SESSION_ID=session-a
+  export CLAUDE_CODE_SESSION_ID
+  jig task new T-1 >/dev/null
+  jig task show T-1 >/dev/null 2>&1 || true
+  jig task route T-1 >/dev/null 2>&1 || true
+  jig task findings T-1 >/dev/null 2>&1 || true
+  jig queue set T-1 --priority 1 >/dev/null 2>&1 || true
+  assert_no_file .ai/runtime/taken/T-1/session-a
+}
+
+test_checkout_taken_record_is_not_written_without_a_session_id() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  run jig task artifact write T-1 discovery --from "$(_ck_disc)"
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file .ai/runtime/taken/T-1
+}
+
+test_checkout_taken_record_from_a_worktree_lands_in_the_main_checkout() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  git add -A >/dev/null
+  git commit -q -m "task" || true
+  local wt="$JIG_TEST_TMP.wtrec" main disc
+  main=$(pwd -P)
+  disc=$(_ck_disc)
+  git worktree add -q -b side-rec "$wt"
+  mkdir -p "$wt/.ai/workspace"
+  ln -s "$main/.ai/workspace/tasks" "$wt/.ai/workspace/tasks"
+  (cd "$wt" && CLAUDE_CODE_SESSION_ID=session-w jig task artifact write T-1 discovery --from "$disc" >/dev/null 2>&1) \
+    || fail "artifact write in the worktree failed"
+  assert_file "$main/.ai/runtime/taken/T-1/session-w"
+  assert_file_contains "$main/.ai/runtime/taken/T-1/session-w" "checkout: $(cd "$wt" && pwd -P)"
+  assert_no_file "$wt/.ai/runtime/taken"
+}

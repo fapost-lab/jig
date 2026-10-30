@@ -72,3 +72,11 @@ another can be started first. The next-task-advice spec settled the rules with t
   rather than restate them.
 - `jig queue next --json` is a contract Jig UI reads (schemas/json.md); its fields follow
   conventions/json-output.md.
+
+> **Amendment (2026-10-30).** A candidate another session holds is not advised
+> (adr-20261030-a-task-another-session-works-on-is-not-advised): the newest live record under
+> `.ai/runtime/taken/<id>/` in the clone's main checkout belongs to a session other than the caller.
+> The answer names each such task with the checkout that session works in, since when and how long
+> ago it was last active; `--json` lists them under `taken`, and `reason` gains `taken`, read after
+> `waiting` and before `paused`. The facts reach `_queue_next_decide` as `tk` lines, so the rules stay
+> in the one awk. The read is still a read: the records are only stat'ed and read.

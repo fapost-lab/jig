@@ -290,11 +290,13 @@ reads the queue, the tasks' state and the last `jig housekeeping` run, never the
 changes nothing:
 
 ```json
-{"schema":1,"revision":1792693064,"generated_at":"2026-10-22T18:17:22Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":true},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"not_queued":1}}
+{"schema":1,"revision":1792693064,"generated_at":"2026-10-22T18:17:22Z","data":{"next":{"ref":"task:booking-form","kind":"task","id":"booking-form","level":null,"position":100,"priority":1,"started":true},"reason":null,"waiting":[{"ref":"task:booking-message","on":"task:booking-form","state":"unknown","reason":"The message quotes the form"}],"taken":[],"not_queued":1}}
 ```
 
-`next` is the task to take, or `null` with a `reason` (`waiting`, `paused` or `empty`) when there
-is none. `waiting` lists each dependency that holds a candidate back, in `state` `open`, `broken`
+`next` is the task to take, or `null` with a `reason` (`waiting`, `taken`, `paused` or `empty`)
+when there is none. `taken` lists each candidate another session is working on, with the
+`checkout` it works in, `since` when and `idle_seconds` since it was last active; such a task is
+never advised. `waiting` lists each dependency that holds a candidate back, in `state` `open`, `broken`
 (it never ends; drop it with `jig queue undepend`) or `unknown`. `not_queued` counts the active
 tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 

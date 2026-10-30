@@ -418,7 +418,7 @@ nothing: the queue file and the revision stay as they were. The producer's rules
 documentation's ("Order the work"); this is the shape.
 
 ```json
-{"next": {"ref": "task:booking-form", "kind": "task", "id": "booking-form", "level": null, "position": 100, "priority": 1, "started": true}, "reason": null, "waiting": [{"ref": "task:booking-message", "on": "task:booking-form", "state": "unknown", "reason": "The message quotes the form"}], "not_queued": 1}
+{"next": {"ref": "task:booking-form", "kind": "task", "id": "booking-form", "level": null, "position": 100, "priority": 1, "started": true}, "reason": null, "waiting": [{"ref": "task:booking-message", "on": "task:booking-form", "state": "unknown", "reason": "The message quotes the form"}], "taken": [{"ref": "task:booking-report", "checkout": "/home/me/shop", "since": "2026-10-30T15:09:12Z", "idle_seconds": 960, "command": "task artifact write booking-report discovery --from notes.md"}], "not_queued": 1}
 ```
 
 | Field | Type | Value |
@@ -429,14 +429,23 @@ documentation's ("Order the work"); this is the shape.
 | `next.position` | integer | its place within its level, as stored |
 | `next.priority` | integer or null | `0` to `5`; `null` when not set |
 | `next.started` | boolean | `true` when the task has its branch and base commit |
-| `reason` | string or null | `null` when `next` is set; otherwise why there is none: `waiting` (a candidate waits for a dependency), `paused` (the queued tasks left are paused or have a pause request) or `empty` (nothing queued is a task to take) |
-| `waiting` | array | every dependency not finished that holds a candidate back, each `{"ref", "on", "state", "reason"}`; `ref` is the one that waits as the queue stores it (a task, or the epic its tasks inherit the dependency from), `on` what it waits for, `reason` the reason given, `[]` for none |
+| `reason` | string or null | `null` when `next` is set; otherwise why there is none: `waiting` (a candidate waits for a dependency), `taken` (the candidates left are taken by another session), `paused` (the queued tasks left are paused or have a pause request) or `empty` (nothing queued is a task to take), the first that holds in that order |
+| `waiting` | array | every dependency not finished that holds back a candidate not taken by another session, each `{"ref", "on", "state", "reason"}`; `ref` is the one that waits as the queue stores it (a task, or the epic its tasks inherit the dependency from), `on` what it waits for, `reason` the reason given, `[]` for none |
 | `waiting[].state` | string | `open` (not done yet), `broken` (the target was abandoned, is archived or is gone, so the wait never ends: drop it with `jig queue undepend`) or `unknown` (nothing says; `jig housekeeping` may) |
+| `taken` | array | every candidate another session is working on, which is therefore not advised, each `{"ref", "checkout", "since", "idle_seconds", "command"}`; `[]` for none |
+| `taken[].checkout` | string or null | the checkout that session ran its last command in |
+| `taken[].since` | string or null | when that session took the task, UTC; kept while its record is live |
+| `taken[].idle_seconds` | integer | seconds since that session last worked on the task |
+| `taken[].command` | string or null | the jig command it last ran on the task, without `jig` |
 | `not_queued` | integer | how many active, unpaused tasks have no item in the queue |
 
 A candidate is a queued task whose state is `active`, not paused and with no pause request. Tasks
 that are ready, closed, abandoned or gone, and epics, are never advised and never listed.
-`waiting` holds the dependencies of candidates only. The failures are the producer's alone and add
+`waiting` holds the dependencies of candidates only. A candidate is taken when the newest live record
+under `.ai/runtime/taken/<id>/` in the clone's main checkout belongs to a session other than the
+caller's (adr-20261030-a-task-another-session-works-on-is-not-advised): a record is live for
+`checkout.busy_ttl`, it is written only by a session the runtime names, and a caller with no name
+of its own holds no task. The failures are the producer's alone and add
 no code: `usage` for an argument after `next`, `not-initialised` without Jig, `failed` for a queue
 file of another format version. Without a queue the answer is `"next":null,"reason":"empty"`.
 

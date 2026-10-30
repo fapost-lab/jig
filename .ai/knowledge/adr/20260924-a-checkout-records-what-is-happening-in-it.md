@@ -359,3 +359,10 @@ decision of its own, with its own line in that document.
   decision and adr-20260924-the-status-page-keeps-the-readers-place both already give: the
   redraw is a process precisely so that no command library needs to source another domain's
   command file.
+
+> *Amended 2026-10-30.* The recorder writes a second record, about the clone rather than this
+> checkout: `<clone root>/.ai/runtime/taken/<task-id>/<session-id>`, for the commands that work a
+> task, and only when the runtime names the session
+> (adr-20261030-a-task-another-session-works-on-is-not-advised). It answers the question this record
+> cannot — which session has taken a task, asked from any worktree — and leaves this one as it is:
+> per checkout, named by the rules above, read by `jig status`, `task start` and `upgrade`.
