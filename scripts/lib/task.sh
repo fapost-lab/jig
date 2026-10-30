@@ -1750,6 +1750,12 @@ task_set() {
   case "$key:$value" in
     status:ready) gate=1 ;;
     knowledge_consolidated:true) gate=1 ;;
+    # A bare triage task's close records its knowledge decision (below), so
+    # it passes the same gates as recording it would.
+    status:consolidated)
+      if _task_is_bare_triage "$id" && [ "$(task_state_get "$id" knowledge_consolidated)" != true ]; then
+        gate=1
+      fi ;;
   esac
   if [ "$gate" -eq 1 ]; then
     local blocking
@@ -1780,6 +1786,14 @@ task_set() {
 
   local was=""
   [ "$key" != status ] || was=$(task_state_get "$id" status)
+  # A bare triage task closes in one command: it carries no change whose
+  # intent could be lost, so its knowledge decision is recorded with the close
+  # and `consolidated` still implies `knowledge_consolidated: true` (ADR-0030)
+  # for every reader (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+  if [ "$key:$value" = status:consolidated ] && _task_is_bare_triage "$id" \
+     && [ "$(task_state_get "$id" knowledge_consolidated)" != true ]; then
+    _task_rewrite_state "$dir" knowledge_consolidated true
+  fi
   if [ "$value" = inherit ]; then
     _task_rewrite_state_remove "$dir" "$key"
   else
@@ -1818,7 +1832,8 @@ task_set() {
 _task_close_refusal() {
   local id="$1" pr_state="$2" pr kc
   task_state_var kc "$id" knowledge_consolidated
-  if [ "$kc" != "true" ]; then
+  # A bare triage task's close records its knowledge decision too (task_set).
+  if [ "$kc" != "true" ] && ! _task_is_bare_triage "$id"; then
     printf 'task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set %s knowledge_consolidated true\n' "$id"
     return 0
   fi
@@ -4065,6 +4080,11 @@ _task_receipt_covers() {
 _task_route_evidence_missing() {
   local id="$1" point="$2" dir class stages stage
   dir=$(task_dir "$id")
+  # A triage task as `task ship` filed it has no route, so nothing of one is
+  # missing (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+  if _task_is_bare_triage "$id"; then
+    return 0
+  fi
   class=$(task_state_get "$id" class)
   if ! _task_valid_class "$class"; then
     printf 'class (not classified, so there is no route: jig task set %s class Tn)\n' "$id"
@@ -4099,6 +4119,24 @@ _task_route_evidence_missing() {
         esac ;;
     esac
   done < <(printf '%s\n' "$stages" | tr ',' '\n' | sed 's/^ *//')
+}
+
+# _task_is_bare_triage <id> — exit 0 when <id> is a triage task as `task ship`
+# filed it: `triage_of` set (script-owned, so an ordinary task cannot claim
+# it), no class and never started. It holds decisions, not a change, so it has
+# no route to prove and no change whose intent consolidation could lose; it
+# closes with `jig task set <id> status consolidated`, which records the
+# knowledge decision with it. Classified or started, it is an ordinary task
+# again and its route is asked for as for any other
+# (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+_task_is_bare_triage() {
+  local of class branch
+  task_state_var of "$1" triage_of
+  [ -n "$of" ] || return 1
+  task_state_var class "$1" class
+  ! _task_valid_class "$class" || return 1
+  task_state_var branch "$1" branch
+  [ -z "$branch" ]
 }
 
 # _task_route_evidence_list <id> <point> — what _task_route_evidence_missing
@@ -6049,7 +6087,9 @@ _task_triage_md() {
   local id="$1" url="$2" open="$3"
   printf '# Triage the open findings of %s\n\n' "$id"
   printf '## Goal\n\n'
-  printf 'Decide each open finding of %s with a person: file a task for it, or dismiss it with a reason.\n\n' "$id"
+  printf 'Decide each open finding of %s with a person: file a task for it, or dismiss it with a reason.\n' "$id"
+  # shellcheck disable=SC2016 # the backticks quote a command for the reader
+  printf 'Once each is decided, close this task as done: `jig task set %s status consolidated`.\n\n' "$(_task_triage_id "$id")"
   printf '## Source\n\n'
   printf -- '- Task: %s\n' "$id"
   printf -- '- Pull request: %s\n' "$url"

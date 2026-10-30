@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-10-29
+reviewed_at: 2026-10-30
 ---
 # Task
 
@@ -289,6 +289,10 @@ Right after `pr_url` (never for `--draft`), `task ship` hands the open P2/P3 to 
 `<id>-findings`, filed through `"$JIG_SELF" task new` as a process of its own and never stopping the
 ship, and links the two with `triage_task` and `triage_of`; the source ledger is left as the
 receipt pinned it (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+Such a triage task — `triage_of` set, no class, no branch (`_task_is_bare_triage`) — has no route:
+`_task_route_evidence_missing` asks it for nothing, and `task set <id>-findings status consolidated`
+closes it in one command, writing `knowledge_consolidated: true` with the close after the gates the
+knowledge decision passes. Classified or started, it is an ordinary task again.
 `_task_open_minor_findings` is the one reader of "open P2/P3" for ship, `task findings` and the
 autopilot's `end` message.
 
