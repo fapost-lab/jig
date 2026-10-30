@@ -385,6 +385,30 @@ not merged: the forge refused: At least 1 approving review is required
 Ask someone who may approve or merge on your repository to look at it. The same line explains the
 other cases — a failed check, checks that took longer than the timeout, or no checks at all.
 
+## Several tasks in one run
+
+You can hand over more than one task at once:
+
+> *"Take booking-form, booking-message and the csv export on autopilot."*
+
+Each task gets a run of its own, and the agent starts the next one as a place frees
+(`autopilot.parallel`, [below](#running-a-whole-phase)). The tasks you named are not the whole
+queue, though: something more urgent may be filed while they run. So before every start the agent
+asks [`jig queue next`](/manual-control#order-the-work) which task to take:
+
+- When the queue names one of your tasks, or nothing more urgent than the next of them, that next
+  task starts.
+- When it names a task outside your list with a higher priority, the agent starts neither on its
+  own — it tells you which task the queue names and asks whether to take it or keep to your list.
+  [Without stops](#without-stops) it decides for you, cautiously: the tasks already running finish,
+  nothing new starts, and the decision reaches you as any other. It never takes someone else's
+  T3 or T4 task to approve that task's design itself.
+- A task the queue names as taken by another session is never started, even one from your list;
+  the agent names it when it hands back.
+
+A [whole phase](#running-a-whole-phase) asks the queue the same way before starting each of its
+tasks.
+
 ## Which tasks of a phase may start
 
 A specification's roadmap groups its items into waves: the items of one wave can be worked on at the

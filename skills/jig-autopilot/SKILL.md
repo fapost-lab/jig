@@ -174,3 +174,23 @@ mechanics — the loop, the prompt each task agent gets, what to do when one fai
 It needs the run's level (`autopilot.git:` in `jig status`) at `pr` or better and a spec
 built on an epic. Without either, refuse the
 phase run, say which is missing, and offer to run the phase's tasks one at a time instead.
+
+## 7. Several tasks
+
+"Take these tasks on autopilot" is a run over a **set**: each task its own run, started as a slot
+frees (`autopilot.parallel`). The set is not the queue. Before each next start — the first one too —
+ask:
+
+```
+.ai/scripts/jig queue next
+```
+
+- **It names a task of the set**, or one outside it with no higher priority than the set's next:
+  start the set's next.
+- **It names a task outside the set with a higher priority** (a lower number; a task without one
+  comes last): start neither silently. Name it to the person and ask whether to take it or keep to
+  the set — §3's "a decision nobody made". Unattended: `jig task autopilot <id> decide --reason`
+  on a run of the set still on, finish the set's tasks in flight, start nothing new, and say so
+  when you hand back. Never take someone else's T3/T4 task to approve its gate as the agent.
+- **A task it names as taken by another session** is not free, in the set or out of it: never
+  start it; skip it and name it when you hand back.

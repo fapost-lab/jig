@@ -85,3 +85,15 @@ findings and receipt gates refuse to finish a task that is not reviewed as it st
 > human's answer, journaled and printed by `report` under "Resumed on an answer" for the pull
 > request; in an unattended run it is refused, since nobody answers there and its repair-limit stop
 > ends the run in a draft (adr-20261004-a-route-stage-is-proven-by-its-record).
+
+> **Amendment (2026-10-30).** A run over a **set** of tasks the person named asks `jig queue next`
+> before each next start (`jig-autopilot` §7, and phase-run.md step 3 for a phase run): on
+> 2026-10-30 a run over four prioritised tasks started each next one of its own set while the queue
+> named a P0 task filed after the run began, and the person saw it only on the board. The set is the
+> person's choice of work, not their ranking against everything filed later, so a higher-priority
+> task outside it is §3's "a decision nobody made" — asked attended; unattended, recorded with
+> `decide` and answered cautiously: the tasks in flight finish, nothing new starts. Taking someone
+> else's T3/T4 task and approving its gate as the agent is never the cautious option. A task the
+> queue names as taken by another session (adr-20261030-a-task-another-session-works-on-is-not-advised)
+> is not started, in the set or out of it. The rule is the queue's answer, read; the skill keeps no
+> ordering of its own (adr-20261022-the-next-task-is-advised-from-the-queue).

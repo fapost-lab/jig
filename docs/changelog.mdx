@@ -16,6 +16,11 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   until now the only way out was `jig task abandon`, which recorded a decided triage as given up. A
   triage task you classified or started follows its route like any other. See
   [Review findings](/working-with-tasks#review-findings).
+- **Autopilot over several tasks asks the queue before each start.** When you hand over a list of
+  tasks, the agent runs `jig queue next` before starting the next one; a more urgent task outside
+  your list is named to you instead of being passed over (without stops, the running tasks finish
+  and nothing new starts), and a task another session works on is never started. See
+  [Several tasks in one run](/autopilot#several-tasks-in-one-run).
 
 ## 0.39.0 — 2026-10-29
 
