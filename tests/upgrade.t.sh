@@ -2640,3 +2640,57 @@ test_upgrade_land_refuses_an_origin_base_without_the_upgrade() {
   rm -rf "$LAND_REMOTE"
 }
 
+
+# A glab that cannot answer is a forge that did not answer, never a list with
+# no merge requests: nothing is called landed or nothing-to-do, nothing moves
+# (task upgrade-land-followups, F4).
+test_upgrade_land_says_so_when_glab_fails() {
+  _land_project merged "" gitlab
+  PATH=$LAND_PATH
+  local head
+  head=$(git rev-parse HEAD)
+  cat > stub-bin/glab <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "auth status") exit 0 ;;
+esac
+printf 'glab: could not reach gitlab.com\n' >&2
+exit 1
+STUB
+
+  _up_json upgrade --land --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "upgrade --land: the forge did not answer; nothing was changed"
+  assert_not_contains "$OUT" "nothing-to-do"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  rm -rf "$LAND_REMOTE"
+}
+
+# In a linked worktree on the upgrade's branch, with the base checked out
+# nowhere, --land does not switch that worktree to the base, as jig_ship_leave
+# never does: refused, nothing moved (task upgrade-land-followups, F5).
+test_upgrade_land_never_switches_a_linked_worktree_to_the_base() {
+  _land_project merged
+  PATH=$LAND_PATH
+  local wt main_before here
+  git checkout -q -b elsewhere
+  main_before=$(git rev-parse main)
+  wt=$(mktemp -d "${TMPDIR:-/tmp}/jig-land-wt.XXXXXX")
+  rmdir "$wt"
+  git worktree add -q "$wt" jig/upgrade-9.9.9
+
+  here=$PWD
+  cd "$wt"
+  run jig upgrade --land
+  cd "$here"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "this is a linked worktree on jig/upgrade-9.9.9, and Jig never switches one to main; run \`jig upgrade --land\` in the main checkout"
+  assert_eq jig/upgrade-9.9.9 "$(git -C "$wt" symbolic-ref --short HEAD)"
+  assert_eq "$main_before" "$(git rev-parse main)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  git worktree remove --force "$wt"
+  rm -rf "$LAND_REMOTE"
+}
