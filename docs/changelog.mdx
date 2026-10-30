@@ -8,6 +8,15 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## Unreleased
+
+- **A triage task closes as done.** `jig task set <task-id>-findings status consolidated` closes the
+  task `jig task ship` filed for open review findings in one command, once you have decided each of
+  them — no class, no review and no separate knowledge decision asked for. It is listed as finished;
+  until now the only way out was `jig task abandon`, which recorded a decided triage as given up. A
+  triage task you classified or started follows its route like any other. See
+  [Review findings](/working-with-tasks#review-findings).
+
 ## 0.39.0 — 2026-10-29
 
 An upgrade that ends in a pull request is followed to the end, and a project upgrades on every

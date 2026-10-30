@@ -11,7 +11,7 @@ paths:
   - skills/jig-consolidate/SKILL.md
   - "skills/jig-review/**"
 summary: Why jig task ship hands a task's open P2/P3 findings to one not-started triage task when its pull request exists, why the source ledger stays untouched, and why knowledge gaps go to consolidation instead.
-reviewed_at: 2026-10-29
+reviewed_at: 2026-10-30
 ---
 # A ship hands the open P2 and P3 findings to one triage task, and leaves the ledger as it is
 
@@ -49,6 +49,17 @@ case the scrub missed (P3), and a new module written into RULES.md but not ARCHI
   when the task has open P2/P3 and a triage task, and `<n> open findings, not handed to a triage
   task` when it has open P2/P3 and none (the hand-over warned, or no pull request was opened). No
   message is added; a task without open P2/P3 gets no such line.
+- **A triage task closes as done, in one command.** `jig task set <id>-findings status consolidated`
+  closes a triage task as `task ship` filed it — `triage_of` set, no class, never started
+  (`_task_is_bare_triage`). It has no route, so `_task_route_evidence_missing` asks it for nothing
+  (amending adr-20261004-a-route-stage-is-proven-by-its-record: a task with no class has no route and
+  is refused, *unless* it is such a triage task); and it carries no change whose intent could be
+  lost, so the close records `knowledge_consolidated: true` with it, after the same findings and
+  receipt gates the knowledge decision passes. `consolidated` keeps implying the knowledge decision
+  (ADR-0030) for every reader. The actions table's `close` row asks the same guard, so the status
+  page offers it. A triage task that was classified or started is an ordinary task again, and its
+  route is asked for as for any other; an `<id>-findings` without `triage_of` was never a triage
+  task. What was decided for each finding stays prose in its `## Notes`; nothing parses it.
 - **A gap in durable knowledge is not a finding.** The review lists it for consolidation, which
   writes it before the commit (knowledge edits leave the receipt current); one already recorded
   keeps its status and the pull request body names where it was written.
@@ -65,6 +76,14 @@ case the scrub missed (P3), and a new module written into RULES.md but not ARCHI
   workspace trashed, the findings would go with it. A task stays until someone decided it.
 - **A separate kind of task the queue never takes.** "Not started and not queued" already behaves
   that way.
+- **Close a decided triage task with `jig task abandon`.** The only way out at first; it records a
+  decided triage as given up, and five were closed that way on 2026-10-30.
+- **A dedicated `jig task triage close <id>` that checks a decision per finding in `## Notes`.** A new
+  command and a parser of prose a person writes; `status consolidated` already says "done".
+- **Structured decisions (finding → task id or dismissal) read by `jig task findings` and the status
+  page.** A new format with no reader yet; it can be added on top of the close later.
+- **A status of its own (`triaged`).** Every reader of `status` would have to learn it, for a
+  difference `triage_of` already carries.
 
 ## Consequences
 
@@ -76,5 +95,9 @@ case the scrub missed (P3), and a new module written into RULES.md but not ARCHI
 - A triage task is an ordinary filed task: housekeeping archives it as `stale` after
   `housekeeping.stale_after` untouched, like any other (adr-20261027-a-task-nobody-finished-is-archived-not-purged).
   Archived, not purged: it can be returned with `jig task unarchive`.
+- A closed triage task has no branch, so its landing can never be observed: housekeeping keeps its
+  workspace, closed and unflagged, as for any such task (ADR-0025, ADR-0030), and neither purges nor
+  archives it. A finding reconsidered after the close is a new task.
+- Undoing the close: revert. Triage tasks already closed stay ordinary consolidated tasks.
 - `triage_of` is written after `task new` returns; an interruption between the two leaves
   `<id>-findings` unlinked, and the next ship warns that the id is taken instead of naming it.

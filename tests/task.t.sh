@@ -5058,6 +5058,98 @@ test_task_ship_leaves_a_taken_triage_id_alone_and_ships() {
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "triage_task:"
 }
 
+# --- a triage task closes as done ----------------------------------------------
+
+# triage_filed <id> <source> — <id> filed as `task ship` files a triage task:
+# through `jig task new`, then `triage_of: <source>` written into its state, a
+# key only ship writes (task set refuses it).
+triage_filed() {
+  jig task new "$1" >/dev/null
+  printf 'triage_of: %s\n' "$2" >> ".ai/workspace/tasks/$1/state"
+}
+
+test_task_set_closes_a_triage_task_filed_by_ship_in_one_command() {
+  triage_ship_setup pr findings
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  # shellcheck disable=SC2016 # the backticks are the text asserted
+  assert_file_contains .ai/workspace/tasks/T-1-findings/task.md \
+    'close this task as done: `jig task set T-1-findings status consolidated`'
+
+  run_split jig task set T-1-findings status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  local state
+  state=$(cat .ai/workspace/tasks/T-1-findings/state)
+  assert_contains "$state" "status: consolidated"
+  # The knowledge decision is recorded with the close: `consolidated` still
+  # implies it for every reader (ADR-0030).
+  assert_contains "$state" "knowledge_consolidated: true"
+  assert_not_contains "$state" "class:"
+  assert_not_contains "$state" "abandoned"
+  # Finished, so hidden from the live list and listed as consolidated.
+  run jig task list
+  assert_not_contains "$OUT" "T-1-findings"
+  run jig task list --all
+  assert_contains "$OUT" "T-1-findings"
+  assert_contains "$OUT" "consolidated"
+}
+
+test_task_set_records_a_triage_tasks_knowledge_decision_without_a_class() {
+  task_setup
+  triage_filed T-1-findings T-1
+  run_split jig task set T-1-findings knowledge_consolidated true
+  assert_eq 0 "$RC" "$ERR"
+  run_split jig task set T-1-findings status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  assert_file_contains .ai/workspace/tasks/T-1-findings/state "status: consolidated"
+}
+
+test_task_actions_offer_close_for_a_triage_task() {
+  task_setup
+  triage_filed T-1-findings T-1
+  jig task new T-2 >/dev/null
+  _tl_json
+  assert_contains "$OUT" '"id":"close","command":"jig task set T-1-findings status consolidated","offered":true,"reason":null}'
+  assert_contains "$OUT" '"id":"close","command":"jig task set T-2 status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set T-2 knowledge_consolidated true"}'
+}
+
+test_task_set_still_refuses_to_close_an_unclassified_task_that_is_not_a_triage() {
+  task_setup
+  jig task new T-2 >/dev/null
+  run_split jig task set T-2 knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "task set: the route of T-2 () is missing: class (not classified, so there is no route: jig task set T-2 class Tn)"
+  run_split jig task set T-2 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set T-2 knowledge_consolidated true"
+  assert_file_contains .ai/workspace/tasks/T-2/state "knowledge_consolidated: false"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-2/state)" "status: consolidated"
+}
+
+# Classified or started, a triage task is an ordinary task again: its route is
+# asked for, and the close needs the knowledge decision first.
+test_task_set_asks_a_classified_or_started_triage_task_for_its_route() {
+  task_setup_clean
+  triage_filed T-1-findings T-1
+  jig task set T-1-findings class T1 >/dev/null
+  run_split jig task set T-1-findings status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "requires knowledge_consolidated true"
+  run_split jig task set T-1-findings knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "the route of T-1-findings (T1) is missing: verify"
+
+  triage_filed T-3-findings T-3
+  jig task start T-3-findings >/dev/null 2>&1
+  assert_file_contains .ai/workspace/tasks/T-3-findings/state "branch: task/T-3-findings"
+  run_split jig task set T-3-findings status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "requires knowledge_consolidated true"
+  run_split jig task set T-3-findings knowledge_consolidated true
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "class (not classified, so there is no route"
+}
+
 test_task_ship_draft_opens_a_draft_and_never_merges() {
   mship_setup github
 

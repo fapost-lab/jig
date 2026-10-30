@@ -24,7 +24,8 @@ report its findings in the conversation as before.
 A P3 is never fixed after the review, at any depth: it stays `open` and is listed in the pull
 request. P2 is fixed at full depth, and only left open on lean. When the task ships, `task ship`
 hands every P2 and P3 still `open` to one triage task, `<id>-findings`, filed not started: a person
-decides each one there. A gap in durable knowledge is not a finding at all — the review lists it
+decides each one there, then closes it as done with `jig task set <id>-findings status consolidated`
+— no class, no route, never `jig task abandon`. A gap in durable knowledge is not a finding at all — the review lists it
 for consolidation, which writes it before the commit. A fix the human asks for after the
 review is an ordinary edit followed by a re-review.
 
