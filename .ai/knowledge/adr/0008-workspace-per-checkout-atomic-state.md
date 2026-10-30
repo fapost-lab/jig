@@ -125,3 +125,12 @@ write the same `state` file.
 > and it is rebuilt by ordering again. It is still not task data in this ADR's sense — no task's
 > `state`, artifacts or lifecycle live there, and a task is whole without it — and workspaces stay
 > exactly as above.
+
+> **Amendment (2026-10-30).** A fifth user of the per-clone runtime exception: which session has
+> taken which task, `.ai/runtime/taken/<task-id>/<session-id>` in the main checkout
+> (adr-20261030-a-task-another-session-works-on-is-not-advised). It passes the test of **whose it
+> is** — `jig queue next` asks it from every worktree, and the answer is one for the clone — and it
+> is derived and lossable: each record is rewritten by the next command that works its task, and lost,
+> it only means the queue no longer knows a task is taken until then. It is not task data: no task's
+> `state`, artifacts or lifecycle live there, and the per-checkout `runtime/working/` record keeps
+> its own subject.

@@ -199,11 +199,28 @@ or `jig housekeeping` saw its pull request merged; an epic when its branch has l
 tasks that do not wait the lowest priority number goes first, with a task without one last; at the
 same priority a task already started goes before one not started; after that comes the place in
 the queue, a task on an epic taking its epic's place. When no task can be taken it says why:
-every queued task waits for a dependency, is paused, or there is none. A wait that can never end
+every queued task waits for a dependency, is taken by another session, is paused, or there is none. A wait that can never end
 (`broken`: the task it waits for was abandoned, archived or is gone) comes with the command that drops it;
 one Jig cannot tell (`unknown`) with the one that may find out. The last line counts the active
 tasks that are not in the queue. `jig queue next --json` gives the same answer to a program
 ([Reading Jig as data](/reading-jig-as-data#which-task-is-next)).
+
+A task another session is already working on is not advised, even before it has a branch. Every
+session that works a task — writes its documents, sets its state, enters a stage, starts it — leaves
+a note of it for the whole clone, and `jig queue next` passes over a task whose newest note is
+another session's, naming it instead:
+
+```text
+next: task:booking-message — 2 of 3 on the top level, priority 2, not started
+  task:booking-form is taken by another session in /home/me/shop, since 2026-10-30T15:09:12Z, last active 16m ago
+```
+
+When that leaves nothing, the answer is `next: none — every queued task left is taken by another
+session`. `jig queue list` prints the same line under the task. Your own session's tasks are advised
+as before, and reading, filing or ordering a task does not take it. A note lapses after
+`checkout.busy_ttl` (12 hours unless you set it); to take over the task of a session that is gone,
+just work on it — the newest note holds the task. This needs a runtime that names its sessions
+(Claude Code does); a session without a name leaves no note and treats every note as another's.
 
 `jig status` shows each queued task's place on its task line — `queue=2/5` is second of five on its
 level (the top, or the epic it is built on), `priority=1` its priority — with what it waits for, and
