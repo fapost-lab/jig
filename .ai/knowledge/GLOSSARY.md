@@ -345,6 +345,16 @@ the task to take: never one that waits for a dependency whose change has not lan
 priority, a started task before an unstarted one, then position — across levels by the top-level
 item. Informal synonyms: backlog order, task queue.
 
+## Taken
+
+Said of a task another session is working on: the newest live record under
+`.ai/runtime/taken/<id>/` in the main checkout belongs to a session other than the caller's. A
+session takes a task by working on it —
+`jig task start|bootstrap|set|artifact|finding|autopilot|gate|receipt <id>` or
+`jig context … --task <id>` — not by a claim; reading, filing, ordering, shipping and closing are
+not taking. `jig queue next` never advises a taken task and names it instead; a person takes over a
+dead session's task by working on it (adr-20261030-a-task-another-session-works-on-is-not-advised).
+
 ## Status Page
 
 `.ai/runtime/status.html`: one self-contained page written by `jig status --html` or
