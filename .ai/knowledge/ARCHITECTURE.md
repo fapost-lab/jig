@@ -44,7 +44,9 @@ with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, wi
 lifecycle.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
-`upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05).
+`upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and
+`jig_checkout_taken` ("which other session holds this task"), the one rule `jig queue next` and
+`jig queue list` read (adr-20261030-a-task-another-session-works-on-is-not-advised).
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`

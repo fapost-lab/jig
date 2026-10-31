@@ -76,9 +76,11 @@ verdict in the prompt: on `narrow`, the interdiff, any knowledge diff and the `f
 place of the actual diff; on `full`, the actual diff as for a first review.
 
 The coordinator checks the process exit and denials, compares its reviewed diff with the
-current diff, enters every finding through `jig task finding`, and records the receipt
+current diff, enters the findings through `jig task finding`, and records the receipt
 through `jig task receipt <id> --stage <review|architecture-review>` only after reviewing the
-report and files. Check `jig task findings` and receipt freshness before continuing.
+report and files. A finding against a `*.local.md` rule is left out of the ledger and goes in
+the coordinator's own report (`jig-review` §1); a finding both axes' reports name is entered
+once. Check `jig task findings` and receipt freshness before continuing.
 If implementation changed after the review, start a new reviewer process and replace the
 receipt. An empty or malformed report is failure, not a clean review. The receipt pins
 content, not the reviewer's identity.
@@ -118,9 +120,10 @@ model remains the person's decision.
 ## Without a matching line
 
 The current session implements as before. Every review stage still goes to a new subagent on
-the session's model, briefed without the implementation conversation. Only here, with no review
-line at all, may the session review when no subagent can start, and it says so in the pull
-request. No setting is required for a normal Jig route.
+the session's model, briefed without the implementation conversation; the `review` stage goes to
+two, one per axis and one after the other, as with a matching line. Only here,
+with no review line at all, may the session review when no subagent can start, and it says so in
+the pull request. No setting is required for a normal Jig route.
 
 ## T4: another model when there is one
 

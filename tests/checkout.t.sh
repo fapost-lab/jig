@@ -851,3 +851,25 @@ test_checkout_taken_record_from_a_worktree_lands_in_the_main_checkout() {
   assert_file_contains "$main/.ai/runtime/taken/T-1/session-w" "checkout: $(cd "$wt" && pwd -P)"
   assert_no_file "$wt/.ai/runtime/taken"
 }
+
+test_checkout_taken_record_folds_tabs_and_line_breaks_in_the_command() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig queue set T-1 --priority 1 >/dev/null
+  # One argument with a tab and a line break: in the record a line break would
+  # start a key of its own, and in jig_checkout_taken's lines a tab would start
+  # a field of its own.
+  CLAUDE_CODE_SESSION_ID=session-a jig task finding add T-1 --severity P3 --where - \
+    --summary "$(printf 'one\ttwo\nthree')" >/dev/null 2>&1 || true
+  assert_file .ai/runtime/taken/T-1/session-a
+  local want="command: task finding add T-1 --severity P3 --where - --summary one two three"
+  assert_file_contains .ai/runtime/taken/T-1/session-a "$want"
+  assert_eq 3 "$(grep -c . .ai/runtime/taken/T-1/session-a)" "$(cat .ai/runtime/taken/T-1/session-a)"
+  assert_not_contains "$(cat .ai/runtime/taken/T-1/session-a)" "$(printf '\t')"
+  CLAUDE_CODE_SESSION_ID=session-b
+  export CLAUDE_CODE_SESSION_ID
+  run jig queue next --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"taken":[{"ref":"task:T-1",'
+  assert_contains "$OUT" '"command":"task finding add T-1 --severity P3 --where - --summary one two three"}'
+}
