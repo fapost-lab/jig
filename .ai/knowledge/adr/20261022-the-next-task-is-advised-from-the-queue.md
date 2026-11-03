@@ -9,7 +9,9 @@ domains:
 paths:
   - scripts/lib/queue.sh
   - schemas/json.md
+  - skills/jig-task/references/priority.md
 summary: Why jig queue next is the one place the next task is chosen, how a dependency counts as landed from task state, the last housekeeping run and a local epic-branch check, why priority, a started task and the top-level position order the rest, and why unqueued work is only counted.
+reviewed_at: 2026-11-03
 ---
 # The next task is advised by `jig queue next`, from the queue, task state and the last housekeeping run — never a task waiting for a dependency that has not landed, then priority, a started task, and position
 
@@ -80,3 +82,10 @@ another can be started first. The next-task-advice spec settled the rules with t
 > ago it was last active; `--json` lists them under `taken`, and `reason` gains `taken`, read after
 > `waiting` and before `paused`. The facts reach `_queue_next_decide` as `tk` lines, so the rules stay
 > in the one awk. The read is still a read: the records are only stat'ed and read.
+
+> **Amendment (2026-11-03).** The rules that choose a number reach an installed project through
+> `skills/jig-task/references/priority.md`, since `docs/` and this glossary are not installed. An agent
+> sets the number itself when it files a task, from what is confirmed rather than the worst case, and
+> leaves a number already there unless asked; a triage task stays out, and a release's notes task until the rest of the release has merged. `jig task new` reminds it on
+> stderr. The table in `docs/manual-control.mdx` is a copy for readers, held equal by
+> `adapters::test_docs_priority_scale_matches_the_skill`. Unqueued work is still only counted.

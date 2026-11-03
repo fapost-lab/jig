@@ -76,6 +76,11 @@ writes the answers to their gitignored `.ai/config.local.yaml` through
 when a newer release is out, `jig upgrade`, and the steps the release asks for by hand; what would
 stop the upgrade is named to the person, never worked around.
 
+The queue (`jig queue`) holds each task's priority, order and dependencies, and `jig queue next`
+advises from it. A task gets its priority when it is filed; to set priorities or order the tasks,
+start with the `jig-task` skill, which holds the `0`–`5` scale. The answer goes in the queue, not
+in a list in the chat.
+
 **Three questions decide the class**, asked about this change being wrong after it shipped:
 what takes it back; how far the mistake reaches — this repository, or users, money, somebody
 else's system; and who finds it — a test and the next run, or the person it hurt. The class is

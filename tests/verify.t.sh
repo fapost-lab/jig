@@ -1778,6 +1778,8 @@ test_verify_own_shell_map_decides_known_paths() {
     "templates/AGENTS.md" \
     "AGENTS.md" \
     "docs/install.mdx" \
+    "docs/manual-control.mdx" \
+    "skills/jig-task/references/priority.md" \
     "docs/concepts.mdx" \
     ".ai/manifest" \
     "scripts/lib/task.sh")
@@ -1796,6 +1798,8 @@ test_verify_own_shell_map_decides_known_paths() {
   # passes this test as easily as a correct one, so the line it must report
   # sits beside the lines it must stay silent about.
   assert_contains "$out" "$(printf 'docs/install.mdx\tadapters::test_docs_agents_section_matches_the_template')"
+  assert_contains "$out" "$(printf 'docs/manual-control.mdx\tadapters::test_docs_priority_scale_matches_the_skill')"
+  assert_contains "$out" "$(printf 'skills/jig-task/references/priority.md\tadapters::test_docs_priority_scale_matches_the_skill')"
   assert_contains "$out" "$(printf 'docs/concepts.mdx\t-')"
   assert_contains "$out" "$(printf 'AGENTS.md\t-')"
   assert_contains "$out" "$(printf '.ai/manifest\t-')"

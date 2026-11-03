@@ -336,7 +336,8 @@ The priority, order and dependencies of a clone's tasks and epics: `.ai/runtime/
 checkout, one per clone, not under git, written only by `jig queue`. Priority `0` (most urgent) to
 `5`, one scale for every person and agent: `0` broken or dangerous — data loss, a destructive
 operation, an install that fails; `1` a bug a user meets; `2` not a bug, but it stops a user doing
-their own work; `3` friction; `4` an improvement or a new capability; `5` some day. Positions are
+their own work; `3` friction; `4` an improvement or a new capability; `5` some day. An agent sets
+the number when it files a task, as `skills/jig-task/references/priority.md` says. Positions are
 sparse and ordered within a level — the top level holds epics and tasks without an epic, an epic's
 level its tasks. A write is checked against the clone revision its caller read and refused
 `stale-revision` when anything was written since
