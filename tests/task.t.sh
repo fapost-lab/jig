@@ -49,6 +49,20 @@ run_split() {
 
 # --- new --------------------------------------------------------------------
 
+# The reminder goes to stderr: stdout is the workspace path, which callers keep.
+test_task_new_reminds_of_the_priority_on_stderr_only() {
+  task_setup
+  run_split jig task new T-1
+  assert_eq 0 "$RC"
+  assert_eq ".ai/workspace/tasks/T-1" "$OUT"
+  assert_contains "$ERR" "not queued: T-1"
+  assert_contains "$ERR" "jig queue set T-1 --priority <0-5>"
+
+  run_split jig task new T-2 --json
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT$ERR" "not queued"
+}
+
 test_task_new_creates_state_with_expected_keys_in_order() {
   task_setup
   run jig task new T-1
@@ -286,7 +300,7 @@ test_task_new_invalid_domains_dies() {
 
 test_task_new_goal_writes_the_goal_paragraph() {
   task_setup
-  run jig task new T-1 --goal '  File the task  from the page '
+  run_split jig task new T-1 --goal '  File the task  from the page '
   assert_eq 0 "$RC"
   # The text form says what it always said: the workspace, nothing else.
   assert_eq ".ai/workspace/tasks/T-1" "$OUT"

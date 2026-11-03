@@ -178,7 +178,8 @@ one thing, so that you and your agent set "bugs first" the same way:
 | `4` | An improvement or a new capability |
 | `5` | Some day |
 
-`--priority none` takes the priority away. A move places one item
+Your agent gives a task a priority when it files it, and writes to the queue when you ask it to set
+priorities; a number already there it changes only when asked. `--priority none` takes the priority away. A move places one item
 before or after another, or with `--top` and `--bottom` at an end; an epic (`epic:<spec-id>`) is
 ordered beside tasks, and the tasks built on it are ordered within it. A dependency always says why.
 `jig queue remove` takes an item out, and `jig queue undepend` drops a dependency. A program

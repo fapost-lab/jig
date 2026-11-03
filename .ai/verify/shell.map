@@ -111,4 +111,8 @@ README.md                       -
 # from drifting. Left to the built-in rule for docs/*, that test ran on no
 # change to the page it guards.
 docs/install.mdx                adapters::test_docs_agents_section_matches_the_template
+# The priority scale is the same kind of copy: the skill's reference is what an
+# agent reads, the page what a person reads, and one test holds the two equal.
+docs/manual-control.mdx         adapters::test_docs_priority_scale_matches_the_skill
+skills/jig-task/references/priority.md adapters::test_docs_priority_scale_matches_the_skill
 docs/**                         -

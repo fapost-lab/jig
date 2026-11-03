@@ -288,6 +288,23 @@ test_docs_agents_section_matches_the_template() {
   assert_eq "$expected" "$shown"
 }
 
+# docs/ is not installed, so the skill's reference is where an agent reads the
+# priority scale. The documentation page keeps a table for its readers, and this
+# test is what keeps that copy from drifting.
+test_docs_priority_scale_matches_the_skill() {
+  local table='/^\| Priority \| When \|$/{f=1} f&&!/^\|/{f=0} f{print}'
+  local shown expected
+  expected=$(awk "$table" "$JIG_HOME/skills/jig-task/references/priority.md")
+  shown=$(awk "$table" "$JIG_HOME/docs/manual-control.mdx")
+  assert_contains "$expected" "Some day"
+  assert_eq "$expected" "$shown"
+}
+
+# A request to set priorities loads only what the skill's description matches.
+test_jig_task_description_names_setting_priorities() {
+  assert_contains "$(sed -n '/^description:/p' "$JIG_HOME/skills/jig-task/SKILL.md")" "set priorities"
+}
+
 # The section the template ships must itself be readable by the parser that
 # every other decision rests on: a template with a broken or missing pair
 # would make `jig init` record nothing and every upgrade a no-op, silently.

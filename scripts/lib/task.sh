@@ -1151,6 +1151,7 @@ _task_new_body() {
     return 0
   fi
   jig_relpath "$dir" "$JIG_PROJECT"
+  jig_info "not queued: $id — jig queue set $id --priority <0-5>; the scale is in the jig-task skill"
 }
 
 # task_start <id> — begin work on a filed task: cut its branch, check it out

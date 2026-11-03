@@ -32,8 +32,9 @@ Each number means one thing:
   the queue, not a list in the chat. `jig task list` shows no priorities; `jig queue` does.
 
 Two tasks stay out of both: a triage task (`<id>-findings`), since a person decides what it holds and
-no autopilot should pick it up, and a release's notes task, which starts after every other task of
-the release. `not queued: <n>` in `jig queue next` still counts them, so that line need not reach zero.
+no autopilot should pick it up, and a release's notes task until every other task of the release has
+merged, as `jig-release` says. `not queued: <n>` in `jig queue next` still counts them, so that line
+need not reach zero.
 
 ## Which number
 
