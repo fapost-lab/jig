@@ -27,6 +27,12 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   your list is named to you instead of being passed over (without stops, the running tasks finish
   and nothing new starts), and a task another session works on is never started. See
   [Several tasks in one run](/autopilot#several-tasks-in-one-run).
+- **Your settings as JSON.** `jig config keys --json` lists every setting Jig reads with its value,
+  where the value comes from (your local file, the project's or the default), who may answer it,
+  what kind of value it takes and the choices, and a one-line description; `jig config set` and
+  `jig config unset` answer with `--json` too, and take `--revision <n>`. A secret such as the
+  Telegram token is never printed, only whether it is set. See
+  [Your settings](/reading-jig-as-data#your-settings).
 
 ## 0.39.0 — 2026-10-29
 

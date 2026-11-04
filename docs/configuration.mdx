@@ -144,6 +144,9 @@ lists every setting this version reads, its default, and which of the two files 
 and marks the ones your `.ai/config.yaml` says nothing about. A commented-out line counts as
 saying something: the file is documentation as much as configuration.
 
+A program reads the same list with `jig config keys --json`, which adds each setting's current value,
+where it comes from, its kind and a description ([Reading Jig as data](/reading-jig-as-data#your-settings)).
+
 `jig doctor` prints the same thing in one line, and only when there is something to say:
 
 ```

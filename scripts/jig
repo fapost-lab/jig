@@ -117,16 +117,19 @@ Usage: jig <command> [args]
                                  ask a task to pause at its next stage boundary,
                                  or take the request back
   housekeeping [--dry-run] [--verbose]  reconcile workspaces with remote state
-  config set <key> <value> [...] --local [--dry-run]
+  config set <key> <value> [...] --local [--dry-run | --revision <n>] [--json]
                                  write your own settings to .ai/config.local.yaml;
-                                 local keys only, values checked, never .ai/config.yaml
-  config unset <key> [...] --local [--dry-run]
+                                 local keys only, values checked, never .ai/config.yaml;
+                                 --json answers with each key's new state
+  config unset <key> [...] --local [--dry-run | --revision <n>] [--json]
                                  remove keys from .ai/config.local.yaml, including
                                  ones no reader answers from
   config show --local            print .ai/config.local.yaml and the keys in it
                                  that no reader answers from
-  config keys                    every key jig reads, its default, which file
-                                 answers for it, and what .ai/config.yaml omits
+  config keys [--json]           every key jig reads, its default, which file
+                                 answers for it, and what .ai/config.yaml omits;
+                                 --json adds each key's value, source, kind and
+                                 description, and never a secret's value
   notify setup                   in your own terminal: ask for the Telegram bot token
                                  (hidden) and chat id, write them, send a test message
   notify test                    send one Telegram test message now, as autopilot would
