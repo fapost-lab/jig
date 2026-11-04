@@ -4,6 +4,8 @@
 + refactor the billing module into smaller services
 + continue the task I started yesterday
 + classify this change and tell me what process it needs
++ set priorities for the tasks
++ order the backlog
 # Its neighbours' requests.
 - analyze why the import job fails on large files
 - review this change before it ships

@@ -2,7 +2,7 @@
 jig.version: 0.39.0
 jig.source: .
 jig.mode: link
-installed_at: 2026-11-03
+installed_at: 2026-11-04
 adapters: [claude, codex]
-instructions.section: 54f2704658a5263c4f5d67e58e583ef8d35cc235 AGENTS.md
+instructions.section: 1ae4afae0d0811a92dd1b5e828642ef2d67b0a90 AGENTS.md
 ---

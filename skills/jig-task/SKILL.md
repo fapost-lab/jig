@@ -88,8 +88,8 @@ T0 and T1 that fit in one session need no workspace. Otherwise:
 The id is short and kebab-case, derived from the work (`fix-trigger-idempotency`), not a
 ticket number unless the project uses one. Fill in `task.md`: goal, scope, notes.
 
-**Give it a priority when you file it**, `jig queue set <id> --priority <0-5>`: a task not in the queue
-is never advised. [Task priority](references/priority.md) holds the scale and how to pick the number.
+**Give it a priority when you file it**, from what is confirmed, not the worst that could happen,
+`.ai/scripts/jig queue set <id> --priority <0-5>`: a task not in the queue is never advised. [Task priority](references/priority.md) holds the scale and how to pick the number.
 
 **The goal comes before the start.** `task start` warns when `## Goal` is empty or holds only the
 template's comment, and refuses a T3 or T4 task until it is written. Write it from what you were
