@@ -69,6 +69,7 @@ be reworded.
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
 | `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, or the task has no such document yet (`jig task artifact read`) |
 | `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
+| `not-closable` | the task you asked to close is not one Jig offers to close: its knowledge decision is not recorded, or its pull request is not merged. Nothing was written — show the person the message, which is the reason |
 | `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
 | `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
@@ -376,6 +377,28 @@ resume found:
 `overlap` lists the files the task changed that also changed on its base while it was paused — worth
 showing before the person continues. A resume somebody else made first is refused with
 `not-paused`; any other write in the clone since your read, with `stale-revision`.
+
+## Closing a task
+
+A task offering `close` is closed with the revision you read, once the person has said yes:
+
+```bash
+jig task set booking-message status consolidated --revision 1792079790 --json
+```
+
+The answer is the task as `jig task list --json` lists it, now with `"status":"consolidated"`:
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"task":{"id":"booking-message","status":"consolidated","…":"…"}}}
+```
+
+The command asks the forge about the pull request now, so it can refuse a close the page offered
+from a stale cache. A close that is not offered — the knowledge decision is not recorded, or the pull
+request is not merged — is refused with `not-closable`, and its `message` is the reason to show as
+it is, the one the `close` action carries. A write somebody else made since your read is refused with
+`stale-revision`, an unknown task with `not-found`; nothing is written in any of them.
+`--revision` and `--json` belong to this close alone: `jig task set booking-message class T2
+--revision 1792079790` is refused with `usage`, not written without the check.
 
 ## Filing a task
 
