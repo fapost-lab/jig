@@ -10,6 +10,12 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 
 ## Unreleased
 
+- **A task can be closed from a program, checked against what it read.** `jig task set <task-id>
+  status consolidated` takes `--revision <n>` and `--json` as `jig task resume` does: a write another
+  change has overtaken is refused with `stale-revision`, and the answer is the closed task, or a
+  refusal with its code — `not-closable` when the close is not offered (the knowledge decision is not
+  recorded, or the pull request is not merged), `not-found` for an unknown task. The two flags are
+  refused on any other key. See [Closing a task](/reading-jig-as-data#closing-a-task).
 - **Knowledge waiting for a person, as JSON.** `jig knowledge proposed --json` lists each proposed
   document with its type, domains, path, `paths`, summary and, for a stub, the file it links;
   `jig knowledge sources --json` gives each linked source's state (`changed`, `unrecorded`, `missing`,
@@ -28,6 +34,12 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   your list is named to you instead of being passed over (without stops, the running tasks finish
   and nothing new starts), and a task another session works on is never started. See
   [Several tasks in one run](/autopilot#several-tasks-in-one-run).
+- **Your settings as JSON.** `jig config keys --json` lists every setting Jig reads with its value,
+  where the value comes from (your local file, the project's or the default), who may answer it,
+  what kind of value it takes and the choices, and a one-line description; `jig config set` and
+  `jig config unset` answer with `--json` too, and take `--revision <n>`. A secret such as the
+  Telegram token is never printed, only whether it is set. See
+  [Your settings](/reading-jig-as-data#your-settings).
 
 ## 0.39.0 — 2026-10-29
 

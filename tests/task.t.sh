@@ -1654,6 +1654,230 @@ test_task_set_refuses_paused_stash_applied() {
   assert_contains "$OUT" "not writable"
 }
 
+# --- close --json and --revision (fapost-lab/jig#365) ---------------------------------
+# `jig task set <id> status consolidated [--revision <n>] [--json]` is the
+# close of a page: checked against the revision it read, answering the task as
+# `task list --json` lists it, or an error.code. _tr_rev, _tr_json's siblings
+# and _tr_code read the envelope as the resume tests above do.
+
+# _tc_json <args...> — `jig task set <args> --json`; stdout in OUT, stderr in
+# ERR, status in RC.
+_tc_json() {
+  run_split jig task set "$@" --json
+}
+
+# _tc_closable — T-1, its route done and its knowledge decision recorded.
+_tc_closable() {
+  task_setup
+  jig task new T-1 >/dev/null
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+}
+
+# _tc_state_tmp — the temporary state files left in T-1's workspace, if any.
+_tc_state_tmp() {
+  (cd .ai/workspace/tasks/T-1 && ls -a) | grep '^state\.tmp' || true
+}
+
+test_task_close_json_answers_the_task_as_the_list_reports_it() {
+  _tc_closable
+  _tc_json T-1 status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"T-1"'
+  assert_contains "$OUT" '"status":"consolidated"'
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
+  local in_data
+  in_data=$(_tr_data | sed -e 's/^{"task"://' -e 's/}$//')
+  run_split jig task list --all --json
+  assert_contains "$OUT" "$in_data" "data.task differs from the task list"
+  assert_eq "" "$(_tc_state_tmp)"
+}
+
+test_task_close_json_raises_the_revision_by_two() {
+  _tc_closable
+  _tr_rev
+  local before=$REV
+  _tc_json T-1 status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "a close must raise the clone revision by exactly two"
+}
+
+test_task_close_with_current_revision_succeeds_in_either_order() {
+  _tc_closable
+  _tr_rev
+  _tc_json T-1 status consolidated --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"status":"consolidated"'
+  _tr_rev
+  run_split jig task set --json T-1 status consolidated --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+}
+
+test_task_close_with_a_revision_and_no_json_prints_nothing_and_checks_it() {
+  _tc_closable
+  _tr_rev
+  local old=$((REV + 7))
+  run_split jig task set T-1 status consolidated --revision "$old"
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "the clone changed since revision $old"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+  assert_eq "" "$(_tc_state_tmp)"
+  run_split jig task set T-1 status consolidated --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
+}
+
+test_task_close_with_stale_revision_is_refused_and_changes_nothing() {
+  _tc_closable
+  _tr_rev
+  local old=$((REV + 7)) state_before now
+  now=$REV
+  state_before=$(cat .ai/workspace/tasks/T-1/state)
+  _tc_json T-1 status consolidated --revision "$old"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_eq "$state_before" "$(cat .ai/workspace/tasks/T-1/state)" "a refused close changed the state"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused close moved the revision"
+  assert_eq "" "$(_tc_state_tmp)" "a refused close left its new state behind"
+}
+
+test_task_close_json_after_another_write_is_stale() {
+  _tc_closable
+  _tr_rev
+  local read=$REV
+  jig task set T-1 domains task >/dev/null
+  _tc_json T-1 status consolidated --revision "$read"
+  assert_eq stale-revision "$(_tr_code)"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+test_task_close_json_without_the_knowledge_decision_is_not_closable() {
+  task_setup
+  jig task new T-1 >/dev/null
+  _tr_rev
+  local now=$REV
+  _tc_json T-1 status consolidated --revision "$now"
+  assert_eq 1 "$RC"
+  assert_eq not-closable "$(_tr_code)"
+  assert_contains "$OUT" "requires knowledge_consolidated true; record the knowledge decision first: jig task set T-1 knowledge_consolidated true"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused close moved the revision"
+}
+
+test_task_close_json_with_a_pull_request_not_merged_is_not_closable() {
+  pr_check_ship_T1 OPEN
+  _tc_json T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_eq not-closable "$(_tr_code)"
+  assert_contains "$OUT" "requires its pull request to be merged"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+test_task_close_json_with_a_merged_pull_request_closes() {
+  pr_check_ship_T1 MERGED
+  _tc_json T-1 status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"status":"consolidated"'
+  assert_file_contains .ai/workspace/tasks/T-1/state "status: consolidated"
+}
+
+test_task_close_json_unknown_task_is_not_found() {
+  task_setup
+  _tc_json NOPE status consolidated
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_tr_code)"
+  assert_contains "$OUT" "unknown task: NOPE"
+}
+
+test_task_close_json_bad_arguments_are_usage() {
+  _tc_closable
+  _tc_json T-1 status consolidated --revision 08
+  assert_eq usage "$(_tr_code)" "08: $OUT"
+  _tc_json T-1 status consolidated --revision x
+  assert_eq usage "$(_tr_code)" "x: $OUT"
+  _tc_json T-1 status consolidated --revision
+  assert_eq usage "$(_tr_code)" "no value: $OUT"
+  _tc_json T-1 status consolidated --revision ""
+  assert_eq usage "$(_tr_code)" "empty: $OUT"
+  _tc_json T-1 status consolidated --bogus
+  assert_eq usage "$(_tr_code)" "unknown arg: $OUT"
+  _tc_json T-1 status
+  assert_eq usage "$(_tr_code)" "missing value: $OUT"
+  _tc_json "bad!id" status consolidated
+  assert_eq usage "$(_tr_code)" "bad id: $OUT"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+# The flags are the close's alone: on another key they are refused, never
+# ignored, and nothing is written.
+test_task_set_revision_and_json_are_refused_on_any_other_key() {
+  _tc_closable
+  _tr_rev
+  local state_before now
+  now=$REV
+  state_before=$(cat .ai/workspace/tasks/T-1/state)
+  _tc_json T-1 domains task
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_tr_code)" "json: $OUT"
+  assert_contains "$OUT" "only for closing a task"
+  run_split jig task set T-1 domains task --revision "$REV"
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "--revision and --json are only for closing a task"
+  run_split jig task set T-1 status active --revision "$REV"
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "only for closing a task"
+  run_split jig task set T-1 knowledge_consolidated true --revision "$REV"
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "only for closing a task"
+  assert_eq "$state_before" "$(cat .ai/workspace/tasks/T-1/state)"
+  _tr_rev
+  assert_eq "$now" "$REV"
+}
+
+test_task_close_json_of_a_triage_task_records_its_knowledge_decision_in_one_write() {
+  task_setup
+  triage_filed T-1-findings T-1
+  _tr_rev
+  local before=$REV
+  _tc_json T-1-findings status consolidated --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"status":"consolidated"'
+  assert_contains "$OUT" '"knowledge_consolidated":true'
+  assert_file_contains .ai/workspace/tasks/T-1-findings/state "knowledge_consolidated: true"
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "the close of a triage task is one write under one claim"
+}
+
+test_task_close_json_of_a_consolidated_task_lands_again_and_an_archived_one_fails() {
+  _tc_closable
+  _tc_json T-1 status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  _tr_rev
+  local before=$REV
+  _tc_json T-1 status consolidated
+  assert_eq 0 "$RC" "$ERR"
+  _tr_rev
+  assert_eq "$((before + 2))" "$REV" "closing again raises the revision as any close does"
+
+  jig task new T-2 >/dev/null
+  jig task archive T-2 >/dev/null
+  _tc_json T-2 status consolidated
+  assert_eq 1 "$RC"
+  assert_eq failed "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "is archived"
+}
+
+test_task_set_usage_lists_the_close_flags() {
+  run jig task set
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig task set <id> status consolidated [--revision <n>] [--json]"
+}
+
 # --- resume overlap is computed against the task's own base (ADR-0039) --------
 
 test_task_resume_overlap_computed_against_task_base() {

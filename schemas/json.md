@@ -43,13 +43,18 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
-| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`). Read again and decide again; nothing was written |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), or a knowledge document that does not exist or links no source (`jig knowledge sources --diff`) |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
+| `not-closable` | `jig task set <id> status consolidated` was asked for a task Jig does not offer to close: its knowledge decision is not recorded, or its pull request is not merged (the forge says so, or cannot be asked). `message` is the reason word for word, the one the task's `close` action carries. Nothing was written |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. For `jig upgrade --land`: uncommitted changes, a checkout on another branch than the base or the upgrade's, the base checked out in another worktree, or a base that cannot be fast-forwarded to origin's. `message` lists every reason, one per line, each with what to do |
+| `unknown-key` | `jig config set --json` was given a name no reader of Jig reads. Nothing was written |
+| `not-local` | `jig config set --json` was given a key Jig reads but only the team's `.ai/config.yaml` answers for. Nothing was written |
+| `invalid-value` | `jig config set --json` was given a value its key does not accept: outside the fixed set, not a number, not a duration. Nothing was written |
+| `secret-key` | `jig config set --json` was asked to put a secret (`notify.telegram.token`) on a command line, which Jig never does. Nothing was written |
 | `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge. Nothing was changed; merge it and run the command again |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
@@ -513,6 +518,44 @@ claimed (it is raised by one). An apply that refused leaves the state as it was;
 stash with conflicts, or wrote part of it, records `paused_stash_applied` (schemas/state.md), so the resume after the
 person resolved them ends the pause without applying the stash again.
 
+## `jig task set <id> status consolidated --json`
+
+`jig task set <id> status consolidated [--revision <n>] --json` closes a task — the person's yes that
+the `close` action waits for — and answers with the task. The write is checked against a revision as
+a `jig queue` write is: with `--revision <n>`, the `revision` of the read the caller decided on;
+without it, the revision the command reads as it starts. When anything was written in the clone
+since, the close is refused with `stale-revision` and changes nothing. A landed close raises the
+revision by two (the claim and the write). `--json` may stand anywhere among the arguments; without
+it the command prints nothing, as it always has, and `--revision` alone checks the write the same
+way.
+
+The two flags are the close's alone. On any other key or value (`jig task set <id> class T2
+--revision 7`) they are refused with `usage` and nothing is written, so a program never believes a
+write it sent with a revision was checked when it was not.
+
+```json
+{"task": <task>}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it — the same object, every field and its `actions` — read after the write: `status` is `consolidated` |
+
+Refusals: `usage` for an argument the command does not take, a key other than `status` or a value
+other than `consolidated` beside `--revision` or `--json`, a `--revision` without a value or that is
+not a revision (digits without a leading zero), and an id outside the grammar; `not-found` for no
+such task; `not-closable` when the close is not offered, as above; `stale-revision` as in the table
+above; `not-initialised` and `not-a-repository` as everywhere. Any other refusal — an archived task,
+a finding or a missing stage of the route that blocks a bare triage task's close — reads `failed`.
+Every refusal happens before anything is written. Unlike the `close` action, which is judged by the
+forge cache housekeeping wrote, the command asks the forge now: a cache behind the forge withholds
+the action while the command would allow it. A pull request that is not merged, or a forge that
+cannot be reached, is `not-closable`. Closing a task that is already `consolidated` lands again and
+raises the revision.
+
+A bare triage task (one `jig task ship` filed for open findings) is closed in the same write, its
+knowledge decision recorded with it.
+
 ## `jig task artifacts --json`
 
 `jig task artifacts <id> --json` lists the documents in a task's workspace — the one
@@ -700,3 +743,64 @@ branch's pull request counts.
 Refusals: `not-merged` when the pull request is still open; `upgrade-blocked` with every reason at
 once; `usage` for any other argument. Both change nothing. No origin, no signed-in forge CLI, or a
 forge that did not answer read `failed` and change nothing either.
+
+## `jig config keys --json`
+
+Every key Jig reads, in the order of its registry (`jig_config_key_rows`, `scripts/lib/config.sh`),
+with what the clone answers for it. Reads `.ai/config.yaml` and `.ai/config.local.yaml` and
+nothing else; changes nothing. Takes no argument but `--json`.
+
+```json
+{"keys": [{"key": "agent.git", "value": "none", "set": false, "source": "default", "scope": "local only", "kind": "choice", "allowed": ["none", "commit", "push", "pr", "merge"], "default": "none", "description": "How far your agent takes a finished task with git.", "secret": false}]}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `key` | string | the key as it is written in the file |
+| `value` | string or null | what a reader of Jig gets (for `git.worktree_root`, whose reader builds its own default, the registry's placeholder): the first non-empty answer of the local file (for a key it may answer), then `.ai/config.yaml` (never for a local-only key), then the default; always a string, as the file writes it (`"true"`, `"30"`, `"[claude, codex]"`). `null` when nothing answers and there is no default. Always `null` for a secret |
+| `set` | boolean | a file answers for the key (`source` is not `default`). For a secret this is all a reader learns |
+| `source` | string | `local`, `project` or `default`: the layer `value` came from |
+| `scope` | string | who may answer the key, as `jig config keys` prints it: `project` (only `.ai/config.yaml`), `local` (the local file wins, the project's answers when it is silent) or `local only` (the local file alone) |
+| `kind` | string | `boolean` (`true` or `false`), `choice` (one of `allowed`), `duration` (`<n>d`, `<n>h`, `<n>m` or `<n>s`), `number`, `text` (anything the file can hold) or `list` (an inline list such as `[a, b]`). A kind a reader does not know is `text` |
+| `allowed` | array or null | the values of a `boolean` or a `choice`, in the order a page offers them; `null` for the other kinds. Every value of a local key is one `jig config set` accepts |
+| `default` | string or null | the value used when no file answers; `null` for a key that is off until set |
+| `description` | string | one line, for a person |
+| `secret` | boolean | `true` for `notify.telegram.token`: its value is never printed by any `--json` read or write, only whether it is `set` |
+
+A key written in the local file that no reader answers from (a misspelling, a project key) is not
+listed. Refusals: `usage` for an argument; `not-initialised` and `not-a-repository` as everywhere.
+
+## `jig config` writes
+
+`jig config set <key> <value> [<key> <value>...] --local --json` and `jig config unset <key>
+[<key>...] --local --json` change the clone's own `.ai/config.local.yaml` and answer in the
+envelope; `.ai/config.yaml` is the team's, and neither writes it. Both take `--revision <n>`, the
+`revision` of the read the caller decided on: when anything was written in the clone since, the
+write is refused with `stale-revision` and nothing is changed. Without it the command checks
+against the revision it reads itself as it starts. A landed write raises the revision (by two: the
+claim and the write), so read again for the new one. `--dry-run` cannot be combined with `--json`
+(`usage`). The same flags work without `--json`; there, a write without `--revision` is not checked.
+
+```json
+{"keys": [<key>, ...]}
+```
+
+`set` answers with the object of each key it wrote (as `jig config keys --json` lists it, in the
+order given), as the clone now reads it. A value `set` accepts is exactly what the key's `kind` and
+`allowed` describe.
+
+```json
+{"keys": [<key>, ...], "removed": ["agent.git"]}
+```
+
+`unset` answers with the object of each key given that Jig reads, as it now stands (so back on its
+default, or on the project's value), and `removed` lists the keys it took out of the file,
+including a key no reader answers from, which has no object. A key the file did not hold costs
+nothing: nothing is written and the revision does not move. `unset` accepts any key the file may hold,
+as the text form does.
+
+Refusals, all before anything is written: `unknown-key` and `not-local` for a key `set` may not
+write, `invalid-value` for a value its key does not accept, `secret-key` for the token, which is
+never set on a command line; `usage` for a missing key or value, an unknown flag, a missing `--local`,
+a name a file cannot hold, a malformed `--revision` or `--dry-run`; `stale-revision` as above. One
+bad pair refuses the whole call.

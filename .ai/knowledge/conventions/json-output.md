@@ -15,6 +15,7 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/queue.sh
   - scripts/lib/knowledge.sh
+  - scripts/lib/config.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-11-04
 ---
@@ -72,7 +73,8 @@ MUST:     call jig_record_changed right after the mv that lands the write, or ca
           reaches neither)
 MUST NOT: raise the revision before the write lands — except a write checked against the
           caller's revision, which claims the next one first (jig_revision_claim), moves its
-          file into place right after, and then calls jig_record_changed (`jig queue`;
+          file into place right after, and then calls jig_record_changed (`jig queue`,
+          `task resume`, `task set <id> status consolidated`;
           adr-20261019-the-queue-is-one-file-written-against-a-revision) — or once at the command's end
           instead of after each write — except a batch whose many writes are one
           change and that runs only as its own command, never inside $(...):
@@ -90,6 +92,9 @@ MUST:     take --revision <n>, validated by jig_revision_valid (common.sh), and,
           state as one file (_task_state_without), never one _task_rewrite_state per key;
           refuse a claim that does not stand with jig_fail stale-revision, having written
           nothing
+MAY:      leave the check off in the text form of a write that is also offered with --json
+          (`jig config set|unset`: --revision is optional there, and only a JSON write
+          without it checks against the revision it reads itself)
 MAY:      make a side effect outside Jig's records between the claim and the move (`task
           resume` applies a stash there), refusing with its own code and leaving the record
           as it was: a refusal after the claim costs one raise, never a half-landed write
