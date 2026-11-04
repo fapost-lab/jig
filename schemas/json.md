@@ -663,7 +663,7 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `state` | string | `ok`, `changed`, `unrecorded` or `missing`, as above, whatever the stub's status; the text form refuses a missing source, this answers it |
 | `approved_hash` | string or null | the git blob hash of the approved text (`source_hash`); `null` when none was recorded or the source is `missing` |
 | `diff` | string or null | the unified diff from the approved text to the file now, as `diff -u` prints it with the labels `<source> (approved)` and `<source>`; `null` unless `state` is `changed` and git still has the approved text. A `changed` state with a `null` diff, like `unrecorded`, means the file is to be reviewed whole |
-| `lossy` | boolean | `true` when `diff` held bytes that are not UTF-8 and they were dropped |
+| `lossy` | boolean | `true` when `diff` held bytes that are not UTF-8 and they were dropped. Not set for the carriage return Git Bash drops from a CRLF line, or for a lone one a platform's `diff` turns into a line break |
 
 Every string escapes as the envelope says. A source file is whatever a person committed, so a
 diff may hold quotes, backslashes, tabs, control bytes or bytes that are not UTF-8: the first

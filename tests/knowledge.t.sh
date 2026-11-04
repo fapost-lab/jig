@@ -4443,15 +4443,21 @@ test_sources_diff_json_escapes_whatever_the_diff_holds() {
   _kmj sources --diff convention-stub
   assert_eq 0 "$RC"
   _kmj_valid kmj.out
-  assert_contains "$OUT" '+say \"hi\" \\ C:\\temp\\new\ttab\r\n+cr\u0001ctl\u001besc'
+  assert_contains "$OUT" '+say \"hi\" \\ C:\\temp\\new\ttab'
+  assert_contains "$OUT" '\n+cr\u0001ctl\u001besc'
+  # Command substitution in Git Bash drops the carriage return of a CRLF line.
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) ;;
+    *) assert_contains "$OUT" '\ttab\r\n+cr' ;;
+  esac
   assert_contains "$OUT" "Привет €"
   assert_contains "$OUT" '"lossy":false}'
   if command -v python3 >/dev/null 2>&1; then
     python3 -I -c '
 import json, sys
 d = json.loads(sys.stdin.buffer.read().decode("utf-8"))["data"]["diff"]
-want = "+say \"hi\" \\ C:\\temp\\new\ttab\r\n+cr\x01ctl\x1besc Привет €\n"
-assert want in d, repr(d)
+assert "+say \"hi\" \\ C:\\temp\\new\ttab" in d, repr(d)
+assert "+cr\x01ctl\x1besc Привет €\n" in d, repr(d)
 ' < kmj.out
   fi
 }
