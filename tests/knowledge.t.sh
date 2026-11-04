@@ -4372,7 +4372,7 @@ test_sources_diff_json_gives_the_diff_against_the_approved_text() {
   _kmj sources --diff convention-stub
   assert_eq 0 "$RC"
   local hash
-  hash=$(git hash-object --no-filters <(printf 'line one\n'))
+  hash=$(printf 'line one\n' | git hash-object --no-filters --stdin)
   assert_eq "\"data\":{\"id\":\"convention-stub\",\"source\":\"docs/x.md\",\"state\":\"changed\",\"approved_hash\":\"$hash\",\"diff\":\"--- docs/x.md (approved)\\n+++ docs/x.md\\n@@ -1 +1,2 @@\\n line one\\n+line two\\n\",\"lossy\":false}" \
     "$(_kmj_data)"
   _kmj_valid kmj.out
@@ -4438,19 +4438,19 @@ test_sources_diff_json_refuses_an_unknown_id_and_a_document_with_no_source() {
 # the diff must read back unchanged.
 test_sources_diff_json_escapes_whatever_the_diff_holds() {
   _kmj_accepted_stub
-  printf 'say "hi" \\ C:\\temp\\new\ttab\rcr\001ctl\033esc \320\237\321\200\320\270\320\262\320\265\321\202 \342\202\254\n' >> docs/x.md
+  printf 'say "hi" \\ C:\\temp\\new\ttab\r\ncr\001ctl\033esc \320\237\321\200\320\270\320\262\320\265\321\202 \342\202\254\n' >> docs/x.md
 
   _kmj sources --diff convention-stub
   assert_eq 0 "$RC"
   _kmj_valid kmj.out
-  assert_contains "$OUT" '+say \"hi\" \\ C:\\temp\\new\ttab\rcr\u0001ctl\u001besc'
+  assert_contains "$OUT" '+say \"hi\" \\ C:\\temp\\new\ttab\r\n+cr\u0001ctl\u001besc'
   assert_contains "$OUT" "Привет €"
   assert_contains "$OUT" '"lossy":false}'
   if command -v python3 >/dev/null 2>&1; then
     python3 -I -c '
 import json, sys
 d = json.loads(sys.stdin.buffer.read().decode("utf-8"))["data"]["diff"]
-want = "+say \"hi\" \\ C:\\temp\\new\ttab\rcr\x01ctl\x1besc Привет €\n"
+want = "+say \"hi\" \\ C:\\temp\\new\ttab\r\n+cr\x01ctl\x1besc Привет €\n"
 assert want in d, repr(d)
 ' < kmj.out
   fi
