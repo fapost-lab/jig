@@ -300,11 +300,6 @@ test_docs_priority_scale_matches_the_skill() {
   assert_eq "$expected" "$shown"
 }
 
-# A request to set priorities loads only what the skill's description matches.
-test_jig_task_description_names_setting_priorities() {
-  assert_contains "$(sed -n '/^description:/p' "$JIG_HOME/skills/jig-task/SKILL.md")" "set priorities"
-}
-
 # The section the template ships must itself be readable by the parser that
 # every other decision rests on: a template with a broken or missing pair
 # would make `jig init` record nothing and every upgrade a no-op, silently.

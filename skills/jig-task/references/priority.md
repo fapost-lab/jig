@@ -48,8 +48,9 @@ need not reach zero.
 
 ## Order and waiting
 
-- **Within one number**, the place decides: `jig queue move <id> --before <other>`.
+- **Within one number**, the started task goes first, then the place decides:
+  `.ai/scripts/jig queue move <id> --before <other>`.
 - **A task that waits for another** gets a dependency with its reason, not a lower number:
-  `jig queue depend <id> --on <other> --reason "<why>"`.
+  `.ai/scripts/jig queue depend <id> --on <other> --reason "<why>"`.
 
 What a project adds to this, such as which roadmap step comes first, is in its own `AGENTS.md`.

@@ -5150,6 +5150,7 @@ test_task_ship_hands_open_findings_to_one_triage_task_verbatim() {
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC"
   assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_not_contains "$OUT" "not queued"
   md=.ai/workspace/tasks/T-1-findings/task.md
   assert_file "$md"
   assert_file_contains "$md" "# Triage the open findings of T-1"
