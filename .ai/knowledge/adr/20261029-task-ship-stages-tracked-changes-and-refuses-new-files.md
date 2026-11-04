@@ -9,8 +9,17 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/task.sh
 summary: Why jig task ship stages tracked changes itself when nothing is staged, refuses new untracked files, and names what a staged index leaves out.
+reviewed_at: 2026-11-04
 ---
 # Task ship stages tracked changes itself and refuses new files
+
+> **Amendment (2026-11-04).** At `merge`, a draft aside, a staged index that leaves a tracked change
+> or a new file in the tree is refused before the commit, unless `--partial` says the rest is not
+> the task's. PR #376 merged one new file of an 18-file change: the agent staged that file as the
+> refusal for new files told it to, the warning went past, and no person stood between the commit and
+> the base. Partial staging and another session's edits stay possible through the flag, which is what
+> the alternative rejected below lacked. Below `merge` a person takes the next step and the warning
+> stands. `jig spec ship` and the upgrade are unchanged.
 
 ## Context
 

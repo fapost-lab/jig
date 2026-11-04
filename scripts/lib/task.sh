@@ -93,7 +93,7 @@ _task_usage() {
       printf '       jig task receipt <id> --check\n'
       printf '       jig task receipt <id> --since-review [--format report|paths]\n'
       ;;
-    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft]\n' ;;
+    ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft] [--partial]\n' ;;
     autopilot)
       printf 'usage: jig task autopilot <id> start [--phase <spec-id>/<n>]\n'
       printf '       jig task autopilot <id> stage <name>\n'
@@ -6112,11 +6112,14 @@ task_ship() {
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
   local id="$1"
   shift
-  local message_file="" title="" body_file="" has_message=0 draft=0
+  local message_file="" title="" body_file="" has_message=0 draft=0 partial=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --draft)
         draft=1
+        shift ;;
+      --partial)
+        partial=1
         shift ;;
       --message-file)
         [ $# -ge 2 ] || jig_die "task ship: --message-file requires a value"
@@ -6227,6 +6230,17 @@ EOF
 
   jig_ship_stage_tracked "task ship" "$inputs_msg" "$inputs_body"
   jig_ship_check_staged "task ship"
+  # At `merge` nobody reads the pull request before it lands, so an index that
+  # leaves part of the change behind has to be declared, not only warned about
+  # (adr-20261029-task-ship-stages-tracked-changes-and-refuses-new-files). A
+  # draft is never merged, and below `merge` a person takes the next step.
+  if [ "$level" = merge ] && [ "$draft" -eq 0 ] && [ "$partial" -eq 0 ]; then
+    local left_out
+    left_out=$(jig_ship_left_out "$message_file" "$inputs_msg" "$inputs_body")
+    [ -z "$left_out" ] || jig_die "task ship: this commit would merge without these changes:
+$left_out
+Nothing was committed. Stage what belongs to the task (git add -u, git add <path>) and run again; if the rest is not this task's, run again with --partial."
+  fi
   jig_ship_commit "task ship" "$message_file" "$inputs_msg" "$inputs_body"
 
   # Before the first step that leaves this machine (common.sh, "what a ship

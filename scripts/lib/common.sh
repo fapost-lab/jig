@@ -1188,13 +1188,22 @@ jig_ship_stage_tracked() {
   if [ -n "$untracked" ]; then
     jig_die "$who: nothing is staged, and these files are not tracked by git:
 $untracked
-A new file is never staged for you: stage the ones that belong to the change (git add <path>), ignore or remove the rest, and run again."
+A new file is never staged for you: stage the ones that belong to the change (git add <path>), ignore or remove the rest. Once anything is staged, that index is the commit, so stage the changes to tracked files too (git add -u), and run again."
   fi
   git -C "$JIG_PROJECT" add -u -- . \
     ":(exclude)$JIG_AI_DIR/workspace" ":(exclude)$JIG_AI_DIR/runtime" \
     || jig_die "$who: git add -u failed"
   staged=$(jig_ship_staged)
   [ -z "$staged" ] || printf '%s: nothing was staged; staged the tracked changes:\n%s\n' "$who" "$staged"
+}
+
+# jig_ship_left_out [<file>...] — what the index would leave in the working
+# tree, one path per line: changes to tracked files and new files, but never
+# .ai/workspace/, .ai/runtime/ or the <file>s, which are the ship's inputs.
+jig_ship_left_out() {
+  { git -C "$JIG_PROJECT" diff --name-only -- . \
+      ":(exclude)$JIG_AI_DIR/workspace" ":(exclude)$JIG_AI_DIR/runtime" 2>/dev/null
+    jig_ship_untracked "$@"; } | sed '/^$/d'
 }
 
 # jig_ship_commit <who> <message-file> [<file>...] — commit the index as it
@@ -1224,8 +1233,7 @@ jig_ship_commit() {
     git -C "$JIG_PROJECT" commit -F "$message_file" >/dev/null \
       || jig_die "$who: git commit failed"
     printf 'committed %s\n' "$(git -C "$JIG_PROJECT" rev-parse --short HEAD)"
-    unstaged=$( { git -C "$JIG_PROJECT" diff --name-only 2>/dev/null
-                  jig_ship_untracked "$message_file" "$@"; } | sed '/^$/d')
+    unstaged=$(jig_ship_left_out "$message_file" "$@")
     [ -z "$unstaged" ] || jig_warn "$who: these changes are not part of this commit; stage them and ship again if they belong to it:
 $unstaged"
     return 0

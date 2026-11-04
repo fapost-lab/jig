@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-10-30
+reviewed_at: 2026-11-04
 ---
 # Task
 
@@ -209,7 +209,8 @@ refuses on each before it touches git, so a renamed field turns into a refusal, 
 the wrong branch. How far it goes is `agent.git`, a local-only key of the config layer; the git
 steps themselves — commit, push, pull request — are `jig_ship_*` in `common.sh`, shared with
 `jig spec ship` (adr-20260922-spec-work-ships-by-the-agent-git-level), and the forge they open the
-pull request on is resolved by `jig_forge_kind`, the same answer housekeeping reads PR state from.
+pull request on is resolved by `jig_forge_kind`, the same answer housekeeping reads PR state from. At
+`merge` it refuses an index that leaves part of the tree out unless `--partial` declares it.
 At `merge` it also merges, through `jig_ship_merge`, after asking `_task_blocking_findings`,
 `_task_receipt_gate_message` and the route evidence once more; `--draft` opens a draft that is never merged, and is the one
 ship those completion gates and `knowledge_consolidated` do not refuse — it is how an unattended run
