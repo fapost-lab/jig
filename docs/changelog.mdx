@@ -16,6 +16,13 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   refusal with its code — `not-closable` when the close is not offered (the knowledge decision is not
   recorded, or the pull request is not merged), `not-found` for an unknown task. The two flags are
   refused on any other key. See [Closing a task](/reading-jig-as-data#closing-a-task).
+- **Knowledge waiting for a person, as JSON.** `jig knowledge proposed --json` lists each proposed
+  document with its type, domains, path, `paths`, summary and, for a stub, the file it links;
+  `jig knowledge sources --json` gives each linked source's state (`changed`, `unrecorded`, `missing`,
+  `ok`) and `jig knowledge sources --diff <id> --json` the difference between the approved text and
+  the file now, always as valid JSON whatever bytes the file holds. A document that does not exist is
+  refused as `not-found`. The text forms are unchanged, and the writes (`accept`, `reject`,
+  `reviewed`) still have no `--json`. See [Reading Jig as data](/reading-jig-as-data#knowledge-waiting-for-a-person).
 - **A triage task closes as done.** `jig task set <task-id>-findings status consolidated` closes the
   task `jig task ship` filed for open review findings in one command, once you have decided each of
   them — no class, no review and no separate knowledge decision asked for. It is listed as finished;

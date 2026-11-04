@@ -44,7 +44,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, or a task document the task does not have (`jig task artifact read`) |
+| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), or a knowledge document that does not exist or links no source (`jig knowledge sources --diff`) |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
@@ -616,6 +616,65 @@ Refusals: `not-found` for no such task, and for a kind the task has no document 
 with `write` or `append` (it goes with `read` only); `not-initialised` and `not-a-repository` as
 everywhere. A document Jig will not read (`unavailable` in the list) reads `failed`, its reason in
 the message.
+
+## `jig knowledge proposed --json`, `jig knowledge sources --json`
+
+The knowledge waiting for a person, and the files its stubs link. Both read the documents under
+`.ai/knowledge/` and git, write nothing and raise no revision. `--json` follows the subcommand
+(`jig knowledge proposed --json`); the text forms print what they always did.
+
+```json
+{"proposals": [<proposal>, ...]}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `proposals` | array | every document whose status is `proposed`, in the order the text form lists them; `[]` when none |
+| `proposals[].id`, `.type` | string | the document's `id` and `type` |
+| `proposals[].domains`, `.paths` | array of strings | its `domains` and `paths` as written; `[]` for none |
+| `proposals[].path` | string | the document's file, relative to the repository |
+| `proposals[].summary` | string or null | its `summary`; `null` when it has none |
+| `proposals[].source` | string or null | for a stub, the file it links, relative to the repository; `null` for any other document |
+
+```json
+{"sources": [<source>, ...], "counts": {"linked": 2, "changed": 1, "unrecorded": 0, "missing": 0}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `sources` | array | every stub that links a source, in the text form's order; `[]` when none |
+| `sources[].id` | string | the stub's `id` |
+| `sources[].state` | string | `ok` (the source is the text that was approved), `changed` (it is not), `unrecorded` (no `source_hash` was ever recorded, so nothing approved the current text), `missing` (the source is not a readable file inside the repository), or, for a stub that is not accepted, its own status (`proposed`, `rejected`, ...) |
+| `sources[].status` | string or null | the stub's `status` |
+| `sources[].path` | string | the stub's file, relative to the repository |
+| `sources[].source` | string | the linked file, relative to the repository |
+| `sources[].bytes` | integer or null | the linked file's size in bytes; `null` when it is `missing` or not a file |
+| `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints; what `jig status` counts as changed is `changed` plus `unrecorded` |
+
+`jig knowledge sources --diff <id> --json` answers for one stub:
+
+```json
+{"id": "convention-coding-style", "source": "docs/coding-style.md", "state": "changed", "approved_hash": "d9dc8059e3a61983d9e3ab6d32dfabc8aa7feb2d", "diff": "--- docs/coding-style.md (approved)\n+++ docs/coding-style.md\n@@ ...", "lossy": false}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `id`, `source` | string | the stub and the file it links |
+| `state` | string | `ok`, `changed`, `unrecorded` or `missing`, as above, whatever the stub's status; the text form refuses a missing source, this answers it |
+| `approved_hash` | string or null | the git blob hash of the approved text (`source_hash`); `null` when none was recorded or the source is `missing` |
+| `diff` | string or null | the unified diff from the approved text to the file now, as `diff -u` prints it with the labels `<source> (approved)` and `<source>`; `null` unless `state` is `changed` and git still has the approved text. A `changed` state with a `null` diff, like `unrecorded`, means the file is to be reviewed whole |
+| `lossy` | boolean | `true` when `diff` held bytes that are not UTF-8 and they were dropped. Not set for the carriage return Git Bash drops from a CRLF line, or for a lone one a platform's `diff` turns into a line break |
+
+Every string escapes as the envelope says. A source file is whatever a person committed, so a
+diff may hold quotes, backslashes, tabs, control bytes or bytes that are not UTF-8: the first
+three kinds come out escaped and read back unchanged; bytes that are not valid UTF-8 are dropped
+from the answer (from `diff` with `lossy` set, from any other string without a flag), so the line
+is always valid JSON in UTF-8. Without `iconv` on the machine, or when the text holds a character above U+10FFFF, every byte
+outside ASCII is replaced by `?` instead.
+
+Refusals: `not-found` for an id no document has, and for a document that links no source;
+`usage` for an argument these commands do not take (`jig knowledge proposed x --json`, `sources
+--diff` without an id, a second id); `not-initialised` and `not-a-repository` as everywhere.
 
 ## `jig upgrade --json`
 

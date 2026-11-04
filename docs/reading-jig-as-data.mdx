@@ -6,8 +6,9 @@ description: "Read your project's tasks, specs and what needs you from a script,
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
 `--json`. Today `jig task list`, `jig task artifacts`, `jig task artifact read`, `jig spec list`, `jig status`,
-`jig queue list`, `jig queue next` and `jig config keys` offer it, and
-`jig queue`, `jig task new`, `jig upgrade` and `jig config set|unset` answer in it when they write; more commands will, in the
+`jig queue list`, `jig queue next`, `jig config keys`, `jig knowledge proposed` and `jig knowledge sources`
+offer it, and `jig queue`, `jig task new`, `jig upgrade` and `jig config set|unset` answer in it when they
+write; more commands will, in the
 same form.
 
 ```bash
@@ -18,6 +19,8 @@ jig task artifact read <id> plan --json
 jig spec list --json
 jig status --json
 jig queue list --json
+jig knowledge proposed --json
+jig knowledge sources --json
 ```
 
 <Info>
@@ -67,7 +70,7 @@ be reworded.
 | `not-a-repository` | it ran outside a Git repository |
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
-| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, or the task has no such document yet (`jig task artifact read`) |
+| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, the task has no such document yet (`jig task artifact read`), or the knowledge document named does not exist or links no source (`jig knowledge sources --diff`) |
 | `already-exists` | what the command would create is already there: a task with that id. Nothing was written — pick another id |
 | `not-closable` | the task you asked to close is not one Jig offers to close: its knowledge decision is not recorded, or its pull request is not merged. Nothing was written — show the person the message, which is the reason |
 | `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
@@ -467,6 +470,49 @@ jig task artifact read booking-message plan --json
 `not-found`, and so is a task the clone does not have. Both commands only read: the `revision` stays
 where it was, and comparing it tells you when to read again. Without `--json`, `jig task artifact
 read` prints the document itself.
+
+## Knowledge waiting for a person
+
+Documents an agent proposed wait for a person to accept or reject them, and a linked source file
+that changed since it was approved waits for a person to approve the new text. Both are readable as
+data, so a page can show them without parsing text:
+
+```bash
+jig knowledge proposed --json
+jig knowledge sources --json
+jig knowledge sources --diff convention-coding-style --json
+```
+
+`proposed` lists each document whose status is `proposed`, with its `id`, `type`, `domains`, its
+`path` and `paths`, its `summary` and, for a stub that links an existing file, that file as `source`
+(`null` for the rest):
+
+```json
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md"}]}}
+```
+
+`sources` lists each stub with the `state` of the file it links: `ok`, `changed` (the file is not
+the text that was approved), `unrecorded` (nothing was ever approved), `missing`, or the stub's own
+status while it is not accepted yet, with the file's size in `bytes` and the counts the text form
+prints on its last line:
+
+```json
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0}}}
+```
+
+`sources --diff <id>` answers for one stub and carries the difference between the approved text and
+the file now in `diff`, a unified diff in one string:
+
+```json
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:50Z","data":{"id":"convention-coding-style","source":"docs/coding-style.md","state":"changed","approved_hash":"d9dc8059e3a61983d9e3ab6d32dfabc8aa7feb2d","diff":"--- docs/coding-style.md (approved)\n+++ docs/coding-style.md\n@@ -1,2 +1,4 @@\n # Style\n Use tabs.\n+Use spaces, never tabs.\n+Quote \"everything\".\n","lossy":false}}
+```
+
+`diff` is `null` when there is nothing to compare: the file is `ok` or `missing`, was never approved
+(`unrecorded`), or is `changed` but git no longer has the approved text. In the last two cases the
+file is read whole. A source can hold anything, quotes and control characters
+included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff`, and
+`lossy` says so. An id no document has, or a document that links no source, is refused as
+`not-found`. These reads write nothing: the `revision` stays where it was.
 
 ## Upgrading a project
 
