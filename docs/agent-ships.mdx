@@ -336,7 +336,9 @@ It is a script, so these limits hold whatever the agent intends:
 - it never stages a new file for you: with nothing staged, a new file that is neither staged nor
   in `.gitignore` is a refusal that names it — a secret or a scratch file pushed to your forge
   cannot be taken back. The commit message and pull request body files do not count;
-- when something is staged, that is the commit, and it names every change it left out;
+- when something is staged, that is the commit, and it names every change it left out. At `merge`,
+  with no person between the commit and your main branch, it refuses instead, committing nothing,
+  until the rest is staged or `--partial` says the rest is not this task's;
 - it refuses when the branch has no commit your main branch does not, before it pushes anything
   or asks your forge for a pull request;
 - it refuses, changing nothing, until the task's knowledge decision is recorded;

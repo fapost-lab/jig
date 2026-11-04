@@ -4435,6 +4435,127 @@ test_task_ship_names_what_a_staged_index_leaves_out() {
   assert_contains "$(git status --porcelain -- .ai/config.yaml)" " M .ai/config.yaml"
 }
 
+# ship_left_out_setup — at `merge`, on a real forge: one new file staged and
+# one tracked edit not, the index that merged half of a change on 2026-11-03.
+ship_left_out_setup() {
+  ship_setup_forge
+  ship_cfg_local agent.git merge
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  printf 'tracked edit\n' >> .ai/config.yaml
+  ship_stage_change
+}
+
+# assert_ship_sent_nothing <head-before> — no commit, no push, no forge call.
+assert_ship_sent_nothing() {
+  assert_eq "$1" "$(git rev-parse HEAD)" "nothing may be committed"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh-calls.log "the forge must not be asked anything"
+}
+
+test_task_ship_at_merge_refuses_an_index_that_leaves_a_tracked_change_out() {
+  ship_left_out_setup
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "this commit would merge without these changes:"
+  assert_contains "$OUT" ".ai/config.yaml"
+  assert_contains "$OUT" "--partial"
+  assert_not_contains "$OUT" "msg.txt"
+  assert_ship_sent_nothing "$head_before"
+  assert_eq "ship.txt" "$(git diff --cached --name-only)" "the index stays as the caller left it"
+}
+
+test_task_ship_at_merge_refuses_an_index_that_leaves_a_new_file_out() {
+  ship_setup_forge
+  ship_cfg_local agent.git merge
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  printf 'forgotten\n' > forgotten.txt
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "forgotten.txt"
+  assert_ship_sent_nothing "$head_before"
+}
+
+# mship_left_out_setup — ship_left_out_setup with a forge that can merge: the
+# edit mship_setup makes to .ai/config.yaml is the one left out of the index.
+mship_left_out_setup() {
+  mship_setup github
+  git reset -q -- .ai/config.yaml
+}
+
+# ship_merged_commit_files — the paths in the commit a merge has shipped; the
+# checkout is back on main by then and the task's branch is gone.
+ship_merged_commit_files() {
+  git show --name-only --format= "$(git log -g -1 --format=%H --grep='^Ship T-1' HEAD)"
+}
+
+# The road the refusal names reaches the merge, with the whole change in it.
+test_task_ship_at_merge_goes_through_once_the_whole_change_is_staged() {
+  mship_left_out_setup
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+
+  git add -u
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  assert_not_contains "$OUT" "not part of this commit"
+  assert_contains "$(ship_merged_commit_files)" ".ai/config.yaml"
+  assert_contains "$(ship_merged_commit_files)" "ship.txt"
+}
+
+# A partial index stays possible: declared, merged, and what it left still named.
+test_task_ship_partial_merges_what_is_staged_and_names_the_rest() {
+  mship_left_out_setup
+
+  run jig task ship T-1 --message-file msg.txt --partial
+
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "not part of this commit"
+  assert_contains "$OUT" ".ai/config.yaml"
+  assert_not_contains "$OUT" "would merge without"
+  assert_eq "ship.txt" "$(ship_merged_commit_files)"
+}
+
+# A draft is never merged, and below `merge` a person takes the next step.
+test_task_ship_draft_at_merge_does_not_refuse_what_the_index_leaves_out() {
+  ship_left_out_setup
+
+  run jig task ship T-1 --message-file msg.txt --draft
+
+  assert_not_contains "$OUT" "would merge without"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "not part of this commit"
+}
+
+# The refusal for a new file is where an agent learns what to stage next, and
+# staging only the new file is what leaves the tracked changes behind.
+test_task_ship_new_file_refusal_says_to_stage_the_tracked_changes_too() {
+  ship_setup
+  ship_cfg_local agent.git commit
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  printf 'tracked edit\n' >> .ai/config.yaml
+  printf 'new\n' > new.txt
+
+  run jig task ship T-1 --message-file msg.txt
+
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "git add -u"
+}
+
 # The order, not the wording (common.sh, "what a ship may send out"). Proved
 # without a network: `origin` is a real bare repository here, so a push that
 # happened is visible in its refs, and `gh` is a stub that appends every call
@@ -4779,6 +4900,8 @@ mship_setup() {
   task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
+  # The forge line above is an edit too, and at `merge` nothing may stay out.
+  git add .ai/config.yaml
 }
 
 # assert_no_override <log> — nothing in <log> asked the forge to override its
@@ -5286,6 +5409,7 @@ test_task_ship_merge_level_with_no_forge_leaves_the_merge_to_the_human() {
   task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
   ship_stage_change
+  git add .ai/config.yaml
 
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC"
@@ -5648,6 +5772,7 @@ test_task_ship_merge_level_ignores_the_project_ci_timeout() {
   sed '/^agent.ci_timeout:/d' .ai/config.local.yaml > .ai/config.local.yaml.tmp
   mv .ai/config.local.yaml.tmp .ai/config.local.yaml
   printf 'agent.ci_timeout: soon\n' >> .ai/config.yaml
+  git add .ai/config.yaml
 
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC"

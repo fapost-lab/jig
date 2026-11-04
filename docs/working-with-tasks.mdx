@@ -582,5 +582,5 @@ without stops never lowers a task below the classes that need your design approv
 
 By default the agent does not commit: a finished task waits in your working tree, and you review the
 diff and commit it. One line in your own `.ai/config.local.yaml` — `agent.git: pr` — lets the agent
-commit, push and open the pull request instead; only `agent.git: merge` also merges, once CI passed.
+commit, push and open the pull request instead; only `agent.git: merge` also merges, once CI passed, and it refuses a commit that would leave changes in the tree unless `--partial` says they are not the task's.
 [Letting the agent ship](/agent-ships) explains the levels and what happens at the end of a task.
