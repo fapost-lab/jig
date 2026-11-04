@@ -6,8 +6,8 @@ description: "Read your project's tasks, specs and what needs you from a script,
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
 `--json`. Today `jig task list`, `jig task artifacts`, `jig task artifact read`, `jig spec list`, `jig status`,
-`jig queue list` and `jig queue next` offer it, and
-`jig queue`, `jig task new` and `jig upgrade` answer in it when they write; more commands will, in the
+`jig queue list`, `jig queue next` and `jig config keys` offer it, and
+`jig queue`, `jig task new`, `jig upgrade` and `jig config set|unset` answer in it when they write; more commands will, in the
 same form.
 
 ```bash
@@ -73,6 +73,7 @@ be reworded.
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
 | `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
+| `unknown-key`, `not-local`, `invalid-value`, `secret-key` | `jig config set --json` refused a key or value: a name Jig does not read, a key only the team's `.ai/config.yaml` answers for, a value the key does not accept, or a secret on a command line. Nothing was written |
 | `failed` | anything else: the message says what |
 
 New codes may appear, for refusals that today read `failed`. Treat a code you do not know as
@@ -484,3 +485,43 @@ the message:
 
 The whole shape is in `schemas/json.md`.
 
+## Your settings
+
+A page can show the settings of a project and change the person's own. `jig config keys --json`
+lists every key Jig reads, with the value this clone gets for it and where that value comes from:
+
+```bash
+jig config keys --json
+```
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-11-04T12:00:00Z","data":{"keys":[{"key":"agent.git","value":"none","set":false,"source":"default","scope":"local only","kind":"choice","allowed":["none","commit","push","pr","merge"],"default":"none","description":"How far your agent takes a finished task with git.","secret":false}]}}
+```
+
+`source` is `local` (the person's `.ai/config.local.yaml`), `project` (the team's `.ai/config.yaml`)
+or `default`. `scope` says who may answer the key: `project` keys are the team's and a page shows
+them read-only; `local` and `local only` keys the person may set. `kind` tells the page which
+control to offer: a checkbox for `boolean`, a choice among `allowed` for `choice`, a field for the
+rest (`duration`, `number`, `text`, `list`). A value is always a string, as the file writes it.
+
+<Warning>
+  A secret's value never leaves Jig in a `--json` answer. `notify.telegram.token` has `"secret":true`
+  and `"value":null` always; `set` says only whether a token is there. Jig also refuses to take a
+  token on a command line, so a page cannot set it either: the person writes it into the file, or
+  runs `jig notify setup` in their own terminal.
+</Warning>
+
+The person's own settings are changed with the commands a person uses, adding `--json`:
+
+```bash
+jig config set agent.git pr --local --json
+jig config unset agent.git --local --json
+```
+
+A write answers with the new state of each key it touched, as `keys` lists it, and `unset` also
+names in `removed` the keys it took out of the file. A key that cannot be written, or a value it
+does not accept, is refused with `unknown-key`, `not-local`, `invalid-value` or `secret-key`
+([Why a command refused](#why-a-command-refused)), and nothing is written. Both commands take
+`--revision <n>` like a queue write: another write in the project since your read is refused with
+`stale-revision`, so a page and `jig-setup` writing the same file cannot overwrite each other's
+change unseen. `.ai/config.yaml` is the team's; no command here writes it.

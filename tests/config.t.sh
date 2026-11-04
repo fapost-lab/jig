@@ -384,6 +384,8 @@ test_config_set_warns_when_local_file_is_not_gitignored() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" \
     "is not ignored by git and can be committed (fix: jig init)"
+  # The warning follows the report line, as it always did.
+  assert_eq "config: housekeeping.cadence:" "$(printf "%s\n" "$OUT" | head -n 1 | cut -c1-29)"
 }
 
 test_config_set_no_warning_when_local_file_is_gitignored() {
@@ -624,7 +626,7 @@ test_config_unset_is_listed_in_help() {
 
   run jig config help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "jig config unset <key> [<key>...] --local [--dry-run]"
+  assert_contains "$OUT" "jig config unset <key> [<key>...] --local [--dry-run | --revision <n>] [--json]"
 }
 
 # --- readers unchanged (jig_agent_git, jig_ci_timeout) ---------------------
@@ -935,4 +937,452 @@ test_jig_setup_names_every_local_key() {
     grep -qF "\`$key\`" "$ROOT/skills/jig-setup/SKILL.md" || missing="$missing $key"
   done
   assert_eq "" "$missing"
+}
+
+# --- --json: jig config keys, set and unset ------------------------------------
+#
+# What Jig UI reads and writes through (schemas/json.md, "jig config keys
+# --json" and "jig config writes"): every key with its value, source and
+# metadata, and a write that answers with the same objects.
+
+# _cj <args...> — run `jig config <args> --json`; stdout in OUT, stderr in ERR,
+# status in RC.
+_cj() {
+  set +e
+  jig config "$@" --json > cj.out 2> cj.err
+  RC=$?
+  set -e
+  OUT=$(cat cj.out)
+  ERR=$(cat cj.err)
+  rm -f cj.out cj.err
+}
+
+# _cj_entry <key> — the object of <key> in the envelope in OUT.
+_cj_entry() {
+  printf '%s\n' "$OUT" | sed 's/},{"key":"/}\n{"key":"/g' \
+    | grep -F "{\"key\":\"$1\"," | head -n 1 | sed 's/^.*"keys":\[//; s/\]}}$//; s/\],"removed".*$//'
+}
+
+# _cj_code — the error.code of the envelope in OUT.
+_cj_code() {
+  printf '%s\n' "$OUT" | sed -n 's/.*"error":{"code":"\([^"]*\)".*/\1/p'
+}
+
+# _cj_project_set <key> <value> — <key> in .ai/config.yaml replaced, or added.
+_cj_project_set() {
+  { grep -v "^$1:" .ai/config.yaml || true; printf '%s: %s\n' "$1" "$2"; } > .ai/config.yaml.new
+  mv .ai/config.yaml.new .ai/config.yaml
+}
+
+# _cj_rev — REV <- the clone's revision, as a read reports it.
+_cj_rev() {
+  REV=$(jig config keys --json | sed -n 's/^{"schema":1,"revision":\([0-9][0-9]*\),.*/\1/p')
+  [ -n "$REV" ] || fail "no revision in the keys read"
+}
+
+test_config_keys_json_lists_every_key_in_the_registry_order() {
+  fixture_jig_repo
+  local want got
+  _cj keys
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_contains "$OUT" '{"schema":1,"revision":'
+  assert_contains "$OUT" '"data":{"keys":[{"key":"profiles",'
+  want=$(bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_config_keys | cut -d" " -f1
+  ')
+  got=$(printf '%s\n' "$OUT" | grep -o '{"key":"[^"]*"' | sed 's/{"key":"//; s/"$//')
+  assert_eq "$want" "$got" "the keys of the JSON read are not the keys of the text one"
+  # One line, whatever it holds.
+  assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+}
+
+test_config_keys_json_pins_the_shape_of_one_key() {
+  fixture_jig_repo
+  _cj keys
+  assert_eq '{"key":"agent.git","value":"none","set":false,"source":"default","scope":"local only","kind":"choice","allowed":["none","commit","push","pr","merge"],"default":"none","description":"How far your agent takes a finished task with git.","secret":false}' \
+    "$(_cj_entry agent.git)"
+  # A key with no default and no answer has no value, not an empty one.
+  assert_eq '{"key":"autopilot.git","value":null,"set":false,"source":"default","scope":"local only","kind":"choice","allowed":["none","commit","push","pr","merge"],"default":null,"description":"The git level of an autopilot run; when unset, agent.git answers.","secret":false}' \
+    "$(_cj_entry autopilot.git)"
+  assert_contains "$(_cj_entry git.delete_merged_branches)" '"kind":"boolean","allowed":["true","false"]'
+  assert_contains "$(_cj_entry housekeeping.trash_ttl)" '"kind":"duration","allowed":null'
+  assert_contains "$(_cj_entry autopilot.parallel)" '"kind":"number","allowed":null'
+  assert_contains "$(_cj_entry worktree.carry)" '"kind":"list","allowed":null'
+  assert_contains "$(_cj_entry run.exec)" '"kind":"text","allowed":null'
+}
+
+test_config_keys_json_reports_the_layer_that_answered() {
+  fixture_jig_repo
+  _cj_project_set git.base_branch develop
+  _cj_project_set agent.git merge
+  _cj_project_set housekeeping.cadence 5d
+  printf '%s\n' 'housekeeping.cadence: 2d' 'agent.ci_timeout: 12' 'git.base_branch: hacked' 'route.depth:' > .ai/config.local.yaml
+  _cj keys
+  assert_eq 0 "$RC" "$ERR"
+  # The project answers for a key it owns.
+  assert_contains "$(_cj_entry git.base_branch)" '"value":"develop","set":true,"source":"project","scope":"project"'
+  # The local file wins for a key it may answer, over the project's.
+  assert_contains "$(_cj_entry housekeeping.cadence)" '"value":"2d","set":true,"source":"local","scope":"local"'
+  # A local-only key is read from the local file alone.
+  assert_contains "$(_cj_entry agent.ci_timeout)" '"value":"12","set":true,"source":"local","scope":"local only"'
+  # The project's value for a local-only key is not read, so it is not the source.
+  assert_contains "$(_cj_entry agent.git)" '"value":"none","set":false,"source":"default","scope":"local only"'
+  # An empty local value falls through, and a local value for a project-only
+  # key is never what the reader gets.
+  assert_contains "$(_cj_entry route.depth)" '"value":"full","set":false,"source":"default"'
+  assert_not_contains "$OUT" hacked
+  # What is reported is what a reader reads.
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    printf "%s %s %s %s %s\n" "$(cfg git.base_branch main)" "$(cfg housekeeping.cadence 1d)" "$(cfg agent.ci_timeout 30)" "$(cfg agent.git none)" "$(cfg route.depth full)"
+  '
+  assert_eq "develop 2d 12 none full" "$OUT"
+}
+
+test_config_keys_json_is_valid_for_quotes_backslashes_and_unicode() {
+  fixture_jig_repo
+  _cj_project_set git.branch_template 'a"b\c {id} é'
+  printf '%s\n' 'claude.implement_model: x"y\z' > .ai/config.local.yaml
+  _cj keys
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$(_cj_entry git.branch_template)" '"value":"a\"b\\c {id} é","set":true,"source":"project"'
+  assert_contains "$(_cj_entry claude.implement_model)" '"value":"x\"y\\z","set":true,"source":"local"'
+  # A description with a brace is whole.
+  assert_contains "$OUT" '"description":"The name of a task'"'"'s branch; {id} is the task id."'
+}
+
+test_config_keys_json_never_prints_a_secret() {
+  fixture_jig_repo
+  local token='1234:AB"cd\ef'
+  printf '%s\n' "notify.telegram.token: $token" 'notify.telegram.chat_id: 42' > .ai/config.local.yaml
+  _cj keys
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"key":"notify.telegram.token","value":null,"set":true,"source":"local","scope":"local only","kind":"text","allowed":null,"default":null,"description":"The Telegram bot token messages are sent with; never shown.","secret":true}' \
+    "$(_cj_entry notify.telegram.token)"
+  assert_not_contains "$OUT$ERR" "1234:AB"
+  assert_not_contains "$OUT$ERR" 'cd\\ef'
+  assert_not_contains "$OUT$ERR" 'cd\ef'
+  # Unset, a secret reads as not set.
+  : > .ai/config.local.yaml
+  _cj keys
+  assert_contains "$(_cj_entry notify.telegram.token)" '"value":null,"set":false,"source":"default"'
+}
+
+# The same token under the spelling `cfg` reads as the key (a pattern, so `_`
+# answers for `.`), and in a project file that never answers for it.
+test_config_json_never_prints_a_secret_under_another_name_or_in_a_write() {
+  fixture_jig_repo
+  local token='9:ZZ"top\secret'
+  printf '%s\n' "notify_telegram_token: $token" 'housekeeping.cadence: 2d' > .ai/config.local.yaml
+  printf '%s\n' "notify.telegram.token: $token" >> .ai/config.yaml
+  _cj keys
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT$ERR" "9:ZZ"
+  assert_not_contains "$OUT$ERR" 'top\secret'
+  assert_not_contains "$OUT$ERR" 'top\\secret'
+  _cj set housekeeping.cadence 3d --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT$ERR" "9:ZZ"
+  _cj set notify.telegram.token "$token" --local
+  assert_eq 1 "$RC"
+  assert_eq secret-key "$(_cj_code)"
+  assert_not_contains "$OUT$ERR" "9:ZZ"
+  _cj set notify.telegram.chat_id 77 housekeeping.cadence 4d --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT$ERR" "9:ZZ"
+  _cj unset notify.telegram.token notify_telegram_token housekeeping.cadence --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT$ERR" "9:ZZ"
+  assert_not_contains "$OUT$ERR" 'top\\secret'
+  assert_contains "$(_cj_entry notify.telegram.token)" '"value":null,"set":false'
+}
+
+test_config_json_set_answers_with_the_state_of_each_key() {
+  fixture_jig_repo
+  local project_before
+  project_before=$(cat .ai/config.yaml)
+  _cj set agent.git pr --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_contains "$OUT" '"data":{"keys":[{"key":"agent.git","value":"pr","set":true,"source":"local","scope":"local only"'
+  assert_not_contains "$OUT" 'config: agent.git'
+  assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+  assert_eq "agent.git: pr" "$(sed -n 's/^\(agent\.git: .*\)$/\1/p' .ai/config.local.yaml)"
+  # Several pairs: one object each, in the order given, written together.
+  _cj set route.depth lean agent.ci_timeout 5 --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq 'route.depth agent.ci_timeout' "$(printf '%s\n' "$OUT" | grep -o '{"key":"[^"]*"' | sed 's/{"key":"//; s/"$//' | tr '\n' ' ' | sed 's/ $//')"
+  assert_contains "$(_cj_entry route.depth)" '"value":"lean","set":true,"source":"local"'
+  assert_contains "$(_cj_entry agent.ci_timeout)" '"value":"5"'
+  assert_eq "$project_before" "$(cat .ai/config.yaml)" "project config was touched"
+  _assert_no_tmp_leftovers
+  # The text form reads what the JSON write wrote.
+  run jig config show --local
+  assert_contains "$OUT" "route.depth: lean"
+}
+
+test_config_json_set_value_with_quotes_and_backslashes() {
+  fixture_jig_repo
+  _cj set claude.review_model 'a"b\c' --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$(_cj_entry claude.review_model)" '"value":"a\"b\\c","set":true,"source":"local"'
+}
+
+test_config_json_set_refusals_carry_a_code_and_write_nothing() {
+  fixture_jig_repo
+  printf '%s\n' 'agent.git: commit' > .ai/config.local.yaml
+  local before
+  before=$(cat .ai/config.local.yaml)
+
+  _cj set no.such.key x --local
+  assert_eq 1 "$RC"
+  assert_eq unknown-key "$(_cj_code)"
+  _cj set git.base_branch develop --local
+  assert_eq 1 "$RC"
+  assert_eq not-local "$(_cj_code)"
+  _cj set agent.git yes --local
+  assert_eq 1 "$RC"
+  assert_eq invalid-value "$(_cj_code)"
+  assert_contains "$OUT" "invalid value 'yes'"
+  _cj set notify.telegram.token abc --local
+  assert_eq 1 "$RC"
+  assert_eq secret-key "$(_cj_code)"
+  _cj set agent.git pr
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_cj_code)"
+  _cj set agent.git --local
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_cj_code)"
+  _cj set agent.git pr --local --dry-run
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_cj_code)"
+  _cj set agent.git pr --local --bogus
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_cj_code)"
+  # One bad pair spoils the call: the good one is not written either.
+  _cj set route.depth lean agent.git nope --local
+  assert_eq 1 "$RC"
+  assert_eq invalid-value "$(_cj_code)"
+  assert_eq "$before" "$(cat .ai/config.local.yaml)"
+  _assert_no_tmp_leftovers
+
+  # The text form says the same thing, in the words it always did.
+  run jig config set no.such.key x --local
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no.such.key is not a local key"
+}
+
+test_config_json_write_without_a_repository_or_project_is_refused_by_code() {
+  local dir="$JIG_TEST_TMP.empty"
+  mkdir -p "$dir"
+  ( cd "$dir" && jig config keys --json > out 2> err ) || true
+  assert_contains "$(cat "$dir/out")" '"error":{"code":"not-a-repository"'
+}
+
+test_config_json_set_takes_an_optional_revision() {
+  fixture_jig_repo
+  _cj_rev
+  local rev=$REV
+  _cj set route.depth lean --local --revision "$rev"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$(_cj_entry route.depth)" '"value":"lean"'
+  # The write raised the revision past the one it was sent: that one is stale.
+  _cj set route.depth full --local --revision "$rev"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_cj_code)"
+  assert_eq "route.depth: lean" "$(grep '^route.depth' .ai/config.local.yaml)"
+  _assert_no_tmp_leftovers
+  # A write raised the revision, so a reader sees something changed.
+  _cj_rev
+  assert_eq 1 "$([ "$REV" -gt "$rev" ] && echo 1 || echo 0)" "the write did not raise the revision"
+  _cj set route.depth full --local --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  # A malformed revision is a usage error, and so is one without a value.
+  _cj set route.depth lean --local --revision 08
+  assert_eq usage "$(_cj_code)"
+  _cj set route.depth lean --local --revision
+  assert_eq usage "$(_cj_code)"
+  _cj set route.depth lean --local --revision ""
+  assert_eq usage "$(_cj_code)"
+}
+
+test_config_text_set_and_unset_take_a_revision_too() {
+  fixture_jig_repo
+  _cj_rev
+  local rev=$REV
+  run jig config set route.depth lean --local --revision "$rev"
+  assert_eq 0 "$RC" "$OUT"
+  run jig config set route.depth full --local --revision "$rev"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $rev"
+  run jig config unset route.depth --local --revision "$rev"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $rev"
+  assert_eq "route.depth: lean" "$(grep '^route.depth' .ai/config.local.yaml)"
+}
+
+test_config_json_unset_answers_with_the_state_and_what_was_removed() {
+  fixture_jig_repo
+  printf '%s\n' 'agent.git: pr' 'route.depth: lean' 'other.key: v' > .ai/config.local.yaml
+  _cj unset agent.git other.key never.set --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq "" "$ERR"
+  assert_contains "$OUT" '"data":{"keys":[{"key":"agent.git","value":"none","set":false,"source":"default"'
+  # A key no reader answers from has no object, and is removed all the same.
+  assert_not_contains "$OUT" '"key":"other.key"'
+  assert_contains "$OUT" '"removed":["agent.git","other.key"]}}'
+  assert_eq "route.depth: lean" "$(cat .ai/config.local.yaml)"
+  assert_not_contains "$OUT" 'config: unset'
+  _assert_no_tmp_leftovers
+}
+
+test_config_json_unset_that_changes_nothing_leaves_file_and_revision_alone() {
+  fixture_jig_repo
+  printf '%s\n' 'route.depth: lean' > .ai/config.local.yaml
+  touch -t 202001010000 .ai/config.local.yaml
+  _cj_rev
+  local rev=$REV
+  _cj unset agent.git --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"removed":[]}}'
+  _cj_rev
+  assert_eq "$rev" "$REV" "a no-op unset raised the revision"
+  assert_eq "" "$(find .ai/config.local.yaml -newermt 2020-01-02)" "a no-op unset rewrote the file"
+  assert_eq "route.depth: lean" "$(cat .ai/config.local.yaml)"
+}
+
+test_config_json_unset_without_a_local_file_answers_with_data() {
+  fixture_jig_repo
+  assert_no_file .ai/config.local.yaml
+  _cj unset agent.git --local
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"keys":[{"key":"agent.git","value":"none","set":false'
+  assert_contains "$OUT" '"removed":[]}}'
+  assert_no_file .ai/config.local.yaml
+}
+
+test_config_json_unset_refusals_carry_a_code() {
+  fixture_jig_repo
+  printf '%s\n' 'agent.git: pr' > .ai/config.local.yaml
+  _cj unset --local
+  assert_eq usage "$(_cj_code)"
+  _cj unset agent.git
+  assert_eq usage "$(_cj_code)"
+  _cj unset 'bad key' --local
+  assert_eq usage "$(_cj_code)"
+  _cj unset agent.git --local --dry-run
+  assert_eq usage "$(_cj_code)"
+  _cj_rev
+  _cj unset agent.git --local --revision 1
+  assert_eq stale-revision "$(_cj_code)"
+  assert_eq "agent.git: pr" "$(cat .ai/config.local.yaml)"
+}
+
+test_config_keys_json_refuses_an_argument_and_a_project_without_jig() {
+  fixture_jig_repo
+  _cj keys extra
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_cj_code)"
+  rm -rf .ai/config.yaml
+  _cj keys
+  assert_eq 1 "$RC"
+  assert_eq not-initialised "$(_cj_code)"
+}
+
+test_config_json_is_in_the_help() {
+  run jig config help
+  assert_contains "$OUT" "jig config keys [--json]"
+  assert_contains "$OUT" "--revision <n>"
+}
+
+# --- the registry's metadata -----------------------------------------------------
+
+# Every key has a kind and a description, and what a kind promises is true:
+# the fixed sets are what the validator accepts, so a page that offers them
+# offers nothing the command then refuses.
+test_config_registry_rows_carry_their_metadata() {
+  fixture_repo
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    n=0
+    while IFS="|" read -r key default kind allowed desc extra; do
+      n=$((n + 1))
+      [ -z "$extra" ] || { echo "$key: more than five fields"; continue; }
+      case "$kind" in
+        boolean | choice | duration | number | text | list) ;;
+        *) echo "$key: kind \"$kind\" is not one of the kinds"; continue ;;
+      esac
+      [ -n "$desc" ] || echo "$key: no description"
+      case "$desc" in *\\\\*) echo "$key: backslash in description" ;; esac
+      case "$kind" in
+        boolean | choice) [ -n "$allowed" ] || echo "$key: a $kind with no allowed values" ;;
+        *) [ -z "$allowed" ] || echo "$key: allowed values on a $kind" ;;
+      esac
+      [ "$kind" != boolean ] || [ "$allowed" = true,false ] || echo "$key: a boolean allows true,false"
+    done < <(jig_config_key_rows)
+    [ "$n" -eq "$(jig_config_keys | wc -l | tr -d " ")" ] || echo "row count differs from jig_config_keys"
+    [ "$(jig_config_key_rows | grep -c "^[a-z][A-Za-z0-9_.]*|")" -eq "$n" ] || echo "a row does not start with its key"
+  '
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+test_config_registry_allowed_values_are_what_the_validator_accepts() {
+  fixture_repo
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    while IFS="|" read -r key default kind allowed desc; do
+      case "$kind" in boolean | choice) ;; *) continue ;; esac
+      jig_config_local_key "$key" || continue
+      for v in ${allowed//,/ }; do
+        jig_config_value_problem "$key" "$v" >/dev/null || echo "$key: allowed value $v is refused"
+      done
+      if jig_config_value_problem "$key" "not-one-of-them" >/dev/null; then
+        echo "$key: a value outside the set is accepted"
+      fi
+    done < <(jig_config_key_rows)
+  '
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+test_config_registry_default_of_a_choice_or_boolean_is_allowed() {
+  fixture_repo
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    while IFS="|" read -r key default kind allowed desc; do
+      case "$kind" in boolean | choice) ;; *) continue ;; esac
+      [ -n "$default" ] || continue
+      case ",$allowed," in *",$default,"*) ;; *) echo "$key: default $default is not allowed" ;; esac
+    done < <(jig_config_key_rows)
+  '
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT"
+}
+
+test_config_json_scope_and_secret_follow_the_lists_they_are_derived_from() {
+  fixture_jig_repo
+  _cj keys
+  local json=$OUT
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    for key in $(jig_config_keys | cut -d" " -f1); do
+      printf "%s %s\n" "$key" "$(jig_config_key_scope "$key")"
+    done
+  '
+  local want="$OUT" key got=""
+  OUT=$json
+  while read -r key _; do
+    [ -n "$key" ] || continue
+    # `scope` is one or two words: re-read it from the object.
+    got="$got$key $(_cj_entry "$key" | sed 's/.*"scope":"\([^"]*\)".*/\1/')
+"
+  done <<EOF
+$want
+EOF
+  assert_eq "$want" "$(printf '%s' "$got")"
+  assert_eq 1 "$(printf '%s\n' "$OUT" | grep -o '"secret":true' | wc -l | tr -d ' ')"
 }
