@@ -10,6 +10,12 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 
 ## Unreleased
 
+- **A task can be closed from a program, checked against what it read.** `jig task set <task-id>
+  status consolidated` takes `--revision <n>` and `--json` as `jig task resume` does: a write another
+  change has overtaken is refused with `stale-revision`, and the answer is the closed task, or a
+  refusal with its code — `not-closable` when the close is not offered (the knowledge decision is not
+  recorded, or the pull request is not merged), `not-found` for an unknown task. The two flags are
+  refused on any other key. See [Closing a task](/reading-jig-as-data#closing-a-task).
 - **A triage task closes as done.** `jig task set <task-id>-findings status consolidated` closes the
   task `jig task ship` filed for open review findings in one command, once you have decided each of
   them — no class, no review and no separate knowledge decision asked for. It is listed as finished;
