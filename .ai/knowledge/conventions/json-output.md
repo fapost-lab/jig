@@ -14,8 +14,9 @@ paths:
   - scripts/lib/forgecache.sh
   - scripts/lib/common.sh
   - scripts/lib/queue.sh
+  - scripts/lib/knowledge.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
-reviewed_at: 2026-10-26
+reviewed_at: 2026-11-04
 ---
 # A command's `--json` output
 
@@ -40,6 +41,14 @@ MUST:     look for --json among all its arguments before anything else runs, and
           its condition — it may withhold more than the guard refuses, never offer more;
           keep the text form's bytes; pin the whole shape of its data in its own test
           file and in schemas/json.md
+MAY:      escape a long free text outside json_quote when json_quote's pass over it is too
+          slow (it is quadratic in the length on bash 3.2: an 83 KB diff took minutes), as
+          knowledge.sh's _km_json_quote_text does with one awk pass; the result must be
+          what json_quote would print
+MUST:     hand JSON only bytes that are valid UTF-8 where the text comes from a file a person
+          committed (json_quote passes other bytes through, and one makes the line invalid):
+          knowledge.sh drops them (iconv -c, else every non-ASCII byte becomes ?) and the
+          answer says so with a `lossy` field where the text is the answer
 MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote); print
           to stdout outside the producer; rename or remove a field, or change its type,
           without raising schema; write anything but what the dispatcher already records;

@@ -12,13 +12,13 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge paths add|remove <id> <glob>
        jig knowledge summary <id> <text>
        jig knowledge stages add|remove <id> <stage>
-       jig knowledge proposed
+       jig knowledge proposed [--json]
        jig knowledge accept <id>...
        jig knowledge reject <id>...
        jig knowledge inventory [--scope <dir>]
        jig knowledge stale [--strict]
        jig knowledge reviewed <id> [--date YYYY-MM-DD]
-       jig knowledge sources [--diff <id>]
+       jig knowledge sources [--diff <id>] [--json]
        jig knowledge adr-convention
        jig knowledge changed --base <ref> | --task <id> [--to-review]"
 
@@ -32,6 +32,24 @@ cmd_knowledge() {
   case "$sub" in
     check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed | sources | adr-convention) ;;
     *) jig_die "$KM_USAGE" ;;
+  esac
+
+  # `--json` anywhere, on the two reads that offer it, runs the whole command as
+  # the producer of json_run (conventions/json-output.md), so every refusal is
+  # an envelope too. Looked for before anything else runs, `jig_require_init`
+  # included: not being initialised is a refusal with a code.
+  case "$sub" in
+    proposed | sources)
+      local arg
+      for arg in "$@"; do
+        if [ "$arg" = --json ]; then
+          # shellcheck source=lib/json.sh
+          . "$JIG_LIB/json.sh"
+          json_run _km_json_main "$sub" "$@"
+          return
+        fi
+      done
+      ;;
   esac
 
   jig_require_init
@@ -1124,8 +1142,8 @@ km_doc_by_id() {
     esac
   done < <(km_docs)
   if [ -z "$found" ]; then
-    [ -z "$near" ] || jig_die "knowledge: no document with id: $want (ids carry their type; did you mean: $near?)"
-    jig_die "knowledge: no document with id: $want"
+    [ -z "$near" ] || jig_fail not-found "knowledge: no document with id: $want (ids carry their type; did you mean: $near?)"
+    jig_fail not-found "knowledge: no document with id: $want"
   fi
   printf '%s\n' "$found"
 }
@@ -2239,35 +2257,262 @@ km_sources_list() {
     "$n" "$changed" "$unrecorded" "$missing"
 }
 
-km_sources_diff() {
-  local id="$1" doc src hash old
-  doc=$(km_doc_by_id "$id")
-  src=$(jig_knowledge_source "$doc")
-  [ -n "$src" ] || jig_die "knowledge sources: $id links no source"
-  jig_knowledge_read_path "$doc" >/dev/null \
-    || jig_die "knowledge sources: $id links $src, which is missing"
-  hash=$(fm_get "$doc" source_hash)
-  if [ -z "$hash" ]; then
-    printf 'knowledge sources: %s has no recorded source_hash; review %s whole\n' "$id" "$src"
+# _km_diff_facts <id> — what `knowledge sources --diff` and its `--json` both
+# need to know about one stub, set once: KM_DIFF_DOC (the stub's file),
+# KM_DIFF_SRC (its source), KM_DIFF_STATE — `missing` (the source is not a
+# readable file), `unrecorded` (no source_hash was ever recorded), `ok` (the
+# source hashes to it) or `changed` — KM_DIFF_HASH (the recorded hash, empty
+# when none) and KM_DIFF_STORED (1 when git still has the approved text).
+# The approved text exists only if git still has that blob: a source committed
+# at that version does, one accepted uncommitted may not. Nothing is stored to
+# make up for it, so the current text is then reviewed whole.
+_km_diff_facts() {
+  local id="$1"
+  KM_DIFF_DOC=$(km_doc_by_id "$id")
+  KM_DIFF_SRC=$(jig_knowledge_source "$KM_DIFF_DOC")
+  [ -n "$KM_DIFF_SRC" ] || jig_fail not-found "knowledge sources: $id links no source"
+  KM_DIFF_HASH=""
+  KM_DIFF_STORED=0
+  if ! jig_knowledge_read_path "$KM_DIFF_DOC" >/dev/null; then
+    KM_DIFF_STATE=missing
     return 0
   fi
-  if [ "$(jig_hash "$JIG_PROJECT/$src")" = "$hash" ]; then
-    printf 'knowledge sources: %s is unchanged since it was approved\n' "$src"
-    return 0
+  KM_DIFF_HASH=$(fm_get "$KM_DIFF_DOC" source_hash)
+  if [ -z "$KM_DIFF_HASH" ]; then
+    KM_DIFF_STATE=unrecorded
+  elif [ "$(jig_hash "$JIG_PROJECT/$KM_DIFF_SRC")" = "$KM_DIFF_HASH" ]; then
+    KM_DIFF_STATE=ok
+  else
+    KM_DIFF_STATE=changed
+    if git -C "$JIG_PROJECT" cat-file -e "$KM_DIFF_HASH^{blob}" 2>/dev/null; then
+      KM_DIFF_STORED=1
+    fi
   fi
-  # The approved text exists only if git still has that blob: a source
-  # committed at that version does, one accepted uncommitted may not. Nothing
-  # is stored to make up for it — the current text is then reviewed whole.
-  if ! git -C "$JIG_PROJECT" cat-file -e "$hash^{blob}" 2>/dev/null; then
-    printf 'knowledge sources: no stored text for %s; review %s whole\n' "$hash" "$src"
-    return 0
-  fi
+}
+
+# _km_diff_text — the unified diff of the approved text of the stub
+# _km_diff_facts described against its source now, on stdout. Only for a
+# `changed` state whose approved text is stored (KM_DIFF_STORED).
+_km_diff_text() {
+  local old
   old=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-approved.XXXXXX")
   jig_cleanup_add "$old"
-  git -C "$JIG_PROJECT" cat-file -p "$hash" > "$old" \
-    || { rm -f "$old"; jig_die "knowledge sources: could not read $hash"; }
-  diff -u --label "$src (approved)" --label "$src" "$old" "$JIG_PROJECT/$src" || true
+  git -C "$JIG_PROJECT" cat-file -p "$KM_DIFF_HASH" > "$old" \
+    || { rm -f "$old"; jig_die "knowledge sources: could not read $KM_DIFF_HASH"; }
+  diff -u --label "$KM_DIFF_SRC (approved)" --label "$KM_DIFF_SRC" "$old" "$JIG_PROJECT/$KM_DIFF_SRC" || true
   rm -f "$old"
+}
+
+km_sources_diff() {
+  local id="$1"
+  _km_diff_facts "$id"
+  case "$KM_DIFF_STATE" in
+    missing) jig_die "knowledge sources: $id links $KM_DIFF_SRC, which is missing" ;;
+    unrecorded)
+      printf 'knowledge sources: %s has no recorded source_hash; review %s whole\n' "$id" "$KM_DIFF_SRC"
+      return 0
+      ;;
+    ok)
+      printf 'knowledge sources: %s is unchanged since it was approved\n' "$KM_DIFF_SRC"
+      return 0
+      ;;
+  esac
+  if [ "$KM_DIFF_STORED" -ne 1 ]; then
+    printf 'knowledge sources: no stored text for %s; review %s whole\n' "$KM_DIFF_HASH" "$KM_DIFF_SRC"
+    return 0
+  fi
+  _km_diff_text
+}
+
+# --- the reads as JSON (schemas/json.md) ---------------------------------------
+
+# _km_json_main <proposed|sources> [args...] — the producer json_run runs for
+# `knowledge proposed|sources --json`; `--json` itself is dropped here.
+_km_json_main() {
+  local sub="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  jig_require_init
+  km_init
+  case "$sub" in
+    proposed)
+      [ ${#args[@]} -eq 0 ] || jig_fail usage "usage: jig knowledge proposed [--json]"
+      _km_proposed_json
+      ;;
+    sources)
+      if [ ${#args[@]} -eq 0 ]; then
+        _km_sources_json
+      elif [ "${args[0]}" = --diff ] && [ ${#args[@]} -eq 2 ]; then
+        _km_sources_diff_json "${args[1]}"
+      else
+        jig_fail usage "usage: jig knowledge sources [--diff <id>] [--json]"
+      fi
+      ;;
+  esac
+}
+
+# _km_utf8_clean <s> — _KM_CLEAN <- <s> without the bytes that are not valid
+# UTF-8, _KM_LOSSY <- true when there were any. json_quote lets such bytes
+# through as they are, and one of them makes the whole line invalid JSON: a
+# source file is anything a person committed. Strict UTF-8 is checked and
+# repaired by iconv; where there is none, every byte outside ASCII goes, which
+# is the lossy end of the same thing.
+_km_utf8_clean() {
+  local ascii src
+  _KM_CLEAN=$1
+  _KM_LOSSY=false
+  if command -v iconv >/dev/null 2>&1; then
+    # Bytes F5 to FF lead no character, and some iconv builds (macOS) accept
+    # them, so they go first. F4 can lead a character above U+10FFFF, which
+    # such a build accepts too: text that still has one takes the ASCII-only
+    # road below, lossy but valid.
+    src=$(printf '%sx' "$1" | LC_ALL=C tr -d '\365-\377')
+    src=${src%x}
+    if [ "$src" = "$1" ] && [ -z "$(printf '%s' "$1" | LC_ALL=C tr -cd '\364')" ] \
+      && printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ -z "$(printf '%s' "$src" | LC_ALL=C tr -cd '\364')" ]; then
+      # The sentinel keeps the trailing newlines $(...) would strip, and ends a
+      # truncated sequence the way a following byte would.
+      _KM_CLEAN=$(printf '%sx' "$src" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true)
+      _KM_CLEAN=${_KM_CLEAN%x}
+      _KM_LOSSY=true
+      return 0
+    fi
+  fi
+  # Printable ASCII, tab, carriage return and newline stay.
+  ascii=$(printf '\t\r -~')
+  if [ -z "$(printf '%s' "$1" | LC_ALL=C tr -d "\n$ascii")" ]; then
+    return 0
+  fi
+  _KM_CLEAN=$(printf '%sx' "$1" | LC_ALL=C tr -c "\n$ascii" '?')
+  _KM_CLEAN=${_KM_CLEAN%x}
+  _KM_LOSSY=true
+}
+
+# _km_json_print <json> — the producer's one value, free of bytes that are not
+# UTF-8 (the structure is ASCII; only a value's text can hold them).
+_km_json_print() {
+  _km_utf8_clean "$1"
+  printf '%s\n' "$_KM_CLEAN"
+}
+
+# _km_json_list <newline-separated items> — _JSON <- a JSON array of strings.
+_km_json_list() {
+  local item out=""
+  while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    json_quote "$item"
+    out="${out:+$out,}$_JSON"
+  done <<EOF
+$1
+EOF
+  _JSON="[$out]"
+}
+
+# _km_json_quote_text <s> — _JSON <- <s> as a JSON string, for a text that may
+# be large: json_quote is quadratic in the length on bash 3.2 (a 83 KB diff
+# took minutes), so the escaping is one awk pass over the lines instead. A
+# backslash, a quote and every control byte are escaped as json_quote does;
+# <s> is a diff, so it is lines ending in a newline and is checked UTF-8 already.
+_km_json_quote_text() {
+  _JSON=$(printf '%s' "$1" | LC_ALL=C awk '
+    BEGIN {
+      cls = "[\\\\\"" sprintf("%c", 1) "-" sprintf("%c", 31) "]"
+      for (i = 1; i < 32; i++) esc[sprintf("%c", i)] = sprintf("\\u%04x", i)
+      esc["\n"] = "\\n"; esc["\r"] = "\\r"; esc["\t"] = "\\t"
+      esc["\\"] = "\\\\"; esc["\""] = "\\\""
+      ORS = ""; print "\""
+    }
+    {
+      line = $0; out = ""
+      while (match(line, cls)) {
+        out = out substr(line, 1, RSTART - 1) esc[substr(line, RSTART, 1)]
+        line = substr(line, RSTART + 1)
+      }
+      print out line "\\n"
+    }
+    END { print "\"" }
+  ')
+}
+
+# _km_proposed_json — the data of `knowledge proposed --json`: every document
+# with status `proposed`, in the order the text form lists them, from the same
+# km_is_proposed. A stub also names its source; `source` is null for the rest.
+_km_proposed_json() {
+  local doc out="" sep="" rec
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    km_is_proposed "$doc" || continue
+    json_quote "$(fm_get "$doc" id)"; rec="{\"id\":$_JSON"
+    json_quote "$(fm_get "$doc" type)"; rec="$rec,\"type\":$_JSON"
+    _km_json_list "$(fm_list "$doc" domains)"; rec="$rec,\"domains\":$_JSON"
+    json_quote "$(km_rel "$doc")"; rec="$rec,\"path\":$_JSON"
+    _km_json_list "$(fm_list "$doc" paths)"; rec="$rec,\"paths\":$_JSON"
+    json_str_or_null "$(fm_get "$doc" summary)"; rec="$rec,\"summary\":$_JSON"
+    json_str_or_null "$(jig_knowledge_source "$doc")"; rec="$rec,\"source\":$_JSON}"
+    out="$out$sep$rec"
+    sep=,
+  done < <(km_docs)
+  _km_json_print "{\"proposals\":[$out]}"
+}
+
+# _km_sources_json — the data of `knowledge sources --json`: every stub with
+# the state km_source_states gives it, the one definition of "changed", and the
+# counts the text form's last line gives.
+_km_sources_json() {
+  local state doc src size n=0 changed=0 unrecorded=0 missing=0 t out="" sep="" rec
+  t=$(printf '\t')
+  while IFS="$t" read -r state doc src; do
+    [ -n "$doc" ] || continue
+    n=$((n + 1))
+    case "$state" in
+      changed) changed=$((changed + 1)) ;;
+      unrecorded) unrecorded=$((unrecorded + 1)) ;;
+      missing) missing=$((missing + 1)) ;;
+    esac
+    size=""
+    if [ "$state" != missing ] && [ -f "$JIG_PROJECT/$src" ]; then
+      size=$(wc -c < "$JIG_PROJECT/$src" | tr -d ' ')
+    fi
+    json_quote "$(fm_get "$doc" id)"; rec="{\"id\":$_JSON"
+    json_quote "$state"; rec="$rec,\"state\":$_JSON"
+    json_str_or_null "$(fm_get "$doc" status)"; rec="$rec,\"status\":$_JSON"
+    json_quote "$(km_rel "$doc")"; rec="$rec,\"path\":$_JSON"
+    json_quote "$src"; rec="$rec,\"source\":$_JSON"
+    json_int_or_null "$size"; rec="$rec,\"bytes\":$_JSON}"
+    out="$out$sep$rec"
+    sep=,
+  done < <(km_source_states)
+  _km_json_print "{\"sources\":[$out],\"counts\":{\"linked\":$n,\"changed\":$changed,\"unrecorded\":$unrecorded,\"missing\":$missing}}"
+}
+
+# _km_sources_diff_json <id> — the data of `knowledge sources --diff <id>
+# --json`, from the facts the text form prints from. `diff` is the unified diff
+# for a `changed` source whose approved text git still has, null otherwise: the
+# source is then reviewed whole. A missing source is an answer here, state
+# `missing`, where the text form refuses.
+_km_sources_diff_json() {
+  local id="$1" text="" lossy=false out
+  _km_diff_facts "$id"
+  if [ "$KM_DIFF_STATE" = changed ] && [ "$KM_DIFF_STORED" -eq 1 ]; then
+    # The sentinel keeps the trailing newlines $(...) would strip.
+    text=$(_km_diff_text && printf x)
+    text=${text%x}
+    _km_utf8_clean "$text"
+    text=$_KM_CLEAN
+    lossy=$_KM_LOSSY
+  fi
+  json_quote "$id"; out="{\"id\":$_JSON"
+  json_quote "$KM_DIFF_SRC"; out="$out,\"source\":$_JSON"
+  json_quote "$KM_DIFF_STATE"; out="$out,\"state\":$_JSON"
+  json_str_or_null "$KM_DIFF_HASH"; out="$out,\"approved_hash\":$_JSON"
+  if [ -n "$text" ]; then _km_json_quote_text "$text"; else _JSON=null; fi
+  out="$out,\"diff\":$_JSON,\"lossy\":$lossy}"
+  _km_json_print "$out"
 }
 
 # Stages are optional relevance metadata; never task state or a filtering policy.

@@ -4188,3 +4188,352 @@ test_adr_convention_ignores_implausibly_long_digit_runs() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "adr-dir: docs/adr  next 0002  width 4  example docs/adr/0001-a.md"
 }
+
+# --- knowledge proposed / sources --json (schemas/json.md) ----------------------
+
+# _kmj <args...> — run `jig knowledge <args> --json`: stdout in OUT and in
+# kmj.out, stderr in ERR, status in RC.
+_kmj() {
+  set +e
+  jig knowledge "$@" --json > kmj.out 2> kmj.err
+  RC=$?
+  set -e
+  OUT=$(cat kmj.out)
+  ERR=$(cat kmj.err)
+}
+
+# _kmj_data — OUT without its envelope: what follows `"generated_at":"…",`,
+# up to the closing brace of the envelope.
+_kmj_data() {
+  printf '%s\n' "$OUT" | sed -e 's/^{"schema":1,"revision":[0-9]*,"generated_at":"[^"]*",//' -e 's/}$//'
+}
+
+# _kmj_code — the error.code of the envelope in OUT.
+_kmj_code() {
+  printf '%s\n' "$OUT" | sed -n 's/.*"error":{"code":"\([^"]*\)".*/\1/p'
+}
+
+# _kmj_valid <file> — the file is one valid JSON value in strict UTF-8, or the
+# calling test fails. Skips where there is no tool to say so: python3 decodes
+# strictly, jq alone would repair invalid bytes, so an iconv check goes with it.
+_kmj_valid() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -I -c 'import json, sys; json.loads(sys.stdin.buffer.read().decode("utf-8"))' < "$1" \
+      || fail "not valid JSON: $(cat "$1")"
+  elif command -v jq >/dev/null 2>&1; then
+    jq -e . < "$1" >/dev/null || fail "not valid JSON: $(cat "$1")"
+  else
+    skip "neither python3 nor jq to validate JSON"
+  fi
+  if command -v iconv >/dev/null 2>&1; then
+    iconv -f UTF-8 -t UTF-8 < "$1" >/dev/null || fail "not valid UTF-8: $(cat "$1")"
+  fi
+  [ "$(wc -l < "$1" | tr -d ' ')" = 1 ] || fail "not exactly one line: $(cat "$1")"
+}
+
+# _kmj_accepted_stub — an accepted stub `convention-stub` over docs/x.md.
+_kmj_accepted_stub() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge accept convention-stub >/dev/null
+}
+
+test_proposed_json_is_an_empty_list_when_nothing_waits() {
+  km_setup
+  _kmj proposed
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"proposals":[]}' "$(_kmj_data)"
+  assert_eq "" "$ERR"
+}
+
+test_proposed_json_lists_each_proposal_with_its_facts() {
+  km_setup
+  jig knowledge new feature alpha --proposed --domains a,b --paths 'src/**' >/dev/null
+  jig knowledge summary feature-alpha 'Says: alpha, with a colon' >/dev/null
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  # Not waiting: neither listed.
+  jig knowledge new feature beta --domains a >/dev/null
+
+  _kmj proposed
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"proposals":[{"id":"feature-alpha","type":"feature","domains":["a","b"],"path":".ai/knowledge/features/alpha.md","paths":["src/**"],"summary":"Says: alpha, with a colon","source":null},{"id":"convention-stub","type":"convention","domains":["a"],"path":".ai/knowledge/sources/stub.md","paths":[],"summary":null,"source":"docs/x.md"}]}' \
+    "$(_kmj_data)"
+  _kmj_valid kmj.out
+  # The envelope's revision is the clone's, as every read reports it.
+  assert_contains "$OUT" '{"schema":1,"revision":'
+}
+
+test_proposed_json_lists_what_the_text_form_lists() {
+  km_setup
+  jig knowledge new feature alpha --proposed --domains a >/dev/null
+  jig knowledge new feature gamma --proposed --domains a >/dev/null
+  run jig knowledge proposed
+  assert_contains "$OUT" "knowledge proposed: 2 proposed"
+  _kmj proposed
+  assert_contains "$OUT" '"id":"feature-alpha"'
+  assert_contains "$OUT" '"id":"feature-gamma"'
+}
+
+test_proposed_json_refuses_an_argument_with_usage() {
+  km_setup
+  _kmj proposed bogus
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_kmj_code)"
+  assert_contains "$ERR" "usage: jig knowledge proposed [--json]"
+}
+
+test_knowledge_json_in_a_repository_without_jig_is_not_initialised() {
+  fixture_repo
+  _kmj proposed
+  assert_eq 1 "$RC"
+  assert_eq not-initialised "$(_kmj_code)"
+  _kmj sources
+  assert_eq 1 "$RC"
+  assert_eq not-initialised "$(_kmj_code)"
+}
+
+test_proposed_json_keeps_hostile_text_valid() {
+  km_setup
+  jig knowledge new feature alpha --proposed --domains a >/dev/null
+  # A summary written by hand: control bytes, and bytes that are not UTF-8.
+  sed 's/^summary:.*//' .ai/knowledge/features/alpha.md > alpha.new
+  { sed -n '1,/^status:/p' alpha.new; printf 'summary: "q\001z \377 \303"\n'; sed '1,/^status:/d' alpha.new; } \
+    > .ai/knowledge/features/alpha.md
+  rm alpha.new
+
+  _kmj proposed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"id":"feature-alpha"'
+  _kmj_valid kmj.out
+}
+
+test_sources_json_reports_every_state_and_the_counts() {
+  km_setup
+  km_track_file docs/ok.md "fine"
+  km_track_file docs/changed.md "before"
+  km_track_file docs/unrecorded.md "whatever"
+  km_track_file docs/gone.md "soon gone"
+  km_track_file docs/waiting.md "not yet"
+  local s
+  for s in ok changed unrecorded gone waiting; do
+    jig knowledge new convention "$s" --source "docs/$s.md" --proposed --domains a >/dev/null
+  done
+  for s in ok changed unrecorded gone; do
+    jig knowledge accept "convention-$s" >/dev/null
+  done
+  printf 'after\n' >> docs/changed.md
+  grep -v '^source_hash:' .ai/knowledge/sources/unrecorded.md > unrec.new
+  mv unrec.new .ai/knowledge/sources/unrecorded.md
+  rm docs/gone.md
+
+  _kmj sources
+  assert_eq 0 "$RC"
+  assert_eq "\"data\":{\"sources\":[$(
+    printf '%s' \
+      '{"id":"convention-changed","state":"changed","status":"active","path":".ai/knowledge/sources/changed.md","source":"docs/changed.md","bytes":13},' \
+      '{"id":"convention-gone","state":"missing","status":"active","path":".ai/knowledge/sources/gone.md","source":"docs/gone.md","bytes":null},' \
+      '{"id":"convention-ok","state":"ok","status":"active","path":".ai/knowledge/sources/ok.md","source":"docs/ok.md","bytes":5},' \
+      '{"id":"convention-unrecorded","state":"unrecorded","status":"active","path":".ai/knowledge/sources/unrecorded.md","source":"docs/unrecorded.md","bytes":9},' \
+      '{"id":"convention-waiting","state":"proposed","status":"proposed","path":".ai/knowledge/sources/waiting.md","source":"docs/waiting.md","bytes":8}'
+  )],\"counts\":{\"linked\":5,\"changed\":1,\"unrecorded\":1,\"missing\":1}}" "$(_kmj_data)"
+  _kmj_valid kmj.out
+
+  # The text form counts the same.
+  run jig knowledge sources
+  assert_contains "$OUT" "knowledge sources: 5 linked, 1 changed, 1 unrecorded, 1 missing"
+}
+
+test_sources_json_is_empty_without_stubs() {
+  km_setup
+  _kmj sources
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"sources":[],"counts":{"linked":0,"changed":0,"unrecorded":0,"missing":0}}' "$(_kmj_data)"
+}
+
+test_sources_json_refuses_bad_arguments_with_usage() {
+  km_setup
+  _kmj sources --diff
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_kmj_code)"
+  _kmj sources bogus
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_kmj_code)"
+  _kmj sources --diff a b
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_kmj_code)"
+}
+
+test_sources_diff_json_gives_the_diff_against_the_approved_text() {
+  _kmj_accepted_stub
+  printf 'line two\n' >> docs/x.md
+
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  local hash
+  hash=$(git hash-object --no-filters <(printf 'line one\n'))
+  assert_eq "\"data\":{\"id\":\"convention-stub\",\"source\":\"docs/x.md\",\"state\":\"changed\",\"approved_hash\":\"$hash\",\"diff\":\"--- docs/x.md (approved)\\n+++ docs/x.md\\n@@ -1 +1,2 @@\\n line one\\n+line two\\n\",\"lossy\":false}" \
+    "$(_kmj_data)"
+  _kmj_valid kmj.out
+}
+
+test_sources_diff_json_has_no_diff_for_an_unchanged_source() {
+  _kmj_accepted_stub
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"state":"ok","approved_hash":"'
+  assert_contains "$OUT" '"diff":null,"lossy":false}}'
+}
+
+test_sources_diff_json_has_no_diff_for_an_unrecorded_hash() {
+  _kmj_accepted_stub
+  grep -v '^source_hash:' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"id":"convention-stub","source":"docs/x.md","state":"unrecorded","approved_hash":null,"diff":null,"lossy":false}' "$(_kmj_data)"
+}
+
+test_sources_diff_json_has_no_diff_when_git_lost_the_approved_text() {
+  _kmj_accepted_stub
+  sed 's/^source_hash:.*/source_hash: 0000000000000000000000000000000000000000/' \
+    .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"id":"convention-stub","source":"docs/x.md","state":"changed","approved_hash":"0000000000000000000000000000000000000000","diff":null,"lossy":false}' "$(_kmj_data)"
+}
+
+test_sources_diff_json_answers_a_missing_source_as_state_missing() {
+  _kmj_accepted_stub
+  rm docs/x.md
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"id":"convention-stub","source":"docs/x.md","state":"missing","approved_hash":null,"diff":null,"lossy":false}' "$(_kmj_data)"
+  # The text form still refuses.
+  run jig knowledge sources --diff convention-stub
+  assert_eq 1 "$RC"
+}
+
+test_sources_diff_json_refuses_an_unknown_id_and_a_document_with_no_source() {
+  km_setup
+  jig knowledge new feature plain --proposed --domains a >/dev/null
+  _kmj sources --diff nope
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_kmj_code)"
+  assert_contains "$OUT" "knowledge: no document with id: nope"
+  _kmj sources --diff feature-plain
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_kmj_code)"
+  assert_contains "$OUT" "knowledge sources: feature-plain links no source"
+  # Text form: same words, same status.
+  run jig knowledge sources --diff nope
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "jig: error: knowledge: no document with id: nope"
+}
+
+# A diff can hold anything: quotes, backslashes, tabs, carriage returns,
+# control bytes, text in other scripts. It must come out as one valid line, and
+# the diff must read back unchanged.
+test_sources_diff_json_escapes_whatever_the_diff_holds() {
+  _kmj_accepted_stub
+  printf 'say "hi" \\ C:\\temp\\new\ttab\rcr\001ctl\033esc \320\237\321\200\320\270\320\262\320\265\321\202 \342\202\254\n' >> docs/x.md
+
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '+say \"hi\" \\ C:\\temp\\new\ttab\rcr\u0001ctl\u001besc'
+  assert_contains "$OUT" "Привет €"
+  assert_contains "$OUT" '"lossy":false}'
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -I -c '
+import json, sys
+d = json.loads(sys.stdin.buffer.read().decode("utf-8"))["data"]["diff"]
+want = "+say \"hi\" \\ C:\\temp\\new\ttab\rcr\x01ctl\x1besc Привет €\n"
+assert want in d, repr(d)
+' < kmj.out
+  fi
+}
+
+# Bytes that are not UTF-8 are dropped from the diff, and the answer says so;
+# the rest of the diff, other scripts included, is untouched.
+test_sources_diff_json_stays_valid_when_the_source_is_not_utf8() {
+  _kmj_accepted_stub
+  printf 'bad \377 byte, cut \303\n\320\237 ok \303' >> docs/x.md
+
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"lossy":true}'
+  assert_contains "$OUT" '+bad  byte, cut '
+  assert_contains "$OUT" 'П ok '
+}
+
+test_sources_diff_json_stays_valid_in_the_c_locale_too() {
+  _kmj_accepted_stub
+  printf 'bad \377 \320\237\n' >> docs/x.md
+  set +e
+  LC_ALL=C jig knowledge sources --diff convention-stub --json > kmj.out 2>/dev/null
+  RC=$?
+  set -e
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$(cat kmj.out)" '"lossy":true}'
+}
+
+test_sources_json_stays_valid_when_a_source_path_is_not_utf8() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  sed 's|^source: docs/x.md|source: docs/x\377.md|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+
+  _kmj sources
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+}
+
+# Where there is no iconv, every byte outside ASCII goes instead: lossy, but
+# valid. The shell's `command` is shadowed so that iconv is not found.
+test_utf8_clean_without_iconv_keeps_ascii_and_drops_the_rest() {
+  local out
+  out=$(bash -c '
+    set -eu
+    . "$1/scripts/lib/knowledge.sh"
+    command() { if [ "$1" = -v ] && [ "$2" = iconv ]; then return 1; fi; builtin command "$@"; }
+    _km_utf8_clean "$(printf "a\tb \303\251 \377 z")"
+    printf "%s|%s" "$_KM_LOSSY" "$_KM_CLEAN"
+    _km_utf8_clean "plain
+two"
+    printf "|%s|%s" "$_KM_LOSSY" "$_KM_CLEAN"
+  ' _ "$JIG_HOME")
+  assert_eq "$(printf 'true|a\tb ?? ? z|false|plain\ntwo')" "$out"
+}
+
+# json_quote is quadratic on bash 3.2: a diff of tens of kilobytes took minutes
+# through it. The diff is escaped in one pass, so a large one answers at once.
+test_sources_diff_json_answers_a_large_diff_in_one_pass() {
+  _kmj_accepted_stub
+  local i=0
+  while [ "$i" -lt 3000 ]; do
+    printf 'line %d with "quotes" and \\ backslashes\ttab\n' "$i"
+    i=$((i + 1))
+  done >> docs/x.md
+
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '+line 2999 with \"quotes\" and \\ backslashes\ttab\n'
+}
+
+# Some iconv builds accept a lead byte above U+10FFFF as UTF-8; JSON parsers do not.
+test_sources_diff_json_drops_a_character_above_the_unicode_range() {
+  _kmj_accepted_stub
+  printf 'beyond \364\220\200\200 and \370\210\200\200\200 end\n' >> docs/x.md
+
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"lossy":true}'
+}
