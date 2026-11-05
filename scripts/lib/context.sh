@@ -219,34 +219,38 @@ _ctx_domain_matches_any() {
   return 1
 }
 
-# _ctx_doc_reason <doc> <files> <domains> [block] — print "paths: <glob>" or
-# "domains: <domain>" for the first matching entry (frontmatter order,
-# paths checked before domains) and exit 0; exit 1 and print nothing when
-# neither matches. Takes the block already read when the caller has one
-# (_ctx_matched_docs), so this and it share one fm_block per document instead
-# of each reading the file again.
-_ctx_doc_reason() {
-  local doc="$1" files="$2" domains="$3" block="${4-}" glob dom
-  [ $# -ge 4 ] || block=$(fm_block "$doc")
+# _ctx_doc_reason_v <var> <files> <domains> <block> — set <var> to "paths: <glob>"
+# or "domains: <domain>" for the first matching entry (frontmatter order, paths
+# checked before domains) and exit 0; exit 1 with <var> empty when neither
+# matches. Without a process: _ctx_matched_docs asks it for every document.
+_ctx_doc_reason_v() {
+  local __cdr_files="$2" __cdr_domains="$3" __cdr_block="$4" __cdr_list __cdr_item
+  printf -v "$1" '%s' ''
 
-  if [ -n "$files" ]; then
-    while IFS= read -r glob; do
-      [ -n "$glob" ] || continue
-      if _ctx_path_matches_any "$glob" "$files"; then
-        printf 'paths: %s\n' "$glob"
+  if [ -n "$__cdr_files" ]; then
+    fm_list_block_v __cdr_list "$__cdr_block" paths
+    while IFS= read -r __cdr_item; do
+      [ -n "$__cdr_item" ] || continue
+      if _ctx_path_matches_any "$__cdr_item" "$__cdr_files"; then
+        printf -v "$1" 'paths: %s' "$__cdr_item"
         return 0
       fi
-    done < <(fm_list_block "$block" paths)
+    done <<EOF
+$__cdr_list
+EOF
   fi
 
-  if [ -n "$domains" ]; then
-    while IFS= read -r dom; do
-      [ -n "$dom" ] || continue
-      if _ctx_domain_matches_any "$dom" "$domains"; then
-        printf 'domains: %s\n' "$dom"
+  if [ -n "$__cdr_domains" ]; then
+    fm_list_block_v __cdr_list "$__cdr_block" domains
+    while IFS= read -r __cdr_item; do
+      [ -n "$__cdr_item" ] || continue
+      if _ctx_domain_matches_any "$__cdr_item" "$__cdr_domains"; then
+        printf -v "$1" 'domains: %s' "$__cdr_item"
         return 0
       fi
-    done < <(fm_list_block "$block" domains)
+    done <<EOF
+$__cdr_list
+EOF
   fi
 
   return 1
@@ -267,19 +271,18 @@ _ctx_matched_docs() {
   local block source_doc id
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
-    fm_has "$doc" || continue
-    block=$(fm_block "$doc")
+    fm_read_v block "$doc" || continue
 
     if [ "$show_all" -ne 1 ]; then
-      status=$(fm_get_block "$block" status)
+      fm_get_block_v status "$block" status
       jig_knowledge_status_resolvable "$status" || continue
     fi
 
-    reason=$(_ctx_doc_reason "$doc" "$files" "$domains" "$block") || continue
+    _ctx_doc_reason_v reason "$files" "$domains" "$block" || continue
     relpath=$(_ctx_read_path "$doc") || exit 1
-    source_doc=$(fm_get_block "$block" source)
+    fm_get_block_v source_doc "$block" source
     if [ -n "$source_doc" ]; then
-      id=$(fm_get_block "$block" id)
+      fm_get_block_v id "$block" id
       reason="$reason; linked by $id"
     fi
     out="$out

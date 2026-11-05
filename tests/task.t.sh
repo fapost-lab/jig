@@ -11001,6 +11001,33 @@ test_task_list_json_starts_a_fixed_number_of_processes_per_task() {
   [ "$few" -le 1 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
 }
 
+# `jig context` is what `task list --json` pays for a task with a review receipt
+# (_task_receipt_context_lines): a process per glob and per document took 9 s on
+# a project of 139 documents.
+test_context_starts_no_process_per_document_it_does_not_select() {
+  task_setup
+  local i=1 two six ten
+  mkdir -p .ai/knowledge/features
+  _tl_context_docs() {
+    while [ "$i" -le "$1" ]; do
+      {
+        printf -- '---\nid: feature-d%s\ntype: feature\nstatus: active\n' "$i"
+        printf 'domains:\n  - nothing-asked\npaths:\n  - "elsewhere/%s/**"\n  - "other/%s/*.sh"\n---\n' "$i" "$i"
+      } > ".ai/knowledge/features/d$i.md"
+      i=$((i + 1))
+    done
+  }
+  _tl_context_docs 2
+  _tl_forks context --no-task --files README.md --format paths >/dev/null || fail "context failed under the probe"
+  two=$(_tl_forks context --no-task --files README.md --format paths) || fail "context failed under the probe"
+  _tl_context_docs 6
+  six=$(_tl_forks context --no-task --files README.md --format paths) || fail "context failed under the probe"
+  _tl_context_docs 10
+  ten=$(_tl_forks context --no-task --files README.md --format paths) || fail "context failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more documents started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more documents started $((ten - six)) more processes (6: $six, 10: $ten)"
+}
+
 test_status_json_starts_a_fixed_number_of_processes_per_task() {
   task_setup
   local two six ten few many

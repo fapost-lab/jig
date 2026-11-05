@@ -2227,8 +2227,8 @@ export JIG_DOC_TYPES
 # consumer of jig_knowledge_docs — silently, which is the worst way to lose a
 # document (design.md, "Global documents are recognised by path").
 jig_knowledge_is_global() {
-  local rel
-  rel=$(jig_relpath "$1" "$JIG_PROJECT")
+  # jig_relpath without its `$(...)`: asked for every document of a walk.
+  local rel="${1#"${JIG_PROJECT%/}/"}"
   case "$rel" in
     "$JIG_AI_DIR/knowledge/GLOSSARY.md" | \
       "$JIG_AI_DIR/knowledge/ARCHITECTURE.md" | \
@@ -2341,12 +2341,42 @@ jig_knowledge_read_path() {
 # matcher context.sh and knowledge.sh both call.
 jig_glob_pattern() {
   local pattern
-  pattern=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/?/\\?/g; s/\[/\\[/g; s/\]/\\]/g')
-  pattern=$(printf '%s' "$pattern" | sed 's#[*][*]/#*#g; s#[*][*]#*#g')
-  case "$pattern" in
-    */) printf '%s*' "$pattern" ;;
-    *) printf '%s' "$pattern" ;;
+  jig_glob_pattern_v pattern "$1"
+  printf '%s' "$pattern"
+}
+
+# jig_glob_pattern_v <var> <glob> — jig_glob_pattern into <var>, without a
+# process: `jig context` asks it for every glob of every document. Literal
+# replacements through _jig_replace_all_v, not `${var//a/b}`: what a replacement
+# means there differs between bash 3.2 and the bash 5.2 of Linux and Git Bash.
+jig_glob_pattern_v() {
+  local __jgp_out="$2"
+  _jig_replace_all_v __jgp_out "$__jgp_out" "\\" "\\\\"
+  _jig_replace_all_v __jgp_out "$__jgp_out" '?' '\?'
+  _jig_replace_all_v __jgp_out "$__jgp_out" '[' '\['
+  _jig_replace_all_v __jgp_out "$__jgp_out" ']' '\]'
+  _jig_replace_all_v __jgp_out "$__jgp_out" '**/' '*'
+  _jig_replace_all_v __jgp_out "$__jgp_out" '**' '*'
+  case "$__jgp_out" in
+    */) __jgp_out="$__jgp_out*" ;;
   esac
+  printf -v "$1" '%s' "$__jgp_out"
+}
+
+# _jig_replace_all_v <var> <text> <find> <with> — every <find> in <text>, left
+# to right and never overlapping, replaced by <with>; all three literal.
+_jig_replace_all_v() {
+  local __jra_rest="$2" __jra_out=""
+  while :; do
+    case "$__jra_rest" in
+      *"$3"*)
+        __jra_out="$__jra_out${__jra_rest%%"$3"*}$4"
+        __jra_rest="${__jra_rest#*"$3"}"
+        ;;
+      *) break ;;
+    esac
+  done
+  printf -v "$1" '%s' "$__jra_out$__jra_rest"
 }
 
 # --- glob matching (one matcher, shared by context.sh and knowledge.sh) -------
@@ -2370,7 +2400,7 @@ jig_glob_pattern() {
 # every glob of every document).
 jig_path_matches_any() {
   local glob="$1" files="$2" pattern file
-  pattern=$(jig_glob_pattern "$glob")
+  jig_glob_pattern_v pattern "$glob"
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     # shellcheck disable=SC2254
