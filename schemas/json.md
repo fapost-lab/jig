@@ -43,13 +43,25 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
-| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), or a knowledge document that does not exist or links no source (`jig knowledge sources --diff`) |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
+| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `not-closable` | `jig task set <id> status consolidated` was asked for a task Jig does not offer to close: its knowledge decision is not recorded, or its pull request is not merged (the forge says so, or cannot be asked). `message` is the reason word for word, the one the task's `close` action carries. Nothing was written |
-| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending. Nothing was written |
+| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` on an item that names a task. Nothing was written |
+| `git-not-allowed` | a write in Jig's own tree was asked for at `agent.git: none`, where Jig commits nothing. `message` names the setting. Nothing was written |
+| `write-busy` | another write in Jig's own tree is running in this clone. Nothing was written; try again in a moment |
+| `branch-checked-out` | the write's branch is checked out somewhere, and Jig never moves a checkout; `message` names the path. Nothing was written |
+| `branch-diverged` | the write's branch and origin's have diverged. Nothing was written, and nothing is forced |
+| `branch-has-other-commits` | the write's branch has commits here that no write of Jig's made and origin does not have: a person's, which a write does not publish. `message` names the branch. Nothing was written |
+| `base-not-on-origin` | the write's base is not on origin, at `agent.git: push` or above: a branch cut from it would carry out whatever is on it, and no pull request could open into it. `message` names the base to push. Nothing was written |
+| `tree-in-the-way` | an unfinished write left something at Jig's tree that git will not remove. `message` names the path for a person to delete; a retry does not clear it. Nothing was written |
+| `commit-refused` | git refused the commit in Jig's own tree, usually a project's hook; `message` holds what it said. Nothing waits |
+| `epic-missing` | a roadmap write found its spec on an open epic that is neither here nor on origin. Nothing was written |
+| `not-linkable` | `jig spec item file` cannot link this task or file this item: the task is finished, started or linked to another spec, or the item is checked. Nothing was written |
+| `not-proposed` | `jig knowledge accept|reject` named a document that is not a proposal: decided already, on the branch if that decision still waits. Nothing was written |
+| `source-missing` | `jig knowledge accept|reviewed` named a stub whose source is missing, invalid or not tracked. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. For `jig upgrade --land`: uncommitted changes, a checkout on another branch than the base or the upgrade's, the base checked out in another worktree, or a base that cannot be fast-forwarded to origin's. `message` lists every reason, one per line, each with what to do |
 | `unknown-key` | `jig config set --json` was given a name no reader of Jig reads. Nothing was written |
 | `not-local` | `jig config set --json` was given a key Jig reads but only the team's `.ai/config.yaml` answers for. Nothing was written |
@@ -225,6 +237,7 @@ A spec:
 | `missing_files` | array of strings | which of `spec.md` and `roadmap.md` are missing — what the text form calls `incomplete`; `[]` for none |
 | `release` | string or null | `patch`, `minor` or `major` from the roadmap's `Release:` line (schemas/spec.md); `null` when it has none, or one `spec epic` and `spec ship` would refuse |
 | `epic` | object or null | the roadmap's `Epic:` line, below; `null` when it has none |
+| `waiting` | object or null | an edit of this roadmap committed in Jig's own tree that has not landed: a [write](#jig-writes---json) with `progress` and `phases` beside it, the roadmap as it is on that branch. `null` when none waits |
 | `progress` | object or null | `{"done", "total", "filed", "fog"}`, integers: the sum of `phases`, the counts the text form prints as `roadmap D/T done, F filed, fog G` (off an open epic the text form prints `progress is on the epic` instead, and these are the epic's). `null` when the roadmap could not be read — no `roadmap.md`, a missing epic branch, or an epic ref without it |
 | `phases` | array | one object per roadmap section the status page counts (`spec_phase_counts`), in roadmap order; `[]` when `progress` is `null` |
 
@@ -251,6 +264,7 @@ An item — the counts above are the sum of its fields, read in the same pass:
 
 | Field | Type | Value |
 |---|---|---|
+| `id` | string | the item's handle: `i-` and 12 hex digits, a digest of its text without a leading task id or `fog:` and with whitespace collapsed; `-2`, `-3` for a repeat of the same text, in roadmap order. It holds through a move, a check and a filing. Rewording the item changes it, and a write naming the old one is refused. Compare it, do not parse it |
 | `text` | string | the line after its checkbox, indented continuation lines joined with a space; tabs become spaces and trailing whitespace is dropped |
 | `checked` | boolean | `[x]` or `[X]` |
 | `done` | boolean | what the item counted as: `checked`, or its `task` is known in this checkout to have merged — `consolidated`, or logged `remote=merged` by the newest housekeeping run (schemas/spec.md) |
@@ -260,6 +274,86 @@ An item — the counts above are the sum of its fields, read in the same pass:
 `done` counts the items whose `done` is `true`, `filed` the other unchecked ones with a `task`,
 `fog` the unchecked ones with `fog`. The roadmap is read where `jig status` reads it: an open epic's from its ref with no
 fetch, every other one from this checkout.
+
+## `jig spec item` writes
+
+`jig spec item add|move|file <spec> … --json` change a roadmap on a branch of its own, in Jig's own
+tree (adr-20261104-a-write-goes-in-jigs-own-tree): nobody's checkout moves. `--revision <n>` as the
+queue writes take it, and the same `stale-revision`. An item is named by its `id`, resolved in the
+roadmap on the write branch, so `waiting.phases` holds the handles of the edits still on their way.
+
+```
+jig spec item add  <spec> --phase <n> --text <t> [--after <item> | --top | --bottom]
+jig spec item move <spec> <item> [--phase <n>] [--after <item> | --top | --bottom]
+jig spec item file <spec> <item> --task <task-id>
+```
+
+`add` goes to the bottom of its phase unless told otherwise. `move` needs `--phase` or a place.
+`file` names a task filed earlier (`jig task new`): the item gets `` `<task-id>` — `` in front, `fog:`
+gone, and the task its `Spec:` line, so `jig spec link` afterwards answers "already linked".
+
+```json
+{"spec": "idea-x", "item": {"id": "i-7d2bc8dc7707", "text": "Export a page", "checked": false, "task": null, "fog": false, "phase": 2}, "write": <write>}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `spec` | string | the spec |
+| `item` | object | the item as the roadmap on the branch now has it: `id`, `text`, `checked`, `task`, `fog` as in `jig spec list --json`, and `phase`, `null` for a section that is not a phase |
+| `write` | object | where the edit went, [below](#jig-writes---json) |
+
+Refusals: `usage`; `not-found` for a spec neither on its branch nor on the base, an item or phase the
+roadmap on the branch does not have, or a task that does not exist; `already-exists` for an item with
+this text, or an item that names a task already; `not-linkable` for a task `file` cannot link: finished,
+started, linked to another spec, or an item already checked; `epic-missing` for an open epic neither
+here nor on origin; and the refusals of every write, below.
+
+## `jig knowledge accept|reject|reviewed` writes
+
+With `--json` or `--revision <n>`, a decision is committed on `knowledge/decisions`, in Jig's own tree
+(adr-20261104-a-write-goes-in-jigs-own-tree). Without either, the text form changes the working tree,
+as it always did. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
+all.
+
+```json
+{"decisions": [{"id": "feature-alpha", "decision": "accepted", "path": ".ai/knowledge/features/alpha.md"}], "write": <write>}
+```
+
+`decision` is `accepted`, `rejected` or `reviewed`. A document is judged as it is on the branch, so one
+already decided and waiting is `not-proposed`. Refusals: `usage`; `not-found` for an id no document
+has; `not-proposed` for an `accept` or `reject` of a document that is not a proposal; `source-missing`
+for a stub whose source is missing; and the refusals of every write, below.
+
+## `jig writes --json`
+
+A write made in Jig's own tree, as the answer of each command above calls it `write`, and as
+`jig writes [list] --json` lists what waits. `jig writes ship <target> --json` carries one as far as
+`agent.git` now allows, and answers `{"write": <write>}`: a push that failed, a pull request after the
+level was raised, and at `merge` the merge, once CI passed. A write itself never merges.
+
+```json
+{"target": "spec:idea-x", "branch": "spec/idea-x", "base": "main", "commit": "4354faecc647079ac9e77cc352e8d007374c250e", "commits": 1, "pushed": true, "pr": null, "merged": false, "committed": true, "level": "push", "note": "agent.git is push: the pull request is yours"}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `target` | string | what it is for: `spec:<id>` or `knowledge`, what `jig writes ship` takes |
+| `branch` | string | the write branch: `spec/<id>` or `knowledge/decisions`; with `-2`, `-3` when the name is taken by a branch that landed by squash, whose pull request was closed, or that origin dropped |
+| `base` | string | where its pull request goes: the default branch, or the spec's open epic |
+| `commit` | string or null | the branch's tip; `null` when a write changed nothing on a branch that carries nothing |
+| `commits` | integer | how many commits the base does not have |
+| `pushed` | boolean | origin's ref, as of the last fetch or push, holds the tip |
+| `pr` | string or null | the pull request's URL; `null` when there is none yet |
+| `merged` | boolean | `true` only from `jig writes ship` that merged it, for this answer; nothing that merged waits |
+| `committed` | boolean | answers only: this write made a commit. `false` when it changed nothing |
+| `level` | string | answers only: the `agent.git` it went by |
+| `note` | string or null | answers only: for a person, why it went no further: whose step is next, or what failed. A push or pull request that failed is said here and is not a refusal: the commit stands |
+
+The list is `{"writes": [<write>, ...]}`, each without the three answer-only fields; a write leaves it
+once its tip is an ancestor of its base as of the last fetch, the paths it touched read the same on the
+base, or it was merged. Like every read it asks no forge and fetches nothing, so a merge shows after
+the next fetch. Refusals of every write: `git-not-allowed` at `agent.git: none`; `stale-revision`;
+`write-busy`; `branch-checked-out`; `branch-diverged`; `branch-has-other-commits`; `base-not-on-origin`; `tree-in-the-way`; `commit-refused`. `jig writes ship` adds `not-found`, also when the record's pull request was closed unmerged or merged with the tip: it sends nothing, and the next edit takes a new name.
 
 ## `jig status --json`
 
@@ -624,7 +718,7 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 (`jig knowledge proposed --json`); the text forms print what they always did.
 
 ```json
-{"proposals": [<proposal>, ...]}
+{"proposals": [<proposal>, ...], "waiting": <write or null>}
 ```
 
 | Field | Type | Value |
@@ -635,9 +729,11 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `proposals[].path` | string | the document's file, relative to the repository |
 | `proposals[].summary` | string or null | its `summary`; `null` when it has none |
 | `proposals[].source` | string or null | for a stub, the file it links, relative to the repository; `null` for any other document |
+| `proposals[].waiting` | object or null | a decision on this document committed in Jig's own tree that has not landed: `decision` (`accepted`, `rejected`), `branch` and `pr` (string or null). The document here still says `proposed`, and it is until that lands. `null` when none waits |
+| `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 
 ```json
-{"sources": [<source>, ...], "counts": {"linked": 2, "changed": 1, "unrecorded": 0, "missing": 0}}
+{"sources": [<source>, ...], "counts": {"linked": 2, "changed": 1, "unrecorded": 0, "missing": 0}, "waiting": <write or null>}
 ```
 
 | Field | Type | Value |
@@ -649,6 +745,8 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `sources[].path` | string | the stub's file, relative to the repository |
 | `sources[].source` | string | the linked file, relative to the repository |
 | `sources[].bytes` | integer or null | the linked file's size in bytes; `null` when it is `missing` or not a file |
+| `sources[].waiting` | object or null | a decision on this stub waiting on a branch, as on a proposal; `decision` is also `reviewed` here. `state` stays what it is here until that lands. `null` when none waits |
+| `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 | `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints; what `jig status` counts as changed is `changed` plus `unrecorded` |
 
 `jig knowledge sources --diff <id> --json` answers for one stub:

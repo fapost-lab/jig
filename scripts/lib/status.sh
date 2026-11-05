@@ -322,6 +322,16 @@ $rel"
   else
     printf 'specs: none\n'
   fi
+  # Only when something waits: the edits Jig committed in its own tree that have not
+  # landed. Counted, not listed, as specs are: `jig writes` lists.
+  # shellcheck source=lib/owntree.sh
+  . "$JIG_LIB/owntree.sh"
+  local waiting_target waiting=0
+  while IFS= read -r waiting_target; do
+    [ -n "$waiting_target" ] || continue
+    if ot_waiting "$waiting_target"; then waiting=$((waiting + 1)); fi
+  done < <(ot_targets)
+  [ "$waiting" -eq 0 ] || printf 'writes: %s waiting (jig writes)\n' "$waiting"
 
   local found=0 rec line default_base blocking bcount autopilot_note qlines qon qreason qago
   [ -n "$_STATUS_LIVE_READY" ] || _status_live_collect

@@ -10,6 +10,18 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 
 ## Unreleased
 
+- **A roadmap can be changed, and knowledge decided, without touching your checkout.** `jig spec item
+  add|move|file` and `jig knowledge accept|reject|reviewed --revision <n> --json` commit on a branch of their
+  own (`spec/<id>`, `knowledge/decisions`) in a tree Jig makes and removes, and go as far as `agent.git`
+  allows; edits in a row share one pull request. The answer names the branch, commit and pull request and
+  whether it merged, refusals come as codes, and at `agent.git: none` they are refused. Each roadmap item in
+  `jig spec list --json` has an `id`, and what waits shows as `waiting` there and in `jig knowledge proposed
+  --json` and `sources --json`, in `jig writes` and on a `writes:` line of `jig status`. `jig writes ship`
+  carries a waiting edit further, and merges it at `agent.git: merge`. `jig knowledge reviewed` takes several
+  ids. The text forms of `accept`, `reject` and `reviewed` still change your working tree. With
+  `--separate-git-dir`, in a submodule or in the worktrees of a bare repository, the clone's revision moves to
+  `<git-dir>/jig/revision`, so a revision held from before reads as stale once. See
+  [Writes on a branch of their own](/reading-jig-as-data#writes-on-a-branch-of-their-own).
 - **A task can be closed from a program, checked against what it read.** `jig task set <task-id>
   status consolidated` takes `--revision <n>` and `--json` as `jig task resume` does: a write another
   change has overtaken is refused with `stale-revision`, and the answer is the closed task, or a
@@ -21,8 +33,7 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   `jig knowledge sources --json` gives each linked source's state (`changed`, `unrecorded`, `missing`,
   `ok`) and `jig knowledge sources --diff <id> --json` the difference between the approved text and
   the file now, always as valid JSON whatever bytes the file holds. A document that does not exist is
-  refused as `not-found`. The text forms are unchanged, and the writes (`accept`, `reject`,
-  `reviewed`) still have no `--json`. See [Reading Jig as data](/reading-jig-as-data#knowledge-waiting-for-a-person).
+  refused as `not-found`. The text forms are unchanged. See [Reading Jig as data](/reading-jig-as-data#knowledge-waiting-for-a-person).
 - **A triage task closes as done.** `jig task set <task-id>-findings status consolidated` closes the
   task `jig task ship` filed for open review findings in one command, once you have decided each of
   them — no class, no review and no separate knowledge decision asked for. It is listed as finished;

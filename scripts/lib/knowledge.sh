@@ -13,11 +13,11 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge summary <id> <text>
        jig knowledge stages add|remove <id> <stage>
        jig knowledge proposed [--json]
-       jig knowledge accept <id>...
-       jig knowledge reject <id>...
+       jig knowledge accept <id>... [--revision <n>] [--json]
+       jig knowledge reject <id>... [--revision <n>] [--json]
        jig knowledge inventory [--scope <dir>]
        jig knowledge stale [--strict]
-       jig knowledge reviewed <id> [--date YYYY-MM-DD]
+       jig knowledge reviewed <id>... [--date YYYY-MM-DD] [--revision <n>] [--json]
        jig knowledge sources [--diff <id>] [--json]
        jig knowledge adr-convention
        jig knowledge changed --base <ref> | --task <id> [--to-review]"
@@ -49,6 +49,34 @@ cmd_knowledge() {
           return
         fi
       done
+      ;;
+  esac
+
+  # A decision a program sends, or a person checked against a revision, is committed
+  # on a branch of its own in Jig's own tree; the plain text form writes the working
+  # tree, as `jig-accept` and `jig-consolidate` mean it to
+  # (adr-20261104-a-write-goes-in-jigs-own-tree).
+  case "$sub" in
+    accept | reject | reviewed)
+      local darg as_tree=""
+      for darg in "$@"; do
+        case "$darg" in
+          --json)
+            # shellcheck source=lib/json.sh
+            . "$JIG_LIB/json.sh"
+            _KM_DECIDE_JSON=1
+            json_run _km_decide_main "$sub" "$@"
+            jig_status_page_touch --full
+            return
+            ;;
+          --revision) as_tree=1 ;;
+        esac
+      done
+      if [ -n "$as_tree" ]; then
+        _km_decide_main "$sub" "$@"
+        jig_status_page_touch --full
+        return
+      fi
       ;;
   esac
 
@@ -485,10 +513,11 @@ km_summary() {
 # two commands refuse the same things, in the same words.
 km_require_proposed() {
   local id="$1" doc status
-  doc=$(km_doc_by_id "$id")
+  # `|| exit 1`, not set -e: a caller asks this in a condition, which turns it off.
+  doc=$(km_doc_by_id "$id") || exit 1
   status=$(fm_get "$doc" status)
   [ "$status" = proposed ] \
-    || jig_die "knowledge: not a proposed document: $id (status: ${status:-none})"
+    || jig_fail not-proposed "knowledge: not a proposed document: $id (status: ${status:-none})"
   printf '%s\n' "$doc"
 }
 
@@ -521,9 +550,9 @@ km_dedupe_ids() {
 #
 # Every id is validated before any document is written: a review loop that promotes
 # nine documents and dies on the tenth must not leave the batch half-applied.
-km_accept() {
+km_accept_check() {
   [ $# -ge 1 ] || jig_die "usage: jig knowledge accept <id>..."
-  local id doc type target count=0 ids src tracked=""
+  local id doc ids src tracked=""
   ids=$(km_dedupe_ids "$@")
 
   while IFS= read -r id; do
@@ -542,12 +571,18 @@ km_accept() {
     fi
     if [ -n "$(km_source_problem "$src")" ] || ! km_source_tracked "$src" "$tracked"; then
       rm -f "$tracked"
-      jig_die "knowledge accept: $id links $src, which is missing, invalid or not tracked by git with this exact case; fix the link or reject it"
+      jig_fail source-missing "knowledge accept: $id links $src, which is missing, invalid or not tracked by git with this exact case; fix the link or reject it"
     fi
   done <<EOF
 $ids
 EOF
   [ -z "$tracked" ] || rm -f "$tracked"
+}
+
+km_accept() {
+  local id doc type target count=0 ids src
+  km_accept_check "$@"
+  ids=$(km_dedupe_ids "$@")
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -575,9 +610,9 @@ EOF
 # deletes or moves a file: the user has decided reject means the document
 # stays, on the record, at its real path — only its status changes, and
 # `rejected` is unresolvable like every other historical status.
-km_reject() {
+km_reject_check() {
   [ $# -ge 1 ] || jig_die "usage: jig knowledge reject <id>..."
-  local id doc count=0 ids
+  local id ids
   ids=$(km_dedupe_ids "$@")
 
   while IFS= read -r id; do
@@ -586,6 +621,12 @@ km_reject() {
   done <<EOF
 $ids
 EOF
+}
+
+km_reject() {
+  local id doc count=0 ids
+  km_reject_check "$@"
+  ids=$(km_dedupe_ids "$@")
 
   local packs=0 type
   while IFS= read -r id; do
@@ -2119,17 +2160,17 @@ km_stale() {
 # the code. `jig-consolidate` calls this for every document it touched; that
 # is what keeps `reviewed_at` honest and `stale` meaningful.
 km_reviewed() {
-  local id="" date=""
-  [ $# -ge 1 ] || jig_die "usage: jig knowledge reviewed <id> [--date YYYY-MM-DD]"
-  id="$1"
-  shift
+  local date="" ids=()
+  [ $# -ge 1 ] || jig_die "usage: jig knowledge reviewed <id>... [--date YYYY-MM-DD]"
   while [ $# -gt 0 ]; do
     case "$1" in
       --date) [ $# -ge 2 ] || jig_die "knowledge reviewed: --date requires a value"
         date="$2"; shift 2 ;;
-      *) jig_die "knowledge reviewed: unknown argument: $1" ;;
+      -*) jig_die "knowledge reviewed: unknown argument: $1" ;;
+      *) ids+=("$1"); shift ;;
     esac
   done
+  [ "${#ids[@]}" -ge 1 ] || jig_die "usage: jig knowledge reviewed <id>... [--date YYYY-MM-DD]"
 
   [ -n "$date" ] || date=$(jig_today)
   case "$date" in
@@ -2137,21 +2178,143 @@ km_reviewed() {
     *) jig_die "knowledge reviewed: invalid date '$date' (expected YYYY-MM-DD)" ;;
   esac
 
-  local file rel src
-  file=$(km_doc_by_id "$id")
-  rel=$(km_rel "$file")
-  # Reviewing a stub approves its source as it is now: the recorded hash moves
-  # with the stamp, so a changed source stops being reported.
-  src=$(jig_knowledge_source "$file")
-  if [ -n "$src" ]; then
-    jig_knowledge_read_path "$file" >/dev/null \
-      || jig_die "knowledge reviewed: $id links $src, which is missing; fix the link or reject it"
-    fm_set "$file" source_hash "$(jig_hash "$JIG_PROJECT/$src")" \
+  km_reviewed_check "${ids[@]}"
+  local id file rel src
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    file=$(km_doc_by_id "$id")
+    rel=$(km_rel "$file")
+    # Reviewing a stub approves its source as it is now: the recorded hash moves
+    # with the stamp, so a changed source stops being reported.
+    src=$(jig_knowledge_source "$file")
+    if [ -n "$src" ]; then
+      fm_set "$file" source_hash "$(jig_hash "$JIG_PROJECT/$src")" \
+        || jig_die "knowledge reviewed: failed to write $rel"
+    fi
+    fm_set "$file" reviewed_at "$date" \
       || jig_die "knowledge reviewed: failed to write $rel"
+    printf 'reviewed   %s  %s\n' "$rel" "$date"
+  done < <(km_dedupe_ids "${ids[@]}")
+}
+
+# km_reviewed_check <id>... — what `reviewed` refuses, before any document is written.
+km_reviewed_check() {
+  local id file src
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    file=$(km_doc_by_id "$id") || exit 1
+    src=$(jig_knowledge_source "$file")
+    [ -n "$src" ] || continue
+    jig_knowledge_read_path "$file" >/dev/null \
+      || jig_fail source-missing "knowledge reviewed: $id links $src, which is missing; fix the link or reject it"
+  done < <(km_dedupe_ids "$@")
+}
+
+# --- decisions, in Jig's own tree ---------------------------------------------------
+
+_KM_DECIDE_JSON=""
+
+# _km_decide_main <accept|reject|reviewed> <id>... [--date <d>] [--revision <n>] [--json]
+# — the decision committed on `knowledge/decisions`, in Jig's own tree (lib/owntree.sh).
+# Judged by the documents on that branch and not the ones in any checkout, so one already
+# decided and waiting is `not-proposed`; and `km_accept`, `km_reject` and `km_reviewed`
+# run as they are, with JIG_PROJECT pointed at the tree.
+_km_decide_main() {
+  local sub="$1" ids=() date="" rev="" rev_given="" arg
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) shift ;;
+      --revision)
+        [ $# -ge 2 ] || jig_fail usage "knowledge $sub: --revision requires a value"
+        rev=$2; rev_given=1; shift 2 ;;
+      --date)
+        [ "$sub" = reviewed ] || jig_fail usage "knowledge $sub: unexpected argument: $1"
+        [ $# -ge 2 ] || jig_fail usage "knowledge $sub: --date requires a value"
+        date=$2; shift 2 ;;
+      -*) jig_fail usage "knowledge $sub: unexpected argument: $1" ;;
+      *) ids+=("$1"); shift ;;
+    esac
+  done
+  [ "${#ids[@]}" -ge 1 ] || jig_fail usage "knowledge $sub: give at least one document id"
+  [ -z "$rev_given" ] || [ -n "$rev" ] || jig_fail usage "knowledge $sub: --revision is empty"
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "knowledge $sub: --revision is not a revision: $rev"
+  if [ -n "$date" ]; then
+    case "$date" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+      *) jig_fail usage "knowledge $sub: invalid date '$date' (expected YYYY-MM-DD)" ;;
+    esac
   fi
-  fm_set "$file" reviewed_at "$date" \
-    || jig_die "knowledge reviewed: failed to write $rel"
-  printf 'reviewed   %s  %s\n' "$rel" "$date"
+  jig_require_init
+  # shellcheck source=lib/owntree.sh
+  . "$JIG_LIB/owntree.sh"
+  ot_begin "knowledge $sub" knowledge "$rev"
+  local default msg
+  default=$(cfg git.base_branch main)
+  ot_fetch "$default"
+  ot_open knowledge/decisions "$default"
+  msg=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-msg.XXXXXX")
+  jig_cleanup_add "$msg"
+  _km_decide_in_tree "$sub" "$date" "${ids[@]}"
+  arg=$(km_dedupe_ids "${ids[@]}" | sed '$!s/$/,/' | tr '\n' ' ' | sed 's/ $//')
+  case "$sub" in
+    accept) printf 'Accept knowledge: %s\n' "$arg" > "$msg" ;;
+    reject) printf 'Reject knowledge: %s\n' "$arg" > "$msg" ;;
+    reviewed) printf 'Mark knowledge reviewed: %s\n' "$arg" > "$msg" ;;
+  esac
+  ot_commit "$msg" "$JIG_AI_DIR/knowledge"
+  ot_ship "Knowledge decisions" "Decisions on knowledge, made through Jig on a branch of its own: nobody's checkout moved. Each commit is one decision, and further decisions land here."
+  rm -f "$msg"
+  if [ -n "$_KM_DECIDE_JSON" ]; then
+    local w
+    ot_answer_json
+    w=$_JSON
+    printf '{"decisions":[%s],"write":%s}\n' "$_KM_DECIDE_ROWS" "$w"
+  else
+    printf 'knowledge %s:%s\n' "$sub" " $arg"
+    ot_answer_text
+  fi
+}
+
+# _km_decide_in_tree <sub> <date> <id>... — validate, claim, apply: the order a write
+# against a revision owes, and fm_set raises the revision, so nothing may be applied
+# before the claim. JIG_PROJECT is the tree for exactly this long.
+_KM_DECIDE_ROWS=""
+_km_decide_in_tree() {
+  local sub="$1" date="$2" JIG_PROJECT="$OT_TREE" id doc word sep="" rec path
+  shift 2
+  km_init
+  case "$sub" in
+    accept) km_accept_check "$@"; word=accepted ;;
+    reject) km_reject_check "$@"; word=rejected ;;
+    reviewed) km_reviewed_check "$@"; word=reviewed ;;
+  esac
+  _KM_DECIDE_ROWS=""
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    doc=$(km_doc_by_id "$id") || exit 1
+    path=$(km_rel "$doc")
+    json_decide_row "$id" "$word" "$path"
+    _KM_DECIDE_ROWS="$_KM_DECIDE_ROWS$sep$_KM_ROW"
+    sep=,
+  done < <(km_dedupe_ids "$@")
+  ot_claim
+  case "$sub" in
+    accept) km_accept "$@" >/dev/null ;;
+    reject) km_reject "$@" >/dev/null ;;
+    reviewed)
+      if [ -n "$date" ]; then km_reviewed "$@" --date "$date" >/dev/null; else km_reviewed "$@" >/dev/null; fi ;;
+  esac
+}
+
+# json_decide_row <id> <decision> <path> — _KM_ROW <- one decision of an answer; empty
+# in the text form, which has no JSON library to build it with.
+_KM_ROW=""
+json_decide_row() {
+  _KM_ROW=""
+  [ -n "$_KM_DECIDE_JSON" ] || return 0
+  json_quote "$1"; _KM_ROW="{\"id\":$_JSON,\"decision\":\"$2\""
+  json_quote "$3"; _KM_ROW="$_KM_ROW,\"path\":$_JSON}"
 }
 
 # --- linked sources ----------------------------------------------------------
@@ -2439,11 +2602,71 @@ _km_json_quote_text() {
   ')
 }
 
+# _km_waiting_field <tip> <path> <key> — a frontmatter value of the document as it is
+# on the waiting branch, or nothing.
+_km_waiting_field() {
+  jig_git_show_path "$1" "$2" 2>/dev/null | K="$3" awk '
+    NR == 1 && $0 != "---" { inb = 0; bad = 1 }
+    NR == 1 && $0 == "---" { inb = 1; next }
+    inb && $0 == "---" { inb = 0 }
+    inb && !found && index($0, ENVIRON["K"] ":") == 1 {
+      v = substr($0, length(ENVIRON["K"]) + 2)
+      gsub(/^[ \t\r]+|[ \t\r]+$/, "", v)
+      gsub(/^"|"$/, "", v)
+      print v
+      found = 1
+    }' || true
+}
+
+# _km_waiting_decision <rel-path> <status-here> <hash-here> — _KM_WAITING <- what a
+# waiting branch decided about one document, as JSON, or null: its status or its
+# approved text there against the ones here. Set once _KM_WAITING_TIP is, by the caller,
+# which asks only while something waits (_km_waiting_top).
+_KM_WAITING=null
+_km_waiting_decision() {
+  local status hash word=""
+  _KM_WAITING=null
+  [ -n "$_KM_WAITING_TIP" ] || return 0
+  status=$(_km_waiting_field "$_KM_WAITING_TIP" "$1" status)
+  hash=$(_km_waiting_field "$_KM_WAITING_TIP" "$1" source_hash)
+  [ -n "$status" ] || return 0
+  if [ "$status" != "$2" ]; then
+    case "$status" in
+      rejected) word=rejected ;;
+      *) word=accepted ;;
+    esac
+  elif [ "$hash" != "$3" ]; then
+    word=reviewed
+  fi
+  [ -n "$word" ] || return 0
+  _KM_WAITING="{\"decision\":\"$word\""
+  json_quote "$OT_R_BRANCH"; _KM_WAITING="$_KM_WAITING,\"branch\":$_JSON"
+  json_str_or_null "$OT_R_PR"; _KM_WAITING="$_KM_WAITING,\"pr\":$_JSON}"
+}
+
+# _km_waiting_top — _KM_WAITING_JSON <- the write that waits (ot_waiting_json), or null;
+# _KM_WAITING_TIP <- its branch tip, empty when none.
+_KM_WAITING_JSON=null
+_KM_WAITING_TIP=""
+_km_waiting_top() {
+  # shellcheck source=lib/owntree.sh
+  . "$JIG_LIB/owntree.sh"
+  _KM_WAITING_JSON=null
+  _KM_WAITING_TIP=""
+  ot_waiting_json knowledge
+  [ -n "$_JSON" ] || return 0
+  _KM_WAITING_JSON="$_JSON}"
+  _KM_WAITING_TIP=$OT_W_TIP
+}
+
 # _km_proposed_json — the data of `knowledge proposed --json`: every document
 # with status `proposed`, in the order the text form lists them, from the same
 # km_is_proposed. A stub also names its source; `source` is null for the rest.
+# `waiting` says what a decision on its way decided: the document here still says
+# `proposed`, and rightly, until the branch lands.
 _km_proposed_json() {
   local doc out="" sep="" rec
+  _km_waiting_top
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
     km_is_proposed "$doc" || continue
@@ -2453,11 +2676,13 @@ _km_proposed_json() {
     json_quote "$(km_rel "$doc")"; rec="$rec,\"path\":$_JSON"
     _km_json_list "$(fm_list "$doc" paths)"; rec="$rec,\"paths\":$_JSON"
     json_str_or_null "$(fm_get "$doc" summary)"; rec="$rec,\"summary\":$_JSON"
-    json_str_or_null "$(jig_knowledge_source "$doc")"; rec="$rec,\"source\":$_JSON}"
+    json_str_or_null "$(jig_knowledge_source "$doc")"; rec="$rec,\"source\":$_JSON"
+    _km_waiting_decision "$(km_rel "$doc")" proposed "$(fm_get "$doc" source_hash)"
+    rec="$rec,\"waiting\":$_KM_WAITING}"
     out="$out$sep$rec"
     sep=,
   done < <(km_docs)
-  _km_json_print "{\"proposals\":[$out]}"
+  _km_json_print "{\"proposals\":[$out],\"waiting\":$_KM_WAITING_JSON}"
 }
 
 # _km_sources_json — the data of `knowledge sources --json`: every stub with
@@ -2465,6 +2690,7 @@ _km_proposed_json() {
 # counts the text form's last line gives.
 _km_sources_json() {
   local state doc src size n=0 changed=0 unrecorded=0 missing=0 t out="" sep="" rec
+  _km_waiting_top
   t=$(printf '\t')
   while IFS="$t" read -r state doc src; do
     [ -n "$doc" ] || continue
@@ -2483,11 +2709,13 @@ _km_sources_json() {
     json_str_or_null "$(fm_get "$doc" status)"; rec="$rec,\"status\":$_JSON"
     json_quote "$(km_rel "$doc")"; rec="$rec,\"path\":$_JSON"
     json_quote "$src"; rec="$rec,\"source\":$_JSON"
-    json_int_or_null "$size"; rec="$rec,\"bytes\":$_JSON}"
+    json_int_or_null "$size"; rec="$rec,\"bytes\":$_JSON"
+    _km_waiting_decision "$(km_rel "$doc")" "$(fm_get "$doc" status)" "$(fm_get "$doc" source_hash)"
+    rec="$rec,\"waiting\":$_KM_WAITING}"
     out="$out$sep$rec"
     sep=,
   done < <(km_source_states)
-  _km_json_print "{\"sources\":[$out],\"counts\":{\"linked\":$n,\"changed\":$changed,\"unrecorded\":$unrecorded,\"missing\":$missing}}"
+  _km_json_print "{\"sources\":[$out],\"counts\":{\"linked\":$n,\"changed\":$changed,\"unrecorded\":$unrecorded,\"missing\":$missing},\"waiting\":$_KM_WAITING_JSON}"
 }
 
 # _km_sources_diff_json <id> — the data of `knowledge sources --diff <id>

@@ -174,8 +174,9 @@ Some settings are a matter of personal taste rather than project policy. Put the
   `housekeeping.abandoned_ttl`, `housekeeping.stale_after`;
 - `checkout.busy_ttl`, `verify.busy_ttl`;
 - `git.worktree_root`, `git.delete_merged_branches`;
-- `agent.git` — how far the agent takes a finished task, and a specification's epic: `none` (the default: you commit),
-  `commit`, `push`, `pr` or `merge`. This one is read **only** from your local file; in `.ai/config.yaml` it
+- `agent.git` — how far the agent takes a finished task, a specification's epic, and an
+  [edit made from a page](/reading-jig-as-data#writes-on-a-branch-of-their-own): `none` (the default: you commit, and
+  such edits are refused), `commit`, `push`, `pr` or `merge`. This one is read **only** from your local file; in `.ai/config.yaml` it
   is ignored, so it can never switch on for everyone. See
   [Letting the agent ship](/agent-ships).
 - `autopilot.git` — the same levels, for what an [autopilot](/autopilot) run ships: a task shipped

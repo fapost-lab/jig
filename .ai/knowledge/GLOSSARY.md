@@ -59,6 +59,14 @@ through git once the task is closed and its branch landed on its own base, or wh
 that Workspace, whichever comes first (ADR-0029 as amended). Informal synonyms: agent tree,
 sandbox.
 
+## Own Tree
+
+The one-off git worktree at `<git-common-dir>/jig/tree` that a write from outside a session
+(`jig spec item`, `jig knowledge accept --revision`) is made in, so that no checkout moves. Made and
+removed by each write. Its branch, the **write branch** (`spec/<id>`, `knowledge/decisions`), is
+what waits until it lands (adr-20261104-a-write-goes-in-jigs-own-tree). Not a Task Worktree: no
+task owns it, and nobody ever works in it. Informal synonyms: write tree.
+
 ## Directory Link
 
 A link from one directory to another that bash sees as a symlink (`-L`, `find -type l`): a

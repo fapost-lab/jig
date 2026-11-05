@@ -1,0 +1,79 @@
+---
+id: adr-20261104-a-write-goes-in-jigs-own-tree
+type: adr
+status: accepted
+date: 2026-11-04
+domains:
+  - spec
+  - knowledge
+  - scripts
+paths:
+  - scripts/lib/owntree.sh
+  - scripts/lib/writes.sh
+  - scripts/lib/spec.sh
+  - scripts/lib/knowledge.sh
+  - scripts/lib/config.sh
+  - scripts/lib/common.sh
+summary: Why a write from outside a session is committed on spec/<id> or knowledge/decisions in a one-off tree under the git directory, what holds a concurrent write off, why a checkout on that branch is refused, and why agent.git none refuses and a write never merges
+reviewed_at: 2026-11-05
+---
+# A write from outside a session is committed on a branch of its own, in a tree of Jig's own, and never moves a checkout
+
+## Context
+
+Jig UI writes no file inside a project (its rule), so a roadmap edit or a knowledge decision from its page needs a Jig command (fapost-lab/jig#362, #364). No command changed a roadmap, and `jig knowledge accept|reject|reviewed` changed the working tree they ran in. A person's main checkout is usually on the default branch or on a task's branch, and another session may be working in it: a decision written there leaves a dirty tree that stops `jig task start`, or lands in an unrelated task's commit. The default branch is commonly protected, so committing there is not the answer either.
+
+Whatever the mechanism, it has to hold in a project that is not this one: no forge, no `origin`, `agent.git: none` (the default), a protected default branch and protected epics, Windows through Git Bash.
+
+## Decision
+
+- **One mechanism, `scripts/lib/owntree.sh`.** A write takes the level (`agent.git`), checks the revision, takes the clone's lock, resolves its branch, adds a tree, validates against that tree, claims the revision, applies, commits, records, ships, removes the tree. `jig spec item add|move|file` and `jig knowledge accept|reject|reviewed --revision|--json` are its writers, and a later one (`.ai/config.yaml`, #363) calls the same steps.
+- **The tree is `<git-common-dir>/jig/tree`, made by each write and removed by the same write.** Inside the git directory nothing walks it (ADR-0029's reason against a nested tree), there is no `.gitignore` to touch, and it goes with the clone. It is removed through git, with `--force`: under the lock only Jig writes in it, nothing a person wrote is ever there, and what was worth keeping is a commit. A new exception in RULES.md's deletion paragraph. There is no `reset --hard` and no `clean`: a tree that went wrong goes whole. One a killed write left is removed by the next write and by housekeeping, because it holds its branch; so is its registration when its directory has gone. Git takes that one entry by its path, and no write runs `git worktree prune`, which would drop any worktree whose directory is merely away. A write removes the tree it made, while it still holds the lock, and at its start, under the lock, what a killed write left: something at that path after that is another writer's, and is refused `write-busy`. What is at that path and is no working tree — what a killed `git worktree remove` leaves — git will not take, and Jig does not delete it: `tree-in-the-way`, naming the path for a person, because no retry clears it.
+- **A clone whose git common directory is not named `.git`** (`--separate-git-dir`, a submodule, a bare repository with linked worktrees) keeps the lock, the records and the revision under that directory: `<git-common-dir>/jig/writes/` and `<git-common-dir>/jig/revision/` (`jig_config_odd_common`). Its clone root is each checkout's own (`jig_config_clone_root` finds a main checkout only behind a directory named `.git`), and in the tree the fallback would answer the tree itself. So a lock kept there would be one per checkout over one shared tree, and a revision read in the tree would always be stale. Settings and everything else keyed by the clone root stay per checkout in these layouts.
+- **A concurrent write is held off in three layers.** The revision claim (`jig_revision_claim`, `stale-revision`) stops a decision made on a read since overtaken; the clone's lock (`jig_claim_file`, the shape of the housekeeping lock, `write-busy`, never waited for) stops two writers with a fresh revision; git itself refuses a branch held elsewhere and a push origin moved past.
+- **The branch is one per spec and one for knowledge.** `spec/<id>` into the default branch, or into the spec's open epic through a pull request: never a push to `epic/<id>`, which is protected like the default branch where a repository says so (ADR-0040 as amended). `knowledge/decisions` into the default branch. Edits in a row land on it, and `jig_ship_pr` finds the pull request already open.
+- **A checkout on that branch is refused (`branch-checked-out`), with its path.** This is common, since `spec new` and `spec resume` leave a person on `spec/<id>`. Moving a branch under a checkout is what this mechanism exists to prevent, and a second branch for one spec makes two pull requests that conflict on one file. A branch that exists is checked out in the tree for the length of one command, so git refuses the race and hooks see the real branch; one that does not exist is cut only at the commit, the tree standing detached until then, so that a refusal in validation leaves no branch behind. A branch that has to catch up is not moved until the commit either: the tree stands on it, with its files and index at what it will be, and the move happens inside the tree, where git holds the branch and checks the old value. A refusal before the commit leaves every ref where it was, and a branch only on origin is cut at the commit from its tip there.
+- **Between edits, the branch is judged after a fetch**, against the base as `jig_base_ref` reads it: origin's when it is known, which is what a forge compares, so a person's unpushed commits on their own base are not carried out on a branch of Jig's. No branch: cut from the base. Merged by ancestry: fast-forwarded to the base, and the pull request it had is over. Merged by squash, its pull request closed unmerged, or dropped from origin: a new name, `spec/x-2`, cut from the base, and the old one stays where it is. A pull request that merged without the tip, because origin never held it: the commits above what merged keep their name and wait for a new pull request; they are never left on an old name out of sight. Otherwise the commit goes on top. Truly diverged from origin: `branch-diverged`. **No branch is ever deleted, moved backwards or force-pushed**; the only ref removed is a stale `refs/remotes/origin/<b>` when `ls-remote` says origin has no such branch, as `git fetch --prune` does, and only at the commit, so that a refusal leaves the next write seeing what this one saw.
+- **A write publishes only its own commits.** Whatever would leave this machine that Jig did not write, and that origin does not already hold, is refused with nothing written. One function, `ot_refuse_what_is_not_jigs`, asks before the branch resolve decides anything and before `jig writes ship` sends anything. A local tip the record does not name, with commits no ref of origin's holds, is a person's: `branch-has-other-commits`, with the branch's name. A base origin does not have, at `push` or above: `base-not-on-origin`, because a branch cut from it would carry out whatever is on it and no pull request could open into it; at `commit` nothing leaves, so the commit stands, and the ship is what refuses. The record names only the tip, so a person's commit below a tip of Jig's cannot be told; the second clause closes the one way that arises, short of a person pushing that base without their commit.
+- **The level is `agent.git`, read through `jig_agent_git`:** `commit` commits, `push` pushes, `pr` opens the pull request; with no `origin` or no forge the answer says whose step it is. Not the unattended branch of `spec_ship_git`: a click is not an autopilot run. **`none` refuses (`git-not-allowed`)**, and its message names the setting: it is the default and that makes these writes opt-in, but "agents do not commit" at `none` (adr-20260921-agent-git-rights-are-a-local-setting) is a promise a page's click should not be the first to break. Undoing this is one line; undoing commits made against a person's setting is not.
+- **A write never merges, even at `merge`.** A merge waits for CI, up to `agent.ci_timeout`, and a click may not; merging each edit would end the shared pull request. `jig writes ship <target>` carries a waiting write as far as the level now allows — the push that failed, the pull request after the level was raised — and at `merge` merges through `jig_ship_merge`, at the shipped commit, under the conditions a task has. It gives the lock back before it waits, and marks the record merged only when the branch is still at the commit that merged. It asks the record's pull request first, under the lock, since a read has no network: closed unmerged, or merged with the tip, it answers `not-found` and sends nothing, and the next edit takes a new name; merged below the tip, what is above it goes in a new one.
+- **Failing after the commit is not a refusal.** A refusal means nothing was written; a push that failed leaves a commit that waits. The answer says `pushed: false`, and `note` why. `pushed` is true only while origin's ref holds the tip, in the answer and in every read: it is worked out from the refs, never carried from an earlier write.
+- **The answer is one object:** `target`, `branch`, `base`, `commit`, `commits`, `pushed`, `pr`, `merged`, and `committed`, `level`, `note`.
+- **A reader sees what waits, with no network.** A record per target, `.ai/runtime/writes/<target>` in the main checkout, written at each write. `spec list --json` gives each spec `waiting`, with the roadmap as it is on the branch; `knowledge proposed --json` and `sources --json` give `waiting` at the top and on each document, read from the document on the branch; `jig writes` lists them and `jig status` counts them. A write stops waiting once its tip is an ancestor of its base as of the last fetch, its touched paths equal the base, or the record says merged. A person's own branch of that name, with no record, is not a write that waits.
+- **An item's handle is a digest of its text** — `i-<12 hex>`, without its filing prefix or `fog:`, with whitespace collapsed; `-2`, `-3` for a repeat — and the roadmap's format does not change. It survives a move, a check and a filing. A person rewording the item changes it, and a write naming the old handle finds nothing and refuses `not-found`: never the wrong item. Handles resolve in the roadmap on the write branch.
+- **`jig knowledge accept|reject|reviewed` without `--revision` and `--json` still writes the working tree.** `jig-accept` has a person looking at their own tree, and `jig-consolidate` stamps `reviewed` as part of a task's commit. Either flag selects the tree. `km_accept`, `km_reject` and `km_reviewed` run unchanged with `JIG_PROJECT` pointed at the tree; their validation is split out to run before the claim, because `fm_set` raises the revision.
+
+## Alternatives
+
+- **Plumbing and no tree** (`GIT_INDEX_FILE`, `hash-object`, `commit-tree`, `update-ref`). No checkout cost and no cleanup, but it skips the project's hooks, and it would rewrite the knowledge commands to work without files.
+- **A tree kept between writes.** A cheaper second click, but a tree left dirty can be repaired only with `reset --hard` or `clean`, it holds a checkout's disk for good, and it needs a retention policy somebody must get right.
+- **A tree beside the repository (`git.worktree_root`) or under `.ai/runtime/`.** The first clutters the parent folder of a project that never used worktrees, for a tree nobody opens; the second is visible to every tool that walks the project.
+- **Sparse checkout.** Needs `extensions.worktreeConfig` in the person's repository config, and a stub's source may be anywhere. Left for when a large repository asks.
+- **A detached tree and `update-ref` compare-and-swap.** Holds no branch even after a crash, but `update-ref` moves a checked-out branch without a word, and a hook reading the branch name sees none.
+- **A branch of its own name (`jig/edits/<id>`).** No clash with a person's `spec/<id>`, but #362 names that branch, and a session on it would then produce a second pull request fighting over one roadmap.
+- **Committing straight on the epic**, as #362 is worded. Refused by every repository that protects epics, this one included.
+- **An id stored in the roadmap.** Ripples into the wave grammar, `spec link`, `spec done`, `spec drop`, `schemas/spec.md` and every person reading the file.
+- **A position checked against the revision**, which #362 offers. A git change to a roadmap moves positions and raises no revision.
+- **A commit at `none`**, on the reading that a person clicked, not an agent. See above.
+- **Waiting for CI inside a write at `merge`.** Half an hour behind a click, holding the lock.
+
+## Consequences
+
+- A person on `spec/<id>` cannot edit that roadmap from a page until they leave the branch; the refusal says where they are.
+- After a squash with a commit of Jig's above what merged, the same name conflicts in the new pull request: the branch still holds what the squash landed. Nothing is lost, and the conflict is the person's to see.
+- `commit-refused` can leave a fast-forward moved: the branch is on the base's commit by then, which loses nothing, but it is one refusal that does not leave every ref where it was.
+- A branch `spec new` left unpushed, or one with a person's commits on it, takes no write until they push or merge it. A write killed between its commit and its record reads the same way, and pushing the branch clears it.
+- A base only here takes no write at `push` or above until it is pushed: a local-only epic among them.
+- Something committed only on a person's local base is not there for a write: a roadmap or a proposal has to reach origin's base, or its own branch there, first.
+- A filed item is not on the default branch until its pull request lands, so `jig spec done` for a task built before that finds no item in the checkout.
+- A pre-commit hook that needs the project's dependencies fails in the tree, which has none: `commit-refused`, with what it said, leaving a branch just cut at the base with nothing on it. Such a project gets no writes until its hook tolerates a bare checkout.
+- A full checkout per write costs seconds on a large repository, and `post-checkout` hooks and LFS run for it.
+- A squash-merged branch whose file changed again on the base since reads as waiting until its recorded pull request says merged; with no forge there is nothing to ask, the next commit goes on top, and the conflict shows in the person's merge.
+- `reviewed` records the source as it is on the base, which may differ from what `sources --diff` showed from a checkout on another branch.
+- Two items with one text swap handles when one of them moves.
+- Branches a write left behind stay; nothing here deletes them (`jig_branch_is_jigs` does not name them either).
+
+## Amends
+
+- **adr-20260924-a-worktree-carries-what-git-does-not**: "the only removal jig performs" holds for a task's worktree, not for this tree (its amendment of 2026-11-05).
+- **ADR-0008 and adr-20261016-the-clone-revision-is-a-claimed-name**: the revision is in the main checkout's `.ai/runtime/revision/` only where a main checkout is found; otherwise it is under the git common directory.

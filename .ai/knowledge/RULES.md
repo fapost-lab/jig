@@ -43,7 +43,7 @@
   taken back by moving it into the staging directory and deleting it there. The staging
   directory sits under `.ai/runtime/` so that git ignores it: anything a carry leaves in a
   worktree that git does not ignore reads as untracked, and `git worktree remove` without
-  `--force` — the only removal jig performs — then refuses that worktree for good.
+  `--force` — the only way jig removes a task's worktree — then refuses that worktree for good.
   (adr-20260924-a-worktree-carries-what-git-does-not) A shared directory adds no deletion: its
   mirror is built and taken back by the same steps, so what is deleted is a directory of links in
   the staging directory, and deleting a link — a symlink, or a junction under Git Bash — never
@@ -77,8 +77,22 @@
   empty. The path is checked to end in `.ai/runtime/verify` before either runs, and the same
   two deletions take back a record whose holder is gone. Nothing else under that directory is
   touched, and there is no `rm -rf` on it.
-  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) The clone's revision is the
-  same shape: under `<clone root>/.ai/runtime/revision/` a raise removes only digits-only names more
+  (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) A write in Jig's own tree holds
+  its lock the same way, under `.ai/runtime/writes/lock/`, or `<git-common-dir>/jig/writes/lock/`
+  where that directory is not named `.git`, the path checked to end so before either deletion: it
+  gives back only a lock that still names its own pid, and takes back one whose holder is gone.
+  Its tree is the seventh: git deletes it, with `git worktree remove --force`, the one `--force` on a
+  removal anywhere in jig, and one function builds the only path it is given,
+  `<git-common-dir>/jig/tree`. `--force` is what a refused write needs, and it is safe there because
+  under that lock only Jig writes in the tree, nothing a person wrote is ever in it, and what was
+  worth keeping is already a commit; a write removes the tree it made, while it still holds the lock,
+  and under the lock, as housekeeping does too, a tree a killed write left; no such write or its sweep runs `git worktree prune`, which would drop any worktree whose
+  directory is merely away; what stands there and is no working tree stays for a person
+  to delete, refused `tree-in-the-way`. The one ref it deletes is `refs/remotes/origin/<b>`, by `git update-ref
+  -d`, at the commit, when `ls-remote` says origin has no such branch: what `git fetch --prune` does, and it holds
+  no work. (adr-20261104-a-write-goes-in-jigs-own-tree) The clone's revision is the
+  same shape: under `<clone root>/.ai/runtime/revision/`, or `<git-common-dir>/jig/revision/` where
+  that directory is not named `.git`, a raise removes only digits-only names more
   than 16 below its own claim (`rmdir`, or `rm -f` for a file), and a claim that turns out stale —
   `jig_revision_bump`'s, or `jig_revision_claim`'s for a `jig queue` write — is withdrawn by
   `rm -f` of the one name, a file, that call created, except a claim of 0 that finds a name below its own,
