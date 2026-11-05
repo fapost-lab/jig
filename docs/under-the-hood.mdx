@@ -142,10 +142,12 @@ project sets it, is run by both after the share and the carry:
 | `git worktree add` | starting a task in a separate worktree |
 | `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
 | delete a branch | only when starting a worktree fails, and only the branch that attempt just created, while it still points where it was created |
+| `git worktree add`, `git worktree remove --force` | a write from a program (`jig spec item`, `jig knowledge accept --json` and the like), only on Jig's own tree under the git directory; never a worktree of yours |
 | `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, it has no uncommitted changes or lock, and no repository inside its ignored files holds work that is nowhere else |
 
 **No script commits or pushes on its own** — apart from the Windows installer's first commit in a
-repository it created, the only ones that do are `jig task ship` and `jig spec ship`, and only as
+repository it created, the only ones that do are `jig task ship`, `jig spec ship` and the writes from a program
+(`jig spec item`, `jig knowledge accept|reject|reviewed --json`, `jig writes ship`), and only as
 far as `agent.git` in your `.ai/config.local.yaml` allows (`none` by default: they do nothing). They
 commit what is staged, push without `--force`, never skip hooks, and open a pull request with `gh`
 or `glab`. With nothing staged, `jig task ship` stages the changes to tracked files itself and lists

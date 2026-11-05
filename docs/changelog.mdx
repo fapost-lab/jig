@@ -8,20 +8,59 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
-## Unreleased
+## 0.40.0 — 2026-11-05
+
+A program can now close a task, read and change your settings, read the knowledge waiting for a
+person, decide it, and change a roadmap, all without moving your checkout. The agent works from the queue: it sets priorities from one scale and is not advised a task
+another session works on. A review reads behaviour and standards apart, and `jig task ship` no
+longer merges part of a change.
 
 - **A roadmap can be changed, and knowledge decided, without touching your checkout.** `jig spec item
   add|move|file` and `jig knowledge accept|reject|reviewed --revision <n> --json` commit on a branch of their
   own (`spec/<id>`, `knowledge/decisions`) in a tree Jig makes and removes, and go as far as `agent.git`
   allows; edits in a row share one pull request. The answer names the branch, commit and pull request and
-  whether it merged, refusals come as codes, and at `agent.git: none` they are refused. Each roadmap item in
+  whether it merged, refusals come as codes, and at `agent.git: none` they are refused. A write publishes
+  only its own commits: what Jig did not write and origin does not hold is refused (`branch-has-other-commits`),
+  and so, at `agent.git: push` or above, is a base origin does not have (`base-not-on-origin`). Each roadmap item in
   `jig spec list --json` has an `id`, and what waits shows as `waiting` there and in `jig knowledge proposed
   --json` and `sources --json`, in `jig writes` and on a `writes:` line of `jig status`. `jig writes ship`
   carries a waiting edit further, and merges it at `agent.git: merge`. `jig knowledge reviewed` takes several
   ids. The text forms of `accept`, `reject` and `reviewed` still change your working tree. With
   `--separate-git-dir`, in a submodule or in the worktrees of a bare repository, the clone's revision moves to
   `<git-dir>/jig/revision`, so a revision held from before reads as stale once. See
-  [Writes on a branch of their own](/reading-jig-as-data#writes-on-a-branch-of-their-own).
+  [Writes on a branch of their own](/reading-jig-as-data#writes-on-a-branch-of-their-own); four faults are
+  in [Known issues](/known-issues).
+- **`jig task ship` refuses a merge that would leave part of the change behind.** When
+  it would merge (`agent.git: merge`, or `autopilot.git: merge` in a run), not on a draft, when what
+  is staged leaves changes to tracked files or new
+  files in the tree, it names them and refuses before the commit: nothing is committed, pushed or
+  asked of the forge. `--partial` says the rest is not this task's, and what it leaves is still
+  named. Below `merge` a person takes the next step, so the warning stands as it was; `jig spec ship`
+  and the upgrade are unchanged. See
+  [Choose what the agent can do](/agent-ships#when-the-agent-cannot-finish).
+- **A code review reads behaviour and standards apart.** T2's review and T4's independent review are
+  done by two fresh readers in turn. One asks whether the change does what was asked and whether a
+  guarantee can be walked around through another path. The other checks every written rule one by
+  one, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` and linter settings included, plus a short list of
+  code smells that is at most a P2 and never stops the task. Lean depth keeps both; a repeat review
+  of a small fix uses one. See [Risk classes and routes](/concepts#risk-classes-and-routes).
+- **`jig queue next` passes over a task another session works on.** A session that works a task
+  leaves a note for the whole clone, even before the task has a branch; the advice names such a task
+  instead of offering it, `jig queue list` prints the same line, and `jig queue next --json` lists it under `taken`,
+  with `taken` as a new `reason`. A note lapses after `checkout.busy_ttl`, and working on the task
+  takes it over. This needs a runtime that names its sessions, as Claude Code does. See
+  [Order the work](/manual-control#order-the-work).
+- **The agent gives a task its priority.** The `jig-task` skill now holds the `0`–`5` scale and answers
+  "set priorities", the Jig section of `AGENTS.md` says the answer goes in the queue, and
+  `jig-idea`, `jig-release` and a phase's run file tasks with a number. `jig task new` reminds on
+  stderr (`not queued: <id> — …`); its stdout and `--json` are unchanged. See
+  [Order the work](/manual-control#order-the-work).
+- **Two faults of `jig upgrade --land` and `jig status` are gone.** An upgrade pull request left open
+  for an older version no longer holds back `upgrade-available` in `jig status --json`. `--land` in a
+  linked worktree on the upgrade's branch is refused as `upgrade-blocked` and names the main checkout,
+  instead of checking the base branch out there. The third entry 0.39.0 listed, that a failing `glab`
+  reads as nothing to land, was wrong: a failing `glab` was already reported as a failure, and a test
+  now holds that.
 - **A task can be closed from a program, checked against what it read.** `jig task set <task-id>
   status consolidated` takes `--revision <n>` and `--json` as `jig task resume` does: a write another
   change has overtaken is refused with `stale-revision`, and the answer is the closed task, or a
@@ -31,9 +70,11 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 - **Knowledge waiting for a person, as JSON.** `jig knowledge proposed --json` lists each proposed
   document with its type, domains, path, `paths`, summary and, for a stub, the file it links;
   `jig knowledge sources --json` gives each linked source's state (`changed`, `unrecorded`, `missing`,
-  `ok`) and `jig knowledge sources --diff <id> --json` the difference between the approved text and
-  the file now, always as valid JSON whatever bytes the file holds. A document that does not exist is
-  refused as `not-found`. The text forms are unchanged. See [Reading Jig as data](/reading-jig-as-data#knowledge-waiting-for-a-person).
+  `ok`, or the stub's own status until it is accepted) and `jig knowledge sources --diff <id> --json`
+  the difference between the approved text and the file now, always as valid JSON whatever bytes the
+  file holds. A document that does not exist is refused as `not-found`. The text forms are unchanged.
+  See [Reading Jig as data](/reading-jig-as-data#knowledge-waiting-for-a-person); three faults in
+  these answers are in [Known issues](/known-issues).
 - **A triage task closes as done.** `jig task set <task-id>-findings status consolidated` closes the
   task `jig task ship` filed for open review findings in one command, once you have decided each of
   them — no class, no review and no separate knowledge decision asked for. It is listed as finished;
@@ -45,6 +86,8 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
   your list is named to you instead of being passed over (without stops, the running tasks finish
   and nothing new starts), and a task another session works on is never started. See
   [Several tasks in one run](/autopilot#several-tasks-in-one-run).
+  A phase run asks the same way: a more urgent task outside the phase holds the next start, and the
+  run stops with `jig spec stop` to ask you.
 - **Your settings as JSON.** `jig config keys --json` lists every setting Jig reads with its value,
   where the value comes from (your local file, the project's or the default), who may answer it,
   what kind of value it takes and the choices, and a one-line description; `jig config set` and
