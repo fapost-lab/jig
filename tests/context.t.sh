@@ -23,6 +23,38 @@ EOF
   assert_contains "$OUT" "matched:   .ai/knowledge/features/flow.md  (paths: src/Flow/**)"
 }
 
+test_context_files_glob_takes_question_mark_and_brackets_literally() {
+  ctx_setup
+  cat > .ai/knowledge/features/literal.md <<'EOF'
+---
+id: feature-literal
+type: feature
+status: active
+paths:
+  - "src/a?b[c].php"
+---
+EOF
+  run jig context --files src/axbc.php
+  assert_not_contains "$OUT" "literal.md"
+  run jig context --files 'src/a?b[c].php'
+  assert_contains "$OUT" "literal.md"
+}
+
+test_context_files_glob_ending_in_a_slash_covers_the_directory() {
+  ctx_setup
+  cat > .ai/knowledge/features/dir.md <<'EOF'
+---
+id: feature-dir
+type: feature
+status: active
+paths:
+  - src/Dir/
+---
+EOF
+  run jig context --files src/Dir/A.php
+  assert_contains "$OUT" "dir.md"
+}
+
 test_context_files_glob_single_segment_prefix() {
   ctx_setup
   cat > .ai/knowledge/features/trigger.md <<'EOF'

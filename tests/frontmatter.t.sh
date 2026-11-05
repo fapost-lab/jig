@@ -523,3 +523,122 @@ test_fm_quote_item_quotes_only_items_with_syntax_characters() {
   assert_eq 0 "$RC"
   assert_eq '"src/**"|core' "$OUT"
 }
+
+# --- the readers answer without a process, and answer the same -----------------
+#
+# These pin the corners of the grammar the sed and awk readers answered, so that
+# `jig context`, which reads every document in-process, resolves what it always did.
+
+test_fm_get_cuts_a_value_at_its_first_hash_with_or_without_a_space() {
+  printf -- '---\nspaced: value  # note\ntight: a#b\n---\n' > doc.md
+  fm_harness 'fm_get doc.md spaced; fm_get doc.md tight'
+  assert_eq 0 "$RC"
+  assert_eq 'value
+a' "$OUT"
+}
+
+test_fm_get_strips_one_pair_of_quotes_and_keeps_a_lone_quote() {
+  printf -- '---\npair: "two words"\nlone: "\n---\n' > doc.md
+  fm_harness 'fm_get doc.md pair; fm_get doc.md lone'
+  assert_eq 0 "$RC"
+  assert_eq 'two words
+"' "$OUT"
+}
+
+test_fm_get_reads_the_first_of_a_repeated_key() {
+  printf -- '---\nid: one\nid: two\n---\n' > doc.md
+  fm_harness 'fm_get doc.md id'
+  assert_eq 'one' "$OUT"
+}
+
+test_fm_get_does_not_read_a_key_that_only_ends_in_the_name() {
+  printf -- '---\nmy_id: wrong\n  id: indented\n---\n' > doc.md
+  fm_harness 'fm_get doc.md id'
+  assert_eq '' "$OUT"
+}
+
+test_fm_list_inline_keeps_a_hash_and_drops_an_empty_item() {
+  printf -- '---\npaths: [ "a/*", b#c , , d, ]tail\n---\n' > doc.md
+  fm_harness 'fm_list doc.md paths'
+  assert_eq 'a/*
+b#c
+d' "$OUT"
+}
+
+test_fm_list_inline_wins_over_a_block_list_under_the_same_key() {
+  printf -- '---\npaths:\n  - block\npaths: [inline]\n---\n' > doc.md
+  fm_harness 'fm_list doc.md paths'
+  assert_eq 'inline' "$OUT"
+}
+
+test_fm_list_inline_never_closed_is_empty() {
+  printf -- '---\npaths: [a, b\n---\n' > doc.md
+  fm_harness 'fm_list doc.md paths'
+  assert_eq '' "$OUT"
+}
+
+test_fm_list_block_ends_an_item_at_its_hash_and_stops_at_the_first_other_line() {
+  printf -- '---\ndomains: # note\n  - x # why\n  - "y z"\n  -  w  \n  -nope\n  - after\n---\n' > doc.md
+  fm_harness 'fm_list doc.md domains'
+  assert_eq 'x
+y z
+w' "$OUT"
+}
+
+test_fm_has_sees_a_closing_delimiter_with_no_newline_after_it() {
+  printf -- '---\nid: x\n---' > doc.md
+  fm_harness 'fm_has doc.md && fm_get doc.md id'
+  assert_eq 0 "$RC"
+  assert_eq 'x' "$OUT"
+}
+
+test_fm_read_v_refuses_what_never_closes_and_leaves_the_variable_empty() {
+  printf -- '---\nid: x\n' > doc.md
+  # shellcheck disable=SC2016 # expanded by the harness's own bash
+  fm_harness 'b=stale; fm_read_v b doc.md; printf "%s|%s" "$?" "$b"'
+  assert_eq '1|' "$OUT"
+}
+
+test_fm_block_still_prints_what_never_closes() {
+  printf -- '---\nid: x\n' > doc.md
+  fm_harness 'fm_block doc.md'
+  assert_eq 'id: x' "$OUT"
+}
+
+test_fm_v_readers_set_any_variable_the_caller_names() {
+  printf -- '---\nid: x\npaths: [p]\n---\n' > doc.md
+  # Whatever a reader calls its own locals, a caller's name must reach the caller.
+  # shellcheck disable=SC2016 # expanded by the harness's own bash
+  fm_harness 'fm_read_v block doc.md; fm_get_block_v val "$block" id; fm_list_block_v items "$block" paths; printf "%s %s" "$val" "$items"'
+  assert_eq 'x p' "$OUT"
+}
+
+test_fm_readers_take_a_document_whose_lines_end_in_crlf() {
+  printf -- '---\r\nid: x\r\nstatus: active\r\npaths:\r\n  - src/**\r\n---\r\nbody\r\n' > doc.md
+  fm_harness 'fm_has doc.md && fm_get doc.md id; fm_get doc.md status; fm_list doc.md paths'
+  assert_eq 0 "$RC"
+  assert_eq 'x
+active
+src/**' "$OUT"
+}
+
+test_fm_block_joins_a_block_with_no_lines_to_nothing() {
+  printf -- '---\n---\n' > doc.md
+  # shellcheck disable=SC2016 # expanded by the harness's own bash
+  # Under `set -u`, as jig runs: an empty array's expansion is an error on bash 3.2.
+  fm_harness 'set -u; fm_has doc.md && fm_block doc.md; printf "[%s]" "$?"'
+  assert_eq '[0]' "$OUT"
+}
+
+test_fm_block_keeps_blank_lines_inside_and_drops_them_at_the_end() {
+  printf -- '---\n\nid: x\n\nnote: y\n\n\n---\n' > doc.md
+  # shellcheck disable=SC2016 # expanded by the harness's own bash
+  fm_harness 'b=$(fm_block doc.md); printf "[%s]" "$b"; fm_read_v r doc.md; printf "[%s]" "$r"'
+  assert_eq '[
+id: x
+
+note: y][
+id: x
+
+note: y]' "$OUT"
+}
