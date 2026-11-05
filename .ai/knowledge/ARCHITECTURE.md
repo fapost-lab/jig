@@ -47,6 +47,10 @@ own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rul
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and
 `jig_checkout_taken` ("which other session holds this task"), the one rule `jig queue next` and
 `jig queue list` read (adr-20261030-a-task-another-session-works-on-is-not-advised).
+`lib/owntree.sh` holds the steps of a write made in Jig's own tree, which never moves a checkout
+(adr-20261104-a-write-goes-in-jigs-own-tree): `spec` and `knowledge` write through it, `writes` is
+its command (`jig writes`, what waits and carrying it further), and `housekeeping` and `status` read
+it; it sources nothing and calls the `jig_ship_*` steps every ship takes.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`

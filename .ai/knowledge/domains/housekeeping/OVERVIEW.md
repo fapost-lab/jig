@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-10-29
+reviewed_at: 2026-11-04
 ---
 # Housekeeping
 
@@ -110,6 +110,9 @@ Read these before changing anything here; each is a rule someone paid for.
   the base. `merged` needs a reflog position the base did not contain at that time
   (`_hk_own_work`); a tie in time goes to the base, and a missing reflog means `unknown`.
   Compare positions, never reflog messages.
+- **The tree a killed write left goes** (`ot_sweep`, `lib/owntree.sh`): it is not a task worktree, it
+  holds its branch against a person's `git switch`, and with no write holding the lock nothing in it
+  is anybody's (adr-20261104-a-write-goes-in-jigs-own-tree).
 - **A worktree goes when its task is closed and landed, or with its workspace, and only
   through git** (RULES.md, ADR-0029 as amended). A phase's workspace waits for its epic
   (ADR-0040); its worktree does not, because nothing reads the worktree once the task is

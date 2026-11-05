@@ -15,7 +15,7 @@ paths:
   - scripts/lib/config.sh
   - "profiles/*/profile.yaml"
 summary: Why a task worktree is given vendor, node_modules and .env by copying them from the checkout beside it rather than installing, how the carry proves with git that what it placed cannot strand the worktree, and the measurements that chose the copy method.
-reviewed_at: 2026-09-24
+reviewed_at: 2026-11-05
 ---
 # ADR: A task worktree carries the state git does not track, from the checkout beside it
 
@@ -327,3 +327,11 @@ lock file: a checkout running a local development setup (`composer dev:link`, an
 that setup to every worktree. "Nothing is ever installed" still holds for Jig. A project may now
 name its own command, `worktree.setup`, which runs after the carry and brings the worktree to what
 the task needs (adr-20261026-a-worktree-is-finished-by-the-projects-command).
+
+## Amendment (2026-11-05): "the only removal jig performs" is a task's worktree
+
+The two sentences above that call `git worktree remove` without `--force` "the only removal jig
+performs" are true of a task's worktree, which is what this decision is about. Jig's own tree is
+removed with `--force`, at one path it builds itself and never with anything of a person's in it
+(adr-20261104-a-write-goes-in-jigs-own-tree). Nothing here changes: a carry must still stay invisible
+to git, because a task's worktree is still removed without `--force`.

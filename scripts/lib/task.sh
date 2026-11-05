@@ -491,7 +491,7 @@ _task_borrowed_tasks_root() {
 #
 # The fallback to ADR-0029's single-task link is not a nicety. A path git does
 # not ignore reads as untracked, and `git worktree remove` without --force --
-# the only removal jig performs -- then refuses that worktree for the rest of
+# the only way jig removes a task's worktree -- then refuses that worktree for the rest of
 # its life. A rule ending in `/` matches only a directory, so a project that
 # ignores `.ai/workspace/tasks/` would earn exactly that. Being blind is the
 # lesser harm, so git is asked first and the old shape taken when it says no.

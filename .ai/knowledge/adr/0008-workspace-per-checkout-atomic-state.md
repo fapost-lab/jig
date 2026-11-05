@@ -10,7 +10,7 @@ paths:
   - schemas/state.md
   - scripts/lib/config.sh
 summary: Why a workspace belongs to its checkout and state is written atomically without locks.
-reviewed_at: 2026-09-25
+reviewed_at: 2026-11-05
 ---
 # ADR-0008: Task workspaces are per checkout; state writes are atomic, last-write-wins
 
@@ -134,3 +134,8 @@ write the same `state` file.
 > it only means the queue no longer knows a task is taken until then. It is not task data: no task's
 > `state`, artifacts or lifecycle live there, and the per-checkout `runtime/working/` record keeps
 > its own subject.
+
+> **Amendment (2026-11-05).** Where a clone's git common directory is not named `.git`
+> (`--separate-git-dir`, a submodule, a bare repository with linked worktrees) no main checkout is
+> found, so the revision is kept under that directory, `<git-common-dir>/jig/revision/`, along with
+> the lock and records of a write in Jig's own tree (adr-20261104-a-write-goes-in-jigs-own-tree).

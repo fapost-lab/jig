@@ -132,6 +132,34 @@ _jig_config_clone_root_find() {
   printf '%s\n' "$JIG_PROJECT"
 }
 
+# jig_config_odd_common — the clone's git common directory when it is not named `.git`
+# (`--separate-git-dir`, a submodule, a bare repository with linked worktrees), and
+# non-zero in the ordinary layout, where a linked worktree's clone root is the main
+# checkout. In these layouts the clone root stays each checkout's own, so what must be
+# one per clone — the revision, and the lock and records of a write in Jig's own tree
+# (adr-20261104-a-write-goes-in-jigs-own-tree) — is kept under this directory, which
+# every checkout and that tree find alike. Reads git's own files, like
+# _jig_config_clone_root_find, because the revision asks on every read.
+jig_config_odd_common() {
+  local line="" gitdir
+  [ -f "$JIG_PROJECT/.git" ] || return 1
+  IFS= read -r line < "$JIG_PROJECT/.git" || [ -n "$line" ] || return 1
+  gitdir=${line#gitdir: }
+  [ -n "$gitdir" ] && [ "$gitdir" != "$line" ] || return 1
+  (
+    common="" here=""
+    cd "$JIG_PROJECT" 2>/dev/null || exit 1
+    cd "$gitdir" 2>/dev/null || exit 1
+    if [ -f commondir ]; then
+      IFS= read -r common < commondir || [ -n "$common" ] || exit 1
+      cd "$common" 2>/dev/null || exit 1
+    fi
+    here=$(pwd -P)
+    [ "${here##*/}" != .git ] || exit 1
+    printf '%s\n' "$here"
+  )
+}
+
 # Path of the local config file for the current clone.
 jig_config_local_file() {
   local file

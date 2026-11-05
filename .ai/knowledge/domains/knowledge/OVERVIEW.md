@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-10-29
+reviewed_at: 2026-11-04
 ---
 # Knowledge
 
@@ -37,6 +37,9 @@ them an agent has to read.
   (`jig knowledge sources`, `sources changed:` in `jig status`). Consolidation edits the source,
   `knowledge changed` reports it, a team's decision record is never edited (`adr-convention` for a
   new one), and an untracked rule file is copied with a secret scan (`new --copy`).
+- A decision from outside a session (`jig knowledge accept|reject|reviewed` with `--revision` or
+  `--json`): committed on `knowledge/decisions` in Jig's own tree, `waiting` on the reads until it
+  lands; the plain text forms write the working tree (adr-20261104-a-write-goes-in-jigs-own-tree).
 - Which documents a task must read, how much of each, and the record that it did:
   resolution by selectors, the catalog, and the context ledger (ADR-0014, ADR-0015).
 - A task's links to a neighbouring repository's task or spec: the `linked:` lines of resolve

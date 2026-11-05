@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
   - "skills/jig-release/**"
-reviewed_at: 2026-10-28
+reviewed_at: 2026-11-04
 ---
 # Spec
 
@@ -53,6 +53,10 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   task filed earlier by `jig spec link` (never for a started one), checking its roadmap items at
   the knowledge decision (`jig spec done`), and taking a spec out with its links
   (`jig spec remove`).
+- Changing a roadmap from outside a session (`jig spec item add|move|file`,
+  adr-20261104-a-write-goes-in-jigs-own-tree): on `spec/<id>`, reaching the default branch or an open
+  epic through a pull request, in Jig's own tree (`lib/owntree.sh`), with `id` on each item of
+  `spec list --json` (`_spec_item_ids`) and `waiting` on each spec.
 - The `jig-release` skill: a release planned as a spec with an epic — the order tasks are picked
   in, the gate on the list and the level, the notes task and its checklist
   (adr-20261002-a-release-is-a-spec-with-an-epic).
@@ -134,7 +138,10 @@ spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut fr
   `_spec_switch_to_existing_branch`, `_spec_refuse_dirty_tree`, `_spec_require_default_branch`,
   `spec_template`, `spec_list`, `spec_list_rows`,
   `spec_progress`, `spec_phase_counts`, `spec_merged_task_ids`, `spec_phase_items`, `_spec_list_json`, `spec_phase_rows`, `spec_roadmap_ref`, `spec_plan`, `spec_list_state`, `spec_count`, `spec_done`, `spec_remove`, `spec_epic`,
-  `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_ship_final_ready`, `spec_release_check`.
+  `spec_epic_status`, `spec_close`, `spec_leftovers`, `spec_ship`, `spec_ship_final_ready`, `spec_release_check`,
+  `spec_item` (its line arithmetic reads `spec_phase_items`, the one reader of the grammar, for each
+  item's lines and handle).
+- `scripts/lib/owntree.sh` — the steps of a write in Jig's own tree, shared with `knowledge.sh`.
 - `scripts/lib/common.sh` — `jig_trash_dest`, shared with housekeeping; `jig_spec_link`,
   `jig_spec_epic`, `jig_fresh_base_ref`, `jig_fetch_branches`, shared with `task start`; `jig_ship_*`,
   shared with `task ship`; `jig_tracked_changes`, shared with `task start`'s own dirty-tree refusal.

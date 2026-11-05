@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -2759,11 +2759,11 @@ test_spec_list_json_says_which_items_count_done() {
   _sl_json
   assert_eq 0 "$RC" "$ERR"
   assert_contains "$OUT" '"progress":{"done":3,"total":5,"filed":2,"fog":0}'
-  assert_contains "$OUT" '{"text":"`t-1` — checked","checked":true,"done":true,"task":"t-1","fog":false}'
-  assert_contains "$OUT" '{"text":"`t-2` — closed, unchecked","checked":false,"done":true,"task":"t-2","fog":false}'
-  assert_contains "$OUT" '{"text":"`t-3` — merged by housekeeping, unchecked","checked":false,"done":true,"task":"t-3","fog":false}'
-  assert_contains "$OUT" '{"text":"`t-4` — filed, still active","checked":false,"done":false,"task":"t-4","fog":false}'
-  assert_contains "$OUT" '{"text":"`axb` — filed, a dotted id closed elsewhere","checked":false,"done":false,"task":"axb","fog":false}'
+  assert_contains "$OUT" '"text":"`t-1` — checked","checked":true,"done":true,"task":"t-1","fog":false}'
+  assert_contains "$OUT" '"text":"`t-2` — closed, unchecked","checked":false,"done":true,"task":"t-2","fog":false}'
+  assert_contains "$OUT" '"text":"`t-3` — merged by housekeeping, unchecked","checked":false,"done":true,"task":"t-3","fog":false}'
+  assert_contains "$OUT" '"text":"`t-4` — filed, still active","checked":false,"done":false,"task":"t-4","fog":false}'
+  assert_contains "$OUT" '"text":"`axb` — filed, a dotted id closed elsewhere","checked":false,"done":false,"task":"axb","fog":false}'
 }
 
 # The lifecycle still reads the checkboxes: a spec whose last items merged but
@@ -4436,7 +4436,7 @@ ROADMAP
 
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"loose item before any phase","checked":false,"done":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"text":"`t-1` — shipped","checked":true,"done":true,"task":"t-1","fog":false},{"text":"`t-2` — filed, and wrapped onto a second line","checked":false,"done":false,"task":"t-2","fog":false},{"text":"fog: not yet clear","checked":false,"done":false,"task":null,"fog":true},{"text":"plain item","checked":false,"done":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}]}]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"idea-x","title":"Idea \"X\"","missing_files":[],"release":"minor","epic":{"branch":"epic/idea-x","state":"open","checked_out":true,"missing":false,"ref":null},"progress":{"done":1,"total":5,"filed":1,"fog":1},"phases":[{"phase":null,"title":null,"done":0,"total":1,"filed":0,"fog":0,"items":[{"id":"i-b1d6453b4a84","text":"loose item before any phase","checked":false,"done":false,"task":null,"fog":false}]},{"phase":1,"title":"First steps","done":1,"total":4,"filed":1,"fog":1,"items":[{"id":"i-ae0619dbb855","text":"`t-1` — shipped","checked":true,"done":true,"task":"t-1","fog":false},{"id":"i-d1a034c1045f","text":"`t-2` — filed, and wrapped onto a second line","checked":false,"done":false,"task":"t-2","fog":false},{"id":"i-429cb41304c3","text":"fog: not yet clear","checked":false,"done":false,"task":null,"fog":true},{"id":"i-bdd285625581","text":"plain item","checked":false,"done":false,"task":null,"fog":false}]},{"phase":2,"title":"Later","done":0,"total":0,"filed":0,"fog":0,"items":[]}],"waiting":null}]}}' "$OUT"
   # The text form of the same spec is what it always was.
   run jig spec list
   assert_eq 'idea-x   Idea "X"   roadmap 1/5 done, 1 filed, fog 1 (on epic/idea-x)' "$OUT"
@@ -4449,7 +4449,7 @@ test_spec_list_json_says_null_for_every_fact_a_spec_does_not_have() {
   printf 'no heading\n' > .ai/specs/c-half/spec.md
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"text":"one","checked":false,"done":false,"task":null,"fog":false}]}]},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[]}]}}' "$OUT"
+  assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"specs":[{"id":"a-plain","title":"Plain","missing_files":[],"release":null,"epic":null,"progress":{"done":0,"total":1,"filed":0,"fog":0},"phases":[{"phase":null,"title":"Notes","done":0,"total":1,"filed":0,"fog":0,"items":[{"id":"i-71504576a7df","text":"one","checked":false,"done":false,"task":null,"fog":false}]}],"waiting":null},{"id":"b-bare","title":null,"missing_files":["spec.md","roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[],"waiting":null},{"id":"c-half","title":null,"missing_files":["roadmap.md"],"release":null,"epic":null,"progress":null,"phases":[],"waiting":null}]}}' "$OUT"
 }
 
 test_spec_list_json_with_no_specs_is_an_empty_list() {
@@ -4482,7 +4482,7 @@ ROADMAP
   _sl_json
   assert_eq 0 "$RC" "$ERR"
   assert_contains "$OUT" '"epic":{"branch":"epic/idea-x","state":"open","checked_out":false,"missing":false,"ref":"refs/heads/epic/idea-x"},"progress":{"done":1,"total":1,"filed":0,"fog":0}'
-  assert_contains "$OUT" '"items":[{"text":"`t-1` — first","checked":true,"done":true,"task":"t-1","fog":false}]'
+  assert_contains "$OUT" '"items":[{"id":"i-20714bede6c0","text":"`t-1` — first","checked":true,"done":true,"task":"t-1","fog":false}]'
   run jig spec list
   assert_contains "$OUT" "epic/idea-x — progress is on the epic"
 }
@@ -4497,7 +4497,7 @@ Release: patch
 ROADMAP
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" '"release":"patch","epic":{"branch":"epic/idea-x","state":"open","checked_out":false,"missing":true,"ref":null},"progress":null,"phases":[]}'
+  assert_contains "$OUT" '"release":"patch","epic":{"branch":"epic/idea-x","state":"open","checked_out":false,"missing":true,"ref":null},"progress":null,"phases":[],"waiting":null}'
   run jig spec list
   assert_contains "$OUT" "epic/idea-x — branch missing"
 }
@@ -4573,7 +4573,438 @@ test_spec_list_json_items_agree_with_counts_on_edge_lines() {
   printf '## Phase 1 — One\r\n\r\n- [ ] `-` — dash id\r\n- [ ] `t-1` — real\r\n' | _sl_spec idea-x 'Idea X'
   _sl_json
   assert_eq 0 "$RC" "$ERR"
-  assert_contains "$OUT" '"phases":[{"phase":1,"title":"One","done":0,"total":2,"filed":2,"fog":0,"items":[{"text":"`-` — dash id","checked":false,"done":false,"task":"-","fog":false},{"text":"`t-1` — real","checked":false,"done":false,"task":"t-1","fog":false}]}]'
+  assert_contains "$OUT" '"phases":[{"phase":1,"title":"One","done":0,"total":2,"filed":2,"fog":0,"items":[{"id":"i-340a3608a1a9","text":"`-` — dash id","checked":false,"done":false,"task":"-","fog":false},{"id":"i-c18a041dbfd3","text":"`t-1` — real","checked":false,"done":false,"task":"t-1","fog":false}]}]'
   JIG_SP_ITEMS=1 run jig spec list
   assert_eq 'idea-x   Idea X   roadmap 0/2 done, 2 filed, fog 0' "$OUT"
+}
+
+# --- spec item: roadmap writes in Jig's own tree (lib/owntree.sh) ------------------
+#
+# What the mechanism does for every write is in writes.t.sh; here, the roadmap.
+
+# _si_roadmap [<branch>] — the roadmap as committed on the write branch.
+_si_roadmap() {
+  own_tree_show "${1:-spec/idea-x}" .ai/specs/idea-x/roadmap.md
+}
+
+# _si_id <text> — the handle of the item with that text, on the write branch when
+# one waits and on main otherwise, read from `spec list --json` as a program would:
+# `waiting.phases` come last in the line, so the last match is the branch's.
+_si_id() {
+  jig spec list --json | awk '{ gsub(/\{"id":"i-/, "\n&"); print }' | awk -v t="\"text\":\"$1\"" 'index($0, t) { l = $0 } END { print l }' \
+    | sed -E 's/^\{"id":"(i-[0-9a-f-]+)".*/\1/'
+}
+
+test_spec_list_json_gives_each_item_a_handle() {
+  own_tree_repo commit
+  run jig spec list --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"text":"Alpha item continued here"'
+  assert_contains "$OUT" '"waiting":null'
+  case "$(_si_id 'Alpha item continued here')" in
+    i-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) fail "not a handle: $(_si_id 'Alpha item continued here')" ;;
+  esac
+}
+
+test_spec_item_handle_survives_what_happens_to_an_item_but_its_rewording() {
+  fixture_repo
+  mkdir -p .ai/specs/h
+  printf '# H\n' > .ai/specs/h/spec.md
+  local one two three four
+  printf -- '- [ ] Некий пункт\n' > .ai/specs/h/roadmap.md
+  one=$(spec_handle_of .ai/specs/h/roadmap.md 1)
+  printf -- '## Phase 3 — Moved\n\n* [x]   Некий   пункт\n' > .ai/specs/h/roadmap.md
+  two=$(spec_handle_of .ai/specs/h/roadmap.md 1)
+  printf -- '- [ ] `some-task` — Некий пункт\n' > .ai/specs/h/roadmap.md
+  three=$(spec_handle_of .ai/specs/h/roadmap.md 1)
+  printf -- '- [ ] fog: Некий пункт\n' > .ai/specs/h/roadmap.md
+  four=$(spec_handle_of .ai/specs/h/roadmap.md 1)
+  assert_eq "$one" "$two"
+  assert_eq "$one" "$three"
+  assert_eq "$one" "$four"
+  printf -- '- [ ] Некий пункт!\n' > .ai/specs/h/roadmap.md
+  if [ "$one" = "$(spec_handle_of .ai/specs/h/roadmap.md 1)" ]; then
+    fail "a reworded item kept its handle"
+  fi
+}
+
+# spec_handle_of <roadmap> <n> — the handle of the n-th item, read from the list.
+spec_handle_of() {
+  jig spec list --json | awk '{ gsub(/\{"id":"i-/, "\n&"); print }' | sed -n "$(($2 + 1))p" | sed -E 's/^\{"id":"(i-[0-9a-f-]+)".*/\1/'
+}
+
+test_spec_item_handle_of_a_repeated_text_is_numbered() {
+  fixture_repo
+  mkdir -p .ai/specs/h
+  printf '# H\n' > .ai/specs/h/spec.md
+  printf -- '- [ ] Same\n- [ ] Other\n- [ ] Same\n' > .ai/specs/h/roadmap.md
+  local one three
+  one=$(spec_handle_of x 1)
+  three=$(spec_handle_of x 3)
+  assert_eq "$one-2" "$three"
+}
+
+test_spec_item_add_places_it_where_it_was_asked() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  run jig spec item add idea-x --phase 1 --text "Bottom by default"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "branch: spec/idea-x (into main)"
+  assert_contains "$OUT" "commit: $(git rev-parse spec/idea-x)"
+  assert_contains "$OUT" "pushed: no"
+  assert_contains "$OUT" "pull request: none"
+  assert_contains "$OUT" "merged: no"
+  run jig spec item add idea-x --phase 1 --text "On top" --top
+  assert_eq 0 "$RC"
+  run jig spec item add idea-x --phase 1 --text "After alpha" --after "$alpha"
+  assert_eq 0 "$RC"
+  assert_eq '- [ ] On top
+- [ ] Alpha item
+  continued here
+- [ ] After alpha
+- [x] Beta item
+- [ ] fog: gamma area — why
+- [ ] Bottom by default' "$(_si_roadmap | grep -E '^(- \[|  continued)')"
+  assert_contains "$(_si_roadmap)" 'Why this phase.
+
+- [ ] On top'
+}
+
+test_spec_item_add_to_a_phase_with_no_items_keeps_the_section_readable() {
+  own_tree_repo commit
+  run jig spec item add idea-x --phase 2 --text "First of two" --json
+  assert_eq 0 "$RC"
+  assert_contains "$(_si_roadmap)" '## Phase 2 — Two
+
+- [ ] First of two
+
+## Waves'
+  run jig spec item add idea-x --phase 2 --text "Second of two" --json
+  assert_contains "$(_si_roadmap)" '- [ ] First of two
+- [ ] Second of two
+
+## Waves'
+}
+
+test_spec_item_add_answers_with_the_item_and_where_it_went() {
+  own_tree_repo commit
+  run jig spec item add idea-x --phase 2 --text 'Says "quoted"	and tabbed' --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"data":{"spec":"idea-x","item":{"id":"i-'
+  assert_contains "$OUT" '"text":"Says \"quoted\" and tabbed","checked":false,"task":null,"fog":false,"phase":2},"write":{"target":"spec:idea-x","branch":"spec/idea-x","base":"main"'
+}
+
+test_spec_item_add_refuses_with_codes_and_writes_nothing() {
+  own_tree_repo commit
+  run jig spec item add idea-x --text x --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add idea-x --phase x --text x --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add idea-x --phase 1 --text "  " --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add ../up --phase 1 --text x --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add idea-x --phase 1 --text x --revision abc --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add idea-x --phase 1 --text x --bogus --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item bogus idea-x --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add idea-x --phase 9 --text x --json
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_contains "$OUT" "no phase 9"
+  run jig spec item add nope --phase 1 --text x --json
+  assert_contains "$OUT" '"code":"not-found"'
+  run jig spec item add idea-x --phase 1 --text "Beta item" --json
+  assert_contains "$OUT" '"code":"already-exists"'
+  run jig spec item add idea-x --phase 1 --text x --after i-000000000000 --json
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+  own_tree_gone
+}
+
+test_spec_item_add_finds_no_spec_that_is_only_in_a_working_tree() {
+  own_tree_repo commit
+  mkdir -p .ai/specs/loose
+  printf '# Loose\n' > .ai/specs/loose/spec.md
+  printf '## Phase 1 — One\n' > .ai/specs/loose/roadmap.md
+  run jig spec item add loose --phase 1 --text x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_contains "$OUT" "until it is committed"
+}
+
+test_spec_item_add_keeps_a_crlf_roadmap_crlf() {
+  own_tree_repo commit
+  printf '# R\r\n\r\n## Phase 1 — One\r\n\r\n- [ ] One\r\n' > .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m crlf
+  git push -q origin main
+  run jig spec item add idea-x --phase 1 --text "Two" --json
+  assert_eq 0 "$RC"
+  local lines crs
+  lines=$(_si_roadmap | wc -l | tr -d ' ')
+  crs=$(_si_roadmap | tr -cd '\r' | wc -c | tr -d ' ')
+  assert_eq 6 "$lines"
+  assert_eq "$lines" "$crs"
+}
+
+test_spec_item_move_within_a_phase_and_to_another_carrying_its_lines() {
+  own_tree_repo commit
+  local alpha beta
+  alpha=$(_si_id 'Alpha item continued here')
+  beta=$(_si_id 'Beta item')
+  run jig spec item move idea-x "$beta" --top --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "\"id\":\"$beta\""
+  assert_contains "$OUT" '"checked":true'
+  assert_contains "$OUT" '"phase":1'
+  assert_contains "$(_si_roadmap)" 'Why this phase.
+
+- [x] Beta item
+- [ ] Alpha item'
+  run jig spec item move idea-x "$alpha" --phase 2 --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "\"id\":\"$alpha\""
+  assert_contains "$OUT" '"phase":2'
+  assert_contains "$(_si_roadmap)" '## Phase 2 — Two
+
+- [ ] Alpha item
+  continued here
+
+## Waves'
+  run jig spec item move idea-x "$alpha" --after "$beta" --json
+  assert_eq 0 "$RC"
+  assert_contains "$(_si_roadmap)" '- [x] Beta item
+- [ ] Alpha item
+  continued here
+- [ ] fog: gamma'
+}
+
+test_spec_item_move_refuses_with_codes() {
+  own_tree_repo commit
+  local alpha beta
+  alpha=$(_si_id 'Alpha item continued here')
+  beta=$(_si_id 'Beta item')
+  run jig spec item move idea-x "$alpha" --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item move idea-x "$alpha" --after "$beta" --phase 2 --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item move idea-x "$alpha" --after "$beta" --top --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item move idea-x "$alpha" --after "$alpha" --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item move idea-x i-000000000000 --top --json
+  assert_contains "$OUT" '"code":"not-found"'
+  run jig spec item move idea-x "$alpha" --phase 9 --json
+  assert_contains "$OUT" '"code":"not-found"'
+}
+
+test_spec_item_a_reworded_item_is_refused_and_not_guessed() {
+  own_tree_repo commit
+  local beta
+  beta=$(_si_id 'Beta item')
+  sed 's/Beta item/Beta reworded/' .ai/specs/idea-x/roadmap.md > r.tmp
+  mv r.tmp .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m reword
+  git push -q origin main
+  run jig spec item move idea-x "$beta" --top --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+}
+
+test_spec_item_a_move_that_changes_nothing_commits_nothing() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  run jig spec item move idea-x "$alpha" --top --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  assert_contains "$OUT" '"commits":0'
+  run jig writes --json
+  assert_contains "$OUT" '"writes":[]'
+}
+
+test_spec_item_edits_in_a_row_reach_what_the_last_one_added() {
+  own_tree_repo commit
+  run jig spec item add idea-x --phase 2 --text "Made a moment ago" --json
+  assert_eq 0 "$RC"
+  local made
+  made=$(_si_id 'Made a moment ago')
+  run jig spec item move idea-x "$made" --phase 1 --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"commits":2'
+  assert_contains "$OUT" '"phase":1'
+}
+
+test_spec_list_json_shows_a_waiting_edit_with_the_roadmap_on_its_branch() {
+  own_tree_repo push
+  run jig spec item add idea-x --phase 2 --text "Waiting one" --json
+  run jig spec list --json
+  assert_eq 0 "$RC"
+  local tip
+  tip=$(git rev-parse spec/idea-x)
+  assert_contains "$OUT" "\"waiting\":{\"target\":\"spec:idea-x\",\"branch\":\"spec/idea-x\",\"base\":\"main\",\"commit\":\"$tip\",\"commits\":1,\"pushed\":true,\"pr\":null,\"merged\":false,\"progress\":{\"done\":1,\"total\":4,\"filed\":0,\"fog\":1},\"phases\":[{\"phase\":1"
+  assert_contains "$OUT" '"text":"Waiting one"'
+  # The roadmap beside it is what it was.
+  assert_contains "$OUT" '"progress":{"done":1,"total":3,"filed":0,"fog":1},"phases":'
+}
+
+test_spec_item_file_names_the_task_and_links_it() {
+  own_tree_repo commit
+  fixture_task t-1 "" active
+  printf '# t-1\n' > .ai/workspace/tasks/t-1/task.md
+  sed '/^branch:/d' .ai/workspace/tasks/t-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/t-1/state
+  local alpha gamma
+  alpha=$(_si_id 'Alpha item continued here')
+  gamma=$(_si_id 'fog: gamma area — why')
+  run jig spec item file idea-x "$alpha" --task t-1 --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "\"id\":\"$alpha\""
+  assert_contains "$OUT" '"task":"t-1"'
+  assert_contains "$(_si_roadmap)" '- [ ] `t-1` — Alpha item
+  continued here'
+  assert_file_contains .ai/workspace/tasks/t-1/task.md 'Spec: .ai/specs/idea-x/ — Phase 1'
+  # What #362 would run next says it is done, and what the roadmap on main says
+  # did not stop it.
+  run jig spec link idea-x t-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "already linked"
+  # A fog item stops being fog.
+  fixture_task t-2 "" active
+  printf '# t-2\n' > .ai/workspace/tasks/t-2/task.md
+  sed '/^branch:/d' .ai/workspace/tasks/t-2/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/t-2/state
+  run jig spec item file idea-x "$gamma" --task t-2 --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"fog":false'
+  assert_contains "$(_si_roadmap)" '- [ ] `t-2` — gamma area — why'
+}
+
+test_spec_item_file_refuses_with_codes() {
+  own_tree_repo commit
+  local alpha beta
+  alpha=$(_si_id 'Alpha item continued here')
+  beta=$(_si_id 'Beta item')
+  run jig spec item file idea-x "$alpha" --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --task ../x --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --task nope --json
+  assert_contains "$OUT" '"code":"not-found"'
+  fixture_task started "task/started" active
+  run jig spec item file idea-x "$alpha" --task started --json
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "is started on task/started"
+  fixture_task done-t "" consolidated
+  run jig spec item file idea-x "$alpha" --task done-t --json
+  assert_contains "$OUT" '"code":"not-linkable"'
+  fixture_task t-1 "" active
+  printf '# t-1\n\nSpec: .ai/specs/other/ — Phase 1\n' > .ai/workspace/tasks/t-1/task.md
+  run jig spec item file idea-x "$alpha" --task t-1 --json
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "is linked to spec other"
+  fixture_task t-2 "" active
+  printf '# t-2\n' > .ai/workspace/tasks/t-2/task.md
+  run jig spec item file idea-x "$beta" --task t-2 --json
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "is checked"
+  run jig spec item file idea-x "$alpha" --task t-2 --bogus --json
+  assert_contains "$OUT" '"code":"usage"'
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+}
+
+test_spec_item_file_a_link_that_fails_is_an_answer_and_the_commit_stands() {
+  skip_unless_readonly_dirs
+  own_tree_repo commit
+  fixture_task t-1 "" active
+  printf '# t-1\n' > .ai/workspace/tasks/t-1/task.md
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  chmod 555 .ai/workspace/tasks/t-1
+  run jig spec item file idea-x "$alpha" --task t-1 --json
+  chmod 755 .ai/workspace/tasks/t-1
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":true'
+  assert_contains "$OUT" "jig spec link idea-x t-1"
+  assert_file .ai/runtime/writes/spec-idea-x
+}
+
+test_spec_item_file_refuses_an_item_that_names_a_task() {
+  own_tree_repo commit
+  fixture_task t-1 "" active
+  printf '# t-1\n' > .ai/workspace/tasks/t-1/task.md
+  fixture_task t-2 "" active
+  printf '# t-2\n' > .ai/workspace/tasks/t-2/task.md
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  run jig spec item file idea-x "$alpha" --task t-1 --json
+  assert_eq 0 "$RC"
+  run jig spec item file idea-x "$alpha" --task t-2 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"already-exists"'
+  assert_contains "$OUT" "already names task t-1"
+}
+
+# _si_epic — idea-x declares an open epic, on main, with the epic cut.
+_si_epic() {
+  awk '{ print } NR == 1 { print ""; print "Epic: epic/idea-x" }' .ai/specs/idea-x/roadmap.md > r.tmp
+  mv r.tmp .ai/specs/idea-x/roadmap.md
+  git add -A
+  git commit -q -m epic
+  git push -q origin main
+  git branch epic/idea-x
+  git push -q origin epic/idea-x
+  git fetch -q origin
+}
+
+test_spec_item_on_an_epic_reaches_it_through_a_pull_request_and_never_a_push() {
+  own_tree_repo pr
+  _si_epic
+  own_tree_stub_gh
+  git fetch -q origin
+  local epic
+  epic=$(git rev-parse epic/idea-x)
+  run jig spec item add idea-x --phase 2 --text "On the epic" --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x","base":"epic/idea-x"'
+  assert_contains "$(cat stub-gh/create.argv)" "$(printf -- '--base\nepic/idea-x\n--head\nspec/idea-x')"
+  assert_eq "$epic" "$(git rev-parse epic/idea-x)"
+  assert_eq "$epic" "$(git --git-dir=origin.git rev-parse epic/idea-x)"
+  assert_eq "$epic" "$(git merge-base spec/idea-x epic/idea-x)"
+}
+
+test_spec_item_on_an_epic_that_is_not_here_is_refused() {
+  own_tree_repo push
+  _si_epic
+  git branch -q -D epic/idea-x
+  git update-ref -d refs/remotes/origin/epic/idea-x
+  git --git-dir=origin.git update-ref -d refs/heads/epic/idea-x
+  run jig spec item add idea-x --phase 2 --text "Lost" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"epic-missing"'
+}
+
+test_spec_item_on_a_spec_only_on_its_own_branch_stays_on_it() {
+  own_tree_repo push
+  git switch -q -c spec/fresh
+  mkdir -p .ai/specs/fresh
+  printf '# Fresh\n' > .ai/specs/fresh/spec.md
+  printf '## Phase 1 — One\n' > .ai/specs/fresh/roadmap.md
+  git add -A
+  git commit -q -m fresh
+  git switch -q main
+  # Not pushed, so it is a person's and a write will not publish it.
+  run jig spec item add fresh --phase 1 --text "Reached" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"branch-has-other-commits"'
+  git push -q origin spec/fresh
+  run jig spec item add fresh --phase 1 --text "Reached" --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/fresh"'
+  assert_contains "$OUT" '"commits":2'
 }

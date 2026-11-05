@@ -2554,7 +2554,8 @@ jig_status_page_flush() {
 #
 # The value is the highest numeric **name** in `.ai/runtime/revision/` of the
 # clone's main checkout (jig_config_clone_root: every worktree raises and reads
-# the same one, ADR-0008 as amended 2026-09-25). Raising it claims the next
+# the same one, ADR-0008 as amended 2026-09-25; see jig_revision_dir for a clone with
+# no main checkout to find). Raising it claims the next
 # name, a file created exclusively (jig_claim_file, O_EXCL on POSIX and
 # CREATE_NEW on NTFS under Git Bash), so of two writers that both saw <n> exactly
 # one creates <n+1> and the other gets EEXIST, reads again and claims <n+2>; a
@@ -2566,10 +2567,15 @@ jig_status_page_flush() {
 # A file edited by hand, or changed by a git command a person ran, raises
 # nothing: the accepted risk of the contract-extensions spec.
 
-# jig_revision_dir — where the counter lives; fails outside a project.
+# jig_revision_dir — where the counter lives; fails outside a project. Where a clone has
+# no main checkout to find, under its git common directory (jig_config_odd_common).
 jig_revision_dir() {
-  local root
+  local root common
   [ -n "${JIG_PROJECT:-}" ] || return 1
+  if common=$(jig_config_odd_common); then
+    printf '%s/jig/revision\n' "$common"
+    return 0
+  fi
   root=$(jig_config_clone_root) || return 1
   [ -n "$root" ] || return 1
   printf '%s/%s/runtime/revision\n' "$root" "$JIG_AI_DIR"

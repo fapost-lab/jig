@@ -16,6 +16,8 @@ paths:
   - scripts/lib/queue.sh
   - scripts/lib/knowledge.sh
   - scripts/lib/config.sh
+  - scripts/lib/owntree.sh
+  - scripts/lib/writes.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
 reviewed_at: 2026-11-04
 ---
@@ -99,6 +101,13 @@ MAY:      make a side effect outside Jig's records between the claim and the mov
           resume` applies a stash there), refusing with its own code and leaving the record
           as it was: a refusal after the claim costs one raise, never a half-landed write
 MUST NOT: write anything before the claim stands; land a second write under one claim
+
+A write made in Jig's own tree (scripts/lib/owntree.sh, ot_*)
+
+MUST:     answer with ot_answer_json's object as `write`; validate against the tree, not the
+          checkout it ran in; refuse only what wrote nothing — once the commit stands, a failed
+          push or pull request is an answer (`pushed: false` and `note`)
+MUST NOT: run in a read: `waiting` in a read comes from the record and local refs (ot_waiting)
 ```
 
 ## Example

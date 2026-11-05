@@ -522,3 +522,144 @@ _run_out() {
     mktemp "${TMPDIR:-/tmp}/jig-run-out.XXXXXX"
   fi
 }
+
+# --- writes in Jig's own tree (lib/owntree.sh) --------------------------------------
+
+# own_tree_repo <level> — an installed project at that `agent.git`, everything
+# committed, with a roadmap on main and a bare `origin` holding main. The bare
+# repository is excluded from git's view, so that a clean checkout reads clean.
+own_tree_repo() {
+  fixture_jig_repo
+  mkdir -p .ai/specs/idea-x
+  printf '# Idea X\n' > .ai/specs/idea-x/spec.md
+  cat > .ai/specs/idea-x/roadmap.md <<'ROADMAP'
+# Roadmap: Idea X
+
+## Phase 1 — One
+
+Why this phase.
+
+- [ ] Alpha item
+  continued here
+- [x] Beta item
+- [ ] fog: gamma area — why
+
+## Phase 2 — Two
+
+## Waves
+
+1. Alpha item
+ROADMAP
+  git add -A >/dev/null
+  git commit -q -m "a roadmap"
+  printf 'origin.git/\nstub-gh/\nstub-git/\n' >> .git/info/exclude
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  own_tree_level "$1"
+}
+
+# own_tree_in_the_window <script> — make a race deterministic. A fake `git`, kept in
+# .git-excluded stub-git/, runs <script> once, from here, the first time a write asks
+# origin about its branch (_ot_origin_has): after the write has looked for a holder and
+# before it has done anything on what it saw.
+own_tree_in_the_window() {
+  local real
+  real=$(command -v git)
+  mkdir -p stub-git
+  printf '%s\n' "$1" > stub-git/window
+  cat > stub-git/git <<STUB
+#!/usr/bin/env bash
+d='$PWD/stub-git'
+case " \$* " in
+  *" ls-remote "*)
+    if [ ! -f "\$d/fired" ]; then
+      : > "\$d/fired"
+      (cd '$PWD' && bash "\$d/window") > "\$d/window.out" 2>&1
+    fi ;;
+esac
+exec '$real' "\$@"
+STUB
+  chmod +x stub-git/git
+  PATH="$PWD/stub-git:$PATH"
+  export PATH
+}
+
+# own_tree_level <level> — agent.git in this clone's own settings.
+own_tree_level() {
+  mkdir -p .ai
+  printf 'agent.git: %s\n' "$1" > .ai/config.local.yaml
+}
+
+# own_tree_level_in <checkout> — agent.git commit in another checkout of the clone, for
+# a layout where each checkout has its own settings.
+own_tree_level_in() {
+  (cd "$1" && own_tree_level commit)
+}
+
+# own_tree_show <ref> <path> — <path> as committed at <ref>. Resolved to a commit first:
+# MSYS rewrites an argument holding a `/` before its `:` (conventions/shell.md).
+own_tree_show() {
+  git show "$(git rev-parse --verify "$1^{commit}"):$2"
+}
+
+# own_tree_rev — the clone's revision, as a read reports it.
+own_tree_rev() {
+  jig spec list --json | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/'
+}
+
+# own_tree_snapshot — what a person's checkout must still be after a write: its HEAD,
+# the commit there, the index and every change in the tree.
+own_tree_snapshot() {
+  git symbolic-ref --short HEAD
+  git rev-parse HEAD
+  git diff --cached
+  git status --porcelain
+  git diff
+}
+
+# own_tree_gone — the write left no tree and no lock behind.
+own_tree_gone() {
+  assert_no_file .git/jig/tree "the tree outlives the write"
+  assert_no_file .ai/runtime/writes/lock/busy/run "the lock outlives the write"
+  assert_eq 1 "$(git worktree list --porcelain | grep -c '^worktree ')"
+}
+
+# own_tree_stub_gh — a fake, authenticated `gh`, kept in .git-excluded stub-gh/. One
+# pull request at a time: `pr create` opens it, `pr list` finds it, stub-gh/state is
+# its state, stub-gh/checks its checks (`pass` unless the file says otherwise).
+own_tree_stub_gh() {
+  mkdir -p stub-gh
+  cat > stub-gh/gh <<STUB
+#!/usr/bin/env bash
+d='$PWD/stub-gh'
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "pr list") if [ -f "\$d/url" ]; then cat "\$d/url"; else printf 'null\n'; fi ;;
+  "pr create")
+    shift 2
+    printf '%s\n' "\$@" >> "\$d/create.argv"
+    printf 'https://github.com/example/example/pull/42\n' | tee "\$d/url" ;;
+  "pr view")
+    case "\$*" in
+      *isDraft*) printf 'false %s\n' "\$(git rev-parse "\$(cat "\$d/head")")" ;;
+      *) if [ -f "\$d/state" ]; then cat "\$d/state"; else printf 'OPEN\n'; fi ;;
+    esac ;;
+  "pr checks")
+    if [ -f "\$d/checks" ]; then cat "\$d/checks"; else printf 'pass\n'; fi ;;
+  "pr merge")
+    printf '%s\n' "\$*" > "\$d/merged"
+    if [ -f "\$d/on-merge" ]; then bash "\$d/on-merge"; fi ;;
+  "repo view") printf 'true false false\n' ;;
+esac
+STUB
+  chmod +x stub-gh/gh
+  sed "s|^forge:.*|forge: github|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml >/dev/null
+  git commit -q -m "forge" || true
+  git push -q origin main 2>/dev/null || true
+  git fetch -q origin
+  PATH="$PWD/stub-gh:$PATH"
+  export PATH
+}
