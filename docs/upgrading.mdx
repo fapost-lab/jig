@@ -443,12 +443,32 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.39.0 to 0.40.0
+
+Nothing to do by hand, unless your project comes from 0.38.1 or older: then the red box in [From
+0.38.1 to 0.39.0](#from-0381-to-0390) applies to its first upgrade. The installer and
+`.ai/config.yaml` did not change, and no new setting appears in the upgrade's report. The upgrade
+brings new scripts, a new priority line and paragraph in the Jig section of `AGENTS.md`, and new
+text for the `jig-accept`, `jig-task`, `jig-review`, `jig-architecture-review`, `jig-autopilot`,
+`jig-consolidate`, `jig-idea` and `jig-release` skills, with two new reference files under
+`jig-task` and `jig-review`.
+
+**What you will notice.** `jig status` has a `writes:` line when a write from a program waits on a
+branch of its own. When it would merge, `jig task ship` refuses if what is staged leaves
+changes in the tree: stage them, or pass `--partial` if they are not the task's. `jig task new`
+prints a `not queued:` reminder on stderr. T2 and T4 reviews take two readers, and may list code
+smells as small findings. `jig queue next` can name a task as taken by another session instead of
+offering it, and autopilot asks it before each start, in a phase run too. `jig upgrade --land` in a linked worktree on the upgrade's branch refuses and names the
+main checkout. A program that reads Jig's JSON may see `taken` as a `reason` of `jig queue next`, a
+`revision` that moves whenever a session works a task, and `upgrade-available` beside an upgrade
+pull request for an older version.
+
 ## From 0.38.1 to 0.39.0
 
 0.38.1 asked nothing by hand, so this section covers an upgrade from 0.38.0 as well.
 
 <Danger>
-  **Run the first upgrade to 0.39.0 with the Jig on your machine, by its full path.** This is for a
+  **Run the first upgrade to 0.39.0 or newer with the Jig on your machine, by its full path.** This is for a
   project whose Jig is 0.38.1 or older and either stops with
   `upgrade: cannot determine the framework source root; pass --from <dir>`, or has a `jig.source:`
   line in `.ai/manifest` naming a folder that is not on your machine — usually another person's,
@@ -472,8 +492,8 @@ and no commit.
   ~/.local/share/jig/scripts/jig upgrade
   ```
 
-  The first command brings the Jig on your machine to 0.39.0; the second upgrades the project from
-  it. Check the result: `.ai/scripts/jig version` prints `jig 0.39.0`, and `.ai/manifest` says
+  The first command brings the Jig on your machine to the newest release; the second upgrades the
+  project from it. Check the result: `.ai/scripts/jig version` prints that version, and `.ai/manifest` says
   `jig.source: global`. Then finish the upgrade as
   [after any upgrade](#after-an-upgrade-what-to-do-in-order), from step 3. From then on the
   project's own copy upgrades by itself, and a plain `jig upgrade` works.
