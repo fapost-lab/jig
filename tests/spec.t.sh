@@ -5084,7 +5084,7 @@ test_spec_item_file_new_a_checkout_that_borrows_its_tasks_files_nothing() {
   alpha=$(_si_id 'Alpha item continued here')
   mkdir -p .ai/workspace elsewhere-tasks
   rm -rf .ai/workspace/tasks
-  ln -s "$PWD/elsewhere-tasks" .ai/workspace/tasks
+  plant_dir_link "$PWD/elsewhere-tasks" "$PWD/.ai/workspace/tasks"
   run jig spec item file idea-x "$alpha" --new t-new --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-linkable"'
