@@ -78,6 +78,12 @@ Whatever the mechanism, it has to hold in a project that is not this one: no for
 - **adr-20260924-a-worktree-carries-what-git-does-not**: "the only removal jig performs" holds for a task's worktree, not for this tree (its amendment of 2026-11-05).
 - **ADR-0008 and adr-20261016-the-clone-revision-is-a-claimed-name**: the revision is in the main checkout's `.ai/runtime/revision/` only where a main checkout is found; otherwise it is under the git common directory.
 
+> **Amendment (2026-11-06).** A knowledge decision on a document this checkout has and the tree does not —
+> only here, in commits origin's base lacks, or on the base but not on a `knowledge/decisions` cut before it —
+> is refused `not-on-base` or `not-on-branch`, not `not-found`, and so is a `reject` of a stub whose change
+> the tree does not carry. `proposed --json` and `sources --json` say it first, with `decidable` and `reason`
+> (adr-20261106-a-changed-link-is-dropped-by-reject).
+
 ## Amendment (2026-11-06): one judgement of the branch, origin's own answer, and a write that waits is never forgotten
 
 The first fixes of this mechanism were made one copy at a time, and each opened a fault in the other copy (writes-in-own-tree-findings F30–F35). Two causes ran through them: the record counted only while its base was today's, and "origin already holds it" was read from tracking refs, which keep a branch origin deleted until a prune.
@@ -87,9 +93,3 @@ The first fixes of this mechanism were made one copy at a time, and each opened 
 - **A write that still waits is never stacked on, nor forgotten: `write-still-waits`.** A write waiting (`top`, `spent`) for another base than this edit's would, on top, go out in the pull request into the old base, which `jig_ship_pr` finds by the branch alone; on a new name, the one record would lose it. Edits that never reached origin above a write whose pull request was closed, or whose branch origin dropped, would otherwise be left on the old name out of sight. Both are refused with nothing written; the message names the branch and what to do. Cutting a new name, or cherry-picking the unsent edits onto it, were the alternatives: the first forgets an edit, the second rewrites commits in a tree nobody watches, and neither was a choice anyone had made.
 - **What `jig writes ship` learns, the record keeps.** A record carries `ended: closed|dropped|landed` once `writes ship` found the write over without a merge, and `merged: 1` once it found it merged with the tip; reads stop counting it. The answer stays `not-found`, which is what a program acts on ("nothing waits"). This narrows "a refusal means nothing was written": a `writes ship` refusal of a write that is over writes that fact into the record, and nothing else — no ref, no commit, nothing on origin. Answering success instead would change a code programs already read; not writing would leave the count wrong until the next edit.
 - **Still open** (writes-pruned-dropped-branch): with the branch deleted on origin, the tracking ref pruned and the last push of the write failed (`pushed: 0`), nothing says origin ever held it, the answer is `top`, and the next edit pushes the dropped branch again.
-
-> **Amendment (2026-11-06).** A knowledge decision on a document this checkout has and the tree does not —
-> only here, in commits origin's base lacks, or on the base but not on a `knowledge/decisions` cut before it —
-> is refused `not-on-base` or `not-on-branch`, not `not-found`, and so is a `reject` of a stub whose change
-> the tree does not carry. `proposed --json` and `sources --json` say it first, with `decidable` and `reason`
-> (adr-20261106-a-changed-link-is-dropped-by-reject).
