@@ -50,8 +50,9 @@ MAY:      escape a long free text outside json_quote when json_quote's pass over
           what json_quote would print
 MUST:     hand JSON only bytes that are valid UTF-8 where the text comes from a file a person
           committed (json_quote passes other bytes through, and one makes the line invalid):
-          knowledge.sh drops them (iconv -c, else every non-ASCII byte becomes ?) and the
-          answer says so with a `lossy` field where the text is the answer
+          knowledge.sh drops them (iconv -c, else every non-ASCII byte becomes ?, one per
+          byte) and the object they were dropped from says so with its `lossy` field — a
+          record whose file name lost a byte too, since that name may be another file's
 MUST NOT: touch the network on the read path (no gh, no fetch, no ls-remote); print
           to stdout outside the producer; rename or remove a field, or change its type,
           without raising schema; write anything but what the dispatcher already records;

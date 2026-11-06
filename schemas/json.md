@@ -739,6 +739,7 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `proposals[].waiting` | object or null | a decision on this document committed in Jig's own tree that has not landed: `decision` (`accepted`, `rejected`), `branch` and `pr` (string or null). The document here still says `proposed`, and it is until that lands. `null` when none waits |
 | `proposals[].decidable` | boolean | a decision sent now (`accept|reject … --json`) would be judged on this document: its file is on the tip of the decisions waiting, or, when none waits, on the base as `origin/<base>` has it (the local base without origin), as of the last fetch. The write asks the same question of the commit its tree stands on. Whether it was decided already is `waiting`'s to say, and an id that differs there is still `not-found` |
 | `proposals[].reason` | string or null | `null` when `decidable`; otherwise the code the decision would be refused with: `not-on-base` (only in this checkout or in commits the base does not have: commit and push it) or `not-on-branch` (on the base, but not on the decisions waiting, cut before it got there) |
+| `proposals[].lossy` | boolean | `true` when a string of this proposal held bytes that are not UTF-8 and they were dropped: a `path` or `source` read without them may name another file. `false` otherwise |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 
 ```json
@@ -756,6 +757,7 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `sources[].bytes` | integer or null | the linked file's size in bytes; `null` when it is `missing` or not a file |
 | `sources[].waiting` | object or null | a decision on this stub waiting on a branch, as on a proposal; `decision` is also `reviewed` here, and `rejected` for a dropped link. `state` stays what it is here until that lands. `null` when none waits |
 | `sources[].decidable`, `.reason` | boolean, string or null | as on a proposal. For a `changed` or `missing` source the change is judged too: the stub has to be there with its source there not the approved text, or a `reject` there would find nothing to drop |
+| `sources[].lossy` | boolean | as on a proposal: `true` when a string of this record lost bytes that are not UTF-8, so its `path` or `source` may name another file |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 | `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints; what `jig status` counts as changed is `changed` plus `unrecorded` |
 
@@ -768,17 +770,20 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | Field | Type | Value |
 |---|---|---|
 | `id`, `source` | string | the stub and the file it links |
-| `state` | string | `ok`, `changed`, `unrecorded` or `missing`, as above, whatever the stub's status; the text form refuses a missing source, this answers it |
+| `state` | string | as `sources[].state` above, the same word for the same stub: `ok`, `changed`, `unrecorded` or `missing`, or for a stub that is not accepted its own status; the text form refuses a missing source, this answers it |
 | `approved_hash` | string or null | the git blob hash of the approved text (`source_hash`); `null` when none was recorded or the source is `missing` |
-| `diff` | string or null | the unified diff from the approved text to the file now, as `diff -u` prints it with the labels `<source> (approved)` and `<source>`; `null` unless `state` is `changed` and git still has the approved text. A `changed` state with a `null` diff, like `unrecorded`, means the file is to be reviewed whole |
-| `lossy` | boolean | `true` when `diff` held bytes that are not UTF-8 and they were dropped. Not set for the carriage return Git Bash drops from a CRLF line, or for a lone one a platform's `diff` turns into a line break |
+| `diff` | string or null | the unified diff from the approved text to the file now, as `diff -u` prints it with the labels `<source> (approved)` and `<source>`; `null` unless the file changed since a recorded approval (`state` is `changed`, or a status for a stub that is no longer accepted) and git still has the approved text. A `changed` state with a `null` diff, like `unrecorded`, means the file is to be reviewed whole |
+| `lossy` | boolean | `true` when `diff` or `source` held bytes that are not UTF-8 and they were dropped: a `source` read without them may name another file. Not set for the carriage return Git Bash drops from a CRLF line, or for a lone one a platform's `diff` turns into a line break |
 
 Every string escapes as the envelope says. A source file is whatever a person committed, so a
 diff may hold quotes, backslashes, tabs, control bytes or bytes that are not UTF-8: the first
 three kinds come out escaped and read back unchanged; bytes that are not valid UTF-8 are dropped
-from the answer (from `diff` with `lossy` set, from any other string without a flag), so the line
-is always valid JSON in UTF-8. Without `iconv` on the machine, or when the text holds a character above U+10FFFF, every byte
-outside ASCII is replaced by `?` instead.
+from the answer, so the line is always valid JSON in UTF-8. The object they were dropped from says
+so with its `lossy`: a proposal, a source, the `--diff` answer; a string outside those (the
+`branch` of a write waiting) carries no flag. A character from U+100000 to U+10FFFF is valid and
+kept; a lead byte above that range is dropped with the bytes that follow it. Without `iconv` on the
+machine, every byte outside ASCII is replaced by `?` instead, one `?` per byte (a Cyrillic letter is
+two), and `lossy` is set wherever one was.
 
 Refusals: `not-found` for an id no document has, and for a document that links no source;
 `usage` for an argument these commands do not take (`jig knowledge proposed x --json`, `sources
@@ -810,14 +815,14 @@ For a stub, `source` is the linked file:
 | `path` | string | the document's file, relative to the repository |
 | `bytes` | integer | the file's size in bytes, as it is on disk (the dropped bytes of a `lossy` text included) |
 | `content` | string | the whole file, frontmatter included, trailing newlines included; `""` for an empty file |
-| `lossy` | boolean | `true` when `content` held bytes that are not UTF-8 and they were dropped. A NUL byte is dropped without it |
+| `lossy` | boolean | `true` when `content` or `path` held bytes that are not UTF-8 and they were dropped. A NUL byte is dropped without it |
 | `source` | object or null | for a stub, the file it links as it is now; `null` for any other document, and for a stub whose source is not a readable file inside the repository (missing, unreadable, a link, outside the repository: the states `jig knowledge sources` calls `missing`) |
 | `source.path` | string | the linked file, relative to the repository |
 | `source.bytes` | integer | its size in bytes, as it is on disk |
-| `source.content`, `source.lossy` | string, boolean | its text and whether bytes were dropped from it, as `content` and `lossy` |
+| `source.content`, `source.lossy` | string, boolean | its text and whether bytes were dropped from it or from `source.path`, as `content` and `lossy` |
 
 Strings escape as the envelope says, and bytes that are not valid UTF-8 are dropped as in
-`sources --diff` (or, without `iconv`, every byte outside ASCII becomes `?`), so the line is always
+`sources --diff` (or, without `iconv`, every byte outside ASCII becomes `?`, one per byte), so the line is always
 valid JSON in UTF-8. A source is read whatever its state: `jig knowledge sources --json` says
 whether it changed since it was approved. The text is the checkout's: a decision waiting on
 `knowledge/decisions` is not applied to it (see `waiting` in `proposed --json`).

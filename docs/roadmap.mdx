@@ -28,11 +28,6 @@ task reads as verified even if files changed afterwards, and a change can be shi
 that was earned by a different tree. The result gets pinned to its inputs, the way the review is,
 and a moved tree asks for a new run.
 
-**Knowledge read as data must say what the files say.** 0.40.0 made the knowledge waiting for a
-person readable as JSON. Three faults came with it: one rare character turns every non-ASCII letter
-of an answer into `?`, a file name that is not UTF-8 reads as a different file, and a proposed stub
-has two states in two reads ([Known issues](/known-issues)).
-
 **A write from a page must only ever publish what it was meant to.** 0.40.0 made a roadmap edit and a
 knowledge decision possible without moving your checkout, and a rule stops a write publishing commits
 origin never had. Four faults remain, mostly around pull requests closed or squashed under

@@ -611,14 +611,21 @@ the file now in `diff`, a unified diff in one string:
 `diff` is `null` when there is nothing to compare: the file is `ok` or `missing`, was never approved
 (`unrecorded`), or is `changed` but git no longer has the approved text. In the last two cases the
 file is read whole. A source can hold anything, quotes and control characters
-included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff`, and
-`lossy` says so. An id no document has, or a document that links no source, is refused as
+included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff` and
+from `source`, and `lossy` says so. A stub not accepted yet reads its status in `state`, as in
+`sources`. An id no document has, or a document that links no source, is refused as
 `not-found`. These reads write nothing: the `revision` stays where it was.
 
 `read <id>` gives the text being decided: the document's whole file, frontmatter included, whatever its
 status, and for a stub the file it links as it is now (`source` is `null` for any other document, and
-for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text and its `lossy` says
-so. An id no document has is refused as `not-found`. It has no text form.
+for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text or a file name and
+the `lossy` beside it says so. An id no document has is refused as `not-found`. It has no text form.
+
+Each proposal and each source carries `lossy` too: `true` when one of its strings held bytes that are
+not UTF-8 and they were dropped. A file name read without them may be another file's — `docs/w<FF>.md`
+reads `docs/w.md` — so do not open a `path` or `source` whose record says `lossy`. On a machine
+without `iconv`, every byte outside ASCII becomes `?` instead, one `?` per byte, and `lossy` says so
+too.
 
 ```json
 {"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:51Z","data":{"id":"convention-release","status":"proposed","path":".ai/knowledge/sources/release.md","bytes":261,"content":"---\nid: convention-release\n...","lossy":false,"source":{"path":"docs/release.md","bytes":21,"content":"# Release\n...","lossy":false}}}
