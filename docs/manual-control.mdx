@@ -281,7 +281,18 @@ jig context resolve --no-task --files README.md --catalog
 ```
 
 Replace `README.md` with the actual paths you are investigating. To record documents you have
-actually read, use `jig context acknowledge`; `jig context guard` checks that record.
+actually read, use `jig context acknowledge`; `jig context guard` checks that record and names
+why each document it still asks for is owed (`global`, `paths: skills/**`, `domains: knowledge`):
+
+```bash
+jig context acknowledge --task booking-message --stage implement --files .ai/knowledge/RULES.md
+jig context acknowledge --task booking-message --revoke --files .ai/knowledge/RULES.md
+```
+
+`--stage` records at which stage a document was read, and a passing guard reports it — a guard run
+for review that says `none acknowledged at review` passed on what the implementer read. A path may
+be written as the guard prints it, with a leading `./`, or as an absolute path inside the project.
+`--revoke` withdraws an acknowledgement given by mistake.
 [How context works](/under-the-hood#knowledge-and-what-an-agent-reads).
 
 ## Run the project's checks

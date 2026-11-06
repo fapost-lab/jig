@@ -1467,7 +1467,7 @@ EOF
   local expected_hash line
   expected_hash=$(git hash-object .ai/knowledge/features/checkout.md)
   line=$(grep "features/checkout.md" .ai/workspace/tasks/T-1/context)
-  assert_eq "$(printf '%s\t%s' "$expected_hash" ".ai/knowledge/features/checkout.md")" "$line"
+  assert_eq "$(printf '%s\t%s\t-' "$expected_hash" ".ai/knowledge/features/checkout.md")" "$line"
 
   local sorted
   sorted=$(sort .ai/workspace/tasks/T-1/context)
@@ -1538,6 +1538,138 @@ test_context_acknowledge_rejects_nonexistent_document() {
   assert_contains "$OUT" "no such document:"
 }
 
+# --- acknowledge: friction (context-acknowledge-friction) ------------------------
+# The guard says why each document is owed, acknowledge takes a path in the
+# spellings an agent writes it in and refuses a batch in one message, an
+# acknowledgement can be withdrawn, and a passing guard says at which stage
+# the acknowledgements it took were made.
+
+ctx_ack_doc() {
+  cat > .ai/knowledge/features/checkout.md <<'EOF'
+---
+id: feature-checkout
+type: feature
+status: active
+paths:
+  - "src/**"
+---
+EOF
+}
+
+test_context_guard_names_why_each_document_is_owed() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  run jig context guard --task T-1 --stage review --files src/a.php
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "  .ai/knowledge/RULES.md  (global)"
+  assert_contains "$OUT" "  .ai/knowledge/features/checkout.md  (paths: src/**)"
+  assert_contains "$OUT" "read them, then: jig context acknowledge --task T-1 --stage review --files <list>"
+
+  # pending stays a bare list: it is piped into acknowledge.
+  run jig context pending --task T-1 --files src/a.php
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ".ai/knowledge/features/checkout.md"
+  assert_not_contains "$OUT" "(paths:"
+}
+
+test_context_acknowledge_takes_dot_slash_and_absolute_project_paths() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  run jig context acknowledge --task T-1 --files "./.ai/knowledge/features/checkout.md,$(pwd -P)/.ai/knowledge/RULES.md"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "acknowledged 2 document(s) for T-1"
+  assert_eq "2" "$(wc -l < .ai/workspace/tasks/T-1/context | tr -d ' ')"
+  assert_contains "$(cut -f2 .ai/workspace/tasks/T-1/context)" ".ai/knowledge/RULES.md"
+  assert_contains "$(cut -f2 .ai/workspace/tasks/T-1/context)" ".ai/knowledge/features/checkout.md"
+}
+
+test_context_acknowledge_refuses_a_batch_naming_every_bad_path() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  run jig context acknowledge --task T-1 --files ".ai/knowledge/features/checkout.md,README.md,../x.md,/etc/passwd"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context acknowledge: not a knowledge document or a linked source: README.md"
+  assert_contains "$OUT" "context acknowledge: path may not contain '..': ../x.md"
+  assert_contains "$OUT" "context acknowledge: path must be repository-relative: /etc/passwd"
+  assert_contains "$OUT" "context acknowledge: 3 path(s) refused; nothing recorded"
+  assert_no_file .ai/workspace/tasks/T-1/context
+  # A refusal leaves no temporary file in the workspace.
+  assert_eq "" "$(find .ai/workspace/tasks/T-1 -name 'context.tmp.*')"
+}
+
+test_context_acknowledge_revoke_withdraws_an_acknowledgement() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  run bash -c '"$JIG_BIN" context pending --task T-1 --files src/a.php | "$JIG_BIN" context acknowledge --task T-1 --files -'
+  assert_eq 0 "$RC" "$OUT"
+  run jig context guard --task T-1 --files src/a.php
+  assert_eq 0 "$RC" "$OUT"
+
+  run jig context acknowledge --task T-1 --revoke --files ./.ai/knowledge/features/checkout.md
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "revoked 1 document(s) for T-1"
+  run jig context guard --task T-1 --files src/a.php
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context guard: 1 of 4 document(s) not acknowledged:"
+
+  # Not in the ledger: the batch is refused and nothing changes.
+  run jig context acknowledge --task T-1 --revoke --files .ai/knowledge/RULES.md,.ai/knowledge/features/checkout.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not acknowledged for this task: .ai/knowledge/features/checkout.md"
+  assert_contains "$(cut -f2 .ai/workspace/tasks/T-1/context)" ".ai/knowledge/RULES.md"
+}
+
+test_context_acknowledge_revoke_takes_a_deleted_document() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  jig context acknowledge --task T-1 --files .ai/knowledge/features/checkout.md >/dev/null
+  git rm -q --cached .ai/knowledge/features/checkout.md 2>/dev/null || true
+  mv .ai/knowledge/features/checkout.md ../checkout.md
+  run jig context acknowledge --task T-1 --revoke --files .ai/knowledge/features/checkout.md
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$(cat .ai/workspace/tasks/T-1/context)"
+}
+
+test_context_guard_says_whose_acknowledgements_it_took() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  jig context acknowledge --task T-1 --stage implement --files .ai/knowledge/GLOSSARY.md,.ai/knowledge/ARCHITECTURE.md,.ai/knowledge/RULES.md >/dev/null
+  # A line from before the stage field: two fields, read as no stage.
+  printf '%s\t%s\n' "$(git hash-object .ai/knowledge/features/checkout.md)" .ai/knowledge/features/checkout.md \
+    >> .ai/workspace/tasks/T-1/context
+  assert_eq "implement" "$(grep RULES.md .ai/workspace/tasks/T-1/context | cut -f3)"
+
+  run jig context guard --task T-1 --stage review --files src/a.php
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "context guard: ok (4 document(s) acknowledged)"
+  assert_contains "$OUT" "  3 acknowledged at implement"
+  assert_contains "$OUT" "  1 acknowledged at no stage"
+  assert_contains "$OUT" "  none acknowledged at review: this guard passed on acknowledgements made elsewhere"
+
+  # Acknowledging again at review replaces the line, the old one included.
+  run jig context acknowledge --task T-1 --stage review --files .ai/knowledge/features/checkout.md
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "acknowledged 1 document(s) for T-1 at review"
+  assert_eq 1 "$(grep -c checkout.md .ai/workspace/tasks/T-1/context)"
+  run jig context guard --task T-1 --stage review --files src/a.php
+  assert_contains "$OUT" "  1 acknowledged at review"
+  assert_not_contains "$OUT" "none acknowledged"
+}
+
+test_context_acknowledge_refuses_an_unknown_stage() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  run jig context acknowledge --task T-1 --stage reading --files .ai/knowledge/RULES.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "context: invalid stage: reading"
+}
+
 # --- acknowledge: a linked source is acknowledged in its stub's place ----------
 # (ADR-0015 amended by linked-sources-reach-agents): the tracked path is the
 # source, so a path outside .ai/knowledge/ is accepted only when it is the
@@ -1553,7 +1685,7 @@ test_context_acknowledge_accepts_the_source_of_an_accepted_stub() {
   local expected_hash line
   expected_hash=$(git hash-object docs/style.md)
   line=$(grep "docs/style.md" .ai/workspace/tasks/T-1/context)
-  assert_eq "$(printf '%s\t%s' "$expected_hash" "docs/style.md")" "$line"
+  assert_eq "$(printf '%s\t%s\t-' "$expected_hash" "docs/style.md")" "$line"
 }
 
 # A source replaced by a symlink after acceptance, without touching the stub,
@@ -2160,7 +2292,7 @@ test_context_ledger_tracks_linked_documents_and_their_changes() {
   assert_eq 0 "$RC" "$OUT"
   run jig context guard --task T-1
   assert_eq 0 "$RC" "$OUT"
-  assert_eq "$(printf '%s\t%s' "$(git hash-object "$d/design.md")" "$d/design.md")" \
+  assert_eq "$(printf '%s\t%s\t-' "$(git hash-object "$d/design.md")" "$d/design.md")" \
     "$(grep "/design.md" .ai/workspace/tasks/T-1/context)"
 
   run jig context resolve --task T-1
@@ -2188,9 +2320,11 @@ test_context_acknowledge_takes_only_the_absolute_paths_a_link_reaches() {
   local root
   root=$(pwd -P)
 
+  # Inside the project, an absolute path is read as the repository-relative
+  # one it names, and that is no knowledge document either.
   run jig context acknowledge --task T-1 --files "$root/packages/saas/notes.md"
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "an absolute path only for a document a Linked: line of the task reaches"
+  assert_contains "$OUT" "not a knowledge document or a linked source: packages/saas/notes.md"
 
   run jig context acknowledge --task T-1 --files "$root/packages/saas/.ai/workspace/tasks/up/task.md"
   assert_eq 0 "$RC" "$OUT"

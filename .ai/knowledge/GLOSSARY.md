@@ -226,8 +226,10 @@ Informal synonyms: index, listing.
 ## Context Ledger
 
 The per-task record of documents the Agent stated it has read:
-`.ai/workspace/tasks/<id>/context`, one `<git-hash><TAB><path>` line each. Transient and
-never committed. It records a claim of reading, not comprehension (ADR-0015).
+`.ai/workspace/tasks/<id>/context`, one `<git-hash><TAB><path><TAB><stage>` line each, the stage
+the acknowledgement was made at (`-` for none). Transient and never committed. It records a claim
+of reading, not comprehension; a claim is withdrawn with `acknowledge --revoke` (ADR-0015 as
+amended).
 Informal synonyms: acknowledgements, read tracking.
 
 ## Task Link
