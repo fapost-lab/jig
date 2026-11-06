@@ -11,7 +11,7 @@ paths:
   - "skills/jig-accept/**"
   - "skills/jig-map/**"
 summary: Why proposals must be enumerable, why rejecting records rather than deletes, and why the review loop lives in a skill.
-reviewed_at: 2026-09-09
+reviewed_at: 2026-11-06
 ---
 # ADR-0018: A proposal ends in a recorded decision, and rejection is not deletion
 
@@ -88,3 +88,8 @@ prompting stays out of it (ADR-0001).
   path-validation ceremony ADR-0006 requires of destructive operations.
 - A proposal left undecided stays proposed and stays invisible to agents. That remains a
   valid end state for a session; it is now a discoverable one.
+
+> **Amendment (2026-11-06).** `reject` also takes an accepted stub whose source is `changed`,
+> `unrecorded` or `missing`: that drops its link, and the stub becomes `rejected` like a declined
+> proposal. Anything else in force is still refused, so the guard against retiring knowledge by
+> accident stands (adr-20261106-a-changed-link-is-dropped-by-reject).
