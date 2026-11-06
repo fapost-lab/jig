@@ -113,7 +113,7 @@ cmd_housekeeping() {
   fi
 
   local needs_consolidation=0 wrong_base=0 archive_refused=0 found=0 keep_branches="" archive_err
-  local reason state_file tid st paused age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
+  local reason state_file tid st paused archived_from archived_reason age branch base_commit task_base remote remote_pair via landed released decision action flags dest facts wt retire
 
   # Worktrees tasks were started in, from git's own list, read once per run.
   # A task's worktree goes when the task is closed and its branch landed on its
@@ -166,8 +166,16 @@ EOF
         released=$(_hk_released "$branch" "$base_commit" "$task_base")
       fi
 
+      archived_from=""
+      archived_reason=""
+      if [ "$st" = archived ]; then
+        archived_from=$(task_state_get "$tid" archived_from)
+        archived_reason=$(task_state_get "$tid" archived_reason)
+      fi
+
       decision=$(housekeeping_decide \
-        "$st" "$remote" "$paused" "$age" "$abandoned_ttl_days" "$stale_after_days" "$released")
+        "$st" "$remote" "$paused" "$age" "$abandoned_ttl_days" "$stale_after_days" "$released" \
+        "$archived_from" "$archived_reason")
       action=${decision%% *}
       flags=${decision#* }
       [ "$flags" = "$decision" ] && flags=""
@@ -340,12 +348,14 @@ $task_base
 # --- policy ------------------------------------------------------------------
 
 # housekeeping_decide <status> <remote> <paused> <age_days> <abandoned_ttl_days>
-#                     <stale_after_days> [released]
+#                     <stale_after_days> [released] [archived_from] [archived_reason]
 # Print "<action> [flags]" where action is purge|preserve|archive and flags is a
 # comma-separated subset of needs-consolidation, abandoned?, base-unreleased,
 # STALE_CANDIDATE. `released` (default true) is false for a task merged into a
 # base that has not reached the default branch yet — a phase of an open epic:
 # closed and merged, it is kept rather than purged (ADR-0040).
+# `archived_from` and `archived_reason` are an archived task's state keys of
+# those names; they decide whether its merge still asks for consolidation.
 #
 # `archive` is for work nobody finished: an abandoned task past its TTL, or an
 # active/ready one untouched past stale_after with no flag and no pull request.
@@ -353,13 +363,20 @@ $task_base
 # caller may still refuse a stale archive where a worktree holds the task's
 # work; the decision stays pure and says only what age and state allow.
 #
-# A pure function of six strings: no filesystem, no git, no config. That is
+# A pure function of its strings: no filesystem, no git, no config. That is
 # what makes the domains/housekeeping policy table exhaustively testable, and it is the reason
 # the destructive decision is separated from the destructive act.
 housekeeping_decide() {
   local status="$1" remote="$2" paused="$3" age="$4" abandoned_ttl="$5" stale_after="$6"
-  local released="${7:-true}"
-  local action="preserve" flags=""
+  local released="${7:-true}" archived_from="${8:-}" archived_reason="${9:-}"
+  local action="preserve" flags="" settled=false
+
+  # An archived task whose fate a person already decided — abandoned before it
+  # was archived, or absorbed by another task — has nothing to consolidate,
+  # like an abandoned one.
+  if [ "$archived_from" = abandoned ] || [ "$archived_reason" = absorbed ]; then
+    settled=true
+  fi
 
   case "$status:$remote" in
     consolidated:merged)
@@ -375,11 +392,16 @@ housekeeping_decide() {
     # Already abandoned: "abandoned?" would ask a question that has been
     # answered.
     abandoned:closed) ;;
-    # Archived: its work was not finished when it was shelved, so a merge means
-    # it landed after all and a person has to consolidate it. A closed pull
-    # request is no question to ask of a task already set aside.
+    # Archived unfinished — stale, or by hand from active/ready — its merge
+    # means the work landed after all with nobody's knowledge decision, and a
+    # person has to consolidate it. Archived from `abandoned`, or `absorbed` by
+    # another task, the question was answered when it was set aside: like
+    # abandoned:merged, nothing to consolidate. Unknown keys keep the flag
+    # (adr-20261027-a-task-nobody-finished-is-archived-not-purged, amended
+    # 2026-11-06). A closed pull request is no question to ask of a task
+    # already set aside.
     archived:merged)
-      flags="needs-consolidation"
+      [ "$settled" = true ] || flags="needs-consolidation"
       ;;
     archived:closed) ;;
     *:closed)
@@ -395,6 +417,7 @@ housekeeping_decide() {
   if [ "$paused" = "true" ] && [ "$remote" = "merged" ]; then
     case "$status" in
       consolidated | abandoned) ;;
+      archived) [ "$settled" = true ] || flags="needs-consolidation" ;;
       *) flags="needs-consolidation" ;;
     esac
   fi

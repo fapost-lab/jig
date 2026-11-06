@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-04
+reviewed_at: 2026-11-06
 ---
 # Housekeeping
 
@@ -26,14 +26,17 @@ evidence it inferred itself.
 - Deriving **Remote State** per task, in tiers: forge (`gh`/`glab`) → git ancestry →
   `unknown`. Derived every run, never written into a task's `state` (ADR-0005).
 - Applying the lifecycle policy — a pure function of `status`, remote state,
-  `paused` and age, which is why the whole table is testable without a repository.
+  `paused`, age and, for an archived task, `archived_from` and `archived_reason`,
+  which is why the whole table is testable without a repository.
 - The two-stage **Purge** of a closed task: move to **Trash**, delete only after `trash_ttl`
   (ADR-0006).
 - The **Archive** of a task nobody finished: an abandoned task older than `abandoned_ttl`, or an
   `active`/`ready` one untouched for longer than `stale_after`, is archived through the task
   domain's `_task_archive`, not deleted, and kept without a time limit
   (adr-20261027-a-task-nobody-finished-is-archived-not-purged). Its log line is `action=archive
-  reason=abandoned|stale`; a dry run prints `would-archive`.
+  reason=abandoned|stale`; a dry run prints `would-archive`. An archived task whose work merged is
+  flagged `needs-consolidation` unless it was archived from `abandoned` or absorbed by another task
+  (`archived_reason: absorbed`); those are left as they are, and one with neither key keeps the flag.
 - The audit trail: `.ai/runtime/housekeeping.log`, one line per decision including
   `via=` (the deciding tier), and the `.ai/runtime/last-housekeeping` stamp. A **purge**
   line additionally carries the task's own `class=`, `created=` and `consolidated=`
