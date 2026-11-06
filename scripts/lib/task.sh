@@ -1038,23 +1038,11 @@ _task_new_body() {
   [ -z "$class" ] || _task_valid_class "$class" || jig_fail usage "task new: invalid class: $class"
   [ -z "$domains" ] || _task_valid_domains "$domains" || jig_fail usage "task new: invalid domains: $domains"
   # The goal is the paragraph under `## Goal` that `task list --goals` and
-  # `task list --json` read back (_task_goal): one line, so that it stays one
-  # paragraph, and not a heading, so that it stays under `## Goal`.
+  # `task list --json` read back (jig_goal_check, which `spec item file --new` shares).
   if [ "$goal_given" -eq 1 ]; then
     [ -z "$from" ] || jig_fail usage "task new: --goal and --from both write task.md; give one of them"
-    case "$goal" in
-      *$'\n'* | *$'\r'*) jig_fail usage "task new: --goal is one line: the goal paragraph of task.md" ;;
-    esac
-    case "$goal" in
-      *[![:space:]]*) ;;
-      *) jig_fail usage "task new: --goal is empty" ;;
-    esac
-    # Trimmed: leading blanks would make the paragraph a code block.
-    goal=${goal#"${goal%%[![:space:]]*}"}
-    goal=${goal%"${goal##*[![:space:]]}"}
-    case "$goal" in
-      '#'*) jig_fail usage "task new: --goal cannot start with #: it would read as a heading" ;;
-    esac
+    jig_goal_check "task new" "$goal"
+    goal=$JIG_GOAL
   fi
 
   # A task filed in a worktree that keeps a task directory of its own dies with

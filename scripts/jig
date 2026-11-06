@@ -108,7 +108,7 @@ Usage: jig <command> [args]
   spec link <spec-id> <task-id>  link a filed, not-started task to the spec phase naming it
   spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom]
   spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom]
-  spec item file <id> <item> --task <task-id>
+  spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>]
                                  change a roadmap on a branch of its own, in Jig's own
                                  tree; each takes [--revision <n>] [--json]
   spec stop <id> --phase <n> --reason <text>

@@ -396,11 +396,15 @@ Each item in `jig spec list --json` has an `id`, which a write names it by:
 jig spec item add foo --phase 2 --text "Export a page" --revision 1793825280 --json
 jig spec item move foo i-7d2bc8dc7707 --phase 1 --top --revision 1793825290 --json
 jig spec item file foo i-7d2bc8dc7707 --task export-page --revision 1793825300 --json
+jig spec item file foo i-7d2bc8dc7707 --new export-page --goal "Export a page" --revision 1793825300 --json
 ```
 
 `add` takes `--after <item>`, `--top` or `--bottom`, the bottom by default, and `move` takes the same or
 `--phase`. `file` names a task filed earlier with `jig task new`: the item gets the task in front, and the
-task is linked to the spec. A spec with an open epic is edited through a pull request into the epic.
+task is linked to the spec. With `--new <task-id> [--goal <text>]` in
+place of `--task`, `file` files the task as well, in the same write, so the `--revision` you carry is the one of
+your read: `jig task new` moves the revision, and a task filed first would make the write stale. Everything is checked
+before anything is written; a refusal files no task. A spec with an open epic is edited through a pull request into the epic.
 
 The `id` holds through a move, a check and a filing, because it is a digest of the item's words. Reword the
 item and the `id` changes, and a write with the old one is refused with `not-found`: it never touches
