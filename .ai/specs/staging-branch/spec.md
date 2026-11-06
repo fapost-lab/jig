@@ -142,11 +142,14 @@ The human's words (translated from Russian, meaning kept):
   not own (failure mode 2) — the team accepts that risk on stage already.
 - A task whose stage pull request waits for review, and a task on stage waiting for QA, each have
   a state of their own; for both: it is not the current task, does not
-  hold `jig queue next` or a concurrency slot, and `jig status` lists it on its own line; a fix
-  QA asks for makes it current again (failure mode 10). Rejected: a plain pause — the UI and
+  hold `jig queue next` or a concurrency slot, and `jig status` lists it on its own line
+  (failure mode 10). `jig task resume <id>` brings it back to work — for a fix QA asked for, or to
+  answer a reviewer; a commit cannot be the trigger, since the work has to be resumed before
+  anything is committed. Rejected: a plain pause — the UI and
   `jig status` could not tell "waiting for QA" from any other pause.
 - A task QA rejects is fixed in the same task and shipped to stage again — as a new pull request
-  into stage, reviewed like the first; Jig takes nothing off
+  into stage, reviewed like the first. The fix takes implement, a review of what changed since
+  the last review (the re-review Jig already has), verify, ship — not the whole route again; Jig takes nothing off
   stage and has no "unstage" command. Failure mode 7 (a revert leaves a task "on stage") is
   accepted: the team does not revert on stage.
 - The work is built on an epic, `epic/staging-branch`, and released once as a `minor` version:
@@ -178,8 +181,23 @@ The human's words (translated from Russian, meaning kept):
   started and cut from `main`; the command would mean two different things by project setting,
   and the team does not version a batch anyway. `jig-release` stays as it is.
 - Whether a task is on stage is derived from git, not stored (ADR-0005): its branch tip is
-  contained in origin's stage branch. A task with commits after that — a fix QA asked for — is
-  "behind stage", and shipping it again merges the new commits in the same way.
+  contained in origin's stage branch. A task with commits of its own after that — a fix QA asked
+  for — is "behind stage", and shipping it again merges the new commits in the same way. Merges
+  of `main` into the task branch — at promotion — are not the task's own commits and do not make
+  it behind (failure mode 7): otherwise a task reads "behind" the moment it is promoted, and a
+  second "prepare for prod" refuses it.
+- Who may land a task on stage follows `agent.git`, with stage treated like any shared branch:
+  merging the pull request on the forge and the direct merge pushed to stage both need level
+  `merge`. Below it, `jig task ship` opens the pull request into stage and stops, saying the task
+  is not on stage yet; the person lands it. The task is "waiting for QA" only once git shows it
+  on stage — never because the ship step ran. Rejected: letting `push` cover the direct merge —
+  a push to a branch the team shares is a merge in effect, not the task's own push.
+- The knowledge decision (ADR-0030) is recorded before the task's first ship to stage, since
+  that is the first commit others build on; each later ship — a QA fix, the merge of `main` at
+  promotion — may revise it. The task closes, as today, once its work is in `main`.
+- The drift report counts only what stage has and `main` does not: a promoted task's branch is
+  deleted after it lands, and without that subtraction every promoted task would read as stage
+  work no task owns.
 
 ## Open questions
 
@@ -190,12 +208,11 @@ The human's words (translated from Russian, meaning kept):
   does not exist on a CI runner. Open: a shared project setting for the promote merge (`human` |
   `auto` on green CI), and how it relates to `agent.git` and `release.merge`.
 - How a CI job knows which tasks to promote: every task branch contained in the tested stage
-  commit and not yet in `main`, or the ones the pipeline names. Decides whether one green stage
+  commit and not yet in `main`, or the ones the pipeline names. Either way the task id comes from
+  the branch name (`task/<id>`), the one thing a runner without a workspace has. Decides whether one green stage
   run promotes everything on stage at once.
 - In an automated team the stage step may itself be CI's (a pipeline merges task branches into
   stage): whether Jig's stage step must then stand aside and only read what CI did.
-- Pushing to stage is a push to a shared branch: which `agent.git` level allows it (`push`
-  already, or a level of its own) — decides what an agent at level `commit` does at the stage step.
 - Dependent tasks on stage (failure mode 4): whether "prepare for prod" should refuse, or warn,
   when the task's queue dependencies are on stage but not yet in `main`.
 - Promotion pull requests that go stale while the merger works through them (failure mode 9):

@@ -22,13 +22,15 @@ it conflicts — and the task is listed as waiting for QA, with no pull request 
 - [ ] Land a task on stage — merge the pull request on the forge; when it conflicts, merge the
   task branch into a fresh temporary worktree of stage, resolve, push (retried from a fresh fetch
   on rejection, never forced); without an approval, warn and ask: merge without review or wait
-  (unattended: wait). (after: Ship
+  (unattended: wait); below `agent.git: merge`, stop at the open pull request. (after: Ship
   a task to stage — it lands that pull request)
-- [ ] See a task's stage state — on stage / behind stage derived from git by branch name, in
+- [ ] See a task's stage state — on stage / behind stage (own commits only, merges of `main`
+  excluded) derived from git by branch name, in
   `jig task list --json`, `jig status` and housekeeping; a pull request merged into stage is no
   longer `wrong-base`. (after: Turn stage on — it reads the key)
 - [ ] Wait for review and for QA — states of their own that free the current-task slot and the
-  queue; autopilot stops at each, never approves and never promotes. (after: Land a task on
+  queue; `jig task resume` brings the task back; autopilot stops at each, never approves and
+  never promotes. (after: Land a task on
   stage — the states start and end at its steps)
 
 ## Phase 2 — Prepare for prod
@@ -51,10 +53,10 @@ Goal: stage stays explainable as tasks come and go, and a fully automated team c
 Done when: `jig status` names tasks on stage nobody promoted for long and stage work no task
 branch owns.
 
-- [ ] Stage drift report — tasks on stage long unpromoted, and stage commits from no live
-  `task/*` branch. (after: See a task's stage state — the report is built on it)
+- [ ] Stage drift report — tasks on stage long unpromoted, and stage commits that are not in
+  `main` and come from no live `task/*` branch. (after: See a task's stage state — the report is built on it)
 - [ ] fog: CI-driven promotion — which tasks one green stage run promotes (all contained in the
-  tested commit, or those it names), and whether Jig's stage step stands aside when CI merges
+  tested commit, or those it names; the id from the `task/<id>` branch name), and whether Jig's stage step stands aside when CI merges
   into stage itself.
 
 ## Waves
