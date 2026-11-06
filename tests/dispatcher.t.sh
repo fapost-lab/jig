@@ -423,6 +423,16 @@ test_version_newer_compares_fields_as_numbers() {
   assert_eq "0.10.0>0.9.0 1.0.0>0.99.99 0.1.1>0.1.0 0.1.0!>0.1.0 0.9.0!>0.10.0 08.0.0>7.0.0 1.0.0-rc1!>0.1.0 0.1.0!>junk " "$OUT"
 }
 
+# A build suffix (`X.Y.Z+<sha>`, unreleased code) orders by its X.Y.Z alone.
+test_version_newer_ignores_the_build_suffix_of_unreleased_versions() {
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  lib_run 'check() { if jig_version_newer "$1" "$2"; then printf "%s>%s " "$1" "$2"; else printf "%s!>%s " "$1" "$2"; fi; }
+    check 0.41.0+abc1234 0.40.0; check 0.40.0+abc 0.40.0; check 0.40.0 0.40.0+abc
+    check 0.40.0+abc 0.41.0; check 0.40.0+abc 0.40.0+def'
+  assert_eq 0 "$RC"
+  assert_eq "0.41.0+abc1234>0.40.0 0.40.0+abc!>0.40.0 0.40.0!>0.40.0+abc 0.40.0+abc!>0.41.0 0.40.0+abc!>0.40.0+def " "$OUT"
+}
+
 test_newest_release_reads_tags_and_ls_remote_lines() {
   # shellcheck disable=SC2016 # expanded by the inner bash, not here
   lib_run 'printf "%s\n" \

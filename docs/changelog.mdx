@@ -8,6 +8,44 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.41.0 — 2026-11-06
+
+Code that has not been released no longer reaches your project by accident. Until now a Jig
+installed from `main` showed the last release's number, and `jig upgrade` copied its unreleased
+code into a project under that number. `jig context` is about fifteen times faster, and a knowledge
+link whose file changed can be dropped.
+
+- **A project in copy mode takes released Jig only.** `jig init` and `jig upgrade`, dry runs
+  included, refuse a Jig checkout that is not at the release tag of its version, as
+  `unreleased-source`. The message says where the checkout stands and gives two ways out: return it
+  to a release, or take that code on purpose with `--unreleased`. A project that took it records
+  `jig.version: 0.41.0+<sha>`, and an upgrade from a released Jig records the plain number again.
+  Off a tag, `jig --version` and `jig status` call the version `X.Y.Z+<sha>`, and `jig status`
+  says when the global Jig is on the development channel. `jig self-update` on a branch and
+  `install.sh --ref <branch>` say the same. `jig verify` no longer asks for framework files from
+  such a checkout, and `jig doctor` warns instead of failing. Link mode is unchanged. How to develop
+  Jig next to a released install is in `CONTRIBUTING.md`. If your Jig was installed from `main`, or
+  is a clone you pull, see
+  [When the source is not a release](/upgrading#when-the-source-is-not-a-release).
+- **`jig context` reads knowledge without a process per document.** On a repository with 139
+  documents it takes 0.6 s instead of 8–10 s, and `jig task list --json` gets faster with it. A
+  knowledge document saved with CRLF line endings is now read on macOS and Linux too.
+- **A knowledge link whose file changed can be dropped.** `jig knowledge reject <id>` takes an
+  accepted stub whose source is `changed`, `unrecorded` or `missing`, and retires it. In
+  `jig knowledge proposed --json` and `sources --json`, every entry carries `decidable` and a
+  `reason` (`not-on-base`, `not-on-branch`). A write that cannot be decided yet is refused with that
+  code before it writes anything. See [Reading Jig as data](/reading-jig-as-data).
+- **`jig knowledge read <id> --json`** gives one document's text, and for a stub the linked file as it
+  is now.
+- **Context acknowledgements say what they stand for.** `jig context guard` names why each pending
+  document is required and at which stage the acknowledgements it accepted were made.
+  `jig context acknowledge` records the stage and takes `--revoke` to withdraw a claim. A refused
+  acknowledgement now records nothing and leaves no temporary file behind.
+- **Fixed:** the session hook printed an `unbound variable` error and ran housekeeping daily whatever
+  `housekeeping.cadence` said. A task closed from an agent session with `--revision` was always
+  refused as `stale-revision`. Housekeeping no longer flags an archived task whose fate was already
+  decided (abandoned or absorbed) as needing consolidation.
+
 ## 0.40.0 — 2026-11-05
 
 A program can now close a task, read and change your settings, read the knowledge waiting for a

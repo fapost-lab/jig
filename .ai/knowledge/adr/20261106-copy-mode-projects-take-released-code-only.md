@@ -12,6 +12,9 @@ paths:
   - scripts/lib/self-update.sh
   - scripts/lib/status.sh
   - install.sh
+  - scripts/jig
+  - scripts/lib/doctor.sh
+  - tests/run.sh
 summary: Why a copy-mode project takes framework code only from a checkout at its release tag, how unreleased code is named X.Y.Z+<sha>, and why --unreleased is the one way to take it.
 ---
 # A copy-mode project takes released code only; unreleased code is named `X.Y.Z+<sha>` and taken only with `--unreleased`

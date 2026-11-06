@@ -313,8 +313,9 @@ The usual ones:
 | `the upgrade to <version> is already on branch <name>, which has not been merged into <base> yet` | An earlier run's branch is still waiting for its merge. Merge it, or `git checkout <name>` and run `jig upgrade` there to carry it on; a second branch would only become a second pull request. |
 | `upgrade: not committed, because the install is not complete …` | The self-check did not confirm the install, so nothing was committed. Run `jig upgrade` again on the same branch; it carries on. |
 
-`jig upgrade --dry-run` never refuses; it prints the same reasons as `note:` lines, so you can see
-them before you try.
+`jig upgrade --dry-run` does not refuse for these reasons; it prints them as `note:` lines, so you
+can see them before you try. The one refusal a dry run shares with the real run is a source that is
+not a release, below.
 
 ### When the source is not a release
 
@@ -476,7 +477,8 @@ brings new scripts and new text for the `jig-accept`, `jig-implement`, `jig-revi
 install from before the first release — `jig upgrade` in a copy-mode project now refuses it: return
 it to a release, as [When the source is not a release](#when-the-source-is-not-a-release) says, then
 `jig self-update`. A project that already took unreleased framework files under 0.40.0 gets the
-released ones back from this upgrade.
+released ones back from this upgrade. The check lives in the project's own copy of Jig, so a project still on
+0.40.0 or older does not make it until this upgrade has landed there.
 
 **What you will notice.** Off a release tag, `jig --version` and `jig status` show `X.Y.Z+<sha>`.
 `jig context guard` says why each pending document is required. A program that reads Jig's JSON may

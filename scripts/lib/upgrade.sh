@@ -211,6 +211,13 @@ _upgrade_same_dir() {
 _upgrade_records_source() {
   local recorded
   [ "$2" = 0 ] || return 0
+  # A project that took unreleased code (`jig.version: X.Y.Z+<sha>`) and now
+  # holds a release's bytes exactly is that release: placing nothing is how it
+  # gets there when the files already match, and the header must say so
+  # (adr-20261106-copy-mode-projects-take-released-code-only).
+  case "$(manifest_header_get jig.version 2>/dev/null)" in
+    *+*) jig_source_release "$1" && return 0 ;;
+  esac
   recorded=$(manifest_source 2>/dev/null) || recorded=""
   _upgrade_same_dir "$1" "$recorded"
 }
@@ -1175,7 +1182,7 @@ _upgrade_custom_profiles() {
 #     the project actually has, so a project with none sees nothing.
 _upgrade_manual_steps() {
   local from="$1" state custom
-  jig_version_lt "$from" 0.16.0 || return 0
+  jig_version_lt "$(jig_version_core "$from")" 0.16.0 || return 0
 
   state=$(jig_section_report_state "$JIG_PROJECT/AGENTS.md" "$(manifest_instructions_section 2>/dev/null)")
   if [ "$state" = unmarked ]; then
@@ -1581,7 +1588,7 @@ _upgrade_run() {
   _UPGRADE_J_MODE=copy
   _UPGRADE_J_DRY=$dry_run
   _UPGRADE_J_FROM=$from_version
-  _UPGRADE_J_TO=$to_version
+  _UPGRADE_J_TO=$to_label
 
   _UPGRADE_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/jig-upgrade-stage.XXXXXX")
   jig_cleanup_add -d "$_UPGRADE_STAGE"
@@ -1659,7 +1666,7 @@ _upgrade_run() {
   fi
   _upgrade_summary "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "$manifest_state"
   [ "$manifest_state" = updated ] || _upgrade_kept_source_note "$source" "copy"
-  _upgrade_finish "$from_version" "$to_version" \
+  _upgrade_finish "$from_version" "$to_label" \
     "$(_upgrade_summary_text "$placed_count" "$kept_count" "$removed_count" "$conflict_count" "$manifest_state")"
 }
 

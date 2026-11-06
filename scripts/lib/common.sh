@@ -366,19 +366,23 @@ EOF
   printf '%s\n' "$v"
 }
 
-# jig_version_newer <a> <b> — true when release version <a> (`X.Y.Z`) is
+# jig_version_newer <a> <b> — true when release version <a> (`X.Y.Z`, or
+# `X.Y.Z+<build>`, ordered by its `X.Y.Z`) is
 # strictly newer than <b>, comparing each field as a number: 0.10.0 is newer
 # than 0.9.0. False for equal versions and for anything that is not three
 # numeric fields, so an unparsable version never reads as an upgrade.
 jig_version_newer() {
-  local a1 a2 a3 b1 b2 b3
-  jig_release_version "v$1" >/dev/null || return 1
-  jig_release_version "v$2" >/dev/null || return 1
+  local a1 a2 a3 b1 b2 b3 a="${1%%+*}" b="${2%%+*}"
+  # A `+<build>` part (unreleased code, `X.Y.Z+<sha>`) takes no part in the
+  # order, as in semver: it is compared by the release number it was built on
+  # (adr-20261106-copy-mode-projects-take-released-code-only).
+  jig_release_version "v$a" >/dev/null || return 1
+  jig_release_version "v$b" >/dev/null || return 1
   IFS=. read -r a1 a2 a3 <<EOF
-$1
+$a
 EOF
   IFS=. read -r b1 b2 b3 <<EOF
-$2
+$b
 EOF
   # 10#: a field with a leading zero is still decimal, not octal.
   a1=$((10#$a1)); a2=$((10#$a2)); a3=$((10#$a3))

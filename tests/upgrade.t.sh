@@ -738,6 +738,36 @@ test_upgrade_does_not_fall_back_to_an_older_global_jig() {
   rm -rf "$global"
 }
 
+# The rule holds for unreleased code too: a project on `X.Y.Z+<sha>` is newer
+# than a released global jig at an older version, so that global is no stand-in
+# for its recorded source either.
+test_upgrade_does_not_fall_back_to_an_older_global_for_unreleased_code() {
+  _unit_project
+  local src global path
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  run jig upgrade --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $(_unreleased_declared)+"
+  git add -A
+  git commit -q -m "took unreleased code"
+  _upgrade_foreign_manifest
+
+  global=$(_unit_source)
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="0.0.1"/' "$global/scripts/lib/version.sh" > "$global/v.tmp"
+  mv "$global/v.tmp" "$global/scripts/lib/version.sh"
+  global=$(cd "$global" && pwd -P)
+  path=$(_upgrade_global_path "$global")
+
+  run env PATH="$path" .ai/scripts/jig upgrade --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "older than this project"
+  assert_contains "$OUT" "jig self-update"
+
+  rm -rf "$global" "$src"
+}
+
 # The same rule when the manifest records `global`: on a colleague's machine
 # with an older global jig, `global` is that older checkout, and it must not
 # be read from either.
@@ -2825,6 +2855,35 @@ test_upgrade_from_a_released_source_records_the_plain_version_again() {
   # the manifest says it is the release again.
   run jig upgrade --from "$JIG_HOME"
   assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared"
+  assert_not_contains "$(cat .ai/manifest)" "jig.version: $declared+"
+
+  rm -rf "$src"
+}
+
+# Unreleased code whose framework files already equal a release's places
+# nothing, yet the project is that release: the manifest says so.
+test_upgrade_records_the_release_when_unreleased_code_already_matches_it() {
+  fixture_repo
+  local src declared
+  declared=$(_unreleased_declared)
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  cp -R "$JIG_HOME"/. "$src"/
+  printf '\nnot a framework file\n' >> "$src/README.md"
+  git -C "$src" add -A
+  git -C "$src" -c user.name=jig-tests -c user.email=tests@jig.invalid \
+    commit -q --no-verify -m "past the tag, outside framework paths"
+
+  run jig init --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared+"
+  git add -A
+  git commit -q -m "jig init from unreleased code"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "manifest updated"
   assert_file_contains .ai/manifest "jig.version: $declared"
   assert_not_contains "$(cat .ai/manifest)" "jig.version: $declared+"
 

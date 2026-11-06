@@ -23,6 +23,30 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
+{/* Closed by task released-source-local-edits. */}
+### Local edits in a released Jig still count as the release
+
+**What you see.** The Jig on your machine is at a release tag, but someone changed files in it
+(`~/.local/share/jig`, or a clone at a tag). `jig upgrade` in a copy-mode project takes those files
+and records the plain release number, and `jig status` calls the versions equal.
+
+**What it costs.** The project carries framework files no release contains, under a release's
+number, and the next person's `jig verify` asks them to upgrade to the same release.
+
+**What to do instead.** Keep the global Jig clean: `git -C ~/.local/share/jig status --short`
+should print nothing. `jig self-update` already refuses a checkout with changes.
+
+{/* Closed by task installer-ref-main-project-setup. */}
+### The Windows installer cannot set up a project from `-Ref main`
+
+**What you see.** `install.ps1 -Ref main` (or any branch) installs Jig, offers to set up a project,
+and then reports that `jig init` failed: the source is not a release.
+
+**What it costs.** The project folder is not set up; nothing in it is changed.
+
+**What to do instead.** Install without `-Ref` for a project you work in. To try unreleased Jig, run
+`jig init --unreleased` in the project yourself.
+
 {/* Closed by task writes-in-own-tree-findings (F30, F31). */}
 ### A rejected edit can come back through `jig spec item` or `jig writes ship`
 
