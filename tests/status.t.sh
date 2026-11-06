@@ -2320,6 +2320,32 @@ test_status_treats_an_archived_task_as_answered_for_a_closed_pull_request_but_no
   assert_contains "$needs" "Merged: the task can be closed</h3><p><code>shelved</code>"
 }
 
+test_status_forgets_a_consolidation_card_for_an_archived_abandoned_or_absorbed_task() {
+  fixture_jig_repo
+  # Housekeeping no longer flags these (housekeeping_decide), and a log line
+  # from a run before must not keep their card.
+  fixture_task let-go task/let-go archived "class:T2" "archived_reason:abandoned" "archived_from:abandoned"
+  fixture_task taken-over task/taken-over archived "class:T2" "archived_reason:absorbed" "archived_from:active"
+  fixture_task shelved task/shelved archived "class:T2" "archived_reason:stale" "archived_from:active"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-09-25T12:00:00Z task=let-go status=archived remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=taken-over status=archived remote=merged via=forge action=preserve flags=needs-consolidation\n'
+    printf '2026-09-25T12:00:00Z task=shelved status=archived remote=merged via=forge action=preserve flags=needs-consolidation\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_not_contains "$needs" "<code>let-go</code>"
+  assert_not_contains "$needs" "<code>taken-over</code>"
+  assert_contains "$needs" "<code>shelved</code>"
+  run jig status
+  assert_contains "$OUT" "needs consolidation: 1 task(s)"
+}
+
 test_status_still_borrows_what_only_the_forge_knows() {
   fixture_jig_repo
   # Closed exactly like the task whose consolidation card disappears above,

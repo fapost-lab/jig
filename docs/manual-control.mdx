@@ -137,6 +137,10 @@ its branch, worktree and pull request are not touched. You can archive an active
 task. Housekeeping does the same for an abandoned task after `housekeeping.abandoned_ttl` and for an
 idle one after `housekeeping.stale_after`. `unarchive` returns the task to the status it had.
 
+If an archived task's work is merged later anyway, housekeeping asks you to close it — but only for a
+task that was archived unfinished. A task that was abandoned before it was archived, or absorbed into
+another task, stays archived without a question: what happens to it was already decided.
+
 ## Merge a task into another
 
 ```bash
