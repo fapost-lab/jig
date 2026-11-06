@@ -3179,7 +3179,7 @@ _SPEC_ITEM_SPEC=""
 
 # _spec_item_main <add|move|file> <spec> [<item>] … — the three writes.
 _spec_item_main() {
-  local args=() arg sub id item="" phase="" text="" after="" place="" task="" rev="" rev_given="" newtask="" goal="" goal_given=""
+  local args=() arg sub id item="" phase="" text="" after="" place="" task="" task_given="" rev="" rev_given="" newtask="" goal="" goal_given=""
   for arg in "$@"; do
     [ "$arg" = --json ] || args+=("$arg")
   done
@@ -3219,7 +3219,7 @@ _spec_item_main() {
         place=${1#--}; shift ;;
       --task)
         [ "$sub" = file ] || jig_fail usage "spec item $sub: unexpected argument: $1"
-        _spec_item_need "$1" $#; task=$2; shift 2 ;;
+        _spec_item_need "$1" $#; task=$2; task_given=1; shift 2 ;;
       --new)
         [ "$sub" = file ] || jig_fail usage "spec item $sub: unexpected argument: $1"
         _spec_item_need "$1" $#; newtask=$2; shift 2 ;;
@@ -3251,6 +3251,7 @@ _spec_item_main() {
       fi
       ;;
     file)
+      [ -z "$task_given" ] || [ -n "$task" ] || jig_fail usage "spec item file: --task is empty"
       [ -z "$task" ] || [ -z "$newtask" ] || jig_fail usage "spec item file: give one of --task and --new"
       [ -n "$task" ] || [ -n "$newtask" ] || jig_fail usage "spec item file: --task or --new is required"
       [ -z "$goal_given" ] || [ -n "$newtask" ] || jig_fail usage "spec item file: --goal goes with --new"

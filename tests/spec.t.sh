@@ -5000,6 +5000,12 @@ test_spec_item_file_new_refuses_before_it_files_anything() {
   assert_contains "$OUT" '"code":"usage"'
   run jig spec item file idea-x "$alpha" --new t-new --goal "" --json
   assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --task "" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --task "" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"usage"'
   run jig spec item file idea-x "$alpha" --new t-new --goal "# heading" --json
   assert_contains "$OUT" '"code":"usage"'
   run jig spec item file idea-x "$alpha" --new t-new --bogus --json
@@ -5085,6 +5091,19 @@ test_spec_item_file_new_a_checkout_that_borrows_its_tasks_files_nothing() {
   assert_contains "$OUT" "borrows its task workspaces"
   assert_no_file elsewhere-tasks/t-new
   assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+}
+
+test_spec_item_file_new_a_worktree_that_is_not_the_clone_files_nothing() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  git worktree add -q -b side ../side-wt >/dev/null 2>&1 || fail "could not add a worktree"
+  cd ../side-wt || fail "no worktree"
+  run jig spec item file idea-x "$alpha" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "keeps no task workspaces of the clone"
+  assert_no_file .ai/workspace/tasks/t-new
 }
 
 # _si_epic — idea-x declares an open epic, on main, with the epic cut.
