@@ -163,7 +163,7 @@ test_doctor_a_terminal_puts_a_failure_first() {
   local src first
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src-del.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
@@ -352,7 +352,7 @@ test_doctor_upgrade_check_fails_when_source_root_is_gone() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src-del.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
@@ -372,7 +372,7 @@ test_doctor_upgrade_check_warns_pending_items() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src2.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
 
   mkdir -p "$src/skills/jig-newthing"
@@ -393,6 +393,28 @@ EOF
   rm -rf "$src"
 }
 
+# adr-20261106-copy-mode-projects-take-released-code-only: an install is not
+# measured against code no release contains. That is not a fault of this
+# machine, so it warns, and the pending items are not counted.
+test_doctor_upgrade_check_warns_not_fails_for_an_unreleased_source() {
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  jig init --from "$src" --unreleased >/dev/null
+
+  run jig_installed_without_global doctor
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "warn  upgrade check: not measured: the framework source is not a release"
+  assert_not_contains "$OUT" "fail  upgrade check"
+  assert_not_contains "$OUT" "pending item"
+  # shellcheck disable=SC2016
+  assert_contains "$OUT" 'fix: run `jig upgrade --dry-run` to see where it stands'
+
+  rm -rf "$src"
+}
+
 # --- pending items and the framework version answer different questions ------
 #
 # The report used to print "framework version: … current" and "upgrade check:
@@ -407,7 +429,7 @@ test_doctor_pending_at_the_same_version_names_the_source() {
   local src version recorded bin
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src3.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
 
   mkdir -p "$src/skills/jig-newthing"
@@ -449,7 +471,7 @@ test_doctor_pending_at_a_different_version_stays_plain() {
   local src bin
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-doctor-src4.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
 
   mkdir -p "$src/skills/jig-newthing"

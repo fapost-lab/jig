@@ -11,7 +11,7 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/status.sh
 summary: Why a never-installed framework file is a gap drift cannot see, and why verify refuses to run across it.
-reviewed_at: 2026-10-29
+reviewed_at: 2026-11-06
 ---
 # ADR-0017: `pending` is a kind of gap, and `verify` refuses to run across it
 
@@ -98,3 +98,8 @@ it.
 - An agent that adds a skill and runs `jig verify` is told so at the first check it runs,
   instead of discovering it when a later session cannot find the skill.
 - `pending` enters the install vocabulary as a term distinct from drift.
+
+> **Amendment (2026-11-06).** Pending is not measured against unreleased code: when the only source
+> on offer is a checkout off its release tag, `upgrade_pending` answers 4 (unknown, for that reason)
+> and `verify` runs, as for any unknown
+> (adr-20261106-copy-mode-projects-take-released-code-only).

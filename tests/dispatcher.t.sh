@@ -423,6 +423,16 @@ test_version_newer_compares_fields_as_numbers() {
   assert_eq "0.10.0>0.9.0 1.0.0>0.99.99 0.1.1>0.1.0 0.1.0!>0.1.0 0.9.0!>0.10.0 08.0.0>7.0.0 1.0.0-rc1!>0.1.0 0.1.0!>junk " "$OUT"
 }
 
+# A build suffix (`X.Y.Z+<sha>`, unreleased code) orders by its X.Y.Z alone.
+test_version_newer_ignores_the_build_suffix_of_unreleased_versions() {
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  lib_run 'check() { if jig_version_newer "$1" "$2"; then printf "%s>%s " "$1" "$2"; else printf "%s!>%s " "$1" "$2"; fi; }
+    check 0.41.0+abc1234 0.40.0; check 0.40.0+abc 0.40.0; check 0.40.0 0.40.0+abc
+    check 0.40.0+abc 0.41.0; check 0.40.0+abc 0.40.0+def'
+  assert_eq 0 "$RC"
+  assert_eq "0.41.0+abc1234>0.40.0 0.40.0+abc!>0.40.0 0.40.0!>0.40.0+abc 0.40.0+abc!>0.41.0 0.40.0+abc!>0.40.0+def " "$OUT"
+}
+
 test_newest_release_reads_tags_and_ls_remote_lines() {
   # shellcheck disable=SC2016 # expanded by the inner bash, not here
   lib_run 'printf "%s\n" \
@@ -449,6 +459,156 @@ test_declared_version_reads_exactly_one_quoted_declaration() {
     done'
   assert_eq 0 "$RC"
   assert_eq "one=1.2.3 two=no bare=no none=no " "$OUT"
+}
+
+# --- released and unreleased sources
+# (adr-20261106-copy-mode-projects-take-released-code-only) ------------------
+# A framework checkout is a release only when it is the top of its own git
+# repository and HEAD carries the tag of the version it declares.
+
+# _src_fixture <dir> [version] — a minimal framework checkout (all the
+# release test reads is scripts/lib/version.sh), released: one commit, tagged
+# v<version>.
+_src_fixture() {
+  local dir="$1" version="${2:-1.2.3}"
+  mkdir -p "$dir/scripts/lib"
+  printf 'JIG_VERSION="%s"\n' "$version" > "$dir/scripts/lib/version.sh"
+  fixture_release_source "$dir" || fail "could not release the fixture source $dir"
+}
+
+# _src_commit <dir> — one more commit in <dir>, past whatever tag it carries.
+_src_commit() {
+  printf '%s\n' "$RANDOM" >> "$1/change.txt"
+  git -C "$1" add -A
+  git -C "$1" commit -q -m "past the tag"
+}
+
+# _src_state <dir> — "<release yes|no> <version>" as the helpers answer for <dir>.
+_src_state() {
+  lib_run "if jig_source_release '$1'; then r=yes; else r=no; fi
+    printf '%s %s' \$r \"\$(jig_source_version '$1')\""
+}
+
+test_source_release_true_at_its_tag() {
+  _src_fixture src
+  _src_state src
+  assert_eq 0 "$RC"
+  assert_eq "yes 1.2.3" "$OUT"
+}
+
+test_source_release_true_on_a_branch_whose_head_carries_the_tag() {
+  _src_fixture src
+  git -C src checkout -q -b somewhere-else
+  _src_state src
+  assert_eq "yes 1.2.3" "$OUT" "a branch at the release commit holds the release's bytes"
+}
+
+test_source_release_false_on_a_branch_past_the_tag() {
+  _src_fixture src
+  _src_commit src
+  local sha
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  _src_state src
+  assert_eq "no 1.2.3+$sha" "$OUT"
+}
+
+test_source_release_false_detached_past_the_tag() {
+  _src_fixture src
+  _src_commit src
+  git -C src checkout -q --detach
+  local sha
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  _src_state src
+  assert_eq "no 1.2.3+$sha" "$OUT"
+}
+
+test_source_release_true_detached_at_the_tag() {
+  _src_fixture src
+  _src_commit src
+  git -C src checkout -q --detach v1.2.3
+  _src_state src
+  assert_eq "yes 1.2.3" "$OUT"
+}
+
+test_source_release_false_when_the_version_is_raised_but_not_tagged() {
+  _src_fixture src
+  printf 'JIG_VERSION="1.2.4"\n' > src/scripts/lib/version.sh
+  git -C src commit -q -am "raise the version"
+  local sha
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  _src_state src
+  assert_eq "no 1.2.4+$sha" "$OUT" "the tag at HEAD is for another version"
+}
+
+test_source_release_false_without_git() {
+  mkdir -p src/scripts/lib
+  printf 'JIG_VERSION="1.2.3"\n' > src/scripts/lib/version.sh
+  _src_state src
+  assert_eq 0 "$RC"
+  assert_eq "no 1.2.3+unknown" "$OUT"
+}
+
+# A copy of the framework placed inside somebody else's repository must not
+# answer with that repository's tags.
+test_source_release_false_in_a_subdirectory_of_another_repository() {
+  _src_fixture outer
+  mkdir -p outer/vendor/jig/scripts/lib
+  printf 'JIG_VERSION="1.2.3"\n' > outer/vendor/jig/scripts/lib/version.sh
+  git -C outer add -A
+  git -C outer commit -q --amend --no-edit
+  git -C outer tag -f -a v1.2.3 -m v1.2.3 >/dev/null
+  _src_state outer/vendor/jig
+  assert_eq "no 1.2.3+unknown" "$OUT"
+}
+
+test_source_version_fails_without_a_declared_version() {
+  mkdir -p none
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  lib_run 'if jig_source_version none; then printf yes; else printf no; fi'
+  assert_eq "no" "$OUT"
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  lib_run 'if jig_source_release none; then printf yes; else printf no; fi'
+  assert_eq "no" "$OUT"
+}
+
+test_version_core_drops_the_build_part() {
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  lib_run 'for v in 1.2.3 1.2.3+abc1234 1.2.3+unknown 0.40.0+0123456 ""; do
+      printf "[%s] " "$(jig_version_core "$v")"
+    done'
+  assert_eq 0 "$RC"
+  assert_eq "[1.2.3] [1.2.3] [1.2.3] [0.40.0] [] " "$OUT"
+}
+
+test_source_where_names_branch_detached_and_no_git() {
+  _src_fixture src
+  mkdir -p bare/scripts/lib
+  printf 'JIG_VERSION="1.2.3"\n' > bare/scripts/lib/version.sh
+  local sha branch
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  branch=$(git -C src symbolic-ref --short HEAD)
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  lib_run 'jig_source_where src; jig_source_where bare; git -C src checkout -q --detach; jig_source_where src'
+  assert_eq "on branch $branch at $sha
+not a git checkout
+detached at $sha" "$OUT"
+}
+
+test_dispatcher_version_names_unreleased_code_from_a_checkout() {
+  # The whole framework, released: JIG_HOME is a copy of this one at its tag.
+  mkdir src
+  cp -R "$JIG_HOME"/. src/
+  local declared sha
+  declared=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' src/scripts/lib/version.sh)
+  run "$PWD/src/scripts/jig" --version
+  assert_eq 0 "$RC"
+  assert_eq "jig $declared" "$OUT" "at its tag the plain number"
+  _src_commit src
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  run "$PWD/src/scripts/jig" --version
+  assert_eq "jig $declared+$sha" "$OUT"
+  run "$PWD/src/scripts/jig" version
+  assert_eq "jig $declared+$sha" "$OUT"
 }
 
 test_help_lists_self_update() {
