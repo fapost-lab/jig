@@ -1102,9 +1102,53 @@ jig_fetch_branches() {
 
 # --- forge -------------------------------------------------------------------
 
+# _jig_forge_by_name <url-or-host> — github|gitlab|none, read off the name.
+_jig_forge_by_name() {
+  case "$1" in
+    *github.com*) printf 'github\n' ;;
+    *gitlab.com*|*gitlab.*) printf 'gitlab\n' ;;
+    *) printf 'none\n' ;;
+  esac
+}
+
+# _jig_ssh_alias_hostname <url> — the host an SSH remote really reaches, as
+# `ssh -G` resolves it from the user's ssh config; nothing for a URL that is
+# not SSH, or when ssh is missing or answers nothing.
+#
+# A person with two accounts on one forge reaches it through a `Host` alias
+# (`git@github-personal:owner/repo.git`, `HostName github.com`). The origin URL
+# then names no forge, git and gh resolve the alias anyway, and `task ship` and
+# `spec ship` said "no forge available" on every pull request. `ssh -G` only
+# prints the resolved configuration: it opens no connection. ssh is optional
+# (ADR-0002): without it the answer stays what the URL says.
+_jig_ssh_alias_hostname() {
+  local url="$1" host
+  case "$url" in
+    ssh://*)
+      host=${url#ssh://}
+      host=${host%%/*}
+      host=${host#*@}
+      host=${host%%:*}
+      ;;
+    *://*) return 0 ;;
+    *:*)
+      # scp form, [user@]host:path. A path with a slash before the first
+      # colon is a local path, not a host.
+      host=${url%%:*}
+      case "$host" in */*) return 0 ;; esac
+      host=${host#*@}
+      ;;
+    *) return 0 ;;
+  esac
+  [ -n "$host" ] || return 0
+  command -v ssh >/dev/null 2>&1 || return 0
+  ssh -G "$host" </dev/null 2>/dev/null | sed -n 's/^hostname //p' || true
+}
+
 # jig_forge_kind — which forge CLI this checkout should use: cfg `forge`
 # (auto|github|gitlab|none, default auto) resolved against the origin URL
-# when auto, then confirmed actually usable here — the CLI on PATH and
+# when auto — or against the host an SSH alias in it resolves to
+# (_jig_ssh_alias_hostname) — then confirmed actually usable here — the CLI on PATH and
 # authenticated. Prints github|gitlab|none; dies only on an unrecognised
 # `forge` value, the one case a caller cannot paper over with "none".
 #
@@ -1129,11 +1173,14 @@ jig_forge_kind() {
   fi
 
   if [ "$want" = "auto" ]; then
-    case "$origin" in
-      *github.com*) want="github" ;;
-      *gitlab.com*|*gitlab.*) want="gitlab" ;;
-      *) printf 'none\n'; return 0 ;;
-    esac
+    want=$(_jig_forge_by_name "$origin")
+    if [ "$want" = none ]; then
+      want=$(_jig_forge_by_name "$(_jig_ssh_alias_hostname "$origin")")
+    fi
+    if [ "$want" = none ]; then
+      printf 'none\n'
+      return 0
+    fi
   fi
 
   case "$want" in
