@@ -173,7 +173,9 @@
   it now; the reference itself is parsed by `jig_task_ref` before `jig_task_ref_dir` builds a
   path from it), the `--scope` check in `km_inventory` for a directory, and
   `km_source_problem` plus `km_source_tracked` for a linked source, which also refuses a
-  tracked symlink because it may point outside the repository (ADR-0036), and
+  tracked symlink because it may point outside the repository (ADR-0036) — `km_source_problem`
+  alone for the source of a retired stub, which nothing reads any more
+  (adr-20261106-a-changed-link-is-dropped-by-reject) — and
   `jig_knowledge_read_path` each time a stub is resolved to its source — no symlink, no
   directory outside the repository, since a source can be swapped after it was accepted — and
   `km_copy_check` for the file `jig knowledge new --copy` copies, which is only ever read. Each

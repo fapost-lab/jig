@@ -15,7 +15,7 @@ paths:
   - scripts/lib/config.sh
   - scripts/lib/common.sh
 summary: Why a write from outside a session is committed on spec/<id> or knowledge/decisions in a one-off tree under the git directory, what holds a concurrent write off, why a checkout on that branch is refused, and why agent.git none refuses and a write never merges
-reviewed_at: 2026-11-05
+reviewed_at: 2026-11-06
 ---
 # A write from outside a session is committed on a branch of its own, in a tree of Jig's own, and never moves a checkout
 
@@ -77,3 +77,9 @@ Whatever the mechanism, it has to hold in a project that is not this one: no for
 
 - **adr-20260924-a-worktree-carries-what-git-does-not**: "the only removal jig performs" holds for a task's worktree, not for this tree (its amendment of 2026-11-05).
 - **ADR-0008 and adr-20261016-the-clone-revision-is-a-claimed-name**: the revision is in the main checkout's `.ai/runtime/revision/` only where a main checkout is found; otherwise it is under the git common directory.
+
+> **Amendment (2026-11-06).** A knowledge decision on a document this checkout has and the tree does not —
+> only here, in commits origin's base lacks, or on the base but not on a `knowledge/decisions` cut before it —
+> is refused `not-on-base` or `not-on-branch`, not `not-found`, and so is a `reject` of a stub whose change
+> the tree does not carry. `proposed --json` and `sources --json` say it first, with `decidable` and `reason`
+> (adr-20261106-a-changed-link-is-dropped-by-reject).
