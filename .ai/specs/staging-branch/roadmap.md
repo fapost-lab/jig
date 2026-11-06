@@ -1,7 +1,7 @@
 # Roadmap — Staging branch
 
 Destination: in a project that names a stage branch, a task goes from `main` to stage through
-`jig task ship`, waits for QA without blocking other work, and reaches a pull request into `main`
+a pull request colleagues review, waits for QA without blocking other work, and reaches a pull request into `main`
 on one "prepare for prod" — said by a person or run by CI — while a project without a stage
 branch works exactly as before.
 
@@ -11,22 +11,24 @@ Release: minor
 ## Phase 1 — Ship to stage
 
 Goal: Jig does the stage step the team does by hand today, and everyone sees which tasks are on
-stage. Done when: in a test project with `git.stage_branch: stage`, `jig task ship` leaves the
-task branch merged into origin's stage and the task listed as waiting for QA, with no pull
-request into `main`.
+stage. Done when: in a test project with `git.stage_branch: stage`, `jig task ship` opens a pull
+request into stage, an approved one lands on stage — merged on the forge, or merged directly when
+it conflicts — and the task is listed as waiting for QA, with no pull request into `main`.
 
 - [ ] Turn stage on — `git.stage_branch` in the shared config, offered by `jig init` and
   `jig-setup` when origin has a `stage`/`staging` branch.
-- [ ] Ship a task to stage — `jig task ship` in a stage project merges the task branch into a
-  fresh temporary worktree of stage, the agent resolves any conflict, stage is pushed (retried
-  from a fresh fetch on rejection, never forced); no pull request into `main`. (after: Turn stage
-  on — it reads the key)
+- [ ] Ship a task to stage — `jig task ship` in a stage project opens the task's pull request
+  into stage for review; no pull request into `main`. (after: Turn stage on — it reads the key)
+- [ ] Land an approved task on stage — merge the approved pull request on the forge; when it
+  conflicts, merge the task branch into a fresh temporary worktree of stage, resolve, push
+  (retried from a fresh fetch on rejection, never forced); refuse an unapproved one. (after: Ship
+  a task to stage — it lands that pull request)
 - [ ] See a task's stage state — on stage / behind stage derived from git by branch name, in
   `jig task list --json`, `jig status` and housekeeping; a pull request merged into stage is no
   longer `wrong-base`. (after: Turn stage on — it reads the key)
-- [ ] Wait for QA — a state of its own that frees the current-task slot and the queue; a new
-  commit makes the task current again; autopilot stops there and never promotes. (after: Ship a
-  task to stage — the state starts where that step ends)
+- [ ] Wait for review and for QA — states of their own that free the current-task slot and the
+  queue; autopilot stops at each, never approves and never promotes. (after: Land an approved
+  task on stage — the states start and end at its steps)
 
 ## Phase 2 — Prepare for prod
 
@@ -58,7 +60,8 @@ branch owns.
 
 1. Turn stage on
 2. Ship a task to stage; See a task's stage state
-3. Wait for QA; Prepare a task for prod; Stage drift report
+3. Land an approved task on stage; Prepare a task for prod; Stage drift report
+4. Wait for review and for QA
 
 <!--
 Rules (jig-idea §8):

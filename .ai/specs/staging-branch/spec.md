@@ -17,6 +17,10 @@ The human's words (translated from Russian, meaning kept):
 > opens the pull request, checks conflicts, merges master in if needed, and hands back the link.
 > Ideally Jig UI does this when a card is moved from Staging to Ready: a script finds the right
 > session and gives it the command — a separate project; for now, only whether it is feasible.
+>
+> We prepare a PR into stage and give it to colleagues for review. After approval the PR is
+> merged; only if it conflicts do we merge into stage directly by hand, though the PR exists and
+> stays in the history. It is an important step: we never just merge straight in.
 
 ## Goal and problem
 
@@ -26,7 +30,8 @@ The human's words (translated from Russian, meaning kept):
   into `main` from being merged before QA, autopilot and `agent.git: merge` would take it straight
   to `main`, and a pull request merged into stage reads as `wrong-base` (ADR-0039).
 - What is true when the work is done: in a project that names a stage branch, a task is cut from
-  `main`, shipped to stage, fixed there as often as QA needs, and promoted to `main` on one
+  `main`, shipped to stage through a pull request colleagues review, fixed there as often as QA
+  needs, and promoted to `main` on one
   command — "prepare for prod", said by a person or run by CI — which opens the pull request,
   brings `main` in when it conflicts, and returns the link. A project without a stage branch works exactly as today.
 
@@ -37,7 +42,8 @@ The human's words (translated from Russian, meaning kept):
     on stage after QA rejected it still reads as on stage.
   - … tasks on stage are independent: stage is never merged into `main`, so a task tested with
     another one present can reach production without it.
-  - … the stage branch accepts a direct push: a team that protects stage gets no stage step.
+  - … the stage branch accepts a direct push from the people who resolve conflicts: a team that
+    protects stage against every push gets the pull request path only, with no conflict fallback.
 - The main trade-off: the task branch stays clean (only its own work reaches `main`) at the price
   of shipping a combination nobody tested — stage's conflict resolutions stay on stage, and the
   pull request into `main` is a second merge.
@@ -70,8 +76,8 @@ The human's words (translated from Russian, meaning kept):
      already handed out lead to pull requests that now conflict.
   10. Tasks stay open for weeks waiting for QA: the queue, concurrency limits and `jig status`
       fill up; abandoned tasks stay on stage for ever and stage drifts from `main` for good.
-- Other shapes considered, and why this one: a pull request into stage (abandoned by the team
-  for its conflicts), merging stage into the task branch (carries untested work into `main`),
+- Other shapes considered, and why this one: a direct merge into stage on every ship (skips the
+  colleagues' review the team holds to), merging stage into the task branch (carries untested work into `main`),
   a release from stage (two meanings for one command). This one keeps the team's own practice
   and puts Jig where the practice has no guard today.
 
@@ -79,13 +85,16 @@ The human's words (translated from Russian, meaning kept):
 
 - In scope:
   - `git.stage_branch` and its offer in `jig init` / `jig-setup`.
-  - `jig task ship` in a stage project: commit, push the task branch, merge it into stage and push
-    stage, as far as `agent.git` allows; no pull request into `main` yet.
+  - `jig task ship` in a stage project: commit, push the task branch, open a pull request into
+    stage for colleagues' review; no pull request into `main` yet.
+  - Landing an approved pull request on stage: merged on the forge when it merges cleanly; a
+    direct merge into stage only when it is approved and conflicts.
   - "Prepare for prod" for one task: refuse unless the task is on stage and not behind it, bring
     `main` in on conflict, open the pull request into `main`, print its link.
   - Stage state in `jig task list --json`, `jig status` and housekeeping: on stage, behind
     stage, promoted; a pull request merged into stage is no longer `wrong-base`.
-  - Autopilot stops after the stage step with "waiting for QA", never promotes.
+  - Autopilot stops at the stage pull request ("waiting for review") and after it lands
+    ("waiting for QA"); it never approves and never promotes.
   - Drift report: tasks on stage that nobody promoted for long, and stage work no live task owns.
 - Not doing:
   - Jig UI's card move (another developer's project). It is feasible: "prepare for prod" is a
@@ -108,18 +117,22 @@ The human's words (translated from Russian, meaning kept):
 - The signal names the stage commit that was tested. The command refuses when the task branch
   tip is not contained in that commit: a fix pushed after the test run must not reach `main`
   untested. A person who says "prepare for prod" by hand means the stage tip as they see it.
-- The stage merge runs in a temporary worktree of the stage branch, fetched fresh from origin,
-  never in the developer's checkout (failure mode 5); a rejected push is retried from a fresh
+- The direct merge, when a conflict calls for it, runs in a temporary worktree of the stage
+  branch, fetched fresh from origin, never in the developer's checkout (failure mode 5); a rejected push is retried from a fresh
   fetch, never forced (failure mode 6).
-- The agent resolves any conflict in the stage merge, its task's files or not, and pushes —
-  what the team's people do by hand today; stage is a draft, and QA is its check. The
-  resolution is named in the ship report. Rejected: stopping on conflicts in code the task does
+- The agent resolves any conflict of an approved pull request with stage, its task's files or
+  not, and pushes — what the team's people do by hand today; the change itself was reviewed, and
+  QA checks stage. The direct merge refuses a pull request that is not approved, and refuses
+  when the forge cannot say (no `gh`/`glab`, no forge). The resolution is named in the ship report
+  and in a comment on the pull request. Rejected: stopping on conflicts in code the task does
   not own (failure mode 2) — the team accepts that risk on stage already.
-- A task on stage waiting for QA has a state of its own: it is not the current task, does not
+- A task whose stage pull request waits for review, and a task on stage waiting for QA, each have
+  a state of their own; for both: it is not the current task, does not
   hold `jig queue next` or a concurrency slot, and `jig status` lists it on its own line; a fix
   QA asks for makes it current again (failure mode 10). Rejected: a plain pause — the UI and
   `jig status` could not tell "waiting for QA" from any other pause.
-- A task QA rejects is fixed in the same task and shipped to stage again; Jig takes nothing off
+- A task QA rejects is fixed in the same task and shipped to stage again — as a new pull request
+  into stage, reviewed like the first; Jig takes nothing off
   stage and has no "unstage" command. Failure mode 7 (a revert leaves a task "on stage") is
   accepted: the team does not revert on stage.
 - The work is built on an epic, `epic/staging-branch`, and released once as a `minor` version:
@@ -128,13 +141,17 @@ The human's words (translated from Russian, meaning kept):
 - Everything shared — on stage, behind stage, the drift report, the state a UI reads — is read
   from git and the forge by branch name (`task/<id>`), never from one checkout's workspace
   (failure mode 3). The workspace adds what only its owner knows; it is never required.
-- A task reaches stage by a direct merge, the way the team does it by hand today: check out the
-  stage branch, merge the task branch into it, resolve any conflict there, push stage. The
-  resolution is a commit on stage; the task branch is never touched, so it reaches `main` with
-  its own work only. Rejected: a pull request into stage — the team already abandons it for the
-  conflicts; merging stage into the task branch — it would carry other tasks' untested work into
-  `main`; a throwaway `stage/<id>` branch with a pull request — the same pull request the team
-  abandons, with one more branch to clean up.
+- A task reaches stage through a pull request into stage, reviewed by colleagues — an important
+  step, never skipped. `jig task ship` opens it from the task branch; nothing lands on stage
+  before it is approved. Once approved it is merged on the forge. Only when an approved pull
+  request conflicts with stage is the task merged into stage directly: the task branch merged
+  into stage, the conflict resolved there, stage pushed. The forge then shows the pull request
+  as merged, since its head is in stage, so it stays in the history as the record of the review.
+  The resolution is a commit on stage; the task branch is never touched, so it reaches `main` with
+  its own work only. Rejected: a direct merge on every ship — it skips the review the team holds
+  to; merging stage into the task branch to clear the conflict — it would carry other tasks'
+  untested work into `main`; a throwaway `stage/<id>` branch with a second pull request — a
+  second review of the same change, with one more branch to clean up.
 - The stage branch is named in the shared `.ai/config.yaml` as `git.stage_branch`; empty means
   off. `jig init` and `jig-setup` look for a `stage`/`staging` branch on origin and offer to turn
   it on; the agent writes the key after a yes. Rejected: turning it on whenever such a branch
@@ -172,6 +189,10 @@ The human's words (translated from Russian, meaning kept):
   whether Jig re-checks them against `main` and says which now conflict.
 
 ## Assumptions left untested
+
+- Pushing a merge that contains a pull request's head into its base marks the pull request as
+  merged — true of GitHub as far as known; not checked for GitLab, where it may stay open and
+  need closing with a note.
 
 - The team's stage branch accepts direct pushes — taken from the human's account of their
   practice; tested by the first phase-1 run against a real project.
