@@ -13,7 +13,7 @@ paths:
   - scripts/lib/frontmatter.sh
   - schemas/frontmatter.md
   - "templates/knowledge/**"
-reviewed_at: 2026-11-04
+reviewed_at: 2026-11-06
 ---
 # Knowledge
 
@@ -26,7 +26,9 @@ them an agent has to read.
 - The shape of a knowledge document: frontmatter fields, their allowed values, and the
   templates new documents start from (`schemas/frontmatter.md`, ADR-0004).
 - The lifecycle of a document: `proposed` → `active` or `rejected`, and the deprecated and
-  superseded ends (ADR-0016, ADR-0018). A proposal has two recorded exits and neither
+  superseded ends (ADR-0016, ADR-0018). An accepted stub whose source changed, has no approved
+  text or is gone goes to `rejected` too: `reject` drops its link
+  (adr-20261106-a-changed-link-is-dropped-by-reject). A proposal has two recorded exits and neither
   deletes a file; `jig knowledge proposed` enumerates what is waiting and `jig status`
   counts it, so a decision may be taken later and by someone else.
 - Whether a document still describes the code: `paths` coverage and `reviewed_at`
@@ -37,9 +39,14 @@ them an agent has to read.
   (`jig knowledge sources`, `sources changed:` in `jig status`). Consolidation edits the source,
   `knowledge changed` reports it, a team's decision record is never edited (`adr-convention` for a
   new one), and an untracked rule file is copied with a secret scan (`new --copy`).
+- What a person is asked to decide, read as data: `jig knowledge read <id> --json` gives a
+  document's whole file in any status and, for a stub, the linked file as it is now (`null` when it is
+  not a readable file inside the repository), from the checkout and with no text form.
 - A decision from outside a session (`jig knowledge accept|reject|reviewed` with `--revision` or
   `--json`): committed on `knowledge/decisions` in Jig's own tree, `waiting` on the reads until it
   lands; the plain text forms write the working tree (adr-20261104-a-write-goes-in-jigs-own-tree).
+  What is only in the checkout reads `decidable: false` and is refused `not-on-base` or
+  `not-on-branch`, one predicate for both (`_km_ref_holds`).
 - Which documents a task must read, how much of each, and the record that it did:
   resolution by selectors, the catalog, and the context ledger (ADR-0014, ADR-0015).
 - A task's links to a neighbouring repository's task or spec: the `linked:` lines of resolve

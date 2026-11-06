@@ -81,7 +81,7 @@ Usage: jig <command> [args]
   context [...]                  relevant knowledge for a task
   context resolve [...]          required documents; --stage, --no-task, --catalog
   context pending|guard [...]    knowledge required but not yet acknowledged
-  context acknowledge [...]      record documents as read
+  context acknowledge [...]      record documents as read, or --revoke
   verify                         run active profiles' checks (or preview with --explain)
   knowledge check                validate .ai/knowledge
   knowledge new <type> <slug>    create a knowledge document (jig knowledge for types)
@@ -101,6 +101,7 @@ Usage: jig <command> [args]
                                  stamp document(s) as reconciled with the code, likewise
   knowledge sources [--diff <id>] [--json]
                                  linked sources and what changed since approval; --json as data
+  knowledge read <id> --json     one document's text, and a stub's linked file as it is now
   spec new <id>                  create .ai/specs/<id>/ from the specification templates
   spec list                      specifications under .ai/specs/ and their roadmap progress
   spec done <task-id>            check the roadmap items that name a spec-linked task

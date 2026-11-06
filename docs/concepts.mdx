@@ -106,8 +106,9 @@ The catalog helps the agent discover additional knowledge without reading every 
 
   For a task with a workspace, `context acknowledge` records the hashes of documents the agent
   says it read. `context pending` identifies required documents that are new or changed;
-  `context guard` fails while any remain unacknowledged. Unchanged documents keep their record
-  across stages. This records a reading claim, not comprehension or continued presence in the
+  `context guard` fails while any remain unacknowledged, naming why each is required, and when it
+  passes says at which stage the acknowledgements it took were made. Unchanged documents keep their
+  record across stages; `context acknowledge --revoke` withdraws one. This records a reading claim, not comprehension or continued presence in the
   model's context; it does not replace a handoff when an agent session changes.
 
   See [Manual control](/manual-control#ask-which-knowledge-applies) for task-based commands and

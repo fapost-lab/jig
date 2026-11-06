@@ -12,7 +12,7 @@ paths:
   - templates/knowledge/source.md
   - "skills/jig-map/**"
 summary: Why a project's existing rule documents are adopted through proposed stubs that link them in place, and why no stub reaches an agent yet.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-11-06
 ---
 # ADR-0036: A project's existing rule documents are linked in place by proposed stubs
 
@@ -128,3 +128,9 @@ collides with the project's own. On a case-insensitive filesystem `[ -f docs/x.m
 > any other before reading its directory, and never lists one outside the repository — rejected: external
 > scanners (a mandatory dependency, ADR-0002), entropy checks (noise on hashes and URLs), and
 > mapping Cursor's `globs`/`alwaysApply` onto `paths`/`load`, whose meanings differ.
+
+> **Amendment (2026-11-06).** "Dropping the link is `reject`" had no code behind it: `reject` took only
+> proposals. It now takes an accepted stub whose source is `changed`, `unrecorded` or `missing`, and the stub
+> becomes `rejected`. `knowledge check` checks only the shape of a retired stub's source and does not follow
+> its link, so a dropped `missing` link, or a rejected proposal whose file was deleted later, fails no check
+> (adr-20261106-a-changed-link-is-dropped-by-reject).

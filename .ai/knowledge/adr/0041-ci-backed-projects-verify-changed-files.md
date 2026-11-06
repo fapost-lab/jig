@@ -134,6 +134,16 @@ never be checked on `main` (it happened on the first day, to the change that int
 > map line that let a change skip the tests it needed. It was a pull request deleting two spec files
 > that ran the whole suite on three platforms.
 
+> **Amendment (2026-11-06): a pull request is measured from its merge parent.** "The pull
+> request's base" was read as the event's `pull_request.base.sha` — where the branch started. The
+> run checks out `refs/pull/<n>/merge`, the pull request merged into its base as the base is now,
+> so every commit that landed on `main` since the branch started counted as the pull request's
+> own: #394, two spec files, ran the full suite because `main` had changed
+> `scripts/lib/config.sh` meanwhile. `ci-scope.sh` and `ci-windows-scope.sh` now take the merge
+> commit's first parent (`HEAD^1`), so `HEAD^1..HEAD` is exactly the pull request's change; no
+> first parent leaves the base empty and runs everything. `main-green-check.sh` still reads
+> `base.sha`, and only to ask whether the change raises the version against it.
+
 > **Amendment (2026-10-08): under `ci` a narrowed run never starts a full set.** The owner found
 > that in his Laravel project, which declares `verify.full_run: ci`, an agent's `jig verify` still
 > ran the whole suite locally whenever a change touched `routes/`, `config/`, `database/`, a

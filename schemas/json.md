@@ -44,7 +44,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
+| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
@@ -61,7 +61,9 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `commit-refused` | git refused the commit in Jig's own tree, usually a project's hook; `message` holds what it said. Nothing waits |
 | `epic-missing` | a roadmap write found its spec on an open epic that is neither here nor on origin. Nothing was written |
 | `not-linkable` | `jig spec item file` cannot link this task or file this item: the task is finished, started or linked to another spec, or the item is checked. Nothing was written |
-| `not-proposed` | `jig knowledge accept|reject` named a document that is not a proposal: decided already, on the branch if that decision still waits. Nothing was written |
+| `not-proposed` | `jig knowledge accept|reject` named a document that is not a proposal — for `reject`, nor an accepted stub whose source is `changed`, `unrecorded` or `missing`: decided already, on the branch if that decision still waits. Nothing was written |
+| `not-on-base` | `jig knowledge accept|reject|reviewed --json|--revision` named a document this checkout has and the base the decision is judged on does not — for `reject` of a stub, also a change to its source the base does not carry: not committed, or not on origin's base. Nothing was written |
+| `not-on-branch` | the same, for what the base has and `knowledge/decisions`, cut before it got there and still waiting, does not. Nothing was written; decide it once that branch has landed |
 | `source-missing` | `jig knowledge accept|reviewed` named a stub whose source is missing, invalid or not tracked. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. For `jig upgrade --land`: uncommitted changes, a checkout on another branch than the base or the upgrade's, the base checked out in another worktree, or a base that cannot be fast-forwarded to origin's. `message` lists every reason, one per line, each with what to do |
 | `unknown-key` | `jig config set --json` was given a name no reader of Jig reads. Nothing was written |
@@ -320,10 +322,15 @@ all.
 {"decisions": [{"id": "feature-alpha", "decision": "accepted", "path": ".ai/knowledge/features/alpha.md"}], "write": <write>}
 ```
 
-`decision` is `accepted`, `rejected` or `reviewed`. A document is judged as it is on the branch, so one
-already decided and waiting is `not-proposed`. Refusals: `usage`; `not-found` for an id no document
-has; `not-proposed` for an `accept` or `reject` of a document that is not a proposal; `source-missing`
-for a stub whose source is missing; and the refusals of every write, below.
+`decision` is `accepted`, `rejected` or `reviewed`. `reject` takes a proposal, and also an accepted stub
+whose source is `changed`, `unrecorded` or `missing` (as `jig knowledge sources` names it): that drops
+its link, and the stub is `rejected` (adr-20261106-a-changed-link-is-dropped-by-reject). A document is
+judged as it is on the branch, so one already decided and waiting is `not-proposed`. Refusals: `usage`;
+`not-found` for an id no document has, here or on the branch; `not-on-base` and `not-on-branch` for a
+document, or a change to a stub's source, this checkout has and the branch does not; `not-proposed` for
+an `accept` of a document that is not a proposal, or a `reject` of one that is neither a proposal nor
+such a stub; `source-missing` for a stub whose source is missing (`accept`, `reviewed`); and the
+refusals of every write, below.
 
 ## `jig writes --json`
 
@@ -731,6 +738,8 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `proposals[].summary` | string or null | its `summary`; `null` when it has none |
 | `proposals[].source` | string or null | for a stub, the file it links, relative to the repository; `null` for any other document |
 | `proposals[].waiting` | object or null | a decision on this document committed in Jig's own tree that has not landed: `decision` (`accepted`, `rejected`), `branch` and `pr` (string or null). The document here still says `proposed`, and it is until that lands. `null` when none waits |
+| `proposals[].decidable` | boolean | a decision sent now (`accept|reject … --json`) would be judged on this document: its file is on the tip of the decisions waiting, or, when none waits, on the base as `origin/<base>` has it (the local base without origin), as of the last fetch. The write asks the same question of the commit its tree stands on. Whether it was decided already is `waiting`'s to say, and an id that differs there is still `not-found` |
+| `proposals[].reason` | string or null | `null` when `decidable`; otherwise the code the decision would be refused with: `not-on-base` (only in this checkout or in commits the base does not have: commit and push it) or `not-on-branch` (on the base, but not on the decisions waiting, cut before it got there) |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 
 ```json
@@ -746,7 +755,8 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `sources[].path` | string | the stub's file, relative to the repository |
 | `sources[].source` | string | the linked file, relative to the repository |
 | `sources[].bytes` | integer or null | the linked file's size in bytes; `null` when it is `missing` or not a file |
-| `sources[].waiting` | object or null | a decision on this stub waiting on a branch, as on a proposal; `decision` is also `reviewed` here. `state` stays what it is here until that lands. `null` when none waits |
+| `sources[].waiting` | object or null | a decision on this stub waiting on a branch, as on a proposal; `decision` is also `reviewed` here, and `rejected` for a dropped link. `state` stays what it is here until that lands. `null` when none waits |
+| `sources[].decidable`, `.reason` | boolean, string or null | as on a proposal. For a `changed` or `missing` source the change is judged too: the stub has to be there with its source there not the approved text, or a `reject` there would find nothing to drop |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 | `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints; what `jig status` counts as changed is `changed` plus `unrecorded` |
 
@@ -774,6 +784,48 @@ outside ASCII is replaced by `?` instead.
 Refusals: `not-found` for an id no document has, and for a document that links no source;
 `usage` for an argument these commands do not take (`jig knowledge proposed x --json`, `sources
 --diff` without an id, a second id); `not-initialised` and `not-a-repository` as everywhere.
+
+## `jig knowledge read --json`
+
+`jig knowledge read <id> --json` answers with the text of one knowledge document, whatever its
+status, so a person can be shown what they are asked to decide: a proposed document as written, or
+the file a stub links as it is now. It reads the checkout, writes nothing and raises no revision.
+`--json` may stand anywhere among the arguments; the command has no text form (without it, it is
+refused as `usage`).
+
+```json
+{"id": "feature-alpha", "status": "proposed", "path": ".ai/knowledge/features/alpha.md", "bytes": 1234, "content": "---\nid: feature-alpha\n...", "lossy": false, "source": null}
+```
+
+For a stub, `source` is the linked file:
+
+```json
+{"id": "convention-coding-style", "status": "proposed", "path": ".ai/knowledge/sources/coding-style.md", "bytes": 261, "content": "---\nid: convention-coding-style\n...", "lossy": false,
+ "source": {"path": "docs/coding-style.md", "bytes": 900, "content": "# Style\n...", "lossy": false}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `id` | string | the document's `id` |
+| `status` | string or null | its `status`; `null` when it has none |
+| `path` | string | the document's file, relative to the repository |
+| `bytes` | integer | the file's size in bytes, as it is on disk (the dropped bytes of a `lossy` text included) |
+| `content` | string | the whole file, frontmatter included, trailing newlines included; `""` for an empty file |
+| `lossy` | boolean | `true` when `content` held bytes that are not UTF-8 and they were dropped. A NUL byte is dropped without it |
+| `source` | object or null | for a stub, the file it links as it is now; `null` for any other document, and for a stub whose source is not a readable file inside the repository (missing, unreadable, a link, outside the repository: the states `jig knowledge sources` calls `missing`) |
+| `source.path` | string | the linked file, relative to the repository |
+| `source.bytes` | integer | its size in bytes, as it is on disk |
+| `source.content`, `source.lossy` | string, boolean | its text and whether bytes were dropped from it, as `content` and `lossy` |
+
+Strings escape as the envelope says, and bytes that are not valid UTF-8 are dropped as in
+`sources --diff` (or, without `iconv`, every byte outside ASCII becomes `?`), so the line is always
+valid JSON in UTF-8. A source is read whatever its state: `jig knowledge sources --json` says
+whether it changed since it was approved. The text is the checkout's: a decision waiting on
+`knowledge/decisions` is not applied to it (see `waiting` in `proposed --json`).
+
+Refusals: `not-found` for an id no document has; `usage` for a missing id, a second argument, an
+argument that starts with `-`, and for the command without `--json`; `not-initialised` and
+`not-a-repository` as everywhere.
 
 ## `jig upgrade --json`
 

@@ -4258,7 +4258,7 @@ test_proposed_json_lists_each_proposal_with_its_facts() {
 
   _kmj proposed
   assert_eq 0 "$RC"
-  assert_eq '"data":{"proposals":[{"id":"feature-alpha","type":"feature","domains":["a","b"],"path":".ai/knowledge/features/alpha.md","paths":["src/**"],"summary":"Says: alpha, with a colon","source":null,"waiting":null},{"id":"convention-stub","type":"convention","domains":["a"],"path":".ai/knowledge/sources/stub.md","paths":[],"summary":null,"source":"docs/x.md","waiting":null}],"waiting":null}' \
+  assert_eq '"data":{"proposals":[{"id":"feature-alpha","type":"feature","domains":["a","b"],"path":".ai/knowledge/features/alpha.md","paths":["src/**"],"summary":"Says: alpha, with a colon","source":null,"waiting":null,"decidable":false,"reason":"not-on-base"},{"id":"convention-stub","type":"convention","domains":["a"],"path":".ai/knowledge/sources/stub.md","paths":[],"summary":null,"source":"docs/x.md","waiting":null,"decidable":false,"reason":"not-on-base"}],"waiting":null}' \
     "$(_kmj_data)"
   _kmj_valid kmj.out
   # The envelope's revision is the clone's, as every read reports it.
@@ -4332,11 +4332,11 @@ test_sources_json_reports_every_state_and_the_counts() {
   assert_eq 0 "$RC"
   assert_eq "\"data\":{\"sources\":[$(
     printf '%s' \
-      '{"id":"convention-changed","state":"changed","status":"active","path":".ai/knowledge/sources/changed.md","source":"docs/changed.md","bytes":13,"waiting":null},' \
-      '{"id":"convention-gone","state":"missing","status":"active","path":".ai/knowledge/sources/gone.md","source":"docs/gone.md","bytes":null,"waiting":null},' \
-      '{"id":"convention-ok","state":"ok","status":"active","path":".ai/knowledge/sources/ok.md","source":"docs/ok.md","bytes":5,"waiting":null},' \
-      '{"id":"convention-unrecorded","state":"unrecorded","status":"active","path":".ai/knowledge/sources/unrecorded.md","source":"docs/unrecorded.md","bytes":9,"waiting":null},' \
-      '{"id":"convention-waiting","state":"proposed","status":"proposed","path":".ai/knowledge/sources/waiting.md","source":"docs/waiting.md","bytes":8,"waiting":null}'
+      '{"id":"convention-changed","state":"changed","status":"active","path":".ai/knowledge/sources/changed.md","source":"docs/changed.md","bytes":13,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
+      '{"id":"convention-gone","state":"missing","status":"active","path":".ai/knowledge/sources/gone.md","source":"docs/gone.md","bytes":null,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
+      '{"id":"convention-ok","state":"ok","status":"active","path":".ai/knowledge/sources/ok.md","source":"docs/ok.md","bytes":5,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
+      '{"id":"convention-unrecorded","state":"unrecorded","status":"active","path":".ai/knowledge/sources/unrecorded.md","source":"docs/unrecorded.md","bytes":9,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
+      '{"id":"convention-waiting","state":"proposed","status":"proposed","path":".ai/knowledge/sources/waiting.md","source":"docs/waiting.md","bytes":8,"waiting":null,"decidable":false,"reason":"not-on-base"}'
   )],\"counts\":{\"linked\":5,\"changed\":1,\"unrecorded\":1,\"missing\":1},\"waiting\":null}" "$(_kmj_data)"
   _kmj_valid kmj.out
 
@@ -4544,6 +4544,131 @@ test_sources_diff_json_drops_a_character_above_the_unicode_range() {
   assert_contains "$OUT" '"lossy":true}'
 }
 
+# --- knowledge read --json (schemas/json.md) ---------------------------------------
+
+test_read_json_gives_the_whole_document_of_any_status() {
+  km_setup
+  jig knowledge new feature alpha --proposed --domains a >/dev/null
+  local file=.ai/knowledge/features/alpha.md
+
+  _kmj read feature-alpha
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"data":{"id":"feature-alpha","status":"proposed","path":".ai/knowledge/features/alpha.md","bytes":'"$(wc -c < "$file" | tr -d ' ')"',"content":"---\nid: feature-alpha\n'
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -I -c '
+import json, sys
+d = json.loads(open(sys.argv[1], "rb").read().decode("utf-8"))["data"]
+assert d["content"] == open(sys.argv[2], encoding="utf-8").read(), repr(d["content"])
+' kmj.out "$file"
+  fi
+
+  jig knowledge accept feature-alpha >/dev/null
+  _kmj read feature-alpha
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"status":"active"'
+}
+
+test_read_json_gives_a_stub_its_source_as_it_is_now() {
+  _kmj_accepted_stub
+  printf 'say "hi" \\ \303\251\n' >> docs/x.md
+
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/x.md","bytes":'"$(wc -c < docs/x.md | tr -d ' ')"',"content":"line one'
+  assert_contains "$OUT" 'say \"hi\" \\ é\n","lossy":false}}}'
+}
+
+test_read_json_keeps_a_text_without_a_final_newline_and_an_empty_one() {
+  _kmj_accepted_stub
+  printf 'no newline' > docs/x.md
+  _kmj read convention-stub
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/x.md","bytes":10,"content":"no newline","lossy":false}}}'
+  : > docs/x.md
+  _kmj read convention-stub
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/x.md","bytes":0,"content":"","lossy":false}}}'
+  printf 'two\n\n\n' > docs/x.md
+  _kmj read convention-stub
+  assert_contains "$OUT" '"content":"two\n\n\n"'
+}
+
+test_read_json_gives_a_null_source_when_the_file_is_not_there() {
+  _kmj_accepted_stub
+  rm docs/x.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+}
+
+test_read_json_gives_a_null_source_for_a_link_jig_does_not_follow() {
+  _kmj_accepted_stub
+  ln -s x.md docs/link.md
+  sed 's|^source: docs/x.md|source: docs/link.md|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+  assert_not_contains "$OUT" "line one"
+  sed 's|^source: docs/link.md|source: ../x.md|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj read convention-stub
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+}
+
+test_read_json_gives_a_null_source_for_an_unreadable_file() {
+  _kmj_accepted_stub
+  chmod 000 docs/x.md
+  if [ -r docs/x.md ]; then chmod 644 docs/x.md; skip "files stay readable here"; fi
+  _kmj read convention-stub
+  chmod 644 docs/x.md
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+}
+
+test_read_json_drops_bytes_that_are_not_utf8_and_says_so() {
+  _kmj_accepted_stub
+  printf 'bad \377 byte \320\237\n' > docs/x.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"content":"bad  byte П\n","lossy":true}}}'
+  assert_contains "$OUT" '"lossy":false,"source":{'
+}
+
+test_read_json_refuses_with_codes() {
+  km_setup
+  jig knowledge new feature alpha --proposed >/dev/null
+  _kmj read nope
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_kmj_code)"
+  _kmj read
+  assert_eq usage "$(_kmj_code)"
+  _kmj read feature-alpha feature-alpha
+  assert_eq usage "$(_kmj_code)"
+  _kmj read --bogus
+  assert_eq usage "$(_kmj_code)"
+  _kmj read ""
+  assert_eq usage "$(_kmj_code)"
+  run jig knowledge read feature-alpha
+  assert_status 1
+  assert_contains "$ERR" "usage: jig knowledge read <id> --json"
+}
+
+test_read_json_writes_nothing_and_moves_no_revision() {
+  _kmj_accepted_stub
+  local before after
+  before=$(jig knowledge proposed --json | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/')
+  _kmj read convention-stub
+  after=$(jig knowledge proposed --json | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/')
+  assert_eq "$before" "$after"
+  assert_eq "$before" "$(printf '%s' "$OUT" | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/')"
+}
+
 # --- decisions in Jig's own tree (lib/owntree.sh) -----------------------------------
 #
 # What the mechanism does for every write is in writes.t.sh; here, the decisions.
@@ -4605,8 +4730,8 @@ test_knowledge_decisions_in_a_row_share_a_branch_and_show_as_waiting() {
   assert_eq 0 "$RC"
   # Still proposed here, and decided on the way.
   assert_contains "$OUT" '"id":"feature-alpha"'
-  assert_contains "$OUT" '"source":null,"waiting":{"decision":"accepted","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"}}'
-  assert_contains "$OUT" '"source":null,"waiting":{"decision":"rejected","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"}}'
+  assert_contains "$OUT" '"source":null,"waiting":{"decision":"accepted","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"},"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"source":null,"waiting":{"decision":"rejected","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"},"decidable":true,"reason":null}'
   local tip
   tip=$(git rev-parse knowledge/decisions)
   assert_contains "$OUT" "\"waiting\":{\"target\":\"knowledge\",\"branch\":\"knowledge/decisions\",\"base\":\"main\",\"commit\":\"$tip\",\"commits\":2,\"pushed\":true,\"pr\":\"https://github.com/example/example/pull/42\",\"merged\":false}}"
@@ -4615,7 +4740,7 @@ test_knowledge_decisions_in_a_row_share_a_branch_and_show_as_waiting() {
 test_knowledge_proposed_json_says_nothing_waits_when_nothing_does() {
   _kd_repo commit
   run jig knowledge proposed --json
-  assert_contains "$OUT" '"source":null,"waiting":null}'
+  assert_contains "$OUT" '"source":null,"waiting":null,"decidable":true,"reason":null}'
   assert_contains "$OUT" '],"waiting":null}'
 }
 
@@ -4692,7 +4817,7 @@ test_knowledge_reviewed_takes_several_and_a_changed_source_shows_as_waiting() {
   git push -q origin main
   run jig knowledge sources --json
   assert_contains "$OUT" '"state":"changed"'
-  assert_contains "$OUT" '"bytes":12,"waiting":null}'
+  assert_contains "$OUT" '"bytes":12,"waiting":null,"decidable":true,"reason":null}'
   assert_contains "$OUT" '},"waiting":null}'
   run jig knowledge reviewed convention-stub feature-alpha --date 2026-01-02 --revision "$(_kd_rev)" --json
   assert_eq 0 "$RC"
@@ -4700,7 +4825,7 @@ test_knowledge_reviewed_takes_several_and_a_changed_source_shows_as_waiting() {
   assert_eq 2026-01-02 "$(own_tree_show knowledge/decisions .ai/knowledge/features/alpha.md | sed -n 's/^reviewed_at: //p')"
   assert_eq "$(git rev-parse HEAD:docs/x.md)" "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md | sed -n 's/^source_hash: //p')"
   run jig knowledge sources --json
-  assert_contains "$OUT" '"bytes":12,"waiting":{"decision":"reviewed","branch":"knowledge/decisions","pr":null}}'
+  assert_contains "$OUT" '"bytes":12,"waiting":{"decision":"reviewed","branch":"knowledge/decisions","pr":null},"decidable":true,"reason":null}'
   assert_contains "$OUT" '"state":"changed"'
 }
 
@@ -4724,4 +4849,216 @@ test_knowledge_decision_with_a_revision_in_text_says_where_it_went() {
   assert_contains "$OUT" "branch: knowledge/decisions (into main)"
   assert_contains "$OUT" "pushed: no"
   assert_eq "Accept knowledge: feature-alpha, feature-beta" "$(git log -1 --format=%s knowledge/decisions)"
+}
+
+# --- dropping a changed link, and what a decision cannot take yet --------------------
+# (adr-20261106-a-changed-link-is-dropped-by-reject)
+
+# _kdl_accepted <name>... — an accepted stub on docs/<name>.md for each name, committed.
+_kdl_accepted() {
+  local s
+  for s in "$@"; do
+    km_track_file "docs/$s.md" "text of $s"
+    jig knowledge new convention "$s" --source "docs/$s.md" --proposed --domains a >/dev/null
+    jig knowledge accept "convention-$s" >/dev/null
+  done
+}
+
+test_reject_drops_the_link_of_a_stub_whose_source_changed_has_no_hash_or_is_gone() {
+  km_setup
+  _kdl_accepted changed unrecorded gone
+  printf 'after\n' >> docs/changed.md
+  grep -v '^source_hash:' .ai/knowledge/sources/unrecorded.md > unrec.new
+  mv unrec.new .ai/knowledge/sources/unrecorded.md
+  git rm -q docs/gone.md
+
+  run jig knowledge reject convention-changed convention-unrecorded convention-gone
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "rejected   .ai/knowledge/sources/changed.md  (status: rejected; link to docs/changed.md dropped)"
+  assert_contains "$OUT" "rejected   .ai/knowledge/sources/gone.md  (status: rejected; link to docs/gone.md dropped)"
+  assert_contains "$OUT" "knowledge reject: 3 rejected"
+  local s
+  for s in changed unrecorded gone; do
+    assert_file_contains ".ai/knowledge/sources/$s.md" "status: rejected"
+  done
+  # A dropped link is not a changed source any more, and a gone source fails no check.
+  run jig knowledge sources
+  assert_contains "$OUT" "knowledge sources: 3 linked, 0 changed, 0 unrecorded, 0 missing"
+  run jig knowledge check
+  assert_eq 0 "$RC"
+}
+
+test_reject_refuses_a_stub_whose_source_is_unchanged_and_the_whole_batch_with_it() {
+  km_setup
+  _kdl_accepted ok changed
+  printf 'after\n' >> docs/changed.md
+  jig knowledge new feature alpha --proposed --domains a >/dev/null
+
+  run jig knowledge reject feature-alpha convention-changed convention-ok
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a proposed document, nor a linked source that needs a decision: convention-ok (status: active, source: ok)"
+  assert_file_contains .ai/knowledge/features/alpha.md "status: proposed"
+  assert_file_contains .ai/knowledge/sources/changed.md "status: active"
+  # A proposal and a changed link go together.
+  run jig knowledge reject feature-alpha convention-changed
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "knowledge reject: 2 rejected"
+}
+
+test_reject_still_refuses_an_active_document_that_links_nothing() {
+  km_setup
+  jig knowledge new feature beta --domains a >/dev/null
+  run jig knowledge reject feature-beta
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "knowledge: not a proposed document: feature-beta (status: active)"
+}
+
+test_check_passes_a_rejected_proposal_whose_source_was_deleted() {
+  km_setup
+  km_track_file docs/x.md
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  jig knowledge reject convention-stub >/dev/null
+  git rm -q docs/x.md
+  run jig knowledge check
+  assert_eq 0 "$RC"
+  # The shape of the path is still checked.
+  sed 's|^source: .*|source: /etc/passwd|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  run jig knowledge check
+  assert_eq 1 "$RC"
+}
+
+test_knowledge_decision_drops_a_changed_link_on_the_branch_and_shows_it_waiting() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed"
+  git push -q origin main
+  local before
+  before=$(own_tree_snapshot)
+  run jig knowledge reject convention-stub --revision "$(_kd_rev)" --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"data":{"decisions":[{"id":"convention-stub","decision":"rejected","path":".ai/knowledge/sources/stub.md"}],"write":{"target":"knowledge"'
+  assert_eq "$before" "$(own_tree_snapshot)"
+  assert_eq rejected "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md | sed -n 's/^status: //p')"
+  assert_eq active "$(sed -n 's/^status: //p' .ai/knowledge/sources/stub.md)"
+  assert_eq "Reject knowledge: convention-stub" "$(git log -1 --format=%s knowledge/decisions)"
+  run jig knowledge sources --json
+  assert_contains "$OUT" '"state":"changed","status":"active"'
+  assert_contains "$OUT" '"waiting":{"decision":"rejected","branch":"knowledge/decisions","pr":null}'
+  # Dropped already, on the branch.
+  run jig knowledge reject convention-stub --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-proposed"'
+  own_tree_gone
+}
+
+test_knowledge_a_source_changed_only_here_is_not_decidable_and_its_drop_is_refused() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed, not pushed"
+  run jig knowledge sources --json
+  assert_contains "$OUT" '"state":"changed","status":"active","path":".ai/knowledge/sources/stub.md","source":"docs/x.md","bytes":12,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+  run jig knowledge reject convention-stub --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-on-base"'
+  assert_contains "$OUT" 'convention-stub, as this checkout has it, is not on main as origin/main has it'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  # Once pushed, it is.
+  git push -q origin main
+  run jig knowledge sources --json
+  assert_contains "$OUT" '"decidable":true,"reason":null}'
+  run jig knowledge reject convention-stub --json
+  assert_eq 0 "$RC"
+  own_tree_gone
+}
+
+test_knowledge_a_proposal_only_in_local_commits_is_not_decidable_and_refused_with_its_own_code() {
+  _kd_repo commit
+  jig knowledge new feature gamma --proposed >/dev/null
+  git add -A .ai/knowledge
+  git commit -q -m gamma
+  run jig knowledge proposed --json
+  assert_contains "$OUT" '"id":"feature-alpha","type":"feature","domains":[],"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"id":"feature-gamma","type":"feature","domains":[],"path":".ai/knowledge/features/gamma.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+  run jig knowledge accept feature-gamma --revision "$(_kd_rev)" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-on-base"'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  # The whole batch goes with it, and a typo is still a typo.
+  run jig knowledge accept feature-alpha feature-gamma --json
+  assert_contains "$OUT" '"code":"not-on-base"'
+  run jig knowledge accept feature-nope --json
+  assert_contains "$OUT" '"code":"not-found"'
+  own_tree_gone
+}
+
+test_knowledge_a_proposal_that_reached_the_base_after_the_branch_was_cut_is_not_on_branch() {
+  _kd_repo commit
+  run jig knowledge accept feature-alpha --json
+  assert_eq 0 "$RC"
+  jig knowledge new feature gamma --proposed >/dev/null
+  git add -A .ai/knowledge
+  git commit -q -m gamma
+  git push -q origin main
+  git fetch -q origin
+  run jig knowledge proposed --json
+  assert_contains "$OUT" '"id":"feature-beta","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"path":".ai/knowledge/features/gamma.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-branch"}'
+  run jig knowledge reject feature-gamma --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-on-branch"'
+  assert_contains "$OUT" 'reached main after knowledge/decisions was cut'
+  assert_eq "Accept knowledge: feature-alpha" "$(git log -1 --format=%s knowledge/decisions)"
+  own_tree_gone
+}
+
+test_knowledge_an_uncommitted_proposal_without_origin_is_not_on_base() {
+  _kd_repo commit
+  git remote remove origin
+  jig knowledge new feature delta --proposed >/dev/null
+  run jig knowledge proposed --json
+  assert_contains "$OUT" '"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"path":".ai/knowledge/features/delta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+  run jig knowledge accept feature-delta --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-on-base"'
+  assert_contains "$OUT" 'is not on main as main has it'
+  # The text form writes the working tree, where it is.
+  run jig knowledge accept feature-delta
+  assert_eq 0 "$RC"
+}
+
+test_knowledge_a_drop_after_a_review_that_waits_is_not_proposed() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed"
+  git push -q origin main
+  run jig knowledge reviewed convention-stub --json
+  assert_eq 0 "$RC"
+  # Reviewed on the branch: nothing there is left to drop.
+  run jig knowledge reject convention-stub --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-proposed"'
+  assert_contains "$OUT" 'source: ok'
+  own_tree_gone
+}
+
+test_knowledge_an_id_changed_only_here_at_a_path_the_tree_has_is_not_found() {
+  _kd_repo commit
+  sed 's/^id: feature-beta$/id: feature-beta2/' .ai/knowledge/features/beta.md > beta.new
+  mv beta.new .ai/knowledge/features/beta.md
+  # The read judges the path, which is there; the write finds no such id there.
+  run jig knowledge proposed --json
+  assert_contains "$OUT" '"id":"feature-beta2","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
+  run jig knowledge accept feature-beta2 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+  own_tree_gone
 }

@@ -1097,6 +1097,27 @@ test_session_hook_honours_the_cadence_from_the_local_config() {
     "hook ignored the local cadence override"
 }
 
+test_session_hook_reads_a_multi_day_cadence_and_stays_silent() {
+  # config.sh reads _JIG_TS_ON, which only common.sh initialises; the hook
+  # sources config.sh alone under `set -u`, so the read aborted the cadence
+  # lookup, printed to stderr, and every cadence collapsed to one day.
+  hk_setup
+  hk_cfg housekeeping.cadence 7d
+  jig housekeeping >/dev/null
+  assert_file .ai/runtime/last-housekeeping
+  touch -t "$(date -v-3d +%Y%m%d%H%M 2>/dev/null || date -d '3 days ago' +%Y%m%d%H%M)" \
+    .ai/runtime/last-housekeeping
+  local before
+  before=$(wc -c < .ai/runtime/housekeeping.log)
+
+  run .ai/scripts/jig-session-hook
+  assert_eq 0 "$RC"
+  assert_eq "" "$OUT" "hook printed on its idle path"
+  sleep 0.5
+  assert_eq "$before" "$(wc -c < .ai/runtime/housekeeping.log)" \
+    "hook ran housekeeping again inside a 7d cadence"
+}
+
 test_session_hook_exits_0_when_the_project_is_not_initialised() {
   # A hook that can fail is a hook that can break the session it is attached
   # to, so every giving-up path returns 0.

@@ -19,14 +19,14 @@ paths:
   - scripts/lib/owntree.sh
   - scripts/lib/writes.sh
 summary: "What a command offering --json may, must and must not do: one envelope through json_run, values from existing producers, no network, schema raised only on an incompatible change."
-reviewed_at: 2026-11-04
+reviewed_at: 2026-11-06
 ---
 # A command's `--json` output
 
 The boundary every command that offers `--json` plugs into: `scripts/lib/json.sh` and the shape
 pinned in `schemas/json.md` (adr-20261015-a-read-is-one-json-envelope). `jig task list` is the first
 implementation; `jig spec list` and `jig status` (attention items) followed it, and legal actions
-will. A refusal says why in `error.code`, from the vocabulary in schemas/json.md ("Failure codes").
+will. A read with no text form (`jig knowledge read <id> --json`) refuses the text form as `usage`; a text form added later is compatible, a removed one is not. A refusal says why in `error.code`, from the vocabulary in schemas/json.md ("Failure codes").
 
 ## Practice
 
