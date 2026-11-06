@@ -142,6 +142,11 @@ If it says the project is not initialized, continue to step 2. If it says
   a specific release; `--install-dir`, `--bin-dir` and `--no-path` change where things go and skip
   the startup-file line.
 
+  A checkout on a branch, such as `--ref main`, is the development channel: its code is not in any
+  release. A project that keeps Jig's files in its own repository will not take files from it
+  without `--unreleased`; see
+  [the source is not a release](/troubleshooting#verification-and-upgrades).
+
   Without the installer, clone Jig into a permanent folder and put its executable on `PATH`:
 
   ```bash
@@ -149,7 +154,8 @@ If it says the project is not initialized, continue to step 2. If it says
   ln -s "$HOME/.local/share/jig/scripts/jig" "$HOME/.local/bin/jig"
   ```
 
-  A clone made this way follows `main`, the development channel.
+  A clone made this way follows `main`, the development channel, so projects will refuse to upgrade
+  from it until you check out a release tag: `git -C "$HOME/.local/share/jig" checkout vX.Y.Z`.
 </Accordion>
 
 ## 2. Set up a project

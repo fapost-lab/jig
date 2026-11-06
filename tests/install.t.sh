@@ -689,6 +689,35 @@ test_install_ref_main_installs_the_branch() {
   esac
 }
 
+# adr-20261106-copy-mode-projects-take-released-code-only: a branch install is
+# the development channel, and the installer says what that costs. Off a
+# terminal the warning is on stderr, so stdout's last line stays what
+# install.ps1 reads.
+test_install_ref_main_past_the_tag_warns_about_the_development_channel() {
+  inst_build_remote_no_tags "$PWD/remote.git"
+  local out_file="$PWD/install-stdout.txt"
+  run bash -c 'bash "$JIG_HOME/install.sh" --repository "$1" --ref main --no-path 2>"$2.err" >"$2"; echo $? > "$2.rc"' _ "$PWD/remote.git" "$out_file"
+  assert_eq 0 "$(cat "$out_file.rc")" "install should succeed: $(cat "$out_file" "$out_file.err")"
+  assert_contains "$(cat "$out_file.err")" "development channel"
+  assert_contains "$(cat "$out_file.err")" "without --unreleased"
+  assert_not_contains "$(cat "$out_file")" "development channel"
+}
+
+# A branch whose tip is the release commit holds the release's bytes.
+test_install_ref_main_at_a_release_commit_does_not_warn() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --ref main --no-path
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+  assert_not_contains "$OUT" "development channel"
+}
+
+test_install_of_a_release_tag_does_not_warn_about_the_development_channel() {
+  inst_build_remote "$PWD/remote.git" v0.1.0 v0.2.0
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+  assert_not_contains "$OUT" "development channel"
+}
+
 test_install_ref_explicit_tag_installs_that_tag() {
   inst_build_remote "$PWD/remote.git" v0.1.0 v0.9.0 v1.0.0
   run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --ref v0.9.0 --no-path

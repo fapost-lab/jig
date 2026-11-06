@@ -382,11 +382,16 @@ _upgrade_config_note() {
 _upgrade_self_check() {
   [ "$1" != 1 ] || return 0
   local jig="$JIG_PROJECT/$JIG_AI_DIR/scripts/jig" out rc=0 n
+  local -a also=()
   [ -f "$jig" ] || return 0
+  # The same source answers the check, so it is asked for the same code: an
+  # install made with --unreleased is checked with it
+  # (adr-20261106-copy-mode-projects-take-released-code-only).
+  [ "${_UPGRADE_UNRELEASED:-0}" != 1 ] || also=(--unreleased)
   # JIG_TERMINAL=0: the lines are read by the filter below, so the child
   # reports in the plain form even when this run's reader asked for the
   # terminal one (output.sh).
-  out=$( (cd "$JIG_PROJECT" && JIG_TERMINAL=0 bash "$jig" upgrade --dry-run) </dev/null 2>&1 ) || rc=$?
+  out=$( (cd "$JIG_PROJECT" && JIG_TERMINAL=0 bash "$jig" upgrade --dry-run ${also[@]+"${also[@]}"}) </dev/null 2>&1 ) || rc=$?
   if [ "$rc" != 0 ]; then
     _upgrade_note warn "could not confirm this install is complete; run \`jig doctor\`"
     return 2
@@ -925,13 +930,14 @@ _upgrade_current_branch() {
 # The marker stops a loop: a handed-off run that is somehow still older than
 # its source has nowhere better to go, and the way out is the global tool.
 _upgrade_handoff() {
-  local source="$1" to q=""
+  local source="$1" to q="" u=""
   to=$(_upgrade_source_version "$source")
   jig_version_newer "$to" "$JIG_VERSION" || return 0
   if [ -n "${JIG_UPGRADE_HANDED_OFF:-}" ]; then
     jig_die "upgrade: this jig is $JIG_VERSION and $source holds $to; nothing was changed. Run \`jig self-update\`, then \`jig upgrade\`"
   fi
   if [ "${quiet:-0}" = 1 ]; then q="--quiet"; fi
+  if [ "${_UPGRADE_UNRELEASED:-0}" = 1 ]; then u="--unreleased"; fi
   _upgrade_out "upgrade: this jig is $JIG_VERSION; handing the upgrade to $to from $source"
   cd "$JIG_PROJECT" || jig_die "upgrade: cannot enter $JIG_PROJECT"
   # bash, not the file itself: Windows has no execute bit.
@@ -939,9 +945,9 @@ _upgrade_handoff() {
     # The newer jig prints its data, not an envelope of its own, into this
     # run's (fd 3, _upgrade_json_body); its refusals carry their codes.
     JIG_UPGRADE_HANDED_OFF="$JIG_VERSION" JIG_UPGRADE_JSON_DATA=1 _JIG_JSON_CODES=1 \
-      exec bash "$source/scripts/jig" upgrade --from "$source" $q --json 1>&3
+      exec bash "$source/scripts/jig" upgrade --from "$source" $q $u --json 1>&3
   fi
-  JIG_UPGRADE_HANDED_OFF="$JIG_VERSION" exec bash "$source/scripts/jig" upgrade --from "$source" $q
+  JIG_UPGRADE_HANDED_OFF="$JIG_VERSION" exec bash "$source/scripts/jig" upgrade --from "$source" $q $u
 }
 
 # _upgrade_stop_reasons <source> — why a real run must not start here, one
@@ -1061,7 +1067,7 @@ $(printf '%s\n' "$reasons" | sed 's/^/  - /')"
 # upgrade branch, the run stays there. No branch at all when the project works
 # on one branch by choice (`git.branch_per_task: false`) or has no commit yet.
 _upgrade_open_branch() {
-  local to="$1" base start name based n=2
+  local to="$1" label="${2:-$1}" base start name based n=2
   _UPGRADE_PREV=$(_upgrade_current_branch)
   [ -n "$_UPGRADE_PREV" ] || _UPGRADE_PREV=$(git -C "$JIG_PROJECT" rev-parse --short HEAD 2>/dev/null || true)
   case "$_UPGRADE_PREV" in
@@ -1083,12 +1089,14 @@ _upgrade_open_branch() {
   # Landed is read two ways, because ancestry alone misses the common case: a
   # pull request squashed or rebased by the forge leaves the local branch
   # behind as no ancestor of the base. A base whose manifest already records
-  # <to> carries that upgrade whichever way it arrived.
+  # <to> carries that upgrade whichever way it arrived. The name is the release
+  # number; "carries" compares the full version, so unreleased code built on
+  # <to> (`<to>+<sha>`) is not mistaken for the release that landed.
   based=$(jig_git_show_path "$start" "$JIG_AI_DIR/manifest" 2>/dev/null \
     | sed -n 's/^jig\.version:[[:space:]]*//p' | head -n 1) || based=""
   name="$_UPGRADE_BRANCH_PREFIX$to"
   while git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/heads/$name"; do
-    if [ "$based" != "$to" ] \
+    if [ "$based" != "$label" ] \
       && ! git -C "$JIG_PROJECT" merge-base --is-ancestor "refs/heads/$name" "$start" 2>/dev/null; then
       jig_die "upgrade: the upgrade to $to is already on branch $name, which has not been merged into $base yet. Merge it, or \`git checkout $name\` and run \`jig upgrade\` there to carry it on. Nothing was changed"
     fi
@@ -1470,10 +1478,12 @@ EOF
 
 _upgrade_run() {
   local from="" dry_run=0 quiet=0 level=none
+  _UPGRADE_UNRELEASED=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --from) [ $# -ge 2 ] || jig_fail usage "upgrade: --from requires a value"; from="$2"; shift 2 ;;
       --dry-run) dry_run=1; shift ;;
+      --unreleased) _UPGRADE_UNRELEASED=1; shift ;;
       --quiet) quiet=1; shift ;;
       *) jig_fail usage "upgrade: unknown argument: $1" ;;
     esac
@@ -1549,7 +1559,10 @@ _upgrade_run() {
   # the newest code, the checks, then a branch of its own — all before the
   # first file is touched. upgrade_pending skips the checks: it runs on every
   # `status` and `verify`, and reads only the per-path lines.
-  local from_version to_version
+  # A copy-mode project takes released code only, dry run included: a plan
+  # the real run would refuse is no plan (adr-20261106-copy-mode-projects-take-released-code-only).
+  jig_require_released_source upgrade "$source" "$_UPGRADE_UNRELEASED"
+  local from_version to_version to_label
   if [ "$dry_run" != 1 ]; then
     _upgrade_handoff "$source"
     level=$(jig_agent_git) \
@@ -1557,8 +1570,9 @@ _upgrade_run() {
   fi
   [ "${_upgrade_skip_preflight:-0}" = 1 ] || _upgrade_preflight "$source" "$dry_run"
   to_version=$(_upgrade_source_version "$source")
+  to_label=$(jig_source_version "$source" 2>/dev/null) || to_label="$to_version"
   if [ "$dry_run" != 1 ]; then
-    _upgrade_open_branch "$to_version"
+    _upgrade_open_branch "$to_version" "$to_label"
     # The branch may hold another config; read what this run installs there.
     active_profiles=$(cfg_list profiles generic)
     active_adapters=$(cfg_list adapters "claude codex")
@@ -1636,7 +1650,7 @@ _upgrade_run() {
   if _upgrade_records_source "$source" \
        "$((placed_count + removed_count + reconciled_count))"; then
     local version adapters_manifest
-    version=$(_upgrade_source_version "$source")
+    version=$(jig_source_version "$source" 2>/dev/null) || version=$(_upgrade_source_version "$source")
     adapters_manifest=$(_upgrade_csv "$active_adapters")
     printf '%s\n' "$new_entries" | sed '/^$/d' \
       | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy" \
@@ -1679,14 +1693,25 @@ _upgrade_run() {
 #      caller: a best-effort staleness check must never itself turn into a
 #      hard failure for status/verify — the caller's own subsequent logic
 #      (e.g. verify's profile-name validation) surfaces the real error.
+#   4  unknown for a named reason: the source is not a release, and a
+#      copy-mode install is not measured against unreleased code
+#      (adr-20261106-copy-mode-projects-take-released-code-only). Callers that
+#      only ask "known or not" read it as 3.
 upgrade_pending() {
   # JIG_TERMINAL=0: the dry run's lines are read by the filter below, so it
   # reports in the plain form whatever the caller's reader is (output.sh).
   # Read by out_init inside cmd_upgrade, which shellcheck cannot see.
   # shellcheck disable=SC2034
   local out rc=0 _upgrade_skip_preflight=1 JIG_TERMINAL=0
-  out=$(cmd_upgrade --dry-run 2>&1) || rc=$?
-  [ "$rc" = 0 ] || return 3
+  # _JIG_JSON_CODES: a refusal puts its code on the line before its message
+  # (_jig_die_as), which is how the one refusal with a reason is told apart.
+  out=$(_JIG_JSON_CODES=1 cmd_upgrade --dry-run 2>&1) || rc=$?
+  if [ "$rc" != 0 ]; then
+    case "$out" in
+      *$'\037jig: code: unreleased-source'*) return 4 ;;
+    esac
+    return 3
+  fi
 
   printf '%s\n' "$out" | grep -E '^(install|link|replace) ' || true
   return 0

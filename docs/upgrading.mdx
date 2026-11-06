@@ -316,6 +316,27 @@ The usual ones:
 `jig upgrade --dry-run` never refuses; it prints the same reasons as `note:` lines, so you can see
 them before you try.
 
+### When the source is not a release
+
+```text
+jig: error: upgrade: the source is not a release: /home/you/.local/share/jig is on branch main at 278958c (0.40.0+278958c). …
+```
+
+The Jig on your machine is a checkout that is not at the tag of its version: a branch (`main`), a
+commit past a release, or a version raised but not yet tagged. Its code is in no release, so a project
+that keeps Jig's files in its own repository will not take it; `jig upgrade --dry-run` refuses too,
+since a plan the real run would refuse is no plan. Projects installed in link mode are not affected.
+Two ways out:
+
+- **Return to a release**: `git -C ~/.local/share/jig checkout v0.40.0` (use the version in the
+  message), or `jig self-update` once a newer release is out.
+- **Take the code on purpose**: `jig upgrade --unreleased`. The project's `.ai/manifest` then records
+  `jig.version: 0.40.0+278958c`.
+
+A `+<sha>` after a version means unreleased code: the release number, then the commit it was taken
+from. `jig status` shows it, and a later `jig upgrade` from a released Jig puts the plain version
+back.
+
 ## What the upgrade does, and what it leaves alone
 
 `jig upgrade` copies from the Jig on your machine. It replaces the files Jig installed and you did
@@ -442,6 +463,25 @@ Two kinds of project work differently. One that uses a single branch
 (`git.branch_per_task: false`) gets the commit on the branch it is on, and nothing is pushed. One
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
+
+## From 0.40.0 to 0.41.0
+
+Nothing to do by hand, if the Jig on your machine is a release. The installer's default and
+`.ai/config.yaml` did not change, and no new setting appears in the upgrade's report. The upgrade
+brings new scripts and new text for the `jig-accept`, `jig-implement`, `jig-review` and
+`jig-architecture-review` skills.
+
+**Check where your Jig stands first.** `git -C ~/.local/share/jig status -sb` should print
+`## HEAD (no branch)`. If it names a branch — installed with `--ref main`, a clone you pull, or an
+install from before the first release — `jig upgrade` in a copy-mode project now refuses it: return
+it to a release, as [When the source is not a release](#when-the-source-is-not-a-release) says, then
+`jig self-update`. A project that already took unreleased framework files under 0.40.0 gets the
+released ones back from this upgrade.
+
+**What you will notice.** Off a release tag, `jig --version` and `jig status` show `X.Y.Z+<sha>`.
+`jig context guard` says why each pending document is required. A program that reads Jig's JSON may
+see the failure code `unreleased-source`, a `+<sha>` in `jig.version` values, and `decidable` and
+`reason` on knowledge entries.
 
 ## From 0.39.0 to 0.40.0
 

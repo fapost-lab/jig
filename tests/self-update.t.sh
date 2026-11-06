@@ -338,7 +338,10 @@ test_self_update_detached_tag_version_mismatch_fails() {
 
   run su_jig self-update
   [ "$RC" != 0 ] || fail "self-update must fail on a tag/version mismatch: $OUT"
-  assert_contains "$OUT" "v0.3.0 reports version 9.9.9 (expected 0.3.0); staying at 0.1.0"
+  # The checkout at the tag declares 9.9.9 under a v0.3.0 tag, so it is not a
+  # release and the version it reports carries its commit.
+  assert_contains "$OUT" "v0.3.0 reports version 9.9.9+"
+  assert_contains "$OUT" "(expected 0.3.0); staying at 0.1.0"
   # The checkout goes back to the release it came from: left on the bad tag,
   # the next run would read it as current and report nothing wrong.
   assert_eq "$release_commit" "$(git -C "$share" rev-parse HEAD)" "HEAD must return to v0.1.0"
@@ -428,6 +431,55 @@ test_self_update_branch_fast_forward_reports_version_unchanged() {
   run su_jig self-update
   assert_eq 0 "$RC" "self-update should succeed: $OUT"
   assert_contains "$OUT" "self-update: source updated, version unchanged at 0.1.0 ("
+}
+
+# adr-20261106-copy-mode-projects-take-released-code-only: a pull on a branch
+# lands on code no release contains, and says that copy-mode projects will not
+# take it. The number is still the release's, so the update line names the
+# plain number, never the build.
+test_self_update_branch_pull_warns_about_the_development_channel() {
+  su_build_source "$HOME/work"
+  su_build_upstream "$HOME/work" "$HOME/upstream.git"
+  su_clone_global_branch "$HOME/upstream.git"
+
+  su_commit_plain "$HOME/work" unrelated
+  su_push "$HOME/work"
+
+  run su_jig self-update
+  assert_eq 0 "$RC" "a warning is not a failure: $OUT"
+  assert_contains "$OUT" "self-update: source updated, version unchanged at 0.1.0 ("
+  assert_not_contains "$OUT" "0.1.0+"
+  assert_contains "$OUT" "the global jig is on the development channel (on branch main at "
+  assert_contains "$OUT" "copy-mode projects will not take files from it without --unreleased"
+}
+
+# The warning goes to stderr: whatever reads the update line is not handed it.
+test_self_update_branch_development_channel_warning_is_on_stderr() {
+  su_build_source "$HOME/work"
+  su_build_upstream "$HOME/work" "$HOME/upstream.git"
+  su_clone_global_branch "$HOME/upstream.git"
+
+  su_commit_plain "$HOME/work" unrelated
+  su_push "$HOME/work"
+
+  local out="$HOME/su-out.txt"
+  su_jig self-update > "$out" 2>/dev/null
+  assert_file_contains "$out" "self-update: source updated, version unchanged at 0.1.0 ("
+  assert_not_contains "$(cat "$out")" "development channel"
+}
+
+test_self_update_branch_pull_onto_a_release_commit_does_not_warn() {
+  su_build_source "$HOME/work"
+  su_build_upstream "$HOME/work" "$HOME/upstream.git"
+  su_clone_global_branch "$HOME/upstream.git"
+
+  su_commit_release "$HOME/work" 0.2.0
+  su_push "$HOME/work"
+
+  run su_jig self-update
+  assert_eq 0 "$RC" "self-update should succeed: $OUT"
+  assert_contains "$OUT" "self-update: updated 0.1.0 -> 0.2.0"
+  assert_not_contains "$OUT" "development channel"
 }
 
 test_self_update_detached_at_non_release_commit_is_refused() {

@@ -131,6 +131,39 @@ _run_release_busy() {
 }
 
 trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
+
+# The framework the tests install from is a release: a copy-mode project takes
+# released code only (adr-20261106-copy-mode-projects-take-released-code-only),
+# and this checkout is on a branch. So JIG_HOME is a copy of it, made a git
+# repository of its own with one commit tagged v<JIG_VERSION> — the same bytes,
+# released. A test about unreleased code builds its own source or asks for
+# --unreleased.
+_run_release_home() {
+  local home="$RESULTS/home" version
+  mkdir "$home" || return 1
+  cp -R "$ROOT"/. "$home"/ || return 1
+  rm -rf "$home/.git" "$home/.ai/runtime" "$home/.ai/workspace"
+  version=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$home/scripts/lib/version.sh") || return 1
+  [ -n "$version" ] || return 1
+  (
+    cd "$home" || exit 1
+    git init -q . && git symbolic-ref HEAD refs/heads/main \
+      && git add -A && git -c user.name=jig-tests -c user.email=tests@jig.invalid \
+        commit -q --no-verify -m "release $version" \
+      && git -c user.name=jig-tests -c user.email=tests@jig.invalid \
+        tag -a "v$version" -m "v$version"
+  ) >/dev/null 2>&1 || return 1
+  # As a manifest records it: `cd && pwd` folds the `//` a TMPDIR ending in
+  # `/` leaves, and tests compare recorded sources with this path.
+  (cd "$home" && pwd)
+}
+JIG_HOME=$(_run_release_home) && [ -n "$JIG_HOME" ] \
+  || { printf 'tests/run.sh: could not build the release copy of the framework\n' >&2; exit 1; }
+# The code under test runs from the copy too: a plain `jig upgrade` reads from
+# the checkout the running jig belongs to (upgrade_source), and that must be the
+# released one. The copy is this working tree's bytes, taken as the run starts.
+JIG_BIN="$JIG_HOME/scripts/jig"
+export JIG_HOME JIG_BIN
 # An interrupted parallel run must not leave its workers running, and must give
 # the record back on the way out.
 trap 'kill $(jobs -p) 2>/dev/null; _run_release_busy; exit 130' INT TERM

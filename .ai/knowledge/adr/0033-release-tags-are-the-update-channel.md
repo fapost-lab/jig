@@ -120,3 +120,9 @@ projects.
 > user `PATH`. `install.ps1 -Uninstall` removes those `PATH` entries, the `jig` link only when it points
 > into the checkout, and the checkout only when it is a jig source tree with a clean `git status`; a
 > failed install run deletes nothing but the Git installer it downloaded in that run.
+
+> **Amendment (2026-11-06).** The development channel stays out of copy-mode projects
+> (adr-20261106-copy-mode-projects-take-released-code-only): `init` and `upgrade` in copy mode take a
+> source only at the release tag of the version it declares, unless `--unreleased` names the code on
+> purpose; off a tag the version reads `X.Y.Z+<sha>`, and `self-update` on a branch and `install.sh`
+> off a release tag say so.
