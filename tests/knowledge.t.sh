@@ -4607,17 +4607,20 @@ test_read_json_gives_a_null_source_when_the_file_is_not_there() {
 
 test_read_json_gives_a_null_source_for_a_link_jig_does_not_follow() {
   _kmj_accepted_stub
+  sed 's|^source: docs/x.md|source: ../x.md|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+  # A symlinked source is the subject below: where ln -s copies, there is none.
+  skip_unless_symlinks
   ln -s x.md docs/link.md
-  sed 's|^source: docs/x.md|source: docs/link.md|' .ai/knowledge/sources/stub.md > stub.new
+  sed 's|^source: ../x.md|source: docs/link.md|' .ai/knowledge/sources/stub.md > stub.new
   mv stub.new .ai/knowledge/sources/stub.md
   _kmj read convention-stub
   assert_eq 0 "$RC"
   assert_contains "$OUT" ',"lossy":false,"source":null}}'
   assert_not_contains "$OUT" "line one"
-  sed 's|^source: docs/link.md|source: ../x.md|' .ai/knowledge/sources/stub.md > stub.new
-  mv stub.new .ai/knowledge/sources/stub.md
-  _kmj read convention-stub
-  assert_contains "$OUT" ',"lossy":false,"source":null}}'
 }
 
 test_read_json_gives_a_null_source_for_an_unreadable_file() {
