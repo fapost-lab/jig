@@ -207,4 +207,4 @@ main() {
   esac
 }
 
-main "$@"
+jig_supervise main "$@"

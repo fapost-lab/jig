@@ -232,6 +232,32 @@ test_housekeeping_decide_archived_merged_needs_consolidation() {
   assert_eq "preserve needs-consolidation" "$(hk_decide archived merged true 999 14 60)"
 }
 
+test_housekeeping_decide_archived_unfinished_and_merged_needs_consolidation() {
+  # Archived while unfinished — stale, or by hand from active/ready — its work
+  # landed with nobody's knowledge decision.
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged "" 1 14 60 true active stale)"
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged "" 1 14 60 true ready stale)"
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged "" 1 14 60 true active manual)"
+  # Paused changes nothing, and neither does an archive from before the keys.
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged true 999 14 60 true active stale)"
+  assert_eq "preserve needs-consolidation" "$(hk_decide archived merged "" 1 14 60 true "" "")"
+}
+
+test_housekeeping_decide_archived_abandoned_or_absorbed_and_merged_is_not_flagged() {
+  # The question was answered when the task was set aside: abandoned:merged is
+  # not flagged, and archiving it must not raise a flag the same facts did not
+  # raise a day earlier. Flagged, it led to a loop nobody could finish:
+  # unarchive gives back `abandoned`, whose close needs a fresh review of code
+  # already reviewed elsewhere, and it went back to the archive by TTL.
+  assert_eq "preserve" "$(hk_decide archived merged "" 1 14 60 true abandoned abandoned)"
+  assert_eq "preserve" "$(hk_decide archived merged "" 1 14 60 true abandoned manual)"
+  assert_eq "preserve" "$(hk_decide archived merged true 999 14 60 true abandoned abandoned)"
+  # Absorbed: the receiver does its work, from whatever status.
+  assert_eq "preserve" "$(hk_decide archived merged "" 1 14 60 true active absorbed)"
+  assert_eq "preserve" "$(hk_decide archived merged "" 1 14 60 true ready absorbed)"
+  assert_eq "preserve" "$(hk_decide archived merged true 999 14 60 true active absorbed)"
+}
+
 test_housekeeping_decide_abandoned_is_never_flagged_for_consolidation() {
   # An abandoned task has nothing to consolidate. Paused and merged, it used to
   # be flagged anyway: five tasks on this repository, exit 3 on every run.
@@ -515,6 +541,21 @@ test_housekeeping_flags_an_archived_task_whose_work_merged() {
   # The close starts at unarchive, so the report says so.
   assert_contains "$OUT" "merged after it was archived, run jig task unarchive landed, then jig-consolidate"
   assert_not_contains "$OUT" "merged but not consolidated"
+}
+
+test_housekeeping_does_not_flag_an_archived_abandoned_task_whose_work_merged() {
+  hk_setup
+  fixture_merge_repo
+  # Abandoned for a successor, and its own branch merged anyway: the abandon
+  # answered the question, before the archive and after it.
+  fixture_task landed "commit-merged" archived "archived_from:abandoned" "archived_reason:abandoned"
+
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "landed status=archived remote=merged"
+  assert_not_contains "$OUT" "needs-consolidation"
+  assert_not_contains "$OUT" "merged after it was archived"
+  assert_file_contains .ai/workspace/tasks/landed/state "status: archived"
 }
 
 test_housekeeping_keeps_a_task_it_cannot_archive_and_goes_on_to_the_rest() {

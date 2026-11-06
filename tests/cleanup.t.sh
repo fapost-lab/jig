@@ -155,3 +155,105 @@ test_cleanup_an_interrupted_state_write_leaves_no_temporary_file() {
   [ -z "$(find .ai/workspace/tasks/cl -name '*.tmp.*')" ] \
     || fail "an interrupted write left: $(find .ai/workspace/tasks/cl -name '*.tmp.*')"
 }
+
+# _cleanup_stub_long_mv <dir> <marker> — a `mv` that records its pid and sleeps long,
+# so a jig command is parked in a foreground child when the signal arrives.
+_cleanup_stub_long_mv() {
+  mkdir -p "$1"
+  printf '#!/bin/sh\necho $$ > "%s"\nexec sleep 300\n' "$2" > "$1/mv"
+  chmod +x "$1/mv"
+}
+
+# _cleanup_wait_nonempty <path> — the file exists before its content is written.
+_cleanup_wait_nonempty() {
+  local until=$((SECONDS + 30))
+  while [ ! -s "$1" ] && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  [ -s "$1" ] || fail "stayed empty: $1"
+}
+
+test_cleanup_sigterm_ends_jig_parked_on_a_child_and_leaves_no_child() {
+  # The trap alone is deferred until the foreground child ends: `kill` of a jig
+  # waiting on a long `mv` did nothing for 300 s and the child outlived it.
+  fixture_jig_repo
+  fixture_task cl "task/cl" active
+  _cleanup_stub_long_mv "$PWD/stubbin" "$PWD/child.pid"
+  PATH="$PWD/stubbin:$PATH" "$JIG_BIN" task set cl class T1 &
+  local pid=$!
+  _cleanup_wait_for child.pid
+  _cleanup_wait_nonempty child.pid
+  local child
+  child=$(cat child.pid)
+  kill -TERM "$pid"
+  local until=$((SECONDS + 15)) rc=0
+  while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" "$child" 2>/dev/null || true
+    fail "jig still running 15 s after SIGTERM"
+  fi
+  wait "$pid" 2>/dev/null || rc=$?
+  assert_eq 143 "$rc"
+  if kill -0 "$child" 2>/dev/null; then
+    kill -KILL "$child" 2>/dev/null || true
+    fail "the child of an interrupted jig outlived it"
+  fi
+  [ -z "$(find .ai/workspace/tasks/cl -name '*.tmp.*')" ] \
+    || fail "an interrupted write left: $(find .ai/workspace/tasks/cl -name '*.tmp.*')"
+}
+
+test_cleanup_sigterm_ends_jig_waiting_on_a_command_substitution() {
+  # The 20-hour case: a long loop inside `$(...)` (a quadratic json_quote). The
+  # parent only waits for that subshell, so its TERM trap never ran, and TERM sent
+  # to the parent alone never reached the subshell.
+  fixture_jig_repo
+  cat > busy.sh <<'BUSY'
+#!/usr/bin/env bash
+set -eu
+. "$JIG_HOME/scripts/lib/common.sh"
+# A cleanup that takes a moment: the supervisor must wait for it, not KILL the
+# tree the instant the job subshell (which has no trap and dies at once) is gone.
+jig_on_exit 'sleep 0.5; echo cleaned > cleaned'
+x=$(: > armed; while :; do :; done)
+BUSY
+  JIG_HOME="$JIG_HOME" bash -c '. "$JIG_HOME/scripts/lib/common.sh"; jig_supervise bash busy.sh' &
+  local pid=$!
+  _cleanup_wait_for armed
+  local tree
+  # The whole tree, as the product walks it: job, busy.sh and the `$(...)` loop.
+  tree=$(. "$JIG_HOME/scripts/lib/common.sh"; _jig_descendants "$pid")
+  [ "$(printf '%s\n' "$tree" | wc -l)" -ge 3 ] || fail "expected 3 processes under the supervisor, got: $tree"
+  kill -TERM "$pid"
+  local until=$((SECONDS + 15)) rc=0 p
+  while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    # shellcheck disable=SC2086
+    kill -KILL "$pid" $tree 2>/dev/null || true
+    fail "supervisor still running 15 s after SIGTERM"
+  fi
+  wait "$pid" 2>/dev/null || rc=$?
+  assert_eq 143 "$rc"
+  for p in $tree; do
+    if kill -0 "$p" 2>/dev/null; then
+      kill -KILL "$p" 2>/dev/null || true
+      fail "process $p under the interrupted command outlived it"
+    fi
+  done
+  assert_file cleaned
+}
+
+test_cleanup_supervise_passes_the_exit_status_and_stdin_through() {
+  _cleanup_script 'jig_supervise bash -c '"'"'read -r l; echo "got:$l"; exit 7'"'"''
+  run bash -c 'echo hello | bash cleanup-script.sh'
+  assert_eq 7 "$RC"
+  assert_contains "$OUT" "got:hello"
+}
+
+test_cleanup_supervise_runs_the_exit_cleanup_of_a_command_that_runs_off_its_end() {
+  # bash 3.2 skips the EXIT trap of a background subshell that ends without an
+  # `exit`; the supervised command is a function, which does exactly that.
+  _cleanup_script 'work() { : > a.tmp.$$; jig_cleanup_add a.tmp.$$; jig_on_exit "echo ran > ran"; }
+jig_supervise work'
+  run bash cleanup-script.sh
+  assert_eq 0 "$RC"
+  assert_eq ran "$(cat ran)"
+  [ -z "$(ls a.tmp.* 2>/dev/null)" ] || fail "registered file survived"
+}

@@ -11,6 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/task.sh
 summary: Why an abandoned or idle task is archived in place with status archived instead of purged, who writes it, and what housekeeping may now write into state.
+reviewed_at: 2026-11-06
 ---
 # ADR: A task nobody finished is archived, not purged
 
@@ -106,3 +107,18 @@ exactly where it is, without a time limit.**
   but refuses to write it. Run `jig task unarchive` on every archived task before downgrading.
 - Amends ADR-0005 (the status enum; an abandoned task is not purged) and ADR-0006 (what goes to
   trash).
+
+> **Amendment (2026-11-06): `archived:merged` asks only about a task nobody decided.** The rule
+> above flagged every archived task whose work merged. A task archived from `abandoned` was not
+> flagged the day before, as `abandoned:merged`, and the same facts raised the flag once the TTL
+> moved it: `task-move-updates-roadmap` — abandoned for a successor, its own pull request merged
+> anyway — went from the archive to "needs you", whose close (unarchive, then consolidate) needs a
+> fresh review of code already reviewed in the successor, and back to the archive by TTL. Now
+> `archived:merged` is flagged unless the task's fate was decided when it was set aside:
+> `archived_from` is `abandoned`, or `archived_reason` is `absorbed`. Every other archived task —
+> `active` or `ready`, and one archived before these keys existed — keeps the flag. A decided one
+> stays archived without a flag, paused or not; for absorbed, see
+> adr-20261027-an-absorbed-task-is-archived-with-its-receiver. The status page drops an older log
+> line's card for such a task. Rejected: letting `jig task merge` absorb into a closed receiver —
+> narrower (no help for a task abandoned without a successor) and a person has to remember to run
+> it; consolidating an abandoned task without a fresh review — weakens ADR-0030 for everyone.
