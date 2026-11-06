@@ -170,7 +170,9 @@
   than derived from a name is validated the same way at the point it is joined to the
   project root — `_ctx_check_knowledge_path` for an
   acknowledged document (an absolute path there only when a `Linked:` line of the task reaches
-  it now; the reference itself is parsed by `jig_task_ref` before `jig_task_ref_dir` builds a
+  it now, or one inside the project that `_ctx_normalise_path_v` first made repository-relative
+  and that is then checked as any other; `_ctx_check_revoked_path` for a withdrawn one, which
+  must be in the ledger; the reference itself is parsed by `jig_task_ref` before `jig_task_ref_dir` builds a
   path from it), the `--scope` check in `km_inventory` for a directory, and
   `km_source_problem` plus `km_source_tracked` for a linked source, which also refuses a
   tracked symlink because it may point outside the repository (ADR-0036), and

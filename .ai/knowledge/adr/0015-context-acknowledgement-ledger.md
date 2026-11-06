@@ -7,7 +7,7 @@ domains:
   - context
 paths:
   - scripts/lib/context.sh
-reviewed_at: 2026-10-29
+reviewed_at: 2026-11-06
 summary: Why reading knowledge is acknowledged per task, and what that ledger does not prove.
 ---
 # ADR-0015: Reading knowledge is acknowledged in a per-task ledger, and the ledger claims nothing more
@@ -98,3 +98,33 @@ anyone reports it as more than one.
 > and `jig context acknowledge` takes an absolute path only when the task's links give it at that
 > moment. A link back to the task itself gives nothing, so its own artifacts stay untracked
 > (adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link).
+
+> **Amendment (2026-11-06, task `context-acknowledge-friction`).** Four releases' worth of review
+> showed the ledger inviting false claims: the guard listed dozens of paths with no reason, `acknowledge`
+> refused the same document written as `./…` or as an absolute path in a task worktree and died on the
+> first such path, a claim could not be withdrawn, and a reviewer's guard passed on the implementer's
+> acknowledgements without saying so — one review was signed with 51 documents unread. Four changes,
+> none of which changes what the guard passes:
+>
+> - **A line may carry a third field, the stage** the acknowledgement was made at
+>   (`acknowledge --stage <stage>`, from `jig_valid_stage`; `-` when none was given):
+>   `<git-hash><TAB><path><TAB><stage>`. A two-field line from before reads as made at no stage. It is
+>   the acknowledger's own statement and has exactly the standing of the acknowledgement — not an actor
+>   record: nothing gates on it (adr-20261004-a-route-stage-is-proven-by-its-record). The runtime's
+>   session id is not stored: adr-20260924-a-checkout-records-what-is-happening-in-it keeps it out of
+>   every record, and a subagent inherits its parent's anyway, so it would not tell a reviewer from the
+>   implementer.
+> - **A passing guard says whose acknowledgements it took**: one line per stage, and `none acknowledged
+>   at <stage>: this guard passed on acknowledgements made elsewhere` when it was run for a stage none
+>   was made at. A failing guard names the reason each pending document is required, as `resolve` does;
+>   `pending` stays a bare list, because it is piped into `acknowledge`.
+> - **`acknowledge --revoke`** withdraws acknowledgements, through the same atomic rewrite. A revoked
+>   path must be in the ledger and pass the shape check (no `..`, absolute only as a linked document);
+>   the document need not exist.
+> - **A path is normalised before it is checked**: a leading `./` goes, and an absolute path inside the
+>   project becomes repository-relative (compared physically). The check that follows is unchanged, and
+>   a batch is still all or nothing — now with every refused path named in one message.
+>
+> Considered and left to a person: making a guard run for a stage accept only that stage's
+> acknowledgements. It would close the gap the attribution only shows, and make each reader of every
+> review round re-acknowledge twenty to seventy documents — the friction that produced the false claims.
