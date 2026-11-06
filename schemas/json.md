@@ -56,6 +56,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `branch-diverged` | the write's branch and origin's have diverged. Nothing was written, and nothing is forced |
 | `branch-has-other-commits` | the write's branch has commits here that no write of Jig's made and origin does not have: a person's, which a write does not publish. `message` names the branch. Nothing was written |
 | `base-not-on-origin` | the write's base is not on origin, at `agent.git: push` or above: a branch cut from it would carry out whatever is on it, and no pull request could open into it. `message` names the base to push. Nothing was written |
+| `write-still-waits` | an earlier write of the same target still waits where this one cannot follow: for another base than this edit's (an epic opened or finished since), or as edits that never reached origin above a write whose pull request was closed unmerged or whose branch origin deleted. `message` names the branch, and what to do. Nothing was written |
 | `tree-in-the-way` | an unfinished write left something at Jig's tree that git will not remove. `message` names the path for a person to delete; a retry does not clear it. Nothing was written |
 | `commit-refused` | git refused the commit in Jig's own tree, usually a project's hook; `message` holds what it said. Nothing waits |
 | `epic-missing` | a roadmap write found its spec on an open epic that is neither here nor on origin. Nothing was written |
@@ -351,9 +352,9 @@ level was raised, and at `merge` the merge, once CI passed. A write itself never
 
 The list is `{"writes": [<write>, ...]}`, each without the three answer-only fields; a write leaves it
 once its tip is an ancestor of its base as of the last fetch, the paths it touched read the same on the
-base, or it was merged. Like every read it asks no forge and fetches nothing, so a merge shows after
+base, or it was merged, or `jig writes ship` found it over. Like every read it asks no forge and fetches nothing, so a merge shows after
 the next fetch. Refusals of every write: `git-not-allowed` at `agent.git: none`; `stale-revision`;
-`write-busy`; `branch-checked-out`; `branch-diverged`; `branch-has-other-commits`; `base-not-on-origin`; `tree-in-the-way`; `commit-refused`. `jig writes ship` adds `not-found`, also when the record's pull request was closed unmerged or merged with the tip: it sends nothing, and the next edit takes a new name.
+`write-busy`; `branch-checked-out`; `branch-diverged`; `branch-has-other-commits`; `base-not-on-origin`; `write-still-waits`; `tree-in-the-way`; `commit-refused`. `jig writes ship` adds `not-found`, also when the record's pull request was closed unmerged or merged with the tip, or origin deleted a branch it held: it sends nothing, the record says so, so that the list stops counting the write, and the next edit takes a new name. What origin holds is what it answers it has, never a tracking ref of a branch it deleted.
 
 ## `jig status --json`
 

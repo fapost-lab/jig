@@ -15,7 +15,7 @@ paths:
   - scripts/lib/config.sh
   - scripts/lib/common.sh
 summary: Why a write from outside a session is committed on spec/<id> or knowledge/decisions in a one-off tree under the git directory, what holds a concurrent write off, why a checkout on that branch is refused, and why agent.git none refuses and a write never merges
-reviewed_at: 2026-11-05
+reviewed_at: 2026-11-06
 ---
 # A write from outside a session is committed on a branch of its own, in a tree of Jig's own, and never moves a checkout
 
@@ -77,3 +77,13 @@ Whatever the mechanism, it has to hold in a project that is not this one: no for
 
 - **adr-20260924-a-worktree-carries-what-git-does-not**: "the only removal jig performs" holds for a task's worktree, not for this tree (its amendment of 2026-11-05).
 - **ADR-0008 and adr-20261016-the-clone-revision-is-a-claimed-name**: the revision is in the main checkout's `.ai/runtime/revision/` only where a main checkout is found; otherwise it is under the git common directory.
+
+## Amendment (2026-11-06): one judgement of the branch, origin's own answer, and a write that waits is never forgotten
+
+The first fixes of this mechanism were made one copy at a time, and each opened a fault in the other copy (writes-in-own-tree-findings F30–F35). Two causes ran through them: the record counted only while its base was today's, and "origin already holds it" was read from tracking refs, which keep a branch origin deleted until a prune.
+
+- **One judgement, `ot_judge`, for a write and for `jig writes ship`.** It reads the record whenever the record names the branch, whatever base it was written for: an epic that opens or finishes changes the base, and a pull request closed before that is no less closed. Its answer is `none`, `ff`, `spent`, `top`, or `gone` with a reason (`merged`, `closed`, `dropped`, `landed`). The write's resolve and `writes ship` act on that answer and keep no rule of their own. The branch a write goes on is the one its record names, not `spec/<id>` again after a base change.
+- **What origin holds is what `ls-remote --heads origin` answers**, asked once per write: the branch's own existence, `base-not-on-origin`, the free name, and the refusal rule's "held" (the commits those branches name, fed to `rev-list --stdin`, failing closed). A tracking ref stands in only when origin gives no answer. The branch's own tracking ref still counts as held: fresh, origin has it; stale, the branch was dropped and is never sent again. A tip the record does not name whose touched paths read the same on the base is held too: it is a squash, judged gone, and never sent.
+- **A write that still waits is never stacked on, nor forgotten: `write-still-waits`.** A write waiting (`top`, `spent`) for another base than this edit's would, on top, go out in the pull request into the old base, which `jig_ship_pr` finds by the branch alone; on a new name, the one record would lose it. Edits that never reached origin above a write whose pull request was closed, or whose branch origin dropped, would otherwise be left on the old name out of sight. Both are refused with nothing written; the message names the branch and what to do. Cutting a new name, or cherry-picking the unsent edits onto it, were the alternatives: the first forgets an edit, the second rewrites commits in a tree nobody watches, and neither was a choice anyone had made.
+- **What `jig writes ship` learns, the record keeps.** A record carries `ended: closed|dropped|landed` once `writes ship` found the write over without a merge, and `merged: 1` once it found it merged with the tip; reads stop counting it. The answer stays `not-found`, which is what a program acts on ("nothing waits"). This narrows "a refusal means nothing was written": a `writes ship` refusal of a write that is over writes that fact into the record, and nothing else — no ref, no commit, nothing on origin. Answering success instead would change a code programs already read; not writing would leave the count wrong until the next edit.
+- **Still open** (writes-pruned-dropped-branch): with the branch deleted on origin, the tracking ref pruned and the last push of the write failed (`pushed: 0`), nothing says origin ever held it, the answer is `top`, and the next edit pushes the dropped branch again.
