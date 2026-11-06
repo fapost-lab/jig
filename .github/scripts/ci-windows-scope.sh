@@ -2,8 +2,10 @@
 # ci-windows-scope.sh — decide whether a pull request needs the Windows shards
 # (adr-20260924-windows-runs-on-a-pull-request-that-touches-platform-behaviour).
 # Run by the `scope` job of .github/workflows/ci.yml in the root of the
-# checkout, with the pull request's base commit. Other events never call it:
-# main, the nightly run and a manual dispatch run Windows whatever changed.
+# checkout, with the first parent of the pull request's merge commit — its base
+# branch as it is now, so only the pull request's own change is read. Other
+# events never call it: main, the nightly run and a manual dispatch run
+# Windows whatever changed.
 #
 # Prints one line, `windows` or `skip`, and why:
 #

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # ci-scope.sh — decide how much of CI a change needs (ADR-0041 as amended).
 # Run by the `scope` job of .github/workflows/ci.yml in the root of the
-# checkout, with the commit the change is measured from: a pull request's
-# base, or for a push the commit of the last successful run on the branch.
+# checkout, with the commit the change is measured from: for a pull request the
+# first parent of the merge commit CI checks out — its base branch as it is now,
+# not where the branch started — or for a push the commit of the last
+# successful run on the branch.
 #
 # Prints one line, `full` or `light`, and why:
 #

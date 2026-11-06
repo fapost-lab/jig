@@ -81,14 +81,25 @@ jobs:
         id: scope
         env:
           EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
           BRANCH: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A pull request's run checks out refs/pull/<n>/merge: the pull
+          # request merged into its base branch as the base is now. Its first
+          # parent is that base, so HEAD^1..HEAD is the pull request's own
+          # change. The event's base.sha is where the branch started, and
+          # measured from there every commit that landed on the base since
+          # counts as the pull request's (#394 ran the full suite for two
+          # spec files that way). No first parent leaves the base empty, and
+          # both scripts then run everything.
+          pr_base=""
+          if [ "$EVENT" = pull_request ]; then
+            pr_base=$(git rev-parse --verify --quiet 'HEAD^1') || pr_base=""
+          fi
           case "$EVENT" in
-            pull_request) line=$(.github/scripts/ci-scope.sh "$PR_BASE") ;;
+            pull_request) line=$(.github/scripts/ci-scope.sh "$pr_base") ;;
             push)
               # Empty when there is no successful run yet, or the API cannot
               # answer: ci-scope.sh then runs everything.
@@ -127,7 +138,7 @@ jobs:
           # dispatch run every platform whatever changed. The event check
           # lives here rather than on the job, which now reads one output.
           if [ "$EVENT" = pull_request ]; then
-            win=$(.github/scripts/ci-windows-scope.sh "$PR_BASE")
+            win=$(.github/scripts/ci-windows-scope.sh "$pr_base")
           else
             win="windows ($EVENT runs every platform)"
           fi
