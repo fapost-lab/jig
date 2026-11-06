@@ -114,6 +114,84 @@ $p
   fi
 }
 
+# --- a signal that is not left waiting -------------------------------------
+#
+# A trapped signal runs its handler only when the command the shell is waiting on
+# has ended: `exit 143` above waits out a `sleep 100`, a test run, or one long
+# expansion in the shell itself (a quadratic string loop took almost 20 hours to
+# reach it, and its children outlived the parent). `wait` is the one builtin a
+# trapped signal interrupts, so the dispatcher runs the command as a background
+# job and waits for it here. On SIGTERM or SIGINT the job and everything under it
+# get SIGTERM (their cleanup runs), and SIGKILL after JIG_TERM_GRACE seconds
+# (default 5; digits only) to what is still there. The job keeps its standard
+# input. A background job ignores SIGINT, so 130 and 143 come from this process,
+# not from the job's own traps above. SIGKILL of this process cannot be handled:
+# the job is orphaned and goes on, which is the price of a signal nothing catches
+# (its lock and busy records name this pid, so they read as stale at once and a
+# later run may take them while the orphan still works).
+
+# _jig_descendants <pid> — every process under <pid>, one per line.
+_jig_descendants() {
+  ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '
+    { id[NR] = $1; par[$1] = $2 }
+    END {
+      mark[root] = 1; changed = 1
+      while (changed) {
+        changed = 0
+        for (i = 1; i <= NR; i++)
+          if (!(id[i] in mark) && (par[id[i]] in mark)) { mark[id[i]] = 1; print id[i]; changed = 1 }
+      }
+    }'
+}
+
+_JIG_SUP_PID=""
+
+# _jig_any_alive <pid>... — true while one of them still runs.
+_jig_any_alive() {
+  local p
+  for p in "$@"; do
+    if kill -0 "$p" 2>/dev/null; then return 0; fi
+  done
+  return 1
+}
+
+# _jig_supervise_signal <exit code> — end the job and its tree, then exit.
+_jig_supervise_signal() {
+  local code="$1" tree grace="${JIG_TERM_GRACE:-5}" until
+  case "$grace" in ''|*[!0-9]*) grace=5 ;; esac
+  # The tree is read once, before anything dies: a child the job leaves behind
+  # when it exits on TERM is still in this list for the SIGKILL below.
+  tree="$(_jig_descendants "$_JIG_SUP_PID") $_JIG_SUP_PID"
+  # shellcheck disable=SC2086
+  kill -TERM $tree 2>/dev/null || true
+  # Wait for every process of the tree, not only the job: the job subshell has no
+  # TERM trap and dies at once, while a command below it is still running its own
+  # exit cleanup; SIGKILL at that moment would take the cleanup with it.
+  until=$((SECONDS + grace))
+  # shellcheck disable=SC2086
+  while _jig_any_alive $tree && [ "$SECONDS" -lt "$until" ]; do
+    sleep 0.1
+  done
+  # shellcheck disable=SC2086
+  kill -KILL $tree 2>/dev/null || true
+  wait "$_JIG_SUP_PID" 2>/dev/null || true
+  exit "$code"
+}
+
+# jig_supervise <command> [args] — run it as a job that SIGTERM and SIGINT reach
+# at once; its exit status is this one's. Call it once, from the main shell.
+jig_supervise() {
+  local rc=0
+  # The explicit `exit`: bash 3.2 skips the EXIT trap of a background subshell
+  # that only runs off its end, and the command's cleanup lives in that trap.
+  { "$@"; exit "$?"; } 0<&0 &
+  _JIG_SUP_PID=$!
+  trap '_jig_supervise_signal 143' TERM
+  trap '_jig_supervise_signal 130' INT
+  wait "$_JIG_SUP_PID" || rc=$?
+  return "$rc"
+}
+
 _jig_exit_run() {
   [ "$_JIG_EXIT_LEVEL" = "${BASH_SUBSHELL:-0}" ] || return 0
   local line
