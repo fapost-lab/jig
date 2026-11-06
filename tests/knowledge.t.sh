@@ -4544,6 +4544,131 @@ test_sources_diff_json_drops_a_character_above_the_unicode_range() {
   assert_contains "$OUT" '"lossy":true}'
 }
 
+# --- knowledge read --json (schemas/json.md) ---------------------------------------
+
+test_read_json_gives_the_whole_document_of_any_status() {
+  km_setup
+  jig knowledge new feature alpha --proposed --domains a >/dev/null
+  local file=.ai/knowledge/features/alpha.md
+
+  _kmj read feature-alpha
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"data":{"id":"feature-alpha","status":"proposed","path":".ai/knowledge/features/alpha.md","bytes":'"$(wc -c < "$file" | tr -d ' ')"',"content":"---\nid: feature-alpha\n'
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -I -c '
+import json, sys
+d = json.loads(open(sys.argv[1], "rb").read().decode("utf-8"))["data"]
+assert d["content"] == open(sys.argv[2], encoding="utf-8").read(), repr(d["content"])
+' kmj.out "$file"
+  fi
+
+  jig knowledge accept feature-alpha >/dev/null
+  _kmj read feature-alpha
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"status":"active"'
+}
+
+test_read_json_gives_a_stub_its_source_as_it_is_now() {
+  _kmj_accepted_stub
+  printf 'say "hi" \\ \303\251\n' >> docs/x.md
+
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/x.md","bytes":'"$(wc -c < docs/x.md | tr -d ' ')"',"content":"line one'
+  assert_contains "$OUT" 'say \"hi\" \\ é\n","lossy":false}}}'
+}
+
+test_read_json_keeps_a_text_without_a_final_newline_and_an_empty_one() {
+  _kmj_accepted_stub
+  printf 'no newline' > docs/x.md
+  _kmj read convention-stub
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/x.md","bytes":10,"content":"no newline","lossy":false}}}'
+  : > docs/x.md
+  _kmj read convention-stub
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/x.md","bytes":0,"content":"","lossy":false}}}'
+  printf 'two\n\n\n' > docs/x.md
+  _kmj read convention-stub
+  assert_contains "$OUT" '"content":"two\n\n\n"'
+}
+
+test_read_json_gives_a_null_source_when_the_file_is_not_there() {
+  _kmj_accepted_stub
+  rm docs/x.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+}
+
+test_read_json_gives_a_null_source_for_a_link_jig_does_not_follow() {
+  _kmj_accepted_stub
+  ln -s x.md docs/link.md
+  sed 's|^source: docs/x.md|source: docs/link.md|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+  assert_not_contains "$OUT" "line one"
+  sed 's|^source: docs/link.md|source: ../x.md|' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj read convention-stub
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+}
+
+test_read_json_gives_a_null_source_for_an_unreadable_file() {
+  _kmj_accepted_stub
+  chmod 000 docs/x.md
+  if [ -r docs/x.md ]; then chmod 644 docs/x.md; skip "files stay readable here"; fi
+  _kmj read convention-stub
+  chmod 644 docs/x.md
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" ',"lossy":false,"source":null}}'
+}
+
+test_read_json_drops_bytes_that_are_not_utf8_and_says_so() {
+  _kmj_accepted_stub
+  printf 'bad \377 byte \320\237\n' > docs/x.md
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"content":"bad  byte П\n","lossy":true}}}'
+  assert_contains "$OUT" '"lossy":false,"source":{'
+}
+
+test_read_json_refuses_with_codes() {
+  km_setup
+  jig knowledge new feature alpha --proposed >/dev/null
+  _kmj read nope
+  assert_eq 1 "$RC"
+  assert_eq not-found "$(_kmj_code)"
+  _kmj read
+  assert_eq usage "$(_kmj_code)"
+  _kmj read feature-alpha feature-alpha
+  assert_eq usage "$(_kmj_code)"
+  _kmj read --bogus
+  assert_eq usage "$(_kmj_code)"
+  _kmj read ""
+  assert_eq usage "$(_kmj_code)"
+  run jig knowledge read feature-alpha
+  assert_status 1
+  assert_contains "$ERR" "usage: jig knowledge read <id> --json"
+}
+
+test_read_json_writes_nothing_and_moves_no_revision() {
+  _kmj_accepted_stub
+  local before after
+  before=$(jig knowledge proposed --json | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/')
+  _kmj read convention-stub
+  after=$(jig knowledge proposed --json | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/')
+  assert_eq "$before" "$after"
+  assert_eq "$before" "$(printf '%s' "$OUT" | sed -E 's/^\{"schema":1,"revision":([0-9]+).*/\1/')"
+}
+
 # --- decisions in Jig's own tree (lib/owntree.sh) -----------------------------------
 #
 # What the mechanism does for every write is in writes.t.sh; here, the decisions.

@@ -6,7 +6,7 @@ description: "Read your project's tasks, specs and what needs you from a script,
 Jig's commands print text for a person. A program — a CI step, a chat bot, a dashboard such as
 [Jig UI](https://jig-ui.fapost.in) — can ask for the same answer as JSON instead, by adding
 `--json`. Today `jig task list`, `jig task artifacts`, `jig task artifact read`, `jig spec list`, `jig status`,
-`jig queue list`, `jig queue next`, `jig config keys`, `jig knowledge proposed`, `jig knowledge sources` and
+`jig queue list`, `jig queue next`, `jig config keys`, `jig knowledge proposed`, `jig knowledge sources`, `jig knowledge read` and
 `jig writes` offer it, and `jig queue`, `jig task new`, `jig upgrade`, `jig config set|unset`, `jig spec item`
 and `jig knowledge accept|reject|reviewed` answer in it when they write; more commands will, in the
 same form.
@@ -70,7 +70,7 @@ be reworded.
 | `not-a-repository` | it ran outside a Git repository |
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
-| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, the task has no such document yet (`jig task artifact read`), or the knowledge document named does not exist or links no source (`jig knowledge sources --diff`) |
+| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, the task has no such document yet (`jig task artifact read`), or the knowledge document named does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`) |
 | `already-exists` | what the command would create is already there: a task with that id, a roadmap item with that text, an item that names a task. Nothing was written |
 | `git-not-allowed` | [a write on a branch of its own](#writes-on-a-branch-of-their-own) was asked for at `agent.git: none`, where Jig commits nothing. Nothing was written; the message names the setting |
 | `write-busy` | another such write is running in this project. Nothing was written — try again in a moment |
@@ -569,6 +569,7 @@ data, so a page can show them without parsing text:
 jig knowledge proposed --json
 jig knowledge sources --json
 jig knowledge sources --diff convention-coding-style --json
+jig knowledge read convention-coding-style --json
 ```
 
 `proposed` lists each document whose status is `proposed`, with its `id`, `type`, `domains`, its
@@ -601,6 +602,15 @@ file is read whole. A source can hold anything, quotes and control characters
 included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff`, and
 `lossy` says so. An id no document has, or a document that links no source, is refused as
 `not-found`. These reads write nothing: the `revision` stays where it was.
+
+`read <id>` gives the text being decided: the document's whole file, frontmatter included, whatever its
+status, and for a stub the file it links as it is now (`source` is `null` for any other document, and
+for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text and its `lossy` says
+so. An id no document has is refused as `not-found`. It has no text form.
+
+```json
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:51Z","data":{"id":"convention-release","status":"proposed","path":".ai/knowledge/sources/release.md","bytes":261,"content":"---\nid: convention-release\n...","lossy":false,"source":{"path":"docs/release.md","bytes":21,"content":"# Release\n...","lossy":false}}}
+```
 
 A decision is [written on a branch of its own](#deciding-knowledge). Until it lands the document here
 still reads `proposed` or `changed`, and its `waiting` says what was decided and where:

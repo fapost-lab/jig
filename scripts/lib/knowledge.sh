@@ -19,6 +19,7 @@ KM_USAGE="usage: jig knowledge check [--quiet]
        jig knowledge stale [--strict]
        jig knowledge reviewed <id>... [--date YYYY-MM-DD] [--revision <n>] [--json]
        jig knowledge sources [--diff <id>] [--json]
+       jig knowledge read <id> --json
        jig knowledge adr-convention
        jig knowledge changed --base <ref> | --task <id> [--to-review]"
 
@@ -30,7 +31,7 @@ cmd_knowledge() {
   local sub="${1:-}"
   [ $# -gt 0 ] && shift
   case "$sub" in
-    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed | sources | adr-convention) ;;
+    check | new | paths | stale | reviewed | accept | reject | proposed | inventory | summary | stages | changed | sources | read | adr-convention) ;;
     *) jig_die "$KM_USAGE" ;;
   esac
 
@@ -39,7 +40,7 @@ cmd_knowledge() {
   # an envelope too. Looked for before anything else runs, `jig_require_init`
   # included: not being initialised is a refusal with a code.
   case "$sub" in
-    proposed | sources)
+    proposed | sources | read)
       local arg
       for arg in "$@"; do
         if [ "$arg" = --json ]; then
@@ -51,6 +52,9 @@ cmd_knowledge() {
       done
       ;;
   esac
+
+  # The text form of a read is not offered: the document is a file a person opens.
+  [ "$sub" != read ] || jig_die "usage: jig knowledge read <id> --json"
 
   # A decision a program sends, or a person checked against a revision, is committed
   # on a branch of its own in Jig's own tree; the plain text form writes the working
@@ -2489,8 +2493,8 @@ km_sources_diff() {
 
 # --- the reads as JSON (schemas/json.md) ---------------------------------------
 
-# _km_json_main <proposed|sources> [args...] — the producer json_run runs for
-# `knowledge proposed|sources --json`; `--json` itself is dropped here.
+# _km_json_main <proposed|sources|read> [args...] — the producer json_run runs for
+# `knowledge proposed|sources|read --json`; `--json` itself is dropped here.
 _km_json_main() {
   local sub="$1" arg args=()
   shift
@@ -2512,6 +2516,11 @@ _km_json_main() {
       else
         jig_fail usage "usage: jig knowledge sources [--diff <id>] [--json]"
       fi
+      ;;
+    read)
+      [ ${#args[@]} -eq 1 ] || jig_fail usage "usage: jig knowledge read <id> --json"
+      case "${args[0]}" in '' | -*) jig_fail usage "usage: jig knowledge read <id> --json" ;; esac
+      _km_read_json "${args[0]}"
       ;;
   esac
 }
@@ -2765,4 +2774,51 @@ km_stages() {
     fm_list_add "$doc" stages "$stage" || return 1
   fi
   printf 'stages     %s\n' "$(km_rel "$doc")"
+}
+
+# _km_json_text <file> — _JSON <- the file's whole text as a JSON string, _KM_LOSSY
+# <- true when bytes that are not UTF-8 were dropped from it. The text is read with
+# a sentinel, so the trailing newlines $(...) would strip stay, and is escaped by
+# _km_json_quote_text's one pass, which ends every line it sees with a newline:
+# a file that does not end in one gets it back off.
+_km_json_text() {
+  local text
+  text=$(cat "$1" && printf x) || jig_die "knowledge read: cannot read $1"
+  text=${text%x}
+  _km_utf8_clean "$text"
+  text=$_KM_CLEAN
+  if [ -n "$text" ] && [ "${text%$'\n'}" = "$text" ]; then
+    _km_json_quote_text "$text
+"
+    _JSON="${_JSON%\\n\"}\""
+  else
+    _km_json_quote_text "$text"
+  fi
+}
+
+# _km_read_json <id> — the data of `knowledge read <id> --json`: the document's
+# whole file, frontmatter included, whatever its status, and for a stub the file it
+# links as it is now (null when that is not a readable file inside the repository,
+# as jig_knowledge_read_path decides for every resolution). The text a person is
+# asked to decide, read as a file reads: nothing is written and no revision moves.
+_km_read_json() {
+  local id="$1" doc src size out source_json=null
+  doc=$(km_doc_by_id "$id")
+  size=$(wc -c < "$doc" | tr -d ' ')
+  json_quote "$id"; out="{\"id\":$_JSON"
+  json_str_or_null "$(fm_get "$doc" status)"; out="$out,\"status\":$_JSON"
+  json_quote "$(km_rel "$doc")"; out="$out,\"path\":$_JSON"
+  json_int_or_null "$size"; out="$out,\"bytes\":$_JSON"
+  _km_json_text "$doc"
+  out="$out,\"content\":$_JSON,\"lossy\":$_KM_LOSSY"
+  src=$(jig_knowledge_source "$doc")
+  if [ -n "$src" ] && jig_knowledge_read_path "$doc" >/dev/null && [ -r "$JIG_PROJECT/$src" ]; then
+    size=$(wc -c < "$JIG_PROJECT/$src" | tr -d ' ')
+    source_json="{\"path\":"
+    json_quote "$src"; source_json="$source_json$_JSON"
+    json_int_or_null "$size"; source_json="$source_json,\"bytes\":$_JSON"
+    _km_json_text "$JIG_PROJECT/$src"
+    source_json="$source_json,\"content\":$_JSON,\"lossy\":$_KM_LOSSY}"
+  fi
+  _km_json_print "$out,\"source\":$source_json}"
 }
