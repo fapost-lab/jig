@@ -118,6 +118,14 @@ The human's words (translated from Russian, meaning kept):
 - The signal names the stage commit that was tested. The command refuses when the task branch
   tip is not contained in that commit: a fix pushed after the test run must not reach `main`
   untested. A person who says "prepare for prod" by hand means the stage tip as they see it.
+- In a team where people decide, the signal never reaches Jig directly: QA posts it where the
+  team talks (a Slack message), and the developer tells their agent "prepare for prod". Those
+  words are the signal; the agent runs the command. Jig reads no chat. A message the agent
+  reads through a connector (a Slack MCP) is not a signal by itself — the person still says it,
+  so a message nobody relayed never promotes a task. Since the person cannot name the commit QA
+  tested, the command shows when the task last landed on stage and with which commits, and
+  asks for a yes when it landed after the person's last look is plausible (a landing in the last
+  hours); the person compares it with the time of QA's message.
 - The direct merge, when a conflict calls for it, runs in a temporary worktree of the stage
   branch, fetched fresh from origin, never in the developer's checkout (failure mode 5); a rejected push is retried from a fresh
   fetch, never forced (failure mode 6).
