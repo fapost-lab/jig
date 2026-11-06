@@ -122,10 +122,10 @@ The human's words (translated from Russian, meaning kept):
   team talks (a Slack message), and the developer tells their agent "prepare for prod". Those
   words are the signal; the agent runs the command. Jig reads no chat. A message the agent
   reads through a connector (a Slack MCP) is not a signal by itself — the person still says it,
-  so a message nobody relayed never promotes a task. Since the person cannot name the commit QA
-  tested, the command shows when the task last landed on stage and with which commits, and
-  asks for a yes when it landed after the person's last look is plausible (a landing in the last
-  hours); the person compares it with the time of QA's message.
+  so a message nobody relayed never promotes a task. The person's word is taken against the
+  stage tip with no further check: QA gives it only after the fixes and the talks with the
+  developer and the product owner are done. Rejected: warning when the task landed on stage
+  recently — it second-guesses a decision QA has already made.
 - The direct merge, when a conflict calls for it, runs in a temporary worktree of the stage
   branch, fetched fresh from origin, never in the developer's checkout (failure mode 5); a rejected push is retried from a fresh
   fetch, never forced (failure mode 6).
