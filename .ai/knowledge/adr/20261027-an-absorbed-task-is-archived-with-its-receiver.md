@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - scripts/lib/queue.sh
 summary: Why a task another task does the work of is archived with reason absorbed instead of getting a new status, what is copied, how the queue and the tracker are handled.
-reviewed_at: 2026-10-27
+reviewed_at: 2026-11-06
 ---
 # ADR: An absorbed task is archived with its receiver
 
@@ -94,3 +94,5 @@ records the link in both states. A fully absorbed task is an archived task with 
   the history says it was once absorbed.
 - Undo of the release: a Jig that predates `absorbed` reads the archived task and hides it, but
   refuses to write the reason; unarchive absorbed tasks before downgrading.
+- An absorbed task whose own branch merged is not flagged `needs-consolidation`: its receiver does
+  its work (adr-20261027-a-task-nobody-finished-is-archived-not-purged, amended 2026-11-06).
