@@ -164,3 +164,25 @@ test_ci_workflow_test_matrix_holds_only_include() {
   assert_eq "include" "$(cw_test_matrix_keys)" \
     "the test job's strategy.matrix must hold only include: another key beside it merges or removes the shares the include list names"
 }
+
+# A pull request's run checks out the pull request merged into its base as the
+# base is now. Measured from the event's base.sha — where the branch started —
+# every commit that landed on the base since counts as the pull request's own:
+# #394, two spec files, ran the full suite because main had changed
+# scripts/lib/config.sh meanwhile. Both scope scripts take the merge commit's
+# first parent instead, and nothing in the scope job reads base.sha.
+test_ci_workflow_scope_measures_a_pull_request_from_its_merge_parent() {
+  local block
+  block=$(cw_job_block scope)
+  printf '%s\n' "$block" | grep -qF "git rev-parse --verify --quiet 'HEAD^1'" ||
+    fail "the scope job must take a pull request's base as the merge commit's first parent (HEAD^1)"
+  # shellcheck disable=SC2016 # shell variables in a workflow, matched literally
+  printf '%s\n' "$block" | grep -qF '.github/scripts/ci-scope.sh "$pr_base"' ||
+    fail "the scope job must pass the merge parent to ci-scope.sh"
+  # shellcheck disable=SC2016 # shell variables in a workflow, matched literally
+  printf '%s\n' "$block" | grep -qF '.github/scripts/ci-windows-scope.sh "$pr_base"' ||
+    fail "the scope job must pass the merge parent to ci-windows-scope.sh"
+  if printf '%s\n' "$block" | grep -qF 'pull_request.base.sha'; then
+    fail "the scope job must not read github.event.pull_request.base.sha: it is where the branch started, not what it merges into"
+  fi
+}
