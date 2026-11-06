@@ -87,6 +87,17 @@ jp_begin() {
 # jp_scoped — exit 0 when this run is narrowed to changed files.
 jp_scoped() { [ "$JP_SCOPED" = 1 ]; }
 
+# jp_in_run <profile> — exit 0 when <profile> starts in this same run, as
+# JIG_VERIFY_PROFILES lists them. Set only for a profile that declared
+# `scope: [..., profiles]`; without it nothing is in the run, so a profile
+# never stands down on a guess.
+jp_in_run() {
+  case " ${JIG_VERIFY_PROFILES:-} " in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
 # jp_has_line <line> <text> — exit 0 when <line> is a whole line of <text>,
 # compared as a string: common.sh's jig_has_line for profiles, which source
 # this file alone. A `case`, never `printf | grep -q`: bash writes a pipe line

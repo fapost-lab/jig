@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Verification for the laravel profile. Called by `jig verify` from the
 # repository root. Exit 0 = pass, 1 = fail, 2 = skip. Only runs Laravel's
-# own test runner; PHPUnit/Pest/PHPStan/Pint/composer validate are the php
-# profile's job (requires: [php], domains/verify) and are not duplicated here.
+# own test runner; PHPStan/Pint/composer validate are the php profile's job
+# (requires: [php], domains/verify) and are not duplicated here. `artisan
+# test` runs the same PHPUnit/Pest suite the php profile would, so in a run
+# with both the php profile leaves its tests to this one (its
+# `scope: [..., profiles]`) and the suite runs once.
 #
 # Narrowing (ADR-0041, adr-20260918-profiles-narrow-per-check-with-project-tools): the same file-to-test convention as the php
 # profile — a changed *Test.php maps to itself, a changed Foo.php maps to
