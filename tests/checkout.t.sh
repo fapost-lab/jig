@@ -826,6 +826,25 @@ test_checkout_taken_record_is_not_written_by_reading_filing_or_ordering() {
   assert_no_file .ai/runtime/taken/T-1/session-a
 }
 
+# Closing a task is not taking it, and a close checked against the caller's
+# revision lands from a session (#389): the taken record's write used to raise
+# the revision before the command's own claim, refusing every such close.
+test_checkout_close_with_revision_from_a_session_lands_and_takes_nothing() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  CLAUDE_CODE_SESSION_ID=session-a
+  export CLAUDE_CODE_SESSION_ID
+  local rev
+  rev=$(jig queue list --json | jq -r .revision)
+  run jig task set T-1 status consolidated --revision "$rev" --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"status":"consolidated"'
+  assert_no_file .ai/runtime/taken/T-1/session-a
+}
+
 test_checkout_taken_record_is_not_written_without_a_session_id() {
   checkout_setup
   jig task new T-1 >/dev/null
