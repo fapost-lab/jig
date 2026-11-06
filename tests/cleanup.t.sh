@@ -209,7 +209,9 @@ test_cleanup_sigterm_ends_jig_waiting_on_a_command_substitution() {
 #!/usr/bin/env bash
 set -eu
 . "$JIG_HOME/scripts/lib/common.sh"
-jig_on_exit 'echo cleaned > cleaned'
+# A cleanup that takes a moment: the supervisor must wait for it, not KILL the
+# tree the instant the job subshell (which has no trap and dies at once) is gone.
+jig_on_exit 'sleep 0.5; echo cleaned > cleaned'
 x=$(: > armed; while :; do :; done)
 BUSY
   JIG_HOME="$JIG_HOME" bash -c '. "$JIG_HOME/scripts/lib/common.sh"; jig_supervise bash busy.sh' &

@@ -146,6 +146,15 @@ _jig_descendants() {
 
 _JIG_SUP_PID=""
 
+# _jig_any_alive <pid>... — true while one of them still runs.
+_jig_any_alive() {
+  local p
+  for p in "$@"; do
+    if kill -0 "$p" 2>/dev/null; then return 0; fi
+  done
+  return 1
+}
+
 # _jig_supervise_signal <exit code> — end the job and its tree, then exit.
 _jig_supervise_signal() {
   local code="$1" tree grace="${JIG_TERM_GRACE:-5}" until
@@ -155,8 +164,12 @@ _jig_supervise_signal() {
   tree="$(_jig_descendants "$_JIG_SUP_PID") $_JIG_SUP_PID"
   # shellcheck disable=SC2086
   kill -TERM $tree 2>/dev/null || true
+  # Wait for every process of the tree, not only the job: the job subshell has no
+  # TERM trap and dies at once, while a command below it is still running its own
+  # exit cleanup; SIGKILL at that moment would take the cleanup with it.
   until=$((SECONDS + grace))
-  while kill -0 "$_JIG_SUP_PID" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do
+  # shellcheck disable=SC2086
+  while _jig_any_alive $tree && [ "$SECONDS" -lt "$until" ]; do
     sleep 0.1
   done
   # shellcheck disable=SC2086
