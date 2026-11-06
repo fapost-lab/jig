@@ -44,7 +44,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
 | `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
-| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
+| `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
@@ -783,6 +783,48 @@ outside ASCII is replaced by `?` instead.
 Refusals: `not-found` for an id no document has, and for a document that links no source;
 `usage` for an argument these commands do not take (`jig knowledge proposed x --json`, `sources
 --diff` without an id, a second id); `not-initialised` and `not-a-repository` as everywhere.
+
+## `jig knowledge read --json`
+
+`jig knowledge read <id> --json` answers with the text of one knowledge document, whatever its
+status, so a person can be shown what they are asked to decide: a proposed document as written, or
+the file a stub links as it is now. It reads the checkout, writes nothing and raises no revision.
+`--json` may stand anywhere among the arguments; the command has no text form (without it, it is
+refused as `usage`).
+
+```json
+{"id": "feature-alpha", "status": "proposed", "path": ".ai/knowledge/features/alpha.md", "bytes": 1234, "content": "---\nid: feature-alpha\n...", "lossy": false, "source": null}
+```
+
+For a stub, `source` is the linked file:
+
+```json
+{"id": "convention-coding-style", "status": "proposed", "path": ".ai/knowledge/sources/coding-style.md", "bytes": 261, "content": "---\nid: convention-coding-style\n...", "lossy": false,
+ "source": {"path": "docs/coding-style.md", "bytes": 900, "content": "# Style\n...", "lossy": false}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `id` | string | the document's `id` |
+| `status` | string or null | its `status`; `null` when it has none |
+| `path` | string | the document's file, relative to the repository |
+| `bytes` | integer | the file's size in bytes, as it is on disk (the dropped bytes of a `lossy` text included) |
+| `content` | string | the whole file, frontmatter included, trailing newlines included; `""` for an empty file |
+| `lossy` | boolean | `true` when `content` held bytes that are not UTF-8 and they were dropped. A NUL byte is dropped without it |
+| `source` | object or null | for a stub, the file it links as it is now; `null` for any other document, and for a stub whose source is not a readable file inside the repository (missing, unreadable, a link, outside the repository: the states `jig knowledge sources` calls `missing`) |
+| `source.path` | string | the linked file, relative to the repository |
+| `source.bytes` | integer | its size in bytes, as it is on disk |
+| `source.content`, `source.lossy` | string, boolean | its text and whether bytes were dropped from it, as `content` and `lossy` |
+
+Strings escape as the envelope says, and bytes that are not valid UTF-8 are dropped as in
+`sources --diff` (or, without `iconv`, every byte outside ASCII becomes `?`), so the line is always
+valid JSON in UTF-8. A source is read whatever its state: `jig knowledge sources --json` says
+whether it changed since it was approved. The text is the checkout's: a decision waiting on
+`knowledge/decisions` is not applied to it (see `waiting` in `proposed --json`).
+
+Refusals: `not-found` for an id no document has; `usage` for a missing id, a second argument, an
+argument that starts with `-`, and for the command without `--json`; `not-initialised` and
+`not-a-repository` as everywhere.
 
 ## `jig upgrade --json`
 
