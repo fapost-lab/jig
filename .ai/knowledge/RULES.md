@@ -14,7 +14,7 @@
   uncommitted, or absent from every remote it knows.
   (adr-20260925-a-worktree-goes-only-when-every-git-in-it-agrees) When git removed
   it and its directory is still there — Windows leaves the links behind — housekeeping
-  deletes only links (`find -type l`, never followed) and empty directories (`rmdir`) inside
+  (`jig_worktree_leftover`, common.sh) deletes only links (`find -type l`, never followed) and empty directories (`rmdir`) inside
   that path, and leaves anything else. (ADR-0037) The installer,
   `install.sh`, is the other: on a failed run it removes only what that run itself made — the
   install directory, by a plain `mkdir` so that creating it and finding it absent are one act;
@@ -87,8 +87,10 @@
   under that lock only Jig writes in the tree, nothing a person wrote is ever in it, and what was
   worth keeping is already a commit; a write removes the tree it made, while it still holds the lock,
   and under the lock, as housekeeping does too, a tree a killed write left; no such write or its sweep runs `git worktree prune`, which would drop any worktree whose
-  directory is merely away; what stands there and is no working tree stays for a person
-  to delete, refused `tree-in-the-way`. The one ref it deletes is `refs/remotes/origin/<b>`, by `git update-ref
+  directory is merely away; once git no longer knows that path, whether it left it or never had it,
+  the links and empty directories there go as housekeeping's leftover does (`jig_worktree_leftover`: `find -type l`, never
+  followed, then `rmdir`), and anything else that stands there and is no working tree stays for a
+  person to delete, refused `tree-in-the-way`. The one ref it deletes is `refs/remotes/origin/<b>`, by `git update-ref
   -d`, at the commit, when `ls-remote` says origin has no such branch: what `git fetch --prune` does, and it holds
   no work. (adr-20261104-a-write-goes-in-jigs-own-tree) The clone's revision is the
   same shape: under `<clone root>/.ai/runtime/revision/`, or `<git-common-dir>/jig/revision/` where

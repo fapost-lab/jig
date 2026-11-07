@@ -12,6 +12,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/config.sh
 summary: Why a directory of separate repositories under edit is given to a task worktree as a mirror of links rather than a copy or a link to the directory, how the mirror proves with git that it cannot strand the worktree, and why removing the worktree cannot take the shared work.
+reviewed_at: 2026-11-06
 ---
 # ADR: A task worktree shares a directory by mirroring it, one link per entry
 
@@ -89,7 +90,7 @@ reports the outcome per path, so a partial top-up never reads as two contradicto
 **Removal needs nothing new, and that is the point of mirroring.** The work lives once, in the
 owner. Housekeeping's walk for nested repositories runs `find` without `-L`, so it does not enter
 the links and finds no repository to hold the worktree for; `git worktree remove` deletes the links
-and not their targets; on Windows, where git leaves links behind, `_hk_worktree_leftover` removes
+and not their targets; on Windows, where git leaves links behind, `jig_worktree_leftover` removes
 only links. `tests/bootstrap.t.sh` and `tests/housekeeping.t.sh` hold this with the measured scenario — a commit with no remote
 and an uncommitted file made in `<worktree>/packages/<pkg>` — through a bare `git worktree remove`
 and through housekeeping, and the same scenario under `carry` is what loses the commit.
