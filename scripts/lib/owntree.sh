@@ -922,7 +922,11 @@ ot_record_write() {
   fi
   dir=${file%/*}
   mkdir -p "$dir" || jig_die "$OT_WHO: cannot create $dir"
-  tmp="$file.tmp.$$"
+  # A dotfile, as _jig_checkout_write names its temporary (checkout.sh): ot_targets
+  # reads the directory as a glob of record names, and a dot is legal in a spec id,
+  # so `spec-<id>.tmp.<pid>` left by a killed write would read as a record, and no
+  # name pattern that skipped it could tell it from a spec whose id has `.tmp.` in it.
+  tmp="$dir/.tmp.${file##*/}.$$"
   jig_cleanup_add "$tmp"
   {
     printf 'branch: %s\nbase: %s\ncommit: %s\n' "$OT_BRANCH" "$OT_BASE" "$OT_COMMIT"
@@ -944,8 +948,6 @@ ot_targets() {
     name=${f##*/}
     case "$name" in
       knowledge) printf 'knowledge\n' ;;
-      # What a write killed in ot_record_write left, before its move, is no record.
-      spec-*.tmp.*) ;;
       spec-*) if jig_valid_id "${name#spec-}"; then printf 'spec:%s\n' "${name#spec-}"; fi ;;
     esac
   done

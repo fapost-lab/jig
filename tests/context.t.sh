@@ -1623,6 +1623,22 @@ test_context_acknowledge_revoke_withdraws_an_acknowledgement() {
   assert_contains "$(cut -f2 .ai/workspace/tasks/T-1/context)" ".ai/knowledge/RULES.md"
 }
 
+test_context_acknowledge_revoke_refuses_a_stage() {
+  ctx_setup
+  jig task new T-1 >/dev/null
+  ctx_ack_doc
+  jig context acknowledge --task T-1 --stage implement --files .ai/knowledge/features/checkout.md >/dev/null
+  # A revoke drops the line whatever stage it was made at: a stage given with it
+  # is refused, in either order, and the ledger is left as it was.
+  run jig context acknowledge --task T-1 --revoke --stage review --files .ai/knowledge/features/checkout.md
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "context acknowledge: --revoke takes no --stage"
+  run jig context acknowledge --task T-1 --stage implement --revoke --files .ai/knowledge/features/checkout.md
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "context acknowledge: --revoke takes no --stage"
+  assert_eq ".ai/knowledge/features/checkout.md implement" "$(cut -f2,3 .ai/workspace/tasks/T-1/context | tr '\t' ' ')"
+}
+
 test_context_acknowledge_revoke_takes_a_deleted_document() {
   ctx_setup
   jig task new T-1 >/dev/null
