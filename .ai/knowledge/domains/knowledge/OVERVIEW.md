@@ -41,7 +41,11 @@ them an agent has to read.
   new one), and an untracked rule file is copied with a secret scan (`new --copy`).
 - What a person is asked to decide, read as data: `jig knowledge read <id> --json` gives a
   document's whole file in any status and, for a stub, the linked file as it is now (`null` when it is
-  not a readable file inside the repository), from the checkout and with no text form.
+  not a readable file inside the repository), from the checkout and with no text form. Bytes that are
+  not UTF-8 are dropped from every knowledge JSON read (`_km_utf8_clean`), and the object they came
+  from says so with `lossy` — each proposal and source record too, since a file name without them can
+  name another file. A stub that is not accepted has its status as its state in every read
+  (`_km_status_state`, asked by `km_source_states` and `sources --diff --json` alike).
 - A decision from outside a session (`jig knowledge accept|reject|reviewed` with `--revision` or
   `--json`): committed on `knowledge/decisions` in Jig's own tree, `waiting` on the reads until it
   lands; the plain text forms write the working tree (adr-20261104-a-write-goes-in-jigs-own-tree).
