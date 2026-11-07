@@ -962,6 +962,48 @@ test_housekeeping_forge_reports_closed_which_ancestry_cannot() {
   assert_dir .ai/workspace/tasks/op
 }
 
+# hk_stub_ssh — a fake `ssh` whose `-G` resolves the alias github-personal to
+# github.com, the way a `Host` block with `HostName` does, and any other host
+# to itself.
+hk_stub_ssh() {
+  mkdir -p stub-bin
+  cat > stub-bin/ssh <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = -G ] || exit 255
+case "$2" in
+  github-personal) printf 'user git\nhostname github.com\nport 22\n' ;;
+  *) printf 'hostname %s\n' "$2" ;;
+esac
+STUB
+  chmod +x stub-bin/ssh
+}
+
+test_housekeeping_forge_auto_sees_github_behind_an_ssh_host_alias() {
+  hk_setup
+  hk_cfg forge auto
+  fixture_merge_repo
+  git remote add origin git@github-personal:example/example.git
+  hk_stub_ssh
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')MERGED"
+  fixture_task op "still-open" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "remote=merged via=forge"
+}
+
+test_housekeeping_forge_auto_ssh_alias_of_an_unknown_host_stays_none() {
+  hk_setup
+  hk_cfg forge auto
+  fixture_merge_repo
+  git remote add origin git@git.example.org:example/example.git
+  hk_stub_ssh
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')MERGED"
+  fixture_task op "still-open" consolidated
+
+  run jig housekeeping --verbose
+  assert_not_contains "$OUT" "via=forge"
+}
+
 test_housekeeping_forge_none_skips_the_tier_entirely() {
   hk_setup
   hk_cfg forge none

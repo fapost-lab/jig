@@ -42,7 +42,7 @@ selected.
 | `worktree.share` | `[]` | Folders a new worktree shares with this checkout instead of copying — for separate repositories you edit, such as `packages/`. Each entry becomes a link to this checkout's, so there is one copy of the work. See [sharing a folder of packages](/working-with-tasks#sharing-a-folder-of-packages-you-edit). |
 | `worktree.setup` | not set | A command of your project that Jig runs in a new worktree after sharing and carrying, to finish what a copy cannot — `composer install` against the lock, say. Runs on this machine, never fatal. See [finishing a worktree with your own command](/working-with-tasks#finishing-a-worktree-with-your-own-command). |
 | `worktree.setup_timeout` | `10m` | How long `worktree.setup` may run before Jig stops it, with everything it started. `0` waits for ever. |
-| `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address. Without the tool, or with `none`, Jig falls back to what Git itself can show. |
+| `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address, or from the host an SSH alias in it resolves to (`git@github-personal:owner/repo.git` with `HostName github.com` in `~/.ssh/config`). Without the tool, or with `none`, Jig falls back to what Git itself can show. |
 
 ### Tracker issues
 
