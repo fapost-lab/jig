@@ -350,6 +350,30 @@ narrow runs in full, with the reason printed.
 Checks of your own belong in the project's installed profile under `.ai/profiles/`; `jig upgrade`
 keeps a profile you edited.
 
+A profile of your own can also replace one check of a stock profile, without editing it. Say it
+runs your test suite its own way: declare that in its `profile.yaml`, and the stock profile's
+tests stand down when both run.
+
+```yaml
+# .ai/profiles/warehouse/profile.yaml
+scope: [changed, map, explain, environment]
+covers: [laravel:tests]
+```
+
+```text
+laravel: artisan test: skip (scope: covered by warehouse, laravel:tests)
+```
+
+`laravel` does the same for `php` (`covers: [php:tests]`), so a Laravel project runs its suite
+once, in `php artisan test`. The check is named by its role, `tests`; `php`, `laravel`, `node` and
+`python` name theirs so far, and a cover of a check a profile does not name prints a warning and
+leaves the check running. A cover holds only where the covering profile applies — its `detect`
+matches, is `always`, or is absent. In a run narrowed to changed files, the covered profile's
+`.ai/verify/<profile>.map` goes with its tests, read after the covering profile's own map, so the
+covering profile declares `scope: [changed, map]` (as the example's would). One that narrows
+without reading maps does not take tests whose map would be dropped: Jig warns, and the stock
+profile keeps them.
+
 ### Where checks run
 
 A project that lives in a container — Laravel Sail, a `docker compose` service — must be checked

@@ -12,7 +12,9 @@ absent key means is decided by its reader, not by this file.
 | `description` | scalar | one line on what the profile checks and which tools it reaches for. Read by no script either |
 | `detect` | `always`, or an inline list of globs | how `profiles_detect` recognises a project of this stack — see **Detection** |
 | `requires` | inline list of profile names | profiles this one builds on. Detection closes over it, and `profiles_check_requires` warns when an active profile's requirement is not active — see **Requires** |
-| `scope` | inline list of capabilities | which parts of the verify scope protocol this profile's `verify.sh` understands: `changed` (ADR-0013), `map` (ADR-0041), `explain`, `environment`, `profiles` — see **Scope** |
+| `scope` | inline list of capabilities | which parts of the verify scope protocol this profile's `verify.sh` understands: `changed` (ADR-0013), `map` (ADR-0041), `explain`, `environment` — see **Scope** |
+| `covers` | inline list of `<profile>:<check>` | checks of other profiles this profile's own checks replace: `laravel` declares `covers: [php:tests]`, because `php artisan test` runs the suite php's PHPUnit or Pest would — see **Covers** |
+| `checks` | inline list of check names | the checks of this profile another can take over by name. Today one name exists, `tests`, and `php`, `laravel`, `node` and `python` declare it — see **Covers** |
 
 ## Grammar
 
@@ -74,9 +76,9 @@ environment variables. A profile receives them only if `scope` declares the capa
 | | A `map` profile also receives `JIG_VERIFY_MAPPED_ALL` (the same decisions for every tracked file that is not a test or a document, for a profile that narrows by caller), `JIG_VERIFY_BASE` (the ref the changed list was taken against, empty for `HEAD`) and `JIG_VERIFY_FULL_RUN` (`local` or `ci`) |
 | `explain` | `JIG_VERIFY_EXPLAIN=1` asks for a plan instead of checks. The profile prints one `PLAN <profile>: <check>: full\|filtered\|skip\|conditional (<reason>)` line per check, runs no project tool and exits 0. `conditional` names what remains unknown and whether the full set is possible |
 | `environment` | `JIG_RUN_EXEC`, the command prefix that reaches the environment the project runs in (`docker compose exec -T -w /app app`), set only when `jig verify` decided the checks run there. The profile promises that every project command goes through `jp_run`, `jp_version`, `jp_exec` or `jp_have` — never a bare `command -v`, a host's absolute path or a shell function — so the prefix reaches all of them (adr-20261001-checks-run-where-the-project-runs) |
-| `profiles` | `JIG_VERIFY_PROFILES`, the space-separated profiles this run starts (those selected, with a `verify.sh`), in plan and in run alike. The profile promises to stand a check down only for a profile named there, with a `skip (scope: covered by <profile>, …)` reason, never on a guess: unset, the list is empty and every check runs. `jp_in_run <profile>` asks it. The php profile uses it to leave its tests to laravel's `artisan test` |
 
-Support is declared, never inferred. A profile that does not declare a capability is run
+Support is declared, never inferred. (`JIG_VERIFY_COVERED` is declared per check, under
+`checks`, rather than in `scope` — see **Covers**.) A profile that does not declare a capability is run
 with those variables explicitly unset — not merely left as the caller's environment had
 them — and the result line says the scope was ignored, so `pass` never quietly means
 something different per profile.
@@ -93,6 +95,61 @@ capability is not run at all — running it would put its checks on the host. It
 `--explain` it is `unknown`. Without an environment, `JIG_RUN_EXEC` is unset for every
 profile, so `jp_run` and `jp_version` behave exactly as they did before the capability
 existed.
+
+## Covers
+
+Two profiles can run the same work: a Laravel project activates `laravel` and the `php` it
+requires, and `php artisan test` runs the PHPUnit or Pest suite `php` would run itself. The
+profile **above** says so; the profile below only names its check (adr-20261107-a-profile-covers-a-check-of-another):
+
+```yaml
+# profiles/laravel/profile.yaml
+covers: [php:tests]
+# profiles/php/profile.yaml
+checks: [tests]
+```
+
+A check is named by its role, never by its tool: `tests` is phpunit or pest, whichever the
+project has. `jig verify` decides once, before any profile starts, which covers hold in this
+run. `<upper> covers <lower>:<check>` holds when:
+
+- both profiles start in this run — the gates the run itself applies: a `verify.sh`, `explain`
+  in a preview, `environment` under one. A profile that never starts covers nothing;
+- the upper profile applies to the project: its `detect` is `always`, absent (a project's own
+  profile, activated by name), or matches. `laravel` without an `artisan` covers nothing, and
+  php keeps its tests;
+- the lower profile lists the check under `checks`. Otherwise `jig verify` warns —
+  `profile 'upper' covers 'lower:tests', but 'lower' names no check 'tests' (checks:), so it still runs` —
+  and the check runs: support is declared, never inferred, as for `scope`;
+- in a narrowed run where the lower profile has its own map, the profile that ends up running the
+  check declares `map` too, so the map can follow the tests (below). If it does not, it warns and the lower profile
+  keeps its tests.
+
+When several profiles cover the same check, the first in run order takes it. Covers chain: with
+`warehouse` declaring `covers: [laravel:tests]` over `laravel`'s `covers: [php:tests]`, php's tests
+are warehouse's, and php's skip names warehouse. A chain that comes back to where it started runs
+the check nowhere, so its covers are dropped with a warning and every profile in it keeps its
+check.
+
+The lower profile receives `JIG_VERIFY_COVERED`, `<check>=<profile>` words, and asks it with
+`jp_covered <check> <label>`, which prints the check's skip — `php: phpunit: skip (scope: covered by
+laravel, php:tests)`, or the `PLAN` line in a preview — and returns 0. Every other profile runs
+with the variable unset. The reason starts `scope:`: the tools are fine and the work is another
+profile's, so a run where everything else narrowed away is not read as a gap in coverage. A
+`verify.sh` that never calls `jp_covered` — a profile a project edited before the key existed —
+runs its check anyway: twice, the safe direction.
+
+**The map follows the tests.** A map's decisions narrow its profile's tests
+(`schemas/verify-map.md`), so when `<lower>:tests` is covered, `.ai/verify/<lower>.map` is read
+for the profile that runs the tests after that profile's own map — along a chain, the nearest
+profile's map first — first match wins across all of them, and the result line names every map. A
+map is handed on only from a profile that declares `map`: one its profile never read is no decision. By covering `<lower>:tests` the
+upper profile accepts the lower profile's filter vocabulary — `php` and `laravel` both take a test
+file path. The lower profile still receives its own map for the checks it keeps.
+
+`covers` and `checks` are the first step of profile layers (`.ai/specs/profile-layers/`): one
+name, one way to drop a check. A check table, overrides of a check's arguments and `extends` are
+later work, and other stock profiles name their checks as that work reaches them.
 
 ## The reader is tolerant, and that is the design
 

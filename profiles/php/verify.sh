@@ -19,11 +19,10 @@
 # composer.json or composer.lock changed, and skips with a reason otherwise;
 # in a full run it always runs.
 #
-# phpunit/pest stand down when the laravel profile starts in the same run and
-# the project has an `artisan`: `php artisan test` runs the same suite, and a
-# Laravel project paid for it twice on every run. The profile learns who else
-# runs through `scope: [..., profiles]` (JIG_VERIFY_PROFILES); `--profile php`
-# alone, or a project without laravel, runs the tests here as before.
+# phpunit/pest answer to the check name `tests` (`checks: [tests]`): when a
+# profile in the same run declares `covers: [php:tests]` and runs that suite
+# itself, jig verify hands the check over and jp_covered prints the skip. This
+# profile names its check and nothing about who covers it.
 #
 # The test rule is not "anything that is not .php needs no test". What decides
 # is whether a path can change the result of the test run, which runs PHP: a
@@ -166,26 +165,6 @@ _php_all_reason() {
 
 # --- phpunit / pest ------------------------------------------------------
 
-# _php_tests_covered — the laravel profile runs this same suite in this run
-# through `php artisan test` (PHPUnit, or Pest when installed), so running it
-# here too would only run it twice. Needs laravel in the run, which only
-# `scope: [..., profiles]` reveals (jp_in_run), and an `artisan` it can run:
-# without one laravel skips its tests and these stay ours.
-#
-# A narrowed run that hands this profile decisions from its own map
-# (.ai/verify/php.map, as JIG_VERIFY_MAPPED) keeps the tests here: laravel
-# reads only laravel.map, so standing down would drop the project's own test
-# decisions in silence — a `resources/js/** ALL` line would run no test at
-# all. Whether laravel has a map too is cmd_verify's to know, not this
-# profile's (a profile reads decisions, never a map file), so such a project
-# runs the suite in both until it moves its decisions to laravel.map.
-PHP_COVERED_REASON="scope: covered by laravel, artisan test"
-_php_tests_covered() {
-  jp_in_run laravel || return 1
-  [ -f artisan ] || return 1
-  [ -z "${JIG_VERIFY_MAPPED:-}" ]
-}
-
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   test_bin=$(_php_tool phpunit)
   test_check=phpunit
@@ -193,8 +172,10 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     test_bin=$(_php_tool pest)
     test_check=pest
   fi
-  if [ -n "$test_bin" ] && _php_tests_covered; then
-    jp_plan "$test_check" skip "$PHP_COVERED_REASON"
+  # With neither runner, the check's lines name it phpunit.
+  [ -n "$test_bin" ] || test_check=phpunit
+  if jp_covered tests "$test_check"; then
+    :
   elif [ -z "$test_bin" ]; then
     jp_plan phpunit skip "$PHP_WHERE"
   else
@@ -250,11 +231,12 @@ if [ -z "$test_bin" ]; then
   test_bin=$(_php_tool pest)
   test_check=pest
 fi
+[ -n "$test_bin" ] || test_check=phpunit
 
-if [ -z "$test_bin" ]; then
+if jp_covered tests "$test_check"; then
+  :
+elif [ -z "$test_bin" ]; then
   jp_skip "phpunit" "$PHP_WHERE"
-elif _php_tests_covered; then
-  jp_skip "$test_check" "$PHP_COVERED_REASON"
 else
   v=$(jp_version "$test_bin" --version)
   if ! jp_scoped; then

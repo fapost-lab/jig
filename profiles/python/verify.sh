@@ -206,6 +206,9 @@ _py_mypy_configured() {
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
   for check in ruff mypy pytest; do
+    if [ "$check" = pytest ] && jp_covered tests pytest; then
+      continue
+    fi
     tool=$(_py_tool "$check")
     if [ -z "$tool" ]; then
       if [ -z "${JIG_RUN_EXEC:-}" ] && [ -f poetry.lock ] && command -v poetry >/dev/null 2>&1; then
@@ -353,8 +356,12 @@ _py_pytest() {
   esac
 }
 
+# pytest answers to `tests` (`checks: [tests]`): a profile in the same run
+# that declares `covers: [python:tests]` takes it over.
 pytest=$(_py_tool pytest)
-if [ -z "$pytest" ]; then
+if jp_covered tests pytest; then
+  :
+elif [ -z "$pytest" ]; then
   jp_skip "pytest" "$PY_WHERE"
 else
   v=$(jp_version "$pytest" --version)
