@@ -70,7 +70,7 @@ be reworded.
 | `not-a-repository` | it ran outside a Git repository |
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
-| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, the task has no such document yet (`jig task artifact read`), or the knowledge document named does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`) |
+| `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, the task has no such document yet (`jig task artifact read`), or the knowledge document named does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`). For a roadmap edit: the spec it names is neither on its branch nor on the base, the phase or item is not in the roadmap on that branch, or the task it would file does not exist. Also `jig writes ship` with nothing waiting |
 | `already-exists` | what the command would create is already there: a task with that id, a roadmap item with that text, an item that names a task. Nothing was written |
 | `git-not-allowed` | [a write on a branch of its own](#writes-on-a-branch-of-their-own) was asked for at `agent.git: none`, where Jig commits nothing. Nothing was written; the message names the setting |
 | `write-busy` | another such write is running in this project. Nothing was written — try again in a moment |
@@ -79,8 +79,8 @@ be reworded.
 | `branch-has-other-commits` | the write's branch has commits here that no write made and the remote does not have: yours, and a write does not publish them. Nothing was written; the message names the branch |
 | `base-not-on-origin` | the write's base is not on the remote, at `agent.git: push` or above: a branch cut from it would carry out whatever is on it. Nothing was written; push that base yourself |
 | `write-still-waits` | an earlier edit of the same spec, or of knowledge, still waits where this one cannot go: into another base, because an epic opened or finished since, or as edits that never reached the remote above ones whose pull request was closed or whose branch was deleted there. Nothing was written; the message names the branch and what to do |
-| `tree-in-the-way` | an unfinished write left something at Jig's tree that git will not remove. Nothing was written, and trying again does not help: delete the path the message names |
-| `commit-refused` | Git refused the commit, usually a hook of the project; the message says what it said. Nothing waits |
+| `tree-in-the-way` | an unfinished write left files at Jig's tree that git will not remove (links and empty directories Jig clears itself). Nothing was written, and trying again does not help: delete the path the message names |
+| `commit-refused` | Git refused the commit, usually a hook of the project; the message says what it said. This edit was not committed; an earlier one already waiting on the branch still waits |
 | `epic-missing` | the spec is built on an epic branch that is neither here nor on the remote. Nothing was written |
 | `not-linkable` | the task cannot be linked to the roadmap item, or the item is done. Nothing was written |
 | `not-proposed` | the knowledge document is not a proposal, nor, for `reject`, a stub whose linked file changed since it was approved: it was decided already, perhaps on a branch that still waits. Nothing was written |
@@ -299,9 +299,11 @@ below answers with, so a board renders both with one piece of code.
 The queue holds order, not the tasks themselves: read it together with `jig task list --json`
 and join a `task` item to a task by `id`, and an `epic` item to `jig spec list --json` by the
 spec's `id`. All of them carry the same `revision` when nothing was written between the reads, and
-the one you send with a change is the `revision` of the queue read you showed. An item whose task
-is finished, archived, or gone, stays in the queue until it is removed; it has no match in the default task
-list, so join against `jig task list --json --all` or show it as it is.
+the one you send with a change is the `revision` of the queue read you showed. A task that is
+closed, abandoned, archived or gone leaves the queue on its own: the command that finished it takes
+it out, and so does every `jig housekeeping` run (`jig queue prune --json` does it on demand). One
+finished since then may still be listed with no match in the default task list, so join against
+`jig task list --json --all` or show it as it is.
 
 ### Which task is next
 
@@ -599,7 +601,7 @@ jig knowledge read convention-coding-style --json
 (`null` for the rest):
 
 ```json
-{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null,"waiting":null},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md","waiting":null}],"waiting":null}}
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md","waiting":null,"decidable":true,"reason":null,"lossy":false}],"waiting":null}}
 ```
 
 `sources` lists each stub with the `state` of the file it links: `ok`, `changed` (the file is not
@@ -608,7 +610,7 @@ status while it is not accepted yet, with the file's size in `bytes` and the cou
 prints on its last line:
 
 ```json
-{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62,"waiting":null},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21,"waiting":null}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0},"waiting":null}}
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62,"waiting":null,"decidable":true,"reason":null,"lossy":false},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21,"waiting":null,"decidable":true,"reason":null,"lossy":false}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0},"waiting":null}}
 ```
 
 `sources --diff <id>` answers for one stub and carries the difference between the approved text and
@@ -621,14 +623,21 @@ the file now in `diff`, a unified diff in one string:
 `diff` is `null` when there is nothing to compare: the file is `ok` or `missing`, was never approved
 (`unrecorded`), or is `changed` but git no longer has the approved text. In the last two cases the
 file is read whole. A source can hold anything, quotes and control characters
-included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff`, and
-`lossy` says so. An id no document has, or a document that links no source, is refused as
+included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff` and
+from `source`, and `lossy` says so. A stub not accepted yet reads its status in `state`, as in
+`sources`. An id no document has, or a document that links no source, is refused as
 `not-found`. These reads write nothing: the `revision` stays where it was.
 
 `read <id>` gives the text being decided: the document's whole file, frontmatter included, whatever its
 status, and for a stub the file it links as it is now (`source` is `null` for any other document, and
-for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text and its `lossy` says
-so. An id no document has is refused as `not-found`. It has no text form.
+for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text or a file name and
+the `lossy` beside it says so. An id no document has is refused as `not-found`. It has no text form.
+
+Each proposal and each source carries `lossy` too: `true` when one of its strings held bytes that are
+not UTF-8 and they were dropped. A file name read without them may be another file's — `docs/w<FF>.md`
+reads `docs/w.md` — so do not open a `path` or `source` whose record says `lossy`. On a machine
+without `iconv`, every byte outside ASCII becomes `?` instead, one `?` per byte, and `lossy` says so
+too.
 
 ```json
 {"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:51Z","data":{"id":"convention-release","status":"proposed","path":".ai/knowledge/sources/release.md","bytes":261,"content":"---\nid: convention-release\n...","lossy":false,"source":{"path":"docs/release.md","bytes":21,"content":"# Release\n...","lossy":false}}}

@@ -93,7 +93,7 @@ hk_lock_release() {
   ' _ "$@"
 }
 
-# hk_leftover <path> — call _hk_worktree_leftover directly, the same way
+# hk_leftover <path> — call jig_worktree_leftover directly, the same way
 # hk_decide calls housekeeping_decide: source the libraries in a subshell and
 # invoke the function under test, so its exit code is the caller's.
 hk_leftover() {
@@ -102,14 +102,14 @@ hk_leftover() {
     JIG_LIB="$JIG_HOME/scripts/lib"
     . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
     . "$JIG_LIB/housekeeping.sh"
-    _hk_worktree_leftover "$@"
+    jig_worktree_leftover "$@"
   ' _ "$@"
 }
 
 # hk_link <target-abs> <link-abs> — plant a directory link the same way the
 # framework itself would (jig_link_dir, common.sh): a real symlink on
 # macOS/Linux, an NTFS junction on Windows Git Bash, where plain `ln -s`
-# copies instead of linking -- exactly the case `_hk_worktree_leftover`
+# copies instead of linking -- exactly the case `jig_worktree_leftover`
 # exists to clean up (its own comment: "measured on windows-latest"). Skips
 # the calling test when neither kind of link can be made here.
 hk_link() { plant_dir_link "$1" "$2"; }
@@ -578,6 +578,66 @@ test_housekeeping_keeps_a_task_it_cannot_archive_and_goes_on_to_the_rest() {
   assert_file_contains .ai/workspace/tasks/good-one/state "archived_reason: stale"
   assert_file_contains .ai/runtime/housekeeping.log "task=bad-one status=active remote=unknown via=none action=preserve"
   assert_file_contains .ai/runtime/housekeeping.log "task=good-one status=active remote=unknown via=none action=archive reason=stale"
+}
+
+# Finished tasks leave the queue (adr-20261107-a-finished-task-leaves-the-queue):
+# one gone by hand, one closed, one abandoned before this version took entries
+# out (the start-of-run prune), one the run itself archives as stale (the
+# archive's own prune); the live one stays.
+test_housekeeping_takes_finished_tasks_out_of_the_queue() {
+  hk_setup
+  fixture_task live "no-such-branch" active
+  fixture_task closed "no-such-branch" consolidated
+  fixture_task vanished "no-such-branch" active
+  fixture_task old-one "no-such-branch" abandoned "updated_at:$(hk_days_ago 30)"
+  fixture_task idle "no-such-branch" active "updated_at:$(hk_days_ago 90)"
+  local id
+  for id in live closed vanished idle; do jig queue set "$id" --priority 2 >/dev/null; done
+  # Queueing touched nothing in the state, so idle is still stale.
+  assert_file_contains .ai/workspace/tasks/idle/state "updated_at: $(hk_days_ago 90)"
+  jig queue depend live --on closed --reason "needs closed" >/dev/null
+  # Queued while abandoned by hand, before this version took entries out.
+  jig queue set old-one --priority 3 >/dev/null
+  rm -rf .ai/workspace/tasks/vanished
+
+  run jig housekeeping
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "queue: task:closed removed (consolidated)"
+  assert_contains "$OUT" "queue: task:vanished removed (gone)"
+  assert_contains "$OUT" "queue: task:old-one removed (abandoned)"
+  assert_contains "$OUT" "queue: task:live no longer waits for task:closed (finished)"
+  assert_file_contains .ai/workspace/tasks/idle/state "status: archived"
+  assert_eq "$(printf 'item\ttask:live\t-\t100\t2')" "$(grep '^item' .ai/runtime/queue)"
+  assert_eq "" "$(grep '^dep' .ai/runtime/queue || true)"
+}
+
+# The prune reads the merges the last run logged, in a dry run and a real one
+# alike: a wait on a merged task is met in both.
+test_housekeeping_prune_reads_the_last_runs_merges_in_either_mode() {
+  hk_setup
+  fixture_task w "no-such-branch" active
+  fixture_task landed "no-such-branch" ready
+  jig queue depend w --on landed --reason "needs landed" >/dev/null
+  mkdir -p .ai/runtime
+  printf -- '--- run 2026-10-21T10:00:00Z forge=none\n2026-10-21T10:00:01Z task=landed status=ready remote=merged via=forge action=preserve\n' \
+    > .ai/runtime/housekeeping.log
+  run jig housekeeping --dry-run
+  assert_contains "$OUT" "queue: task:w would no longer wait for task:landed (finished)"
+  run jig housekeeping
+  assert_contains "$OUT" "queue: task:w no longer waits for task:landed (finished)"
+  assert_eq "" "$(grep '^dep' .ai/runtime/queue || true)"
+}
+
+test_housekeeping_dry_run_leaves_the_queue_alone() {
+  hk_setup
+  fixture_task closed "no-such-branch" consolidated
+  jig queue set closed --priority 2 >/dev/null
+  local before
+  before=$(cat .ai/runtime/queue)
+  run jig housekeeping --dry-run
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "queue: would remove task:closed (consolidated)"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
 }
 
 test_housekeeping_dry_run_archives_nothing() {
@@ -2888,7 +2948,7 @@ test_housekeeping_report_appended_to_the_log_changes_no_count() {
   assert_contains "$OUT" "2 tasks (1 live, 1 recorded at purge)"
 }
 
-# --- _hk_worktree_leftover (Windows leftover cleanup) -------------------------------------------------
+# --- jig_worktree_leftover (Windows leftover cleanup) -------------------------------------------------
 # On Windows, `git worktree remove` (no --force) has been seen to exit 0 and
 # leave the worktree directory behind, junction included (measured on
 # windows-latest, 2026-09-14). `_hk_worktree_retire` calls this function only
@@ -2899,7 +2959,7 @@ test_housekeeping_report_appended_to_the_log_changes_no_count() {
 # outside the worktree, and is the one thing here it would be catastrophic to
 # delete (RULES.md).
 # git is not exercised: macOS/Linux git removes the directory outright, so
-# these call _hk_worktree_leftover directly on a hand-built leftover, the way
+# these call jig_worktree_leftover directly on a hand-built leftover, the way
 # hk_decide calls housekeeping_decide.
 
 # hk_leftover_owner <dir> — build a workspace a leftover's junction borrows

@@ -4258,7 +4258,7 @@ test_proposed_json_lists_each_proposal_with_its_facts() {
 
   _kmj proposed
   assert_eq 0 "$RC"
-  assert_eq '"data":{"proposals":[{"id":"feature-alpha","type":"feature","domains":["a","b"],"path":".ai/knowledge/features/alpha.md","paths":["src/**"],"summary":"Says: alpha, with a colon","source":null,"waiting":null,"decidable":false,"reason":"not-on-base"},{"id":"convention-stub","type":"convention","domains":["a"],"path":".ai/knowledge/sources/stub.md","paths":[],"summary":null,"source":"docs/x.md","waiting":null,"decidable":false,"reason":"not-on-base"}],"waiting":null}' \
+  assert_eq '"data":{"proposals":[{"id":"feature-alpha","type":"feature","domains":["a","b"],"path":".ai/knowledge/features/alpha.md","paths":["src/**"],"summary":"Says: alpha, with a colon","source":null,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},{"id":"convention-stub","type":"convention","domains":["a"],"path":".ai/knowledge/sources/stub.md","paths":[],"summary":null,"source":"docs/x.md","waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}],"waiting":null}' \
     "$(_kmj_data)"
   _kmj_valid kmj.out
   # The envelope's revision is the clone's, as every read reports it.
@@ -4292,6 +4292,14 @@ test_knowledge_json_in_a_repository_without_jig_is_not_initialised() {
   _kmj sources
   assert_eq 1 "$RC"
   assert_eq not-initialised "$(_kmj_code)"
+}
+
+# _kmj_summary <file> <text> — the document's summary set to <text>, as a person
+# writing it by hand would.
+_kmj_summary() {
+  sed 's/^summary:.*//' "$1" > summary.new
+  { sed -n '1,/^status:/p' summary.new; printf 'summary: "%s"\n' "$2"; sed '1,/^status:/d' summary.new; } > "$1"
+  rm summary.new
 }
 
 test_proposed_json_keeps_hostile_text_valid() {
@@ -4332,11 +4340,11 @@ test_sources_json_reports_every_state_and_the_counts() {
   assert_eq 0 "$RC"
   assert_eq "\"data\":{\"sources\":[$(
     printf '%s' \
-      '{"id":"convention-changed","state":"changed","status":"active","path":".ai/knowledge/sources/changed.md","source":"docs/changed.md","bytes":13,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
-      '{"id":"convention-gone","state":"missing","status":"active","path":".ai/knowledge/sources/gone.md","source":"docs/gone.md","bytes":null,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
-      '{"id":"convention-ok","state":"ok","status":"active","path":".ai/knowledge/sources/ok.md","source":"docs/ok.md","bytes":5,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
-      '{"id":"convention-unrecorded","state":"unrecorded","status":"active","path":".ai/knowledge/sources/unrecorded.md","source":"docs/unrecorded.md","bytes":9,"waiting":null,"decidable":false,"reason":"not-on-base"},' \
-      '{"id":"convention-waiting","state":"proposed","status":"proposed","path":".ai/knowledge/sources/waiting.md","source":"docs/waiting.md","bytes":8,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+      '{"id":"convention-changed","state":"changed","status":"active","path":".ai/knowledge/sources/changed.md","source":"docs/changed.md","bytes":13,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},' \
+      '{"id":"convention-gone","state":"missing","status":"active","path":".ai/knowledge/sources/gone.md","source":"docs/gone.md","bytes":null,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},' \
+      '{"id":"convention-ok","state":"ok","status":"active","path":".ai/knowledge/sources/ok.md","source":"docs/ok.md","bytes":5,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},' \
+      '{"id":"convention-unrecorded","state":"unrecorded","status":"active","path":".ai/knowledge/sources/unrecorded.md","source":"docs/unrecorded.md","bytes":9,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},' \
+      '{"id":"convention-waiting","state":"proposed","status":"proposed","path":".ai/knowledge/sources/waiting.md","source":"docs/waiting.md","bytes":8,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}'
   )],\"counts\":{\"linked\":5,\"changed\":1,\"unrecorded\":1,\"missing\":1},\"waiting\":null}" "$(_kmj_data)"
   _kmj_valid kmj.out
 
@@ -4488,16 +4496,83 @@ test_sources_diff_json_stays_valid_in_the_c_locale_too() {
   assert_contains "$(cat kmj.out)" '"lossy":true}'
 }
 
-test_sources_json_stays_valid_when_a_source_path_is_not_utf8() {
+# A source named with a byte that is not UTF-8 reads without it, and that name can
+# be another file's: here docs/w.md exists. The record that lost the byte says so,
+# and only that record. The byte is planted with printf: sed reads `\3` in an
+# expression as a back-reference and refuses it.
+test_sources_json_flags_a_source_path_that_is_not_utf8() {
   km_setup
   km_track_file docs/x.md "line one"
+  km_track_file docs/w.md "another file"
+  km_track_file docs/y.md "line one"
   jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
-  sed 's|^source: docs/x.md|source: docs/x\377.md|' .ai/knowledge/sources/stub.md > stub.new
+  jig knowledge new convention clean --source docs/y.md --proposed --domains a >/dev/null
+  sed "$(printf 's|^source: docs/x.md|source: docs/w\377.md|')" .ai/knowledge/sources/stub.md > stub.new
   mv stub.new .ai/knowledge/sources/stub.md
+  [ -n "$(LC_ALL=C tr -cd '\377' < .ai/knowledge/sources/stub.md)" ] || fail "the byte was not planted"
 
   _kmj sources
   assert_eq 0 "$RC"
   _kmj_valid kmj.out
+  assert_contains "$OUT" '"linked":2,'
+  assert_contains "$OUT" '"id":"convention-stub","state":"proposed","status":"proposed","path":".ai/knowledge/sources/stub.md","source":"docs/w.md",'
+  assert_contains "$OUT" '"source":"docs/y.md","bytes":9,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},{"id":"convention-stub",'
+  assert_contains "$OUT" '"source":"docs/w.md","bytes":null,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":true}],'
+
+  _kmj proposed
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":"docs/w.md","waiting":null,"decidable":false,"reason":"not-on-base","lossy":true}'
+  assert_contains "$OUT" '"source":"docs/y.md","waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}'
+
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_eq '"data":{"id":"convention-stub","source":"docs/w.md","state":"proposed","approved_hash":null,"diff":null,"lossy":true}' "$(_kmj_data)"
+}
+
+# The same for the file a stub links in `knowledge read`, which exists here. Some
+# file systems (APFS) refuse such a name, and there it cannot be linked at all.
+test_read_json_flags_a_source_path_that_is_not_utf8() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  km_track_file docs/w.md "another file"
+  { printf 'its own\n' > "$(printf 'docs/w\377.md')"; } 2>/dev/null \
+    || skip "this file system refuses a name that is not UTF-8"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+  sed "$(printf 's|^source: docs/x.md|source: docs/w\377.md|')" .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+
+  _kmj read convention-stub
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" '"source":{"path":"docs/w.md","bytes":8,"content":"its own\n","lossy":true}}}'
+}
+
+# A stub that is not accepted has one state in both reads: its status.
+test_sources_diff_json_gives_a_stub_not_accepted_its_status() {
+  km_setup
+  km_track_file docs/x.md "line one"
+  jig knowledge new convention stub --source docs/x.md --proposed --domains a >/dev/null
+
+  _kmj sources
+  assert_contains "$OUT" '"id":"convention-stub","state":"proposed",'
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_eq '"data":{"id":"convention-stub","source":"docs/x.md","state":"proposed","approved_hash":null,"diff":null,"lossy":false}' "$(_kmj_data)"
+
+  # Rejected after it was accepted and its source changed: the state is the status,
+  # the diff is still there to read.
+  jig knowledge accept convention-stub >/dev/null
+  printf 'line two\n' >> docs/x.md
+  sed 's/^status: .*/status: rejected/' .ai/knowledge/sources/stub.md > stub.new
+  mv stub.new .ai/knowledge/sources/stub.md
+  _kmj sources
+  assert_contains "$OUT" '"id":"convention-stub","state":"rejected",'
+  _kmj sources --diff convention-stub
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"state":"rejected","approved_hash":"'
+  assert_contains "$OUT" '+line two\n","lossy":false}'
 }
 
 # Where there is no iconv, every byte outside ASCII goes instead: lossy, but
@@ -4542,6 +4617,90 @@ test_sources_diff_json_drops_a_character_above_the_unicode_range() {
   assert_eq 0 "$RC"
   _kmj_valid kmj.out
   assert_contains "$OUT" '"lossy":true}'
+}
+
+# A character from U+100000 to U+10FFFF is valid and stays, and so does every other
+# letter of the answer: only a lead byte above that range is dropped, as one
+# character, never the whole answer's non-ASCII text, nor a carriage return, nor
+# the bytes after a lead cut short at the end.
+test_utf8_clean_keeps_the_top_plane_and_drops_only_what_is_above_it() {
+  local out
+  out=$(bash -c '
+    set -eu
+    . "$1/scripts/lib/knowledge.sh"
+    _km_utf8_clean "$(printf "\320\237\321\200\320\270 \364\217\277\275 ok")"
+    printf "%s|%s" "$_KM_LOSSY" "$_KM_CLEAN"
+    _km_utf8_clean "$(printf "\320\237 \364\220\200\200 z\r\nend")"
+    printf "|%s|%s" "$_KM_LOSSY" "$_KM_CLEAN"
+    _km_utf8_clean $'"'"'line\364\n'"'"'
+    printf "|%s|%s|" "$_KM_LOSSY" "$_KM_CLEAN"
+  ' _ "$JIG_HOME")
+  command -v iconv >/dev/null 2>&1 || skip "no iconv: every byte outside ASCII becomes ?"
+  assert_eq "$(printf 'false|\320\237\321\200\320\270 \364\217\277\275 ok|true|\320\237  z\r\nend|true|line\n|')" "$out"
+}
+
+test_drop_above_unicode_takes_a_long_text_with_many_pairs_in_one_pass() {
+  local out
+  # The inputs are made with printf -v, not $(...): a CR before the newline
+  # $(...) strips must reach the function, and the output ends in a byte that
+  # is not a newline for the same reason. CRs sit before, after and between
+  # the pairs, and at the very end.
+  out=$(bash -c '
+    set -eu
+    . "$1/scripts/lib/knowledge.sh"
+    printf -v unit "lorem ipsum *dolor\r\n sit amet, consectetur adipiscing elit \364\220"
+    big=$unit; n=1
+    while [ "$n" -lt 4096 ]; do big=$big$big; n=$((n * 2)); done
+    printf -v cr "\r"
+    printf -v head "\364\220a\364\217\277\275 \r\364\240\r\364\364\240\r\n"
+    _km_drop_above_unicode "$head$big$cr"
+    LC_ALL=C
+    printf "%s|%s" "${#big}" "${#_KM_CLEAN}"
+    case $_KM_CLEAN in *"elit $cr") printf "|ends-cr" ;; esac
+    printf -v small "\r\364\220\r a\364\364\240\r\n\364\217\r\364\r"
+    _km_drop_above_unicode "$small"
+    printf "|%sE" "$_KM_CLEAN"
+  ' _ "$JIG_HOME")
+  assert_eq "$(printf '249856|241676|ends-cr|\r\r a\364\r\n\364\217\r\364\rE')" "$out"
+}
+
+test_proposed_json_keeps_other_letters_beside_a_top_plane_character() {
+  command -v iconv >/dev/null 2>&1 || skip "no iconv: every byte outside ASCII becomes ?"
+  km_setup
+  jig knowledge new feature alpha --proposed --domains a >/dev/null
+  jig knowledge new feature beta --proposed --domains a >/dev/null
+  _kmj_summary .ai/knowledge/features/alpha.md "$(printf 'top \364\217\277\275 plane')"
+  _kmj_summary .ai/knowledge/features/beta.md "$(printf '\320\237\321\200\320\270\320\262\320\265\321\202')"
+
+  _kmj proposed
+  assert_eq 0 "$RC"
+  _kmj_valid kmj.out
+  assert_contains "$OUT" "$(printf '"summary":"top \364\217\277\275 plane"')"
+  assert_contains "$OUT" "$(printf '"summary":"\320\237\321\200\320\270\320\262\320\265\321\202"')"
+  assert_not_contains "$OUT" '"lossy":true'
+}
+
+# _km_json_quote_text stands in for json_quote on long texts (conventions/
+# json-output.md); what it prints must be what json_quote prints, for every control
+# byte, DEL, a quote, a backslash and text outside ASCII. Its one pass ends every
+# line with a newline, so the text compared ends in one.
+test_json_quote_text_prints_what_json_quote_prints() {
+  local out
+  out=$(bash -c '
+    set -eu
+    . "$1/scripts/lib/json.sh"
+    . "$1/scripts/lib/knowledge.sh"
+    s="$(printf "a\001\002\003\004\005\006\007\010\t\n\013\014\r\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037 \177 \" \\\\ \320\237 \360\237\230\200 z")"
+    s="$s
+"
+    json_quote "$s"; want=$_JSON
+    _km_json_quote_text "$s"; got=$_JSON
+    [ "$want" = "$got" ] || { printf "json_quote:          %s\n_km_json_quote_text: %s\n" "$want" "$got"; exit 1; }
+    printf "%s" "$got"
+  ' _ "$JIG_HOME") || fail "the two escapers differ: $out"
+  assert_contains "$out" '\u0001\u0002'
+  assert_contains "$out" '\u001f'
+  assert_contains "$out" '\u0008\t\n\u000b\u000c\r'
 }
 
 # --- knowledge read --json (schemas/json.md) ---------------------------------------
@@ -4733,8 +4892,8 @@ test_knowledge_decisions_in_a_row_share_a_branch_and_show_as_waiting() {
   assert_eq 0 "$RC"
   # Still proposed here, and decided on the way.
   assert_contains "$OUT" '"id":"feature-alpha"'
-  assert_contains "$OUT" '"source":null,"waiting":{"decision":"accepted","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"},"decidable":true,"reason":null}'
-  assert_contains "$OUT" '"source":null,"waiting":{"decision":"rejected","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"},"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"source":null,"waiting":{"decision":"accepted","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"},"decidable":true,"reason":null,"lossy":false}'
+  assert_contains "$OUT" '"source":null,"waiting":{"decision":"rejected","branch":"knowledge/decisions","pr":"https://github.com/example/example/pull/42"},"decidable":true,"reason":null,"lossy":false}'
   local tip
   tip=$(git rev-parse knowledge/decisions)
   assert_contains "$OUT" "\"waiting\":{\"target\":\"knowledge\",\"branch\":\"knowledge/decisions\",\"base\":\"main\",\"commit\":\"$tip\",\"commits\":2,\"pushed\":true,\"pr\":\"https://github.com/example/example/pull/42\",\"merged\":false}}"
@@ -4743,7 +4902,7 @@ test_knowledge_decisions_in_a_row_share_a_branch_and_show_as_waiting() {
 test_knowledge_proposed_json_says_nothing_waits_when_nothing_does() {
   _kd_repo commit
   run jig knowledge proposed --json
-  assert_contains "$OUT" '"source":null,"waiting":null,"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
   assert_contains "$OUT" '],"waiting":null}'
 }
 
@@ -4820,7 +4979,7 @@ test_knowledge_reviewed_takes_several_and_a_changed_source_shows_as_waiting() {
   git push -q origin main
   run jig knowledge sources --json
   assert_contains "$OUT" '"state":"changed"'
-  assert_contains "$OUT" '"bytes":12,"waiting":null,"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"bytes":12,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
   assert_contains "$OUT" '},"waiting":null}'
   run jig knowledge reviewed convention-stub feature-alpha --date 2026-01-02 --revision "$(_kd_rev)" --json
   assert_eq 0 "$RC"
@@ -4828,7 +4987,7 @@ test_knowledge_reviewed_takes_several_and_a_changed_source_shows_as_waiting() {
   assert_eq 2026-01-02 "$(own_tree_show knowledge/decisions .ai/knowledge/features/alpha.md | sed -n 's/^reviewed_at: //p')"
   assert_eq "$(git rev-parse HEAD:docs/x.md)" "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md | sed -n 's/^source_hash: //p')"
   run jig knowledge sources --json
-  assert_contains "$OUT" '"bytes":12,"waiting":{"decision":"reviewed","branch":"knowledge/decisions","pr":null},"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"bytes":12,"waiting":{"decision":"reviewed","branch":"knowledge/decisions","pr":null},"decidable":true,"reason":null,"lossy":false}'
   assert_contains "$OUT" '"state":"changed"'
 }
 
@@ -4962,7 +5121,7 @@ test_knowledge_a_source_changed_only_here_is_not_decidable_and_its_drop_is_refus
   git add docs
   git commit -q -m "source changed, not pushed"
   run jig knowledge sources --json
-  assert_contains "$OUT" '"state":"changed","status":"active","path":".ai/knowledge/sources/stub.md","source":"docs/x.md","bytes":12,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+  assert_contains "$OUT" '"state":"changed","status":"active","path":".ai/knowledge/sources/stub.md","source":"docs/x.md","bytes":12,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}'
   run jig knowledge reject convention-stub --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-on-base"'
@@ -4973,7 +5132,7 @@ test_knowledge_a_source_changed_only_here_is_not_decidable_and_its_drop_is_refus
   # Once pushed, it is.
   git push -q origin main
   run jig knowledge sources --json
-  assert_contains "$OUT" '"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"decidable":true,"reason":null,"lossy":false}'
   run jig knowledge reject convention-stub --json
   assert_eq 0 "$RC"
   own_tree_gone
@@ -4985,8 +5144,8 @@ test_knowledge_a_proposal_only_in_local_commits_is_not_decidable_and_refused_wit
   git add -A .ai/knowledge
   git commit -q -m gamma
   run jig knowledge proposed --json
-  assert_contains "$OUT" '"id":"feature-alpha","type":"feature","domains":[],"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
-  assert_contains "$OUT" '"id":"feature-gamma","type":"feature","domains":[],"path":".ai/knowledge/features/gamma.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+  assert_contains "$OUT" '"id":"feature-alpha","type":"feature","domains":[],"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
+  assert_contains "$OUT" '"id":"feature-gamma","type":"feature","domains":[],"path":".ai/knowledge/features/gamma.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}'
   run jig knowledge accept feature-gamma --revision "$(_kd_rev)" --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-on-base"'
@@ -5015,8 +5174,8 @@ test_knowledge_a_proposal_that_reached_the_base_after_the_branch_was_cut_is_not_
   git push -q origin main
   git fetch -q origin
   run jig knowledge proposed --json
-  assert_contains "$OUT" '"id":"feature-beta","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
-  assert_contains "$OUT" '"path":".ai/knowledge/features/gamma.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-branch"}'
+  assert_contains "$OUT" '"id":"feature-beta","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
+  assert_contains "$OUT" '"path":".ai/knowledge/features/gamma.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-branch","lossy":false}'
   run jig knowledge reject feature-gamma --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-on-branch"'
@@ -5030,8 +5189,8 @@ test_knowledge_an_uncommitted_proposal_without_origin_is_not_on_base() {
   git remote remove origin
   jig knowledge new feature delta --proposed >/dev/null
   run jig knowledge proposed --json
-  assert_contains "$OUT" '"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
-  assert_contains "$OUT" '"path":".ai/knowledge/features/delta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-base"}'
+  assert_contains "$OUT" '"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
+  assert_contains "$OUT" '"path":".ai/knowledge/features/delta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}'
   run jig knowledge accept feature-delta --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-on-base"'
@@ -5063,7 +5222,7 @@ test_knowledge_an_id_changed_only_here_at_a_path_the_tree_has_is_not_found() {
   mv beta.new .ai/knowledge/features/beta.md
   # The read judges the path, which is there; the write finds no such id there.
   run jig knowledge proposed --json
-  assert_contains "$OUT" '"id":"feature-beta2","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null}'
+  assert_contains "$OUT" '"id":"feature-beta2","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
   run jig knowledge accept feature-beta2 --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-found"'

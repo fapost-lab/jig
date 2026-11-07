@@ -37,7 +37,8 @@ builds every string with `json_quote` (adr-20261015-a-read-is-one-json-envelope;
 `status`, `task` and `queue`: "which flags still stand" is decided there once. It is the one shared
 library that calls a command library's function — its rechecks ask `task_state_get` — so a reader
 of the rechecks sources `lib/task.sh` before it; `queue`, which may not source `task.sh`, reads only
-the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies have landed. `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
+the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies have landed, and
+`jig queue prune` which of them are met (adr-20261107-a-finished-task-leaves-the-queue). `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
 forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
@@ -88,7 +89,9 @@ same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-age
 adr-20260930-an-upgrade-is-a-unit-of-work, and for the merge
 adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), `jig_verify_busy_dir`,
 `jig_verify_busy_ttl` and `jig_verify_busy_holder` ("is `jig verify` running in this clone, and where" —
-`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in). One command
+`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in), and
+`jig_worktree_leftover` ("clear what `git worktree remove` left: links and empty directories only" —
+housekeeping for a task worktree, `owntree.sh` for its tree). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 

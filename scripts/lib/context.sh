@@ -15,7 +15,7 @@ CTX_USAGE="usage: jig context [--task <id>] [--files <list>|-] [--domains a,b] [
        jig context resolve   [selectors] [--catalog]
        jig context pending   [selectors]
        jig context guard     [selectors]
-       jig context acknowledge --task <id> [--stage <stage>] [--revoke] --files <list>|-
+       jig context acknowledge --task <id> [--stage <stage> | --revoke] --files <list>|-
 
 selectors: --task <id>|--no-task --stage <stage> --files <list>|- --domains a,b --topics a,b --ids a,b --all"
 
@@ -1139,10 +1139,11 @@ _ctx_is_linked_source() {
   return 1
 }
 
-# jig context acknowledge --task <id> [--stage <stage>] [--revoke] --files <list>|-
+# jig context acknowledge --task <id> [--stage <stage> | --revoke] --files <list>|-
 #
 # Records documents the agent states it has read, or with --revoke withdraws
-# such a record. Each ledger line is `<hash><TAB><path><TAB><stage>`: the stage
+# such a record. A revoke drops a path's line whatever stage it was made at, so
+# `--revoke --stage` is refused rather than the stage silently ignored. Each ledger line is `<hash><TAB><path><TAB><stage>`: the stage
 # the acknowledgement was made at, `-` when none was given. A line written
 # before the stage field existed has two fields and reads as made at no stage.
 # The stage is the acknowledger's own statement, with the standing of the
@@ -1153,7 +1154,7 @@ _ctx_is_linked_source() {
 # named, and the ledger is untouched unless all of them pass.
 ctx_acknowledge() {
   local task_id="" files_arg="" files_stdin=0 files ledger tmp rel t hash rest count
-  local stage="-" revoke=0 norm="" problems="" have=""
+  local stage="-" stage_given=0 revoke=0 norm="" problems="" have=""
   t=$(printf '\t')
 
   while [ $# -gt 0 ]; do
@@ -1168,12 +1169,16 @@ ctx_acknowledge() {
         [ $# -ge 2 ] || jig_die "context: --stage requires a value"
         jig_valid_stage "$2" || jig_die "context: invalid stage: $2"
         stage="$2"
+        stage_given=1
         shift 2
         ;;
       --revoke) revoke=1; shift ;;
       *) jig_die "context: unknown argument: $1" ;;
     esac
   done
+  if [ "$revoke" -eq 1 ] && [ "$stage_given" -eq 1 ]; then
+    jig_die "context acknowledge: --revoke takes no --stage: a revoke withdraws the path's acknowledgement whatever stage it was made at"
+  fi
 
   [ -n "$task_id" ] || jig_die "context acknowledge: --task is required"
   [ -f "$(task_dir "$task_id")/state" ] || jig_die "context: unknown task: $task_id"

@@ -92,45 +92,119 @@ _ot_tree_path() {
 # click retries, and a command that sits behind a stuck one helps nobody. The shape of
 # the housekeeping lock, with `jig_verify_busy_holder` saying whether a holder lives.
 
-# Longer than any write: a clone, a commit, a push and a forge call.
+# Longer than any write: a clone, a commit, a push and a forge call. What keeps a live
+# write inside it is _OT_NET_BUDGET: every call that reaches the network under the lock
+# goes through jig_net (common.sh), with a deadline set when the lock is taken, so a
+# stalled origin or forge costs a write an answer and never makes its holder read as
+# gone while it runs. The rest of the ttl is for what is local: the tree, the commit
+# and its hooks.
 _OT_LOCK_TTL=900
+_OT_NET_BUDGET=600
 
 _ot_lock_try() {
   mkdir -p "$1/busy" 2>/dev/null || return 1
   jig_claim_file "$1/busy/run" || return 1
   printf 'checkout: %s\npid: %s\n' "$JIG_PROJECT" "$$" > "$1/busy/run" 2>/dev/null || true
   _OT_LOCK_DIR="$1"
+  _JIG_NET_DEADLINE=$(($(date +%s) + _OT_NET_BUDGET))
 }
 
-# _ot_lock_clear <dir> — the two deletions of the lock, for a holder that is gone and for
-# this run's own: the one file a run claims, then `rmdir`, which refuses anything else
-# there. Only at a path of the lock's shape.
-_ot_lock_clear() {
+# _ot_lock_shaped <dir> — <dir> is a path of the lock's shape, the one place its
+# deletions run.
+_ot_lock_shaped() {
   case "$1" in
-    */"$JIG_AI_DIR"/runtime/writes/lock | */jig/writes/lock) ;;
-    *) return 0 ;;
+    */"$JIG_AI_DIR"/runtime/writes/lock | */jig/writes/lock) return 0 ;;
   esac
+  return 1
+}
+
+# _ot_lock_clear <dir> — the two deletions of this run's own lock: the one file a run
+# claims, then `rmdir`, which refuses anything else there. Only at a path of the lock's
+# shape.
+_ot_lock_clear() {
+  _ot_lock_shaped "$1" || return 0
   rm -f "$1/busy/run" 2>/dev/null || true
   rmdir "$1/busy" 2>/dev/null || true
   return 0
 }
 
-# _ot_lock_acquire <who> — claim the lock, or refuse write-busy. A holder that is gone
-# is cleared first. Not able to make the directory is a refusal too: a write that
-# nothing holds off is the thing the lock is for.
-_ot_lock_acquire() {
+# _ot_lock_id <file> — which record stands at <file>: `<pid>.<mtime>`, the pid `none`
+# when the record names none (a holder stopped between its claim and its first line).
+# Non-zero when there is no record.
+_ot_lock_id() {
+  local mtime line pid=none
+  mtime=$(jig_file_mtime "$1") || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "pid: "*) pid=${line#pid: } ;;
+    esac
+  done 2>/dev/null < "$1" || true
+  case "$pid" in
+    '' | *[!0-9]*) pid=none ;;
+  esac
+  printf '%s.%s\n' "$pid" "$mtime"
+}
+
+# _ot_lock_take_back <dir> — take back the record of a holder that is gone, so that two
+# writers who both found it gone cannot both act on it: the second would remove the
+# first one's fresh claim. The record is taken back under a claim of its own,
+# `busy/clear.<pid>.<mtime>`, created exclusively (jig_claim_file) and named after that
+# record, and under it the record goes only while it is still that record and its holder
+# is still gone. Nobody removes a record without its claim, and the one that comes after
+# it has another pid or mtime, so a late writer with the same claim finds a record that
+# is not the one it judged and leaves it. The claim is removed by the call that made it.
+# One a writer stopped inside those few lines left is never removed here — that would be
+# a check-then-remove again — and the refusal names it for a person. 0: the way is clear
+# for a claim of the lock; 1: another is taking it back (_OT_LOCK_BUSY).
+_ot_lock_take_back() {
+  local dir="$1" run="$1/busy/run" id claim
+  _ot_lock_shaped "$dir" || return 0
+  id=$(_ot_lock_id "$run") || return 0
+  claim="$dir/busy/clear.$id"
+  if ! jig_claim_file "$claim"; then
+    _OT_LOCK_BUSY="another write is taking back a lock whose holder is gone; try again in a moment, and if this goes on, delete $claim, which one stopped part-way left"
+    return 1
+  fi
+  if [ "$(_ot_lock_id "$run" 2>/dev/null)" = "$id" ] \
+    && ! jig_verify_busy_holder "$dir" "$_OT_LOCK_TTL" >/dev/null 2>&1; then
+    rm -f "$run" 2>/dev/null || true
+  fi
+  rm -f "$claim" 2>/dev/null || true
+  return 0
+}
+
+# _ot_lock_take <who> — claim the lock: 0 taken, 1 another holds it (_OT_LOCK_BUSY says
+# why). A holder that is gone is taken back first (_ot_lock_take_back). Not able to make
+# the directory dies: a write that nothing holds off is the thing the lock is for.
+_OT_LOCK_BUSY=""
+_ot_lock_take() {
   local who="$1" dir holder
+  _OT_LOCK_BUSY=""
   dir="$(ot_records_dir)/lock"
   if _ot_lock_try "$dir"; then
     return 0
   fi
+  # A holder that gave the lock back between the `mkdir -p` and the claim took `busy`
+  # with it: once more, then it is the directory that cannot be made.
+  if [ ! -d "$dir/busy" ] && _ot_lock_try "$dir"; then
+    return 0
+  fi
   [ -d "$dir/busy" ] || jig_die "$who: cannot create $dir"
   if holder=$(jig_verify_busy_holder "$dir" "$_OT_LOCK_TTL" 2>/dev/null); then
-    jig_fail write-busy "$who: another write is running in this clone (${holder#* }); try again in a moment"
+    _OT_LOCK_BUSY="another write is running in this clone (${holder#* }); try again in a moment"
+    return 1
   fi
-  _ot_lock_clear "$dir"
-  _ot_lock_try "$dir" \
-    || jig_fail write-busy "$who: another write just started in this clone; try again in a moment"
+  _ot_lock_take_back "$dir" || return 1
+  if _ot_lock_try "$dir"; then
+    return 0
+  fi
+  _OT_LOCK_BUSY="another write just started in this clone; try again in a moment"
+  return 1
+}
+
+# _ot_lock_acquire <who> — claim the lock, or refuse write-busy.
+_ot_lock_acquire() {
+  _ot_lock_take "$1" || jig_fail write-busy "$1: $_OT_LOCK_BUSY"
 }
 
 # _ot_lock_mine — this run still holds the lock. A write that outlived the ttl has had it
@@ -148,6 +222,7 @@ _ot_lock_mine() {
 _ot_lock_release() {
   local dir="$_OT_LOCK_DIR"
   [ -n "$dir" ] || return 0
+  _JIG_NET_DEADLINE=""
   _ot_lock_mine || { _OT_LOCK_DIR=""; return 0; }
   _OT_LOCK_DIR=""
   _ot_lock_clear "$dir"
@@ -161,8 +236,15 @@ _ot_lock_release() {
 # (RULES.md). Never `reset --hard` or `clean`: a tree that went wrong goes whole. Git takes
 # its registration with it, also when the directory has gone, and only that one: `git
 # worktree prune` would drop any worktree whose directory is merely away for the moment.
+# On Windows git can drop the registration and leave the directory: what it left,
+# once git no longer knows the path, goes the way housekeeping clears a task worktree's
+# leftover, links and empty directories only. Anything else stays, and the next write
+# names it, refused `tree-in-the-way`.
 _ot_tree_remove() {
   git -C "$1" worktree remove --force "$2" >/dev/null 2>&1 || true
+  [ -e "$2" ] || return 0
+  ! _ot_tree_registered "$2" || return 0
+  jig_worktree_leftover "$2" || true
 }
 
 # _ot_tree_registered <path> — git may still have our tree registered, its directory gone.
@@ -270,7 +352,7 @@ _ot_origin_heads() {
     return 0
   fi
   if _OT_HEADS=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-    git -C "$JIG_PROJECT" ls-remote --heads origin 2>/dev/null); then
+    jig_net git -C "$JIG_PROJECT" ls-remote --heads origin 2>/dev/null); then
     _OT_HEADS_STATE=known
   else
     _OT_HEADS=""
@@ -956,7 +1038,11 @@ ot_record_write() {
   fi
   dir=${file%/*}
   mkdir -p "$dir" || jig_die "$OT_WHO: cannot create $dir"
-  tmp="$file.tmp.$$"
+  # A dotfile, as _jig_checkout_write names its temporary (checkout.sh): ot_targets
+  # reads the directory as a glob of record names, and a dot is legal in a spec id,
+  # so `spec-<id>.tmp.<pid>` left by a killed write would read as a record, and no
+  # name pattern that skipped it could tell it from a spec whose id has `.tmp.` in it.
+  tmp="$dir/.tmp.${file##*/}.$$"
   jig_cleanup_add "$tmp"
   {
     printf 'branch: %s\nbase: %s\ncommit: %s\n' "$OT_BRANCH" "$OT_BASE" "$OT_COMMIT"
@@ -978,8 +1064,6 @@ ot_targets() {
     name=${f##*/}
     case "$name" in
       knowledge) printf 'knowledge\n' ;;
-      # What a write killed in ot_record_write left, before its move, is no record.
-      spec-*.tmp.*) ;;
       spec-*) if jig_valid_id "${name#spec-}"; then printf 'spec:%s\n' "${name#spec-}"; fi ;;
     esac
   done

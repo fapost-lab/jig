@@ -94,6 +94,32 @@ _writes_over() {
   esac
 }
 
+# _writes_mark_merged <target> <sha> — after the merge of <sha>, mark the record merged:
+# under the lock again, and from the record as it reads now. The lock was given back for
+# the wait, so a write may have gone on meanwhile — on top of the branch, or, the forge
+# having merged it already, on a new name that the record now names. Either way that
+# record stands and its commit waits: only a record still of this branch, this tip and
+# this pull request, with the branch still at what merged, is marked. With the lock held
+# by another write the record stays as it is, and says so; it stops showing as waiting
+# once the base is fetched with the merge on it.
+_writes_mark_merged() {
+  local target="$1" sha="$2"
+  if ! _ot_lock_take "writes ship"; then
+    OT_NOTE="merged; another write held the lock, so the record of $target was left as it was"
+    return 0
+  fi
+  if ot_record_read "$target" && [ "$OT_R_BRANCH" = "$OT_BRANCH" ] && [ "$OT_R_COMMIT" = "$OT_COMMIT" ] \
+    && [ "$OT_R_PR" = "$OT_PR" ] && [ "$(_ot_sha "refs/heads/$OT_BRANCH")" = "$sha" ]; then
+    OT_BASE=$OT_R_BASE
+    OT_PUSHED=$OT_R_PUSHED
+    OT_SENT=$OT_R_SENT
+    OT_ENDED=$OT_R_ENDED
+    OT_MERGED=1
+    ot_record_write "$target"
+  fi
+  _ot_lock_release
+}
+
 # _writes_ship <target> — take a waiting write as far as the level now allows. The lock
 # is given back before the wait for CI, so edits can go on meanwhile; one that lands
 # moves the branch, and the merge, which names the commit, refuses.
@@ -150,19 +176,15 @@ _writes_ship() {
   # Only once the steps reached the pull request: one that stopped on the way has said why
   # in the note, and there is nothing of theirs to merge.
   if [ "$OT_LEVEL" = merge ] && [ -n "$OT_PR" ] && [ "$_OT_SHIP_AT_PR" = 1 ]; then
-    _ot_lock_release
     sha=$(_ot_sha "refs/heads/$OT_BRANCH")
+    _ot_lock_release
     _ot_capture jig_ship_merge "$who" "$OT_PR" "$sha" any || true
     case "$_OT_CAP" in
       *"not merged:"*) OT_NOTE=${_OT_CAP#*not merged: } ;;
       *merged*) OT_MERGED=1; OT_NOTE="" ;;
       *) OT_NOTE=$_OT_CAP ;;
     esac
-    # The lock was given back for the wait, so an edit may have landed meanwhile: its
-    # record stands, and its commit waits. Only a branch still at what merged is done.
-    if [ "$OT_MERGED" = 1 ] && [ "$(_ot_sha "refs/heads/$OT_BRANCH")" = "$sha" ]; then
-      ot_record_write "$target"
-    fi
+    [ "$OT_MERGED" != 1 ] || _writes_mark_merged "$target" "$sha"
   fi
   if [ -n "$_WRITES_AS_JSON" ]; then
     ot_answer_json

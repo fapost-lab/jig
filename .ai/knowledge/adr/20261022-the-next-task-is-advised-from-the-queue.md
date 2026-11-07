@@ -11,7 +11,7 @@ paths:
   - schemas/json.md
   - skills/jig-task/references/priority.md
 summary: Why jig queue next is the one place the next task is chosen, how a dependency counts as landed from task state, the last housekeeping run and a local epic-branch check, why priority, a started task and the top-level position order the rest, and why unqueued work is only counted.
-reviewed_at: 2026-11-03
+reviewed_at: 2026-11-07
 ---
 # The next task is advised by `jig queue next`, from the queue, task state and the last housekeeping run — never a task waiting for a dependency that has not landed, then priority, a started task, and position
 
@@ -89,3 +89,9 @@ another can be started first. The next-task-advice spec settled the rules with t
 > leaves a number already there unless asked; a triage task stays out, and a release's notes task until the rest of the release has merged. `jig task new` reminds it on
 > stderr. The table in `docs/manual-control.mdx` is a copy for readers, held equal by
 > `adapters::test_docs_priority_scale_matches_the_skill`. Unqueued work is still only counted.
+
+> **Amendment (2026-11-07).** `jig queue prune` (adr-20261107-a-finished-task-leaves-the-queue)
+> reuses `_queue_next_dep_state`: a wait whose target it reads `finished` is dropped as met, so a
+> closed task purged to trash no longer turns it `broken`. A wait on an abandoned, archived or
+> vanished task is kept and reads `broken` as before. A finished task is no longer queued at all,
+> so "a closed, abandoned or deleted task is never advised" now mostly holds by its absence.

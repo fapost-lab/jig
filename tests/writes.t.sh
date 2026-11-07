@@ -100,6 +100,18 @@ test_writes_in_a_row_share_one_branch_and_one_pull_request() {
   assert_contains "$(cat stub-gh/create.argv)" "$(printf -- '--title\nRoadmap edits: idea-x')"
 }
 
+test_writes_take_the_pull_request_from_what_gh_answers_not_from_its_warning() {
+  # Under the lock the call is bounded, and its output comes back through files: gh's
+  # warning about a dirty checkout, on stderr, is not the pull request.
+  own_tree_repo pr
+  own_tree_stub_gh
+  : > stub-gh/warn
+  _w_add "First"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"pr":"https://github.com/example/example/pull/42"'
+  assert_contains "$(cat .ai/runtime/writes/spec-idea-x)" "pr: https://github.com/example/example/pull/42"
+}
+
 test_writes_at_merge_do_not_wait_for_ci_and_say_how_to_merge() {
   own_tree_repo merge
   own_tree_stub_gh
@@ -224,6 +236,44 @@ HOOK
   run jig writes --json
   assert_contains "$OUT" '"target":"spec:idea-x"'
   assert_contains "$OUT" "\"commit\":\"$(git rev-parse spec/idea-x)\""
+}
+
+test_writes_ship_keeps_the_record_of_a_write_that_took_a_new_name_while_it_merged() {
+  own_tree_repo merge
+  own_tree_stub_gh
+  printf 'agent.ci_timeout: 0\n' >> .ai/config.local.yaml
+  _w_add "New"
+  printf 'spec/idea-x\n' > stub-gh/head
+  # While `writes ship` holds no lock the forge merged, and the next edit, finding the
+  # branch spent, went on a new name: the record names that one now.
+  cat > stub-gh/on-merge <<'HOOK'
+f=.ai/runtime/writes/spec-idea-x
+sed 's|^branch: .*|branch: spec/idea-x-2|' "$f" > "$f.new"
+mv "$f.new" "$f"
+HOOK
+  run jig writes ship spec:idea-x --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"merged":true'
+  assert_contains "$(cat .ai/runtime/writes/spec-idea-x)" "branch: spec/idea-x-2"
+  assert_contains "$(cat .ai/runtime/writes/spec-idea-x)" "merged: 0"
+}
+
+test_writes_ship_leaves_the_record_to_a_write_that_holds_the_lock_after_the_merge() {
+  own_tree_repo merge
+  own_tree_stub_gh
+  printf 'agent.ci_timeout: 0\n' >> .ai/config.local.yaml
+  _w_add "New"
+  printf 'spec/idea-x\n' > stub-gh/head
+  cat > stub-gh/on-merge <<HOOK
+mkdir -p .ai/runtime/writes/lock/busy
+printf 'checkout: elsewhere\npid: $$\n' > .ai/runtime/writes/lock/busy/run
+HOOK
+  run jig writes ship spec:idea-x --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"merged":true'
+  assert_contains "$OUT" 'another write held the lock'
+  assert_contains "$(cat .ai/runtime/writes/spec-idea-x)" "merged: 0"
+  assert_contains "$(cat .ai/runtime/writes/lock/busy/run)" "pid: $$"
 }
 
 test_writes_ship_at_merge_leaves_a_red_pull_request_open() {
@@ -359,6 +409,188 @@ test_writes_a_running_write_holds_another_off_and_a_dead_one_does_not() {
   _w_add "New"
   assert_eq 0 "$RC"
   own_tree_gone
+  # The take-back's own claim went with it.
+  assert_no_file .ai/runtime/writes/lock/busy
+}
+
+# _w_dead_holder — a lock record whose holder is gone: a pid reaped in a subshell.
+_w_dead_holder() {
+  local dead
+  ( : ) & dead=$!
+  wait "$dead"
+  mkdir -p .ai/runtime/writes/lock/busy
+  printf 'checkout: elsewhere\npid: %s\n' "$dead" > .ai/runtime/writes/lock/busy/run
+}
+
+# _w_after_the_judgement <script> [<n>] — run <script> once, from here, after a writer
+# has judged the lock's holder gone and before it acts on that: at the <n>th `stat` of
+# the record (default 2; the first is the judgement's, the second the take-back's read
+# of it, the third its look again under the claim), or at its removal, whichever comes
+# first.
+_w_after_the_judgement() {
+  local real_stat real_rm n
+  n=$(printf "%${2:-2}s" | tr ' ' x)
+  real_stat=$(command -v stat)
+  real_rm=$(command -v rm)
+  mkdir -p stub-git
+  printf '%s\n' "$1" > stub-git/window
+  cat > stub-git/stat <<STUB
+#!/usr/bin/env bash
+d='$PWD/stub-git'
+case " \$* " in
+  *"/busy/run "*)
+    case " \$* " in
+      *" -f "*) printf x >> "\$d/stats" ;;
+    esac
+    if [ ! -f "\$d/fired" ] && [ "\$(cat "\$d/stats" 2>/dev/null)" = $n ]; then
+      : > "\$d/fired"
+      (cd '$PWD' && bash "\$d/window") > "\$d/window.out" 2>&1
+    fi ;;
+esac
+exec '$real_stat' "\$@"
+STUB
+  cat > stub-git/rm <<STUB
+#!/usr/bin/env bash
+d='$PWD/stub-git'
+case " \$* " in
+  *"/busy/run "*)
+    if [ ! -f "\$d/fired" ]; then
+      : > "\$d/fired"
+      (cd '$PWD' && bash "\$d/window") > "\$d/window.out" 2>&1
+    fi ;;
+esac
+exec '$real_rm' "\$@"
+STUB
+  chmod +x stub-git/stat stub-git/rm
+  PATH="$PWD/stub-git:$PATH"
+  export PATH
+}
+
+test_writes_two_writers_taking_back_one_dead_lock_leave_the_first_ones_claim() {
+  # Both found the holder gone; the other took the lock back and claimed it first. The
+  # record that stands is a live one now, and it is not this writer's to remove.
+  own_tree_repo commit
+  _w_dead_holder
+  _w_after_the_judgement "printf 'checkout: elsewhere\npid: $$\n' > .ai/runtime/writes/lock/busy/run"
+  _w_add "New"
+  assert_file stub-git/fired "the window never opened"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-busy"'
+  assert_contains "$(cat .ai/runtime/writes/lock/busy/run)" "pid: $$"
+  if git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "a second writer went on beside the first"
+  fi
+}
+
+test_writes_a_take_back_leaves_a_record_that_changed_under_its_claim() {
+  # The record is replaced after the take-back read it and claimed it: under the claim it
+  # is not the record judged gone, and it stays.
+  own_tree_repo commit
+  _w_dead_holder
+  _w_after_the_judgement "printf 'checkout: elsewhere\npid: $$\n' > .ai/runtime/writes/lock/busy/run" 3
+  _w_add "New"
+  assert_file stub-git/fired "the window never opened"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-busy"'
+  assert_contains "$(cat .ai/runtime/writes/lock/busy/run)" "pid: $$"
+  assert_no_file .ai/runtime/writes/lock/busy/clear.* "the take-back's claim stayed"
+}
+
+test_writes_a_take_back_another_has_claimed_is_refused_and_named() {
+  # A writer stopped inside its take-back left the claim: the record stays, and the
+  # refusal names what a person deletes.
+  own_tree_repo commit
+  _w_dead_holder
+  local run=.ai/runtime/writes/lock/busy/run mtime pid
+  mtime=$(stat -f '%m' "$run" 2>/dev/null) || mtime=""
+  case "$mtime" in '' | *[!0-9]*) mtime=$(stat -c '%Y' "$run") ;; esac
+  pid=$(sed -n 's/^pid: //p' "$run")
+  : > ".ai/runtime/writes/lock/busy/clear.$pid.$mtime"
+  _w_add "New"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-busy"'
+  assert_contains "$OUT" "clear.$pid.$mtime"
+  assert_contains "$(cat "$run")" "pid: $pid"
+  rm ".ai/runtime/writes/lock/busy/clear.$pid.$mtime"
+  _w_add "New"
+  assert_eq 0 "$RC"
+}
+
+# _w_stalled_origin — a fake `git` for which origin never answers: ls-remote, fetch and
+# push sleep far past any budget, everything else is git.
+_w_stalled_origin() {
+  local real
+  real=$(command -v git)
+  mkdir -p stub-git
+  cat > stub-git/git <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+  *" ls-remote "* | *" fetch "* | *" push "*) exec sleep 60 ;;
+esac
+exec '$real' "\$@"
+STUB
+  chmod +x stub-git/git
+  PATH="$PWD/stub-git:$PATH"
+  export PATH
+}
+
+test_writes_a_stalled_origin_costs_the_write_its_push_not_the_lock() {
+  # Every network call under the lock is cut off at its budget: the write answers, its
+  # commit waits for `jig writes ship`, and the lock is back long before its ttl.
+  own_tree_repo push
+  _w_stalled_origin
+  local start elapsed
+  start=$SECONDS
+  JIG_NET_CALL=1 _w_add "New"
+  elapsed=$((SECONDS - start))
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":true'
+  assert_contains "$OUT" '"pushed":false'
+  assert_contains "$OUT" 'no answer within 1s; cut off'
+  assert_no_file .ai/runtime/writes/lock/busy/run "the lock outlives the write"
+  # Five calls at a second each, on a slow runner; unbounded, one sleep alone is 60.
+  if [ "$elapsed" -ge 40 ]; then
+    fail "the write took ${elapsed}s against a stalled origin; expected each call cut off at its budget"
+  fi
+  run jig writes --json
+  assert_contains "$OUT" '"target":"spec:idea-x"'
+}
+
+# _w_net <body> — run <body> in a shell that has loaded common.sh.
+_w_net() {
+  printf '#!/usr/bin/env bash\nset -eu\n. "%s/scripts/lib/common.sh"\n%s\n' "$JIG_HOME" "$1" > net.sh
+  run bash net.sh
+}
+
+test_writes_jig_net_without_a_deadline_is_the_call_itself() {
+  _w_net 'jig_net sh -c "echo out; echo err >&2; exit 3" || echo "rc=$?"'
+  assert_contains "$OUT" "out"
+  assert_contains "$OUT" "err"
+  assert_contains "$OUT" "rc=3"
+}
+
+test_writes_jig_net_under_a_deadline_cuts_a_call_off_at_its_budget() {
+  local start elapsed
+  start=$SECONDS
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _w_net '_JIG_NET_CALL=1
+_JIG_NET_DEADLINE=$(($(date +%s) + 600))
+jig_net sh -c "echo partial; exec sleep 60" || echo "rc=$?"
+jig_net sh -c "echo whole; exit 2" || echo "rc2=$?"
+_JIG_NET_DEADLINE=$(($(date +%s) - 1))
+jig_net sh -c ": > started" || echo "rc3=$?"'
+  elapsed=$((SECONDS - start))
+  assert_contains "$OUT" "rc=124"
+  assert_contains "$OUT" "sh: no answer within 1s; cut off"
+  assert_contains "$OUT" "sh: not started"
+  assert_not_contains "$OUT" "partial"
+  assert_contains "$OUT" "whole"
+  assert_contains "$OUT" "rc2=2"
+  assert_contains "$OUT" "rc3=124"
+  assert_no_file started "a call past the deadline was started"
+  if [ "$elapsed" -ge 30 ]; then
+    fail "jig_net took ${elapsed}s; expected the call cut off after 1s"
+  fi
 }
 
 test_writes_past_the_ttl_leave_the_next_writers_tree_and_lock_alone() {
@@ -471,6 +703,24 @@ test_writes_a_refused_commit_leaves_nothing_waiting() {
   assert_eq 0 "$(git rev-list --count main..spec/idea-x)"
   run jig writes --json
   assert_contains "$OUT" '"writes":[]'
+  own_tree_gone
+}
+
+test_writes_a_refused_commit_leaves_an_earlier_edit_waiting() {
+  own_tree_repo commit
+  _w_add "First"
+  assert_eq 0 "$RC"
+  local tip
+  tip=$(git rev-parse spec/idea-x)
+  printf '#!/bin/sh\necho needs-node-modules >&2\nexit 1\n' > .git/hooks/pre-commit
+  chmod +x .git/hooks/pre-commit
+  _w_add "Second"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"commit-refused"'
+  # This edit is not committed; the one before it still waits where it was.
+  assert_eq "$tip" "$(git rev-parse spec/idea-x)"
+  run jig writes --json
+  assert_contains "$OUT" '"branch":"spec/idea-x"'
   own_tree_gone
 }
 
@@ -1313,6 +1563,97 @@ test_writes_name_a_leftover_tree_git_no_longer_knows() {
   assert_contains "$OUT" '"code":"tree-in-the-way"'
 }
 
+# --- what git leaves of the tree (Windows) ---------------------------------------
+# On Windows `git worktree remove` can drop the registration and leave the directory
+# (housekeeping measured it for a task worktree). macOS/Linux git removes it outright,
+# so a fake `git` leaves one: after the real `worktree remove` took a tree that was
+# there, it runs stub-git/leftover, which plants what Windows would leave.
+
+# _w_leftover_git <script> — the fake git, <script> run from here after each removal.
+_w_leftover_git() {
+  local real
+  real=$(command -v git)
+  mkdir -p stub-git
+  printf '%s\n' "$1" > stub-git/leftover
+  cat > stub-git/git <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+  *" worktree remove "*)
+    tree='$PWD/.git/jig/tree' was=0 rc=0
+    [ ! -e "\$tree" ] || was=1
+    '$real' "\$@" || rc=\$?
+    [ "\$was\$rc" != 10 ] || (cd '$PWD' && bash stub-git/leftover)
+    exit "\$rc" ;;
+esac
+exec '$real' "\$@"
+STUB
+  chmod +x stub-git/git
+  PATH="$PWD/stub-git:$PATH"
+  export PATH
+}
+
+# _w_leftover_owner — what a leftover's link points at: content that must outlive it.
+_w_leftover_owner() {
+  mkdir -p stub-git/owner/nested
+  printf 'kept\n' > stub-git/owner/state
+  printf 'nested, kept\n' > stub-git/owner/nested/doc.md
+}
+
+_w_leftover_owner_intact() {
+  assert_eq "kept" "$(cat stub-git/owner/state)"
+  assert_eq "nested, kept" "$(cat stub-git/owner/nested/doc.md)"
+}
+
+# The link the fake git plants is made the way Jig makes one (jig_link_dir): a junction
+# on Windows Git Bash, where `ln -s` copies. Expanded by the leftover script, from the clone.
+# shellcheck disable=SC2016
+_W_PLANT_LINK='bash -c ". \"\$JIG_HOME/scripts/lib/version.sh\"; . \"\$JIG_HOME/scripts/lib/common.sh\"; jig_link_dir \"\$1\" \"\$2\"" _ "$PWD/stub-git/owner" "$PWD/.git/jig/tree/borrowed"'
+
+test_writes_clear_links_and_empty_directories_git_left_of_the_tree() {
+  own_tree_repo commit
+  _w_leftover_owner
+  plant_dir_link "$PWD/stub-git/owner" "$PWD/stub-git/probe"
+  rm -f stub-git/probe 2>/dev/null || rmdir stub-git/probe
+  _w_leftover_git "mkdir -p .git/jig/tree/a/b .git/jig/tree/c
+$_W_PLANT_LINK"
+  _w_add "New"
+  assert_eq 0 "$RC"
+  own_tree_gone
+  _w_leftover_owner_intact
+  _w_add "Next"
+  assert_eq 0 "$RC"
+  own_tree_gone
+  _w_leftover_owner_intact
+}
+
+test_writes_leave_a_file_git_left_of_the_tree_for_a_person() {
+  own_tree_repo commit
+  _w_leftover_owner
+  plant_dir_link "$PWD/stub-git/owner" "$PWD/stub-git/probe"
+  rm -f stub-git/probe 2>/dev/null || rmdir stub-git/probe
+  _w_leftover_git "mkdir -p .git/jig/tree/a
+printf 'held\n' > .git/jig/tree/a/held.txt
+$_W_PLANT_LINK"
+  _w_add "New"
+  assert_eq 0 "$RC"
+  assert_file .git/jig/tree/a/held.txt
+  assert_no_file .git/jig/tree/borrowed "a link goes even beside a file"
+  _w_leftover_owner_intact
+  _w_add "Next"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"tree-in-the-way"'
+  assert_file .git/jig/tree/a/held.txt
+  _w_leftover_owner_intact
+}
+
+test_writes_clear_an_empty_leftover_git_no_longer_knows() {
+  own_tree_repo commit
+  mkdir -p .git/jig/tree/a/b
+  _w_add "New"
+  assert_eq 0 "$RC"
+  own_tree_gone
+}
+
 # --- what a reader sees ---------------------------------------------------------
 
 test_writes_list_json_pins_the_shape() {
@@ -1353,7 +1694,8 @@ test_writes_a_person_on_a_branch_of_that_name_is_not_a_write_that_waits() {
 test_writes_list_no_ghost_for_a_record_a_killed_write_left_half_made() {
   own_tree_repo commit
   _w_add "New"
-  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/spec-idea-x.tmp.999
+  # A killed write leaves its temporary as a dotfile, outside the glob of records.
+  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/.tmp.spec-idea-x.999
   cp .ai/runtime/writes/spec-idea-x ".ai/runtime/writes/spec-not valid"
   run jig writes --json
   assert_contains "$OUT" '"target":"spec:idea-x"'
@@ -1361,6 +1703,17 @@ test_writes_list_no_ghost_for_a_record_a_killed_write_left_half_made() {
   assert_not_contains "$OUT" 'not valid'
   assert_not_contains "$(jig writes)" 'tmp'
   assert_contains "$(jig status)" "writes: 1"
+}
+
+test_writes_list_a_spec_whose_id_has_tmp_in_it() {
+  own_tree_repo commit
+  _w_add "New"
+  # A dot is legal in a spec id, so `.tmp.` in one is a name, not a leftover.
+  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/spec-v1.tmp.2
+  run jig writes --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"target":"spec:idea-x"'
+  assert_contains "$OUT" '"target":"spec:v1.tmp.2"'
 }
 
 test_writes_reads_ask_no_network() {

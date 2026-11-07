@@ -588,6 +588,27 @@ jig_link_dir() {
   [ -L "$2" ]
 }
 
+# jig_worktree_leftover <path> — clear what `git worktree remove` leaves behind
+# on Windows, once git no longer has the worktree: links, never what they point
+# at — `find` does not follow them; `rm -f`, and `rmdir` where that fails — and
+# then empty directories, deepest first; `rmdir` cannot
+# remove a directory that still holds anything. Non-zero when anything else
+# remains, which stays where it is. Measured on windows-latest, 2026-09-14: git
+# removed the tracked files of a task worktree and left the directory, with
+# `.ai/…` and the junction that borrowed the tasks directory still in it. Never
+# `rm -rf`: under Git Bash it can go through a junction into what it borrows.
+# Callers: housekeeping, on a task worktree it proved is ours, and the own tree
+# (owntree.sh), on the one path `_ot_tree_path` builds.
+jig_worktree_leftover() {
+  local path="$1" entry
+  while IFS= read -r entry; do
+    [ -L "$entry" ] || continue
+    rm -f "$entry" 2>/dev/null || rmdir "$entry" 2>/dev/null || true
+  done < <(find "$path" -type l 2>/dev/null)
+  find "$path" -depth -type d -exec rmdir {} \; 2>/dev/null || true
+  [ ! -e "$path" ]
+}
+
 # How this machine copies a directory fastest: the `cp` flags in
 # _JIG_COPY_FLAGS, with a one-word name for reports in _JIG_COPY_KIND. Set by
 # jig_copy_detect, once per process. Cleared here so that a value in the
@@ -1015,10 +1036,74 @@ jig_fresh_base_ref() {
 # hangs for a different reason — a stalled TCP connection, a slow forge.
 # That would need a process-level timeout, and `timeout`/`gtimeout` is not
 # guaranteed to exist (ADR-0002: git is the only required dependency), so
-# none is added here; a caller cannot be made to wait no longer than N
-# seconds without one.
+# none is added here; a caller that must not wait past a budget runs the
+# call through jig_net below.
 jig_git_batch_ssh() {
   printf '%s -o BatchMode=yes\n' "${GIT_SSH_COMMAND:-ssh}"
+}
+
+# _JIG_NET_DEADLINE — the epoch second after which no call through jig_net may
+# still run; empty, the default, bounds nothing. Set by the one caller that
+# holds a lock with a ttl while it reaches the network: a write in Jig's own
+# tree (lib/owntree.sh), whose live holder would read as gone past that ttl.
+# _JIG_NET_CALL caps a single call below the deadline (JIG_NET_CALL in the
+# environment overrides it, for tests), so one stalled call does not use up
+# what the calls after it are owed.
+_JIG_NET_DEADLINE=""
+_JIG_NET_CALL=120
+case "${JIG_NET_CALL:-}" in
+  '' | *[!0-9]*) ;;
+  *) _JIG_NET_CALL=$JIG_NET_CALL ;;
+esac
+
+# jig_net <program> [args...] — run a program that reaches the network: as is
+# while _JIG_NET_DEADLINE is empty, and otherwise killed once it has run
+# min(_JIG_NET_CALL, what is left before the deadline) seconds, exit 124, with
+# nothing it printed passed on but one line on stderr that names the cut-off,
+# so a caller that reports what failed says why. Past the deadline it is not
+# started: 124 too. A program, never a shell function: the background job is
+# the program itself, so the kill reaches it and not a subshell its child
+# outlives. TERM, not KILL: git takes its own `.lock` files away on TERM. Its
+# output comes back through files once it has ended, stderr first and stdout
+# last: a caller that reads `2>&1` takes its answer from the last line (the
+# URL `gh pr create` prints), and a warning gh writes to stderr first must
+# not end up there.
+# Bounded by hand for ADR-0002, as jig_ls_remote_tags is (conventions/shell.md).
+jig_net() {
+  local now left out err pid rc=0 ticks=0
+  if [ -z "$_JIG_NET_DEADLINE" ]; then
+    "$@"
+    return
+  fi
+  now=$(date +%s)
+  left=$((_JIG_NET_DEADLINE - now))
+  [ "$left" -le "$_JIG_NET_CALL" ] || left=$_JIG_NET_CALL
+  if [ "$left" -le 0 ]; then
+    printf '%s: not started, no time left for the network under the lock\n' "$1" >&2
+    return 124
+  fi
+  out=$(mktemp "${TMPDIR:-/tmp}/jig-net.XXXXXX") || return 1
+  jig_cleanup_add "$out"
+  err="$out.err"
+  jig_cleanup_add "$err"
+  "$@" >"$out" 2>"$err" </dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge $((left * 5)) ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$out" "$err"
+      printf '%s: no answer within %ss; cut off\n' "$1" "$left" >&2
+      return 124
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+  wait "$pid" || rc=$?
+  cat "$err" >&2
+  cat "$out"
+  rm -f "$out" "$err"
+  return "$rc"
 }
 
 # --- the newest published release -------------------------------------------
@@ -1117,7 +1202,7 @@ jig_fetch_branches() {
   for name in "$@"; do
     [ -n "$name" ] || continue
     if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-         git -C "$JIG_PROJECT" fetch --quiet origin \
+         jig_net git -C "$JIG_PROJECT" fetch --quiet origin \
          "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1; then
       jig_warn "$who: could not fetch $name from origin; using the refs this checkout has"
     fi
@@ -1210,14 +1295,14 @@ jig_forge_kind() {
 
   case "$want" in
     github)
-      if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+      if command -v gh >/dev/null 2>&1 && jig_net gh auth status >/dev/null 2>&1; then
         printf 'github\n'
       else
         printf 'none\n'
       fi
       ;;
     gitlab)
-      if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
+      if command -v glab >/dev/null 2>&1 && jig_net glab auth status >/dev/null 2>&1; then
         printf 'gitlab\n'
       else
         printf 'none\n'
@@ -1501,7 +1586,7 @@ jig_ship_push() {
   local who="$1" branch="$2" out
   _jig_ship_outward "$who"
   if ! out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-             git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
+             jig_net git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
     jig_die "$who: git push failed:
 $out"
   fi
@@ -1544,7 +1629,7 @@ _jig_ship_pr_github() {
   local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" url out
   local extra=""
   [ "$draft" != 1 ] || extra="--draft"
-  url=$(gh pr list --head "$head" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
+  url=$(jig_net gh pr list --head "$head" --state open --json url --jq '.[0].url' 2>/dev/null || printf '')
   case "$url" in '' | null) url="" ;; esac
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
@@ -1552,7 +1637,7 @@ _jig_ship_pr_github() {
     return 0
   fi
   # shellcheck disable=SC2086 # $extra is one flag or nothing
-  out=$(gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" $extra 2>&1) \
+  out=$(jig_net gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" $extra 2>&1) \
     || jig_die "$who: gh pr create failed:
 $out"
   url=$(printf '%s\n' "$out" | tail -n 1)
@@ -1568,7 +1653,7 @@ _jig_ship_pr_gitlab() {
   local who="$1" head="$2" base="$3" title="$4" body_file="$5" draft="$6" out url desc
   local extra=""
   [ "$draft" != 1 ] || extra="--draft"
-  out=$(glab mr list --source-branch "$head" --output json 2>/dev/null || printf '')
+  out=$(jig_net glab mr list --source-branch "$head" --output json 2>/dev/null || printf '')
   url=$(printf '%s' "$out" | jig_glab_fields web_url | head -n 1)
   if [ -n "$url" ]; then
     JIG_SHIP_URL="$url"
@@ -1577,7 +1662,7 @@ _jig_ship_pr_gitlab() {
   fi
   desc=$(cat "$body_file")
   # shellcheck disable=SC2086 # $extra is one flag or nothing
-  out=$(glab mr create --target-branch "$base" --source-branch "$head" --title "$title" --description "$desc" $extra 2>&1) \
+  out=$(jig_net glab mr create --target-branch "$base" --source-branch "$head" --title "$title" --description "$desc" $extra 2>&1) \
     || jig_die "$who: glab mr create failed:
 $out"
   url=$(printf '%s\n' "$out" | grep -oE 'https://[^[:space:]]+' | tail -n 1)
@@ -1889,7 +1974,7 @@ jig_pr_state() {
 
 _jig_pr_state_github() {
   local state
-  state=$(gh pr view "$1" --json state --jq .state 2>/dev/null) || { printf 'unknown\n'; return 0; }
+  state=$(jig_net gh pr view "$1" --json state --jq .state 2>/dev/null) || { printf 'unknown\n'; return 0; }
   case "$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')" in
     merged) printf 'merged\n' ;;
     open) printf 'open\n' ;;
@@ -1902,7 +1987,7 @@ _jig_pr_state_gitlab() {
   local iid json state
   iid=$(_jig_ship_glab_mr "$1")
   [ -n "$iid" ] || { printf 'unknown\n'; return 0; }
-  json=$(glab mr view "$iid" --output json 2>/dev/null) || { printf 'unknown\n'; return 0; }
+  json=$(jig_net glab mr view "$iid" --output json 2>/dev/null) || { printf 'unknown\n'; return 0; }
   state=$(printf '%s' "$json" | tr -d ' \n' | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
   case "$state" in
     merged) printf 'merged\n' ;;
