@@ -2836,16 +2836,19 @@ _km_utf8_clean() {
 # _km_drop_above_unicode <s> — _KM_CLEAN <- <s> without each F4 byte and the byte
 # from 90 to BF that follows it. Matched by the shell, byte by byte under the C locale: sed and awk
 # would drop the carriage return of a CRLF line under Git Bash (conventions/shell.md). The text is
-# split on F4 by one read, not stripped with ${s//pattern/}: on bash 3.2 that substitution costs
-# the text's length once per match, and a source file can be long and hold many of them. The `x`
-# keeps a trailing F4's empty field; the here-document adds the newline taken off after it.
+# split on F4 by word splitting, not stripped with ${s//pattern/}: on bash 3.2 that substitution
+# costs the text's length once per match, and a source file can be long and hold many of them.
+# Splitting is done in memory, with no read, here-document or $(...) a CR could be lost in on
+# Git Bash; globbing is off for it, and the `x` keeps a trailing F4's empty field.
 _km_drop_above_unicode() {
-  local LC_ALL=C IFS=$'\364' out part first=1
+  local LC_ALL=C IFS=$'\364' out part first=1 noglob=
   local -a parts acc
   case $1 in *$'\364'*) ;; *) _KM_CLEAN=$1; return 0 ;; esac
-  read -r -d '' -a parts <<EOT || true
-${1}x
-EOT
+  case $- in *f*) noglob=1 ;; esac
+  set -f
+  # shellcheck disable=SC2206 # the split on IFS is the point; globbing is off
+  parts=(${1}x)
+  [ -n "$noglob" ] || set +f
   # The pieces are joined once at the end: appending each to one string would
   # copy all of it again per F4.
   for part in "${parts[@]}"; do
@@ -2857,7 +2860,7 @@ EOT
   done
   IFS=
   out="${acc[*]}"
-  _KM_CLEAN=${out%x$'\n'}
+  _KM_CLEAN=${out%x}
 }
 
 # _km_json_print <json> — the producer's one value, free of bytes that are not

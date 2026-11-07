@@ -4641,19 +4641,27 @@ test_utf8_clean_keeps_the_top_plane_and_drops_only_what_is_above_it() {
 
 test_drop_above_unicode_takes_a_long_text_with_many_pairs_in_one_pass() {
   local out
+  # The inputs are made with printf -v, not $(...): a CR before the newline
+  # $(...) strips must reach the function, and the output ends in a byte that
+  # is not a newline for the same reason. CRs sit before, after and between
+  # the pairs, and at the very end.
   out=$(bash -c '
     set -eu
     . "$1/scripts/lib/knowledge.sh"
-    unit=$(printf "lorem ipsum dolor sit amet, consectetur adipiscing elit \364\220")
+    printf -v unit "lorem ipsum *dolor\r\n sit amet, consectetur adipiscing elit \364\220"
     big=$unit; n=1
     while [ "$n" -lt 4096 ]; do big=$big$big; n=$((n * 2)); done
-    _km_drop_above_unicode "$(printf "\364\220a\364\217\277\275 \364\364\240\r\n")$big"
+    printf -v cr "\r"
+    printf -v head "\364\220a\364\217\277\275 \r\364\240\r\364\364\240\r\n"
+    _km_drop_above_unicode "$head$big$cr"
     LC_ALL=C
     printf "%s|%s" "${#big}" "${#_KM_CLEAN}"
-    _km_drop_above_unicode "$(printf "\364\220a\364\217\277\275 \364\364\240\r\n\364")"
-    printf "|%s" "$_KM_CLEAN"
+    case $_KM_CLEAN in *"elit $cr") printf "|ends-cr" ;; esac
+    printf -v small "\r\364\220\r a\364\364\240\r\n\364\217\r\364\r"
+    _km_drop_above_unicode "$small"
+    printf "|%sE" "$_KM_CLEAN"
   ' _ "$JIG_HOME")
-  assert_eq "$(printf '237568|229384|a\364\217\277\275 \364\r\n\364')" "$out"
+  assert_eq "$(printf '249856|241676|ends-cr|\r\r a\364\r\n\364\217\r\364\rE')" "$out"
 }
 
 test_proposed_json_keeps_other_letters_beside_a_top_plane_character() {
