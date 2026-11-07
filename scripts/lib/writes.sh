@@ -99,7 +99,7 @@ _writes_over() {
 # moves the branch, and the merge, which names the commit, refuses.
 _writes_ship() {
   [ $# -eq 1 ] || jig_fail usage "writes ship: give one target; $WRITES_USAGE"
-  local target="$1" who="writes ship" sha msg body rec_pushed
+  local target="$1" who="writes ship" sha msg body rec_pushed out
   case "$target" in
     knowledge) ;;
     spec:*) jig_valid_id "${target#spec:}" || jig_fail usage "writes ship: not a valid spec id: $target" ;;
@@ -120,6 +120,14 @@ _writes_ship() {
     # Merged below the tip: what is above it waits for a new pull request.
     spent) OT_R_PR="" ;;
   esac
+  # The local branch was deleted and origin still holds it: what waits is origin's tip,
+  # and the ship steps send a local branch, so it is cut there again, as a write cuts a
+  # branch only on origin. Nothing moves: the ref is created only where there is none.
+  if [ -z "$_OT_J_LOCAL" ] && [ -n "$_OT_J_TIP" ]; then
+    out=$(git -C "$JIG_PROJECT" update-ref "refs/heads/$OT_R_BRANCH" "$_OT_J_TIP" "" 2>&1) \
+      || jig_die "$who: could not cut $OT_R_BRANCH again at origin's $_OT_J_TIP: $out"
+    OT_W_TIP=$_OT_J_TIP
+  fi
   OT_BRANCH=$OT_R_BRANCH
   OT_BASE=$OT_R_BASE
   OT_COMMIT=$OT_W_TIP
@@ -139,7 +147,9 @@ _writes_ship() {
   printf 'Committed by Jig on a branch of its own; each commit is one edit.\n' > "$body"
   _ot_ship_steps "$(cat "$msg")" "$body" "$msg"
   ot_record_write "$target"
-  if [ "$OT_LEVEL" = merge ] && [ -n "$OT_PR" ]; then
+  # Only once the steps reached the pull request: one that stopped on the way has said why
+  # in the note, and there is nothing of theirs to merge.
+  if [ "$OT_LEVEL" = merge ] && [ -n "$OT_PR" ] && [ "$_OT_SHIP_AT_PR" = 1 ]; then
     _ot_lock_release
     sha=$(_ot_sha "refs/heads/$OT_BRANCH")
     _ot_capture jig_ship_merge "$who" "$OT_PR" "$sha" any || true

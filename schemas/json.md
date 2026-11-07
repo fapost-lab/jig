@@ -282,7 +282,9 @@ fetch, every other one from this checkout.
 
 `jig spec item add|move|file <spec> … --json` change a roadmap on a branch of its own, in Jig's own
 tree (adr-20261104-a-write-goes-in-jigs-own-tree): nobody's checkout moves. `--revision <n>` as the
-queue writes take it, and the same `stale-revision`. An item is named by its `id`, resolved in the
+queue writes take it, and the same `stale-revision`. Without it the write checks against the revision
+it reads once its tree stands, before it reads the roadmap there, so a Jig write landing while it
+fetches is not a reason to refuse it. An item is named by its `id`, resolved in the
 roadmap on the write branch, so `waiting.phases` holds the handles of the edits still on their way.
 
 ```

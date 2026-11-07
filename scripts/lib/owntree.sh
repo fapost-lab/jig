@@ -215,7 +215,9 @@ _ot_level() {
 # ot_begin <who> <target> <revision> — the checks that cost nothing and the lock.
 # Refused with nothing done: `agent.git` none (git-not-allowed), a revision already
 # overtaken (stale-revision), another write running (write-busy). An empty <revision>
-# checks against the one read here, as `jig queue` does.
+# asks for no check of a read the caller made: the write checks against the revision it
+# reads itself once its tree stands (ot_open), before it reads what it changes, so that a
+# Jig write landing during the fetch and the checkout does not refuse it.
 ot_begin() {
   OT_WHO="$1"
   OT_TARGET="$2"
@@ -228,8 +230,6 @@ ot_begin() {
   if [ -n "$OT_EXPECTED" ]; then
     [ "$(jig_revision_read)" = "$OT_EXPECTED" ] \
       || jig_fail stale-revision "$OT_WHO: the clone changed since revision $OT_EXPECTED; read again and retry"
-  else
-    OT_EXPECTED=$(jig_revision_read)
   fi
   _OT_HEADS_STATE=""
   _OT_HELD_STATE=""
@@ -349,13 +349,38 @@ ot_touched_equal() {
   git -C "$JIG_PROJECT" diff --quiet "$2" "$1" -- "${paths[@]}" 2>/dev/null
 }
 
-# _ot_free_name <branch> — <branch>-2, -3, …: the first neither here nor on origin.
+# _ot_spec_named <id> — a spec has this id: its directory is in this checkout, on the
+# write's base or on the default branch, or its epic is here or on origin. `spec/x-2` is
+# then the branch of spec `x-2`, whose own branch may merely be merged and gone.
+_ot_spec_named() {
+  local rel="$JIG_AI_DIR/specs/$1" ref sha
+  [ ! -d "$JIG_PROJECT/$rel" ] || return 0
+  for ref in "$OT_BASE_REF" "$(jig_base_ref "$(cfg git.base_branch main)")"; do
+    [ -n "$ref" ] || continue
+    sha=$(_ot_sha "$ref")
+    if [ -n "$sha" ] && git -C "$JIG_PROJECT" cat-file -e "$sha:$rel" 2>/dev/null; then
+      return 0
+    fi
+  done
+  if [ -n "$(_ot_sha "refs/heads/epic/$1")" ] || [ -n "$(_ot_sha "refs/remotes/origin/epic/$1")" ]; then
+    return 0
+  fi
+  _ot_origin_has "epic/$1" || return 1
+}
+
+# _ot_free_name <branch> — <branch>-2, -3, …: the first neither here nor on origin, and
+# for a spec's branch, not the name of another spec's (_ot_spec_named).
 _ot_free_name() {
   local n=2 name
   while :; do
     name="$1-$n"
     if [ -z "$(_ot_sha "refs/heads/$name")" ] && [ -z "$(_ot_sha "refs/remotes/origin/$name")" ]; then
-      _ot_origin_has "$name" || { printf '%s\n' "$name"; return 0; }
+      if ! _ot_origin_has "$name"; then
+        case "$name" in
+          spec/*) _ot_spec_named "${name#spec/}" || { printf '%s\n' "$name"; return 0; } ;;
+          *) printf '%s\n' "$name"; return 0 ;;
+        esac
+      fi
     fi
     n=$((n + 1))
   done
@@ -701,11 +726,16 @@ ot_open() {
     out=$(git -C "$OT_TREE" read-tree -m -u HEAD "$_OT_FF_TO" 2>&1) \
       || jig_die "$OT_WHO: could not bring the tree to $_OT_FF_TO: $out"
   fi
+  # No revision was sent: the one the write is checked against is read now, after the
+  # fetch and the checkout and before validation reads the tree (ot_begin).
+  if [ -z "$OT_EXPECTED" ]; then
+    OT_EXPECTED=$(jig_revision_read)
+  fi
 }
 
-# ot_claim — the revision claim of every write checked against what its caller read
-# (jig_revision_claim, conventions/json-output.md). Nothing Jig records has been
-# written before it.
+# ot_claim — the revision claim of every write checked against what its caller read,
+# or, with no revision sent, what ot_open read (jig_revision_claim,
+# conventions/json-output.md). Nothing Jig records has been written before it.
 ot_claim() {
   local rc=0
   jig_revision_claim "$OT_EXPECTED" || rc=$?
@@ -785,12 +815,15 @@ _ot_pushed_now() {
 }
 
 # _ot_ship_steps <title> <body-file> <message-file> — push, then the pull request, each
-# as far as OT_LEVEL allows, leaving OT_PUSHED, OT_PR and OT_NOTE. A failure here is an
-# answer and not a refusal: the commit stands and waits, and `jig writes ship` carries
-# it on. Asks nothing of the forge unless the level says so.
+# as far as OT_LEVEL allows, leaving OT_PUSHED, OT_PR and OT_NOTE, and _OT_SHIP_AT_PR 1
+# only when the steps reached a pull request that holds the tip: what a merge may follow.
+# A failure here is an answer and not a refusal: the commit stands and waits, and `jig
+# writes ship` carries it on. Asks nothing of the forge unless the level says so.
+_OT_SHIP_AT_PR=0
 _ot_ship_steps() {
   local title="$1" body="$2" msg="$3" url
   OT_NOTE=""
+  _OT_SHIP_AT_PR=0
   _ot_pushed_now
   OT_COMMITS=$(git -C "$JIG_PROJECT" rev-list --count "$OT_BASE_REF..refs/heads/$OT_BRANCH" 2>/dev/null) || OT_COMMITS=0
   [ "$OT_COMMITS" -gt 0 ] || return 0
@@ -825,6 +858,7 @@ _ot_ship_steps() {
   url=$(printf '%s\n' "$_OT_CAP" | sed -n 's/^pr \([^ ]*\).*$/\1/p' | sed -n '$p')
   if [ -n "$url" ]; then
     OT_PR=$url
+    _OT_SHIP_AT_PR=1
   else
     OT_NOTE="no forge available: the pull request is yours"
     return 0

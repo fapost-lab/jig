@@ -379,7 +379,8 @@ jig writes --json
 the commits are on its base **as of the last fetch**, since a read never fetches.
 
 A branch left behind stays where it is: when it merged by squash, its pull request was closed or it
-was deleted on the remote, the next edit takes a new name such as `spec/foo-2`. A commit above what a merged pull request held
+was deleted on the remote, the next edit takes a new name such as `spec/foo-2`, never one that is
+another spec's id. A commit above what a merged pull request held
 keeps its name and waits for a new one. When you are on the
 branch yourself, or another worktree is, the write is refused with `branch-checked-out`, and the
 message says where: finish there or switch away. When the branch has commits of yours that the remote

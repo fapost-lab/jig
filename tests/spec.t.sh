@@ -4828,6 +4828,30 @@ test_spec_item_a_move_that_changes_nothing_commits_nothing() {
   assert_contains "$OUT" '"writes":[]'
 }
 
+test_spec_item_moving_the_only_item_of_a_section_within_it_commits_nothing() {
+  own_tree_repo commit
+  run jig spec item add idea-x --phase 2 --text "Only one" --json
+  assert_eq 0 "$RC"
+  local only before
+  only=$(_si_id 'Only one')
+  before=$(git rev-parse spec/idea-x)
+  run jig spec item move idea-x "$only" --top --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  run jig spec item move idea-x "$only" --bottom --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  run jig spec item move idea-x "$only" --phase 2 --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":false'
+  assert_eq "$before" "$(git rev-parse spec/idea-x)"
+  assert_contains "$(_si_roadmap)" '## Phase 2 — Two
+
+- [ ] Only one
+
+## Waves'
+}
+
 test_spec_item_edits_in_a_row_reach_what_the_last_one_added() {
   own_tree_repo commit
   run jig spec item add idea-x --phase 2 --text "Made a moment ago" --json

@@ -3101,7 +3101,9 @@ _spec_map_phase() {
 # _spec_map_place <section> <top|bottom> <skip-index> <file> — where a block goes:
 # _SPEC_AT, the line it goes after; _SPEC_PRE and _SPEC_POST, whether it needs a blank
 # line before and after, which only a section with no other item does: it goes after
-# the section's last line that is not blank.
+# the section's last line that is not blank. The one item of its own section is already
+# at its top and its bottom: it stays where it stands, so a move that changes nothing
+# writes nothing.
 _SPEC_AT=0 _SPEC_PRE=0 _SPEC_POST=0
 _spec_map_place() {
   local sec="$1" how="$2" skip="$3" file="$4" i=0 first="" last=""
@@ -3115,6 +3117,10 @@ _spec_map_place() {
   done
   if [ -n "$first" ]; then
     if [ "$how" = top ]; then _SPEC_AT=$((M_FIRST[first] - 1)); else _SPEC_AT=${M_LAST[$last]}; fi
+    return 0
+  fi
+  if [ "$skip" -ge 0 ] && [ "${M_SEC[$skip]}" = "$sec" ]; then
+    _SPEC_AT=$((M_FIRST[skip] - 1))
     return 0
   fi
   _SPEC_AT=$(awk -v from="${S_HEAD[$sec]}" -v to="${S_LAST[$sec]}" '
