@@ -80,7 +80,11 @@
   (adr-20260925-one-test-run-per-clone-and-a-dead-run-is-not-a-pass) A write in Jig's own tree holds
   its lock the same way, under `.ai/runtime/writes/lock/`, or `<git-common-dir>/jig/writes/lock/`
   where that directory is not named `.git`, the path checked to end so before either deletion: it
-  gives back only a lock that still names its own pid, and takes back one whose holder is gone.
+  gives back only a lock that still names its own pid, and takes back one whose holder is gone
+  only under a claim of its own: `busy/clear.<pid>.<mtime>`, created exclusively and named after
+  the record judged gone, under which that record is removed only while it is still that record
+  and its holder is still gone; the claim is removed, `rm -f`, by the call that made it, and one a
+  stopped writer left is never removed by jig — the refusal names it for a person to delete.
   Its tree is the seventh: git deletes it, with `git worktree remove --force`, the one `--force` on a
   removal anywhere in jig, and one function builds the only path it is given,
   `<git-common-dir>/jig/tree`. `--force` is what a refused write needs, and it is safe there because

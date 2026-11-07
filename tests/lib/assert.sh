@@ -639,6 +639,8 @@ case "\$1 \$2" in
   "pr create")
     shift 2
     printf '%s\n' "\$@" >> "\$d/create.argv"
+    # gh warns on stderr whenever the checkout it runs in is dirty.
+    if [ -f "\$d/warn" ]; then printf 'Warning: 1 uncommitted change\n' >&2; fi
     printf 'https://github.com/example/example/pull/42\n' | tee "\$d/url" ;;
   "pr view")
     case "\$*" in
