@@ -299,9 +299,11 @@ below answers with, so a board renders both with one piece of code.
 The queue holds order, not the tasks themselves: read it together with `jig task list --json`
 and join a `task` item to a task by `id`, and an `epic` item to `jig spec list --json` by the
 spec's `id`. All of them carry the same `revision` when nothing was written between the reads, and
-the one you send with a change is the `revision` of the queue read you showed. An item whose task
-is finished, archived, or gone, stays in the queue until it is removed; it has no match in the default task
-list, so join against `jig task list --json --all` or show it as it is.
+the one you send with a change is the `revision` of the queue read you showed. A task that is
+closed, abandoned, archived or gone leaves the queue on its own: the command that finished it takes
+it out, and so does every `jig housekeeping` run (`jig queue prune --json` does it on demand). One
+finished since then may still be listed with no match in the default task list, so join against
+`jig task list --json --all` or show it as it is.
 
 ### Which task is next
 

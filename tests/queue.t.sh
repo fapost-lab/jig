@@ -823,7 +823,8 @@ test_queue_next_prefers_a_started_task_then_the_position() {
   jig task abandon d >/dev/null 2>&1 || fail "abandon failed"
   jig task abandon b >/dev/null 2>&1 || fail "abandon failed"
   _qn_next
-  assert_contains "$NEXT" "next: task:a — 2 of 4 on the top level, priority 2, not started"
+  # An abandoned task leaves the queue (adr-20261107-a-finished-task-leaves-the-queue).
+  assert_contains "$NEXT" "next: task:a — 1 of 2 on the top level, priority 2, not started"
   # A higher priority still beats a started task.
   jig queue set c --priority 0 >/dev/null
   _qn_next
@@ -1116,6 +1117,260 @@ test_queue_next_reads_and_changes_nothing() {
   assert_eq "$state" "$(cat .ai/workspace/tasks/a/state)"
   _q_rev
   assert_eq "$rev" "$REV"
+}
+
+# --- finished tasks leave the queue (adr-20261107-a-finished-task-leaves-the-queue)
+
+test_queue_prune_takes_out_every_finished_task_and_keeps_the_rest() {
+  fixture_jig_repo
+  _qn_task live started
+  _qn_task done_t started consolidated
+  _qn_task dead started abandoned
+  _qn_task shelved started archived
+  _qn_task waiting started ready
+  _qn_task resting started active paused:true
+  _qn_task gone_t started
+  local id
+  for id in live done_t dead shelved waiting resting gone_t; do
+    jig queue set "$id" --priority 2 >/dev/null
+  done
+  rm -rf .ai/workspace/tasks/gone_t
+  run jig queue prune
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$(printf '%s\n' \
+    'queue: task:done_t removed (consolidated)' \
+    'queue: task:dead removed (abandoned)' \
+    'queue: task:shelved removed (archived)' \
+    'queue: task:gone_t removed (gone)')" "$OUT"
+  assert_eq "$(printf '%s\n' 'task:live - 100 2' 'task:waiting - 500 2' 'task:resting - 600 2')" "$(_q_items)"
+  run jig queue prune
+  assert_eq "queue: no finished task to take out" "$OUT"
+}
+
+# A wait on a task the advice reads as finished is met and goes; a wait on
+# work that never landed stays and reads broken.
+test_queue_prune_drops_met_waits_and_keeps_broken_ones() {
+  fixture_jig_repo
+  _qn_task w started
+  _qn_task fin_t started consolidated
+  _qn_task hk_t started ready
+  _qn_task dead started abandoned
+  _qn_task open_t started
+  local on
+  jig queue set w --priority 1 >/dev/null
+  for on in fin_t hk_t dead open_t; do
+    jig queue depend w --on "$on" --reason "r $on" >/dev/null
+  done
+  _qn_hk hk_t merged
+  run jig queue prune
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "queue: task:w no longer waits for task:fin_t (finished)"
+  assert_contains "$OUT" "queue: task:w no longer waits for task:hk_t (finished)"
+  assert_eq "$(printf '%s\n' 'task:w task:dead' 'task:w task:open_t')" "$(_qm_deps)"
+  # Purged afterwards, the closed task cannot turn its wait broken: it is gone.
+  rm -rf .ai/workspace/tasks/fin_t
+  _q_json next
+  assert_not_contains "$OUT" 'task:fin_t'
+  assert_contains "$OUT" '{"ref":"task:w","on":"task:dead","state":"broken","reason":"r dead"}'
+}
+
+test_queue_prune_takes_out_the_waits_and_requests_of_what_leaves() {
+  fixture_jig_repo
+  _qn_task a started
+  _qn_task b started
+  jig queue depend a --on b --reason "x" >/dev/null
+  jig queue request a pause >/dev/null
+  fixture_task a task/a abandoned base_commit:abc123
+  run jig queue prune
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$(_qm_deps)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+  assert_eq "" "$(_q_items)"
+}
+
+test_queue_prune_dry_run_says_what_would_go_and_writes_nothing() {
+  fixture_jig_repo
+  _qn_task w started
+  _qn_task fin_t started consolidated
+  jig queue depend w --on fin_t --reason "r" >/dev/null
+  jig queue set fin_t --priority 1 >/dev/null
+  local before
+  before=$(cat .ai/runtime/queue)
+  _q_rev
+  local rev=$REV
+  run jig queue prune --dry-run
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$(printf '%s\n' \
+    'queue: would remove task:fin_t (consolidated)' \
+    'queue: task:w would no longer wait for task:fin_t (finished)')" "$OUT"
+  assert_eq "$before" "$(cat .ai/runtime/queue)"
+  _q_rev
+  assert_eq "$rev" "$REV"
+}
+
+test_queue_prune_is_one_write_and_answers_in_the_envelope() {
+  fixture_jig_repo
+  _qn_task w started
+  _qn_task x started consolidated
+  _qn_task y started abandoned
+  jig queue depend w --on x --reason "r" >/dev/null
+  jig queue set y --priority 1 >/dev/null
+  _q_rev
+  local rev=$REV
+  _q_json prune
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"dry_run":false,"removed":[{"ref":"task:y","status":"abandoned"}],"met":[{"ref":"task:w","on":"task:x"}]}}'
+  _q_rev
+  assert_eq "$((rev + 2))" "$REV" "one queue write raises the revision by two"
+  # A write against an old revision is refused; with nothing to take out,
+  # nothing is written and nothing is checked.
+  _qn_task z started archived
+  jig queue set w --priority 1 >/dev/null
+  jig queue depend w --on z --reason "r" >/dev/null
+  fixture_task w task/w consolidated base_commit:abc123
+  _q_json prune --revision "$rev"
+  assert_eq stale-revision "$(_q_code)"
+  assert_eq "task:w - 100 1" "$(_q_items)"
+}
+
+test_queue_prune_refuses_what_it_does_not_take() {
+  _q_setup a
+  jig queue set a --priority 1 >/dev/null
+  _q_json prune --revision
+  assert_eq usage "$(_q_code)"
+  assert_contains "$OUT" "queue: --revision requires a value"
+  _q_json prune --revision ""
+  assert_eq usage "$(_q_code)"
+  assert_contains "$OUT" "queue: --revision is empty"
+  _q_json prune --revision abc
+  assert_eq usage "$(_q_code)"
+  assert_contains "$OUT" "queue: --revision is not a revision: abc"
+  _q_json prune extra
+  assert_eq usage "$(_q_code)"
+  assert_contains "$OUT" "queue prune: unexpected argument: extra"
+  printf '# jig queue 99 — from the future\n' > .ai/runtime/queue
+  _q_json prune
+  assert_eq failed "$(_q_code)"
+  assert_contains "$OUT" "is in another format than this jig writes"
+  assert_eq "# jig queue 99 — from the future" "$(cat .ai/runtime/queue)"
+}
+
+test_queue_prune_without_a_queue_writes_none() {
+  _q_setup a
+  run jig queue prune
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "queue: no finished task to take out" "$OUT"
+  assert_no_file .ai/runtime/queue
+  run jig queue prune --bogus
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "unexpected argument: --bogus"
+}
+
+# A checkout that cannot see the clone's task workspace finds no task gone.
+test_queue_prune_finds_nothing_gone_without_the_workspace() {
+  _q_setup a
+  jig queue set a --priority 1 >/dev/null
+  mv .ai/workspace/tasks .ai/workspace/tasks.away
+  run jig queue prune
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "queue: no finished task to take out" "$OUT"
+  assert_eq "task:a - 100 1" "$(_q_items)"
+}
+
+test_queue_prune_leaves_an_epic_alone() {
+  fixture_jig_repo
+  _q_epic big t1
+  jig queue set epic:big --priority 1 >/dev/null
+  rm -rf .ai/specs/big
+  run jig queue prune
+  assert_eq "queue: no finished task to take out" "$OUT"
+  assert_eq "epic:big - 100 1" "$(_q_items)"
+}
+
+test_task_abandon_takes_the_task_out_of_the_queue() {
+  _q_setup a b
+  jig queue set a --priority 1 >/dev/null
+  jig queue depend b --on a --reason "needs a" >/dev/null
+  run jig task abandon a
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task set: task:a left the queue"
+  assert_eq "task:b - 200 -" "$(_q_items)"
+  # The wait stays: the work never landed, so it reads broken.
+  assert_eq "task:b task:a" "$(_qm_deps)"
+  # Taken back, it is live and not queued: the reminder says so.
+  run jig task set a status active
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not queued: a — jig queue set a --priority <0-5>"
+}
+
+test_task_archive_and_unarchive_and_the_queue() {
+  _q_setup a
+  jig queue set a --priority 1 >/dev/null
+  run jig task archive a
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task archive: task:a left the queue"
+  assert_eq "" "$(_q_items)"
+  run jig task unarchive a
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not queued: a — jig queue set a --priority <0-5>"
+}
+
+test_task_unarchive_back_to_abandoned_gives_no_reminder() {
+  _q_setup a
+  fixture_task a task/a abandoned
+  jig task archive a >/dev/null 2>&1 || fail "archive failed"
+  run jig task unarchive a
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "not queued"
+}
+
+test_task_merge_takes_the_absorbed_task_out_of_the_queue() {
+  _q_setup a b c
+  jig queue set a --priority 1 >/dev/null
+  jig queue depend c --on a --reason "needs a" >/dev/null
+  run jig task merge a --into b
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "task:c - 200 -" "$(_q_items)"
+  assert_eq "task:c task:b" "$(_qm_deps)"
+}
+
+test_task_close_takes_the_task_out_of_the_queue_and_its_waits_are_met() {
+  _q_setup a b
+  jig queue set a --priority 1 >/dev/null
+  jig queue depend b --on a --reason "needs a" >/dev/null
+  fixture_task a task/a ready knowledge_consolidated:true
+  task_route_done a
+  run jig task set a status consolidated
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task set: task:a left the queue"
+  assert_eq "task:b - 200 -" "$(_q_items)"
+  assert_eq "" "$(_qm_deps)"
+}
+
+test_task_close_json_takes_the_task_out_of_the_queue() {
+  _q_setup a
+  jig queue set a --priority 1 >/dev/null
+  fixture_task a task/a ready knowledge_consolidated:true
+  task_route_done a
+  set +e
+  jig task set a status consolidated --json > q.out 2> q.err
+  RC=$?
+  set -e
+  assert_eq 0 "$RC" "$(cat q.err)"
+  assert_contains "$(cat q.out)" '"status":"consolidated"'
+  assert_eq "" "$(_q_items)"
+}
+
+# The status is written whatever the queue says: a queue jig cannot rewrite
+# is warned about, never a reason to fail the close.
+test_task_abandon_with_an_unwritable_queue_still_abandons() {
+  _q_setup a
+  jig queue set a --priority 1 >/dev/null
+  printf '# jig queue 99 — from the future\n' > .ai/runtime/queue
+  run jig task abandon a
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "a stays in the queue; take it out with jig queue prune"
+  assert_file_contains .ai/workspace/tasks/a/state "status: abandoned"
 }
 
 # --- jig task merge moves the waits (adr-20261027-an-absorbed-task-is-archived-with-its-receiver)
