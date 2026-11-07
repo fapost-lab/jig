@@ -930,8 +930,8 @@ function Test-UnreleasedConsentDefaultsToNo {
         Assert-JigTrue ($script:UnreleasedResult -eq $false) '-Yes must not be consent to unreleased Jig'
         Assert-JigEqual 0 $script:UnreleasedPrompts.Count '-Yes must not ask'
         Assert-JigContains $text 'development channel (main, 0.41.0+abc1234)' 'the notice must name the ref and the version'
-        Assert-JigContains $text 'jig init --unreleased' 'the notice must name the way to take it on purpose'
-        Assert-JigContains $text 'git -C "C:\Users\t\.local\share\jig" checkout v0.41.0' 'the way back must be the release tag of the version, in the install folder'
+        Assert-JigContains $text "on purpose:`n    jig init --unreleased`n" 'the notice must name the way to take it on purpose, on a line of its own'
+        Assert-JigContains $text "release first:`n    git -C `"C:\Users\t\.local\share\jig`" checkout v0.41.0" 'the way back must be the release tag of the version, in the install folder, on a line of its own'
         Assert-JigTrue ($text -notlike '*without -Ref*') 'a repeat run without -Ref stays on the branch, so it must not be the advice'
 
         [void]$script:UnreleasedAnswers.Add('')
@@ -1025,6 +1025,7 @@ function Test-UnreleasedInstallSkipsTheProjectUnderYes {
     Assert-JigEqual 0 $result.ExitCode "the install itself should succeed:`n$($result.Output)"
     Assert-JigContains $result.Output 'development channel (main, 0.41.0+abc1234)' 'the run must say the Jig is not a release'
     Assert-JigContains $result.Output 'skipped: no project was set up from unreleased Jig' 'the run must say the project was skipped'
+    Assert-JigContains $result.Output "git repository:`n        jig init --unreleased" 'the skip must set the command on a line of its own, under its sentence'
     Assert-JigTrue (-not (Test-Path -LiteralPath $projectDir)) 'nothing may be created for a skipped project'
     Assert-JigTrue ($result.Output -notlike '*jig init failed*') 'jig init must not be run and fail'
 }

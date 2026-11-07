@@ -156,7 +156,9 @@ function Write-JigStep {
 
 # Write-JigResult <message> [-Level ok|warn] -- what a step came to. warn is
 # for an outcome the person may want to know about: a fallback taken, a
-# step skipped, something left in place.
+# step skipped, something left in place. Each line of a message of several
+# is indented alike, so a command on a line of its own stays set off under
+# the sentence that introduces it in the plain form too.
 function Write-JigResult {
     param(
         [Parameter(Mandatory)][string]$Message,
@@ -166,7 +168,10 @@ function Write-JigResult {
         Write-JigBlock -Level $Level -Text $Message
     }
     else {
-        Write-Host "    $Message"
+        foreach ($line in ($Message -split "`r?`n")) {
+            if ($line -eq '') { Write-Host '' }
+            else { Write-Host "    $line" }
+        }
     }
 }
 
@@ -694,10 +699,12 @@ function Get-JigUnreleasedNotice {
     $release = 'v' + $Version.Split('+')[0]
     $lines = @(
         "This Jig is on the development channel ($where), not a release.",
-        'A project takes files from it only on purpose: jig init --unreleased.'
+        'A project takes files from it only on purpose:',
+        '    jig init --unreleased'
     )
     if ($InstallDir) {
-        $lines += "For a project you work in, put Jig back on its release first: git -C `"$InstallDir`" checkout $release"
+        $lines += 'For a project you work in, put Jig back on its release first:'
+        $lines += "    git -C `"$InstallDir`" checkout $release"
     }
     return $lines -join "`n"
 }
@@ -1568,8 +1575,9 @@ function Install-Jig {
                         -JigScriptPath $installResult.JigScript
                 }
                 else {
-                    Write-JigResult -Level warn ("skipped: no project was set up from unreleased Jig. " `
-                        + 'To set one up later, run in its git repository: jig init --unreleased')
+                    Write-JigResult -Level warn ("skipped: no project was set up from unreleased Jig.`n" `
+                        + "To set one up later, run in its git repository:`n" `
+                        + '    jig init --unreleased')
                 }
             }
 
