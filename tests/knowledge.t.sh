@@ -4639,6 +4639,23 @@ test_utf8_clean_keeps_the_top_plane_and_drops_only_what_is_above_it() {
   assert_eq "$(printf 'false|\320\237\321\200\320\270 \364\217\277\275 ok|true|\320\237  z\r\nend|true|line\n|')" "$out"
 }
 
+test_drop_above_unicode_takes_a_long_text_with_many_pairs_in_one_pass() {
+  local out
+  out=$(bash -c '
+    set -eu
+    . "$1/scripts/lib/knowledge.sh"
+    unit=$(printf "lorem ipsum dolor sit amet, consectetur adipiscing elit \364\220")
+    big=$unit; n=1
+    while [ "$n" -lt 4096 ]; do big=$big$big; n=$((n * 2)); done
+    _km_drop_above_unicode "$(printf "\364\220a\364\217\277\275 \364\364\240\r\n")$big"
+    LC_ALL=C
+    printf "%s|%s" "${#big}" "${#_KM_CLEAN}"
+    _km_drop_above_unicode "$(printf "\364\220a\364\217\277\275 \364\364\240\r\n\364")"
+    printf "|%s" "$_KM_CLEAN"
+  ' _ "$JIG_HOME")
+  assert_eq "$(printf '237568|229384|a\364\217\277\275 \364\r\n\364')" "$out"
+}
+
 test_proposed_json_keeps_other_letters_beside_a_top_plane_character() {
   command -v iconv >/dev/null 2>&1 || skip "no iconv: every byte outside ASCII becomes ?"
   km_setup

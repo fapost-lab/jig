@@ -2835,10 +2835,29 @@ _km_utf8_clean() {
 
 # _km_drop_above_unicode <s> — _KM_CLEAN <- <s> without each F4 byte and the byte
 # from 90 to BF that follows it. Matched by the shell, byte by byte under the C locale: sed and awk
-# would drop the carriage return of a CRLF line under Git Bash (conventions/shell.md).
+# would drop the carriage return of a CRLF line under Git Bash (conventions/shell.md). The text is
+# split on F4 by one read, not stripped with ${s//pattern/}: on bash 3.2 that substitution costs
+# the text's length once per match, and a source file can be long and hold many of them. The `x`
+# keeps a trailing F4's empty field; the here-document adds the newline taken off after it.
 _km_drop_above_unicode() {
-  local LC_ALL=C
-  _KM_CLEAN=${1//$'\364'[$'\220'-$'\277']/}
+  local LC_ALL=C IFS=$'\364' out part first=1
+  local -a parts acc
+  case $1 in *$'\364'*) ;; *) _KM_CLEAN=$1; return 0 ;; esac
+  read -r -d '' -a parts <<EOT || true
+${1}x
+EOT
+  # The pieces are joined once at the end: appending each to one string would
+  # copy all of it again per F4.
+  for part in "${parts[@]}"; do
+    if [ -n "$first" ]; then acc[0]=$part; first=; continue; fi
+    case $part in
+      [$'\220'-$'\277']*) acc[${#acc[@]}]=${part#?} ;;
+      *) acc[${#acc[@]}]=$'\364'$part ;;
+    esac
+  done
+  IFS=
+  out="${acc[*]}"
+  _KM_CLEAN=${out%x$'\n'}
 }
 
 # _km_json_print <json> — the producer's one value, free of bytes that are not
