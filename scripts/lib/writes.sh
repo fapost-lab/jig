@@ -79,6 +79,7 @@ _writes_over() {
   OT_PR=$OT_R_PR
   OT_MERGED=$OT_R_MERGED
   OT_ENDED=$OT_R_ENDED
+  OT_SENT=$OT_R_SENT
   if [ "$_OT_J_WHY" = merged ]; then
     OT_MERGED=1
   else
@@ -128,6 +129,7 @@ _writes_ship() {
   OT_PR=$OT_R_PR
   OT_MERGED=0
   OT_ENDED=""
+  OT_SENT=$OT_R_SENT
   OT_BASE_REF=$(jig_base_ref "$OT_BASE")
   msg=$(mktemp "${TMPDIR:-/tmp}/jig-writes.XXXXXX")
   jig_cleanup_add "$msg"
