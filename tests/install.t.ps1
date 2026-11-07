@@ -991,11 +991,28 @@ function Test-UnreleasedInitArgsCarryTheFlag {
 # The whole run, as `-Ref main -Yes -Project <dir>` meets it: told up front,
 # the project skipped before anything is made in its folder, and the run a
 # success -- not a failed `jig init` at the end.
+#
+# Install-JigFramework is replaced by the checkout the scenarios above already
+# installed. An in-process Install-Jig needs $env:JIG_INSTALL_NO_MAIN=1 (or
+# its `exit` ends this process), and bash inherits that variable: install.sh
+# then honours its own guard of the same name, defines its functions, runs
+# nothing and prints no summary line. Step 5 is covered by the child-process
+# scenarios; this one is about step 6.
 function Test-UnreleasedInstallSkipsTheProjectUnderYes {
+    $jigScript = Join-Path (Get-JigDefaultScriptsDir) 'jig'
+    if (-not (Test-Path -LiteralPath $jigScript)) {
+        Skip-JigTest 'no installed jig (an earlier scenario must have failed)'
+    }
     $projectDir = Join-Path (New-JigTempDir -Prefix 'unreleased-run') 'project'
     $savedVersion = ${function:script:Get-JigInstalledVersion}
+    $savedFramework = ${function:script:Install-JigFramework}
+    $script:InstalledJigScript = $jigScript
     try {
         ${function:script:Get-JigInstalledVersion} = { param($BashExe, $JigScriptPath) return '0.41.0+abc1234' }
+        ${function:script:Install-JigFramework} = {
+            param($BashExe, $InstallShPath, $Ref, $Repository)
+            return [PSCustomObject]@{ JigScript = $script:InstalledJigScript; Ref = 'main' }
+        }
         $result = Invoke-JigInProcess {
             Install-Jig -Yes -Project $projectDir -GitName t -GitEmail t@example.com `
                 -InstallSh $script:InstallShPath -Repository $script:RemoteDir
@@ -1003,9 +1020,10 @@ function Test-UnreleasedInstallSkipsTheProjectUnderYes {
     }
     finally {
         ${function:script:Get-JigInstalledVersion} = $savedVersion
+        ${function:script:Install-JigFramework} = $savedFramework
     }
     Assert-JigEqual 0 $result.ExitCode "the install itself should succeed:`n$($result.Output)"
-    Assert-JigContains $result.Output 'development channel' 'the run must say the Jig is not a release'
+    Assert-JigContains $result.Output 'development channel (main, 0.41.0+abc1234)' 'the run must say the Jig is not a release'
     Assert-JigContains $result.Output 'skipped: no project was set up from unreleased Jig' 'the run must say the project was skipped'
     Assert-JigTrue (-not (Test-Path -LiteralPath $projectDir)) 'nothing may be created for a skipped project'
     Assert-JigTrue ($result.Output -notlike '*jig init failed*') 'jig init must not be run and fail'
