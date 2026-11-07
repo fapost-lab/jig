@@ -589,7 +589,7 @@ jig knowledge read convention-coding-style --json
 (`null` for the rest):
 
 ```json
-{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null,"waiting":null},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md","waiting":null}],"waiting":null}}
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md","waiting":null,"decidable":true,"reason":null,"lossy":false}],"waiting":null}}
 ```
 
 `sources` lists each stub with the `state` of the file it links: `ok`, `changed` (the file is not
@@ -598,7 +598,7 @@ status while it is not accepted yet, with the file's size in `bytes` and the cou
 prints on its last line:
 
 ```json
-{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62,"waiting":null},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21,"waiting":null}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0},"waiting":null}}
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62,"waiting":null,"decidable":true,"reason":null,"lossy":false},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21,"waiting":null,"decidable":true,"reason":null,"lossy":false}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0},"waiting":null}}
 ```
 
 `sources --diff <id>` answers for one stub and carries the difference between the approved text and
