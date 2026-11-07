@@ -149,7 +149,12 @@ _writes_ship() {
   # The local branch was deleted and origin still holds it: what waits is origin's tip,
   # and the ship steps send a local branch, so it is cut there again, as a write cuts a
   # branch only on origin. Nothing moves: the ref is created only where there is none.
+  # An edit the record names that origin's tip does not hold never reached it, and was on
+  # the branch deleted: cut at origin's tip, it would go out of sight, so it is refused.
   if [ -z "$_OT_J_LOCAL" ] && [ -n "$_OT_J_TIP" ]; then
+    if [ -n "$OT_R_COMMIT" ] && ! _ot_ancestor "$OT_R_COMMIT" "$_OT_J_TIP"; then
+      jig_fail write-still-waits "$who: $OT_R_BRANCH was deleted here with $OT_R_COMMIT, which never reached origin; bring it back (git branch $OT_R_BRANCH $OT_R_COMMIT), then try again"
+    fi
     out=$(git -C "$JIG_PROJECT" update-ref "refs/heads/$OT_R_BRANCH" "$_OT_J_TIP" "" 2>&1) \
       || jig_die "$who: could not cut $OT_R_BRANCH again at origin's $_OT_J_TIP: $out"
     OT_W_TIP=$_OT_J_TIP

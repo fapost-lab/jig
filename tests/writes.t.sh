@@ -184,6 +184,34 @@ test_writes_ship_at_merge_ships_from_origins_tip_after_the_local_branch_was_dele
   assert_contains "$(cat stub-gh/merged)" "--match-head-commit $sent"
 }
 
+test_writes_ship_refuses_to_cut_a_deleted_branch_below_an_edit_never_sent() {
+  own_tree_repo merge
+  own_tree_stub_gh
+  printf 'agent.ci_timeout: 0\n' >> .ai/config.local.yaml
+  _w_add "First"
+  assert_contains "$OUT" '"pushed":true'
+  printf '#!/bin/sh\nexit 1\n' > .git/hooks/pre-push
+  chmod +x .git/hooks/pre-push
+  _w_add "Second"
+  assert_contains "$OUT" '"pushed":false'
+  local unsent
+  unsent=$(git rev-parse spec/idea-x)
+  rm -f .git/hooks/pre-push
+  git branch -q -D spec/idea-x
+  printf 'spec/idea-x\n' > stub-gh/head
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "$unsent"
+  assert_no_file stub-gh/merged
+  if git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "a refused ship cut the branch"
+  fi
+  # The edit still waits, by the record.
+  run jig writes --json
+  assert_contains "$OUT" '"target":"spec:idea-x"'
+}
+
 test_writes_ship_says_why_it_could_not_cut_the_deleted_branch_again() {
   own_tree_repo push
   _w_add "New"
