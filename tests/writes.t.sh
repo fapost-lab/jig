@@ -401,6 +401,24 @@ test_writes_a_refused_commit_leaves_nothing_waiting() {
   own_tree_gone
 }
 
+test_writes_a_refused_commit_leaves_an_earlier_edit_waiting() {
+  own_tree_repo commit
+  _w_add "First"
+  assert_eq 0 "$RC"
+  local tip
+  tip=$(git rev-parse spec/idea-x)
+  printf '#!/bin/sh\necho needs-node-modules >&2\nexit 1\n' > .git/hooks/pre-commit
+  chmod +x .git/hooks/pre-commit
+  _w_add "Second"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"commit-refused"'
+  # This edit is not committed; the one before it still waits where it was.
+  assert_eq "$tip" "$(git rev-parse spec/idea-x)"
+  run jig writes --json
+  assert_contains "$OUT" '"branch":"spec/idea-x"'
+  own_tree_gone
+}
+
 test_writes_clear_a_tree_a_killed_write_left() {
   own_tree_repo commit
   mkdir -p .git/jig
