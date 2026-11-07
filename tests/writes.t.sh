@@ -1252,7 +1252,8 @@ test_writes_a_person_on_a_branch_of_that_name_is_not_a_write_that_waits() {
 test_writes_list_no_ghost_for_a_record_a_killed_write_left_half_made() {
   own_tree_repo commit
   _w_add "New"
-  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/spec-idea-x.tmp.999
+  # A killed write leaves its temporary as a dotfile, outside the glob of records.
+  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/.tmp.spec-idea-x.999
   cp .ai/runtime/writes/spec-idea-x ".ai/runtime/writes/spec-not valid"
   run jig writes --json
   assert_contains "$OUT" '"target":"spec:idea-x"'
@@ -1260,6 +1261,17 @@ test_writes_list_no_ghost_for_a_record_a_killed_write_left_half_made() {
   assert_not_contains "$OUT" 'not valid'
   assert_not_contains "$(jig writes)" 'tmp'
   assert_contains "$(jig status)" "writes: 1"
+}
+
+test_writes_list_a_spec_whose_id_has_tmp_in_it() {
+  own_tree_repo commit
+  _w_add "New"
+  # A dot is legal in a spec id, so `.tmp.` in one is a name, not a leftover.
+  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/spec-v1.tmp.2
+  run jig writes --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"target":"spec:idea-x"'
+  assert_contains "$OUT" '"target":"spec:v1.tmp.2"'
 }
 
 test_writes_reads_ask_no_network() {
