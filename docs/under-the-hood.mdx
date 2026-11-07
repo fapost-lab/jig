@@ -188,7 +188,10 @@ Everything a script deletes, it first proves is its own:
   a trash entry. Task, spec, profile, adapter and domain names are validated before any path is built
   from them.
 - **Worktrees** are removed by Git, never by a script, under the conditions above; on Windows,
-  leftover links and empty folders inside that path are then removed, never followed.
+  leftover links and empty folders inside that path are then removed, never followed. Jig's own
+  tree under the git directory goes the same way: Git removes it, and once Git no longer knows the
+  path, only the links and empty folders left there are removed; anything else stays, and the next
+  write is refused `tree-in-the-way`.
 - **Specifications** removed, closed or finished go to the trash, not straight to deletion.
 - **Branches** are never deleted, apart from the failed-worktree case above.
 

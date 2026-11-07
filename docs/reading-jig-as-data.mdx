@@ -79,7 +79,7 @@ be reworded.
 | `branch-has-other-commits` | the write's branch has commits here that no write made and the remote does not have: yours, and a write does not publish them. Nothing was written; the message names the branch |
 | `base-not-on-origin` | the write's base is not on the remote, at `agent.git: push` or above: a branch cut from it would carry out whatever is on it. Nothing was written; push that base yourself |
 | `write-still-waits` | an earlier edit of the same spec, or of knowledge, still waits where this one cannot go: into another base, because an epic opened or finished since, or as edits that never reached the remote above ones whose pull request was closed or whose branch was deleted there. Nothing was written; the message names the branch and what to do |
-| `tree-in-the-way` | an unfinished write left something at Jig's tree that git will not remove. Nothing was written, and trying again does not help: delete the path the message names |
+| `tree-in-the-way` | an unfinished write left files at Jig's tree that git will not remove (links and empty directories Jig clears itself). Nothing was written, and trying again does not help: delete the path the message names |
 | `commit-refused` | Git refused the commit, usually a hook of the project; the message says what it said. This edit was not committed; an earlier one already waiting on the branch still waits |
 | `epic-missing` | the spec is built on an epic branch that is neither here nor on the remote. Nothing was written |
 | `not-linkable` | the task cannot be linked to the roadmap item, or the item is done. Nothing was written |

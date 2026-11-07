@@ -1230,6 +1230,97 @@ test_writes_name_a_leftover_tree_git_no_longer_knows() {
   assert_contains "$OUT" '"code":"tree-in-the-way"'
 }
 
+# --- what git leaves of the tree (Windows) ---------------------------------------
+# On Windows `git worktree remove` can drop the registration and leave the directory
+# (housekeeping measured it for a task worktree). macOS/Linux git removes it outright,
+# so a fake `git` leaves one: after the real `worktree remove` took a tree that was
+# there, it runs stub-git/leftover, which plants what Windows would leave.
+
+# _w_leftover_git <script> — the fake git, <script> run from here after each removal.
+_w_leftover_git() {
+  local real
+  real=$(command -v git)
+  mkdir -p stub-git
+  printf '%s\n' "$1" > stub-git/leftover
+  cat > stub-git/git <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+  *" worktree remove "*)
+    tree='$PWD/.git/jig/tree' was=0 rc=0
+    [ ! -e "\$tree" ] || was=1
+    '$real' "\$@" || rc=\$?
+    [ "\$was\$rc" != 10 ] || (cd '$PWD' && bash stub-git/leftover)
+    exit "\$rc" ;;
+esac
+exec '$real' "\$@"
+STUB
+  chmod +x stub-git/git
+  PATH="$PWD/stub-git:$PATH"
+  export PATH
+}
+
+# _w_leftover_owner — what a leftover's link points at: content that must outlive it.
+_w_leftover_owner() {
+  mkdir -p stub-git/owner/nested
+  printf 'kept\n' > stub-git/owner/state
+  printf 'nested, kept\n' > stub-git/owner/nested/doc.md
+}
+
+_w_leftover_owner_intact() {
+  assert_eq "kept" "$(cat stub-git/owner/state)"
+  assert_eq "nested, kept" "$(cat stub-git/owner/nested/doc.md)"
+}
+
+# The link the fake git plants is made the way Jig makes one (jig_link_dir): a junction
+# on Windows Git Bash, where `ln -s` copies. Expanded by the leftover script, from the clone.
+# shellcheck disable=SC2016
+_W_PLANT_LINK='bash -c ". \"\$JIG_HOME/scripts/lib/version.sh\"; . \"\$JIG_HOME/scripts/lib/common.sh\"; jig_link_dir \"\$1\" \"\$2\"" _ "$PWD/stub-git/owner" "$PWD/.git/jig/tree/borrowed"'
+
+test_writes_clear_links_and_empty_directories_git_left_of_the_tree() {
+  own_tree_repo commit
+  _w_leftover_owner
+  plant_dir_link "$PWD/stub-git/owner" "$PWD/stub-git/probe"
+  rm -f stub-git/probe 2>/dev/null || rmdir stub-git/probe
+  _w_leftover_git "mkdir -p .git/jig/tree/a/b .git/jig/tree/c
+$_W_PLANT_LINK"
+  _w_add "New"
+  assert_eq 0 "$RC"
+  own_tree_gone
+  _w_leftover_owner_intact
+  _w_add "Next"
+  assert_eq 0 "$RC"
+  own_tree_gone
+  _w_leftover_owner_intact
+}
+
+test_writes_leave_a_file_git_left_of_the_tree_for_a_person() {
+  own_tree_repo commit
+  _w_leftover_owner
+  plant_dir_link "$PWD/stub-git/owner" "$PWD/stub-git/probe"
+  rm -f stub-git/probe 2>/dev/null || rmdir stub-git/probe
+  _w_leftover_git "mkdir -p .git/jig/tree/a
+printf 'held\n' > .git/jig/tree/a/held.txt
+$_W_PLANT_LINK"
+  _w_add "New"
+  assert_eq 0 "$RC"
+  assert_file .git/jig/tree/a/held.txt
+  assert_no_file .git/jig/tree/borrowed "a link goes even beside a file"
+  _w_leftover_owner_intact
+  _w_add "Next"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"tree-in-the-way"'
+  assert_file .git/jig/tree/a/held.txt
+  _w_leftover_owner_intact
+}
+
+test_writes_clear_an_empty_leftover_git_no_longer_knows() {
+  own_tree_repo commit
+  mkdir -p .git/jig/tree/a/b
+  _w_add "New"
+  assert_eq 0 "$RC"
+  own_tree_gone
+}
+
 # --- what a reader sees ---------------------------------------------------------
 
 test_writes_list_json_pins_the_shape() {
@@ -1270,7 +1361,8 @@ test_writes_a_person_on_a_branch_of_that_name_is_not_a_write_that_waits() {
 test_writes_list_no_ghost_for_a_record_a_killed_write_left_half_made() {
   own_tree_repo commit
   _w_add "New"
-  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/spec-idea-x.tmp.999
+  # A killed write leaves its temporary as a dotfile, outside the glob of records.
+  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/.tmp.spec-idea-x.999
   cp .ai/runtime/writes/spec-idea-x ".ai/runtime/writes/spec-not valid"
   run jig writes --json
   assert_contains "$OUT" '"target":"spec:idea-x"'
@@ -1278,6 +1370,17 @@ test_writes_list_no_ghost_for_a_record_a_killed_write_left_half_made() {
   assert_not_contains "$OUT" 'not valid'
   assert_not_contains "$(jig writes)" 'tmp'
   assert_contains "$(jig status)" "writes: 1"
+}
+
+test_writes_list_a_spec_whose_id_has_tmp_in_it() {
+  own_tree_repo commit
+  _w_add "New"
+  # A dot is legal in a spec id, so `.tmp.` in one is a name, not a leftover.
+  cp .ai/runtime/writes/spec-idea-x .ai/runtime/writes/spec-v1.tmp.2
+  run jig writes --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"target":"spec:idea-x"'
+  assert_contains "$OUT" '"target":"spec:v1.tmp.2"'
 }
 
 test_writes_reads_ask_no_network() {

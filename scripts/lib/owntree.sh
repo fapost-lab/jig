@@ -161,8 +161,15 @@ _ot_lock_release() {
 # (RULES.md). Never `reset --hard` or `clean`: a tree that went wrong goes whole. Git takes
 # its registration with it, also when the directory has gone, and only that one: `git
 # worktree prune` would drop any worktree whose directory is merely away for the moment.
+# On Windows git can drop the registration and leave the directory: what it left,
+# once git no longer knows the path, goes the way housekeeping clears a task worktree's
+# leftover, links and empty directories only. Anything else stays, and the next write
+# names it, refused `tree-in-the-way`.
 _ot_tree_remove() {
   git -C "$1" worktree remove --force "$2" >/dev/null 2>&1 || true
+  [ -e "$2" ] || return 0
+  ! _ot_tree_registered "$2" || return 0
+  jig_worktree_leftover "$2" || true
 }
 
 # _ot_tree_registered <path> — git may still have our tree registered, its directory gone.
@@ -922,7 +929,11 @@ ot_record_write() {
   fi
   dir=${file%/*}
   mkdir -p "$dir" || jig_die "$OT_WHO: cannot create $dir"
-  tmp="$file.tmp.$$"
+  # A dotfile, as _jig_checkout_write names its temporary (checkout.sh): ot_targets
+  # reads the directory as a glob of record names, and a dot is legal in a spec id,
+  # so `spec-<id>.tmp.<pid>` left by a killed write would read as a record, and no
+  # name pattern that skipped it could tell it from a spec whose id has `.tmp.` in it.
+  tmp="$dir/.tmp.${file##*/}.$$"
   jig_cleanup_add "$tmp"
   {
     printf 'branch: %s\nbase: %s\ncommit: %s\n' "$OT_BRANCH" "$OT_BASE" "$OT_COMMIT"
@@ -944,8 +955,6 @@ ot_targets() {
     name=${f##*/}
     case "$name" in
       knowledge) printf 'knowledge\n' ;;
-      # What a write killed in ot_record_write left, before its move, is no record.
-      spec-*.tmp.*) ;;
       spec-*) if jig_valid_id "${name#spec-}"; then printf 'spec:%s\n' "${name#spec-}"; fi ;;
     esac
   done
