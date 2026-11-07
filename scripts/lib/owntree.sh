@@ -41,6 +41,7 @@ OT_PUSHED=0
 OT_PR=""
 OT_MERGED=0
 OT_ENDED=""
+OT_SENT=""
 OT_NOTE=""
 
 # Referenced from the exit handler, so script-global (conventions/shell.md).
@@ -391,7 +392,7 @@ _OT_J_TIP=""
 _OT_J_LOCAL=""
 ot_judge() {
   local branch="$1" base="$2" base_ref default_ref rec_base_ref="" remote_sha="" stale_sha="" sent="" tip state n
-  local had_rc=0 was_pushed=0 rec_pr="" rec_merged=0 rec_pushed=0 rec_commit="" rec_ended=""
+  local had_rc=0 was_pushed=0 rec_pr="" rec_merged=0 rec_pushed=0 rec_commit="" rec_ended="" rec_sent=""
   _OT_J=""
   _OT_J_WHY=""
   _OT_J_TIP=""
@@ -402,6 +403,7 @@ ot_judge() {
     rec_pushed=$OT_R_PUSHED
     rec_commit=$OT_R_COMMIT
     rec_ended=$OT_R_ENDED
+    rec_sent=$OT_R_SENT
     [ "$OT_R_BASE" = "$base" ] || rec_base_ref=$(jig_base_ref "$OT_R_BASE")
   fi
 
@@ -424,6 +426,16 @@ ot_judge() {
   default_ref=$(jig_base_ref "$(cfg git.base_branch main)")
 
   _OT_J_LOCAL=$(_ot_sha "refs/heads/$branch")
+  # A failed push since leaves the record's `pushed` at 0, and a prune took the tracking
+  # ref: the record's `sent` still says origin held this branch, when what it held is below
+  # the tip and has not landed. A `sent` the base holds is a branch merged and deleted on
+  # origin, and what is above it was never dropped.
+  if [ "$had_rc" -eq 1 ] && [ "$was_pushed" -eq 0 ] && [ -n "$rec_sent" ] && [ -n "$_OT_J_LOCAL" ] \
+    && _ot_ancestor "$rec_sent" "$_OT_J_LOCAL" && ! _ot_ancestor "$rec_sent" "$base_ref" \
+    && { [ -z "$default_ref" ] || ! _ot_ancestor "$rec_sent" "$default_ref"; } \
+    && { [ -z "$rec_base_ref" ] || ! _ot_ancestor "$rec_sent" "$rec_base_ref"; }; then
+    was_pushed=1
+  fi
   [ -n "$_OT_STALE_REF" ] || remote_sha=$(_ot_sha "refs/remotes/origin/$branch")
   tip=$_OT_J_LOCAL
   if [ -n "$remote_sha" ]; then
@@ -482,11 +494,12 @@ ot_judge() {
     closed | dropped) ;;
     *) return 0 ;;
   esac
-  # What origin had of it is what anyone could see; the record's tip answers when the
-  # tracking ref has gone. Not knowing, there is nothing to tell apart.
+  # What origin had of it is what anyone could see; the record's tip, or else its `sent`,
+  # answers when the tracking ref has gone. Not knowing, there is nothing to tell apart.
   if [ -z "$sent" ] && [ "$rec_pushed" = 1 ]; then
     sent=$rec_commit
   fi
+  [ -n "$sent" ] || sent=$rec_sent
   if [ -z "$sent" ] || [ -z "$_OT_J_LOCAL" ]; then
     return 0
   fi
@@ -838,9 +851,12 @@ ot_ship() {
   OT_PR=""
   OT_MERGED=0
   OT_ENDED=""
-  if ot_record_read "$OT_TARGET" && [ "$OT_R_BRANCH" = "$OT_BRANCH" ] && [ "$OT_R_BASE" = "$OT_BASE" ] \
-    && [ "$OT_R_MERGED" != 1 ] && [ -z "$OT_R_ENDED" ]; then
-    [ "$_OT_PR_SPENT" = 1 ] || OT_PR=$OT_R_PR
+  OT_SENT=""
+  if ot_record_read "$OT_TARGET" && [ "$OT_R_BRANCH" = "$OT_BRANCH" ]; then
+    OT_SENT=$OT_R_SENT
+    if [ "$OT_R_BASE" = "$OT_BASE" ] && [ "$OT_R_MERGED" != 1 ] && [ -z "$OT_R_ENDED" ]; then
+      [ "$_OT_PR_SPENT" = 1 ] || OT_PR=$OT_R_PR
+    fi
   fi
   _ot_pushed_now
   OT_COMMITS=$(git -C "$JIG_PROJECT" rev-list --count "$OT_BASE_REF..refs/heads/$OT_BRANCH" 2>/dev/null) || OT_COMMITS=0
@@ -866,14 +882,18 @@ OT_R_PUSHED=0
 OT_R_PR=""
 OT_R_MERGED=0
 OT_R_ENDED=""
+OT_R_SENT=""
 
 # ot_record_read <target> — the OT_R_* of its record; non-zero with none. Read with the
 # shell, one process per nothing: a read asks this once per spec. `ended` is what `jig
 # writes ship` learned of a write that is over without a merge — `closed`, `dropped` or
-# `landed` — and is absent from a record written before it was asked.
+# `landed` — and is absent from a record written before it was asked. `sent` is the last
+# tip of the branch origin was seen to hold, kept through a push that failed since: what
+# says origin held the branch once its tracking ref was pruned. A record written before it
+# was kept has none.
 ot_record_read() {
   local file key value
-  OT_R_BRANCH="" OT_R_BASE="" OT_R_COMMIT="" OT_R_PUSHED=0 OT_R_PR="" OT_R_MERGED=0 OT_R_ENDED=""
+  OT_R_BRANCH="" OT_R_BASE="" OT_R_COMMIT="" OT_R_PUSHED=0 OT_R_PR="" OT_R_MERGED=0 OT_R_ENDED="" OT_R_SENT=""
   file=$(_ot_record_file "$1") || return 1
   [ -f "$file" ] || return 1
   while IFS= read -r key || [ -n "$key" ]; do
@@ -886,16 +906,27 @@ ot_record_read() {
       pr:*) [ "$value" = "$key" ] || OT_R_PR=$value ;;
       merged:*) OT_R_MERGED=$value ;;
       ended:*) [ "$value" = "$key" ] || OT_R_ENDED=$value ;;
+      sent:*) [ "$value" = "$key" ] || OT_R_SENT=$value ;;
     esac
   done < "$file"
   [ -n "$OT_R_BRANCH" ]
 }
 
 # ot_record_write <target> — the record from OT_*, moved into place whole, and the
-# revision raised: a read answers from it.
+# revision raised: a read answers from it. `sent` is the tip when origin holds it, else
+# what origin's ref of the branch holds below it, else OT_SENT, carried by the caller from
+# a record of the same branch.
 ot_record_write() {
-  local file dir tmp
+  local file dir tmp ref
   file=$(_ot_record_file "$1") || jig_die "$OT_WHO: not a target: $1"
+  if [ "$OT_PUSHED" = 1 ]; then
+    OT_SENT=$OT_COMMIT
+  else
+    ref=$(_ot_sha "refs/remotes/origin/$OT_BRANCH")
+    if [ -n "$ref" ] && [ -n "$OT_COMMIT" ] && _ot_ancestor "$ref" "$OT_COMMIT"; then
+      OT_SENT=$ref
+    fi
+  fi
   dir=${file%/*}
   mkdir -p "$dir" || jig_die "$OT_WHO: cannot create $dir"
   tmp="$file.tmp.$$"
@@ -903,6 +934,7 @@ ot_record_write() {
   {
     printf 'branch: %s\nbase: %s\ncommit: %s\n' "$OT_BRANCH" "$OT_BASE" "$OT_COMMIT"
     printf 'pushed: %s\npr: %s\nmerged: %s\n' "$OT_PUSHED" "$OT_PR" "$OT_MERGED"
+    [ -z "$OT_SENT" ] || printf 'sent: %s\n' "$OT_SENT"
     [ -z "$OT_ENDED" ] || printf 'ended: %s\n' "$OT_ENDED"
   } > "$tmp"
   mv "$tmp" "$file"

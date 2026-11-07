@@ -23,19 +23,6 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-{/* Closed by task writes-pruned-dropped-branch. */}
-### A write can push again what origin deleted, after a prune and a failed push
-
-**What you see.** A write's branch was deleted on origin, this clone has pruned it (`git fetch --prune`
-or `fetch.prune`), and the last push of that write had failed: the next edit goes on top of the old
-branch and pushes it, so origin has the deleted branch back, with a new commit on it.
-
-**What it costs.** Edits whose branch you deleted on origin are published again, in the pull request
-of the next edit. Nothing is lost.
-
-**What to do instead.** After you delete a write's branch on origin, rename the local branch before
-the next edit: `git branch -m <branch> <new-name>`.
-
 {/* Closed by task knowledge-json-findings (F6). */}
 ### One rare character turns every non-ASCII letter of a knowledge answer into `?`
 

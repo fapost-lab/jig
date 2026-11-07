@@ -329,6 +329,31 @@ jig_valid_id() {
   esac
 }
 
+# jig_goal_check <who> <goal> — the goal of a task, which `task new --goal` and
+# `spec item file --new --goal` both take. It is the paragraph under `## Goal` that
+# `task list --goals` and `task list --json` read back: one line, so that it stays one
+# paragraph, and not a heading, so that it stays under `## Goal`. Refuses `usage`;
+# leaves the trimmed goal in JIG_GOAL.
+JIG_GOAL=""
+jig_goal_check() {
+  local who="$1" goal="$2"
+  case "$goal" in
+    *$'\n'* | *$'\r'*) jig_fail usage "$who: --goal is one line: the goal paragraph of task.md" ;;
+  esac
+  case "$goal" in
+    *[![:space:]]*) ;;
+    *) jig_fail usage "$who: --goal is empty" ;;
+  esac
+  # Trimmed: leading blanks would make the paragraph a code block.
+  goal=${goal#"${goal%%[![:space:]]*}"}
+  goal=${goal%"${goal##*[![:space:]]}"}
+  case "$goal" in
+    '#'*) jig_fail usage "$who: --goal cannot start with #: it would read as a heading" ;;
+  esac
+  # shellcheck disable=SC2034 # read by the callers
+  JIG_GOAL=$goal
+}
+
 # Die unless the project has been initialised with jig init.
 # jig_has_line <line> <text> — exit 0 when <line> is a whole line of <text>,
 # compared as a string. A `case`, never `printf | grep -qxF`: bash writes a

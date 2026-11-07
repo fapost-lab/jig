@@ -21,7 +21,8 @@ item that did not pass.
 2. Git for Windows gets installed. As the standard user, note whether Windows asked for
    an administrator password, and whether the installer then continued without rights.
 3. The installer asks at most four questions: project folder, make it a git repository,
-   name and e-mail for git, set up jig. The first one is the check CI cannot make: you
+   name and e-mail for git, set up jig (one more comes first on the development channel,
+   below). The first one is the check CI cannot make: you
    pasted the line without changing directory, so the current directory is your profile,
    and the installer must **refuse** it instead of offering it as the folder. Note whether
    the refusal reads as an instruction -- a yellow `warn` block that names the folder, says
@@ -35,6 +36,14 @@ item that did not pass.
    checks in one `ok    N passed: …` line, and ends with `doctor: N ok, N warn, 0 fail`.
    Note every `warn`.
 5. The closing line tells you what to say to the agent.
+
+## Development channel
+
+- Run the installer again with `-Ref main` on a `main` that is past the release tag, in a new
+  empty folder. Before the folder question it says the Jig is on the development channel and
+  names `jig init --unreleased`; the question after it shows `[y/N]`. Enter skips the project
+  with a yellow `warn` and the run ends in success; `y` sets the project up, and its
+  `.ai/manifest` records `jig.version: X.Y.Z+<sha>`.
 
 ## First session
 

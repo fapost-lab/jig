@@ -1595,6 +1595,66 @@ test_writes_refuse_to_strand_edits_never_sent_above_a_branch_origin_dropped() {
   assert_eq "$second" "$(git rev-parse kept)"
 }
 
+test_writes_know_origin_held_a_branch_it_dropped_after_a_prune_and_a_failed_push() {
+  # The last push failed, so the record says pushed: 0, and `fetch --prune` took the
+  # tracking ref: only the record's `sent` says origin ever held the branch.
+  own_tree_repo push
+  _w_add "First"
+  git remote set-url --push origin /nonexistent/origin.git
+  _w_add "Second"
+  assert_contains "$OUT" '"pushed":false'
+  git remote set-url --push origin "$PWD/origin.git"
+  git --git-dir=origin.git update-ref -d refs/heads/spec/idea-x
+  git fetch -q --prune origin
+  assert_eq "" "$(git rev-parse --verify --quiet refs/remotes/origin/spec/idea-x)"
+  local second
+  second=$(git rev-parse spec/idea-x)
+  _w_add "Third"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "spec/idea-x has 1 edit(s) that never reached origin, above edits origin no longer has"
+  assert_eq "$second" "$(git rev-parse spec/idea-x)"
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+  own_tree_gone
+}
+
+test_writes_after_a_merge_and_a_prune_go_on_top_of_an_edit_whose_push_failed() {
+  # What the record says origin held is in the base: the branch was merged and deleted,
+  # not dropped, and the edit above it still waits to go out.
+  own_tree_repo push
+  _w_merged_and_moved_on
+  git --git-dir=origin.git update-ref -d refs/heads/spec/idea-x
+  git fetch -q --prune origin
+  git remote set-url --push origin /nonexistent/origin.git
+  _w_add "Second"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"pushed":false'
+  git remote set-url --push origin "$PWD/origin.git"
+  _w_add "Third"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x"'
+  assert_contains "$OUT" '"commits":2'
+  assert_contains "$OUT" '"pushed":true'
+}
+
+test_writes_whose_first_push_failed_go_on_top_and_push() {
+  own_tree_repo push
+  git remote set-url --push origin /nonexistent/origin.git
+  _w_add "First"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"pushed":false'
+  git remote set-url --push origin "$PWD/origin.git"
+  _w_add "Second"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x"'
+  assert_contains "$OUT" '"commits":2'
+  assert_contains "$OUT" '"pushed":true'
+}
+
 test_writes_refuse_to_strand_edits_never_sent_above_a_closed_pull_request() {
   own_tree_repo pr
   own_tree_stub_gh
