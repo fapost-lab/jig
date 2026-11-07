@@ -299,6 +299,56 @@ _jig_descendants 100' | sort | tr '\n' ' ')
   assert_eq "200 300 " "$out"
 }
 
+# _cleanup_ping_pids — the Windows pids of the PING.EXE processes now running.
+_cleanup_ping_pids() {
+  MSYS2_ARG_CONV_EXCL='*' tasklist /FI "IMAGENAME eq PING.EXE" /FO CSV /NH 2>/dev/null |
+    awk -F'","' '/^"PING\.EXE"/ { print $2 }' | sort
+}
+
+# On Git Bash a native program hears no signal; what stops it is the MSYS2
+# runtime: the MSYS stub that execed it, on a fatal signal, ends the native
+# program's whole Windows tree (exit_process_tree, msys2-runtime exceptions.cc).
+# The stub gets that signal only because the supervisor reads the tree from
+# /proc/<pid>/ppid where ps has no -o. So a native grandchild (ping.exe under
+# cmd.exe) of an interrupted command must not outlive it; this goes red if the
+# /proc walk is lost or the runtime stops ending the native tree.
+test_cleanup_sigterm_ends_a_native_grandchild_under_git_bash() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) ;;
+    *) skip "needs Git Bash: native Windows programs, taskkill and tasklist" ;;
+  esac
+  command -v tasklist >/dev/null 2>&1 || skip "no tasklist on PATH"
+  local before ours="" until
+  before=$(_cleanup_ping_pids)
+  MSYS2_ARG_CONV_EXCL='*' bash -c 'set -eu; set -o pipefail
+. "$JIG_HOME/scripts/lib/common.sh"
+jig_supervise cmd.exe /c ping -n 300 127.0.0.1' >/dev/null 2>&1 &
+  local sup=$!
+  until=$((SECONDS + 30))
+  while [ -z "$ours" ] && [ "$SECONDS" -lt "$until" ]; do
+    sleep 0.2
+    ours=$(comm -13 <(printf '%s\n' "$before") <(_cleanup_ping_pids))
+  done
+  [ -n "$ours" ] || { kill -KILL "$sup" 2>/dev/null || true; fail "ping.exe never started"; }
+  kill -TERM "$sup"
+  until=$((SECONDS + 15))
+  while kill -0 "$sup" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  local rc=0
+  kill -KILL "$sup" 2>/dev/null || true
+  wait "$sup" 2>/dev/null || rc=$?
+  local left
+  until=$((SECONDS + 5))
+  left=$(comm -12 <(printf '%s\n' "$ours") <(_cleanup_ping_pids))
+  while [ -n "$left" ] && [ "$SECONDS" -lt "$until" ]; do
+    sleep 0.2
+    left=$(comm -12 <(printf '%s\n' "$ours") <(_cleanup_ping_pids))
+  done
+  local p
+  for p in $left; do MSYS2_ARG_CONV_EXCL='*' taskkill /F /PID "$p" >/dev/null 2>&1 || true; done
+  assert_eq 143 "$rc"
+  [ -z "$left" ] || fail "ping.exe outlived the interrupted command: $left"
+}
+
 test_cleanup_supervise_passes_the_exit_status_and_stdin_through() {
   _cleanup_script 'jig_supervise bash -c '"'"'read -r l; echo "got:$l"; exit 7'"'"''
   run bash -c 'echo hello | bash cleanup-script.sh'
