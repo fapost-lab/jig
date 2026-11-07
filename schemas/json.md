@@ -49,7 +49,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `not-closable` | `jig task set <id> status consolidated` was asked for a task Jig does not offer to close: its knowledge decision is not recorded, or its pull request is not merged (the forge says so, or cannot be asked). `message` is the reason word for word, the one the task's `close` action carries. Nothing was written |
-| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` on an item that names a task. Nothing was written |
+| `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` on an item that names a task or with a `--new` id another task holds. Nothing was written |
 | `git-not-allowed` | a write in Jig's own tree was asked for at `agent.git: none`, where Jig commits nothing. `message` names the setting. Nothing was written |
 | `write-busy` | another write in Jig's own tree is running in this clone. Nothing was written; try again in a moment |
 | `branch-checked-out` | the write's branch is checked out somewhere, and Jig never moves a checkout; `message` names the path. Nothing was written |
@@ -289,11 +289,18 @@ roadmap on the write branch, so `waiting.phases` holds the handles of the edits 
 jig spec item add  <spec> --phase <n> --text <t> [--after <item> | --top | --bottom]
 jig spec item move <spec> <item> [--phase <n>] [--after <item> | --top | --bottom]
 jig spec item file <spec> <item> --task <task-id>
+jig spec item file <spec> <item> --new <task-id> [--goal <text>]
 ```
 
 `add` goes to the bottom of its phase unless told otherwise. `move` needs `--phase` or a place.
 `file` names a task filed earlier (`jig task new`): the item gets `` `<task-id>` — `` in front, `fog:`
 gone, and the task its `Spec:` line, so `jig spec link` afterwards answers "already linked".
+`--new <task-id>` files the task too, as `jig task new <task-id> [--goal <text>]` does, in the same
+write: the task id, the item, the level, the branch and the revision are all checked before anything is
+written, and a refusal files nothing, so a program carries the revision of the read the person saw
+(`jig task new` raises the revision; filed first, it would make the write `stale-revision`). The task is filed
+once the commit stands, as the `Spec:` line is: a failure then is a `note`, with the commands to run, not a
+refusal. `--task` and `--new` are exclusive, and `--goal` goes with `--new`.
 
 ```json
 {"spec": "idea-x", "item": {"id": "i-7d2bc8dc7707", "text": "Export a page", "checked": false, "task": null, "fog": false, "phase": 2}, "write": <write>}
@@ -307,8 +314,8 @@ gone, and the task its `Spec:` line, so `jig spec link` afterwards answers "alre
 
 Refusals: `usage`; `not-found` for a spec neither on its branch nor on the base, an item or phase the
 roadmap on the branch does not have, or a task that does not exist; `already-exists` for an item with
-this text, or an item that names a task already; `not-linkable` for a task `file` cannot link: finished,
-started, linked to another spec, or an item already checked; `epic-missing` for an open epic neither
+this text, an item that names a task already, or a `--new` task id another task holds; `not-linkable` for a task `file` cannot link: finished,
+started, linked to another spec, or an item already checked, or a checkout that does not keep the clone's task workspaces for `--new`; `epic-missing` for an open epic neither
 here nor on origin; and the refusals of every write, below.
 
 ## `jig knowledge accept|reject|reviewed` writes

@@ -462,7 +462,7 @@ test_spec_without_subcommand_fails() {
   fixture_repo
   run jig spec
   [ "$RC" -ne 0 ] || fail "expected non-zero exit, got 0"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 test_spec_unknown_subcommand_fails_naming_it() {
@@ -476,7 +476,7 @@ test_spec_help_exits_zero() {
   fixture_repo
   run jig spec --help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # `help` (no dashes) is the subcommand form, same as `--help`/`-h`.
@@ -484,7 +484,7 @@ test_spec_help_subcommand_exits_zero() {
   fixture_repo
   run jig spec help
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
+  assert_contains "$OUT" "usage: jig spec new <id> | jig spec resume <id> | jig spec list [--json] | jig spec plan <id> --phase <n> [--format text|tsv] | jig spec stop <id> --phase <n> --reason <text> | jig spec done <task-id> | jig spec drop <task-id> | jig spec link <spec-id> <task-id> | jig spec item add <id> --phase <n> --text <t> [--after <item> | --top | --bottom] | jig spec item move <id> <item> [--phase <n>] [--after <item> | --top | --bottom] | jig spec item file <id> <item> --task <task-id> | --new <task-id> [--goal <text>] (each [--revision <n>] [--json]) | jig spec close <id> [--leftovers-handled] | jig spec remove <id> [--dry-run] [--abandon-unstarted] | jig spec epic <id> [--release patch|minor|major | --finish [--leftovers-handled] | --reopen] | jig spec ship <id> [--message-file <file>] [--title <t>] [--body-file <file>]"
 }
 
 # --- specs are not knowledge --------------------------------------------------
@@ -4948,6 +4948,162 @@ test_spec_item_file_refuses_an_item_that_names_a_task() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"already-exists"'
   assert_contains "$OUT" "already names task t-1"
+}
+
+test_spec_item_file_new_files_the_task_with_the_revision_of_the_read() {
+  own_tree_repo commit
+  local alpha rev
+  alpha=$(_si_id 'Alpha item continued here')
+  rev=$(own_tree_rev)
+  run jig spec item file idea-x "$alpha" --new t-new --goal "Make the thing" --revision "$rev" --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"task":"t-new"'
+  assert_contains "$OUT" '"committed":true'
+  assert_contains "$(_si_roadmap)" '- [ ] `t-new` — Alpha item'
+  assert_file .ai/workspace/tasks/t-new/state
+  assert_file_contains .ai/workspace/tasks/t-new/task.md 'Make the thing'
+  assert_file_contains .ai/workspace/tasks/t-new/task.md 'Spec: .ai/specs/idea-x/ — Phase 1'
+  run jig spec link idea-x t-new
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "already linked"
+  # With no goal the task has the template's.
+  local gamma
+  gamma=$(_si_id 'fog: gamma area — why')
+  run jig spec item file idea-x "$gamma" --new t-bare --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"fog":false'
+  assert_file .ai/workspace/tasks/t-bare/task.md
+}
+
+test_spec_item_file_new_a_stale_revision_files_nothing() {
+  own_tree_repo commit
+  local alpha rev
+  alpha=$(_si_id 'Alpha item continued here')
+  rev=$(own_tree_rev)
+  run jig spec item file idea-x "$alpha" --new t-new --revision "$((rev + 1))" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"stale-revision"'
+  assert_no_file .ai/workspace/tasks/t-new
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+}
+
+test_spec_item_file_new_refuses_before_it_files_anything() {
+  own_tree_repo commit
+  local alpha beta
+  alpha=$(_si_id 'Alpha item continued here')
+  beta=$(_si_id 'Beta item')
+  run jig spec item file idea-x "$alpha" --new t-new --task t-old --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --goal "x" --task t-old --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --new ../x --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --new t-new --goal "" --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --task "" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --task "" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --new t-new --goal "# heading" --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x "$alpha" --new t-new --bogus --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item add idea-x --phase 1 --text x --new t-new --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig spec item file idea-x i-000000000000 --new t-new --json
+  assert_contains "$OUT" '"code":"not-found"'
+  run jig spec item file idea-x "$beta" --new t-new --json
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "is checked"
+  run jig spec item file nope "$alpha" --new t-new --json
+  assert_contains "$OUT" '"code":"not-found"'
+  fixture_task t-taken "" active
+  run jig spec item file idea-x "$alpha" --new t-taken --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"already-exists"'
+  assert_contains "$OUT" "task already exists: t-taken"
+  assert_no_file .ai/workspace/tasks/t-new
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+  assert_contains "$(_si_roadmap)" '- [ ] Alpha item'
+}
+
+test_spec_item_file_new_an_item_that_names_a_task_files_nothing() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  run jig spec item file idea-x "$alpha" --new t-1 --json
+  assert_eq 0 "$RC"
+  run jig spec item file idea-x "$alpha" --new t-2 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"already-exists"'
+  assert_no_file .ai/workspace/tasks/t-2
+}
+
+test_spec_item_file_new_at_none_refuses_and_files_nothing() {
+  own_tree_repo none
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  run jig spec item file idea-x "$alpha" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"git-not-allowed"'
+  assert_no_file .ai/workspace/tasks/t-new
+}
+
+test_spec_item_file_new_a_branch_checked_out_files_nothing() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  git checkout -q -b spec/idea-x
+  run jig spec item file idea-x "$alpha" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"branch-checked-out"'
+  assert_no_file .ai/workspace/tasks/t-new
+}
+
+test_spec_item_file_new_a_task_that_cannot_be_filed_is_an_answer_and_the_commit_stands() {
+  skip_unless_readonly_dirs
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  mkdir -p .ai/workspace/tasks
+  chmod 555 .ai/workspace/tasks
+  run jig spec item file idea-x "$alpha" --new t-new --json
+  chmod 755 .ai/workspace/tasks
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":true'
+  assert_contains "$OUT" "could not file the task t-new"
+  assert_contains "$OUT" "jig spec link idea-x t-new"
+  assert_no_file .ai/workspace/tasks/t-new
+}
+
+test_spec_item_file_new_a_checkout_that_borrows_its_tasks_files_nothing() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  mkdir -p .ai/workspace elsewhere-tasks
+  rm -rf .ai/workspace/tasks
+  plant_dir_link "$PWD/elsewhere-tasks" "$PWD/.ai/workspace/tasks"
+  run jig spec item file idea-x "$alpha" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "borrows its task workspaces"
+  assert_no_file elsewhere-tasks/t-new
+  assert_eq 0 "$(git rev-list --count main..spec/idea-x 2>/dev/null || printf 0)"
+}
+
+test_spec_item_file_new_a_worktree_that_is_not_the_clone_files_nothing() {
+  own_tree_repo commit
+  local alpha
+  alpha=$(_si_id 'Alpha item continued here')
+  git worktree add -q -b side ../side-wt >/dev/null 2>&1 || fail "could not add a worktree"
+  cd ../side-wt || fail "no worktree"
+  run jig spec item file idea-x "$alpha" --new t-new --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-linkable"'
+  assert_contains "$OUT" "keeps no task workspaces of the clone"
+  assert_no_file .ai/workspace/tasks/t-new
 }
 
 # _si_epic — idea-x declares an open epic, on main, with the epic cut.
