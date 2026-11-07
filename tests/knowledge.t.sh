@@ -5149,6 +5149,10 @@ test_knowledge_a_proposal_only_in_local_commits_is_not_decidable_and_refused_wit
   run jig knowledge accept feature-gamma --revision "$(_kd_rev)" --json
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-on-base"'
+  # The refusal names the branch it judged on and why, never a bare "no document".
+  assert_contains "$OUT" 'feature-gamma, as this checkout has it, is not on main as origin/main has it'
+  assert_contains "$OUT" 'commit and push it, then decide'
+  assert_not_contains "$OUT" 'no document with id'
   if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
     fail "a refused decision cut a branch"
   fi

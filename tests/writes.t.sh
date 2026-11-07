@@ -165,6 +165,88 @@ test_writes_ship_at_merge_merges_once_ci_passed_at_the_shipped_commit() {
   assert_contains "$OUT" '"writes":[]'
 }
 
+test_writes_ship_at_merge_ships_from_origins_tip_after_the_local_branch_was_deleted() {
+  own_tree_repo merge
+  own_tree_stub_gh
+  printf 'agent.ci_timeout: 0\n' >> .ai/config.local.yaml
+  _w_add "New"
+  assert_contains "$OUT" '"pushed":true'
+  local sent
+  sent=$(git --git-dir=origin.git rev-parse spec/idea-x)
+  git branch -q -D spec/idea-x
+  printf 'spec/idea-x\n' > stub-gh/head
+  run jig writes ship spec:idea-x --json
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" 'internal:'
+  assert_contains "$OUT" "\"commit\":\"$sent\""
+  assert_contains "$OUT" '"commits":1'
+  assert_contains "$OUT" '"merged":true'
+  assert_contains "$(cat stub-gh/merged)" "--match-head-commit $sent"
+}
+
+test_writes_ship_refuses_to_cut_a_deleted_branch_below_an_edit_never_sent() {
+  own_tree_repo merge
+  own_tree_stub_gh
+  printf 'agent.ci_timeout: 0\n' >> .ai/config.local.yaml
+  _w_add "First"
+  assert_contains "$OUT" '"pushed":true'
+  printf '#!/bin/sh\nexit 1\n' > .git/hooks/pre-push
+  chmod +x .git/hooks/pre-push
+  _w_add "Second"
+  assert_contains "$OUT" '"pushed":false'
+  local unsent
+  unsent=$(git rev-parse spec/idea-x)
+  rm -f .git/hooks/pre-push
+  git branch -q -D spec/idea-x
+  printf 'spec/idea-x\n' > stub-gh/head
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "$unsent"
+  assert_no_file stub-gh/merged
+  if git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "a refused ship cut the branch"
+  fi
+  # The edit still waits, by the record.
+  run jig writes --json
+  assert_contains "$OUT" '"target":"spec:idea-x"'
+}
+
+test_writes_ship_says_why_it_could_not_cut_the_deleted_branch_again() {
+  own_tree_repo push
+  _w_add "New"
+  assert_contains "$OUT" '"pushed":true'
+  git branch -q -D spec/idea-x
+  # A lock git left: the ref cannot be created, and git says why.
+  mkdir -p .git/refs/heads/spec
+  : > .git/refs/heads/spec/idea-x.lock
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" 'could not cut spec/idea-x again at origin'
+  assert_contains "$OUT" 'idea-x.lock'
+  if git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "a refused cut left the branch"
+  fi
+}
+
+test_writes_ship_at_merge_does_not_merge_when_the_ship_steps_stopped() {
+  own_tree_repo merge
+  own_tree_stub_gh
+  printf 'agent.ci_timeout: 0\n' >> .ai/config.local.yaml
+  _w_add "First"
+  assert_contains "$OUT" '"pr":"https://github.com/example/example/pull/42"'
+  printf '#!/bin/sh\necho refused-by-hook >&2\nexit 1\n' > .git/hooks/pre-push
+  chmod +x .git/hooks/pre-push
+  _w_add "Second"
+  assert_contains "$OUT" '"pushed":false'
+  printf 'spec/idea-x\n' > stub-gh/head
+  run jig writes ship spec:idea-x --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" 'refused-by-hook'
+  assert_contains "$OUT" '"merged":false'
+  assert_no_file stub-gh/merged
+}
+
 test_writes_ship_keeps_a_write_that_landed_while_it_waited_for_ci() {
   own_tree_repo merge
   own_tree_stub_gh
@@ -315,6 +397,25 @@ HOOK
   if git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
     fail "a refused write left its branch"
   fi
+  own_tree_gone
+}
+
+test_writes_without_a_revision_are_not_refused_for_a_write_made_meanwhile() {
+  # The same raise, by another writer while the tree was being made: a caller that gave
+  # no --revision asked for no check, so the claim takes the revision as it is then.
+  own_tree_repo commit
+  cat > .git/hooks/post-checkout <<'HOOK'
+#!/bin/sh
+d=$(git rev-parse --git-common-dir)/../.ai/runtime/revision
+mkdir -p "$d"
+: > "$d/99999999999"
+exit 0
+HOOK
+  chmod +x .git/hooks/post-checkout
+  run jig spec item add idea-x --phase 2 --text "New" --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"committed":true'
+  assert_contains "$(own_tree_show spec/idea-x .ai/specs/idea-x/roadmap.md)" '- [ ] New'
   own_tree_gone
 }
 
@@ -942,6 +1043,34 @@ test_writes_after_a_squash_merge_cut_a_new_name_and_leave_the_old_alone() {
   _w_add "Third"
   assert_contains "$OUT" '"branch":"spec/idea-x-2"'
   assert_contains "$OUT" '"commits":2'
+}
+
+test_writes_after_a_squash_merge_do_not_take_the_name_of_another_spec() {
+  own_tree_repo push
+  # A spec whose id is what the new name would be, its own branch merged and gone.
+  mkdir -p .ai/specs/idea-x-2
+  printf '# Idea X 2\n' > .ai/specs/idea-x-2/spec.md
+  printf '# Roadmap: Idea X 2\n\n## Phase 1 — One\n\n- [ ] Its own\n' > .ai/specs/idea-x-2/roadmap.md
+  git add -A .ai/specs/idea-x-2
+  git commit -q -m "another spec"
+  git push -q origin main
+  _w_add "First"
+  # shellcheck disable=SC2094
+  own_tree_show spec/idea-x .ai/specs/idea-x/roadmap.md > .ai/specs/idea-x/roadmap.md
+  git add -A .ai/specs/idea-x
+  git commit -q -m squashed
+  git push -q origin main
+  _w_add "Second"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x-3"'
+  assert_contains "$OUT" '"commits":1'
+  if git rev-parse --verify --quiet refs/heads/spec/idea-x-2 >/dev/null; then
+    fail "a write of idea-x took the branch of spec idea-x-2"
+  fi
+  run jig spec item add idea-x-2 --phase 1 --text "Next" --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x-2"'
+  assert_contains "$OUT" '"commits":1'
 }
 
 test_writes_after_a_closed_pull_request_do_not_bring_its_edits_back() {
