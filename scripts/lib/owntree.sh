@@ -40,6 +40,7 @@ OT_COMMITS=0
 OT_PUSHED=0
 OT_PR=""
 OT_MERGED=0
+OT_ENDED=""
 OT_NOTE=""
 
 # Referenced from the exit handler, so script-global (conventions/shell.md).
@@ -229,6 +230,8 @@ ot_begin() {
   else
     OT_EXPECTED=$(jig_revision_read)
   fi
+  _OT_HEADS_STATE=""
+  _OT_HELD_STATE=""
   # shellcheck disable=SC2016 # evaluated at exit, by design
   jig_on_exit '_ot_close'
   _ot_lock_acquire "$OT_WHO"
@@ -250,17 +253,79 @@ _ot_holder() {
   '
 }
 
+# _ot_origin_heads — what origin says its branches are, asked once per write: _OT_HEADS
+# <- `ls-remote --heads` (`<sha><TAB>refs/heads/<name>` lines), _OT_HEADS_STATE <- known,
+# none (no origin) or unknown (no answer). A tracking ref is what origin had at the last
+# fetch, and one whose branch origin deleted stays until a prune: what origin holds is
+# judged by this answer, never by those refs, when there is one. Memoises into globals,
+# so it is called as a plain command; ot_begin clears it.
+_OT_HEADS=""
+_OT_HEADS_STATE=""
+_ot_origin_heads() {
+  [ -z "$_OT_HEADS_STATE" ] || return 0
+  if ! git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    _OT_HEADS=""
+    _OT_HEADS_STATE=none
+    return 0
+  fi
+  if _OT_HEADS=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+    git -C "$JIG_PROJECT" ls-remote --heads origin 2>/dev/null); then
+    _OT_HEADS_STATE=known
+  else
+    _OT_HEADS=""
+    _OT_HEADS_STATE=unknown
+  fi
+}
+
 # _ot_origin_has <branch> — 0 origin has it, 1 it does not, 2 no origin or no answer.
 _ot_origin_has() {
-  local rc=0
-  git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 || return 2
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-    git -C "$JIG_PROJECT" ls-remote --exit-code --heads origin "refs/heads/$1" >/dev/null 2>&1 || rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    2) return 1 ;;
-    *) return 2 ;;
+  _ot_origin_heads
+  [ "$_OT_HEADS_STATE" = known ] || return 2
+  case "$_OT_HEADS"$'\n' in
+    *$'\t'"refs/heads/$1"$'\n'*) return 0 ;;
   esac
+  return 1
+}
+
+# _ot_origin_held — what "origin already holds it" is measured against: _OT_HELD <- the
+# commits origin's branches name that are here, as `^<sha>` lines for `rev-list --stdin`
+# (an origin of many branches would overflow a command line, Git Bash's first), and
+# _OT_HELD_REMOTES <- 1 when origin gave no answer, so its tracking refs, the best this
+# clone knows, stand in. One `cat-file` for the lot, once per write.
+_OT_HELD=""
+_OT_HELD_REMOTES=0
+_OT_HELD_STATE=""
+_ot_origin_held() {
+  local sha type
+  [ -z "$_OT_HELD_STATE" ] || return 0
+  _OT_HELD_STATE=1
+  _OT_HELD=""
+  _OT_HELD_REMOTES=0
+  _ot_origin_heads
+  if [ "$_OT_HEADS_STATE" != known ]; then
+    _OT_HELD_REMOTES=1
+    return 0
+  fi
+  [ -n "$_OT_HEADS" ] || return 0
+  while read -r sha type _; do
+    if [ "$type" = commit ]; then
+      _OT_HELD="$_OT_HELD^$sha"$'\n'
+    fi
+  done < <(printf '%s\n' "$_OT_HEADS" | cut -f1 | git -C "$JIG_PROJECT" cat-file --batch-check 2>/dev/null)
+}
+
+# _ot_not_held <commit> <also-held-or-empty> — <commit> has something origin does not
+# hold (_ot_origin_held), or git could not say: a rule that keeps a person's commits in
+# fails closed.
+_ot_not_held() {
+  local out also="" remotes=()
+  _ot_origin_held
+  [ "$_OT_HELD_REMOTES" != 1 ] || remotes=(--not --remotes=origin)
+  [ -z "$2" ] || also="^$2"$'\n'
+  # A --not before --stdin leaves what stdin names alone (git-rev-list(1)).
+  out=$(printf '%s%s' "$_OT_HELD" "$also" \
+    | git -C "$JIG_PROJECT" rev-list -1 "$1" ${remotes[@]+"${remotes[@]}"} --stdin 2>/dev/null) || return 0
+  [ -n "$out" ]
 }
 
 _ot_sha() {
@@ -295,59 +360,42 @@ _ot_free_name() {
   done
 }
 
-# _ot_resolve <wanted> <base> — which branch this write goes on, and from what:
-# OT_BRANCH, _OT_START (the commit a new branch is cut from; empty to stay on the
-# branch's tip) and OT_BASE_REF. The table in the ADR:
+# ot_judge <branch> <base> — what a write finds on <branch>: the one answer a write's
+# resolve and `jig writes ship` both act on, so that neither keeps a judgement of its own.
+# What the record knows counts whenever the record names <branch>, whatever base it was
+# written for: a base changes when an epic opens or finishes, and a pull request closed
+# before that is no less closed. Origin is asked through _ot_origin_heads, and the branch
+# is fetched when origin has it. Sets:
 #
-# - no such branch: cut from the base, and one only on origin from its tip there;
-# - it merged by ancestry into the base: fast-forward to the base, same name;
-# - it landed some other way, was closed unmerged, or origin dropped it: its commits are
-#   no longer what waits, and it cannot be fast-forwarded. A new name, cut from the
-#   base. It stays where it is: nothing is deleted, moved back or forced;
-# - its pull request merged without its tip: what is above what merged still waits, on
-#   the same name, for a new pull request;
-# - it has commits here that no write of Jig's made and origin does not have: a person's,
-#   and Jig publishes nothing of theirs. Refused;
-# - otherwise it still waits, and the commit goes on top.
+# - _OT_J: `none` (no such branch, here or on origin), `ff` (the base holds its tip),
+#   `spent` (its pull request merged without the tip: what is above waits for a new one),
+#   `gone` (its commits no longer wait) or `top` (it waits, and a commit goes on top);
+# - _OT_J_WHY, for `gone`: `merged`, `closed` (unmerged), `dropped` (origin deleted the
+#   branch it held) or `landed` (the base has its work, by ancestry or by content);
+# - _OT_J_TIP and _OT_J_LOCAL, and _OT_STALE_REF for a tracking ref origin no longer backs.
 #
-# The base is read through jig_base_ref, origin's when it is known: what a forge will
-# compare against, so that commits a person has not pushed to their base are not carried
-# out on a branch of Jig's, and so that `commits` counts what the pull request shows.
-#
-# Nothing moves here. A branch that has to catch up leaves _OT_FF_TO and _OT_FF_FROM,
-# and a tracking ref origin no longer backs leaves _OT_STALE_REF: ot_commit moves the one,
-# inside the tree that holds the branch, and removes the other, so a refusal before then
-# has left every ref where it was, and the next write sees what this one saw.
-_OT_START=""
-_OT_FF_TO=""
-_OT_FF_FROM=""
-_OT_STALE_REF=""
-_OT_PR_SPENT=0
-_ot_resolve() {
-  local wanted="$1" base="$2" branch local_sha remote_sha stale_sha="" tip default default_ref had_rc=0 was_pushed=0 holder
-  local rec_branch="" rec_pr="" rec_merged=0 rec_pushed=0 rec_commit="" any_branch="" any_commit=""
-  OT_BASE="$base"
-  _OT_FF_TO=""
-  _OT_FF_FROM=""
+# Refuses with nothing written: `branch-diverged`; what ot_refuse_what_is_not_jigs refuses;
+# and `write-still-waits` for edits that never reached origin above a write that is over
+# because it was closed or dropped: sent, they would go out with what was turned down, and
+# left behind, nobody would see them wait.
+_OT_J=""
+_OT_J_WHY=""
+_OT_J_TIP=""
+_OT_J_LOCAL=""
+ot_judge() {
+  local branch="$1" base="$2" base_ref default_ref rec_base_ref="" remote_sha="" stale_sha="" sent="" tip state n
+  local had_rc=0 was_pushed=0 rec_pr="" rec_merged=0 rec_pushed=0 rec_commit="" rec_ended=""
+  _OT_J=""
+  _OT_J_WHY=""
+  _OT_J_TIP=""
   _OT_STALE_REF=""
-  _OT_PR_SPENT=0
-  if ot_record_read "$OT_TARGET"; then
-    any_branch=$OT_R_BRANCH
-    any_commit=$OT_R_COMMIT
-    if [ "$OT_R_BASE" = "$base" ] && [ -n "$OT_R_BRANCH" ]; then
-      rec_branch=$OT_R_BRANCH
-      rec_pr=$OT_R_PR
-      rec_merged=$OT_R_MERGED
-      rec_pushed=$OT_R_PUSHED
-      rec_commit=$OT_R_COMMIT
-    fi
-  fi
-  branch=${rec_branch:-$wanted}
-  git check-ref-format --branch "$branch" >/dev/null 2>&1 \
-    || jig_die "$OT_WHO: git rejects the branch name: $branch"
-  holder=$(_ot_holder "$branch")
-  if [ -n "$holder" ]; then
-    jig_fail branch-checked-out "$OT_WHO: $branch is checked out in $holder, and Jig never moves a checkout; finish the work there, or switch that checkout to another branch, then try again"
+  if [ -n "$OT_R_BRANCH" ] && [ "$OT_R_BRANCH" = "$branch" ]; then
+    rec_pr=$OT_R_PR
+    rec_merged=$OT_R_MERGED
+    rec_pushed=$OT_R_PUSHED
+    rec_commit=$OT_R_COMMIT
+    rec_ended=$OT_R_ENDED
+    [ "$OT_R_BASE" = "$base" ] || rec_base_ref=$(jig_base_ref "$OT_R_BASE")
   fi
 
   _ot_origin_has "$branch" || had_rc=$?
@@ -364,71 +412,159 @@ _ot_resolve() {
     [ "$rec_pushed" != 1 ] || was_pushed=1
   fi
 
-  OT_BASE_REF=$(jig_base_ref "$base")
-  [ -n "$OT_BASE_REF" ] || jig_die "$OT_WHO: $base exists neither here nor on origin"
-  default=$(cfg git.base_branch main)
-  default_ref=$(jig_base_ref "$default")
+  base_ref=$(jig_base_ref "$base")
+  [ -n "$base_ref" ] || jig_die "$OT_WHO: $base exists neither here nor on origin"
+  default_ref=$(jig_base_ref "$(cfg git.base_branch main)")
 
-  local_sha=$(_ot_sha "refs/heads/$branch")
-  remote_sha=""
+  _OT_J_LOCAL=$(_ot_sha "refs/heads/$branch")
   [ -n "$_OT_STALE_REF" ] || remote_sha=$(_ot_sha "refs/remotes/origin/$branch")
-  tip=$local_sha
+  tip=$_OT_J_LOCAL
   if [ -n "$remote_sha" ]; then
-    if [ -z "$local_sha" ] || _ot_ancestor "$local_sha" "$remote_sha"; then
+    if [ -z "$_OT_J_LOCAL" ] || _ot_ancestor "$_OT_J_LOCAL" "$remote_sha"; then
       tip=$remote_sha
-    elif ! _ot_ancestor "$remote_sha" "$local_sha"; then
+    elif ! _ot_ancestor "$remote_sha" "$_OT_J_LOCAL"; then
       jig_fail branch-diverged "$OT_WHO: $branch and origin/$branch have diverged; reconcile them, or merge the pull request, then try again"
     fi
   fi
 
-  ot_refuse_what_is_not_jigs "$branch" "$any_branch" "$any_commit" "$base"
+  ot_refuse_what_is_not_jigs "$branch" "$OT_R_BRANCH" "$OT_R_COMMIT" "$base"
 
-  OT_BRANCH=$branch
-  _OT_START=""
+  _OT_J_TIP=$tip
   if [ -z "$tip" ]; then
-    _OT_START=$(_ot_sha "$OT_BASE_REF")
+    _OT_J=none
     return 0
   fi
-  if _ot_ancestor "$tip" "$OT_BASE_REF"; then
-    # Merged, and the base holds everything the branch has, on origin too: a fast-forward.
-    # A pull request it had is over, and the next one is another.
-    _ot_plan_move "$(_ot_sha "$OT_BASE_REF")" "$local_sha"
-    _OT_PR_SPENT=1
+  if _ot_ancestor "$tip" "$base_ref"; then
+    _OT_J=ff
     return 0
   fi
-  local gone=0 state="" sent_sha="${remote_sha:-$stale_sha}"
+  sent=${remote_sha:-$stale_sha}
   if [ "$rec_merged" = 1 ]; then
-    gone=1
-  elif [ -n "$default_ref" ] && _ot_ancestor "$tip" "$default_ref"; then
-    gone=1
-  elif [ -n "$rec_pr" ] && [ "$rec_branch" = "$branch" ]; then
+    _OT_J_WHY=merged
+  elif [ -n "$rec_ended" ]; then
+    _OT_J_WHY=$rec_ended
+  elif { [ -n "$default_ref" ] && _ot_ancestor "$tip" "$default_ref"; } \
+    || { [ -n "$rec_base_ref" ] && _ot_ancestor "$tip" "$rec_base_ref"; }; then
+    _OT_J_WHY=landed
+  elif [ -n "$rec_pr" ]; then
     state=$(jig_pr_state "$rec_pr" 2>/dev/null) || state=unknown
     case "$state" in
-      closed) gone=1 ;;
+      closed) _OT_J_WHY=closed ;;
       merged)
-        if ot_tip_was_sent "$tip" "$sent_sha" "$rec_pushed" "$rec_commit"; then
-          gone=1
+        if ot_tip_was_sent "$tip" "$sent" "$rec_pushed" "$rec_commit"; then
+          _OT_J_WHY=merged
         else
-          _OT_PR_SPENT=1
+          _OT_J=spent
+          return 0
         fi ;;
     esac
   fi
-  if [ "$_OT_PR_SPENT" = 1 ]; then
-    _ot_plan_move "$tip" "$local_sha"
+  if [ -z "$_OT_J_WHY" ] && { ot_touched_equal "$tip" "$base_ref" \
+    || { [ -n "$rec_base_ref" ] && ot_touched_equal "$tip" "$rec_base_ref"; }; }; then
+    _OT_J_WHY=landed
+  fi
+  if [ -z "$_OT_J_WHY" ] && [ "$had_rc" -eq 1 ] && [ "$was_pushed" -eq 1 ]; then
+    _OT_J_WHY=dropped
+  fi
+  if [ -z "$_OT_J_WHY" ]; then
+    _OT_J=top
     return 0
   fi
-  if [ "$gone" -eq 0 ] && ot_touched_equal "$tip" "$OT_BASE_REF"; then
-    gone=1
+  _OT_J=gone
+  case "$_OT_J_WHY" in
+    closed | dropped) ;;
+    *) return 0 ;;
+  esac
+  # What origin had of it is what anyone could see; the record's tip answers when the
+  # tracking ref has gone. Not knowing, there is nothing to tell apart.
+  if [ -z "$sent" ] && [ "$rec_pushed" = 1 ]; then
+    sent=$rec_commit
   fi
-  if [ "$gone" -eq 0 ] && [ "$had_rc" -eq 1 ] && [ "$was_pushed" -eq 1 ]; then
-    gone=1
-  fi
-  if [ "$gone" -eq 1 ]; then
-    OT_BRANCH=$(_ot_free_name "$wanted")
-    _OT_START=$(_ot_sha "$OT_BASE_REF")
+  if [ -z "$sent" ] || [ -z "$_OT_J_LOCAL" ]; then
     return 0
   fi
-  _ot_plan_move "$tip" "$local_sha"
+  n=$(git -C "$JIG_PROJECT" rev-list --count "$sent..$_OT_J_LOCAL" 2>/dev/null) || n=0
+  [ "$n" -gt 0 ] || return 0
+  if [ "$_OT_J_WHY" = closed ]; then
+    state="above edits whose pull request was closed unmerged"
+  else
+    state="above edits origin no longer has"
+  fi
+  jig_fail write-still-waits "$OT_WHO: $branch has $n edit(s) that never reached origin, $state; Jig neither sends them out with those nor leaves them where nobody sees them wait. Move them to a branch of your own (git branch -m $branch <name>), then try again"
+}
+
+# _ot_resolve <wanted> <base> — which branch this write goes on, and from what:
+# OT_BRANCH, _OT_START (the commit a new branch is cut from; empty to stay on the
+# branch's tip) and OT_BASE_REF. The branch is the one the record names, whatever base
+# it was written for, and <wanted> with no record. By ot_judge's answer (the table in
+# the ADR):
+#
+# - none: cut from the base, and one only on origin from its tip there;
+# - ff: it merged by ancestry into the base: fast-forward to the base, same name, and the
+#   pull request it had is over;
+# - gone: it landed some other way, was closed unmerged, or origin dropped it: its commits
+#   are no longer what waits, and it cannot be fast-forwarded. A new name, cut from the
+#   base. It stays where it is: nothing is deleted, moved back or forced;
+# - spent: its pull request merged without its tip: what is above what merged still
+#   waits, on the same name, for a new pull request;
+# - top: it still waits, and the commit goes on top.
+#
+# A write that still waits (spent, top) for another base than this one's is refused,
+# write-still-waits: on top, this edit would go out in the pull request into the old base,
+# which `jig_ship_pr` finds by the branch alone; on a new name, the record would forget
+# the edit that waits.
+#
+# The base is read through jig_base_ref, origin's when it is known: what a forge will
+# compare against, so that commits a person has not pushed to their base are not carried
+# out on a branch of Jig's, and so that `commits` counts what the pull request shows.
+#
+# Nothing moves here. A branch that has to catch up leaves _OT_FF_TO and _OT_FF_FROM,
+# and a tracking ref origin no longer backs leaves _OT_STALE_REF: ot_commit moves the one,
+# inside the tree that holds the branch, and removes the other, so a refusal before then
+# has left every ref where it was, and the next write sees what this one saw.
+_OT_START=""
+_OT_FF_TO=""
+_OT_FF_FROM=""
+_OT_STALE_REF=""
+_OT_PR_SPENT=0
+_ot_resolve() {
+  local wanted="$1" base="$2" branch holder pr=""
+  OT_BASE="$base"
+  _OT_FF_TO=""
+  _OT_FF_FROM=""
+  _OT_STALE_REF=""
+  _OT_PR_SPENT=0
+  branch=$wanted
+  if ot_record_read "$OT_TARGET"; then
+    branch=$OT_R_BRANCH
+  fi
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 \
+    || jig_die "$OT_WHO: git rejects the branch name: $branch"
+  holder=$(_ot_holder "$branch")
+  if [ -n "$holder" ]; then
+    jig_fail branch-checked-out "$OT_WHO: $branch is checked out in $holder, and Jig never moves a checkout; finish the work there, or switch that checkout to another branch, then try again"
+  fi
+
+  ot_judge "$branch" "$base"
+  OT_BASE_REF=$(jig_base_ref "$base")
+  OT_BRANCH=$branch
+  _OT_START=""
+  case "$_OT_J" in
+    none) _OT_START=$(_ot_sha "$OT_BASE_REF") ;;
+    ff)
+      _ot_plan_move "$(_ot_sha "$OT_BASE_REF")" "$_OT_J_LOCAL"
+      _OT_PR_SPENT=1 ;;
+    gone)
+      OT_BRANCH=$(_ot_free_name "$wanted")
+      _OT_START=$(_ot_sha "$OT_BASE_REF") ;;
+    *)
+      if [ -n "$OT_R_BASE" ] && [ "$OT_R_BASE" != "$base" ]; then
+        [ "$_OT_J" != top ] || [ -z "$OT_R_PR" ] || pr=" ($OT_R_PR)"
+        jig_fail write-still-waits "$OT_WHO: $branch still waits to go into $OT_R_BASE$pr, and this edit goes into $base; merge or close what waits first (\`jig writes ship $OT_TARGET\` carries it on), then try again"
+      fi
+      [ "$_OT_J" != spent ] || _OT_PR_SPENT=1
+      _ot_plan_move "$_OT_J_TIP" "$_OT_J_LOCAL" ;;
+  esac
 }
 
 # ot_tip_was_sent <tip> <origin's-ref-sha> <record-pushed> <record-commit> — the tip is in
@@ -444,32 +580,51 @@ ot_tip_was_sent() {
 # ot_refuse_what_is_not_jigs <branch> <record-branch> <record-commit> <base> — the rule:
 # a write publishes only its own commits. Whatever would leave this machine that Jig did
 # not write, and that origin does not already hold, is refused, with nothing written.
-# Asked before the resolve decides anything and before `jig writes ship` sends anything,
+# Asked by ot_judge, before anything is decided, for a write and for `jig writes ship`,
 # the only two ways out (_ot_ship_steps does the sending for both).
 #
 # - A local tip the record does not name, with commits origin does not hold, is a
-#   person's. Held by any ref of origin's, or by the base here, nothing new would leave.
-#   The record names only the tip: a commit that is not Jig's below a tip that is cannot
-#   be told, which is why the next clause exists.
+#   person's. Held by a branch origin answers it has (_ot_origin_held: a tracking ref of a
+#   branch origin deleted holds nothing), or by the base here, nothing new would leave.
+#   The branch's own tracking ref counts too: fresh, origin has it; stale, origin dropped
+#   the branch, which ot_judge then takes as gone, and what it held is never sent again.
+#   Nor does it from a branch the record does not name whose touched paths read the same
+#   on the base: that is a squash merge, judged gone, and never sent. The record names
+#   only the tip: a commit that is not Jig's below a tip that is cannot be told, which is
+#   why the next clause exists.
 # - A base origin does not have: a branch cut from it would carry whatever is on it out to
 #   origin, and a pull request into it could not open anyway. At `commit` nothing leaves.
 ot_refuse_what_is_not_jigs() {
-  local local_sha ref
+  local local_sha ref base_ref has_origin=0 rc=0 how own
   local_sha=$(_ot_sha "refs/heads/$1")
-  if [ -n "$local_sha" ] && { [ "$2" != "$1" ] || [ "$3" != "$local_sha" ]; } \
-    && [ -n "$(git -C "$JIG_PROJECT" rev-list -1 "$local_sha" --not --remotes=origin 2>/dev/null)" ]; then
-    for ref in "$(jig_base_ref "$4")" "$(jig_base_ref "$(cfg git.base_branch main)")"; do
-      if [ -n "$ref" ] && _ot_ancestor "$local_sha" "$ref"; then
-        local_sha=""
-        break
-      fi
-    done
-    [ -z "$local_sha" ] \
-      || jig_fail branch-has-other-commits "$OT_WHO: $1 has commits that no write of Jig's made and origin does not have, and Jig does not publish them; push or merge them yourself, or move them to another branch, then try again"
+  if git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    has_origin=1
   fi
-  if [ "$OT_LEVEL" != commit ] && git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 \
-    && [ -z "$(_ot_sha "refs/remotes/origin/$4")" ]; then
-    jig_fail base-not-on-origin "$OT_WHO: $4 is not on origin, so a branch cut from it would carry out whatever is on it and no pull request could open into it; push $4 yourself, then try again"
+  if [ -n "$local_sha" ] && { [ "$2" != "$1" ] || [ "$3" != "$local_sha" ]; }; then
+    own=$(_ot_sha "refs/remotes/origin/$1")
+    if _ot_not_held "$local_sha" "$own"; then
+      base_ref=$(jig_base_ref "$4")
+      for ref in "$base_ref" "$(jig_base_ref "$(cfg git.base_branch main)")"; do
+        if [ -n "$ref" ] && _ot_ancestor "$local_sha" "$ref"; then
+          local_sha=""
+          break
+        fi
+      done
+      if [ -n "$local_sha" ] && [ "$2" != "$1" ] && [ -n "$base_ref" ] && ot_touched_equal "$local_sha" "$base_ref"; then
+        local_sha=""
+      fi
+      if [ -n "$local_sha" ]; then
+        how="push or merge them yourself"
+        [ "$has_origin" = 1 ] || how="merge them yourself"
+        jig_fail branch-has-other-commits "$OT_WHO: $1 has commits that no write of Jig's made and origin does not have, and Jig does not publish them; $how, or move them to another branch, then try again"
+      fi
+    fi
+  fi
+  if [ "$OT_LEVEL" != commit ] && [ "$has_origin" = 1 ]; then
+    _ot_origin_has "$4" || rc=$?
+    if [ "$rc" -eq 1 ] || { [ "$rc" -eq 2 ] && [ -z "$(_ot_sha "refs/remotes/origin/$4")" ]; }; then
+      jig_fail base-not-on-origin "$OT_WHO: $4 is not on origin, so a branch cut from it would carry out whatever is on it and no pull request could open into it; push $4 yourself, then try again"
+    fi
   fi
 }
 
@@ -675,7 +830,9 @@ ot_ship() {
   OT_PUSHED=0
   OT_PR=""
   OT_MERGED=0
-  if ot_record_read "$OT_TARGET" && [ "$OT_R_BRANCH" = "$OT_BRANCH" ] && [ "$OT_R_BASE" = "$OT_BASE" ] && [ "$OT_R_MERGED" != 1 ]; then
+  OT_ENDED=""
+  if ot_record_read "$OT_TARGET" && [ "$OT_R_BRANCH" = "$OT_BRANCH" ] && [ "$OT_R_BASE" = "$OT_BASE" ] \
+    && [ "$OT_R_MERGED" != 1 ] && [ -z "$OT_R_ENDED" ]; then
     [ "$_OT_PR_SPENT" = 1 ] || OT_PR=$OT_R_PR
   fi
   _ot_pushed_now
@@ -701,12 +858,15 @@ OT_R_COMMIT=""
 OT_R_PUSHED=0
 OT_R_PR=""
 OT_R_MERGED=0
+OT_R_ENDED=""
 
 # ot_record_read <target> — the OT_R_* of its record; non-zero with none. Read with the
-# shell, one process per nothing: a read asks this once per spec.
+# shell, one process per nothing: a read asks this once per spec. `ended` is what `jig
+# writes ship` learned of a write that is over without a merge — `closed`, `dropped` or
+# `landed` — and is absent from a record written before it was asked.
 ot_record_read() {
   local file key value
-  OT_R_BRANCH="" OT_R_BASE="" OT_R_COMMIT="" OT_R_PUSHED=0 OT_R_PR="" OT_R_MERGED=0
+  OT_R_BRANCH="" OT_R_BASE="" OT_R_COMMIT="" OT_R_PUSHED=0 OT_R_PR="" OT_R_MERGED=0 OT_R_ENDED=""
   file=$(_ot_record_file "$1") || return 1
   [ -f "$file" ] || return 1
   while IFS= read -r key || [ -n "$key" ]; do
@@ -718,6 +878,7 @@ ot_record_read() {
       pushed:*) OT_R_PUSHED=$value ;;
       pr:*) [ "$value" = "$key" ] || OT_R_PR=$value ;;
       merged:*) OT_R_MERGED=$value ;;
+      ended:*) [ "$value" = "$key" ] || OT_R_ENDED=$value ;;
     esac
   done < "$file"
   [ -n "$OT_R_BRANCH" ]
@@ -735,6 +896,7 @@ ot_record_write() {
   {
     printf 'branch: %s\nbase: %s\ncommit: %s\n' "$OT_BRANCH" "$OT_BASE" "$OT_COMMIT"
     printf 'pushed: %s\npr: %s\nmerged: %s\n' "$OT_PUSHED" "$OT_PR" "$OT_MERGED"
+    [ -z "$OT_ENDED" ] || printf 'ended: %s\n' "$OT_ENDED"
   } > "$tmp"
   mv "$tmp" "$file"
   jig_record_changed
@@ -764,12 +926,15 @@ OT_W_COMMITS=0
 
 # ot_waiting <target> — true while its write has not reached its base, the OT_R_* of
 # its record and OT_W_TIP and OT_W_COMMITS set. Local refs and the record, no network:
-# so a merge shows as of the last fetch. A person's own branch of that name, with no
+# so a merge shows as of the last fetch, and an end only `jig writes ship` asked about
+# shows once it marked the record. A person's own branch of that name, with no
 # record, is not a write that waits.
 ot_waiting() {
   local base_ref
   ot_record_read "$1" || return 1
-  [ "$OT_R_MERGED" != 1 ] || return 1
+  if [ "$OT_R_MERGED" = 1 ] || [ -n "$OT_R_ENDED" ]; then
+    return 1
+  fi
   OT_W_TIP=$(_ot_sha "refs/heads/$OT_R_BRANCH")
   [ -n "$OT_W_TIP" ] || OT_W_TIP=$(_ot_sha "refs/remotes/origin/$OT_R_BRANCH")
   [ -n "$OT_W_TIP" ] || return 1

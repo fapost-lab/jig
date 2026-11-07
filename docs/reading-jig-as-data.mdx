@@ -78,6 +78,7 @@ be reworded.
 | `branch-diverged` | the write's branch and the one on the remote have diverged. Nothing was written, and nothing is forced |
 | `branch-has-other-commits` | the write's branch has commits here that no write made and the remote does not have: yours, and a write does not publish them. Nothing was written; the message names the branch |
 | `base-not-on-origin` | the write's base is not on the remote, at `agent.git: push` or above: a branch cut from it would carry out whatever is on it. Nothing was written; push that base yourself |
+| `write-still-waits` | an earlier edit of the same spec, or of knowledge, still waits where this one cannot go: into another base, because an epic opened or finished since, or as edits that never reached the remote above ones whose pull request was closed or whose branch was deleted there. Nothing was written; the message names the branch and what to do |
 | `tree-in-the-way` | an unfinished write left something at Jig's tree that git will not remove. Nothing was written, and trying again does not help: delete the path the message names |
 | `commit-refused` | Git refused the commit, usually a hook of the project; the message says what it said. Nothing waits |
 | `epic-missing` | the spec is built on an epic branch that is neither here nor on the remote. Nothing was written |
@@ -384,8 +385,12 @@ branch yourself, or another worktree is, the write is refused with `branch-check
 message says where: finish there or switch away. When the branch has commits of yours that the remote
 does not have, the write is refused with `branch-has-other-commits`: push or merge them, or move them
 off. A write starts from the remote's base, so what you have not pushed to your own `main` stays out
-of it. `jig writes ship` sends nothing of a pull request that was closed unmerged or merged with those
-edits: it answers `not-found`, and the next edit takes a new name. The full shape is in
+of it. What the remote holds is what it says it has: a branch deleted there counts for nothing, pruned
+or not. `jig writes ship` sends nothing of a pull request that was closed unmerged or merged with those
+edits, or of a branch the remote deleted: it answers `not-found`, the edit leaves `jig writes`, and the
+next edit takes a new name. An edit still waiting is never left out of sight: when an epic opened or
+finished since it was made, or when it never reached the remote above edits that were turned down, the
+next write is refused with `write-still-waits` until you merge, close or move it. The full shape is in
 [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 
 ### Changing a roadmap

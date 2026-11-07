@@ -67,22 +67,29 @@ _writes_where() {
   if [ "$OT_R_PUSHED" = 1 ]; then printf 'pushed, no pull request\n'; else printf 'not pushed\n'; fi
 }
 
-# _writes_pr_still_open <target> <record-pushed> — what the record's pull request says about
-# carrying this write on, under the lock. Reads have no network, so a read may still show
-# what this finds over. Turned down, its edits do not come back; merged with the tip, they
-# landed: neither is sent again, and the next edit takes a new name. Merged below the tip,
-# what is above it waits for a new pull request.
-_writes_pr_still_open() {
-  local state
-  [ -n "$OT_R_PR" ] || return 0
-  state=$(jig_pr_state "$OT_R_PR" 2>/dev/null) || state=unknown
-  case "$state" in
+# _writes_over <target> — the write is over without anything left to send (ot_judge's
+# `gone`): say so in its record, which reads go on counting until it does, then answer
+# not-found. Under the lock, from the record as read. Turned down, or dropped by origin,
+# its edits do not come back; landed, they need not: the next edit takes a new name.
+_writes_over() {
+  OT_BRANCH=$OT_R_BRANCH
+  OT_BASE=$OT_R_BASE
+  OT_COMMIT=$OT_R_COMMIT
+  OT_PUSHED=$OT_R_PUSHED
+  OT_PR=$OT_R_PR
+  OT_MERGED=$OT_R_MERGED
+  OT_ENDED=$OT_R_ENDED
+  if [ "$_OT_J_WHY" = merged ]; then
+    OT_MERGED=1
+  else
+    OT_ENDED=$_OT_J_WHY
+  fi
+  ot_record_write "$1"
+  case "$_OT_J_WHY" in
     closed) jig_fail not-found "writes ship: the pull request of $1 was closed unmerged, and its edits do not come back; the next edit goes on a new name" ;;
-    merged)
-      if ot_tip_was_sent "$OT_W_TIP" "$(_ot_sha "refs/remotes/origin/$OT_R_BRANCH")" "$2" "$OT_R_COMMIT"; then
-        jig_fail not-found "writes ship: the pull request of $1 merged with these edits, so nothing waits; the next edit goes on a new name"
-      fi
-      OT_R_PR="" ;;
+    merged) jig_fail not-found "writes ship: the pull request of $1 merged with these edits, so nothing waits; the next edit goes on a new name" ;;
+    dropped) jig_fail not-found "writes ship: origin no longer has $OT_BRANCH, which it held, and what it dropped does not come back; the next edit goes on a new name" ;;
+    *) jig_fail not-found "writes ship: what $OT_BRANCH holds is already on $OT_BASE, so nothing of $1 waits" ;;
   esac
 }
 
@@ -103,8 +110,15 @@ _writes_ship() {
   rec_pushed=$OT_R_PUSHED
   ot_fetch "$OT_R_BASE"
   ot_waiting "$target" || jig_fail not-found "writes ship: nothing of $target waits"
-  ot_refuse_what_is_not_jigs "$OT_R_BRANCH" "$OT_R_BRANCH" "$OT_R_COMMIT" "$OT_R_BASE"
-  _writes_pr_still_open "$target" "$rec_pushed"
+  # ot_waiting read `pushed` from the refs; ot_judge wants what the record says.
+  OT_R_PUSHED=$rec_pushed
+  ot_judge "$OT_R_BRANCH" "$OT_R_BASE"
+  case "$_OT_J" in
+    gone) _writes_over "$target" ;;
+    none | ff) jig_fail not-found "writes ship: nothing of $target waits" ;;
+    # Merged below the tip: what is above it waits for a new pull request.
+    spent) OT_R_PR="" ;;
+  esac
   OT_BRANCH=$OT_R_BRANCH
   OT_BASE=$OT_R_BASE
   OT_COMMIT=$OT_W_TIP
@@ -113,6 +127,7 @@ _writes_ship() {
   OT_PUSHED=$OT_R_PUSHED
   OT_PR=$OT_R_PR
   OT_MERGED=0
+  OT_ENDED=""
   OT_BASE_REF=$(jig_base_ref "$OT_BASE")
   msg=$(mktemp "${TMPDIR:-/tmp}/jig-writes.XXXXXX")
   jig_cleanup_add "$msg"
