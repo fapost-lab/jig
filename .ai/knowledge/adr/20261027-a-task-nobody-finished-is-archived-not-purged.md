@@ -11,7 +11,7 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/task.sh
 summary: Why an abandoned or idle task is archived in place with status archived instead of purged, who writes it, and what housekeeping may now write into state.
-reviewed_at: 2026-11-06
+reviewed_at: 2026-11-07
 ---
 # ADR: A task nobody finished is archived, not purged
 
@@ -122,3 +122,10 @@ exactly where it is, without a time limit.**
 > line's card for such a task. Rejected: letting `jig task merge` absorb into a closed receiver —
 > narrower (no help for a task abandoned without a successor) and a person has to remember to run
 > it; consolidating an abandoned task without a fresh review — weakens ADR-0030 for everyone.
+
+> **Amendment (2026-11-07).** An archived task's queue item no longer stays: archiving — by `jig task
+> archive`, by housekeeping or by `jig task merge` — takes it out, with what it waited for, through
+> `jig queue prune` (adr-20261107-a-finished-task-leaves-the-queue). `unarchive` therefore does not
+> restore a place; when it returns the task to `active` or `ready` it prints the `jig queue set`
+> reminder `jig task new` prints (back to `abandoned`, the task is still finished, and none). A wait on an
+> archived task still stays and reads `broken`.

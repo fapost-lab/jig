@@ -143,7 +143,7 @@ project sets it, is run by both after the share and the carry:
 | `git worktree add` | starting a task in a separate worktree |
 | `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
 | delete a branch | only when starting a worktree fails, and only the branch that attempt just created, while it still points where it was created |
-| `git worktree add`, `git worktree remove --force` | a write from a program (`jig spec item`, `jig knowledge accept --json` and the like), only on Jig's own tree under the git directory; never a worktree of yours |
+| `git worktree add`, `git worktree remove --force`, `git update-ref` | a write from a program (`jig spec item`, `jig knowledge accept --json` and the like): the worktree commands only on Jig's own tree under the git directory, never a worktree of yours. At the write's commit, `update-ref` fast-forwards the write's branch in that tree to the base that already holds it or to origin's copy of it, checking the old value first, and deletes your clone's remote-tracking ref of that branch (`refs/remotes/origin/<branch>`) when origin no longer has the branch — what `git fetch --prune` would do |
 | `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, it has no uncommitted changes or lock, and no repository inside its ignored files holds work that is nowhere else |
 
 **No script commits or pushes on its own** — apart from the Windows installer's first commit in a
@@ -189,7 +189,10 @@ Everything a script deletes, it first proves is its own:
   a trash entry. Task, spec, profile, adapter and domain names are validated before any path is built
   from them.
 - **Worktrees** are removed by Git, never by a script, under the conditions above; on Windows,
-  leftover links and empty folders inside that path are then removed, never followed.
+  leftover links and empty folders inside that path are then removed, never followed. Jig's own
+  tree under the git directory goes the same way: Git removes it, and once Git no longer knows the
+  path, only the links and empty folders left there are removed; anything else stays, and the next
+  write is refused `tree-in-the-way`.
 - **Specifications** removed, closed or finished go to the trash, not straight to deletion.
 - **Branches** are never deleted, apart from the failed-worktree case above.
 

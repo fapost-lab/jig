@@ -138,13 +138,44 @@ trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
 # repository of its own with one commit tagged v<JIG_VERSION> — the same bytes,
 # released. A test about unreleased code builds its own source or asks for
 # --unreleased.
+#
+# What is copied is what git would see: tracked files and untracked ones that
+# are not ignored, as they stand in the working tree. Nothing ignored comes
+# along (.ai/runtime, .ai/workspace, nested worktrees under .claude/worktrees),
+# and links are made after every file, because Git Bash makes a link by copying
+# its target and refuses one whose target is not there yet.
+#
+# A tree that is not the framework — the fixture runners tests/runner.t.sh
+# builds hold a copy of this script and no scripts/lib/version.sh — is used as
+# it is.
 _run_release_home() {
-  local home="$RESULTS/home" version
-  mkdir "$home" || return 1
-  cp -R "$ROOT"/. "$home"/ || return 1
-  rm -rf "$home/.git" "$home/.ai/runtime" "$home/.ai/workspace"
-  version=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$home/scripts/lib/version.sh") || return 1
+  local home="$RESULTS/home" version list f
+  if [ ! -f "$ROOT/scripts/lib/version.sh" ]; then
+    printf '%s\n' "$ROOT"
+    return 0
+  fi
+  version=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$ROOT/scripts/lib/version.sh") || return 1
   [ -n "$version" ] || return 1
+  mkdir "$home" || return 1
+  list="$RESULTS/home.files"
+  (
+    cd "$ROOT" || exit 1
+    # -z: a name git would quote (core.quotePath) is read as it is on disk.
+    git ls-files -z --cached --others --exclude-standard > "$list.all" || exit 1
+    : > "$list"
+    : > "$list.links"
+    while IFS= read -r -d '' f; do
+      if [ -L "$f" ]; then
+        printf '%s\n' "$f" >> "$list.links"
+      elif [ -f "$f" ]; then
+        printf '%s\n' "$f" >> "$list"
+      fi
+    done < "$list.all"
+    tar -cf - -T "$list" | (cd "$home" && tar -xf -) || exit 1
+    while IFS= read -r f; do
+      mkdir -p "$home/$(dirname "$f")" && ln -s "$(readlink "$f")" "$home/$f" || exit 1
+    done < "$list.links"
+  ) >/dev/null || return 1
   (
     cd "$home" || exit 1
     git init -q . && git symbolic-ref HEAD refs/heads/main \
@@ -253,7 +284,7 @@ enter_test_env() {
   # repository's changes and took the scoped path (ADR-0041).
   # JIG_VERIFY_BUSY_HELD is the run record this suite's own `jig verify` holds
   # for this clone; a test builds its own project and must queue on its own.
-  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN JIG_VERIFY_BUSY_HELD CI
+  unset JIG_VERIFY_SCOPE JIG_VERIFY_FILES JIG_VERIFY_MAPPED JIG_VERIFY_MAPPED_ALL JIG_VERIFY_BASE JIG_VERIFY_FULL_RUN JIG_VERIFY_EXPLAIN JIG_VERIFY_PROFILES JIG_VERIFY_BUSY_HELD CI
   # The runtime's own session id names a checkout record when nothing else
   # does (adr-20260924-a-checkout-records-what-is-happening-in-it), so a suite
   # run from inside an agent session would write records a CI run does not —

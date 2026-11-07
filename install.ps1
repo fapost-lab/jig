@@ -156,7 +156,9 @@ function Write-JigStep {
 
 # Write-JigResult <message> [-Level ok|warn] -- what a step came to. warn is
 # for an outcome the person may want to know about: a fallback taken, a
-# step skipped, something left in place.
+# step skipped, something left in place. Each line of a message of several
+# is indented alike, so a command on a line of its own stays set off under
+# the sentence that introduces it in the plain form too.
 function Write-JigResult {
     param(
         [Parameter(Mandatory)][string]$Message,
@@ -166,7 +168,10 @@ function Write-JigResult {
         Write-JigBlock -Level $Level -Text $Message
     }
     else {
-        Write-Host "    $Message"
+        foreach ($line in ($Message -split "`r?`n")) {
+            if ($line -eq '') { Write-Host '' }
+            else { Write-Host "    $line" }
+        }
     }
 }
 
@@ -640,6 +645,91 @@ function Install-JigFramework {
     return [PSCustomObject]@{ JigScript = $winJigScript; Ref = $info.Ref }
 }
 
+# --- between steps 5 and 6: is this Jig a release? ----------------------------
+#
+# A copy-mode project takes released code only, and `jig init` refuses any
+# other source unless --unreleased names it on purpose
+# (adr-20261106-copy-mode-projects-take-released-code-only). `-Ref main`
+# installs exactly such a source, so the project step is decided here, before
+# a folder is created, a repository made or a global git identity set --
+# never discovered as a failed `jig init` at the end of it.
+#
+# The question is put to the installed jig, not to -Ref: `jig version` run
+# from a framework checkout prints `X.Y.Z+<sha>` (or `X.Y.Z+unknown`) exactly
+# when `jig init` would refuse it, and that name arrived in the same change as
+# the refusal and the flag. A jig that predates them prints the plain number
+# on any branch, takes any source, and has no --unreleased to pass -- so a
+# branch name alone would ask the wrong question there.
+
+# Get-JigInstalledVersion -- the version the installed jig reports, without
+# its `jig ` prefix, or $null when it printed no such line.
+function Get-JigInstalledVersion {
+    param(
+        [Parameter(Mandatory)][string]$BashExe,
+        [Parameter(Mandatory)][string]$JigScriptPath
+    )
+    $result = Invoke-JigCommand -BashExe $BashExe -JigScriptPath $JigScriptPath -JigArgs @('version')
+    $line = @($result.Output) | ForEach-Object { "$_".Trim() } |
+        Where-Object { $_ -match '^jig \S+$' } | Select-Object -Last 1
+    if (-not $line) { return $null }
+    return $line.Substring(4)
+}
+
+# Test-JigUnreleasedVersion <version> -- whether <version> names unreleased
+# code: it carries a build part, `+<sha>` or `+unknown`.
+function Test-JigUnreleasedVersion {
+    param([string]$Version)
+    return ([bool]$Version) -and $Version.Contains('+')
+}
+
+# Get-JigUnreleasedNotice -- what is said before the question, in the words
+# install.sh uses for the same fact, then what the person can do about it.
+#
+# The way back to a release is a checkout of its tag in <install-dir>, not a
+# repeat run without -Ref: install.sh keeps a checkout that is on a branch on
+# that branch and only fast-forwards it, so the installer run again would
+# land exactly where this one did.
+function Get-JigUnreleasedNotice {
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [string]$Ref,
+        [string]$InstallDir
+    )
+    $where = if ($Ref) { "$Ref, $Version" } else { $Version }
+    $release = 'v' + $Version.Split('+')[0]
+    $lines = @(
+        "This Jig is on the development channel ($where), not a release.",
+        'A project takes files from it only on purpose:',
+        '    jig init --unreleased'
+    )
+    if ($InstallDir) {
+        $lines += 'For a project you work in, put Jig back on its release first:'
+        $lines += "    git -C `"$InstallDir`" checkout $release"
+    }
+    return $lines -join "`n"
+}
+
+# Confirm-JigUnreleasedProject -- the notice, then the question, defaulting to
+# no. -Yes takes the default and is not consent: unreleased code goes into a
+# project only when the person typed yes to exactly that.
+function Confirm-JigUnreleasedProject {
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [string]$Ref,
+        [string]$InstallDir,
+        [bool]$Yes
+    )
+    $notice = Get-JigUnreleasedNotice -Version $Version -Ref $Ref -InstallDir $InstallDir
+    if (Test-JigTerminal) {
+        Write-JigBlock -Level warn -Text $notice
+    }
+    else {
+        Write-Host ''
+        Write-Host $notice -ForegroundColor Yellow
+    }
+    return (Read-JigConfirm -Prompt 'Set up a project with this unreleased Jig anyway?' -Yes $Yes -DefaultNo)
+}
+
 # --- step 6: the first project -----------------------------------------------
 
 # Invoke-JigGitOrThrow <git-exe> <description> <git-args> -- runs git
@@ -665,19 +755,28 @@ function Invoke-JigGitOrThrow {
 
 # Read-JigConfirm <prompt> -- a yes/no question, defaulting to yes and
 # skipped (answered yes) under -Yes (design.md D2: at most four questions,
-# and -Yes takes every default).
+# and -Yes takes every default; one more comes before them when the
+# installed Jig is unreleased, Confirm-JigUnreleasedProject).
+#
+# -DefaultNo turns the default around, for a question whose yes is consent
+# to something the person must choose on purpose: the prompt reads [y/N], an
+# empty answer is no, and -Yes -- which takes every default -- answers no
+# without asking.
 function Read-JigConfirm {
     param(
         [Parameter(Mandatory)][string]$Prompt,
-        [bool]$Yes
+        [bool]$Yes,
+        [switch]$DefaultNo
     )
+    $default = -not $DefaultNo
     if ($Yes) {
-        return $true
+        return $default
     }
     if (Test-JigTerminal) { Write-JigLevelWord 'ask' }
-    $answer = Read-Host "$Prompt [Y/n]"
+    $choices = if ($default) { '[Y/n]' } else { '[y/N]' }
+    $answer = Read-Host "$Prompt $choices"
     if ([string]::IsNullOrWhiteSpace($answer)) {
-        return $true
+        return $default
     }
     return $answer -match '^[Yy]'
 }
@@ -992,9 +1091,12 @@ function Get-JigProjectDirRefusal {
     return $null
 }
 
-# Initialize-JigProject -- REQ-8..11 / design.md D2, at most four questions.
+# Initialize-JigProject -- REQ-8..11 / design.md D2, at most four questions
+# (the unreleased-Jig question, when there is one, is asked before it).
 # Returns the project directory jig was set up in, or $null when it was
 # skipped (declined git-init, or the "set up jig?" question was declined).
+# -Unreleased passes --unreleased to `jig init`: only after the person said
+# yes to it in Confirm-JigUnreleasedProject, never on a default.
 function Initialize-JigProject {
     param(
         [string]$Project,
@@ -1002,6 +1104,7 @@ function Initialize-JigProject {
         [string]$GitName,
         [string]$GitEmail,
         [bool]$SessionHook = $true,
+        [bool]$Unreleased = $false,
         [Parameter(Mandatory)][string]$GitExe,
         [Parameter(Mandatory)][string]$BashExe,
         [Parameter(Mandatory)][string]$JigScriptPath
@@ -1159,6 +1262,12 @@ function Initialize-JigProject {
             'Run the installer with -NoSessionHook to leave the hook out.'
         )
         $initArgs += '--session-hook'
+    }
+    if ($Unreleased) {
+        # Consent was given before the folder question
+        # (Confirm-JigUnreleasedProject); this only says what it means here.
+        $explained += 'Its files come from unreleased Jig (jig init --unreleased), and the project records that.'
+        $initArgs += '--unreleased'
     }
     Write-JigIndented -Lines $explained
     if (-not (Read-JigConfirm -Prompt 'Set up jig in this folder?' -Yes $Yes)) {
@@ -1443,14 +1552,33 @@ function Install-Jig {
                 -Ref $Ref -Repository $Repository
             Write-JigResult "jig installed: $($installResult.JigScript) ($($installResult.Ref))"
 
-            # Step 6: the first project.
+            # Step 6: the first project. Unreleased Jig is said up front and
+            # needs its own yes, before any question about the folder.
             $projectDir = $null
             if (-not $NoInit) {
                 Write-JigStep 'Setting up your project...'
-                $projectDir = Initialize-JigProject -Project $Project -Yes $YesBool `
-                    -GitName $GitName -GitEmail $GitEmail -SessionHook (-not $NoSessionHook) `
-                    -GitExe $gitExe -BashExe $bashExe `
+                $unreleased = $false
+                $setUp = $true
+                $installedVersion = Get-JigInstalledVersion -BashExe $bashExe `
                     -JigScriptPath $installResult.JigScript
+                if (Test-JigUnreleasedVersion -Version $installedVersion) {
+                    $installDir = Split-Path -Parent (Split-Path -Parent $installResult.JigScript)
+                    $unreleased = Confirm-JigUnreleasedProject -Version $installedVersion `
+                        -Ref $installResult.Ref -InstallDir $installDir -Yes $YesBool
+                    $setUp = $unreleased
+                }
+                if ($setUp) {
+                    $projectDir = Initialize-JigProject -Project $Project -Yes $YesBool `
+                        -GitName $GitName -GitEmail $GitEmail -SessionHook (-not $NoSessionHook) `
+                        -Unreleased $unreleased `
+                        -GitExe $gitExe -BashExe $bashExe `
+                        -JigScriptPath $installResult.JigScript
+                }
+                else {
+                    Write-JigResult -Level warn ("skipped: no project was set up from unreleased Jig.`n" `
+                        + "To set one up later, run in its git repository:`n" `
+                        + '    jig init --unreleased')
+                }
             }
 
             # Step 7: doctor.

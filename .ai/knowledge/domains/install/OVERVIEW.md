@@ -134,6 +134,11 @@ project owns.
   "set up jig" question, that `init --session-hook` creates `.claude/settings.json` whose hook
   runs housekeeping (which moves and later deletes workspaces) at each session start;
   `-NoSessionHook` leaves the hook out.
+  Unreleased code is one of those things: when the installed jig reports `X.Y.Z+<sha>`
+  (`jig version`, the same test `jig init` refuses by), the installer says so before the folder
+  question and asks, defaulting to no, whether to set the project up from it anyway; only a typed
+  yes adds `--unreleased` to `jig init`, and `-Yes` takes the no. It asks the installed jig rather
+  than reading `-Ref`, because a jig older than that check takes any source and has no flag to pass.
   **And some folders it refuses to prepare at all**: the home folder, anything containing it,
   the root of a drive or share (unless that root is itself a repository, the exception a
   `subst` drive or a dedicated volume needs), and a folder inside a repository whose root is

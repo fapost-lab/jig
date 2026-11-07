@@ -253,10 +253,12 @@ once more. It is word overlap, not a model: no key, no network, the same answer 
 ## Releases
 
 The pull request that raises the version also writes the release's entry in
-[`docs/changelog.mdx`](docs/changelog.mdx) — a `## <version> — <date>` section with a line or two
-per user-visible change: a new capability, a fix, a change someone has to act on. It is the only
-moment anyone knows what the version contains, so CI asks for it: the `changelog` job refuses a pull
-request whose `JIG_VERSION` has no tag yet and no section on that page.
+[`docs/changelog.mdx`](docs/changelog.mdx) — a `## <version> — <date>` section that says what
+matters about each user-visible change — a new capability, a fix, a change someone has to act on —
+and only that: a line or two is the guide against bloat, not a limit, and the detail stays on the
+page the entry links. It is the only moment anyone knows what the version contains, so CI asks for
+it: the `changelog` job refuses a pull request whose `JIG_VERSION` has no tag yet and no section on
+that page.
 
 The changelog is not the only page a release changes. The same pull request revises
 [`docs/known-issues.mdx`](docs/known-issues.mdx) and [`docs/roadmap.mdx`](docs/roadmap.mdx): an

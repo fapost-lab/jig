@@ -136,9 +136,10 @@ new class requires.
   `.codex/skills/` until then, and no runtime can see it. `jig verify` refuses to run
   while anything is pending, and `jig status` reports the count.
 - A release is written down as it is made: the pull request that raises `JIG_VERSION` adds that
-  version's section to `docs/changelog.mdx` — a line or two per user-visible change. CI's
-  `changelog` job refuses a pull request that declares an unreleased version the page does not
-  describe. The changelog alone is not enough: the same pull request revises
+  version's section to `docs/changelog.mdx`: what matters about each user-visible change, and
+  only that — a line or two is the guide against bloat, not a limit, and the detail stays on the
+  page the entry links. CI's `changelog` job refuses a pull request that declares an unreleased
+  version the page does not describe. The changelog alone is not enough: the same pull request revises
   `docs/known-issues.mdx` and `docs/roadmap.mdx` against the release — fixed entries out, narrowed
   ones rewritten, faults the release introduced or uncovered in, what was done and what comes next
   updated — and walks the other pages under `docs/` for anything the release made untrue or left
