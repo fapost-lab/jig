@@ -850,6 +850,186 @@ function Test-FindGitReturnsOneStringWithSeveralOnPath {
     Assert-JigEqual (Join-Path $first 'git.cmd') $found 'the first git on PATH should win'
 }
 
+# --- unreleased Jig and the first project --------------------------------------
+#
+# adr-20261106-copy-mode-projects-take-released-code-only: `jig init` refuses
+# a source that is not a release unless --unreleased names it, and `-Ref main`
+# installs exactly such a source. The installer says so before the folder
+# question and passes --unreleased only after a typed yes. The fixture remote
+# is a release tag, so the scenarios above walk the released path; these walk
+# the other one with the installed jig's version overridden in-process, the way
+# Test-MissingGitFails overrides Find-JigGitCommand (see the scope note there).
+
+# Invoke-JigInProcess <scriptblock> -- runs the block with $env:JIG_INSTALL_NO_MAIN
+# set, so Install-Jig returns its exit code instead of calling `exit`, and
+# returns @{ ExitCode; Output } from what it returned and wrote.
+function Invoke-JigInProcess {
+    param([Parameter(Mandatory)][scriptblock]$Block)
+    $prevNoMain = $env:JIG_INSTALL_NO_MAIN
+    $env:JIG_INSTALL_NO_MAIN = '1'
+    try {
+        $raw = & $Block *>&1
+    }
+    finally {
+        if ($null -eq $prevNoMain) { Remove-Item Env:\JIG_INSTALL_NO_MAIN -ErrorAction SilentlyContinue }
+        else { $env:JIG_INSTALL_NO_MAIN = $prevNoMain }
+    }
+    $rc = $null
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($item in $raw) {
+        if ($item -is [int]) { $rc = $item }
+        elseif ($item -is [System.Management.Automation.InformationRecord]) { $lines.Add([string]$item.MessageData) }
+        else { $lines.Add([string]$item) }
+    }
+    return [PSCustomObject]@{ ExitCode = $rc; Output = ($lines -join "`n") }
+}
+
+# The check is only as good as the reading of the real `jig version`: a run or
+# a parse that came back empty would switch it off with every test green. The
+# fixture is a release tag, so the installed jig names the plain number.
+function Test-InstalledVersionIsReadFromTheInstalledJig {
+    $gitExe = Find-JigGitCommand
+    if (-not $gitExe) { Skip-JigTest 'git is not on PATH' }
+    $bashExe = Find-JigBash -GitExe $gitExe
+    if (-not $bashExe) { Skip-JigTest 'Git Bash was not found' }
+    $jigScript = Join-Path (Get-JigDefaultScriptsDir) 'jig'
+    if (-not (Test-Path -LiteralPath $jigScript)) {
+        Skip-JigTest 'no installed jig (an earlier scenario must have failed)'
+    }
+    $version = Get-JigInstalledVersion -BashExe $bashExe -JigScriptPath $jigScript
+    Assert-JigEqual (Get-JigVersion) $version 'the installed jig at a release tag should report its plain version'
+    Assert-JigTrue (-not (Test-JigUnreleasedVersion -Version $version)) 'a release must not be read as unreleased'
+}
+
+function Test-UnreleasedVersionIsTheOneWithABuildPart {
+    Assert-JigTrue (-not (Test-JigUnreleasedVersion -Version '0.41.0')) 'a plain number is a release'
+    Assert-JigTrue (Test-JigUnreleasedVersion -Version '0.41.0+abc1234') 'X.Y.Z+<sha> is unreleased'
+    Assert-JigTrue (Test-JigUnreleasedVersion -Version '0.41.0+unknown') 'X.Y.Z+unknown is unreleased'
+    Assert-JigTrue (-not (Test-JigUnreleasedVersion -Version $null)) 'no version at all asks nothing'
+    Assert-JigTrue (-not (Test-JigUnreleasedVersion -Version '')) 'an empty version asks nothing'
+}
+
+# The question defaults to no, and -Yes takes that default without asking.
+function Test-UnreleasedConsentDefaultsToNo {
+    $script:UnreleasedAnswers = New-Object System.Collections.ArrayList
+    $script:UnreleasedPrompts = New-Object System.Collections.ArrayList
+    $savedReadHost = ${function:script:Read-Host}
+    try {
+        ${function:script:Read-Host} = {
+            param([string]$Prompt)
+            [void]$script:UnreleasedPrompts.Add($Prompt)
+            $next = $script:UnreleasedAnswers[0]
+            $script:UnreleasedAnswers.RemoveAt(0)
+            return $next
+        }
+
+        $text = Get-JigHostText {
+            $script:UnreleasedResult = Confirm-JigUnreleasedProject -Version '0.41.0+abc1234' -Ref 'main' `
+                -InstallDir 'C:\Users\t\.local\share\jig' -Yes $true
+        }
+        Assert-JigTrue ($script:UnreleasedResult -eq $false) '-Yes must not be consent to unreleased Jig'
+        Assert-JigEqual 0 $script:UnreleasedPrompts.Count '-Yes must not ask'
+        Assert-JigContains $text 'development channel (main, 0.41.0+abc1234)' 'the notice must name the ref and the version'
+        Assert-JigContains $text "on purpose:`n    jig init --unreleased`n" 'the notice must name the way to take it on purpose, on a line of its own'
+        Assert-JigContains $text "release first:`n    git -C `"C:\Users\t\.local\share\jig`" checkout v0.41.0" 'the way back must be the release tag of the version, in the install folder, on a line of its own'
+        Assert-JigTrue ($text -notlike '*without -Ref*') 'a repeat run without -Ref stays on the branch, so it must not be the advice'
+
+        [void]$script:UnreleasedAnswers.Add('')
+        Get-JigHostText { $script:UnreleasedResult = Confirm-JigUnreleasedProject -Version '0.41.0+abc1234' -Ref 'main' -Yes $false } | Out-Null
+        Assert-JigTrue ($script:UnreleasedResult -eq $false) 'an empty answer must be no'
+        Assert-JigContains $script:UnreleasedPrompts[0] '[y/N]' 'the prompt must show no as the default'
+
+        [void]$script:UnreleasedAnswers.Add('y')
+        Get-JigHostText { $script:UnreleasedResult = Confirm-JigUnreleasedProject -Version '0.41.0+abc1234' -Ref 'main' -Yes $false } | Out-Null
+        Assert-JigTrue ($script:UnreleasedResult -eq $true) 'a typed y must be consent'
+    }
+    finally {
+        # Put back what answered before. Where that was the cmdlet itself, a
+        # script-scope function still shadows it, so it is made to hand every
+        # call straight to the cmdlet: removing a function from another scope
+        # is a question of PowerShell's scope rules this test need not depend on.
+        if ($savedReadHost) { ${function:script:Read-Host} = $savedReadHost }
+        else { ${function:script:Read-Host} = { Microsoft.PowerShell.Utility\Read-Host @args } }
+    }
+}
+
+# With consent, and only with it, `jig init` gets --unreleased. The project is
+# an existing repository, so no commit is made and jig init itself is replaced:
+# what is checked is the arguments it is handed.
+function Test-UnreleasedInitArgsCarryTheFlag {
+    $gitExe = Find-JigGitCommand
+    if (-not $gitExe) { Skip-JigTest 'git is not on PATH' }
+
+    $script:InitArgsSeen = New-Object System.Collections.ArrayList
+    $savedInvoke = ${function:script:Invoke-JigCommand}
+    try {
+        ${function:script:Invoke-JigCommand} = {
+            param([string]$BashExe, [string]$JigScriptPath, [string]$WorkingDirectory, [string[]]$JigArgs = @())
+            [void]$script:InitArgsSeen.Add(($JigArgs -join ' '))
+            return [PSCustomObject]@{ Output = @(); ExitCode = 0 }
+        }
+        foreach ($unreleased in $true, $false) {
+            $projectDir = New-JigTempDir -Prefix 'unreleased-args'
+            & git -C $projectDir init -q -b main
+            & git -C $projectDir config user.name t
+            & git -C $projectDir config user.email t@example.com
+            Get-JigHostText {
+                Initialize-JigProject -Project $projectDir -Yes $true -Unreleased $unreleased `
+                    -GitExe $gitExe -BashExe 'not-run' -JigScriptPath 'not-run' | Out-Null
+            } | Out-Null
+        }
+    }
+    finally {
+        ${function:script:Invoke-JigCommand} = $savedInvoke
+    }
+    Assert-JigEqual 2 $script:InitArgsSeen.Count 'jig init should run once per project'
+    Assert-JigContains $script:InitArgsSeen[0] '--unreleased' 'consent must pass --unreleased to jig init'
+    Assert-JigTrue ($script:InitArgsSeen[1] -notlike '*--unreleased*') `
+        "without consent --unreleased must not be passed, got: $($script:InitArgsSeen[1])"
+}
+
+# The whole run, as `-Ref main -Yes -Project <dir>` meets it: told up front,
+# the project skipped before anything is made in its folder, and the run a
+# success -- not a failed `jig init` at the end.
+#
+# Install-JigFramework is replaced by the checkout the scenarios above already
+# installed. An in-process Install-Jig needs $env:JIG_INSTALL_NO_MAIN=1 (or
+# its `exit` ends this process), and bash inherits that variable: install.sh
+# then honours its own guard of the same name, defines its functions, runs
+# nothing and prints no summary line. Step 5 is covered by the child-process
+# scenarios; this one is about step 6.
+function Test-UnreleasedInstallSkipsTheProjectUnderYes {
+    $jigScript = Join-Path (Get-JigDefaultScriptsDir) 'jig'
+    if (-not (Test-Path -LiteralPath $jigScript)) {
+        Skip-JigTest 'no installed jig (an earlier scenario must have failed)'
+    }
+    $projectDir = Join-Path (New-JigTempDir -Prefix 'unreleased-run') 'project'
+    $savedVersion = ${function:script:Get-JigInstalledVersion}
+    $savedFramework = ${function:script:Install-JigFramework}
+    $script:InstalledJigScript = $jigScript
+    try {
+        ${function:script:Get-JigInstalledVersion} = { param($BashExe, $JigScriptPath) return '0.41.0+abc1234' }
+        ${function:script:Install-JigFramework} = {
+            param($BashExe, $InstallShPath, $Ref, $Repository)
+            return [PSCustomObject]@{ JigScript = $script:InstalledJigScript; Ref = 'main' }
+        }
+        $result = Invoke-JigInProcess {
+            Install-Jig -Yes -Project $projectDir -GitName t -GitEmail t@example.com `
+                -InstallSh $script:InstallShPath -Repository $script:RemoteDir
+        }
+    }
+    finally {
+        ${function:script:Get-JigInstalledVersion} = $savedVersion
+        ${function:script:Install-JigFramework} = $savedFramework
+    }
+    Assert-JigEqual 0 $result.ExitCode "the install itself should succeed:`n$($result.Output)"
+    Assert-JigContains $result.Output 'development channel (main, 0.41.0+abc1234)' 'the run must say the Jig is not a release'
+    Assert-JigContains $result.Output 'skipped: no project was set up from unreleased Jig' 'the run must say the project was skipped'
+    Assert-JigContains $result.Output "git repository:`n        jig init --unreleased" 'the skip must set the command on a line of its own, under its sentence'
+    Assert-JigTrue (-not (Test-Path -LiteralPath $projectDir)) 'nothing may be created for a skipped project'
+    Assert-JigTrue ($result.Output -notlike '*jig init failed*') 'jig init must not be run and fail'
+}
+
 # --- run -------------------------------------------------------------------
 
 $script:OriginalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -890,6 +1070,11 @@ try {
     Invoke-JigTest 'ProjectDirRefusalTable' { Test-ProjectDirRefusalTable }
     Invoke-JigTest 'InteractiveRefusalAsksAgainAndNeverAccepts' { Test-InteractiveRefusalAsksAgainAndNeverAccepts }
     Invoke-JigTest 'NoInitSkipsProject' { Test-NoInitSkipsProject }
+    Invoke-JigTest 'InstalledVersionIsReadFromTheInstalledJig' { Test-InstalledVersionIsReadFromTheInstalledJig }
+    Invoke-JigTest 'UnreleasedVersionIsTheOneWithABuildPart' { Test-UnreleasedVersionIsTheOneWithABuildPart }
+    Invoke-JigTest 'UnreleasedConsentDefaultsToNo' { Test-UnreleasedConsentDefaultsToNo }
+    Invoke-JigTest 'UnreleasedInitArgsCarryTheFlag' { Test-UnreleasedInitArgsCarryTheFlag }
+    Invoke-JigTest 'UnreleasedInstallSkipsTheProjectUnderYes' { Test-UnreleasedInstallSkipsTheProjectUnderYes }
     Invoke-JigTest 'NoSessionHookLeavesSettingsOut' { Test-NoSessionHookLeavesSettingsOut }
     Invoke-JigTest 'UninstallRemovesPathAndCheckout' { Test-UninstallRemovesPathAndCheckout }
     Invoke-JigTest 'MissingGitFails' { Test-MissingGitFails }
