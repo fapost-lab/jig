@@ -283,7 +283,9 @@ fetch, every other one from this checkout.
 
 `jig spec item add|move|file <spec> … --json` change a roadmap on a branch of its own, in Jig's own
 tree (adr-20261104-a-write-goes-in-jigs-own-tree): nobody's checkout moves. `--revision <n>` as the
-queue writes take it, and the same `stale-revision`. An item is named by its `id`, resolved in the
+queue writes take it, and the same `stale-revision`. Without it the write checks against the revision
+it reads once its tree stands, before it reads the roadmap there, so a Jig write landing while it
+fetches is not a reason to refuse it. An item is named by its `id`, resolved in the
 roadmap on the write branch, so `waiting.phases` holds the handles of the edits still on their way.
 
 ```
@@ -323,7 +325,8 @@ here nor on origin; and the refusals of every write, below.
 
 With `--json` or `--revision <n>`, a decision is committed on `knowledge/decisions`, in Jig's own tree
 (adr-20261104-a-write-goes-in-jigs-own-tree). Without either, the text form changes the working tree,
-as it always did. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
+as it always did. With `--json` alone the write checks against the revision it reads once its tree
+stands, before it reads the knowledge there, as the spec item writes do. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
 all.
 
 ```json
