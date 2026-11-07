@@ -78,7 +78,8 @@ be reworded.
 | `branch-diverged` | the write's branch and the one on the remote have diverged. Nothing was written, and nothing is forced |
 | `branch-has-other-commits` | the write's branch has commits here that no write made and the remote does not have: yours, and a write does not publish them. Nothing was written; the message names the branch |
 | `base-not-on-origin` | the write's base is not on the remote, at `agent.git: push` or above: a branch cut from it would carry out whatever is on it. Nothing was written; push that base yourself |
-| `tree-in-the-way` | an unfinished write left something at Jig's tree that git will not remove. Nothing was written, and trying again does not help: delete the path the message names |
+| `write-still-waits` | an earlier edit of the same spec, or of knowledge, still waits where this one cannot go: into another base, because an epic opened or finished since, or as edits that never reached the remote above ones whose pull request was closed or whose branch was deleted there. Nothing was written; the message names the branch and what to do |
+| `tree-in-the-way` | an unfinished write left files at Jig's tree that git will not remove (links and empty directories Jig clears itself). Nothing was written, and trying again does not help: delete the path the message names |
 | `commit-refused` | Git refused the commit, usually a hook of the project; the message says what it said. Nothing waits |
 | `epic-missing` | the spec is built on an epic branch that is neither here nor on the remote. Nothing was written |
 | `not-linkable` | the task cannot be linked to the roadmap item, or the item is done. Nothing was written |
@@ -384,8 +385,12 @@ branch yourself, or another worktree is, the write is refused with `branch-check
 message says where: finish there or switch away. When the branch has commits of yours that the remote
 does not have, the write is refused with `branch-has-other-commits`: push or merge them, or move them
 off. A write starts from the remote's base, so what you have not pushed to your own `main` stays out
-of it. `jig writes ship` sends nothing of a pull request that was closed unmerged or merged with those
-edits: it answers `not-found`, and the next edit takes a new name. The full shape is in
+of it. What the remote holds is what it says it has: a branch deleted there counts for nothing, pruned
+or not. `jig writes ship` sends nothing of a pull request that was closed unmerged or merged with those
+edits, or of a branch the remote deleted: it answers `not-found`, the edit leaves `jig writes`, and the
+next edit takes a new name. An edit still waiting is never left out of sight: when an epic opened or
+finished since it was made, or when it never reached the remote above edits that were turned down, the
+next write is refused with `write-still-waits` until you merge, close or move it. The full shape is in
 [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 
 ### Changing a roadmap
@@ -396,11 +401,15 @@ Each item in `jig spec list --json` has an `id`, which a write names it by:
 jig spec item add foo --phase 2 --text "Export a page" --revision 1793825280 --json
 jig spec item move foo i-7d2bc8dc7707 --phase 1 --top --revision 1793825290 --json
 jig spec item file foo i-7d2bc8dc7707 --task export-page --revision 1793825300 --json
+jig spec item file foo i-7d2bc8dc7707 --new export-page --goal "Export a page" --revision 1793825300 --json
 ```
 
 `add` takes `--after <item>`, `--top` or `--bottom`, the bottom by default, and `move` takes the same or
 `--phase`. `file` names a task filed earlier with `jig task new`: the item gets the task in front, and the
-task is linked to the spec. A spec with an open epic is edited through a pull request into the epic.
+task is linked to the spec. With `--new <task-id> [--goal <text>]` in
+place of `--task`, `file` files the task as well, in the same write, so the `--revision` you carry is the one of
+your read: `jig task new` moves the revision, and a task filed first would make the write stale. Everything is checked
+before anything is written; a refusal files no task. A spec with an open epic is edited through a pull request into the epic.
 
 The `id` holds through a move, a check and a filing, because it is a digest of the item's words. Reword the
 item and the `id` changes, and a write with the old one is refused with `not-found`: it never touches

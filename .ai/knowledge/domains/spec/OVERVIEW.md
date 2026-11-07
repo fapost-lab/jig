@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
   - "skills/jig-release/**"
-reviewed_at: 2026-11-04
+reviewed_at: 2026-11-06
 ---
 # Spec
 
@@ -57,6 +57,9 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   adr-20261104-a-write-goes-in-jigs-own-tree): on `spec/<id>`, reaching the default branch or an open
   epic through a pull request, in Jig's own tree (`lib/owntree.sh`), with `id` on each item of
   `spec list --json` (`_spec_item_ids`) and `waiting` on each spec.
+  `spec item file --new <task> [--goal]` files the task in the same write, so the person's
+  revision still holds (`task new` raises it): everything is checked before the claim, the task is
+  filed by a `task new` process after the commit stands, and a failure then is a `note`, not a refusal.
 - The `jig-release` skill: a release planned as a spec with an epic — the order tasks are picked
   in, the gate on the list and the level, the notes task and its checklist
   (adr-20261002-a-release-is-a-spec-with-an-epic).

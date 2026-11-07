@@ -130,18 +130,42 @@ $p
 # (its lock and busy records name this pid, so they read as stale at once and a
 # later run may take them while the orphan still works).
 
-# _jig_descendants <pid> — every process under <pid>, one per line.
+# _jig_descendants <pid> — every process under <pid>, one per line. Always
+# succeeds: it runs in the signal handler under `set -e`, and a failure there
+# killed the handler with status 1 before it signalled anything, orphaning the
+# job. `ps -o` is POSIX, but the `ps` of Git Bash (MSYS, Cygwin) has no `-o`
+# and fails; Cygwin and MSYS give every process a `/proc/<pid>/ppid` instead,
+# which Linux and macOS do not, so the fallback is read only where `ps` failed.
+# _JIG_PROC_ROOT moves that directory for the tests.
 _jig_descendants() {
-  ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '
-    { id[NR] = $1; par[$1] = $2 }
+  local rows
+  rows=$(ps -A -o pid= -o ppid= 2>/dev/null) || rows=""
+  [ -n "$rows" ] || rows=$(_jig_proc_parents)
+  printf '%s\n' "$rows" | awk -v root="$1" '
+    NF >= 2 { n++; id[n] = $1; par[$1] = $2 }
     END {
       mark[root] = 1; changed = 1
       while (changed) {
         changed = 0
-        for (i = 1; i <= NR; i++)
+        for (i = 1; i <= n; i++)
           if (!(id[i] in mark) && (par[id[i]] in mark)) { mark[id[i]] = 1; print id[i]; changed = 1 }
       }
-    }'
+    }' || true
+  return 0
+}
+
+# _jig_proc_parents — `<pid> <ppid>` per process, from /proc/<pid>/ppid. A
+# process that ends during the walk is skipped: `2>/dev/null` comes before the
+# input redirection, so the failed open is silent too.
+_jig_proc_parents() {
+  local d ppid
+  for d in "${_JIG_PROC_ROOT:-/proc}"/[0-9]*; do
+    [ -f "$d/ppid" ] || continue
+    ppid=""
+    read -r ppid 2>/dev/null < "$d/ppid" || [ -n "$ppid" ] || continue
+    printf '%s %s\n' "${d##*/}" "$ppid"
+  done
+  return 0
 }
 
 _JIG_SUP_PID=""
@@ -161,7 +185,9 @@ _jig_supervise_signal() {
   case "$grace" in ''|*[!0-9]*) grace=5 ;; esac
   # The tree is read once, before anything dies: a child the job leaves behind
   # when it exits on TERM is still in this list for the SIGKILL below.
-  tree="$(_jig_descendants "$_JIG_SUP_PID") $_JIG_SUP_PID"
+  # Should the tree be unreadable after all, the job alone still gets the
+  # signals and this process still exits with <code>.
+  tree="$(_jig_descendants "$_JIG_SUP_PID" || true) $_JIG_SUP_PID"
   # shellcheck disable=SC2086
   kill -TERM $tree 2>/dev/null || true
   # Wait for every process of the tree, not only the job: the job subshell has no
@@ -301,6 +327,31 @@ jig_valid_id() {
     '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+# jig_goal_check <who> <goal> — the goal of a task, which `task new --goal` and
+# `spec item file --new --goal` both take. It is the paragraph under `## Goal` that
+# `task list --goals` and `task list --json` read back: one line, so that it stays one
+# paragraph, and not a heading, so that it stays under `## Goal`. Refuses `usage`;
+# leaves the trimmed goal in JIG_GOAL.
+JIG_GOAL=""
+jig_goal_check() {
+  local who="$1" goal="$2"
+  case "$goal" in
+    *$'\n'* | *$'\r'*) jig_fail usage "$who: --goal is one line: the goal paragraph of task.md" ;;
+  esac
+  case "$goal" in
+    *[![:space:]]*) ;;
+    *) jig_fail usage "$who: --goal is empty" ;;
+  esac
+  # Trimmed: leading blanks would make the paragraph a code block.
+  goal=${goal#"${goal%%[![:space:]]*}"}
+  goal=${goal%"${goal##*[![:space:]]}"}
+  case "$goal" in
+    '#'*) jig_fail usage "$who: --goal cannot start with #: it would read as a heading" ;;
+  esac
+  # shellcheck disable=SC2034 # read by the callers
+  JIG_GOAL=$goal
 }
 
 # Die unless the project has been initialised with jig init.
@@ -535,6 +586,27 @@ jig_link_dir() {
     *) return 1 ;;
   esac
   [ -L "$2" ]
+}
+
+# jig_worktree_leftover <path> — clear what `git worktree remove` leaves behind
+# on Windows, once git no longer has the worktree: links, never what they point
+# at — `find` does not follow them; `rm -f`, and `rmdir` where that fails — and
+# then empty directories, deepest first; `rmdir` cannot
+# remove a directory that still holds anything. Non-zero when anything else
+# remains, which stays where it is. Measured on windows-latest, 2026-09-14: git
+# removed the tracked files of a task worktree and left the directory, with
+# `.ai/…` and the junction that borrowed the tasks directory still in it. Never
+# `rm -rf`: under Git Bash it can go through a junction into what it borrows.
+# Callers: housekeeping, on a task worktree it proved is ours, and the own tree
+# (owntree.sh), on the one path `_ot_tree_path` builds.
+jig_worktree_leftover() {
+  local path="$1" entry
+  while IFS= read -r entry; do
+    [ -L "$entry" ] || continue
+    rm -f "$entry" 2>/dev/null || rmdir "$entry" 2>/dev/null || true
+  done < <(find "$path" -type l 2>/dev/null)
+  find "$path" -depth -type d -exec rmdir {} \; 2>/dev/null || true
+  [ ! -e "$path" ]
 }
 
 # How this machine copies a directory fastest: the `cp` flags in
@@ -1076,9 +1148,53 @@ jig_fetch_branches() {
 
 # --- forge -------------------------------------------------------------------
 
+# _jig_forge_by_name <url-or-host> — github|gitlab|none, read off the name.
+_jig_forge_by_name() {
+  case "$1" in
+    *github.com*) printf 'github\n' ;;
+    *gitlab.com*|*gitlab.*) printf 'gitlab\n' ;;
+    *) printf 'none\n' ;;
+  esac
+}
+
+# _jig_ssh_alias_hostname <url> — the host an SSH remote really reaches, as
+# `ssh -G` resolves it from the user's ssh config; nothing for a URL that is
+# not SSH, or when ssh is missing or answers nothing.
+#
+# A person with two accounts on one forge reaches it through a `Host` alias
+# (`git@github-personal:owner/repo.git`, `HostName github.com`). The origin URL
+# then names no forge, git and gh resolve the alias anyway, and `task ship` and
+# `spec ship` said "no forge available" on every pull request. `ssh -G` only
+# prints the resolved configuration: it opens no connection. ssh is optional
+# (ADR-0002): without it the answer stays what the URL says.
+_jig_ssh_alias_hostname() {
+  local url="$1" host
+  case "$url" in
+    ssh://*)
+      host=${url#ssh://}
+      host=${host%%/*}
+      host=${host#*@}
+      host=${host%%:*}
+      ;;
+    *://*) return 0 ;;
+    *:*)
+      # scp form, [user@]host:path. A path with a slash before the first
+      # colon is a local path, not a host.
+      host=${url%%:*}
+      case "$host" in */*) return 0 ;; esac
+      host=${host#*@}
+      ;;
+    *) return 0 ;;
+  esac
+  [ -n "$host" ] || return 0
+  command -v ssh >/dev/null 2>&1 || return 0
+  ssh -G "$host" </dev/null 2>/dev/null | sed -n 's/^hostname //p' || true
+}
+
 # jig_forge_kind — which forge CLI this checkout should use: cfg `forge`
 # (auto|github|gitlab|none, default auto) resolved against the origin URL
-# when auto, then confirmed actually usable here — the CLI on PATH and
+# when auto — or against the host an SSH alias in it resolves to
+# (_jig_ssh_alias_hostname) — then confirmed actually usable here — the CLI on PATH and
 # authenticated. Prints github|gitlab|none; dies only on an unrecognised
 # `forge` value, the one case a caller cannot paper over with "none".
 #
@@ -1103,11 +1219,14 @@ jig_forge_kind() {
   fi
 
   if [ "$want" = "auto" ]; then
-    case "$origin" in
-      *github.com*) want="github" ;;
-      *gitlab.com*|*gitlab.*) want="gitlab" ;;
-      *) printf 'none\n'; return 0 ;;
-    esac
+    want=$(_jig_forge_by_name "$origin")
+    if [ "$want" = none ]; then
+      want=$(_jig_forge_by_name "$(_jig_ssh_alias_hostname "$origin")")
+    fi
+    if [ "$want" = none ]; then
+      printf 'none\n'
+      return 0
+    fi
   fi
 
   case "$want" in

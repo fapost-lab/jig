@@ -88,7 +88,9 @@ same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-age
 adr-20260930-an-upgrade-is-a-unit-of-work, and for the merge
 adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), `jig_verify_busy_dir`,
 `jig_verify_busy_ttl` and `jig_verify_busy_holder` ("is `jig verify` running in this clone, and where" —
-`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in). One command
+`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in), and
+`jig_worktree_leftover` ("clear what `git worktree remove` left: links and empty directories only" —
+housekeeping for a task worktree, `owntree.sh` for its tree). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 
@@ -176,7 +178,10 @@ never assumed" rule the profile contract below states.
 - `detect` — globs whose presence means this stack is here, or `always`. This is the one
   place the mapping "manifest → stack" is written down; no command re-derives it.
 - `requires` — another profile this one implies;
-- `scope` — capabilities the profile understands: `changed` (ADR-0013) and `map` (ADR-0041).
+- `scope` — capabilities the profile understands: `changed` (ADR-0013), `map` (ADR-0041),
+  `explain`, `environment`, and `profiles` — which profiles start in the same run, so one
+  can leave a check another already runs (the php profile leaves its tests to laravel's
+  `artisan test`).
 
 `profiles/<stack>/verify.sh` is run from the repository root and exits 0 pass, 1 fail,
 **2 skip**, **3 incomplete** — a check that started and did not finish, which is neither a

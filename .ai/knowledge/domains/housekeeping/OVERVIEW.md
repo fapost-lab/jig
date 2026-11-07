@@ -228,7 +228,7 @@ an LLM (ADR-0001).
 
 - `scripts/lib/housekeeping.sh` — `cmd_housekeeping`, `housekeeping_decide` (the policy),
   `_hk_remote_state` and its tiers, `_hk_purge`, `_hk_trash_expire`, `_hk_task_facts`,
-  `_hk_worktree_retire` and `_hk_worktree_leftover`, `_hk_branch_sweep` (with
+  `_hk_worktree_retire` (with `jig_worktree_leftover` in common.sh), `_hk_branch_sweep` (with
   `jig_branch_leave` and `jig_branch_is_jigs` in common.sh), `_hk_record` and `_hk_print_report` (the grouped report),
   `_hk_unknown_reason`, `_hk_released`.
 - `scripts/jig-session-hook` — the trigger; always exits 0, by design.

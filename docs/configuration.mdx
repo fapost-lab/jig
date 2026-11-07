@@ -42,7 +42,7 @@ selected.
 | `worktree.share` | `[]` | Folders a new worktree shares with this checkout instead of copying — for separate repositories you edit, such as `packages/`. Each entry becomes a link to this checkout's, so there is one copy of the work. See [sharing a folder of packages](/working-with-tasks#sharing-a-folder-of-packages-you-edit). |
 | `worktree.setup` | not set | A command of your project that Jig runs in a new worktree after sharing and carrying, to finish what a copy cannot — `composer install` against the lock, say. Runs on this machine, never fatal. See [finishing a worktree with your own command](/working-with-tasks#finishing-a-worktree-with-your-own-command). |
 | `worktree.setup_timeout` | `10m` | How long `worktree.setup` may run before Jig stops it, with everything it started. `0` waits for ever. |
-| `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address. Without the tool, or with `none`, Jig falls back to what Git itself can show. |
+| `forge` | `auto` | Where Jig asks whether a pull request was merged: `github` (through the `gh` tool), `gitlab` (through `glab`), `none`, or `auto` — decided from the `origin` remote's address, or from the host an SSH alias in it resolves to (`git@github-personal:owner/repo.git` with `HostName github.com` in `~/.ssh/config`). Without the tool, or with `none`, Jig falls back to what Git itself can show. |
 
 ### Tracker issues
 
@@ -331,7 +331,7 @@ skip is never a pass.
 | `generic` | always | Nothing: it checks no code. It fails when the folder is not a Git repository and otherwise reports a skip, so a project it is alone in hears that nothing verifies it. |
 | `shell` | `*.sh` | ShellCheck, and an executable `tests/run.sh`. |
 | `php` | `composer.json` | PHPUnit or Pest, PHPStan, Pint, `composer validate`. |
-| `laravel` | `artisan` | The PHP checks, plus `php artisan test`. |
+| `laravel` | `artisan` | The PHP checks, with the tests run once through `php artisan test` instead of PHPUnit or Pest directly. |
 | `node` | `package.json` | Your `test`, `lint` and `typecheck` scripts, run by your package manager (npm, pnpm, yarn or bun). |
 | `go` | `go.mod` | `go vet`, `go test`. |
 | `python` | `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, `Pipfile` | ruff, mypy (when configured), pytest. |

@@ -93,7 +93,7 @@ hk_lock_release() {
   ' _ "$@"
 }
 
-# hk_leftover <path> — call _hk_worktree_leftover directly, the same way
+# hk_leftover <path> — call jig_worktree_leftover directly, the same way
 # hk_decide calls housekeeping_decide: source the libraries in a subshell and
 # invoke the function under test, so its exit code is the caller's.
 hk_leftover() {
@@ -102,14 +102,14 @@ hk_leftover() {
     JIG_LIB="$JIG_HOME/scripts/lib"
     . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
     . "$JIG_LIB/housekeeping.sh"
-    _hk_worktree_leftover "$@"
+    jig_worktree_leftover "$@"
   ' _ "$@"
 }
 
 # hk_link <target-abs> <link-abs> — plant a directory link the same way the
 # framework itself would (jig_link_dir, common.sh): a real symlink on
 # macOS/Linux, an NTFS junction on Windows Git Bash, where plain `ln -s`
-# copies instead of linking -- exactly the case `_hk_worktree_leftover`
+# copies instead of linking -- exactly the case `jig_worktree_leftover`
 # exists to clean up (its own comment: "measured on windows-latest"). Skips
 # the calling test when neither kind of link can be made here.
 hk_link() { plant_dir_link "$1" "$2"; }
@@ -960,6 +960,48 @@ test_housekeeping_forge_reports_closed_which_ancestry_cannot() {
   assert_contains "$OUT" "remote=closed via=forge"
   assert_contains "$OUT" "flags=abandoned?"
   assert_dir .ai/workspace/tasks/op
+}
+
+# hk_stub_ssh — a fake `ssh` whose `-G` resolves the alias github-personal to
+# github.com, the way a `Host` block with `HostName` does, and any other host
+# to itself.
+hk_stub_ssh() {
+  mkdir -p stub-bin
+  cat > stub-bin/ssh <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = -G ] || exit 255
+case "$2" in
+  github-personal) printf 'user git\nhostname github.com\nport 22\n' ;;
+  *) printf 'hostname %s\n' "$2" ;;
+esac
+STUB
+  chmod +x stub-bin/ssh
+}
+
+test_housekeeping_forge_auto_sees_github_behind_an_ssh_host_alias() {
+  hk_setup
+  hk_cfg forge auto
+  fixture_merge_repo
+  git remote add origin git@github-personal:example/example.git
+  hk_stub_ssh
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')MERGED"
+  fixture_task op "still-open" consolidated
+
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "remote=merged via=forge"
+}
+
+test_housekeeping_forge_auto_ssh_alias_of_an_unknown_host_stays_none() {
+  hk_setup
+  hk_cfg forge auto
+  fixture_merge_repo
+  git remote add origin git@git.example.org:example/example.git
+  hk_stub_ssh
+  hk_stub_gh "still-open$(printf '\t')main$(printf '\t')MERGED"
+  fixture_task op "still-open" consolidated
+
+  run jig housekeeping --verbose
+  assert_not_contains "$OUT" "via=forge"
 }
 
 test_housekeeping_forge_none_skips_the_tier_entirely() {
@@ -2846,7 +2888,7 @@ test_housekeeping_report_appended_to_the_log_changes_no_count() {
   assert_contains "$OUT" "2 tasks (1 live, 1 recorded at purge)"
 }
 
-# --- _hk_worktree_leftover (Windows leftover cleanup) -------------------------------------------------
+# --- jig_worktree_leftover (Windows leftover cleanup) -------------------------------------------------
 # On Windows, `git worktree remove` (no --force) has been seen to exit 0 and
 # leave the worktree directory behind, junction included (measured on
 # windows-latest, 2026-09-14). `_hk_worktree_retire` calls this function only
@@ -2857,7 +2899,7 @@ test_housekeeping_report_appended_to_the_log_changes_no_count() {
 # outside the worktree, and is the one thing here it would be catastrophic to
 # delete (RULES.md).
 # git is not exercised: macOS/Linux git removes the directory outright, so
-# these call _hk_worktree_leftover directly on a hand-built leftover, the way
+# these call jig_worktree_leftover directly on a hand-built leftover, the way
 # hk_decide calls housekeeping_decide.
 
 # hk_leftover_owner <dir> — build a workspace a leftover's junction borrows

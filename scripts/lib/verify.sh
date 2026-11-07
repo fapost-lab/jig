@@ -524,6 +524,22 @@ cmd_verify() {
 
   profiles_check_requires
 
+  # The profiles this run will actually start, for a profile that declared
+  # `scope: [..., profiles]` (JIG_VERIFY_PROFILES): one whose check another
+  # profile in the same run already covers can stand down instead of running
+  # the same suite twice (php leaves its tests to laravel's artisan test). A
+  # profile the loop below will not start covers nothing: no verify.sh, no
+  # `explain` in a preview, no `environment` under one — the same gates, in
+  # the same order, so a profile never stands down for one that never runs.
+  local run_profiles=""
+  for p in $profiles_words; do
+    pdir=$(profiles_dir "$installed_dir" "$p")
+    [ -f "$pdir/verify.sh" ] || continue
+    if [ "$explain" = 1 ] && ! profiles_supports "$pdir" explain; then continue; fi
+    if [ -n "$RUNENV_EXEC" ] && ! profiles_supports "$pdir" environment; then continue; fi
+    run_profiles="${run_profiles:+$run_profiles }$p"
+  done
+
   local total=0 pass=0 failn=0 skip=0 rc
   for p in $profiles_words; do
     total=$((total + 1))
@@ -591,6 +607,12 @@ cmd_verify() {
       export JIG_RUN_EXEC
     else
       unset JIG_RUN_EXEC
+    fi
+    if profiles_supports "$pdir" profiles; then
+      JIG_VERIFY_PROFILES="$run_profiles"
+      export JIG_VERIFY_PROFILES
+    else
+      unset JIG_VERIFY_PROFILES
     fi
 
     note=""
