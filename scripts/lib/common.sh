@@ -588,6 +588,27 @@ jig_link_dir() {
   [ -L "$2" ]
 }
 
+# jig_worktree_leftover <path> — clear what `git worktree remove` leaves behind
+# on Windows, once git no longer has the worktree: links, never what they point
+# at — `find` does not follow them; `rm -f`, and `rmdir` where that fails — and
+# then empty directories, deepest first; `rmdir` cannot
+# remove a directory that still holds anything. Non-zero when anything else
+# remains, which stays where it is. Measured on windows-latest, 2026-09-14: git
+# removed the tracked files of a task worktree and left the directory, with
+# `.ai/…` and the junction that borrowed the tasks directory still in it. Never
+# `rm -rf`: under Git Bash it can go through a junction into what it borrows.
+# Callers: housekeeping, on a task worktree it proved is ours, and the own tree
+# (owntree.sh), on the one path `_ot_tree_path` builds.
+jig_worktree_leftover() {
+  local path="$1" entry
+  while IFS= read -r entry; do
+    [ -L "$entry" ] || continue
+    rm -f "$entry" 2>/dev/null || rmdir "$entry" 2>/dev/null || true
+  done < <(find "$path" -type l 2>/dev/null)
+  find "$path" -depth -type d -exec rmdir {} \; 2>/dev/null || true
+  [ ! -e "$path" ]
+}
+
 # How this machine copies a directory fastest: the `cp` flags in
 # _JIG_COPY_FLAGS, with a one-word name for reports in _JIG_COPY_KIND. Set by
 # jig_copy_detect, once per process. Cleared here so that a value in the
