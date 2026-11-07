@@ -88,7 +88,9 @@ same git steps and keep their own gates; adr-20260922-spec-work-ships-by-the-age
 adr-20260930-an-upgrade-is-a-unit-of-work, and for the merge
 adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), `jig_verify_busy_dir`,
 `jig_verify_busy_ttl` and `jig_verify_busy_holder` ("is `jig verify` running in this clone, and where" —
-`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in). One command
+`verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in), and
+`jig_worktree_leftover` ("clear what `git worktree remove` left: links and empty directories only" —
+housekeeping for a task worktree, `owntree.sh` for its tree). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 

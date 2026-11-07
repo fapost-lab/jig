@@ -3432,7 +3432,7 @@ test_task_new_in_a_worktree_is_filed_where_every_other_task_is() {
   # the *directory* survives is a platform fact this test does not own -- on
   # Windows a removal that returns 0 leaves the directory behind, junction
   # included (measured 2026-09-14, tests/housekeeping.t.sh), and clearing that
-  # is `_hk_worktree_leftover`'s job. Measured again here on 2026-09-25, on the
+  # is `jig_worktree_leftover`'s job. Measured again here on 2026-09-25, on the
   # borrowed-directory form: the leftover's `.ai/workspace/tasks` was still a
   # link (`-L` yes) pointing at this checkout, so the removal went nowhere
   # through it -- which is why the two assertions below are the whole claim and

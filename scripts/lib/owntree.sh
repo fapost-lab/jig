@@ -159,8 +159,15 @@ _ot_lock_release() {
 # (RULES.md). Never `reset --hard` or `clean`: a tree that went wrong goes whole. Git takes
 # its registration with it, also when the directory has gone, and only that one: `git
 # worktree prune` would drop any worktree whose directory is merely away for the moment.
+# On Windows git can drop the registration and leave the directory: what it left,
+# once git no longer knows the path, goes the way housekeeping clears a task worktree's
+# leftover, links and empty directories only. Anything else stays, and the next write
+# names it, refused `tree-in-the-way`.
 _ot_tree_remove() {
   git -C "$1" worktree remove --force "$2" >/dev/null 2>&1 || true
+  [ -e "$2" ] || return 0
+  ! _ot_tree_registered "$2" || return 0
+  jig_worktree_leftover "$2" || true
 }
 
 # _ot_tree_registered <path> — git may still have our tree registered, its directory gone.

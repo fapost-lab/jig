@@ -1360,7 +1360,7 @@ _hk_worktree_retire() {
   if [ -z "$reason" ] && [ "$ours" = 1 ] && [ "$dry" != 1 ]; then
     git -C "$JIG_PROJECT" worktree remove "$path" >/dev/null 2>&1 || reason="git-refused"
     if [ -z "$reason" ] && [ -e "$path" ]; then
-      _hk_worktree_leftover "$path" || reason="leftover"
+      jig_worktree_leftover "$path" || reason="leftover"
     fi
   fi
 
@@ -1527,24 +1527,6 @@ _hk_ignored_summary() {
     index($0, ai) == 1 { next }
     { n++; if (n <= 5) out = out (out == "" ? "" : ",") $0 }
     END { if (n > 5) out = out ",+" n - 5 "-more"; print out }'
-}
-
-# _hk_worktree_leftover <path> — clear what `git worktree remove` leaves behind
-# on Windows. There git removed the tracked files but left the directory, with
-# `.ai/…` and the junction that borrowed the tasks directory still in it
-# (measured on windows-latest, 2026-09-14). Removes links only, never what they point at —
-# `find` does not follow them — and then empty directories, deepest first;
-# `rmdir` cannot remove a directory that still holds anything. Non-zero when
-# anything else remains, which stays where it is. Called only after git
-# removed the worktree, on a path `_hk_worktree_retire` already proved is ours.
-_hk_worktree_leftover() {
-  local path="$1" entry
-  while IFS= read -r entry; do
-    [ -L "$entry" ] || continue
-    rm -f "$entry" 2>/dev/null || rmdir "$entry" 2>/dev/null || true
-  done < <(find "$path" -type l 2>/dev/null)
-  find "$path" -depth -type d -exec rmdir {} \; 2>/dev/null || true
-  [ ! -e "$path" ]
 }
 
 # _hk_worktree_locked <path> — true when git lists the worktree at <path> as

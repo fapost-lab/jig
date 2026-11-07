@@ -83,3 +83,16 @@ Whatever the mechanism, it has to hold in a project that is not this one: no for
 > is refused `not-on-base` or `not-on-branch`, not `not-found`, and so is a `reject` of a stub whose change
 > the tree does not carry. `proposed --json` and `sources --json` say it first, with `decidable` and `reason`
 > (adr-20261106-a-changed-link-is-dropped-by-reject).
+
+> **Amendment (2026-11-06).** On Windows `git worktree remove` can drop the tree's registration and
+> leave its directory, as housekeeping measured for a task worktree; before this, every later write
+> was refused `tree-in-the-way` until a person deleted it, an empty directory included. Once git no
+> longer knows the path — whether git just dropped it or never had it, as with an empty leftover
+> from before this change, which the next write's sweep finds — the removal of the tree clears what
+> stands there the way housekeeping does
+> (`jig_worktree_leftover`, common.sh): links, never what they point at, then empty directories by
+> `rmdir`. That is all it deletes. A leftover that still holds a file — and a path git never knew
+> that holds one — stays for a person, refused `tree-in-the-way` as before, because what a person
+> or another process may have put there is not Jig's to judge. What a Windows leftover of this
+> tree holds is reasoned, not measured: Jig plants nothing in it, so it is most likely empty
+> directories, and a file a process held open is the case still left to a person.
