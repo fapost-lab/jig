@@ -331,7 +331,7 @@ skip is never a pass.
 | `generic` | always | Nothing: it checks no code. It fails when the folder is not a Git repository and otherwise reports a skip, so a project it is alone in hears that nothing verifies it. |
 | `shell` | `*.sh` | ShellCheck, and an executable `tests/run.sh`. |
 | `php` | `composer.json` | PHPUnit or Pest, PHPStan, Pint, `composer validate`. |
-| `laravel` | `artisan` | The PHP checks, plus `php artisan test`. |
+| `laravel` | `artisan` | The PHP checks, with the tests run once through `php artisan test` instead of PHPUnit or Pest directly. |
 | `node` | `package.json` | Your `test`, `lint` and `typecheck` scripts, run by your package manager (npm, pnpm, yarn or bun). |
 | `go` | `go.mod` | `go vet`, `go test`. |
 | `python` | `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, `Pipfile` | ruff, mypy (when configured), pytest. |

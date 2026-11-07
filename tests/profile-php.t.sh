@@ -763,3 +763,32 @@ test_profile_php_without_full_run_ci_explain_keeps_phpstan_full() {
   _php_explain "$files"
   assert_contains "$OUT" "PLAN php: phpstan: full (phpstan configuration changed)"
 }
+
+# --- tests left to laravel (laravel-php-duplicate-suite) -----------------------
+
+test_profile_php_leaves_pest_to_laravel_in_the_same_run() {
+  _php_install
+  : > artisan
+  _php_stub_tool pest 3.1.0 0 pest.log
+  JIG_VERIFY_PROFILES="generic laravel php"
+  export JIG_VERIFY_PROFILES
+  run bash "$_PHP_VERIFY"
+  assert_contains "$OUT" "php: pest: skip (scope: covered by laravel, artisan test)"
+  assert_no_file pest.log
+
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_EXPLAIN
+  run bash "$_PHP_VERIFY"
+  unset JIG_VERIFY_EXPLAIN JIG_VERIFY_PROFILES
+  assert_contains "$OUT" "PLAN php: pest: skip (scope: covered by laravel, artisan test)"
+}
+
+test_profile_php_runs_its_tests_without_the_run_s_profiles() {
+  _php_install
+  : > artisan
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  unset JIG_VERIFY_PROFILES
+  run bash "$_PHP_VERIFY"
+  assert_contains "$OUT" "php: phpunit: pass (9.9.9)"
+  assert_file phpunit.log
+}

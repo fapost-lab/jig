@@ -17,7 +17,7 @@ paths:
   - schemas/profile.md
   - scripts/lib/runenv.sh
   - scripts/lib/hostruntime.sh
-reviewed_at: 2026-10-01
+reviewed_at: 2026-11-07
 ---
 # Verify
 
@@ -63,6 +63,9 @@ it actually did.
   never an ok. `_hostruntime_version` is the one place that names which binary the host runs.
 - Honest reporting: a narrowed run says what it narrowed to, and an ignored scope is
   printed rather than dropped.
+- Which profiles start in the same run, for a profile declaring `scope: [..., profiles]`
+  (`JIG_VERIFY_PROFILES`, read with `jp_in_run`): the php profile leaves its tests to
+  laravel's `artisan test` there, so a Laravel project runs its suite once.
 
 ## Boundaries
 
@@ -84,7 +87,7 @@ contract. A change to how profiles are *copied* still belongs to `install`.
 
 - `scripts/lib/verify.sh` — `cmd_verify`, `_verify_changed_files`, `_verify_map_check`,
   `_verify_map_apply`.
-- `scripts/lib/profile.sh` — `jp_begin`, `jp_changed`, `jp_changed_any`, `jp_decide`,
+- `scripts/lib/profile.sh` — `jp_begin`, `jp_in_run`, `jp_changed`, `jp_changed_any`, `jp_decide`,
   `jp_path_matches`, `jp_is_doc`, `jp_first_missing`, `jp_files`, `jp_version`, `jp_run`,
   `jp_exec`, `jp_have`, `jp_skip`, `jp_end`; under `verify.full_run: ci`, `jp_select`,
   `jp_full_left_to_ci`, `jp_plan_full`, `jp_plan_select`.

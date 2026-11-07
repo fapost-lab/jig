@@ -15,7 +15,7 @@ paths:
   - tests/run.sh
   - scripts/lib/profile.sh
   - scripts/lib/runenv.sh
-reviewed_at: 2026-10-01
+reviewed_at: 2026-11-07
 ---
 # Verify rules
 
@@ -179,8 +179,17 @@ the global `RULES.md` (ADR-0013). What follows binds changes inside this domain.
 - **A shipped profile knows its stack, never a project.** A files-to-checks rule true for
   one project's layout belongs in that project's `.ai/verify/<profile>.map`. The map is
   parsed in `cmd_verify` alone; a profile reads decisions, never the map file.
+- **A profile stands a check down only for a profile that will run it, and never past its
+  own map.** `JIG_VERIFY_PROFILES` (`scope: [..., profiles]`) lists the profiles this run
+  starts, built with the same gates the run applies (a `verify.sh`, `explain` in a preview,
+  `environment` under one): a profile the run will not start covers nothing. A profile that
+  received decisions from its own map keeps the checks they route to it, because the other
+  profile reads only its own map — standing down would drop the project's decision in
+  silence. The skip it prints starts `scope:` (`scope: covered by laravel, artisan test`):
+  the check's tools are fine and the work is someone else's, so a run where everything else
+  narrowed away is not read as a gap in coverage.
 - **A test suite run by a narrowed profile must not pass the scope on.** `tests/run.sh`
-  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_EXPLAIN`, `JIG_VERIFY_BUSY_HELD`
+  unsets `JIG_VERIFY_SCOPE`, `JIG_VERIFY_FILES`, `JIG_VERIFY_MAPPED`, `JIG_VERIFY_EXPLAIN`, `JIG_VERIFY_PROFILES`, `JIG_VERIFY_BUSY_HELD`
   and `CI` for every test:
   a test that runs a profile directly otherwise takes the scope of the run that started the
   suite.

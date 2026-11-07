@@ -890,3 +890,19 @@ test_runenv_config_set_accepts_a_run_path_with_a_blank() {
   assert_eq 1 "$RC" "$OUT"
   assert_contains "$OUT" "not auto or an absolute path"
 }
+
+test_runenv_a_profile_never_stands_down_for_one_the_environment_keeps_off() {
+  unset CI
+  _env_laravel_install
+  _env_docker_stub
+  mkdir -p .ai/profiles/hostonly .ai/profiles/seer
+  printf 'name: hostonly\ndescription: a profile that never declared environment.\ndetect: always\nscope: [changed]\n' \
+    > .ai/profiles/hostonly/profile.yaml
+  printf '#!/usr/bin/env bash\nexit 0\n' > .ai/profiles/hostonly/verify.sh
+  printf 'name: seer\ndescription: reports the profiles of its run.\ndetect: always\nscope: [environment, profiles]\n' \
+    > .ai/profiles/seer/profile.yaml
+  printf '#!/usr/bin/env bash\necho "seer: profiles=${JIG_VERIFY_PROFILES-<unset>}"\nexit 0\n' > .ai/profiles/seer/verify.sh
+  run jig verify --profile laravel,hostonly,seer
+  # hostonly is not run under Sail, so it covers nothing for anyone.
+  assert_contains "$OUT" "seer: profiles=laravel seer"
+}
