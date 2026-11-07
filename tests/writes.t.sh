@@ -1099,7 +1099,14 @@ test_writes_ship_does_not_bring_back_a_pull_request_closed_unmerged() {
   assert_contains "$OUT" "closed unmerged"
   assert_eq "$creates" "$(grep -c . stub-gh/create.argv)"
   assert_no_file stub-gh/merged "a turned-down edit merged"
-  assert_eq "$before" "$(cat .ai/runtime/writes/spec-idea-x)"
+  # What it learned it keeps: reads stop counting the edit, and the next ship says the same.
+  assert_eq "$before
+ended: closed" "$(cat .ai/runtime/writes/spec-idea-x)"
+  run jig writes --json
+  assert_contains "$OUT" '"writes":[]'
+  assert_not_contains "$(jig status)" "waiting"
+  run jig writes ship spec:idea-x --json
+  assert_contains "$OUT" '"code":"not-found"'
   own_tree_gone
 }
 
@@ -1359,3 +1366,273 @@ test_writes_reads_ask_no_network() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" '"pr":"https://github.com/example/example/pull/42"'
 }
+
+# --- what the record knows, whatever the base; what origin holds, by its answer ----
+
+# _w_open_epic — the spec gets an open epic on origin: the roadmap on origin's main says so,
+# and the epic is cut from there, the way `jig spec epic` leaves it.
+_w_open_epic() {
+  git fetch -q origin
+  git worktree add -q --detach "$PWD.epic" origin/main
+  printf 'Epic: epic/idea-x\n\n' | cat - "$PWD.epic/.ai/specs/idea-x/roadmap.md" > roadmap.tmp
+  mv roadmap.tmp "$PWD.epic/.ai/specs/idea-x/roadmap.md"
+  git -C "$PWD.epic" commit -q -am "an epic"
+  git -C "$PWD.epic" push -q origin HEAD:refs/heads/main HEAD:refs/heads/epic/idea-x
+  git worktree remove --force "$PWD.epic"
+  git fetch -q origin
+}
+
+# _w_squashed_and_deleted <branch> — its pull request squash-merged into origin's main, and
+# the branch deleted there, as a forge's button does.
+_w_squashed_and_deleted() {
+  _w_on_origin_main squash "$1"
+  git worktree remove --force "$PWD.other"
+  git --git-dir=origin.git update-ref -d "refs/heads/$1"
+}
+
+test_writes_after_a_closed_pull_request_and_a_new_epic_do_not_bring_its_edits_back() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "Turned down"
+  printf 'CLOSED\n' > stub-gh/state
+  rm stub-gh/url
+  _w_open_epic
+  _w_add "After the epic"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x-2","base":"epic/idea-x"'
+  assert_contains "$OUT" '"commits":1'
+  assert_not_contains "$(own_tree_show spec/idea-x-2 .ai/specs/idea-x/roadmap.md)" "Turned down"
+  assert_contains "$(own_tree_show spec/idea-x .ai/specs/idea-x/roadmap.md)" "Turned down"
+  assert_contains "$(cat stub-gh/create.argv)" "$(printf -- '--base\nepic/idea-x\n--head\nspec/idea-x-2')"
+}
+
+test_writes_after_a_squash_merge_and_a_new_epic_do_not_send_it_again() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  # The epic changes the file again, so only the pull request can say that it landed.
+  _w_on_origin_main squash spec/idea-x
+  git worktree remove --force "$PWD.other"
+  printf 'MERGED\n' > stub-gh/state
+  rm stub-gh/url
+  _w_open_epic
+  _w_add "After the epic"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x-2","base":"epic/idea-x"'
+  assert_contains "$OUT" '"commits":1'
+}
+
+test_writes_refuse_a_write_that_still_waits_for_another_base() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "Waiting for main"
+  local tip before
+  tip=$(git rev-parse spec/idea-x)
+  before=$(cat .ai/runtime/writes/spec-idea-x)
+  _w_open_epic
+  _w_add "After the epic"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "spec/idea-x still waits to go into main (https://github.com/example/example/pull/42), and this edit goes into epic/idea-x"
+  assert_eq "$tip" "$(git rev-parse spec/idea-x)"
+  assert_eq "$tip" "$(git --git-dir=origin.git rev-parse spec/idea-x)"
+  assert_eq "$before" "$(cat .ai/runtime/writes/spec-idea-x)"
+  assert_eq "" "$(git rev-parse --verify --quiet refs/heads/spec/idea-x-2)"
+  own_tree_gone
+  # What waits still ships where it was going.
+  run jig writes ship spec:idea-x --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"base":"main"'
+}
+
+test_writes_after_a_base_change_keep_to_the_branch_the_record_names() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squashed_and_deleted spec/idea-x
+  printf 'MERGED\n' > stub-gh/state
+  rm stub-gh/url
+  _w_add "Second"
+  assert_contains "$OUT" '"branch":"spec/idea-x-2"'
+  rm stub-gh/state
+  _w_open_epic
+  # Still waiting: refused, and the message names the branch that waits.
+  _w_add "After the epic"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "spec/idea-x-2 still waits to go into main"
+  assert_not_contains "$OUT" "branch-has-other-commits"
+  # Turned down: a new name, from the epic, with neither edit on it.
+  printf 'CLOSED\n' > stub-gh/state
+  rm stub-gh/url
+  _w_add "After the epic"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x-3","base":"epic/idea-x"'
+  assert_contains "$OUT" '"commits":1'
+}
+
+test_writes_after_a_squash_merge_a_pruned_branch_of_a_session_is_no_persons_commit() {
+  own_tree_repo push
+  git switch -q -c spec/idea-x
+  printf -- '- [ ] From a session\n' >> .ai/specs/idea-x/roadmap.md
+  git commit -q -am "from a session"
+  git push -q origin spec/idea-x
+  git switch -q main
+  local old
+  old=$(git rev-parse spec/idea-x)
+  _w_squashed_and_deleted spec/idea-x
+  git fetch -q --prune origin
+  _w_add "New"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"branch":"spec/idea-x-2"'
+  assert_eq "$old" "$(git rev-parse spec/idea-x)"
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+}
+
+test_writes_say_nothing_of_a_push_to_a_clone_with_no_origin() {
+  own_tree_repo commit
+  git remote remove origin
+  git switch -q -c spec/idea-x
+  printf 'wip\n' > wip.txt
+  git add wip.txt
+  git commit -q -m "my unfinished wip"
+  git switch -q main
+  _w_add "New"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"branch-has-other-commits"'
+  assert_contains "$OUT" "merge them yourself"
+  assert_not_contains "$OUT" "push"
+}
+
+test_writes_do_not_take_a_branch_origin_deleted_for_one_it_holds() {
+  own_tree_repo push
+  git switch -q -c wip
+  printf 'secret wip\n' > secret.txt
+  git add secret.txt
+  git commit -q -m "secret wip"
+  git push -q origin wip
+  git switch -q main
+  git branch -q spec/idea-x wip
+  # Deleted on origin, by a forge's button: this clone still has origin/wip.
+  git --git-dir=origin.git update-ref -d refs/heads/wip
+  _w_add "New"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"branch-has-other-commits"'
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/wip)"
+}
+
+test_writes_do_not_take_an_epic_origin_deleted_for_a_base_it_has() {
+  own_tree_repo push
+  _w_open_epic
+  git --git-dir=origin.git update-ref -d refs/heads/epic/idea-x
+  _w_add "New"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"base-not-on-origin"'
+  assert_contains "$OUT" "epic/idea-x is not on origin"
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+  own_tree_gone
+}
+
+test_writes_ship_does_not_bring_back_a_branch_origin_dropped() {
+  own_tree_repo push
+  own_tree_stub_gh
+  _w_add "Dropped"
+  git --git-dir=origin.git update-ref -d refs/heads/spec/idea-x
+  own_tree_level merge
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_contains "$OUT" "origin no longer has spec/idea-x"
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+  assert_no_file stub-gh/create.argv "a pull request opened for what origin dropped"
+  assert_no_file stub-gh/merged "what origin dropped merged"
+  assert_contains "$(cat .ai/runtime/writes/spec-idea-x)" "ended: dropped"
+  run jig writes --json
+  assert_contains "$OUT" '"writes":[]'
+}
+
+test_writes_ship_does_not_send_again_what_a_squash_landed_with_no_pull_request() {
+  own_tree_repo push
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squashed_and_deleted spec/idea-x
+  # The file moves on, so the paths the branch touched no longer read the same on the base.
+  git worktree add -q --detach "$PWD.later" origin/main
+  printf 'later\n' >> "$PWD.later/.ai/specs/idea-x/roadmap.md"
+  git -C "$PWD.later" commit -q -am "later"
+  git -C "$PWD.later" push -q origin HEAD:refs/heads/main
+  git fetch -q origin
+  own_tree_level pr
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+  assert_no_file stub-gh/create.argv "a landed edit sent again"
+}
+
+test_writes_refuse_to_strand_edits_never_sent_above_a_branch_origin_dropped() {
+  own_tree_repo push
+  _w_add "First"
+  git remote set-url --push origin /nonexistent/origin.git
+  _w_add "Second"
+  git remote set-url --push origin "$PWD/origin.git"
+  git --git-dir=origin.git update-ref -d refs/heads/spec/idea-x
+  local second
+  second=$(git rev-parse spec/idea-x)
+  _w_add "Third"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "spec/idea-x has 1 edit(s) that never reached origin, above edits origin no longer has"
+  assert_eq "$second" "$(git rev-parse spec/idea-x)"
+  assert_eq "" "$(git rev-parse --verify --quiet refs/heads/spec/idea-x-2)"
+  assert_contains "$(jig writes)" "spec:idea-x  spec/idea-x -> main"
+  own_tree_gone
+  # Moved to a branch of the person's own, the next edit goes on.
+  git branch -m spec/idea-x kept
+  _w_add "Third"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"commits":1'
+  assert_eq "$second" "$(git rev-parse kept)"
+}
+
+test_writes_refuse_to_strand_edits_never_sent_above_a_closed_pull_request() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  git remote set-url --push origin /nonexistent/origin.git
+  _w_add "Second"
+  git remote set-url --push origin "$PWD/origin.git"
+  printf 'CLOSED\n' > stub-gh/state
+  rm stub-gh/url
+  _w_add "Third"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+  assert_contains "$OUT" "above edits whose pull request was closed unmerged"
+  run jig writes ship spec:idea-x --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"write-still-waits"'
+}
+
+test_writes_refuse_a_persons_commit_whatever_number_of_branches_origin_has() {
+  own_tree_repo push
+  local main i
+  main=$(git rev-parse main)
+  # More branch names than a Windows command line holds as arguments.
+  i=0
+  while [ "$i" -lt 2000 ]; do
+    printf 'create refs/heads/many/branch-%04d %s\n' "$i" "$main"
+    i=$((i + 1))
+  done > refs.txt
+  git --git-dir=origin.git update-ref --stdin < refs.txt
+  rm refs.txt
+  git switch -q -c spec/idea-x
+  printf 'wip\n' > wip.txt
+  git add wip.txt
+  git commit -q -m "my unfinished wip"
+  git switch -q main
+  _w_add "New"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"branch-has-other-commits"'
+  assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
+}
+

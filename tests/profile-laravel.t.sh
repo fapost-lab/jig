@@ -654,3 +654,119 @@ test_profile_laravel_full_run_ci_explain_says_the_full_set_is_left_to_ci() {
     "PLAN laravel: artisan test: skip (scope: routes/web.php can affect any test, full set left to CI)"
   assert_no_file artisan.log
 }
+
+# --- one suite, not two (laravel-php-duplicate-suite) -------------------------
+# `php artisan test` runs the same PHPUnit/Pest suite the php profile would.
+# In a run with both, php leaves its tests to laravel and says so; alone, or
+# without an `artisan`, it runs them as before.
+
+# _laravel_php_install — a Laravel project as `jig init` activates it: laravel
+# and the php it requires, with an `artisan`.
+_laravel_php_install() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles laravel,php >/dev/null
+  : > artisan
+  # A passing `composer`, so a composer on the machine running the suite does
+  # not decide php's result: these tests are about its tests, not its manifest.
+  mkdir -p stub-bin
+  printf '#!/usr/bin/env bash\n[ "$1" = --version ] && echo "Composer 2.8.0"\nexit 0\n' > stub-bin/composer
+  chmod +x stub-bin/composer
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# _phpunit_stub <log> — vendor/bin/phpunit: answers `--version`, otherwise
+# appends its arguments to <log>.
+_phpunit_stub() {
+  local log="$1"
+  mkdir -p vendor/bin
+  cat > vendor/bin/phpunit <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then
+  printf 'PHPUnit 11.0.0\n'
+  exit 0
+fi
+printf '%s\n' "\$*" >> "$PWD/$log"
+exit 0
+STUB
+  chmod +x vendor/bin/phpunit
+}
+
+test_profile_laravel_and_php_run_the_suite_once() {
+  _laravel_php_install
+  _artisan_stub 0 artisan.log
+  _phpunit_stub phpunit.log
+  run jig verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_file artisan.log
+  assert_no_file phpunit.log
+  assert_contains "$OUT" "php: phpunit: skip (scope: covered by laravel, artisan test)"
+}
+
+test_profile_laravel_and_php_explain_plans_the_suite_once() {
+  _laravel_php_install
+  _artisan_stub 0 artisan.log
+  _phpunit_stub phpunit.log
+  run jig verify --explain
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN php: phpunit: skip (scope: covered by laravel, artisan test)"
+  assert_contains "$OUT" "PLAN laravel: artisan test: full"
+  assert_no_file phpunit.log
+}
+
+test_profile_php_alone_runs_its_tests_beside_an_artisan() {
+  _laravel_php_install
+  _artisan_stub 0 artisan.log
+  _phpunit_stub phpunit.log
+  run jig verify --profile php
+  assert_eq 0 "$RC" "$OUT"
+  assert_file phpunit.log
+  assert_contains "$OUT" "php: phpunit: pass"
+}
+
+test_profile_php_runs_its_tests_when_laravel_has_no_artisan() {
+  _laravel_php_install
+  rm artisan
+  _artisan_stub 0 artisan.log
+  _phpunit_stub phpunit.log
+  run jig verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "laravel: artisan test: skip (artisan or php not found)"
+  assert_file phpunit.log
+  assert_contains "$OUT" "php: phpunit: pass"
+}
+
+test_profile_laravel_doc_only_change_beside_php_is_scope_narrowing() {
+  _laravel_php_install
+  _artisan_stub 0 artisan.log
+  _phpunit_stub phpunit.log
+  # phpstan and pint present, so every skip below is about this change and
+  # none about a missing tool.
+  cp vendor/bin/phpunit vendor/bin/phpstan
+  cp vendor/bin/phpunit vendor/bin/pint
+  git add -A >/dev/null 2>&1
+  git commit -qm base >/dev/null 2>&1
+  printf 'notes\n' > README.md
+  run jig verify --changed
+  # Every check skipped because this change is not theirs: not a gap in
+  # coverage, so not "no verdict" (domains/verify RULES, the third state).
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "php: phpunit: skip (scope: covered by laravel, artisan test)"
+  assert_no_file phpunit.log
+}
+
+test_profile_laravel_php_map_keeps_the_tests_in_php_without_a_laravel_map() {
+  _laravel_php_install
+  _artisan_stub 0 artisan.log
+  _phpunit_stub phpunit.log
+  mkdir -p .ai/verify
+  printf 'resources/js/** ALL\n' > .ai/verify/php.map
+  git add -A >/dev/null 2>&1
+  git commit -qm base >/dev/null 2>&1
+  mkdir -p resources/js
+  printf 'x\n' > resources/js/app.js
+  run jig verify --changed
+  # laravel reads only laravel.map; php's own decision must not be dropped.
+  assert_not_contains "$OUT" "covered by laravel"
+  assert_file phpunit.log
+}

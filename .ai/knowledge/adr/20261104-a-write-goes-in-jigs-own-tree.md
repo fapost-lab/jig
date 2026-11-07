@@ -84,15 +84,16 @@ Whatever the mechanism, it has to hold in a project that is not this one: no for
 > the tree does not carry. `proposed --json` and `sources --json` say it first, with `decidable` and `reason`
 > (adr-20261106-a-changed-link-is-dropped-by-reject).
 
-> **Amendment (2026-11-06).** On Windows `git worktree remove` can drop the tree's registration and
-> leave its directory, as housekeeping measured for a task worktree; before this, every later write
-> was refused `tree-in-the-way` until a person deleted it, an empty directory included. Once git no
-> longer knows the path — whether git just dropped it or never had it, as with an empty leftover
-> from before this change, which the next write's sweep finds — the removal of the tree clears what
-> stands there the way housekeeping does
-> (`jig_worktree_leftover`, common.sh): links, never what they point at, then empty directories by
-> `rmdir`. That is all it deletes. A leftover that still holds a file — and a path git never knew
-> that holds one — stays for a person, refused `tree-in-the-way` as before, because what a person
-> or another process may have put there is not Jig's to judge. What a Windows leftover of this
-> tree holds is reasoned, not measured: Jig plants nothing in it, so it is most likely empty
-> directories, and a file a process held open is the case still left to a person.
+## Amendment (2026-11-06): one judgement of the branch, origin's own answer, and a write that waits is never forgotten
+
+The first fixes of this mechanism were made one copy at a time, and each opened a fault in the other copy (writes-in-own-tree-findings F30–F35). Two causes ran through them: the record counted only while its base was today's, and "origin already holds it" was read from tracking refs, which keep a branch origin deleted until a prune.
+
+- **One judgement, `ot_judge`, for a write and for `jig writes ship`.** It reads the record whenever the record names the branch, whatever base it was written for: an epic that opens or finishes changes the base, and a pull request closed before that is no less closed. Its answer is `none`, `ff`, `spent`, `top`, or `gone` with a reason (`merged`, `closed`, `dropped`, `landed`). The write's resolve and `writes ship` act on that answer and keep no rule of their own. The branch a write goes on is the one its record names, not `spec/<id>` again after a base change.
+- **What origin holds is what `ls-remote --heads origin` answers**, asked once per write: the branch's own existence, `base-not-on-origin`, the free name, and the refusal rule's "held" (the commits those branches name, fed to `rev-list --stdin`, failing closed). A tracking ref stands in only when origin gives no answer. The branch's own tracking ref still counts as held: fresh, origin has it; stale, the branch was dropped and is never sent again. A tip the record does not name whose touched paths read the same on the base is held too: it is a squash, judged gone, and never sent.
+- **A write that still waits is never stacked on, nor forgotten: `write-still-waits`.** A write waiting (`top`, `spent`) for another base than this edit's would, on top, go out in the pull request into the old base, which `jig_ship_pr` finds by the branch alone; on a new name, the one record would lose it. Edits that never reached origin above a write whose pull request was closed, or whose branch origin dropped, would otherwise be left on the old name out of sight. Both are refused with nothing written; the message names the branch and what to do. Cutting a new name, or cherry-picking the unsent edits onto it, were the alternatives: the first forgets an edit, the second rewrites commits in a tree nobody watches, and neither was a choice anyone had made.
+- **What `jig writes ship` learns, the record keeps.** A record carries `ended: closed|dropped|landed` once `writes ship` found the write over without a merge, and `merged: 1` once it found it merged with the tip; reads stop counting it. The answer stays `not-found`, which is what a program acts on ("nothing waits"). This narrows "a refusal means nothing was written": a `writes ship` refusal of a write that is over writes that fact into the record, and nothing else — no ref, no commit, nothing on origin. Answering success instead would change a code programs already read; not writing would leave the count wrong until the next edit.
+- **Still open** (writes-pruned-dropped-branch): with the branch deleted on origin, the tracking ref pruned and the last push of the write failed (`pushed: 0`), nothing says origin ever held it, the answer is `top`, and the next edit pushes the dropped branch again.
+
+## Amendment (2026-11-06): what git leaves of the tree on Windows
+
+On Windows `git worktree remove` can drop the tree's registration and leave its directory, as housekeeping measured for a task worktree; before this, every later write was refused `tree-in-the-way` until a person deleted it, an empty directory included. Once git no longer knows the path — whether git just dropped it or never had it, as with an empty leftover from before this change, which the next write's sweep finds — the removal of the tree clears what stands there the way housekeeping does (`jig_worktree_leftover`, common.sh): links, never what they point at, then empty directories by `rmdir`. That is all it deletes. A leftover that still holds a file — and a path git never knew that holds one — stays for a person, refused `tree-in-the-way` as before, because what a person or another process may have put there is not Jig's to judge. What a Windows leftover of this tree holds is reasoned, not measured: Jig plants nothing in it, so it is most likely empty directories, and a file a process held open is the case still left to a person.

@@ -178,7 +178,10 @@ never assumed" rule the profile contract below states.
 - `detect` — globs whose presence means this stack is here, or `always`. This is the one
   place the mapping "manifest → stack" is written down; no command re-derives it.
 - `requires` — another profile this one implies;
-- `scope` — capabilities the profile understands: `changed` (ADR-0013) and `map` (ADR-0041).
+- `scope` — capabilities the profile understands: `changed` (ADR-0013), `map` (ADR-0041),
+  `explain`, `environment`, and `profiles` — which profiles start in the same run, so one
+  can leave a check another already runs (the php profile leaves its tests to laravel's
+  `artisan test`).
 
 `profiles/<stack>/verify.sh` is run from the repository root and exits 0 pass, 1 fail,
 **2 skip**, **3 incomplete** — a check that started and did not finish, which is neither a

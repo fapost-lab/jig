@@ -130,18 +130,42 @@ $p
 # (its lock and busy records name this pid, so they read as stale at once and a
 # later run may take them while the orphan still works).
 
-# _jig_descendants <pid> — every process under <pid>, one per line.
+# _jig_descendants <pid> — every process under <pid>, one per line. Always
+# succeeds: it runs in the signal handler under `set -e`, and a failure there
+# killed the handler with status 1 before it signalled anything, orphaning the
+# job. `ps -o` is POSIX, but the `ps` of Git Bash (MSYS, Cygwin) has no `-o`
+# and fails; Cygwin and MSYS give every process a `/proc/<pid>/ppid` instead,
+# which Linux and macOS do not, so the fallback is read only where `ps` failed.
+# _JIG_PROC_ROOT moves that directory for the tests.
 _jig_descendants() {
-  ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '
-    { id[NR] = $1; par[$1] = $2 }
+  local rows
+  rows=$(ps -A -o pid= -o ppid= 2>/dev/null) || rows=""
+  [ -n "$rows" ] || rows=$(_jig_proc_parents)
+  printf '%s\n' "$rows" | awk -v root="$1" '
+    NF >= 2 { n++; id[n] = $1; par[$1] = $2 }
     END {
       mark[root] = 1; changed = 1
       while (changed) {
         changed = 0
-        for (i = 1; i <= NR; i++)
+        for (i = 1; i <= n; i++)
           if (!(id[i] in mark) && (par[id[i]] in mark)) { mark[id[i]] = 1; print id[i]; changed = 1 }
       }
-    }'
+    }' || true
+  return 0
+}
+
+# _jig_proc_parents — `<pid> <ppid>` per process, from /proc/<pid>/ppid. A
+# process that ends during the walk is skipped: `2>/dev/null` comes before the
+# input redirection, so the failed open is silent too.
+_jig_proc_parents() {
+  local d ppid
+  for d in "${_JIG_PROC_ROOT:-/proc}"/[0-9]*; do
+    [ -f "$d/ppid" ] || continue
+    ppid=""
+    read -r ppid 2>/dev/null < "$d/ppid" || [ -n "$ppid" ] || continue
+    printf '%s %s\n' "${d##*/}" "$ppid"
+  done
+  return 0
 }
 
 _JIG_SUP_PID=""
@@ -161,7 +185,9 @@ _jig_supervise_signal() {
   case "$grace" in ''|*[!0-9]*) grace=5 ;; esac
   # The tree is read once, before anything dies: a child the job leaves behind
   # when it exits on TERM is still in this list for the SIGKILL below.
-  tree="$(_jig_descendants "$_JIG_SUP_PID") $_JIG_SUP_PID"
+  # Should the tree be unreadable after all, the job alone still gets the
+  # signals and this process still exits with <code>.
+  tree="$(_jig_descendants "$_JIG_SUP_PID" || true) $_JIG_SUP_PID"
   # shellcheck disable=SC2086
   kill -TERM $tree 2>/dev/null || true
   # Wait for every process of the tree, not only the job: the job subshell has no
@@ -1097,9 +1123,53 @@ jig_fetch_branches() {
 
 # --- forge -------------------------------------------------------------------
 
+# _jig_forge_by_name <url-or-host> — github|gitlab|none, read off the name.
+_jig_forge_by_name() {
+  case "$1" in
+    *github.com*) printf 'github\n' ;;
+    *gitlab.com*|*gitlab.*) printf 'gitlab\n' ;;
+    *) printf 'none\n' ;;
+  esac
+}
+
+# _jig_ssh_alias_hostname <url> — the host an SSH remote really reaches, as
+# `ssh -G` resolves it from the user's ssh config; nothing for a URL that is
+# not SSH, or when ssh is missing or answers nothing.
+#
+# A person with two accounts on one forge reaches it through a `Host` alias
+# (`git@github-personal:owner/repo.git`, `HostName github.com`). The origin URL
+# then names no forge, git and gh resolve the alias anyway, and `task ship` and
+# `spec ship` said "no forge available" on every pull request. `ssh -G` only
+# prints the resolved configuration: it opens no connection. ssh is optional
+# (ADR-0002): without it the answer stays what the URL says.
+_jig_ssh_alias_hostname() {
+  local url="$1" host
+  case "$url" in
+    ssh://*)
+      host=${url#ssh://}
+      host=${host%%/*}
+      host=${host#*@}
+      host=${host%%:*}
+      ;;
+    *://*) return 0 ;;
+    *:*)
+      # scp form, [user@]host:path. A path with a slash before the first
+      # colon is a local path, not a host.
+      host=${url%%:*}
+      case "$host" in */*) return 0 ;; esac
+      host=${host#*@}
+      ;;
+    *) return 0 ;;
+  esac
+  [ -n "$host" ] || return 0
+  command -v ssh >/dev/null 2>&1 || return 0
+  ssh -G "$host" </dev/null 2>/dev/null | sed -n 's/^hostname //p' || true
+}
+
 # jig_forge_kind — which forge CLI this checkout should use: cfg `forge`
 # (auto|github|gitlab|none, default auto) resolved against the origin URL
-# when auto, then confirmed actually usable here — the CLI on PATH and
+# when auto — or against the host an SSH alias in it resolves to
+# (_jig_ssh_alias_hostname) — then confirmed actually usable here — the CLI on PATH and
 # authenticated. Prints github|gitlab|none; dies only on an unrecognised
 # `forge` value, the one case a caller cannot paper over with "none".
 #
@@ -1124,11 +1194,14 @@ jig_forge_kind() {
   fi
 
   if [ "$want" = "auto" ]; then
-    case "$origin" in
-      *github.com*) want="github" ;;
-      *gitlab.com*|*gitlab.*) want="gitlab" ;;
-      *) printf 'none\n'; return 0 ;;
-    esac
+    want=$(_jig_forge_by_name "$origin")
+    if [ "$want" = none ]; then
+      want=$(_jig_forge_by_name "$(_jig_ssh_alias_hostname "$origin")")
+    fi
+    if [ "$want" = none ]; then
+      printf 'none\n'
+      return 0
+    fi
   fi
 
   case "$want" in

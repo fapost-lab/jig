@@ -3001,3 +3001,72 @@ test_verify_shell_full_run_ci_explain_leaves_shellcheck_to_ci() {
   run jig verify --changed --explain --profile shell
   assert_contains "$OUT" "PLAN shell: shellcheck: skip (scope: .shellcheckrc changed; whole script set, full set left to CI)"
 }
+
+# --- the `profiles` capability (JIG_VERIFY_PROFILES) ---------------------------
+# A profile learns which profiles start in the same run only by declaring
+# `scope: [..., profiles]`; any other is run with the variable unset, even when
+# the caller's environment carries one (schemas/profile.md, Scope).
+
+# _fixture_peer_profile <name> <scope-line> — a profile whose verify.sh prints
+# the JIG_VERIFY_PROFILES it observes.
+_fixture_peer_profile() {
+  local name="$1" scope_line="$2"
+  mkdir -p ".ai/profiles/$name"
+  {
+    printf 'name: %s\n' "$name"
+    printf 'description: fixture profile reporting the profiles of its run.\n'
+    printf 'detect: always\n'
+    [ -z "$scope_line" ] || printf '%s\n' "$scope_line"
+  } > ".ai/profiles/$name/profile.yaml"
+  cat > ".ai/profiles/$name/verify.sh" <<EOS
+#!/usr/bin/env bash
+echo "$name: profiles=\${JIG_VERIFY_PROFILES-<unset>}"
+exit 0
+EOS
+}
+
+test_verify_hands_the_run_s_profiles_only_to_a_profile_that_declared_it() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  _fixture_peer_profile seer "scope: [profiles]"
+  _fixture_peer_profile blind ""
+  _fixture_peer_profile ghost ""
+  rm .ai/profiles/ghost/verify.sh
+  printf 'profiles: [generic, seer, blind, ghost]\nadapters: [claude, codex]\n' > .ai/config.yaml
+
+  JIG_VERIFY_PROFILES=leaked
+  export JIG_VERIFY_PROFILES
+  run jig verify
+  unset JIG_VERIFY_PROFILES
+  # A profile with no verify.sh starts nothing, so it is not in the list.
+  assert_contains "$OUT" "seer: profiles=generic seer blind"
+  assert_contains "$OUT" "blind: profiles=<unset>"
+  assert_not_contains "$OUT" "leaked"
+}
+
+test_verify_explain_hands_the_run_s_profiles_to_a_profile_that_declared_it() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  _fixture_peer_profile seer "scope: [explain, profiles]"
+  printf '#!/usr/bin/env bash\nprintf "PLAN seer: peers: full (%%s)\\n" "${JIG_VERIFY_PROFILES-<unset>}"\nexit 0\n' \
+    > .ai/profiles/seer/verify.sh
+  printf 'profiles: [generic, seer]\nadapters: [claude, codex]\n' > .ai/config.yaml
+
+  run jig verify --explain --profile seer
+  assert_contains "$OUT" "PLAN seer: peers: full (seer)"
+}
+
+test_verify_explain_leaves_out_of_the_run_s_profiles_one_it_will_not_ask() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  _fixture_peer_profile seer "scope: [explain, profiles]"
+  printf '#!/usr/bin/env bash\nprintf "PLAN seer: peers: full (%%s)\\n" "${JIG_VERIFY_PROFILES-<unset>}"\nexit 0\n' \
+    > .ai/profiles/seer/verify.sh
+  # mute has a verify.sh but no `explain`: a preview never starts it, so it
+  # covers nothing there.
+  _fixture_peer_profile mute ""
+  printf 'profiles: [generic, seer, mute]\nadapters: [claude, codex]\n' > .ai/config.yaml
+
+  run jig verify --explain --profile seer --profile mute
+  assert_contains "$OUT" "PLAN seer: peers: full (seer)"
+}
