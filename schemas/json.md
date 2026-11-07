@@ -483,8 +483,9 @@ does not read (record kinds a later Jig adds to the file) are left out, never an
 argument after `list` with `usage`.
 
 Read with `jig task list --json`: a `task` item joins a task by `id`, an `epic` item a spec of
-`jig spec list --json` by `id`. A task finished or gone stays queued until removed, so it may have
-no match in the default listing (`--all` lists the finished ones). The envelope's `revision` is the
+`jig spec list --json` by `id`. A finished task leaves the queue (`jig queue prune` below), but one
+finished since the last prune may still be listed with no match in the default listing (`--all`
+lists the finished ones). The envelope's `revision` is the
 one to send with the next write, as for every read.
 
 ### Pause requests
@@ -516,6 +517,29 @@ pause of it is requested (`cancel` takes any well-formed reference, so a task go
 have its request taken out); `already-exists` when a pause of it is already requested — its time
 stays; `failed` when the task is paused, `consolidated` or `abandoned`. The `request-pause` and
 `cancel-pause-request` actions ask the same guards.
+
+## `jig queue prune --json`
+
+`jig queue prune [--dry-run] [--revision <n>] --json` takes every finished task out of the queue in
+one write (adr-20261107-a-finished-task-leaves-the-queue): a task `consolidated`, `abandoned` or
+`archived`, or whose workspace is gone, goes with what it waited for and its pause requests; a wait
+on a task `jig queue next` reads as `finished` goes too, being met. The commands that finish a task
+and every housekeeping run call it. With nothing to take out, nothing is written and the revision
+is not checked; `--dry-run` answers the same and writes nothing. Otherwise `--revision` and
+`stale-revision` are as for the writes above.
+
+```json
+{"dry_run": false, "removed": [{"ref": "task:old", "status": "consolidated"}], "met": [{"ref": "task:next", "on": "task:old"}]}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `dry_run` | boolean | `true` for `--dry-run`: nothing was written |
+| `removed` | array | each item taken out, in the queue's order: `ref` (`task:<id>`) and `status` — `consolidated`, `abandoned`, `archived`, or `gone` when no workspace holds it |
+| `met` | array | each wait dropped as met, held by an item that stays: `ref` the item, `on` the finished task |
+
+Refusals: `usage` for an argument the command does not take; `stale-revision`; `failed` for a queue
+of another format version. Epic items are never taken out.
 
 ## `jig queue next --json`
 

@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-06
+reviewed_at: 2026-11-07
 ---
 # Housekeeping
 
@@ -37,6 +37,12 @@ evidence it inferred itself.
   reason=abandoned|stale`; a dry run prints `would-archive`. An archived task whose work merged is
   flagged `needs-consolidation` unless it was archived from `abandoned` or absorbed by another task
   (`archived_reason: absorbed`); those are left as they are, and one with neither key keeps the flag.
+- The **Queue prune** at the start of every run, before this run's log marker and any purge:
+  `jig queue prune` (a dry run: `--dry-run`) takes the queue entries of finished or vanished tasks
+  out, and every wait the advice reads as met — on a closed task, or one the last run logged
+  `remote=merged` — through `jig queue`, the queue's only writer
+  (adr-20261107-a-finished-task-leaves-the-queue). Its lines are printed when it took anything out;
+  a refusal is a warning, never the run's failure.
 - The audit trail: `.ai/runtime/housekeeping.log`, one line per decision including
   `via=` (the deciding tier), and the `.ai/runtime/last-housekeeping` stamp. A **purge**
   line additionally carries the task's own `class=`, `created=` and `consolidated=`
@@ -170,7 +176,8 @@ Outside: what a `status` value *means* and who may write it — that is the `tas
 (ADR-0005, ADR-0012). Housekeeping reads `state` and writes nothing into it, with one exception:
 it archives, by calling the task domain's writer (`_task_archive`), which sets `status` and the
 three archive keys (adr-20261027-a-task-nobody-finished-is-archived-not-purged). It never writes
-`state` itself. The purge line copies three of the task's fields: they are copied into this
+`state` itself. It writes the queue only through `jig queue prune`, the queue's own command
+(adr-20261107-a-finished-task-leaves-the-queue), never the file. The purge line copies three of the task's fields: they are copied into this
 domain's log, never back into the task's file.
 
 **The report on stdout is for people and is not an interface.** It is printed once

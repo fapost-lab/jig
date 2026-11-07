@@ -151,9 +151,9 @@ jig task merge booking-message --into booking-notifications --partial
 When one task turns out to do another's work, merge it. The documents of `booking-message` are
 copied, not moved, to `absorbed/booking-message/` in the receiving task's notes, and the receiver's
 `task.md` gets a section that names them. Without `--partial` the absorbed task is archived (reason
-`absorbed`) and anything in the queue that waited on it waits on the receiver instead. `jig task
-unarchive` brings the task back, but not the queue waits that moved: put them back with `jig queue
-depend`. A merge can always be run again. With `--partial` the task stays open and both sides note
+`absorbed`) and anything in the queue that waited on it waits on the receiver instead; the absorbed
+task itself leaves the queue. `jig task unarchive` brings the task back, but not its queue place or
+the queue waits that moved: put them back with `jig queue set` and `jig queue depend`. A merge can always be run again. With `--partial` the task stays open and both sides note
 the overlap; the queue is left alone. The receiving task must be active or ready, and a merge that would make the
 queue wait in a circle is refused before anything changes.
 
@@ -188,6 +188,15 @@ before or after another, or with `--top` and `--bottom` at an end; an epic (`epi
 ordered beside tasks, and the tasks built on it are ordered within it. A dependency always says why.
 `jig queue remove` takes an item out, and `jig queue undepend` drops a dependency. A program
 reads the queue with `jig queue list --json` ([Reading Jig as data](/reading-jig-as-data#the-queue)).
+
+A task leaves the queue by itself when it is finished: closing, abandoning or archiving it takes its
+entry out, and every `jig housekeeping` run takes out the entries of tasks that are finished or whose
+workspace is gone. `jig queue prune` does the same on demand (`--dry-run` only says what would go).
+Whatever waited on a closed task no longer waits: that dependency is met. A dependency on a task
+that was abandoned or archived stays, because that work never landed: `jig queue next` names it
+broken until you drop it with `jig queue undepend`. A task you bring back with `jig task unarchive`,
+or by setting an abandoned task active again, is not in the queue any more: give it a priority again
+with `jig queue set`.
 
 To ask which task to take next, run `jig queue next`. It answers from the queue and from what Jig
 already knows, over the network never, and changes nothing:

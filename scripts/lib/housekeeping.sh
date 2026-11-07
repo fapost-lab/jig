@@ -101,6 +101,14 @@ cmd_housekeeping() {
   [ "$dry" = 1 ] || _hk_forge_cache_write
   _hk_base_reflog_init "$tasks_dir"
 
+  # Finished tasks leave the queue before any workspace is purged: a wait on a
+  # closed task is read as met while its state is still here to say so
+  # (adr-20261107-a-finished-task-leaves-the-queue). Through `jig queue`, the
+  # queue's one writer; a dry run only says what would go. Before this run's
+  # marker, so a real run and a dry run both read the merges the last run saw,
+  # as `jig queue next` does.
+  _hk_queue_prune "$dry"
+
   # A run boundary in the log. Without it the log is an undifferentiated
   # append-only history, and any reader asking "what does the latest run say"
   # has to guess with a line count — which is how `jig status` came to report
@@ -342,6 +350,25 @@ $task_base
   if [ "$needs_consolidation" = 1 ] || [ "$wrong_base" = 1 ] || [ "$archive_refused" = 1 ]; then
     return 3
   fi
+  return 0
+}
+
+# _hk_queue_prune <dry> — `jig queue prune` (`--dry-run` on a dry run), its
+# lines printed when it took anything out; a refusal is warned about and never
+# fails the run. Nothing is asked of a clone with no queue.
+_hk_queue_prune() {
+  local out rc=0 args=""
+  [ -f "$(jig_queue_file)" ] || return 0
+  [ "$1" != 1 ] || args=--dry-run
+  out=$(JIG_INTERNAL_REDRAW=1 "$JIG_SELF" queue prune ${args:+"$args"} 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jig_warn "housekeeping: the queue was not pruned: ${out#jig: error: }"
+    return 0
+  fi
+  case "$out" in
+    'queue: no finished task to take out') ;;
+    *) printf '%s\n' "$out" ;;
+  esac
   return 0
 }
 

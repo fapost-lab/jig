@@ -1164,7 +1164,7 @@ _task_new_body() {
     return 0
   fi
   jig_relpath "$dir" "$JIG_PROJECT"
-  jig_info "not queued: $id — jig queue set $id --priority <0-5>; the scale is in the jig-task skill"
+  _task_not_queued_hint "$id"
 }
 
 # task_start <id> — begin work on a filed task: cut its branch, check it out
@@ -1857,6 +1857,7 @@ _task_set_body() {
 
   if [ "$claim" -eq 1 ]; then
     _task_close_write "$id" "$dir" "$expected"
+    _task_queue_prune "$id" "task set"
     if [ "$as_json" -eq 1 ]; then
       printf '{"task":%s}\n' "$(_task_json_one "$id")"
     fi
@@ -1881,6 +1882,20 @@ _task_set_body() {
   if [ "$was" = abandoned ] && [ "$value" != abandoned ]; then
     _task_abandon_keys_clear "$id" "$dir"
   fi
+  if [ "$key" = status ]; then
+    case "$value" in
+      consolidated | abandoned) _task_queue_prune "$id" "task set" ;;
+      *) [ "$was" != abandoned ] || _task_not_queued_hint "$id" ;;
+    esac
+  fi
+}
+
+# _task_not_queued_hint <id> — the reminder `task new` gives, for a task that
+# is live and not in the queue: a task taken back from abandoned or archived
+# left its place when it finished (adr-20261107-a-finished-task-leaves-the-queue).
+_task_not_queued_hint() {
+  jig_queue_place "$1" && return 0
+  jig_info "not queued: $1 — jig queue set $1 --priority <0-5>; the scale is in the jig-task skill"
 }
 
 # _task_close_write <id> <dir> <expected> — the close of a write checked
@@ -2146,7 +2161,8 @@ _task_abandon_keys_clear() {
 # task_archive <id> — a person's archive of a task nobody will finish now
 # (adr-20261027-a-task-nobody-finished-is-archived-not-purged). The workspace
 # stays where it is, kept without a limit; only the status changes, and the
-# branch, worktree, pull request and queue place are left alone.
+# branch, worktree and pull request are left alone. Its queue entry goes
+# (adr-20261107-a-finished-task-leaves-the-queue).
 task_archive() {
   [ $# -eq 1 ] || jig_die "$(_task_usage archive)"
   jig_require_init
@@ -2172,6 +2188,7 @@ _task_archive() {
   _task_rewrite_state "$dir" archived_reason "$reason"
   _task_rewrite_state "$dir" archived_at "$(jig_today)"
   _task_rewrite_state "$dir" status archived
+  _task_queue_prune "$id" "task archive"
 }
 
 # task_unarchive <id> — return an archived task to the status it had. The
@@ -2196,6 +2213,10 @@ task_unarchive() {
   # An absorbed task that comes back is its own task again; the receiver
   # keeps `absorbs` as the record of the documents it took.
   _task_rewrite_state_remove "$dir" absorbed_into
+  # Back to live work, it is not queued any more: its entry went when it was
+  # archived. Back to abandoned, it is still finished, and a reminder to queue
+  # it would be undone by the next prune.
+  [ "$from" = abandoned ] || _task_not_queued_hint "$id"
 }
 
 # _task_list_add <list> <id> — <list>, comma-separated, with <id> added once.
@@ -2668,6 +2689,37 @@ _task_honour_pause_request() {
     _task_autopilot_log "$id" pause "$name not entered: $why"
   fi
   printf 'paused: %s (%s); stage %s not entered\n' "$id" "$why" "$name"
+}
+
+# _task_queue_prune <id> <verb> — once a status that finishes a task is
+# written (consolidated, abandoned, archived), take the finished tasks out of
+# the queue through `jig queue prune`, the queue's one writer
+# (adr-20261107-a-finished-task-leaves-the-queue). Best effort: the status
+# stands whatever the queue says. A stale revision is another write landing in
+# between: read again, up to three times; a queue that kept changing or
+# refused is warned about with the command that finishes the job. Nothing is
+# asked of a clone with no queue.
+_task_queue_prune() {
+  local id="$1" verb="$2" tries=0 out
+  [ -f "$(jig_queue_file)" ] || return 0
+  while :; do
+    if out=$(JIG_INTERNAL_REDRAW=1 "$JIG_SELF" queue prune --json 2>/dev/null); then
+      case "$out" in
+        *"\"ref\":\"task:$id\",\"status\""*) jig_info "$verb: task:$id left the queue" ;;
+      esac
+      return 0
+    fi
+    # The code as json.sh's envelope prints it (_task_pause_take_request).
+    case "$out" in
+      *'"code":"stale-revision"'*) ;;
+      *) jig_warn "$verb: $id stays in the queue; take it out with jig queue prune"; return 0 ;;
+    esac
+    tries=$((tries + 1))
+    if [ "$tries" -ge 3 ]; then
+      jig_warn "$verb: the queue kept changing; $id stays in it — jig queue prune"
+      return 0
+    fi
+  done
 }
 
 # _task_pause_take_request <id> <verb> — when the queue holds a pause request

@@ -37,7 +37,8 @@ builds every string with `json_quote` (adr-20261015-a-read-is-one-json-envelope;
 `status`, `task` and `queue`: "which flags still stand" is decided there once. It is the one shared
 library that calls a command library's function — its rechecks ask `task_state_get` — so a reader
 of the rechecks sources `lib/task.sh` before it; `queue`, which may not source `task.sh`, reads only
-the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies have landed. `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
+the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies have landed, and
+`jig queue prune` which of them are met (adr-20261107-a-finished-task-leaves-the-queue). `lib/forgecache.sh` follows the same rule: `housekeeping` writes the
 forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task

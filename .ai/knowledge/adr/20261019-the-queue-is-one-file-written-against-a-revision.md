@@ -11,7 +11,7 @@ paths:
   - scripts/lib/common.sh
   - schemas/json.md
 summary: Why the queue is .ai/runtime/queue in the main checkout, one tab-separated record per line written only by jig queue, and why a write claims the revision above the caller's (jig_revision_claim) and refuses with stale-revision, then moves the file and raises the revision again.
-reviewed_at: 2026-10-19
+reviewed_at: 2026-11-07
 ---
 # The queue is one tab-separated file per clone, written only by `jig queue` against the revision its caller read
 
@@ -150,3 +150,10 @@ a new dependency (ADR-0002, ADR-0037).
   2026-10-19: the parser of items and dependencies moved to `common.sh` as `jig_queue_items`, which
   `jig queue list --json` calls, and `jig status` and `jig context` read a task's place through
   `jig_queue_place` on top of it, so the readers share one parser and one format check.)
+
+> **Amendment (2026-11-07).** A finished task's item no longer waits for `remove`: `jig queue prune`
+> takes every closed, abandoned, archived or vanished task out in one write, called by the commands
+> that finish a task and at the start of every housekeeping run
+> (adr-20261107-a-finished-task-leaves-the-queue). Housekeeping thereby writes the queue, through
+> `jig queue`, its only writer. `remove` keeps what waits for the item; `prune` keeps it too, except
+> a wait the advice already reads as `finished`, which it drops as met.

@@ -49,7 +49,8 @@ or gate moves because a document was rewritten.
 (from `active`, `ready` or `abandoned`; not `consolidated`) sets it with the script-owned keys
 `archived_at`, `archived_reason` (`abandoned`, `stale`, `manual`) and `archived_from`; `jig task
 unarchive <id>` returns `archived_from`, removes the keys and refreshes `updated_at`. The workspace
-does not move, and branch, worktree, pull request, pause stash and queue place are untouched. Every
+does not move, and branch, worktree, pull request and pause stash are untouched; its queue entry
+goes, as every finished task's does (adr-20261107-a-finished-task-leaves-the-queue). Every
 other reader treats `archived` like `abandoned`; lists hide it unless asked for it with
 `--status archived`.
 
