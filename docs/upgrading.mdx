@@ -313,8 +313,34 @@ The usual ones:
 | `the upgrade to <version> is already on branch <name>, which has not been merged into <base> yet` | An earlier run's branch is still waiting for its merge. Merge it, or `git checkout <name>` and run `jig upgrade` there to carry it on; a second branch would only become a second pull request. |
 | `upgrade: not committed, because the install is not complete …` | The self-check did not confirm the install, so nothing was committed. Run `jig upgrade` again on the same branch; it carries on. |
 
-`jig upgrade --dry-run` never refuses; it prints the same reasons as `note:` lines, so you can see
-them before you try.
+`jig upgrade --dry-run` does not refuse for these reasons; it prints them as `note:` lines, so you
+can see them before you try. The one refusal a dry run shares with the real run is a source that is
+not a release, below.
+
+### When the source is not a release
+
+```text
+jig: error: upgrade: the source is not a release: /home/you/.local/share/jig is on branch main at 278958c (0.40.0+278958c). …
+```
+
+The Jig on your machine is a checkout that is not at the tag of its version: a branch (`main`), a
+commit past a release, or a version raised but not yet tagged. A checkout at the tag with files
+edited or added in it is not a release either; the message then says `at its release tag with
+uncommitted changes`. Its code is in no release, so a project
+that keeps Jig's files in its own repository will not take it; `jig upgrade --dry-run` refuses too,
+since a plan the real run would refuse is no plan. Projects installed in link mode are not affected.
+Two ways out:
+
+- **Return to a release**: `git -C ~/.local/share/jig checkout v0.40.0` (use the version in the
+  message), or `jig self-update` once a newer release is out. For local changes, look at them with
+  `git -C ~/.local/share/jig status --short` and put them away (`git -C ~/.local/share/jig stash -u`
+  keeps them).
+- **Take the code on purpose**: `jig upgrade --unreleased`. The project's `.ai/manifest` then records
+  `jig.version: 0.40.0+278958c`.
+
+A `+<sha>` after a version means unreleased code: the release number, then the commit it was taken
+from; `.dirty` after it means the checkout also had local changes. `jig status` shows it, and a
+later `jig upgrade` from a released Jig puts the plain version back.
 
 ## What the upgrade does, and what it leaves alone
 
@@ -427,21 +453,60 @@ jig upgrade --land
 It asks the forge whether the pull request is merged, puts you on the base branch, fast-forwards it
 to origin's and deletes the upgrade's branch, here and — when your agent may push — on origin. It
 refuses, changing nothing, while the pull request is still open, while you have uncommitted changes,
-when you are on another branch than the base or the upgrade's, or when your base branch has commits
-origin does not have. Until then `jig status` reminds you with an `upgrade pull request:` line.
+when you are on another branch than the base or the upgrade's, when your base branch has commits
+origin does not have, or while origin's base here does not record the upgrade's version yet (fetch,
+then run it again). Until then `jig status` reminds you with an `upgrade pull request:` line.
 
 A program — Jig UI, a script that upgrades many projects — runs `jig upgrade --json` and reads what
 the run did instead of these lines: the outcome, the branch, the commit and the pull request, and
 the steps the release asks for by hand ([Reading Jig as data](/reading-jig-as-data#upgrading-a-project)).
 
-`jig upgrade --dry-run` never stops and never makes a branch — `jig status`, `jig verify` and
-`jig doctor` rely on it. It prints what would stop a real run as `note: a real upgrade would stop:
-…` lines instead.
+`jig upgrade --dry-run` never makes a branch, and it does not stop for these reasons —
+`jig status`, `jig verify` and `jig doctor` rely on it. It prints what would stop a real run as
+`note: a real upgrade would stop: …` lines instead. The one thing it refuses, as a real run does, is
+a source that is not a release ([When the source is not a release](#when-the-source-is-not-a-release)).
 
 Two kinds of project work differently. One that uses a single branch
 (`git.branch_per_task: false`) gets the commit on the branch it is on, and nothing is pushed. One
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
+
+## From 0.40.0 to 0.41.0
+
+Nothing to do by hand, if the Jig on your machine is a release and you have not edited a stock
+profile. The installer's default and `.ai/config.yaml` did not change, and no new setting appears in
+the upgrade's report. The upgrade brings new scripts, changes to the `php`, `laravel`, `node` and
+`python` profiles, and new text for the `jig-accept`, `jig-implement`, `jig-review`,
+`jig-architecture-review`, `jig-autopilot`, `jig-consolidate` and `jig-verify` skills.
+
+**A stock profile you edited.** `jig upgrade` keeps your copy of a `profile.yaml` or `verify.sh` you
+changed (`keep-modified`), so that profile goes on as in 0.40.0: a Laravel project with an edited
+`php` or `laravel` profile still runs its suite twice, and an edited `php/profile.yaml` makes
+`jig verify` warn that `php` names no check `tests`. To take the new behaviour, merge the stock
+profile's changes into yours: `checks: [tests]` in `php`, `node` and `python`, `covers: [php:tests]`
+in `laravel`, and the `jp_covered tests` call around the test command in each `verify.sh`
+([Verification profiles](/configuration#verification-profiles)).
+
+**Check where your Jig stands first.** `git -C ~/.local/share/jig status -sb` should print
+`## HEAD (no branch)` and nothing under it. If it lists changed files, the upgrade refuses those
+too. If it names a branch past the release tag — installed with `--ref main`, a
+clone you pull, or an install from before the first release — `jig upgrade` in a copy-mode project
+now refuses it: return it to a release, as
+[When the source is not a release](#when-the-source-is-not-a-release) says, then `jig self-update`.
+A project that already took unreleased framework files under 0.40.0 gets the released ones back from
+this upgrade. Until it has, the project's own copy of Jig (`.ai/scripts/jig`) is the old one: its
+`jig verify` and `jig status` still measure pending files against such a global Jig and may ask for
+an upgrade that the new Jig then refuses. Return the global Jig to a release first, and they agree.
+
+**What you will notice.** Off a release tag, `jig --version` and `jig status` show `X.Y.Z+<sha>`.
+`jig context guard` says why each pending document is required. Finished tasks leave the queue on
+the first housekeeping run, so `jig queue list` gets shorter. A Laravel project's `jig verify` prints
+`skip (scope: covered by laravel, php:tests)` for the php profile's tests. A stopped autopilot run can
+be handed over to you (`jig task autopilot <id> handover`), after which `jig status` shows
+`autopilot=handed-over`. A program that reads Jig's JSON may see the failure codes
+`unreleased-source` and `write-still-waits`, a `+<sha>` in `jig.version` values, `decidable`,
+`reason` and `lossy` on knowledge entries, `handover_at` on a task's `autopilot` and `handover` among
+the actions a person may take.
 
 ## From 0.39.0 to 0.40.0
 

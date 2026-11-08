@@ -84,7 +84,8 @@ it waits for and why, and a pause asked of it that it has not honoured yet.
     to `<username>@example.com`);
   - in a folder it turned into a repository, makes one first commit of everything in it — including
     files that were already there (it lists the first few);
-  - runs `jig init --session-hook` unless you pass `-NoSessionHook`.
+  - runs `jig init --session-hook` unless you pass `-NoSessionHook`; from an unreleased Jig
+    (`-Ref main`) it adds `--unreleased` only after you typed yes to its question.
 
   It deletes only the Git installer it downloaded in that run. `-Uninstall` removes the `PATH` entry,
   the `jig` link only when it points into the install folder, and the install folder only when it is
@@ -102,7 +103,8 @@ it waits for and why, and a pause asked of it that it has not honoured yet.
   through a directory link still ignores it. With
   `--session-hook` it creates `.claude/settings.json` only when that file does not exist; an existing
   one is never edited. It asks nothing and commits nothing.
-- **`jig upgrade`** fetches nothing: it copies from the Jig on your machine. It replaces framework
+- **`jig upgrade`** fetches nothing: it copies from the Jig on your machine, and only when that is a
+  release (a checkout at its version's tag, with no local changes); otherwise it refuses unless given `--unreleased`. It replaces framework
   files you have not edited, keeps and reports the ones you have, and deletes a file the new version
   no longer ships only when you have not edited it — this can be outside `.ai/`, for example an old
   skill under `.claude/skills/`. It never touches knowledge, specifications or configuration. Of
@@ -141,7 +143,7 @@ project sets it, is run by both after the share and the carry:
 | create a branch without switching | creating an epic branch |
 | `git worktree add` | starting a task in a separate worktree |
 | `git stash push -u` | pausing a task with `--stash`; resuming applies the stash and keeps it |
-| delete a branch | only when starting a worktree fails, and only the branch that attempt just created, while it still points where it was created |
+| delete a branch | when starting a worktree fails, only the branch that attempt just created, while it still points where it was created; and, unless `git.delete_merged_branches` is `false`, a branch of Jig's own once its work has landed — after a merge Jig made (`jig task ship`, `jig upgrade --land`) and in housekeeping when a finished task is cleaned up — only when every commit on it is merged (`git branch -d`, or the hosting site's merged head when the remote copy is gone), and on origin only at the commit that was merged and only when `agent.git` is `push` or higher |
 | `git worktree add`, `git worktree remove --force`, `git update-ref` | a write from a program (`jig spec item`, `jig knowledge accept --json` and the like): the worktree commands only on Jig's own tree under the git directory, never a worktree of yours. At the write's commit, `update-ref` fast-forwards the write's branch in that tree to the base that already holds it or to origin's copy of it, checking the old value first; `jig writes ship` creates the write's branch in your clone at origin's tip when you deleted it there, only where no such branch exists and only when origin holds every edit the write made; and it deletes your clone's remote-tracking ref of that branch (`refs/remotes/origin/<branch>`) when origin no longer has the branch — what `git fetch --prune` would do |
 | `git worktree remove` (never `--force`) | cleaning up a closed task's worktree, only when Git lists it with the task's branch, it lies under `git.worktree_root`, it has no uncommitted changes or lock, and no repository inside its ignored files holds work that is nowhere else |
 
@@ -193,7 +195,10 @@ Everything a script deletes, it first proves is its own:
   path, only the links and empty folders left there are removed; anything else stays, and the next
   write is refused `tree-in-the-way`.
 - **Specifications** removed, closed or finished go to the trash, not straight to deletion.
-- **Branches** are never deleted, apart from the failed-worktree case above.
+- **Branches** are deleted only as the table above says: the branch a failed worktree start just
+  created, and Jig's own branches once their work has landed (`git.delete_merged_branches`, on by
+  default; `false` keeps every branch). A branch you made is never deleted, nor one with a commit
+  that is not merged.
 
 The session hook, when you installed it, starts `jig housekeeping` — the real one, not a dry run — in
 the background at most once per `housekeeping.cadence`.

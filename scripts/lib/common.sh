@@ -417,19 +417,23 @@ EOF
   printf '%s\n' "$v"
 }
 
-# jig_version_newer <a> <b> — true when release version <a> (`X.Y.Z`) is
+# jig_version_newer <a> <b> — true when release version <a> (`X.Y.Z`, or
+# `X.Y.Z+<build>`, ordered by its `X.Y.Z`) is
 # strictly newer than <b>, comparing each field as a number: 0.10.0 is newer
 # than 0.9.0. False for equal versions and for anything that is not three
 # numeric fields, so an unparsable version never reads as an upgrade.
 jig_version_newer() {
-  local a1 a2 a3 b1 b2 b3
-  jig_release_version "v$1" >/dev/null || return 1
-  jig_release_version "v$2" >/dev/null || return 1
+  local a1 a2 a3 b1 b2 b3 a="${1%%+*}" b="${2%%+*}"
+  # A `+<build>` part (unreleased code, `X.Y.Z+<sha>`) takes no part in the
+  # order, as in semver: it is compared by the release number it was built on
+  # (adr-20261106-copy-mode-projects-take-released-code-only).
+  jig_release_version "v$a" >/dev/null || return 1
+  jig_release_version "v$b" >/dev/null || return 1
   IFS=. read -r a1 a2 a3 <<EOF
-$1
+$a
 EOF
   IFS=. read -r b1 b2 b3 <<EOF
-$2
+$b
 EOF
   # 10#: a field with a leading zero is still decimal, not octal.
   a1=$((10#$a1)); a2=$((10#$a2)); a3=$((10#$a3))
@@ -489,6 +493,158 @@ jig_declared_version() {
 '*) return 1 ;;
   esac
   printf '%s\n' "$found"
+}
+
+# --- released and unreleased sources ------------------------------------------
+#
+# A framework checkout is a released source only when its HEAD carries the
+# release tag of the version it declares. Anything else — a branch past the
+# tag, a detached commit, a copy without git — is unreleased code, even when it
+# declares a released number: `main` keeps the last release's JIG_VERSION until
+# the next release raises it. A copy-mode project takes released code only,
+# unless asked for unreleased code by name
+# (adr-20261106-copy-mode-projects-take-released-code-only).
+
+# _jig_source_git <dir> — true when <dir> is the top of a git checkout of its
+# own, not merely inside somebody else's repository (a copy of the framework
+# placed inside a project would otherwise answer with the project's tags).
+_jig_source_git() {
+  local top phys
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+  top=$(cd -P "$top" 2>/dev/null && pwd -P) || return 1
+  phys=$(cd -P "$1" 2>/dev/null && pwd -P) || return 1
+  [ "$top" = "$phys" ]
+}
+
+# jig_source_release <dir> — true when framework checkout <dir> stands at the
+# release tag of the version it declares (`v<JIG_VERSION>` points at HEAD). A
+# branch whose HEAD carries that tag counts: its bytes are the release's.
+# Uncommitted changes are not looked at here: this is the cheap question
+# `jig status` and `jig --version` ask on every run. Taking files asks
+# jig_source_released, which also asks jig_source_clean.
+jig_source_release() {
+  local declared tags
+  declared=$(jig_declared_version "$1") || return 1
+  jig_release_version "v$declared" >/dev/null || return 1
+  _jig_source_git "$1" || return 1
+  # Read whole, then searched: a pipe into an early-quitting reader can die
+  # of SIGPIPE under pipefail (conventions/shell.md).
+  tags=$(git -C "$1" tag --points-at HEAD 2>/dev/null) || return 1
+  jig_has_line "v$declared" "$tags"
+}
+
+# jig_source_changes <dir> — the uncommitted changes of checkout <dir>, as
+# `git status --porcelain` lists them; fails when git cannot read them.
+# --untracked-files=all pins what counts as a change: with
+# status.showUntrackedFiles=no in someone's git config, plain --porcelain
+# hides untracked files and a dirty checkout would read as clean. Shared with
+# self-update, which refuses a checkout with changes for the same reason.
+jig_source_changes() {
+  git -C "$1" status --porcelain --untracked-files=all 2>/dev/null
+}
+
+# jig_source_clean <dir> — true when checkout <dir> has no tracked, staged or
+# untracked change. The answer is kept for the process: an upgrade asks it
+# for the refusal and again for the version it records, and on Git Bash each
+# `git status` is a slow process start.
+_JIG_SOURCE_CLEAN_DIR=""
+_JIG_SOURCE_CLEAN_RC=""
+jig_source_clean() {
+  local changes
+  if [ -n "$_JIG_SOURCE_CLEAN_DIR" ] && [ "$_JIG_SOURCE_CLEAN_DIR" = "$1" ]; then
+    return "$_JIG_SOURCE_CLEAN_RC"
+  fi
+  _JIG_SOURCE_CLEAN_RC=1
+  if changes=$(jig_source_changes "$1") && [ -z "$changes" ]; then
+    _JIG_SOURCE_CLEAN_RC=0
+  fi
+  _JIG_SOURCE_CLEAN_DIR=$1
+  return "$_JIG_SOURCE_CLEAN_RC"
+}
+
+# jig_source_released <dir> — true when <dir> holds a release's bytes: at its
+# release tag (jig_source_release) and with no local change. A checkout at a
+# tag with edited or added files is unreleased code under a release's number
+# (adr-20261106-copy-mode-projects-take-released-code-only).
+jig_source_released() {
+  jig_source_release "$1" && jig_source_clean "$1"
+}
+
+# jig_source_taken_version <dir> — the version a copy-mode project records
+# when it takes files from <dir>: jig_source_version, and `X.Y.Z+<sha>.dirty`
+# when the checkout has local changes, at a release tag or past one.
+jig_source_taken_version() {
+  local v sha
+  v=$(jig_source_version "$1") || return 1
+  if ! _jig_source_git "$1" || jig_source_clean "$1"; then
+    printf '%s\n' "$v"
+    return 0
+  fi
+  case "$v" in
+    *+*) printf '%s.dirty\n' "$v" ;;
+    *)
+      sha=$(git -C "$1" rev-parse --short=7 HEAD 2>/dev/null) || sha=unknown
+      printf '%s+%s.dirty\n' "$v" "${sha:-unknown}" ;;
+  esac
+}
+
+# jig_source_version <dir> — the version of framework checkout <dir> as a
+# person should read it: the declared `X.Y.Z` at its release tag, otherwise
+# `X.Y.Z+<short sha>`, or `X.Y.Z+unknown` without a git checkout of its own.
+jig_source_version() {
+  local declared sha
+  declared=$(jig_declared_version "$1") || return 1
+  if jig_source_release "$1"; then
+    printf '%s\n' "$declared"
+  elif _jig_source_git "$1" \
+       && sha=$(git -C "$1" rev-parse --short=7 HEAD 2>/dev/null) && [ -n "$sha" ]; then
+    printf '%s+%s\n' "$declared" "$sha"
+  else
+    printf '%s+unknown\n' "$declared"
+  fi
+}
+
+# jig_version_core <version> — <version> without its `+<build>` part: the
+# release number an unreleased version was built on.
+jig_version_core() {
+  printf '%s\n' "${1%%+*}"
+}
+
+# jig_source_where <dir> — where an unreleased checkout stands, in words:
+# "on branch main at 278958c", "detached at 278958c", "not a git checkout".
+jig_source_where() {
+  local sha branch
+  if ! _jig_source_git "$1"; then
+    printf 'not a git checkout\n'
+    return 0
+  fi
+  sha=$(git -C "$1" rev-parse --short=7 HEAD 2>/dev/null) || sha="?"
+  if branch=$(git -C "$1" symbolic-ref -q --short HEAD 2>/dev/null); then
+    printf 'on branch %s at %s\n' "$branch" "$sha"
+  else
+    printf 'detached at %s\n' "$sha"
+  fi
+}
+
+# jig_require_released_source <command> <source> <unreleased> — refuse, as
+# `unreleased-source`, to install a copy-mode project from <source> when it is
+# not a release, unless <unreleased> is 1 (`--unreleased`). The message names
+# where the checkout stands and the two ways out.
+jig_require_released_source() {
+  local cmd="$1" source="$2" unreleased="$3" declared back
+  [ "$unreleased" != 1 ] || return 0
+  if jig_source_release "$source"; then
+    jig_source_clean "$source" && return 0
+    jig_fail unreleased-source "$cmd: the source is not a release: $source is at its release tag with uncommitted changes ($(jig_source_taken_version "$source" 2>/dev/null || printf '%s' "$(jig_declared_version "$source" 2>/dev/null)")). A copy-mode project takes released code only; see the changes with \`git -C $source status --short\` and commit them elsewhere or stash them (\`git -C $source stash -u\`); or take this code on purpose: jig $cmd --unreleased"
+  fi
+  declared=$(jig_declared_version "$source" 2>/dev/null) || declared="?"
+  if _jig_source_git "$source" \
+     && git -C "$source" rev-parse -q --verify "refs/tags/v$declared" >/dev/null 2>&1; then
+    back="return it to a release: git -C $source checkout v$declared"
+  else
+    back="use a released Jig: install.sh without --ref, or check out a release tag (git tag -l 'v*')"
+  fi
+  jig_fail unreleased-source "$cmd: the source is not a release: $source is $(jig_source_where "$source") ($(jig_source_version "$source" 2>/dev/null || printf '%s' "$declared")). A copy-mode project takes released code only; $back; or take this code on purpose: jig $cmd --unreleased"
 }
 
 # jig_global_executable — the physical path of the `jig` the current PATH

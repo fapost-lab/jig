@@ -66,6 +66,7 @@ that has none yet reads `failed` until it gains one — so a program treats a co
 | `not-on-branch` | the same, for what the base has and `knowledge/decisions`, cut before it got there and still waiting, does not. Nothing was written; decide it once that branch has landed |
 | `source-missing` | `jig knowledge accept` or `reviewed` named a stub whose source is missing, invalid or not tracked. Nothing was written |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing: uncommitted changes, a started task's branch checked out, `jig verify` running in this checkout, or line endings Jig's files are not pinned against. For `jig upgrade --land`: uncommitted changes, a checkout on another branch than the base or the upgrade's, the base checked out in another worktree, or a base that cannot be fast-forwarded to origin's. `message` lists every reason, one per line, each with what to do |
+| `unreleased-source` | `jig init` or `jig upgrade` in copy mode (dry run too) found the framework source checkout not at the release tag of its version, or at it with uncommitted changes, and `--unreleased` was not given. `message` names where the checkout stands and the two ways out. Nothing was changed |
 | `unknown-key` | `jig config set --json` was given a name no reader of Jig reads. Nothing was written |
 | `not-local` | `jig config set --json` was given a key Jig reads but only the team's `.ai/config.yaml` answers for. Nothing was written |
 | `invalid-value` | `jig config set --json` was given a value its key does not accept: outside the fixed set, not a number, not a duration. Nothing was written |
@@ -419,7 +420,7 @@ The kinds, in the order they are listed:
 | `release-available` | project | a newer jig is out (`.ai/runtime/latest-release`, written by housekeeping) |
 | `upgrade-pull-request-waiting` | project | an upgrade's pull request is open: the forge cache's newest line for a `jig/upgrade-*` branch into `git.base_branch` says `open`, and the base branch here does not already record its version (as it does right after `jig upgrade --land`, before housekeeping hears the merge). Merge it, then `jig upgrade --land`. One item per such branch |
 | `upgrade-pull-request-merged` | project | an upgrade's pull request was merged, and the base branch here (`refs/heads/<git.base_branch>`) still records an older Jig than the version its branch is named for; `todo` is `jig upgrade --land`. A merged upgrade the base here already carries makes no item |
-| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine; `todo` is `jig upgrade`, and the item carries `versions: {from, to}` — the project's and the machine's. Not listed while an `upgrade-pull-request-*` item is for the machine's version or a newer one (or for a branch whose name holds no version): `jig upgrade` again would cut a second branch for the same upgrade. One for an older version, such as an abandoned pull request left open, does not hold it back |
+| `upgrade-available` | project | this project's installed Jig (the manifest's `jig.version`) is an older release than the one on this machine (a machine on unreleased code, `X.Y.Z+<sha>`, offers none); `todo` is `jig upgrade`, and the item carries `versions: {from, to}` — the project's and the machine's. Not listed while an `upgrade-pull-request-*` item is for the machine's version or a newer one (or for a branch whose name holds no version): `jig upgrade` again would cut a second branch for the same upgrade. One for an older version, such as an abandoned pull request left open, does not hold it back |
 | `phase-stopped` | phase | tasks of a phase run stopped; answered once, in the coordinator's session |
 | `autopilot-stopped` | task | an autopilot run stopped with a question |
 | `gate-waiting` | task | a T3/T4 design waits at its human gate |
@@ -886,7 +887,7 @@ source holds a newer version than the jig that was called), that jig's data is t
 |---|---|
 | `mode` | `copy`, or `link` for a project installed with `jig init --link` |
 | `dry_run` | `true` for `--dry-run`, which changes nothing |
-| `from`, `to` | the project's Jig before the run (the manifest's `jig.version`) and the version it upgrades to; `null` when unknown |
+| `from`, `to` | the project's Jig before the run (the manifest's `jig.version`) and the version it upgrades to; `null` when unknown. Either carries `+<short sha>` (`0.40.0+278958c`) for unreleased code, taken with `--unreleased` |
 | `outcome` | `planned` (a dry run), `linked` (link mode, every link in place), `nothing-to-do`, `incomplete` (the self-check failed, so nothing was committed; run again), `staged` (changed and left for the person to commit: `agent.git` is `none`, or the repository has no commit yet), `upgraded` (committed) |
 | `files` | how many framework files the run placed, kept as they were, removed and left in conflict; `null` in link mode |
 | `git` | how far git went, by `agent.git` (`level`): the upgrade's `branch` (`null` when the project works on one branch), the `commit` (`null` when staged), `pushed`, the `pull_request` URL or `null`, and `merged`. `null` when nothing was staged or committed |
@@ -926,7 +927,7 @@ branch's pull request counts.
 | Field | Meaning |
 |---|---|
 | `mode`, `dry_run`, `files`, `manual_steps`, `would_stop` | as in `jig upgrade --json`; `dry_run` is `false`, `files` `null`, the two lists empty |
-| `from`, `to` | the Jig the base branch here recorded before (`jig.version` in its manifest) and after the fast-forward; on `nothing-to-do` both are the base's |
+| `from`, `to` | the Jig the base branch here recorded before (`jig.version` in its manifest) and after the fast-forward; on `nothing-to-do` both are the base's. A value may carry `+<short sha>` for unreleased code |
 | `outcome` | `landed`, or `nothing-to-do` when no merged upgrade waits to be brought here (and none is open) |
 | `git` | on `landed`: `level` (`agent.git`), the upgrade's `branch`, the `commit` the base is on now, `pushed` and `merged` (both `true`), and the `pull_request` URL or `null`. `null` on `nothing-to-do` |
 | `land` | on `landed`: the `base` checked out, and whether the upgrade's branch was deleted here (`branch_deleted`) and on origin (`origin_branch_deleted`). A branch kept says why in the text on stderr. `null` on `nothing-to-do` |

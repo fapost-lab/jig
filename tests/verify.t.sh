@@ -421,7 +421,7 @@ test_verify_runs_profiles_when_source_root_unknown() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-del.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" --profiles generic >/dev/null
   rm -rf "$src"
 

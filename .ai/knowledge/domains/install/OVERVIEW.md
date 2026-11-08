@@ -95,7 +95,9 @@ project owns.
   left out of that count a repeat of an interrupted run would write nothing and report
   `manifest unchanged`. The source already recorded
   is the exception, written back whether or not anything was placed: in link mode the
-  project runs that checkout's scripts, so its version moves with it. A real run ends by
+  project runs that checkout's scripts, so its version moves with it. So is a project recording
+  unreleased code (`X.Y.Z+<sha>`) upgraded from a released source: its bytes are the release's,
+  and the header says so (adr-20260922, amended 2026-11-07). A real run ends by
   asking the install it has just made whether anything is still not installed, and naming
   it — `upgrade_pending`, the same predicate `jig doctor` uses, run as a subprocess of the
   project's own dispatcher because an upgrade is carried out by the code of the version
@@ -117,7 +119,13 @@ project owns.
   global framework as `jig.source: global`, never as the installing person's path
   (adr-20261029-the-manifest-names-the-global-framework-not-its-path). Release tags are the update channel and `main` the
   development channel (ADR-0033). Moving the global framework never changes a project; only
-  `upgrade` does.
+  `upgrade` does. A copy-mode `init` or `upgrade` takes a released source only — at its tag and
+  without local changes, dry run included, refused as `unreleased-source` — unless `--unreleased`, which records the build version
+  in the manifest; an unreleased source is not measured for pending (`upgrade_pending` 4), and
+  `status`, `self-update` and `install.sh` name the development channel
+  (adr-20261106-copy-mode-projects-take-released-code-only). The test runner installs from a
+  released copy of the checkout (`tests/run.sh`, `JIG_HOME`), built from what git sees in the
+  working tree; a test that changes a copy of it releases the copy again (`fixture_release_source`).
 - Windows (ADR-0037): `install.ps1` brings Git for Windows, runs `install.sh --no-path`, puts
   the checkout's `scripts\` on the user `PATH` and, with consent, prepares a first project.
   Where symlinks cannot be made, `install.sh` links nothing into `~/.local/bin` and `scripts/`
@@ -243,6 +251,8 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
   check before a release that changes installation on Windows.
 - `scripts/lib/self-update.sh` — `cmd_self_update`.
 - `scripts/lib/common.sh` — `jig_release_version`, `jig_version_newer`, `jig_newest_release`,
-  `jig_global_executable`, `jig_declared_version`, `jig_version_of`.
+  `jig_global_executable`, `jig_declared_version`, `jig_version_of`, and for released sources
+  `jig_source_release`, `jig_source_version`, `jig_version_core`, `jig_source_where`,
+  `jig_require_released_source`.
 - `.github/scripts/release-tag.sh` — whether to tag a release; run by the `release` job of
   `.github/workflows/ci.yml`.

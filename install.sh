@@ -750,6 +750,19 @@ main() {
     fi
   fi
 
+  # Anything but a release tag is the development channel, and projects in
+  # copy mode take released code only
+  # (adr-20261106-copy-mode-projects-take-released-code-only). Said on stderr
+  # off a terminal: stdout's last line is install.ps1's contract.
+  if [ "$ACTUAL_IS_RELEASE" != 1 ]; then
+    local channel="This Jig is on the development channel ($ACTUAL_REF), not a release; copy-mode projects will not take files from it without --unreleased."
+    if [ "$_INSTALL_OUT_TERMINAL" = 1 ]; then
+      _install_later "$channel"
+    else
+      _install_warn "$channel"
+    fi
+  fi
+
   # The closing line, and install.ps1's machine contract
   # (Get-JigInstalledInfo): it reads this line from a captured, never a
   # terminal, stdout, and runs install.sh with JIG_TERMINAL=0 besides.

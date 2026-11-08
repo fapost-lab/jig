@@ -2855,20 +2855,39 @@ _status_upgrade_prs() {
     to=$(_status_upgrade_version "$b")
     case "$st" in
       open)
-        if [ -n "$to" ] && [ -n "$have" ] && ! jig_version_newer "$to" "$have"; then
+        if [ -n "$to" ] && [ -n "$have" ] && ! jig_version_newer "$to" "$have" \
+           && ! _status_upgrade_rebuilds "$b" "$have"; then
           continue
         fi
         printf '%s\t%s\t%s\t%s\t-\t%s\t%s\n' open "$b" "$base" "${to:--}" "$at" "$url"
         ;;
       merged)
         [ -n "$to" ] && [ -n "$have" ] || continue
-        jig_version_newer "$to" "$have" || continue
+        jig_version_newer "$to" "$have" || _status_upgrade_rebuilds "$b" "$have" || continue
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' merged "$b" "$base" "$to" "$have" "$at" "$url"
         ;;
     esac
   done <<CACHE
 $(forgecache_upgrades "$cache" "$base")
 CACHE
+}
+
+# _status_upgrade_rebuilds <branch> <have> — true when upgrade branch <branch>
+# records a version of the same release number as the base's <have> but
+# another build: a return to a release (`X.Y.Z+<sha>` -> `X.Y.Z`) or an
+# `--unreleased` upgrade within one release. The branch name holds the number
+# alone, so only the label it records tells it from an upgrade already here.
+# Read from the branch here or origin's copy of it, as `jig upgrade --land`
+# reads it (upgrade.sh); false when neither is here.
+_status_upgrade_rebuilds() {
+  local ref label
+  for ref in "refs/heads/$1" "refs/remotes/origin/$1"; do
+    label=$(_upgrade_land_version "$ref")
+    [ -n "$label" ] || continue
+    _upgrade_rebuilds "$label" "$2"
+    return
+  done
+  return 1
 }
 
 # _status_upgrade_version <branch> — the version `jig/upgrade-<to>[-<n>]` is
@@ -2919,17 +2938,33 @@ UPR
 # runs from — a normal "current", not a missing global (common.sh,
 # jig_global_executable).
 _status_framework_versions() {
-  local project="$1" global_exe global
+  local project="$1" global_exe global global_src
+  # The global version as a person should read it: `X.Y.Z+<sha>` off a release
+  # tag. Read from its git, never by running it
+  # (adr-20261106-copy-mode-projects-take-released-code-only).
   if ! global_exe=$(jig_global_executable) \
-     || ! global=$(jig_declared_version "${global_exe%/scripts/jig}"); then
+     || ! global=$(jig_source_version "${global_exe%/scripts/jig}"); then
     printf '%s\n' "framework versions: project=$project global=unavailable"
     return 0
   fi
+  global_src=${global_exe%/scripts/jig}
   if [ "$project" = "$global" ]; then
     printf '%s\n' "framework versions: project=$project global=$global current"
     return 0
   fi
   printf '%s\n' "framework versions: project=$project global=$global mismatch"
+  # Unreleased code on either side is named before any direction: the number
+  # it shares with a release says nothing about which is newer.
+  case "$global" in
+    *+*)
+      printf '%s\n' "hint: the global jig is on the development channel ($(jig_source_where "$global_src")); copy-mode projects take releases only — return it to a release, or develop Jig in a clone of its own"
+      return 0 ;;
+  esac
+  case "$project" in
+    *+*)
+      printf '%s\n' "hint: this project carries unreleased Jig ($project); \`jig upgrade\` from a released Jig returns it to the release"
+      return 0 ;;
+  esac
   if jig_release_version "v$global" >/dev/null 2>&1 && jig_release_version "v$project" >/dev/null 2>&1; then
     if jig_version_newer "$global" "$project"; then
       printf '%s\n' "hint: the global framework is newer; run \`jig upgrade --dry-run\`"
@@ -2954,9 +2989,12 @@ _status_project_behind() {
   local project global_exe global
   manifest_exists || return 1
   project=$(manifest_header_get jig.version) || return 1
+  project=$(jig_version_core "$project")
   global_exe=$(jig_global_executable) || return 1
   global=$(jig_declared_version "${global_exe%/scripts/jig}") || return 1
   jig_release_version "v$global" >/dev/null 2>&1 || return 1
+  # Unreleased global code is nothing a project can upgrade to without asking.
+  jig_source_release "${global_exe%/scripts/jig}" || return 1
   jig_release_version "v$project" >/dev/null 2>&1 || return 1
   jig_version_newer "$global" "$project" || return 1
   printf '%s %s\n' "$project" "$global"

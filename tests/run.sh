@@ -131,6 +131,77 @@ _run_release_busy() {
 }
 
 trap 'rm -rf "$JIG_TEST_CACHE" "$RESULTS"; _run_release_busy' EXIT
+
+# The framework the tests install from is a release: a copy-mode project takes
+# released code only (adr-20261106-copy-mode-projects-take-released-code-only),
+# and this checkout is on a branch. So JIG_HOME is a copy of it, made a git
+# repository of its own with one commit tagged v<JIG_VERSION> — the same bytes,
+# released. A test about unreleased code builds its own source or asks for
+# --unreleased.
+#
+# What is copied is what git would see: tracked files and untracked ones that
+# are not ignored, as they stand in the working tree. Nothing ignored comes
+# along (.ai/runtime, .ai/workspace, nested worktrees under .claude/worktrees),
+# and links are made after every file, because Git Bash makes a link by copying
+# its target and refuses one whose target is not there yet.
+#
+# A tree that is not the framework — the fixture runners tests/runner.t.sh
+# builds hold a copy of this script and no scripts/lib/version.sh — is used as
+# it is.
+_run_release_home() {
+  local home="$RESULTS/home" version list f
+  if [ ! -f "$ROOT/scripts/lib/version.sh" ]; then
+    printf '%s\n' "$ROOT"
+    return 0
+  fi
+  version=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$ROOT/scripts/lib/version.sh") || return 1
+  [ -n "$version" ] || return 1
+  mkdir "$home" || return 1
+  list="$RESULTS/home.files"
+  (
+    cd "$ROOT" || exit 1
+    # -z: a name git would quote (core.quotePath) is read as it is on disk.
+    git ls-files -z --cached --others --exclude-standard > "$list.all" || exit 1
+    : > "$list"
+    : > "$list.links"
+    while IFS= read -r -d '' f; do
+      if [ -L "$f" ]; then
+        printf '%s\n' "$f" >> "$list.links"
+      elif [ -f "$f" ]; then
+        printf '%s\n' "$f" >> "$list"
+      fi
+    done < "$list.all"
+    tar -cf - -T "$list" | (cd "$home" && tar -xf -) || exit 1
+    while IFS= read -r f; do
+      mkdir -p "$home/$(dirname "$f")" && ln -s "$(readlink "$f")" "$home/$f" || exit 1
+    done < "$list.links"
+  ) >/dev/null || return 1
+  # The release is committed with the git configuration the tests see (no
+  # system file, a HOME of its own; enter_test_env below), not the person's:
+  # a global excludes file that ignores, say, `.gitignore` would leave the
+  # file out of the commit, and every test would find the release dirty.
+  mkdir "$RESULTS/home-git" || return 1
+  _run_home_git() {
+    HOME="$RESULTS/home-git" GIT_CONFIG_NOSYSTEM=1 \
+      git -C "$home" -c user.name=jig-tests -c user.email=tests@jig.invalid "$@"
+  }
+  {
+    _run_home_git init -q . && _run_home_git symbolic-ref HEAD refs/heads/main \
+      && _run_home_git add -A \
+      && _run_home_git commit -q --no-verify -m "release $version" \
+      && _run_home_git tag -a "v$version" -m "v$version"
+  } >/dev/null 2>&1 || return 1
+  # As a manifest records it: `cd && pwd` folds the `//` a TMPDIR ending in
+  # `/` leaves, and tests compare recorded sources with this path.
+  (cd "$home" && pwd)
+}
+JIG_HOME=$(_run_release_home) && [ -n "$JIG_HOME" ] \
+  || { printf 'tests/run.sh: could not build the release copy of the framework\n' >&2; exit 1; }
+# The code under test runs from the copy too: a plain `jig upgrade` reads from
+# the checkout the running jig belongs to (upgrade_source), and that must be the
+# released one. The copy is this working tree's bytes, taken as the run starts.
+JIG_BIN="$JIG_HOME/scripts/jig"
+export JIG_HOME JIG_BIN
 # An interrupted parallel run must not leave its workers running, and must give
 # the record back on the way out.
 trap 'kill $(jobs -p) 2>/dev/null; _run_release_busy; exit 130' INT TERM

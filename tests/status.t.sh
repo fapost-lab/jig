@@ -619,7 +619,7 @@ test_status_reports_pending_after_skill_added_to_source() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
 
   run jig_installed status
@@ -635,6 +635,8 @@ description: fixture skill added to the source after init
 # jig-newthing
 Run `/jig-newthing` to do the thing.
 EOF
+  # Released again: a source with local changes is no release.
+  fixture_release_source "$src"
 
   # Two pending items: one per default adapter (claude, codex), each with
   # its own installed copy of the skill.
@@ -661,7 +663,7 @@ test_status_link_mode_reports_pending_after_skill_added_to_source() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" --link >/dev/null
 
   run jig_installed status
@@ -700,7 +702,7 @@ test_status_omits_pending_when_source_root_unknown() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-del.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
@@ -766,6 +768,11 @@ _status_make_stub_global() {
 printf 'jig 0.0.0-from-running\n'
 EOF
   chmod +x "$root/scripts/jig"
+  # A global framework is a release unless the test says otherwise: `status`
+  # names a checkout off its tag X.Y.Z+<sha>
+  # (adr-20261106-copy-mode-projects-take-released-code-only). A deliberately
+  # broken version file has nothing to tag, which is the point of those tests.
+  fixture_release_source "$root" || true
   if ln -s "$root/scripts/jig" "$bin/jig" 2>/dev/null && [ -L "$bin/jig" ]; then
     printf '%s\n' "$bin"
   else
@@ -882,7 +889,7 @@ test_status_framework_versions_mismatch_project_newer() {
   rm -rf "$stub_root" "$stub_bin"
 }
 
-test_status_framework_versions_non_release_global_gets_generic_hint() {
+test_status_framework_versions_non_release_global_is_the_development_channel() {
   fixture_repo
   jig init --from "$JIG_HOME" >/dev/null
   local version stub_root stub_bin path_dir
@@ -893,11 +900,117 @@ test_status_framework_versions_non_release_global_gets_generic_hint() {
 
   run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "framework versions: project=$version global=dev mismatch"
-  # shellcheck disable=SC2016
-  assert_contains "$OUT" 'hint: run `jig self-update`, then `jig upgrade --dry-run`'
+  # A checkout whose declared version is no release number is unreleased code
+  # whatever its tag: it is named by its build and called the development
+  # channel, not given a direction (adr-20261106-copy-mode-projects-take-released-code-only).
+  assert_contains "$OUT" "framework versions: project=$version global=dev+"
+  assert_contains "$OUT" " mismatch"
+  assert_contains "$OUT" "hint: the global jig is on the development channel"
 
   rm -rf "$stub_root" "$stub_bin"
+}
+
+# _status_unrelease_stub <root> — one commit past the stub's release tag: the
+# global framework is now code no release contains (X.Y.Z+<sha>).
+_status_unrelease_stub() {
+  printf 'past the tag\n' > "$1/past-the-tag.txt"
+  git -C "$1" add -A
+  git -C "$1" -c user.name=jig-tests -c user.email=tests@jig.invalid \
+    commit -q --no-verify -m "past the tag"
+}
+
+# adr-20261106-copy-mode-projects-take-released-code-only: a global checkout
+# past its tag declares a released number and holds code no release has, so
+# "the same number" is not "current".
+test_status_framework_versions_unreleased_global_is_named_by_its_build() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin path_dir sha
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\"")
+  _status_unrelease_stub "$stub_root"
+  sha=$(git -C "$stub_root" rev-parse --short=7 HEAD)
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=$version+$sha mismatch"
+  assert_contains "$OUT" "hint: the global jig is on the development channel"
+  assert_contains "$OUT" "copy-mode projects take releases only"
+  assert_no_file "$stub_root/executed" "status executed the global jig"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_unreleased_global_without_git_is_unknown_build() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin path_dir
+  version=$(_status_project_version)
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\"")
+  rm -rf "$stub_root/.git"
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version global=$version+unknown mismatch"
+  assert_contains "$OUT" "hint: the global jig is on the development channel (not a git checkout)"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+test_status_framework_versions_project_that_took_unreleased_code_says_so() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version stub_root stub_bin path_dir
+  version=$(_status_project_version)
+  sed "s/^jig\\.version: .*/jig.version: $version+abc1234/" .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" "JIG_VERSION=\"$version\"")
+
+  run env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "framework versions: project=$version+abc1234 global=$version mismatch"
+  assert_contains "$OUT" "hint: this project carries unreleased Jig ($version+abc1234)"
+  assert_not_contains "$OUT" "development channel"
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+# A release the project could upgrade to is a release; unreleased code is not
+# something to offer.
+test_status_json_offers_no_upgrade_to_an_unreleased_global() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local stub_root stub_bin path_dir
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"')
+  _status_unrelease_stub "$stub_root"
+
+  OUT=$(env PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status --json 2>/dev/null)
+  assert_not_contains "$OUT" '"kind":"upgrade-available"'
+
+  rm -rf "$stub_root" "$stub_bin"
+}
+
+# The project took unreleased code built on its number; the release it can
+# upgrade to is measured from that number.
+test_status_json_measures_a_project_with_unreleased_code_by_its_release_number() {
+  fixture_repo
+  jig init --from "$JIG_HOME" >/dev/null
+  local version
+  version=$(_status_project_version)
+  sed "s/^jig\\.version: .*/jig.version: $version+abc1234/" .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+
+  _st_upgrade_item 9.0.0
+  assert_contains "$OUT" "\"versions\":{\"from\":\"$version\",\"to\":\"9.0.0\"}"
+  assert_contains "$ITEM" "this project runs $version; this machine has 9.0.0"
 }
 
 test_status_framework_versions_no_global_on_path() {
@@ -3900,6 +4013,37 @@ test_status_names_a_merged_upgrade_not_brought_here() {
   assert_not_contains "$OUT" "upgrade-pull-request"
   run jig status
   assert_not_contains "$OUT" "upgrade pull request:"
+}
+
+# A return to a release: main records unreleased code (9.9.9+abc1234) and the
+# upgrade branch, named for 9.9.9 alone, records 9.9.9. Open, it waits; merged
+# and not here, it is to be landed (task dev-channel-stays-out-of-projects, F8).
+test_status_names_an_upgrade_pull_request_that_returns_to_the_release() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.9.9${t}main${t}open${t}pending${t}2026-10-20T10:00:00Z${t}abc123${t}https://github.com/o/r/pull/12"
+  sed 's/^jig\.version: .*/jig.version: 9.9.9+abc1234/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "took unreleased 9.9.9+abc1234"
+  git checkout -q -b jig/upgrade-9.9.9
+  sed 's/^jig\.version: .*/jig.version: 9.9.9/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "Upgrade Jig to 9.9.9"
+  git checkout -q main
+
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-waiting"'
+
+  printf 'jig/upgrade-9.9.9%smain%smerged%s-%s2026-10-21T10:00:00Z\n' "$t" "$t" "$t" "$t" > .ai/runtime/forge-cache
+  _st_json
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-merged"'
+  assert_contains "$OUT" 'main here is still at 9.9.9+abc1234'
+
+  # Landed: main records what the branch records, and the item is history.
+  git merge -q --ff-only jig/upgrade-9.9.9
+  _st_json
+  assert_not_contains "$OUT" "upgrade-pull-request"
 }
 
 # Only Jig's own upgrade branches into the base, and only their newest pull

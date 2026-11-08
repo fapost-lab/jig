@@ -24,6 +24,23 @@ User documentation is the [site](https://jig.fapost.in); its sources are in [`do
 - Everything that leaves the machine — code, comments, knowledge, skills, documentation, commit
   messages — is written in English.
 
+## Setting up to develop Jig
+
+A copy-mode project takes framework files only from a release (a checkout at its `v<version>` tag);
+from anything else `jig init` and `jig upgrade` refuse with `unreleased-source`, unless given
+`--unreleased` (ADR `20261106-copy-mode-projects-take-released-code-only`). So keep two Jigs apart:
+
+1. **The global Jig stays on a release.** `~/.local/share/jig` is installed with `install.sh` and no
+   `--ref`, updated only with `jig self-update`, and never touched with `git checkout` or `git pull`.
+   Check it with `git -C ~/.local/share/jig status -sb`; a release shows `## HEAD (no branch)` and
+   nothing under it. If it sits on a branch, return it: `git -C ~/.local/share/jig checkout
+   v<version>`. A file edited or added there makes it unreleased too, as on a branch.
+2. **Develop in a clone of its own**, for example `~/src/jig`. It installs itself in link mode, and
+   in it you call `.ai/scripts/jig`, not `jig` ([below](#which-jig-you-are-running)).
+3. **Ordinary projects take releases only.** To try unreleased Jig on a real project, use a throwaway
+   branch or clone of that project and run `jig upgrade --from ~/src/jig --unreleased`. The manifest
+   then says `jig.version: X.Y.Z+<sha>`; never commit that into the project's main line.
+
 ## Link mode
 
 A normal project copies Jig in, so the whole team shares a committed version. This repository

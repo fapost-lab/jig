@@ -262,7 +262,9 @@ jobs:
           git -C "$work" add README.md
           git -C "$work" commit -q -m init
           cd "$work"
-          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          # The checkout is the pull request's code, not a release: it is taken
+          # on purpose (adr-20261106-copy-mode-projects-take-released-code-only).
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --unreleased --profiles generic,shell
           .ai/scripts/jig status
           .ai/scripts/jig verify
           .ai/scripts/jig housekeeping
@@ -375,14 +377,16 @@ jobs:
           git -C "$work" add README.md
           git -C "$work" commit -q -m init
           cd "$work"
-          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --profiles generic,shell
+          # The checkout is the pull request's code, not a release: it is taken
+          # on purpose (adr-20261106-copy-mode-projects-take-released-code-only).
+          "$GITHUB_WORKSPACE/scripts/jig" init --from "$GITHUB_WORKSPACE" --unreleased --profiles generic,shell
           git add -A
           git commit -q -m "jig init"
           .ai/scripts/jig doctor
           # The terminal form of the report, forced: proves it runs in Git Bash
           # and exits as the plain one does. That it renders is not provable here.
           JIG_TERMINAL=1 .ai/scripts/jig doctor
-          .ai/scripts/jig upgrade --dry-run
+          .ai/scripts/jig upgrade --dry-run --unreleased
           .ai/scripts/jig task new ci-demo --class T1 --domains core
           wt=$(.ai/scripts/jig task start ci-demo --worktree)
           .ai/scripts/jig task list

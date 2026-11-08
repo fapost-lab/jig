@@ -7,7 +7,7 @@
 _mk_source_v2() {
   local dest="$1"
   cp -R "$JIG_HOME"/. "$dest"/
-  rm -rf "$dest/.git"
+  fixture_release_source "$dest"
   printf '\n# v2 marker\n' >> "$dest/profiles/generic/verify.sh"
   mkdir -p "$dest/skills/jig-newthing"
   cat > "$dest/skills/jig-newthing/SKILL.md" <<'EOF'
@@ -21,6 +21,7 @@ EOF
   local tmp_version="$dest/scripts/lib/version.sh.tmp"
   sed 's/^JIG_VERSION=.*/JIG_VERSION="9.9.9"/' "$dest/scripts/lib/version.sh" > "$tmp_version"
   mv "$tmp_version" "$dest/scripts/lib/version.sh"
+  fixture_release_source "$dest"
 }
 
 # _unbump_source <dest> — give a source made by _mk_source_v2 the running
@@ -31,6 +32,7 @@ _unbump_source() {
   local tmp_version="$1/scripts/lib/version.sh.tmp"
   cp "$JIG_HOME/scripts/lib/version.sh" "$tmp_version"
   mv "$tmp_version" "$1/scripts/lib/version.sh"
+  fixture_release_source "$1"
 }
 
 test_upgrade_requires_initialised_project() {
@@ -71,7 +73,7 @@ test_upgrade_link_mode_keeps_manifest_when_every_link_conflicts() {
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-other.XXXXXX")
   src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   cp .ai/manifest manifest.before.tmp
 
   run jig upgrade --from "$src"
@@ -99,7 +101,7 @@ test_upgrade_link_mode_refreshes_version_of_the_recorded_source() {
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-same.XXXXXX")
   src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" --link >/dev/null
   local tmp_version="$src/scripts/lib/version.sh.tmp"
   sed 's/^JIG_VERSION=.*/JIG_VERSION="9.9.9"/' "$src/scripts/lib/version.sh" > "$tmp_version"
@@ -238,6 +240,8 @@ test_upgrade_decision_table_full() {
 
   # delete: unmodified file removed in source-v2.
   rm -f "$src/profiles/generic/profile.yaml"
+  # Released again: a source with local changes is no release.
+  fixture_release_source "$src"
 
   # keep-conflict: a path the new skill would install, pre-created locally
   # with content that does not match the source and is not manifest-tracked.
@@ -361,6 +365,7 @@ test_upgrade_copy_mode_replaces_the_running_dispatcher_without_running_its_tail(
 printf 'TAIL-EXECUTED\n'
 exit 42
 EOF
+  fixture_release_source "$src"
 
   run jig_installed upgrade --from "$src"
   assert_eq 0 "$RC"
@@ -380,7 +385,7 @@ test_upgrade_deletes_orphaned_skill_under_claude_skills_dir() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-orphan.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   mkdir -p "$src/skills/jig-orphantest"
   cat > "$src/skills/jig-orphantest/SKILL.md" <<'EOF'
 ---
@@ -389,10 +394,13 @@ description: fixture skill removed again in the next source
 ---
 # jig-orphantest
 EOF
+  # Released again: a source with local changes is no release.
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
   assert_file .claude/skills/jig-orphantest/SKILL.md
 
   rm -rf "$src/skills/jig-orphantest"
+  fixture_release_source "$src"
   run jig upgrade --from "$src"
   assert_eq 0 "$RC"
   assert_contains "$OUT" "delete .claude/skills/jig-orphantest/SKILL.md"
@@ -536,6 +544,7 @@ test_upgrade_propagates_changed_knowledge_template() {
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
   printf '\n<!-- v2 template marker -->\n' >> "$src/templates/knowledge/feature.md"
+  fixture_release_source "$src"
 
   run jig upgrade --from "$src"
   assert_eq 0 "$RC"
@@ -628,7 +637,7 @@ test_upgrade_still_dies_without_from_when_source_root_gone() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-del.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" >/dev/null
   rm -rf "$src"
 
@@ -736,6 +745,36 @@ test_upgrade_does_not_fall_back_to_an_older_global_jig() {
   rm -rf "$global"
 }
 
+# The rule holds for unreleased code too: a project on `X.Y.Z+<sha>` is newer
+# than a released global jig at an older version, so that global is no stand-in
+# for its recorded source either.
+test_upgrade_does_not_fall_back_to_an_older_global_for_unreleased_code() {
+  _unit_project
+  local src global path
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  run jig upgrade --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $(_unreleased_declared)+"
+  git add -A
+  git commit -q -m "took unreleased code"
+  _upgrade_foreign_manifest
+
+  global=$(_unit_source)
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="0.0.1"/' "$global/scripts/lib/version.sh" > "$global/v.tmp"
+  mv "$global/v.tmp" "$global/scripts/lib/version.sh"
+  global=$(cd "$global" && pwd -P)
+  path=$(_upgrade_global_path "$global")
+
+  run env PATH="$path" .ai/scripts/jig upgrade --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "older than this project"
+  assert_contains "$OUT" "jig self-update"
+
+  rm -rf "$global" "$src"
+}
+
 # The same rule when the manifest records `global`: on a colleague's machine
 # with an older global jig, `global` is that older checkout, and it must not
 # be read from either.
@@ -771,7 +810,7 @@ test_init_from_the_global_jig_records_global_and_upgrade_reads_it() {
   local global path
   global=$(mktemp -d "${TMPDIR:-/tmp}/jig-global-src.XXXXXX")
   cp -R "$JIG_HOME"/. "$global"/
-  rm -rf "$global/.git"
+  fixture_release_source "$global"
   global=$(cd "$global" && pwd -P)
   path=$(_upgrade_global_path "$global")
 
@@ -822,6 +861,7 @@ test_sdd_upgrade_adds_references_and_preserves_modified_consumers() {
     "$old_source/skills/jig-task/references/show-the-document.md" \
     "$old_source/skills/jig-analyze/references/ambiguity.md" \
     "$old_source/skills/jig-review/references/change-scope.md"
+  fixture_release_source "$old_source"
   jig init --from "$old_source" >/dev/null
   echo 'User-owned review instruction' >> .codex/skills/jig-review/SKILL.md
   run jig upgrade --from "$JIG_HOME"
@@ -856,6 +896,8 @@ _mk_source_v2_section() {
   sed 's/^## Workflow$/## Workflow\n\nA brand new sentence from source-v2./' \
     "$dest/templates/AGENTS.md" > "$tmp"
   mv "$tmp" "$dest/templates/AGENTS.md"
+  # Released again: a source with local changes is no release.
+  fixture_release_source "$dest"
 }
 
 test_upgrade_replaces_the_marked_instructions_section() {
@@ -1031,7 +1073,7 @@ test_upgrade_link_mode_replaces_the_marked_instructions_section() {
   local src tmp
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-srclink.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --link --from "$src" >/dev/null
   assert_file_contains .ai/manifest "instructions.section: "
 
@@ -1105,6 +1147,7 @@ test_upgrade_finishes_a_run_interrupted_midway() {
   _mk_source_v2 "$src"
   # Sorts after .ai/** and .claude/**, so those are placed before the run dies.
   printf '\n# v2 marker\n' >> "$src/skills/jig-verify/SKILL.md"
+  fixture_release_source "$src"
 
   chmod 500 .codex/skills/jig-verify
   run jig upgrade --from "$src"
@@ -1156,6 +1199,7 @@ test_upgrade_adopts_a_path_an_interrupted_run_installed() {
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
   printf '\n# v2 marker\n' >> "$src/skills/jig-verify/SKILL.md"
+  fixture_release_source "$src"
 
   chmod 500 .codex/skills/jig-verify
   run jig upgrade --from "$src"
@@ -1276,6 +1320,7 @@ test_upgrade_names_what_is_still_not_installed() {
     index($0, anchor) { print "  cp -p \"$source/templates/AGENTS.md\" \"$stage/.ai/templates/NEWTHING.md\"" }
   ' "$src/scripts/lib/upgrade.sh" > "$src/scripts/lib/upgrade.sh.tmp"
   mv "$src/scripts/lib/upgrade.sh.tmp" "$src/scripts/lib/upgrade.sh"
+  fixture_release_source "$src"
 
   run jig upgrade --from "$src"
   assert_eq 0 "$RC"
@@ -1549,6 +1594,7 @@ test_upgrade_hands_itself_to_newer_code() {
   local src
   src=$(_unit_source)
   printf '\nprintf "NEW-DISPATCHER\\n" >&2\n' >> "$src/scripts/lib/version.sh"
+  fixture_release_source "$src"
 
   run jig upgrade --from "$src"
   assert_eq 0 "$RC"
@@ -2026,6 +2072,7 @@ test_upgrade_reads_a_squashed_upgrade_branch_as_landed() {
   src=$(_unit_source)
   sed 's/^JIG_VERSION=.*/JIG_VERSION="7.7.7"/' "$src/scripts/lib/version.sh" > "$src/v.tmp"
   mv "$src/v.tmp" "$src/scripts/lib/version.sh"
+  fixture_release_source "$src"
 
   run jig upgrade --from "$src"
   assert_eq 0 "$RC"
@@ -2143,6 +2190,7 @@ _report_scenario() {
   printf '\n<!-- v2 -->\n' >> "$src/skills/jig-review/SKILL.md"
   printf '\n<!-- v2 -->\n' >> "$src/skills/jig-verify/SKILL.md"
   rm -f "$src/profiles/generic/profile.yaml"
+  fixture_release_source "$src"
   printf '\n# local edit\n' >> .ai/scripts/lib/config.sh
   mkdir -p .claude/skills/jig-newthing
   echo "pre-existing, not from jig" > .claude/skills/jig-newthing/SKILL.md
@@ -2256,6 +2304,7 @@ test_upgrade_a_terminal_reader_still_hears_what_is_not_installed() {
     index($0, anchor) { print "  cp -p \"$source/templates/AGENTS.md\" \"$stage/.ai/templates/NEWTHING.md\"" }
   ' "$src/scripts/lib/upgrade.sh" > "$src/scripts/lib/upgrade.sh.tmp"
   mv "$src/scripts/lib/upgrade.sh.tmp" "$src/scripts/lib/upgrade.sh"
+  fixture_release_source "$src"
 
   run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" upgrade --from "$src"
   assert_eq 0 "$RC"
@@ -2641,6 +2690,34 @@ test_upgrade_land_refuses_an_origin_base_without_the_upgrade() {
 }
 
 
+# A return to a release: the base records unreleased code (`9.9.9+<sha>`) and
+# the merged upgrade records `9.9.9`. An origin/main still at `9.9.9+<sha>` is
+# the same release number, but not the upgrade, so nothing is called landed
+# (task dev-channel-stays-out-of-projects, F7).
+test_upgrade_land_refuses_an_origin_base_still_on_the_unreleased_build() {
+  _land_project open
+  PATH=$LAND_PATH
+  local head
+  # The base took unreleased code built on the release the branch returns to.
+  sed 's/^jig\.version: .*/jig.version: 9.9.9+abc1234/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "took unreleased 9.9.9+abc1234"
+  git push -q origin main
+  git fetch -q origin
+  sed 's/\tOPEN\t/\tMERGED\t/' stub-bin/prs > stub-bin/prs.new
+  mv stub-bin/prs.new stub-bin/prs
+  head=$(git rev-parse HEAD)
+
+  _up_json upgrade --land --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"upgrade-blocked"'
+  assert_contains "$OUT" "origin/main here does not record Jig 9.9.9 yet"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the branch was deleted"
+
+  rm -rf "$LAND_REMOTE"
+}
+
 # A glab that cannot answer is a forge that did not answer, never a list with
 # no merge requests: nothing is called landed or nothing-to-do, nothing moves
 # (task upgrade-land-followups, F4).
@@ -2693,4 +2770,289 @@ test_upgrade_land_never_switches_a_linked_worktree_to_the_base() {
 
   git worktree remove --force "$wt"
   rm -rf "$LAND_REMOTE"
+}
+
+# --- unreleased sources (adr-20261106-copy-mode-projects-take-released-code-only) --
+
+# _unreleased_declared — the version the running framework declares.
+_unreleased_declared() {
+  sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$JIG_HOME/scripts/lib/version.sh"
+}
+
+# _unit_unreleased_source <dir> — _unit_source's newer code (9.9.9), then one
+# commit past its release tag: the version it names is 9.9.9+<sha>.
+_unit_unreleased_source() {
+  _mk_source_v2 "$1"
+  printf '\n# past the tag\n' >> "$1/profiles/generic/verify.sh"
+  git -C "$1" add -A
+  git -C "$1" -c user.name=jig-tests -c user.email=tests@jig.invalid \
+    commit -q --no-verify -m "past the tag"
+}
+
+test_upgrade_refuses_an_unreleased_source_and_changes_nothing() {
+  _unit_project
+  local src sha head
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  sha=$(git -C "$src" rev-parse --short=7 HEAD)
+  head=$(git rev-parse HEAD)
+  cp .ai/manifest manifest.before.tmp
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is not a release"
+  assert_contains "$OUT" "--unreleased"
+  assert_contains "$OUT" "+$sha"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+  assert_eq "" "$(git branch --list 'jig/upgrade-*')" "a refused upgrade made a branch"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)" "a refused upgrade changed tracked files"
+  diff -q manifest.before.tmp .ai/manifest >/dev/null || fail "the manifest changed"
+
+  rm -rf "$src"
+}
+
+# A plan the real run would refuse is no plan.
+test_upgrade_dry_run_refuses_an_unreleased_source_too() {
+  _unit_project
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+
+  run jig upgrade --from "$src" --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is not a release"
+  assert_not_contains "$OUT" "dry run"
+
+  rm -rf "$src"
+}
+
+test_upgrade_refuses_a_source_without_git() {
+  _unit_project
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-nogit.XXXXXX")
+  src=$(cd "$src" && pwd)
+  cp -R "$JIG_HOME"/. "$src"/
+  rm -rf "$src/.git"
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a git checkout"
+  assert_contains "$OUT" "+unknown"
+
+  rm -rf "$src"
+}
+
+test_upgrade_json_refuses_an_unreleased_source_with_its_code() {
+  _unit_project
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"unreleased-source"'
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src"
+}
+
+test_upgrade_unreleased_takes_the_code_and_records_the_build() {
+  _unit_project
+  local src sha declared
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  sha=$(git -C "$src" rev-parse --short=7 HEAD)
+  declared=$(_unreleased_declared)
+
+  run jig upgrade --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared+$sha"
+  # The branch is named for the release number, not the build.
+  assert_contains "$OUT" "jig/upgrade-$declared"
+  assert_not_contains "$OUT" "jig/upgrade-$declared+"
+
+  rm -rf "$src"
+}
+
+test_upgrade_from_a_released_source_records_the_plain_version_again() {
+  _unit_project
+  local src sha declared
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  sha=$(git -C "$src" rev-parse --short=7 HEAD)
+  declared=$(_unreleased_declared)
+
+  run jig upgrade --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared+$sha"
+  git add -A
+  git commit -q -m "took unreleased code"
+
+  # The released code replaces what the unreleased code changed, by hash, and
+  # the manifest says it is the release again.
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared"
+  assert_not_contains "$(cat .ai/manifest)" "jig.version: $declared+"
+
+  rm -rf "$src"
+}
+
+# Unreleased code whose framework files already equal a release's places
+# nothing, yet the project is that release: the manifest says so.
+test_upgrade_records_the_release_when_unreleased_code_already_matches_it() {
+  fixture_repo
+  local src declared
+  declared=$(_unreleased_declared)
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  cp -R "$JIG_HOME"/. "$src"/
+  printf '\nnot a framework file\n' >> "$src/README.md"
+  git -C "$src" add -A
+  git -C "$src" -c user.name=jig-tests -c user.email=tests@jig.invalid \
+    commit -q --no-verify -m "past the tag, outside framework paths"
+
+  run jig init --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared+"
+  git add -A
+  git commit -q -m "jig init from unreleased code"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "manifest updated"
+  assert_file_contains .ai/manifest "jig.version: $declared"
+  assert_not_contains "$(cat .ai/manifest)" "jig.version: $declared+"
+
+  rm -rf "$src"
+}
+
+# A released source with local changes is no release: a plain upgrade from it
+# refuses, dry run included, and does not record the release's number; with
+# --unreleased the project says it took a dirty build, and an upgrade from the
+# clean release afterwards records the release again (task
+# released-source-local-edits).
+test_upgrade_refuses_a_release_tag_with_local_changes() {
+  _unit_project
+  local src head declared sha
+  declared=$(_unreleased_declared)
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-dirty.XXXXXX")
+  src=$(cd "$src" && pwd)
+  cp -R "$JIG_HOME"/. "$src"/
+  sha=$(git -C "$src" rev-parse --short=7 HEAD)
+  printf '\n# edited at the tag\n' >> "$src/profiles/generic/verify.sh"
+  head=$(git rev-parse HEAD)
+  cp .ai/manifest manifest.before.tmp
+
+  run jig upgrade --from "$src" --dry-run
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "at its release tag with uncommitted changes"
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "at its release tag with uncommitted changes"
+  assert_contains "$OUT" "--unreleased"
+  assert_eq "$head" "$(git rev-parse HEAD)"
+  diff -q manifest.before.tmp .ai/manifest >/dev/null || fail "the manifest changed"
+
+  run jig upgrade --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared+$sha.dirty"
+  git add -A
+  git commit -q -m "took a dirty build"
+
+  run jig upgrade --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared"
+  assert_not_contains "$(cat .ai/manifest)" "jig.version: $declared+"
+
+  rm -rf "$src"
+}
+
+# The code running the upgrade is older than the unreleased source, so it hands
+# the run to the source's own jig; that run must be told too, or it refuses what
+# the first run was asked to take.
+test_upgrade_unreleased_hands_off_to_newer_unreleased_code_with_the_flag() {
+  _unit_project
+  local src sha
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  _unit_unreleased_source "$src"
+  sha=$(git -C "$src" rev-parse --short=7 HEAD)
+
+  run jig upgrade --from "$src" --unreleased
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "handing the upgrade to 9.9.9"
+  assert_not_contains "$OUT" "is not a release"
+  assert_file_contains .ai/manifest "jig.version: 9.9.9+$sha"
+  assert_contains "$OUT" "jig/upgrade-9.9.9"
+
+  rm -rf "$src"
+}
+
+test_upgrade_without_the_flag_refuses_newer_unreleased_code_before_handing_off() {
+  _unit_project
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  _unit_unreleased_source "$src"
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is not a release"
+  assert_not_contains "$OUT" "handing the upgrade"
+  assert_eq "main" "$(git symbolic-ref --short HEAD)"
+
+  rm -rf "$src"
+}
+
+# Link mode runs the checkout itself, so what the checkout is does not matter.
+test_upgrade_link_mode_does_not_refuse_an_unreleased_source() {
+  skip_unless_symlinks
+  fixture_repo
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  jig init --from "$src" --link >/dev/null
+
+  run jig upgrade --from "$src"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "is not a release"
+
+  rm -rf "$src"
+}
+
+# upgrade_pending answers 4 — unknown for a named reason — and says nothing,
+# so what asks it (verify, status, doctor) neither fails nor counts drift.
+test_upgrade_pending_is_unknown_for_an_unreleased_source() {
+  _unit_project
+  local src
+  src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-unrel.XXXXXX")
+  src=$(cd "$src" && pwd)
+  fixture_unreleased_source "$src"
+  # The project's recorded source is now code no release contains.
+  sed "s|^jig\\.source: .*|jig.source: $src|" .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  # From the project's installed copy, which is no source root: the source is
+  # then the one the manifest records.
+  run env PATH="$(path_without_jig)" bash -c '
+    set -u
+    JIG_LIB="$PWD/.ai/scripts/lib"; export JIG_LIB
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    . "$JIG_LIB/upgrade.sh"
+    rc=0; out=$(upgrade_pending) || rc=$?
+    printf "rc=%s out=[%s]" "$rc" "$out"'
+  assert_eq "rc=4 out=[]" "$OUT"
+
+  rm -rf "$src"
 }

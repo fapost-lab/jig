@@ -14,6 +14,41 @@ fixture_repo() {
   git commit -q -m "init"
 }
 
+# fixture_release_source <dir> — make framework copy <dir> a released source:
+# a git repository of its own, one commit, tagged v<the version it declares>.
+# A copy-mode install takes released code only
+# (adr-20261106-copy-mode-projects-take-released-code-only), so a test that
+# builds a source by copying and changing $JIG_HOME releases it after the
+# change. Any .git the copy brought along is replaced.
+fixture_release_source() {
+  local dir="$1" version
+  version=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' "$dir/scripts/lib/version.sh") || return 1
+  [ -n "$version" ] || return 1
+  rm -rf "$dir/.git"
+  (
+    cd "$dir" || exit 1
+    git init -q . && git add -A \
+      && git -c user.name=jig-tests -c user.email=tests@jig.invalid \
+        commit -q --no-verify -m "release $version" \
+      && git -c user.name=jig-tests -c user.email=tests@jig.invalid \
+        tag -a "v$version" -m "v$version"
+  ) >/dev/null 2>&1
+}
+
+# fixture_unreleased_source <dir> — <dir> becomes a copy of the released
+# framework ($JIG_HOME) with one commit past its release tag: code that is on
+# a branch but in no release, which a copy-mode install refuses unless asked
+# (--unreleased). Prints nothing; the version it names is X.Y.Z+<sha7>.
+fixture_unreleased_source() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cp -R "$JIG_HOME"/. "$dir"/ || return 1
+  printf '\n# past the release tag\n' >> "$dir/profiles/generic/verify.sh"
+  git -C "$dir" add -A \
+    && git -C "$dir" -c user.name=jig-tests -c user.email=tests@jig.invalid \
+      commit -q --no-verify -m "past the release tag" >/dev/null 2>&1
+}
+
 # A default copy-mode install for tests of commands other than init/upgrade.
 # Cache only preparation, never results; the runner discards it after each run.
 # cp (not hard links) isolates both the installed files and Git state per test.

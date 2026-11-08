@@ -16,7 +16,7 @@ paths:
   - scripts/lib/self-update.sh
   - .github/scripts/release-tag.sh
   - scripts/lib/section.sh
-reviewed_at: 2026-10-29
+reviewed_at: 2026-11-06
 ---
 # Install glossary
 
@@ -53,7 +53,8 @@ Informal synonyms: the Jig section, the managed block.
 `adapters`, and `instructions.section` once a marked section is tracked) and, in copy
 mode, one hash line per installed path. Maintained by `init` and
 `upgrade`, never edited by hand. `init` chooses `jig.source`; `upgrade` writes it only for a
-source it actually installed from (adr-20260922-upgrade-records-the-source-it-installed-from).
+source it actually installed from, or to return a project carrying unreleased code to a release
+(adr-20260922-upgrade-records-the-source-it-installed-from, as amended).
 `jig.source` is `.` (the project is its own source), `global` (the Global framework of whichever
 machine reads it) or, for any other checkout, its path — never one person's install path for the
 global framework, because the file is committed
@@ -122,3 +123,22 @@ CI `release` job creates one, always without leading zeros (ADR-0034).
 
 What a global framework follows. Release tags are the default channel; `main` is the
 development channel, installed only with `--ref main` (ADR-0033).
+
+## Released source / unreleased source
+
+A framework checkout is a **released source** when it is the top of a git checkout of its own and
+its HEAD carries the release tag of the version it declares and it has no uncommitted change,
+untracked files included (`jig_source_released`; `jig_source_release` is the tag half alone, the
+cheap question `jig status` and `jig --version` ask). Everything else is an **unreleased source**:
+a branch or detached HEAD past the tag, a checkout at the tag with local changes, a raised version
+not yet tagged, a copy without git. A copy-mode `init` or `upgrade` takes released sources only, unless
+`--unreleased` names the code on purpose
+(adr-20261106-copy-mode-projects-take-released-code-only).
+
+## Build version
+
+`X.Y.Z+<short sha>` (`X.Y.Z+unknown` without git): how unreleased code is named, by
+`jig_source_version`. What a project records when it takes files is `jig_source_taken_version`,
+which adds `.dirty` for a checkout with local changes (`X.Y.Z+<sha>.dirty`, at a tag or past one). It appears in `jig --version` run from a framework checkout, in `jig status`,
+and in `.ai/manifest` of a project installed with `--unreleased`. It is ordered by its `X.Y.Z`
+(`jig_version_newer`, `jig_version_core`); `scripts/lib/version.sh` always holds the plain number.

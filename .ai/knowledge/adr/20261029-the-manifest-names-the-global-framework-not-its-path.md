@@ -11,6 +11,7 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/self-update.sh
 summary: Why jig.source records 'global' for the machine's Jig instead of an install path, and the order a plain jig upgrade looks for its source.
+reviewed_at: 2026-11-06
 ---
 # The manifest records the global framework as `global`, not as one person's path
 
@@ -102,3 +103,8 @@ Only `.` was ever kept machine-independent: a framework repository installed fro
   only a laptop would catch the difference.
 - The word `global` is reserved in `jig.source`. A relative path is never written there, so the
   word cannot collide with a recorded directory.
+
+> **Amendment (2026-11-06).** The global framework stands in as a copy-mode project's source only when
+> it is a release; an unreleased global is refused like any unreleased source, and the age check
+> compares release numbers, a `+<sha>` included
+> (adr-20261106-copy-mode-projects-take-released-code-only).
