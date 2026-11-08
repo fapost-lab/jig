@@ -151,7 +151,7 @@ The decisions below this subsection were made before the catalogue and still hol
   It is not the current task and holds no queue or concurrency slot, as decided below for both.
 - **Parked is derived, never written**, the way remote merge state is today: a task is parked
   when its status is `ready`, its branch has a pull request into the staging branch or is contained in the
-  stop, and it has no pull request into the base branch yet. Its reason is one of `review` (the staging branch pull
+  staging branch, and it has no pull request into the base branch yet. Its reason is one of `review` (the staging branch pull
   request is open without an approval), `landing` (it may land, but the person's `agent.git` is
   below `merge`, so the person lands it) and `signal` (it is on the staging branch and waits for "prepare
   for prod"). It ends in one of two ways: `jig task resume <id>` makes it `active` for a fix,
@@ -180,7 +180,7 @@ The decisions below this subsection were made before the catalogue and still hol
 - **A dependency still on the staging branch is warned about, never refused** (failure mode 4). The queue
   that holds dependencies is `.ai/runtime/queue`, local to the checkout that filed them, so only
   that checkout can see one. There, "prepare for prod" for a task whose queue dependency is on the
-  stop but not in the base branch still opens the pull request, prints which task it depends on and that
+  staging branch but not in the base branch still opens the pull request, prints which task it depends on and that
   it should go with it or after it, and puts the same line in the pull request body for the
   merger. On a CI runner there is nothing to check, and the documentation says so: a team that
   cares names the tasks together or uses `--all`. Rejected: refusing — it holds a task hostage

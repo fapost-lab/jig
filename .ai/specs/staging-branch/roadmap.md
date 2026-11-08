@@ -64,7 +64,7 @@ branch owns.
 - [ ] Staging drift report — tasks on staging long unpromoted, staging commits that are not in
   the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
   the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it)
-- [ ] Stop landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
+- [ ] Staging landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
   merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
   state — it is the only thing Jig does on the staging branch then)
 - [ ] Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
@@ -75,7 +75,7 @@ branch owns.
 
 1. Choose a flow
 2. Ship a task to staging; See a task's staging state
-3. Land a task on staging; Prepare a task for prod; Staging drift report; Stop landed by CI
+3. Land a task on staging; Prepare a task for prod; Staging drift report; Staging landed by CI
 4. Park at the staging branch; Merge the promotion by the flow; Promote from CI
 
 <!--
