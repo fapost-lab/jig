@@ -53,6 +53,11 @@ profile that does not declare `map`, the variable is unset. The result line name
 RESULT shell: pass (scope: changed, 7 files, map .ai/verify/shell.map)
 ```
 
+A profile that covers another's tests (`covers: [<profile>:tests]`, `schemas/profile.md`)
+also reads that profile's map, after its own: the decisions follow the tests, and the result
+line names every map read — `map .ai/verify/laravel.map, .ai/verify/php.map`. A broken line in
+either fails the profile reading it.
+
 ## What a filter means, per profile
 
 A filter narrows the profile's tests; linters are narrowed by the changed files
