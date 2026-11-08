@@ -285,6 +285,14 @@ An autopilot run in a clone with `autopilot.unattended: true`: it asks nothing, 
 safe default at each stop and, at `agent.git: merge`, ends merged once CI passed. Its mode is
 fixed when the run starts. Informal synonyms: without stops, hands-off run.
 
+## Handover
+
+A person taking a stopped autopilot run over: `jig task autopilot <id> handover --by human --answer
+<their words>`. The run ends (`done`, `autopilot_handover` recorded), the gate and the git level are
+the person's from then on, and no new run starts on the task, so it gains no repairs
+(adr-20261108-a-person-takes-over-a-stopped-run). Not a `resume`, which continues the run. Informal
+synonyms: taking a run over, hand-over.
+
 ## Phase Run
 
 An autopilot run over a whole phase of a Specification's roadmap, wave by wave, instead of one

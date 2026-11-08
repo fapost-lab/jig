@@ -764,31 +764,53 @@ test_profile_php_without_full_run_ci_explain_keeps_phpstan_full() {
   assert_contains "$OUT" "PLAN php: phpstan: full (phpstan configuration changed)"
 }
 
-# --- tests left to laravel (laravel-php-duplicate-suite) -----------------------
+# --- a covered test check (JIG_VERIFY_COVERED) --------------------------------
+# php names its test check `tests`; which profile covers it is jig verify's
+# decision, handed down as `tests=<profile>`. The profile prints the skip and
+# names nobody of its own accord.
 
-test_profile_php_leaves_pest_to_laravel_in_the_same_run() {
+test_profile_php_hands_pest_over_when_its_tests_are_covered() {
   _php_install
-  : > artisan
   _php_stub_tool pest 3.1.0 0 pest.log
-  JIG_VERIFY_PROFILES="generic laravel php"
-  export JIG_VERIFY_PROFILES
+  JIG_VERIFY_COVERED="tests=upper"
+  export JIG_VERIFY_COVERED
   run bash "$_PHP_VERIFY"
-  assert_contains "$OUT" "php: pest: skip (scope: covered by laravel, artisan test)"
+  assert_contains "$OUT" "php: pest: skip (scope: covered by upper, php:tests)"
   assert_no_file pest.log
 
   JIG_VERIFY_EXPLAIN=1
   export JIG_VERIFY_EXPLAIN
   run bash "$_PHP_VERIFY"
-  unset JIG_VERIFY_EXPLAIN JIG_VERIFY_PROFILES
-  assert_contains "$OUT" "PLAN php: pest: skip (scope: covered by laravel, artisan test)"
+  unset JIG_VERIFY_EXPLAIN JIG_VERIFY_COVERED
+  assert_contains "$OUT" "PLAN php: pest: skip (scope: covered by upper, php:tests)"
 }
 
-test_profile_php_runs_its_tests_without_the_run_s_profiles() {
+test_profile_php_hands_its_tests_over_even_without_a_runner() {
   _php_install
-  : > artisan
-  _php_stub_tool phpunit 9.9.9 0 phpunit.log
-  unset JIG_VERIFY_PROFILES
+  JIG_VERIFY_COVERED="tests=upper"
+  export JIG_VERIFY_COVERED
   run bash "$_PHP_VERIFY"
+  unset JIG_VERIFY_COVERED
+  # The suite is the covering profile's now: a missing phpunit here is not
+  # a gap of php's.
+  assert_contains "$OUT" "php: phpunit: skip (scope: covered by upper, php:tests)"
+  assert_not_contains "$OUT" "php: phpunit: skip (not found"
+}
+
+test_profile_php_runs_its_tests_when_another_check_is_covered() {
+  _php_install
+  _php_stub_tool phpunit 9.9.9 0 phpunit.log
+  JIG_VERIFY_COVERED="style=upper"
+  export JIG_VERIFY_COVERED
+  run bash "$_PHP_VERIFY"
+  unset JIG_VERIFY_COVERED
   assert_contains "$OUT" "php: phpunit: pass (9.9.9)"
   assert_file phpunit.log
+}
+
+test_profile_php_source_names_no_profile_above_it() {
+  # php names its own check; the profile that covers it is declared there,
+  # in that profile's `covers` (laravel's profile.yaml), never here.
+  run grep -n -i -e laravel -e artisan "$JIG_HOME/profiles/php/verify.sh"
+  assert_eq 1 "$RC" "$OUT"
 }

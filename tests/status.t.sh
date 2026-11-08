@@ -2016,6 +2016,37 @@ test_status_page_plain_status_refreshes_the_counts_only_once_the_page_exists() {
   assert_not_contains "$(cat .ai/runtime/status-counts)" "2000-01-01"
 }
 
+# An unattended run at its repair limit is resumed by nothing; once a person
+# takes it over the card goes, the task is a row again, and a design that
+# changed still waits at its gate (adr-20261108-a-person-takes-over-a-stopped-run).
+test_status_page_a_handed_over_run_stops_waiting_and_its_gate_does_not() {
+  fixture_jig_repo
+  printf 'autopilot.unattended: true\n' >> .ai/config.local.yaml
+  jig task new run-1 --class T3 --goal "The goal." >/dev/null
+  jig task start run-1 >/dev/null
+  jig task autopilot run-1 start >/dev/null
+  printf '# design\n' > .ai/workspace/tasks/run-1/design.md
+  jig task gate run-1 approved --by agent >/dev/null
+  jig task autopilot run-1 repair --reason r1 >/dev/null
+  jig task autopilot run-1 repair --reason r2 >/dev/null
+  jig task autopilot run-1 repair --reason r3 >/dev/null 2>&1 || true
+  printf '# design\n\nrevised\n' > .ai/workspace/tasks/run-1/design.md
+  jig status --html >/dev/null
+  local page needs
+  page=$(cat .ai/runtime/status.html)
+  needs=$(status_page_section "$page" needs)
+  assert_contains "$needs" "Autopilot stopped and is waiting for you"
+  assert_contains "$needs" "Nothing resumes this run: it ships a draft. To finish the task yourself, tell the agent in this task&#39;s session; it hands the run over to you."
+
+  jig task autopilot run-1 handover --by human --answer "mine now" >/dev/null
+  jig status --html >/dev/null
+  page=$(cat .ai/runtime/status.html)
+  needs=$(status_page_section "$page" needs)
+  assert_not_contains "$needs" "Autopilot stopped and is waiting for you"
+  assert_contains "$needs" "A design changed after you approved it"
+  assert_contains "$(status_page_section "$page" tasks)" '<span class="badge">taken over by a person</span> <span class="badge warn">design changed after approval</span>'
+}
+
 test_status_page_shows_a_stopped_run_first_with_its_reason() {
   fixture_jig_repo
   jig task new run-1 --class T2 >/dev/null

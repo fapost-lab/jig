@@ -27,7 +27,7 @@ it actually did.
 ## Responsibility
 
 - The profile contract: `profile.yaml` (`name`, `description`, `detect`, `requires`,
-  `scope`) and `verify.sh` with its four exit codes — 0 pass, 1 fail, **2 skip**,
+  `scope`, `covers`, `checks`) and `verify.sh` with its four exit codes — 0 pass, 1 fail, **2 skip**,
   **3 incomplete**: a check that started and did not finish, which is neither a pass nor a
   fail and means run it again. A profile killed by a signal (128+N) says the same without
   knowing it. `jig verify` itself exits 3 for a run that produced no verdict at all — one
@@ -63,9 +63,11 @@ it actually did.
   never an ok. `_hostruntime_version` is the one place that names which binary the host runs.
 - Honest reporting: a narrowed run says what it narrowed to, and an ignored scope is
   printed rather than dropped.
-- Which profiles start in the same run, for a profile declaring `scope: [..., profiles]`
-  (`JIG_VERIFY_PROFILES`, read with `jp_in_run`): the php profile leaves its tests to
-  laravel's `artisan test` there, so a Laravel project runs its suite once.
+- Which covers hold in a run: a profile's `covers: [<profile>:<check>]` against the covered
+  profile's `checks`, among the profiles the run starts and where the covering profile
+  applies (`_verify_covers`). The covered profile gets `JIG_VERIFY_COVERED` and prints the
+  skip with `jp_covered`; the covered profile's map goes with its tests to the covering one.
+  laravel covers `php:tests`, so a Laravel project runs its suite once.
 
 ## Boundaries
 
@@ -87,7 +89,7 @@ contract. A change to how profiles are *copied* still belongs to `install`.
 
 - `scripts/lib/verify.sh` — `cmd_verify`, `_verify_changed_files`, `_verify_map_check`,
   `_verify_map_apply`.
-- `scripts/lib/profile.sh` — `jp_begin`, `jp_in_run`, `jp_changed`, `jp_changed_any`, `jp_decide`,
+- `scripts/lib/profile.sh` — `jp_begin`, `jp_covered`, `jp_changed`, `jp_changed_any`, `jp_decide`,
   `jp_path_matches`, `jp_is_doc`, `jp_first_missing`, `jp_files`, `jp_version`, `jp_run`,
   `jp_exec`, `jp_have`, `jp_skip`, `jp_end`; under `verify.full_run: ci`, `jp_select`,
   `jp_full_left_to_ci`, `jp_plan_full`, `jp_plan_select`.

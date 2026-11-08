@@ -3,9 +3,11 @@
 # repository root. Exit 0 = pass, 1 = fail, 2 = skip. Only runs Laravel's
 # own test runner; PHPStan/Pint/composer validate are the php profile's job
 # (requires: [php], domains/verify) and are not duplicated here. `artisan
-# test` runs the same PHPUnit/Pest suite the php profile would, so in a run
-# with both the php profile leaves its tests to this one (its
-# `scope: [..., profiles]`) and the suite runs once.
+# test` runs the same PHPUnit/Pest suite the php profile would, so this
+# profile declares `covers: [php:tests]`: in a run with both, jig verify hands
+# php's tests over (and php.map with them) and the suite runs once. Its own
+# test check answers to `tests` in turn (`checks: [tests]`), so a project's
+# profile above this one can take it over the same way.
 #
 # Narrowing (ADR-0041, adr-20260918-profiles-narrow-per-check-with-project-tools): the same file-to-test convention as the php
 # profile — a changed *Test.php maps to itself, a changed Foo.php maps to
@@ -146,7 +148,9 @@ _laravel_all_reason() {
 }
 
 if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
-  if [ ! -f artisan ] || ! jp_have php; then
+  if jp_covered tests "artisan test"; then
+    :
+  elif [ ! -f artisan ] || ! jp_have php; then
     jp_plan "artisan test" skip "artisan or php not found"
   else
     jp_select _laravel_builtin
@@ -168,6 +172,10 @@ if [ "${JIG_VERIFY_EXPLAIN:-}" = 1 ]; then
     jp_plan_select "artisan test" "$filters" "test files" "$why"
   fi
   exit 0
+fi
+
+if jp_covered tests "artisan test"; then
+  jp_end
 fi
 
 if [ ! -f artisan ] || ! jp_have php; then

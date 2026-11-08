@@ -4,4 +4,9 @@ description: Laravel applications (extends the php profile).
 detect: [artisan]
 requires: [php]
 scope: [changed, map, explain, environment]
+# `php artisan test` runs the suite php's phpunit/pest would: in a run with
+# both, php's tests are handed over here and run once.
+covers: [php:tests]
+# Checks another profile can take over by name (`covers: [laravel:tests]`).
+checks: [tests]
 carry: [.env]

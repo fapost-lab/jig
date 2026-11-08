@@ -3,6 +3,8 @@ name: python
 description: Python projects (ruff, mypy, pytest from the project's own environment).
 detect: [pyproject.toml, requirements.txt, setup.py, setup.cfg, Pipfile]
 scope: [changed, map, explain, environment]
+# Checks another profile can take over by name (`covers: [python:tests]`).
+checks: [tests]
 # No `carry`: a virtualenv is not relocatable. Copied to another path its
 # console scripts (pip, pytest, ruff) keep an absolute shebang into the
 # original .venv, so they run against the other tree's interpreter and

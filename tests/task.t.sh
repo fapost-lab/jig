@@ -6101,6 +6101,26 @@ test_task_ship_an_unattended_stopped_run_ships_its_draft_at_autopilot_git() {
   assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
 }
 
+# A person who took the run over ships at their own level, and the ship is
+# no longer a draft's: the completion gates decide it
+# (adr-20261108-a-person-takes-over-a-stopped-run).
+test_task_ship_a_handed_over_run_goes_by_agent_git() {
+  mship_setup github
+  ship_cfg_local agent.git merge
+  ship_cfg_local autopilot.git pr
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason r3 >/dev/null 2>&1 || true
+  jig task autopilot T-1 handover --by human --answer "I finish it" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level merge (agent.git)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
 test_task_ship_autopilot_git_pr_stops_a_run_at_the_pr_over_agent_git_merge() {
   mship_setup github
   ship_cfg_local autopilot.git pr
@@ -9570,8 +9590,8 @@ test_task_list_json_pins_a_task_with_every_fact() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -9580,7 +9600,7 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq 14 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq 15 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
   assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
@@ -9806,7 +9826,7 @@ _tl_agree() {
   _tl_json --all
   assert_eq 0 "$RC" "$ERR"
   rows=$(_tl_action_rows)
-  assert_eq 14 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  assert_eq 15 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
   saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
   # The queue too: a pause request written by one command must not change
   # what the next is judged on.
@@ -9876,7 +9896,7 @@ test_task_actions_at_a_gate_and_a_stop_agree_with_their_commands() {
 the design
 EOF
   printf 'autopilot: stopped\nautopilot_mode: attended\nautopilot_repairs: 1\npaused: true\n' >> .ai/workspace/tasks/big/state
-  _tl_agree big "resume approve-gate answer-stop set-class abandon archive"
+  _tl_agree big "resume approve-gate answer-stop handover set-class abandon archive"
 }
 
 # A pending pause request: it can be cancelled and not asked again; a direct
@@ -9910,9 +9930,10 @@ EOF
   sed 's/^knowledge_consolidated: false/knowledge_consolidated: true/' .ai/workspace/tasks/run/state > s.tmp
   mv s.tmp .ai/workspace/tasks/run/state
   printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 2\n' >> .ai/workspace/tasks/run/state
-  _tl_agree run "pause request-pause set-class close abandon archive"
+  _tl_agree run "pause request-pause handover set-class close abandon archive"
   _tl_json --all
-  assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft"'
+  assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft, or, if a person takes the task on: jig task autopilot run handover --by human --answer <text>"'
+  assert_contains "$OUT" '{"id":"handover","command":"jig task autopilot run handover --by human --answer <text>","offered":true,"reason":null}'
   assert_contains "$OUT" '"id":"ship","command":"jig task ship run --message-file <file>","offered":false,"reason":"task ship: the route of run (T3) is missing: '
 }
 
@@ -11183,4 +11204,182 @@ test_task_ship_names_the_absorbed_issues_in_the_pull_request_body() {
   assert_eq "Absorbs: SRD-7" "$(sed '/^$/d' gh-create.body | tail -n 1)"
   assert_eq "PR body." "$(head -n 1 gh-create.body)"
   assert_eq "PR body." "$(cat body.txt)"
+}
+
+# --- a person takes a stopped run over (adr-20261108-a-person-takes-over-a-stopped-run)
+
+# The live case of 2026-11-07 (profile-covers-check): an unattended T3 run
+# approved its own gate, spent both repairs, stopped at the limit, and its
+# design changed afterwards. A person then answered and approved the current
+# design. Before the handover every road to record that was refused; each
+# refusal now names the handover, and after it the gate is the person's.
+_handover_live_case() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  route_design
+  jig task gate T-1 approved --by agent >/dev/null
+  jig task autopilot T-1 approve --reason "design approved by the agent" >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason "verify red" >/dev/null || true
+  printf '# design\n\nthe answer, revised\n' > .ai/workspace/tasks/T-1/design.md
+}
+
+test_handover_the_refusals_at_the_limit_name_it() {
+  _handover_live_case
+  local road="ship a draft, or, if a person takes the task on: jig task autopilot T-1 handover --by human --answer <text>"
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task gate: T-1 exhausted its unattended repair limit; $road"
+  run jig task autopilot T-1 resume --answer "approved, go on" --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot resume: T-1 exhausted its unattended repair limit; $road"
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot start: T-1 exhausted its unattended repair limit; $road"
+  run jig task autopilot T-1 end --reason "taken over"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot end: T-1 is stopped; if a person takes the task on: jig task autopilot T-1 handover --by human --answer <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+}
+
+test_handover_of_the_live_case_gives_the_gate_to_the_person() {
+  _handover_live_case
+  run jig task autopilot T-1 handover --by human --answer "I approve the revised design and finish it by hand"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "autopilot: handed over; the task goes on without autopilot" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: done"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_handover: "
+  # What the run was stays: its mode and the repairs it spent.
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\thandover\thuman: I approve the revised design and finish it by hand')"
+
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--by agent is an unattended run's self-approval"
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: human"
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_handover_buys_no_fresh_run() {
+  _handover_live_case
+  jig task autopilot T-1 handover --by human --answer "mine now" >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot start: T-1 was handed over to a person; it finishes without autopilot"
+  # Not even where the clone no longer says unattended.
+  : > .ai/config.local.yaml
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "was handed over to a person"
+  run jig task autopilot T-1 repair --reason r3
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run"
+  run jig task autopilot T-1 resume --answer "again" --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not stopped"
+  run jig task autopilot T-1 handover --by human --answer "again"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: T-1 has no stopped autopilot run"
+  run jig task autopilot T-1 end --reason merged
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot end: T-1's run already ended when a person took it over; there is nothing to end"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+}
+
+test_handover_stops_waiting_in_jig_status_and_the_report() {
+  _handover_live_case
+  run jig status
+  assert_contains "$OUT" "autopilot=stopped"
+  jig task autopilot T-1 handover --by human --answer "mine now" >/dev/null
+  run jig status
+  assert_not_contains "$OUT" "autopilot=stopped"
+  assert_contains "$OUT" "autopilot=handed-over"
+  run jig task autopilot T-1 report
+  assert_contains "$OUT" "Taken over by a person (check it was yours):
+- human: mine now"
+  assert_contains "$OUT" "autopilot: done (handed over), repairs: 2/2, unattended"
+  run jig task list --json
+  local at
+  at=$(sed -n 's/^autopilot_handover: //p' .ai/workspace/tasks/T-1/state)
+  assert_contains "$OUT" "\"autopilot\":{\"state\":\"done\",\"mode\":\"unattended\",\"repairs\":2,"
+  assert_contains "$OUT" "\"phase\":null,\"handover_at\":\"$at\"}"
+}
+
+test_handover_takes_an_attended_stopped_run() {
+  route_task --class T1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "which API?" >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "I pick the API and write it myself"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: done"
+  run jig task autopilot T-1 report
+  assert_contains "$OUT" "autopilot: done (handed over), repairs: 0/2"
+}
+
+test_handover_takes_an_unattended_run_stopped_before_the_limit() {
+  route_task --class T1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 stop --reason "ask the owner" >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "the owner takes it"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 1"
+}
+
+test_handover_refuses_a_run_that_is_not_stopped() {
+  route_task --class T1
+  run jig task autopilot T-1 handover --by human --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: T-1 has no stopped autopilot run"
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: T-1 is running; ask the agent to stop it first: jig task autopilot T-1 stop --reason <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "has no stopped autopilot run"
+}
+
+test_handover_needs_a_person_and_their_words() {
+  route_task --class T1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "stuck" >/dev/null
+  run jig task autopilot T-1 handover --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --by human is required: only a person takes a run over, never the agent that ran it"
+  run jig task autopilot T-1 handover --by agent --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --by accepts human only"
+  run jig task autopilot T-1 handover --by
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --by requires human"
+  run jig task autopilot T-1 handover --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer is required: the person's words"
+  run jig task autopilot T-1 handover --by human --answer
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer requires a value"
+  run jig task autopilot T-1 handover --by human --answer ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer must not be empty"
+  run jig task autopilot T-1 handover --by human --answer "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer must be a single line with no tab"
+  run jig task autopilot T-1 handover --by human --answer mine --what
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: unknown argument: --what"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  run jig task set T-1 autopilot_handover now
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "key is not writable: autopilot_handover"
 }
