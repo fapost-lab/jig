@@ -384,6 +384,9 @@ description: fixture skill added to the source after init
 # jig-newthing
 Run `/jig-newthing` to do the thing.
 EOF
+  # Released again with the new skill: a source with local changes is no
+  # release, and is not measured against.
+  fixture_release_source "$src"
 
   run jig_installed doctor
   assert_eq 0 "$RC"
@@ -441,6 +444,9 @@ description: fixture skill added to the source after init
 # jig-newthing
 Run `/jig-newthing` to do the thing.
 EOF
+  # Released again with the new skill: a source with local changes is no
+  # release, and is not measured against.
+  fixture_release_source "$src"
 
   # The version line has a global jig to compare the manifest against only
   # when PATH offers one; the fixture source is that global here, so the two
@@ -483,6 +489,9 @@ description: fixture skill added to the source after init
 # jig-newthing
 Run `/jig-newthing` to do the thing.
 EOF
+  # Released again with the new skill: a source with local changes is no
+  # release, and is not measured against.
+  fixture_release_source "$src"
   # Only the recorded version moves: the install itself is untouched.
   sed 's/^jig\.version: .*/jig.version: 0.0.1/' .ai/manifest > .ai/manifest.new
   mv .ai/manifest.new .ai/manifest

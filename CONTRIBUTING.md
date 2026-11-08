@@ -32,8 +32,9 @@ from anything else `jig init` and `jig upgrade` refuse with `unreleased-source`,
 
 1. **The global Jig stays on a release.** `~/.local/share/jig` is installed with `install.sh` and no
    `--ref`, updated only with `jig self-update`, and never touched with `git checkout` or `git pull`.
-   Check it with `git -C ~/.local/share/jig status -sb`; a release shows `## HEAD (no branch)`. If it
-   sits on a branch, return it: `git -C ~/.local/share/jig checkout v<version>`.
+   Check it with `git -C ~/.local/share/jig status -sb`; a release shows `## HEAD (no branch)` and
+   nothing under it. If it sits on a branch, return it: `git -C ~/.local/share/jig checkout
+   v<version>`. A file edited or added there makes it unreleased too, as on a branch.
 2. **Develop in a clone of its own**, for example `~/src/jig`. It installs itself in link mode, and
    in it you call `.ai/scripts/jig`, not `jig` ([below](#which-jig-you-are-running)).
 3. **Ordinary projects take releases only.** To try unreleased Jig on a real project, use a throwaway

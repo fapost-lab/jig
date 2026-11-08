@@ -9,7 +9,7 @@ paths:
   - scripts/lib/upgrade.sh
   - scripts/lib/manifest.sh
 summary: Why an upgrade that placed nothing leaves .ai/manifest untouched, and why the recorded source may always be written back.
-reviewed_at: 2026-09-22
+reviewed_at: 2026-11-07
 ---
 # `jig upgrade` records a source only when it installed something from it
 
@@ -47,6 +47,13 @@ The run said nothing about any of this. The only summary was link mode's
   to a new version changes the project's version without a single link being created; were
   the header frozen there, `jig status` would report a version mismatch no `jig upgrade`
   could ever clear.
+- **A project that carries unreleased code returns to the release by name** (amended
+  2026-11-07, task dev-channel-stays-out-of-projects). When the manifest records a build version
+  (`jig.version: X.Y.Z+<sha>`, taken with `--unreleased`) and the source is a released one (at its
+  tag, with no local change), the header is rewritten even when nothing was placed and the source
+  is another checkout: the project's bytes are then that release's, and leaving the header would
+  keep calling it unreleased, and keep `jig.source` on a development clone, with no upgrade ever
+  able to clear it (adr-20261106-copy-mode-projects-take-released-code-only).
 - Moving a project onto another checkout stays what it was: an upgrade that really does
   place files from it records it. What no longer happens is a move nobody performed.
 - Sources are compared as physical paths (`pwd -P`), the way `manifest_write_entries`

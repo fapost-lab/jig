@@ -22,10 +22,9 @@ _self_update_validate_source() {
   [ "$toplevel_phys" = "$source_phys" ] \
     || jig_die "self-update: $source is nested inside another git worktree ($toplevel_phys); refusing"
 
-  # --untracked-files=all pins what counts as a change: with
-  # status.showUntrackedFiles=no in someone's git config, plain --porcelain
-  # hides untracked files and a dirty checkout would read as clean.
-  status=$(git -C "$source" status --porcelain --untracked-files=all 2>/dev/null) \
+  # The same question copy-mode init and upgrade ask of a released source
+  # (jig_source_changes, common.sh).
+  status=$(jig_source_changes "$source") \
     || jig_die "self-update: cannot read git status: $source"
   [ -z "$status" ] \
     || jig_die "self-update: framework checkout has uncommitted changes; commit or stash before self-update: $source"

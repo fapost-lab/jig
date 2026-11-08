@@ -2855,20 +2855,39 @@ _status_upgrade_prs() {
     to=$(_status_upgrade_version "$b")
     case "$st" in
       open)
-        if [ -n "$to" ] && [ -n "$have" ] && ! jig_version_newer "$to" "$have"; then
+        if [ -n "$to" ] && [ -n "$have" ] && ! jig_version_newer "$to" "$have" \
+           && ! _status_upgrade_rebuilds "$b" "$have"; then
           continue
         fi
         printf '%s\t%s\t%s\t%s\t-\t%s\t%s\n' open "$b" "$base" "${to:--}" "$at" "$url"
         ;;
       merged)
         [ -n "$to" ] && [ -n "$have" ] || continue
-        jig_version_newer "$to" "$have" || continue
+        jig_version_newer "$to" "$have" || _status_upgrade_rebuilds "$b" "$have" || continue
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' merged "$b" "$base" "$to" "$have" "$at" "$url"
         ;;
     esac
   done <<CACHE
 $(forgecache_upgrades "$cache" "$base")
 CACHE
+}
+
+# _status_upgrade_rebuilds <branch> <have> — true when upgrade branch <branch>
+# records a version of the same release number as the base's <have> but
+# another build: a return to a release (`X.Y.Z+<sha>` -> `X.Y.Z`) or an
+# `--unreleased` upgrade within one release. The branch name holds the number
+# alone, so only the label it records tells it from an upgrade already here.
+# Read from the branch here or origin's copy of it, as `jig upgrade --land`
+# reads it (upgrade.sh); false when neither is here.
+_status_upgrade_rebuilds() {
+  local ref label
+  for ref in "refs/heads/$1" "refs/remotes/origin/$1"; do
+    label=$(_upgrade_land_version "$ref")
+    [ -n "$label" ] || continue
+    _upgrade_rebuilds "$label" "$2"
+    return
+  done
+  return 1
 }
 
 # _status_upgrade_version <branch> — the version `jig/upgrade-<to>[-<n>]` is

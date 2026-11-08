@@ -635,6 +635,8 @@ description: fixture skill added to the source after init
 # jig-newthing
 Run `/jig-newthing` to do the thing.
 EOF
+  # Released again: a source with local changes is no release.
+  fixture_release_source "$src"
 
   # Two pending items: one per default adapter (claude, codex), each with
   # its own installed copy of the skill.
@@ -4011,6 +4013,37 @@ test_status_names_a_merged_upgrade_not_brought_here() {
   assert_not_contains "$OUT" "upgrade-pull-request"
   run jig status
   assert_not_contains "$OUT" "upgrade pull request:"
+}
+
+# A return to a release: main records unreleased code (9.9.9+abc1234) and the
+# upgrade branch, named for 9.9.9 alone, records 9.9.9. Open, it waits; merged
+# and not here, it is to be landed (task dev-channel-stays-out-of-projects, F8).
+test_status_names_an_upgrade_pull_request_that_returns_to_the_release() {
+  local t
+  t=$(printf '\t')
+  _st_upgrade_pr_repo "jig/upgrade-9.9.9${t}main${t}open${t}pending${t}2026-10-20T10:00:00Z${t}abc123${t}https://github.com/o/r/pull/12"
+  sed 's/^jig\.version: .*/jig.version: 9.9.9+abc1234/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "took unreleased 9.9.9+abc1234"
+  git checkout -q -b jig/upgrade-9.9.9
+  sed 's/^jig\.version: .*/jig.version: 9.9.9/' .ai/manifest > manifest.tmp
+  mv manifest.tmp .ai/manifest
+  git commit -q -am "Upgrade Jig to 9.9.9"
+  git checkout -q main
+
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-waiting"'
+
+  printf 'jig/upgrade-9.9.9%smain%smerged%s-%s2026-10-21T10:00:00Z\n' "$t" "$t" "$t" "$t" > .ai/runtime/forge-cache
+  _st_json
+  assert_contains "$OUT" '"kind":"upgrade-pull-request-merged"'
+  assert_contains "$OUT" 'main here is still at 9.9.9+abc1234'
+
+  # Landed: main records what the branch records, and the item is history.
+  git merge -q --ff-only jig/upgrade-9.9.9
+  _st_json
+  assert_not_contains "$OUT" "upgrade-pull-request"
 }
 
 # Only Jig's own upgrade branches into the base, and only their newest pull

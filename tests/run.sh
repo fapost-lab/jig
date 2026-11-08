@@ -176,14 +176,21 @@ _run_release_home() {
       mkdir -p "$home/$(dirname "$f")" && ln -s "$(readlink "$f")" "$home/$f" || exit 1
     done < "$list.links"
   ) >/dev/null || return 1
-  (
-    cd "$home" || exit 1
-    git init -q . && git symbolic-ref HEAD refs/heads/main \
-      && git add -A && git -c user.name=jig-tests -c user.email=tests@jig.invalid \
-        commit -q --no-verify -m "release $version" \
-      && git -c user.name=jig-tests -c user.email=tests@jig.invalid \
-        tag -a "v$version" -m "v$version"
-  ) >/dev/null 2>&1 || return 1
+  # The release is committed with the git configuration the tests see (no
+  # system file, a HOME of its own; enter_test_env below), not the person's:
+  # a global excludes file that ignores, say, `.gitignore` would leave the
+  # file out of the commit, and every test would find the release dirty.
+  mkdir "$RESULTS/home-git" || return 1
+  _run_home_git() {
+    HOME="$RESULTS/home-git" GIT_CONFIG_NOSYSTEM=1 \
+      git -C "$home" -c user.name=jig-tests -c user.email=tests@jig.invalid "$@"
+  }
+  {
+    _run_home_git init -q . && _run_home_git symbolic-ref HEAD refs/heads/main \
+      && _run_home_git add -A \
+      && _run_home_git commit -q --no-verify -m "release $version" \
+      && _run_home_git tag -a "v$version" -m "v$version"
+  } >/dev/null 2>&1 || return 1
   # As a manifest records it: `cd && pwd` folds the `//` a TMPDIR ending in
   # `/` leaves, and tests compare recorded sources with this path.
   (cd "$home" && pwd)

@@ -93,7 +93,7 @@ Small work — a typo, a one-file fix that fits in one session — needs no work
 | **active** | Being worked on. |
 | **ready** | Checked: tests pass and the goal is met. Waiting to be merged. |
 | **consolidated** | Closed: merged, and what it taught the project is recorded. |
-| **abandoned** | Stopped. A task from a spec must say why (`--reason`); any other task may. Comes back with `jig task set <id> status active`, but a roadmap item `jig spec drop` closed stays closed — reopen it by hand, as Jig reminds you. |
+| **abandoned** | Stopped. A task from a spec must say why (`--reason`); any other task may. Comes back with `jig task set <id> status active`, without its queue place (`jig queue set` gives it one again), but a roadmap item `jig spec drop` closed stays closed — reopen it by hand, as Jig reminds you. |
 | **archived** | Put away: abandoned for a while, untouched for two months, or absorbed into another task with `jig task merge`. Hidden from the lists, never deleted. |
 
 **Paused** is a mark on an active or ready task, not a state of its own: it says the work was
@@ -132,7 +132,7 @@ What is left behind is cleaned up automatically. The workspace of a closed task 
 folder, and deleted from there after a week. A task whose remote state cannot be determined keeps its
 workspace. An abandoned task, and one nobody touched for two months, is archived instead of deleted: its notes stay
 where they were, the task leaves your lists, and `jig task list --status archived` shows it and
-`jig task unarchive <id>` brings it back. You can archive a task yourself with `jig task archive <id>`. The trigger is a Claude Code session hook
+`jig task unarchive <id>` brings it back, without its place in the queue (`jig queue set` gives it one again). You can archive a task yourself with `jig task archive <id>`. The trigger is a Claude Code session hook
 or a scheduler you choose ([Configuration](/configuration)).
 </Accordion>
 

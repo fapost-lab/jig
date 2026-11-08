@@ -16,6 +16,7 @@ paths:
   - scripts/lib/doctor.sh
   - tests/run.sh
 summary: Why a copy-mode project takes framework code only from a checkout at its release tag, how unreleased code is named X.Y.Z+<sha>, and why --unreleased is the one way to take it.
+reviewed_at: 2026-11-07
 ---
 # A copy-mode project takes released code only; unreleased code is named `X.Y.Z+<sha>` and taken only with `--unreleased`
 
@@ -43,9 +44,18 @@ an agent ran `jig upgrade` and opened a pull request carrying unreleased framewo
 ## Decision
 
 - **A released source is a framework checkout whose HEAD carries the tag `v<JIG_VERSION>` of the
-  version it declares** (`jig_source_release`, common.sh). A branch at that commit is released — the
-  bytes are the release's. Anything else is unreleased: a branch or detached HEAD past the tag, a
-  version raised but not yet tagged, a directory that is not the top of a git checkout of its own.
+  version it declares, with no uncommitted change** (`jig_source_released`, common.sh). A branch at
+  that commit is released — the bytes are the release's. Anything else is unreleased: a branch or
+  detached HEAD past the tag, a checkout at the tag with edited, staged or untracked files, a version
+  raised but not yet tagged, a directory that is not the top of a git checkout of its own.
+- **Local changes are asked only where files are taken.** The question is `self-update`'s own
+  (`git status --porcelain --untracked-files=all`, shared as `jig_source_changes`), asked by copy-mode
+  `init` and `upgrade` — dry runs, and so `upgrade_pending`, included — and only once the tag check
+  has passed. That is one `git status` per measurement, beside a dry run that already reads every
+  framework file; a full `jig status` measures, and its redraws reuse the saved answer. What only
+  shows a version (`jig --version`, the version line of `jig status`, its upgrade-available item)
+  reads the tag alone (`jig_source_release`), so it pays nothing more on Windows, and the refusal
+  names the changes when an upgrade is tried.
 - **Unreleased code has its own version name, `X.Y.Z+<short sha>`** (`X.Y.Z+unknown` without git;
   `jig_source_version`). `scripts/lib/version.sh` is unchanged and always plain: CI, the release job
   and every ordering helper read it as before. Comparisons and orderings use the release number
@@ -55,8 +65,9 @@ an agent ran `jig upgrade` and opened a pull request carrying unreleased framewo
   `--unreleased`. A dry run refuses too, because a plan the real run would refuse is no plan. Link
   mode is not affected: there the project runs the checkout itself, which is what developing Jig is.
 - **`--unreleased` takes the code on purpose, and the project says so**: the manifest records
-  `jig.version: X.Y.Z+<sha>`. The next upgrade from a released source replaces the files by hash and
-  records the plain number again. Whatever re-runs an upgrade carries the flag: the handoff to newer
+  `jig.version: X.Y.Z+<sha>`, or `X.Y.Z+<sha>.dirty` from a checkout with local changes. The next upgrade from a released source replaces the files by hash and
+  records the plain number again — also when it places nothing, because the files already match:
+  a third case beside the two in which adr-20260922 rewrites the header (amended there). Whatever re-runs an upgrade carries the flag: the handoff to newer
   code and the self-check after the install.
 - **An unreleased source is not measured against.** `upgrade_pending` answers 4 — unknown, for this
   reason — so `verify` runs (ADR-0017's unknown), `jig doctor` warns instead of failing, and the
@@ -84,10 +95,11 @@ an agent ran `jig upgrade` and opened a pull request carrying unreleased framewo
   nobody there.
 - **An environment variable to bypass the check** (for tests, for tools). A switch an agent can set
   silently is what this decision exists to prevent; the tests install from a released copy instead.
-- **Treat local changes on a release tag as unreleased.** Not now: `self-update` already refuses a
-  dirty global checkout, the incident was a branch, and a `git status` of the global checkout on every
-  `jig status` costs real time on Windows. When it is wanted, reuse `self-update`'s cleanliness check,
-  which pins `--untracked-files=all`.
+- **Treat local changes on a release tag as a release** (this decision's first version). The
+  incident was a branch, and `self-update` already refuses a dirty global checkout; but a checkout
+  edited in place still gave a project framework files no release contains, under the release's
+  number. Asking for them wherever a version is shown was rejected for its cost on Windows; they
+  are asked where files are taken or measured.
 
 ## Consequences
 
@@ -95,8 +107,10 @@ an agent ran `jig upgrade` and opened a pull request carrying unreleased framewo
   `--unreleased`, and its manifest says which.
 - A framework developer whose global jig is their working clone is refused in other projects; their
   ways out are a released global install beside the clone, or `--unreleased`.
-- `install.ps1` set up with `-Ref main` cannot prepare a first project without `--unreleased`: its
-  `jig init` is refused and it reports the failure. Known and accepted.
+- `install.ps1` set up with `-Ref main` asks before it prepares a first project from unreleased
+  code, defaulting to no; only a typed yes passes `--unreleased` to `jig init`.
+- A global checkout at a release tag with local changes still reads as that release in `jig status`
+  and `jig --version`, and may be offered as an upgrade; the upgrade itself refuses it.
 - The test runner installs from a released copy of the checkout (`tests/run.sh`, `JIG_HOME`), so the
   suite exercises the released path by default and the unreleased one where a test asks for it.
 - `jig status` reads the global checkout's git (tag and HEAD) besides its `version.sh`; it still

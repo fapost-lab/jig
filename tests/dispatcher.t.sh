@@ -611,6 +611,23 @@ test_dispatcher_version_names_unreleased_code_from_a_checkout() {
   assert_eq "jig $declared+$sha" "$OUT"
 }
 
+# Link mode: a project's .ai/scripts is a link to the checkout's scripts/, and
+# the version run through it names the checkout's code too.
+test_dispatcher_version_through_a_link_names_the_checkout() {
+  skip_unless_symlinks
+  mkdir src
+  cp -R "$JIG_HOME"/. src/
+  local declared sha
+  declared=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' src/scripts/lib/version.sh)
+  _src_commit src
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  mkdir -p project/.ai
+  ln -s "$PWD/src/scripts" project/.ai/scripts
+  run "$PWD/project/.ai/scripts/jig" --version
+  assert_eq 0 "$RC"
+  assert_eq "jig $declared+$sha" "$OUT"
+}
+
 test_help_lists_self_update() {
   run jig help
   assert_contains "$OUT" "self-update"

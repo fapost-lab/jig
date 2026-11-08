@@ -216,7 +216,7 @@ _upgrade_records_source() {
   # gets there when the files already match, and the header must say so
   # (adr-20261106-copy-mode-projects-take-released-code-only).
   case "$(manifest_header_get jig.version 2>/dev/null)" in
-    *+*) jig_source_release "$1" && return 0 ;;
+    *+*) jig_source_released "$1" && return 0 ;;
   esac
   recorded=$(manifest_source 2>/dev/null) || recorded=""
   _upgrade_same_dir "$1" "$recorded"
@@ -1577,7 +1577,7 @@ _upgrade_run() {
   fi
   [ "${_upgrade_skip_preflight:-0}" = 1 ] || _upgrade_preflight "$source" "$dry_run"
   to_version=$(_upgrade_source_version "$source")
-  to_label=$(jig_source_version "$source" 2>/dev/null) || to_label="$to_version"
+  to_label=$(jig_source_taken_version "$source" 2>/dev/null) || to_label="$to_version"
   if [ "$dry_run" != 1 ]; then
     _upgrade_open_branch "$to_version" "$to_label"
     # The branch may hold another config; read what this run installs there.
@@ -1657,7 +1657,7 @@ _upgrade_run() {
   if _upgrade_records_source "$source" \
        "$((placed_count + removed_count + reconciled_count))"; then
     local version adapters_manifest
-    version=$(jig_source_version "$source" 2>/dev/null) || version=$(_upgrade_source_version "$source")
+    version=$(jig_source_taken_version "$source" 2>/dev/null) || version=$(_upgrade_source_version "$source")
     adapters_manifest=$(_upgrade_csv "$active_adapters")
     printf '%s\n' "$new_entries" | sed '/^$/d' \
       | manifest_write_entries "$version" "$source" "$adapters_manifest" "copy" \
@@ -1796,9 +1796,38 @@ _upgrade_land_to() {
   jig_release_version "v${v%-*}" 2>/dev/null || true
 }
 
+# _upgrade_land_label <branch> <head-commit> — the jig.version the upgrade
+# branch records, read from the branch here, the merged head, or origin's copy
+# of the branch, whichever this clone has; nothing when none is here. The
+# branch name holds the release number only, and a return to a release
+# (`X.Y.Z+<sha>` -> `X.Y.Z`) or an `--unreleased` upgrade within one release
+# differs from the base in the `+<build>` part alone.
+_upgrade_land_label() {
+  local ref v
+  for ref in "refs/heads/$1" "$2" "refs/remotes/origin/$1"; do
+    [ -n "$ref" ] || continue
+    git -C "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 || continue
+    v=$(_upgrade_land_version "$ref")
+    if [ -n "$v" ]; then
+      printf '%s\n' "$v"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# _upgrade_rebuilds <label> <have> — true when <label>, the jig.version an
+# upgrade branch records, is the same release number as <have>, the base's,
+# but another build: what the release number alone (jig_version_newer) cannot
+# tell apart. Shared with `jig status` (_status_upgrade_rebuilds).
+_upgrade_rebuilds() {
+  [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] \
+    && [ "$(jig_version_core "$1")" = "$(jig_version_core "$2")" ]
+}
+
 # _upgrade_land_run [--quiet] — `jig upgrade --land`.
 _upgrade_land_run() {
-  local quiet=0 a base forge prs cur have line head st sha url to pick="" open_url="" open_head=""
+  local quiet=0 a base forge prs cur have line head st sha url to label pick="" open_url="" open_head=""
   local reasons="" tracked leave level
   for a in "$@"; do
     case "$a" in
@@ -1899,11 +1928,19 @@ PICK
     # fetch that worked (jig_fetch_branches only warns): without the version
     # the branch is named for, landing would report the old Jig as landed
     # and let the branch go.
+    # The release number alone cannot tell a stale origin/<base> at
+    # `X.Y.Z+<sha>` from an upgrade that returned it to `X.Y.Z`; the label the
+    # branch records can, when this clone has it. A base that already holds
+    # the merged head has the upgrade, whatever it records since.
     to=$(_upgrade_land_to "$head")
     if [ -n "$to" ]; then
       a=$(_upgrade_land_version "refs/remotes/origin/$base")
-      if [ -z "$a" ] || jig_version_newer "$to" "$a"; then
-        reasons="${reasons}origin/$base here does not record Jig $to yet (the fetch failed, or the merge has not reached it); check the remote, then run \`jig upgrade --land\` again
+      label=$(_upgrade_land_label "$head" "$sha")
+      if [ -z "$a" ] || jig_version_newer "$to" "$a" \
+         || { _upgrade_rebuilds "$label" "$a" \
+              && ! { [ -n "$sha" ] && git -C "$JIG_PROJECT" merge-base --is-ancestor "$sha" \
+                       "refs/remotes/origin/$base" >/dev/null 2>&1; }; }; then
+        reasons="${reasons}origin/$base here does not record Jig ${label:-$to} yet (the fetch failed, or the merge has not reached it); check the remote, then run \`jig upgrade --land\` again
 "
       fi
     fi

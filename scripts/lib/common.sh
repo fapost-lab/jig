@@ -519,7 +519,9 @@ _jig_source_git() {
 # jig_source_release <dir> — true when framework checkout <dir> stands at the
 # release tag of the version it declares (`v<JIG_VERSION>` points at HEAD). A
 # branch whose HEAD carries that tag counts: its bytes are the release's.
-# Uncommitted changes are not looked at; see the ADR for why.
+# Uncommitted changes are not looked at here: this is the cheap question
+# `jig status` and `jig --version` ask on every run. Taking files asks
+# jig_source_released, which also asks jig_source_clean.
 jig_source_release() {
   local declared tags
   declared=$(jig_declared_version "$1") || return 1
@@ -529,6 +531,61 @@ jig_source_release() {
   # of SIGPIPE under pipefail (conventions/shell.md).
   tags=$(git -C "$1" tag --points-at HEAD 2>/dev/null) || return 1
   jig_has_line "v$declared" "$tags"
+}
+
+# jig_source_changes <dir> — the uncommitted changes of checkout <dir>, as
+# `git status --porcelain` lists them; fails when git cannot read them.
+# --untracked-files=all pins what counts as a change: with
+# status.showUntrackedFiles=no in someone's git config, plain --porcelain
+# hides untracked files and a dirty checkout would read as clean. Shared with
+# self-update, which refuses a checkout with changes for the same reason.
+jig_source_changes() {
+  git -C "$1" status --porcelain --untracked-files=all 2>/dev/null
+}
+
+# jig_source_clean <dir> — true when checkout <dir> has no tracked, staged or
+# untracked change. The answer is kept for the process: an upgrade asks it
+# for the refusal and again for the version it records, and on Git Bash each
+# `git status` is a slow process start.
+_JIG_SOURCE_CLEAN_DIR=""
+_JIG_SOURCE_CLEAN_RC=""
+jig_source_clean() {
+  local changes
+  if [ -n "$_JIG_SOURCE_CLEAN_DIR" ] && [ "$_JIG_SOURCE_CLEAN_DIR" = "$1" ]; then
+    return "$_JIG_SOURCE_CLEAN_RC"
+  fi
+  _JIG_SOURCE_CLEAN_RC=1
+  if changes=$(jig_source_changes "$1") && [ -z "$changes" ]; then
+    _JIG_SOURCE_CLEAN_RC=0
+  fi
+  _JIG_SOURCE_CLEAN_DIR=$1
+  return "$_JIG_SOURCE_CLEAN_RC"
+}
+
+# jig_source_released <dir> — true when <dir> holds a release's bytes: at its
+# release tag (jig_source_release) and with no local change. A checkout at a
+# tag with edited or added files is unreleased code under a release's number
+# (adr-20261106-copy-mode-projects-take-released-code-only).
+jig_source_released() {
+  jig_source_release "$1" && jig_source_clean "$1"
+}
+
+# jig_source_taken_version <dir> — the version a copy-mode project records
+# when it takes files from <dir>: jig_source_version, and `X.Y.Z+<sha>.dirty`
+# when the checkout has local changes, at a release tag or past one.
+jig_source_taken_version() {
+  local v sha
+  v=$(jig_source_version "$1") || return 1
+  if ! _jig_source_git "$1" || jig_source_clean "$1"; then
+    printf '%s\n' "$v"
+    return 0
+  fi
+  case "$v" in
+    *+*) printf '%s.dirty\n' "$v" ;;
+    *)
+      sha=$(git -C "$1" rev-parse --short=7 HEAD 2>/dev/null) || sha=unknown
+      printf '%s+%s.dirty\n' "$v" "${sha:-unknown}" ;;
+  esac
 }
 
 # jig_source_version <dir> — the version of framework checkout <dir> as a
@@ -576,7 +633,10 @@ jig_source_where() {
 jig_require_released_source() {
   local cmd="$1" source="$2" unreleased="$3" declared back
   [ "$unreleased" != 1 ] || return 0
-  jig_source_release "$source" && return 0
+  if jig_source_release "$source"; then
+    jig_source_clean "$source" && return 0
+    jig_fail unreleased-source "$cmd: the source is not a release: $source is at its release tag with uncommitted changes ($(jig_source_taken_version "$source" 2>/dev/null || printf '%s' "$(jig_declared_version "$source" 2>/dev/null)")). A copy-mode project takes released code only; see the changes with \`git -C $source status --short\` and commit them elsewhere or stash them (\`git -C $source stash -u\`); or take this code on purpose: jig $cmd --unreleased"
+  fi
   declared=$(jig_declared_version "$source" 2>/dev/null) || declared="?"
   if _jig_source_git "$source" \
      && git -C "$source" rev-parse -q --verify "refs/tags/v$declared" >/dev/null 2>&1; then

@@ -784,7 +784,6 @@ test_init_codex_transform_end_to_end() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-fixture-src.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  fixture_release_source "$src"
   mkdir -p "$src/skills/jig-demo"
   cat > "$src/skills/jig-demo/SKILL.md" <<'EOF'
 ---
@@ -794,6 +793,7 @@ description: fixture skill for the codex transform test
 # jig-demo
 Run `/jig-demo` to start.
 EOF
+  fixture_release_source "$src"
 
   run jig init --from "$src" --adapters claude,codex --profiles generic
   assert_eq 0 "$RC"
@@ -1118,6 +1118,53 @@ test_init_unreleased_flag_changes_nothing_for_a_released_source() {
   assert_eq 0 "$RC"
   assert_file_contains .ai/manifest "jig.version: $declared"
   assert_not_contains "$(cat .ai/manifest)" "jig.version: $declared+"
+}
+
+# A checkout at its release tag with local changes is unreleased code under the
+# release's number: an edited framework file and an added one are both refused,
+# and --unreleased records the build as dirty (task released-source-local-edits).
+test_init_copy_mode_refuses_a_release_tag_with_local_changes() {
+  fixture_repo
+  mkdir src
+  cp -R "$JIG_HOME"/. src/
+  printf '\n# edited at the tag\n' >> src/profiles/generic/verify.sh
+
+  run jig init --from "$PWD/src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is not a release"
+  assert_contains "$OUT" "at its release tag with uncommitted changes"
+  assert_contains "$OUT" ".dirty"
+  assert_contains "$OUT" "--unreleased"
+  assert_no_file .ai/manifest
+  assert_no_file .ai/scripts/jig
+}
+
+test_init_copy_mode_refuses_a_release_tag_with_an_untracked_file() {
+  fixture_repo
+  mkdir src
+  cp -R "$JIG_HOME"/. src/
+  # Even when someone's git hides untracked files from a plain status.
+  git -C src config status.showUntrackedFiles no
+  printf 'not in the release\n' > src/skills/jig-task/extra.md
+
+  run jig init --from "$PWD/src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "at its release tag with uncommitted changes"
+  assert_no_file .ai/manifest
+}
+
+test_init_unreleased_from_a_release_tag_with_changes_records_it_dirty() {
+  fixture_repo
+  mkdir src
+  cp -R "$JIG_HOME"/. src/
+  printf '\n# edited at the tag\n' >> src/profiles/generic/verify.sh
+  local sha declared
+  sha=$(git -C src rev-parse --short=7 HEAD)
+  declared=$(sed -n 's/^JIG_VERSION="\([^"]*\)".*/\1/p' src/scripts/lib/version.sh)
+
+  run jig init --from "$PWD/src" --unreleased
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/manifest "jig.version: $declared+$sha.dirty"
 }
 
 test_init_link_mode_is_not_refused_for_an_unreleased_source() {

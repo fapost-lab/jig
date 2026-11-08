@@ -167,8 +167,10 @@ main() {
       # names unreleased code as `X.Y.Z+<sha>`; at a release tag, and from a
       # project's installed copy, it is the plain number, as the installer and
       # self-update require (adr-20261106-copy-mode-projects-take-released-code-only).
+      # Physically: through a link-mode project's .ai/scripts link the logical
+      # parent is the project's .ai/, not the checkout.
       local root v=""
-      root=$(cd "$JIG_LIB/../.." 2>/dev/null && pwd) || root=""
+      root=$(cd -P "$JIG_LIB/../.." 2>/dev/null && pwd) || root=""
       if [ -n "$root" ] && jig_is_source_root "$root"; then
         v=$(jig_source_version "$root" 2>/dev/null) || v=""
       fi

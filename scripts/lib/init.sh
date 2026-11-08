@@ -687,8 +687,9 @@ cmd_init() {
     fi
 
     # A copy records the version it is: `X.Y.Z+<sha>` when --unreleased took
-    # code from past a release, so the project says what it carries.
-    version=$(jig_source_version "$source" 2>/dev/null) || true
+    # code from past a release, `+<sha>.dirty` from a checkout with local
+    # changes, so the project says what it carries.
+    version=$(jig_source_taken_version "$source" 2>/dev/null) || true
     [ -n "$version" ] || version=$(_init_source_version "$source")
     [ -n "$version" ] || version="$JIG_VERSION"
     manifest_write_entries "$version" "$source" "$adapters_manifest" "copy" \
