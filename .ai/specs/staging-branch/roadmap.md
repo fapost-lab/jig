@@ -1,70 +1,82 @@
-# Roadmap — Staging branch
+# Roadmap — Git flows
 
-Destination: in a project that names a stage branch, a task goes from `main` to stage through
-a pull request, warned when nobody approved it, waits for QA without blocking other work, and reaches a pull request into `main`
-on one "prepare for prod" — said by a person or run by CI — while a project without a stage
-branch works exactly as before.
+Destination: a project picks its git flow from a short catalogue; in the `staging` flow a task
+goes from the base branch to the staging branch through a pull request, warned when nobody approved it, is
+parked there without blocking other work, and reaches a pull request into the base branch on one "prepare
+for prod" — said by a person or run by CI — while a project on the default `github` flow works
+exactly as before.
 
 Epic: epic/staging-branch
 Release: minor
 
-## Phase 1 — Ship to stage
+## Phase 1 — Ship to staging
 
-Goal: Jig does the stage step the team does by hand today, and everyone sees which tasks are on
-stage. Done when: in a test project with `git.stage_branch: stage`, `jig task ship` opens a pull
-request into stage, the pull request lands on stage — merged on the forge, or merged directly when
-it conflicts — and the task is listed as waiting for QA, with no pull request into `main`.
+Goal: Jig does the staging step the team does by hand today, and everyone sees which tasks are on
+staging. Done when: in a test project with `git.flow: staging` and `git.staging_branch: staging`, `jig task ship` opens a pull
+request into staging, the pull request lands on staging — merged on the forge, or merged directly when
+it conflicts — and the task is listed as parked, with no pull request into the base branch.
 
-- [ ] Turn stage on — `git.stage_branch` in the shared config, offered by `jig init` and
-  `jig-setup` when origin has a `stage`/`staging` branch.
-- [ ] Ship a task to stage — `jig task ship` in a stage project opens the task's pull request
-  into stage for review; no pull request into `main`. (after: Turn stage on — it reads the key)
-- [ ] Land a task on stage — merge the pull request on the forge; when it conflicts, merge the
-  task branch into a fresh temporary worktree of stage, resolve, push (retried from a fresh fetch
+- [ ] Choose a flow — `git.flow: github | staging` in the shared config with the bricks'
+  defaults and overrides (`staging_branch`, `staging_land`, `staging_review`, `promote_merge`); `jig init`
+  and `jig-setup` describe both flows in plain words and offer `staging` when origin has a
+  `stage`/`staging` branch; `github` stays the default.
+- [ ] Ship a task to staging — `jig task ship` in a staging project opens the task's pull request
+  into staging for review; no pull request into the base branch. (after: Choose a flow — it reads the key)
+- [ ] Land a task on staging — merge the pull request on the forge; when it conflicts, merge the
+  task branch into a fresh temporary worktree of staging, resolve, push (retried from a fresh fetch
   on rejection, never forced); without an approval, warn and ask: merge without review or wait
   (unattended: wait); below `agent.git: merge`, stop at the open pull request. (after: Ship
-  a task to stage — it lands that pull request)
-- [ ] See a task's stage state — on stage / behind stage (own commits only, merges of `main`
+  a task to staging — it lands that pull request)
+- [ ] See a task's staging state — on staging / behind staging (own commits only, merges of the base branch
   excluded) derived from git by branch name, in
-  `jig task list --json`, `jig status` and housekeeping; a pull request merged into stage is no
-  longer `wrong-base`. (after: Turn stage on — it reads the key)
-- [ ] Wait for review and for QA — states of their own that free the current-task slot and the
-  queue; `jig task resume` brings the task back; autopilot stops at each, never approves and
-  never promotes. (after: Land a task on
-  stage — the states start and end at its steps)
+  `jig task list --json`, `jig status` and housekeeping; a pull request merged into staging is no
+  longer `wrong-base`. (after: Choose a flow — it reads the key)
+- [ ] Park at the staging branch — one state, *parked*, with its reason derived from git and the forge
+  (the staging pull request waits for review, or the task is on the staging branch and waits for the signal);
+  it frees the current-task slot and the queue; `jig task resume` brings the task back; autopilot
+  stops there, never approves and never promotes. (after: Land a task on staging — parking starts
+  and ends at its steps)
 
 ## Phase 2 — Prepare for prod
 
-Goal: one command takes a tested task to a pull request into `main`, from a person's checkout or
-from a CI job. Done when: run on a runner with no Jig workspace and given a tested stage commit,
-it opens the pull request into `main` and prints its link, and it refuses a task whose tip is not
+Goal: one command takes a tested task to a pull request into the base branch, from a person's checkout or
+from a CI job. Done when: run on a runner with no Jig workspace and given a tested staging commit,
+it opens the pull request into the base branch and prints its link, and it refuses a task whose tip is not
 in that commit.
 
-- [ ] Prepare a task for prod — refuses unless the task tip is in the tested stage commit;
-  merges `main` into the task branch on conflict; opens the pull request into `main`; prints the
-  link; reads git and the forge only. (after: See a task's stage state — the refusal is that
-  check)
-- [ ] fog: who merges the promotion pull request — a shared `human` | `auto` setting beside
-  `agent.git` and `release.merge`; cannot be stated until it is clear how the three combine.
+- [ ] Prepare a task for prod — refuses unless the task tip is in the tested staging commit;
+  merges the base branch into the task branch on conflict; opens the pull request into the base branch; prints the
+  link — run again on a task already promoted, it merges the base branch in afresh and prints the same
+  link instead of opening a second one; needs only git and the forge, and where the checkout has a queue it warns — in the output
+  and the pull request body — of a dependency on the staging branch but not in the base branch. (after: See a task's
+  staging state — the refusal is that check)
+- [ ] Merge the promotion by the flow — `promote_merge: human` stops at the link, `auto` switches
+  on the forge's auto-merge so the pull request merges on green CI — in a checkout only at
+  `agent.git: merge`, on a CI runner by the flow alone, and never past `release.merge: human` for
+  a promotion that raises the version. (after: Prepare a task for prod — it merges the pull request that item opens)
 
-## Phase 3 — Stage over time
+## Phase 3 — Staging over time
 
-Goal: stage stays explainable as tasks come and go, and a fully automated team can drive it.
-Done when: `jig status` names tasks on stage nobody promoted for long and stage work no task
+Goal: staging stays explainable as tasks come and go, and a fully automated team can drive it.
+Done when: `jig status` names tasks on staging nobody promoted for long and staging work no task
 branch owns.
 
-- [ ] Stage drift report — tasks on stage long unpromoted, and stage commits that are not in
-  `main` and come from no live `task/*` branch. (after: See a task's stage state — the report is built on it)
-- [ ] fog: CI-driven promotion — which tasks one green stage run promotes (all contained in the
-  tested commit, or those it names; the id from the `task/<id>` branch name), and whether Jig's stage step stands aside when CI merges
-  into stage itself.
+- [ ] Staging drift report — tasks on staging long unpromoted, staging commits that are not in
+  the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
+  the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it)
+- [ ] Staging landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
+  merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
+  state — it is the only thing Jig does on the staging branch then)
+- [ ] Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
+  names, or with `--all` every `task/*` branch contained in that commit and not yet in the base branch.
+  (after: Prepare a task for prod — it runs that item's command once per task)
 
 ## Waves
 
-1. Turn stage on
-2. Ship a task to stage; See a task's stage state
-3. Land a task on stage; Prepare a task for prod; Stage drift report
-4. Wait for review and for QA
+1. Choose a flow
+2. Ship a task to staging; See a task's staging state
+3. Land a task on staging; Prepare a task for prod; Staging drift report; Staging landed by CI
+4. Park at the staging branch; Merge the promotion by the flow; Promote from CI
 
 <!--
 Rules (jig-idea §8):
