@@ -11,7 +11,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - schemas/state.md
 summary: A direct human answer can resume a manually stopped unattended run without resetting its repair limit.
-reviewed_at: 2026-10-13
+reviewed_at: 2026-11-08
 ---
 # A direct human answer may resume a manually stopped unattended run without renewing its repair budget
 
@@ -39,3 +39,5 @@ reviewed_at: 2026-10-13
 A person can unblock an already stopped unattended task without editing protected state. The remaining repair budget and gate origin stay visible. Agents must quote the actual answer; a fabricated answer remains possible at the agent boundary and is exposed in the pull request report.
 
 This narrows the unattended no-resume rule in ADR 20261004 and ADR 20260922; their repair-limit guarantee remains in force.
+
+> **Amendment (2026-11-08).** A person who takes a stopped run on, at the repair limit too, ends it with `handover --by human --answer`. A stop after two repairs stays final for the run, not for the task: no `resume` and no new `start` reopen it, and the work the person takes on goes on without autopilot and without a repair count. The run is not switched to attended, the alternative rejected above: it ends, its mode and repair count stay as recorded, and no run starts after it (adr-20261108-a-person-takes-over-a-stopped-run).

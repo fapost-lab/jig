@@ -14,6 +14,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-task/references/classification.md
 summary: Why the completion gates refuse a task whose route skipped a stage that leaves a record (gate approval, review receipt, verify's ready), why only those records count, why tasks filed earlier are warned, why lowering a class takes a reason and resume an answer, and why there is no actor field.
+reviewed_at: 2026-11-08
 ---
 # A stage of a task's route is proven by its record, and the completion gates refuse a route that skipped one
 
@@ -153,3 +154,5 @@ adr-20261002-route-depth-is-a-personal-choice (its rejected alternative "scripts
 stage" is now taken, for the stages that leave a record, without reading the depth) and
 adr-20260921-autopilot-runs-a-task-to-its-stops (`resume` needs an answer, and an unattended run has
 none).
+
+> **Amendment (2026-11-08).** `handover` ends a stopped run without the knowledge decision, so it is the one way out of `stopped` besides `resume`. It cannot buy repairs: `start` is refused while `autopilot_handover` is set. The gate after it is a person's claim, like an attended approval, quoted in the report and in Telegram (adr-20261108-a-person-takes-over-a-stopped-run).
