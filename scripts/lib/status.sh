@@ -411,7 +411,9 @@ EOF
     esac
     # Same predicate `jig task autopilot report` prints (_task_autopilot_note,
     # task.sh): a run mid-flight (`on`) or waiting on a human (`stopped`).
-    # `done`, and a task that never ran one, add nothing (design.md, autopilot).
+    # A run a person took over adds `autopilot=handed-over`, a fact and not a
+    # wait; any other `done`, and a task that never ran one, add nothing
+    # (design.md, autopilot; adr-20261108-a-person-takes-over-a-stopped-run).
     # Asked only of a task whose state has a run at all; for any other the
     # answer is empty.
     if [ -n "$_ST_AUTOPILOT" ]; then
@@ -1041,6 +1043,7 @@ _status_terminal_tasks() {
           uncommitted=*) note+=("${wd#uncommitted=} uncommitted") ;;
           base=*) note+=("base ${wd#base=}") ;;
           autopilot=on) note+=("autopilot on") ;;
+          autopilot=handed-over) note+=("autopilot handed over") ;;
           queue=*) note+=("queue ${wd#queue=}") ;;
           priority=*) note+=("priority ${wd#priority=}") ;;
           *) note+=("$wd") ;;
@@ -1974,7 +1977,7 @@ _status_attn() {
 # twice.
 _status_attention() {
   local stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url live hk_note pr_ids=""
-  local nc wrong kept closed open settled phase phase_stops=""
+  local nc wrong kept closed open settled phase phase_stops="" todo
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
@@ -2086,9 +2089,15 @@ UPR
 "
         continue
       fi
+      # An unattended run at its repair limit is resumed by nothing: what is
+      # left is its draft, or a person taking the task over
+      # (adr-20261108-a-person-takes-over-a-stopped-run).
+      todo="Answer the agent in this task's session; it resumes the run."
+      if _task_autopilot_at_limit "$_ST_ID"; then
+        todo="Nothing resumes this run: it ships a draft. To finish the task yourself, tell the agent in this task's session; it hands the run over to you."
+      fi
       stopped="$stopped$(_status_attn autopilot-stopped task "$_ST_ID" "$_ST_ID" \
-        "Autopilot stopped and is waiting for you" "$stop_reason" \
-        "Answer the agent in this task's session; it resumes the run.")
+        "Autopilot stopped and is waiting for you" "$stop_reason" "$todo")
 "
       continue
     fi
@@ -2695,7 +2704,7 @@ _status_html_task_row() {
 # stage (ADR-0020), so none is claimed — except the gate a T3/T4 design waits
 # at (_task_gate_state).
 _status_html_stage() {
-  local repairs stage stage_at ago
+  local repairs stage stage_at ago handover
   if [ "$_ST_AUTOPILOT" = on ]; then
     repairs=$(printf '%s\n' "$_ST_APFACTS" | cut -f 2)
     stage=$(printf '%s\n' "$_ST_APFACTS" | cut -f 3)
@@ -2717,6 +2726,17 @@ _status_html_stage() {
   if [ -z "$_ST_BRANCH" ]; then
     printf '<span class="muted">filed, not started</span>'
     return 0
+  fi
+  # A run a person took over: no stage is tracked from here on, and the
+  # gate, when there is one, follows.
+  if [ "$_ST_AUTOPILOT" = "done" ]; then
+    # The handover time is the facts line's last field: read without a
+    # process, as every per-row reader here must (conventions/shell.md).
+    handover=${_ST_APFACTS##*$'\t'}
+    case "$handover" in
+      '' | -) ;;
+      *) printf '<span class="badge">taken over by a person</span> ' ;;
+    esac
   fi
   case "$_ST_GATE" in
     waiting) printf '<span class="badge warn">design at the gate</span>' ;;

@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-11-04
+reviewed_at: 2026-11-08
 ---
 # Task
 
@@ -233,7 +233,7 @@ lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`c
 `none`, `none (required for T4)`; the page asks it `cheap`, which does not resolve the knowledge, so it shows
 `not checked (…)` where the gates would say `current`), `_task_worktree_note` and the task base; an autopilot run as
 `_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time,
-and the run's phase — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
+the run's phase, and when a person took it over — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
 (`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
 gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
 awk pass (`_status_task_rows`), so a renamed key empties a column there too. At a terminal
@@ -316,10 +316,14 @@ their diff follows the interdiff (adr-20261029-a-global-knowledge-edit-narrows-a
 `task changes`, because ADR-0022 keeps that one an inventory from an explicit `--base`.
 
 **An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
-`jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode` and
-`autopilot_phase`, which `task set` refuses like every other script-owned key, and a journal file in
+`jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode`,
+`autopilot_phase` and `autopilot_handover`, which `task set` refuses like every other script-owned key, and a journal file in
 the workspace. The only rule it enforces is the repair limit — two per run, a third refused with
-exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A run changes none of
+exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A stopped run ends
+in a draft, a `resume`, or a `handover` — a person taking the task over: the run is `done`,
+`autopilot_handover` is recorded and `start` refuses from then on, so a handover buys no repairs
+(adr-20261108-a-person-takes-over-a-stopped-run). "At the limit" is one predicate,
+`_task_autopilot_at_limit`, which the commands and the status page's stop card ask. A run changes none of
 the completion gates: a task on autopilot meets the same findings and receipt checks as any other.
 `stage` is also where a person's pause request is honoured
 (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): it takes the request out of the
@@ -338,7 +342,7 @@ same "one message for the wave" the coordinator gives in chat. The key is never 
 the run was.
 
 **A run's stops and ends leave the machine, but never through the journal**
-(adr-20261009-autopilot-stops-reach-telegram). `stop`, `end`, and an unattended run's `approve` and
+(adr-20261009-autopilot-stops-reach-telegram). `stop`, `end`, `handover`, and an unattended run's `approve` and
 `decide` call `_task_autopilot_notify` after their journal line, and `notify.sh` sends a Telegram
 message from a detached process when the person set the local keys. Two things here are easy to
 undo by accident: the sender records its outcome in the task's `notify` file, never in `autopilot`,

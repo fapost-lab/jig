@@ -16,7 +16,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-consolidate/SKILL.md
 summary: "Why an unattended autopilot run asks nothing and records its defaults in the pull request, and why agent.git: merge merges only on green CI at the shipped commit, never past branch protection."
-reviewed_at: 2026-09-22
+reviewed_at: 2026-11-08
 ---
 # An unattended run asks nothing, and a finished change merges itself once CI passed, never past the forge's rules
 
@@ -106,3 +106,5 @@ adr-20260921-agent-git-rights-are-a-local-setting.
   human — the safe side of ADR-0040's ancestry rule.
 - Reverting the mechanism is removing a level, two keys and two journal events; a change already
   merged is reverted like any other, not by this.
+
+> **Amendment (2026-11-08).** Exhausted repairs end in a draft for a run *nobody takes over*. When a person takes the task on, `handover` ends the run; the gate is then theirs, the ship goes by `agent.git`, and every completion gate is asked as for any task (adr-20261108-a-person-takes-over-a-stopped-run).

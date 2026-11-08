@@ -129,6 +129,22 @@ the run a new direction. It carries your answer into the run's record word for w
 lists it under **Resumed on an answer** — if you see an answer there you never gave, the agent
 resumed itself.
 
+### Taking a stopped run over
+
+You can finish a stopped task yourself, or tell the agent to go on with it without autopilot. Say so
+to the agent, and it records your words:
+
+```
+jig task autopilot <task-id> handover --by human --answer "<your words>"
+```
+
+The run ends, and the task stops waiting for you on the status page and in `jig status`
+(`autopilot=handed-over`). From then on the design approval is yours: if the design changed, the
+page still asks you to approve it. The task ships at your own git level. A task that was handed over
+never starts a new run, so it gains no new attempts at fixing. The report lists your words under
+**Taken over by a person**, and a Telegram message says it happened: if you see one you never sent,
+the agent took the run over by itself.
+
 ### Pausing a run yourself
 
 To stop a run that needs nothing from you — you want to look at something first, or need the
@@ -161,8 +177,8 @@ with the size of the edit and the command that shows it, and the pull request ca
 block. The agent never approves its own edit, so the new text waits for you in `jig-accept`; the
 block does not stop the run or the merge.
 
-`jig status` marks a task that is running with `autopilot=on`, and one waiting for you with
-`autopilot=stopped`.
+`jig status` marks a task that is running with `autopilot=on`, one waiting for you with
+`autopilot=stopped`, and one a person took over with `autopilot=handed-over`.
 
 ## Watching a run
 
@@ -193,6 +209,7 @@ third is what the agent needs, chose, or how the run ended. The mark says which:
 | `⛔` | A run without stops stopped — nothing waits for you; it ends as a draft pull request |
 | `✅` | The run ended: merged, not merged and why, or ready for your commit — with the number of small review findings left open and the task that holds them (`2 open findings → task fix-login-redirect-findings`), and the pull request link, when there are any |
 | `🤖` | A run without stops approved its own design, or decided something for you |
+| `👤` | A person took a stopped run over; the message quotes their words |
 
 Nothing is sent when the run starts, moves to the next stage or fixes something: those need nothing
 from you.
@@ -344,7 +361,8 @@ A task you work on by hand, with no autopilot run of its own, is still yours to 
 
 If you are present and answer a run that was already stopped for a decision, the agent can
 record your exact answer and continue without gaining more attempts to fix a failing change.
-A stop after the repair limit still ends in a draft. If a risky design changed while the run
+A stop after the repair limit still ends in a draft, unless you [take the task over](#taking-a-stopped-run-over).
+If a risky design changed while the run
 was stopped, the agent's new approval remains labeled as its own in the pull request; your
 answer to one decision is not treated as approval of the whole design.
 
