@@ -378,8 +378,8 @@ _verify_covers() {
 
 # _verify_covers_resolve <installed-dir> <covers> <narrowed> — the covers of
 # _verify_covers, each followed to the profile that finally runs the check:
-# `warehouse covers laravel:tests` and `laravel covers php:tests` make php's
-# tests warehouse's, so php's skip names warehouse and php.map reaches the
+# `myapp covers laravel:tests` and `laravel covers php:tests` make php's
+# tests myapp's, so php's skip names myapp and php.map reaches the
 # profile that runs them. Prints `<profile><TAB><check><TAB><runner><TAB><depth>`,
 # <depth> the number of covers between them. A chain that comes back to where
 # it started runs the check nowhere: those covers are dropped with a warning,

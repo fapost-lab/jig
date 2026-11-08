@@ -126,8 +126,8 @@ run. `<upper> covers <lower>:<check>` holds when:
   keeps its tests.
 
 When several profiles cover the same check, the first in run order takes it. Covers chain: with
-`warehouse` declaring `covers: [laravel:tests]` over `laravel`'s `covers: [php:tests]`, php's tests
-are warehouse's, and php's skip names warehouse. A chain that comes back to where it started runs
+`myapp` declaring `covers: [laravel:tests]` over `laravel`'s `covers: [php:tests]`, php's tests
+are myapp's, and php's skip names myapp. A chain that comes back to where it started runs
 the check nowhere, so its covers are dropped with a warning and every profile in it keeps its
 check.
 

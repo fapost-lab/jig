@@ -837,27 +837,27 @@ test_profile_laravel_fails_on_a_broken_php_map_it_reads() {
 }
 
 test_profile_laravel_tests_go_to_a_project_profile_with_php_map() {
-  # The warehouse case: a project's profile over stock laravel takes laravel's
+  # A project profile over a stock profile: one over stock laravel takes laravel's
   # tests, and so php's, which laravel covers; php.map follows them all the way.
   _laravel_php_install
   _artisan_stub 0 artisan.log
   _phpunit_stub phpunit.log
-  mkdir -p .ai/profiles/warehouse .ai/verify
-  printf 'name: warehouse\ndescription: the project runs its own suite.\nscope: [changed, map]\ncovers: [laravel:tests]\n' \
-    > .ai/profiles/warehouse/profile.yaml
+  mkdir -p .ai/profiles/myapp .ai/verify
+  printf 'name: myapp\ndescription: the project runs its own suite.\nscope: [changed, map]\ncovers: [laravel:tests]\n' \
+    > .ai/profiles/myapp/profile.yaml
   # shellcheck disable=SC2016  # a script written for the stub to expand, not this shell
-  printf '#!/usr/bin/env bash\necho "warehouse: mapped=$(cat "${JIG_VERIFY_MAPPED:-/dev/null}" | tr "\\t\\n" ":;")"\nexit 0\n' \
-    > .ai/profiles/warehouse/verify.sh
-  printf 'profiles: [laravel, php, warehouse]\nadapters: [claude, codex]\n' > .ai/config.yaml
+  printf '#!/usr/bin/env bash\necho "myapp: mapped=$(cat "${JIG_VERIFY_MAPPED:-/dev/null}" | tr "\\t\\n" ":;")"\nexit 0\n' \
+    > .ai/profiles/myapp/verify.sh
+  printf 'profiles: [laravel, php, myapp]\nadapters: [claude, codex]\n' > .ai/config.yaml
   printf 'resources/js/** ALL\n' > .ai/verify/php.map
   _laravel_php_committed
   mkdir -p resources/js
   printf 'x\n' > resources/js/app.js
   run jig verify --changed
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "laravel: artisan test: skip (scope: covered by warehouse, laravel:tests)"
-  assert_contains "$OUT" "php: phpunit: skip (scope: covered by warehouse, php:tests)"
-  assert_contains "$OUT" "warehouse: mapped=resources/js/app.js:ALL;"
+  assert_contains "$OUT" "laravel: artisan test: skip (scope: covered by myapp, laravel:tests)"
+  assert_contains "$OUT" "php: phpunit: skip (scope: covered by myapp, php:tests)"
+  assert_contains "$OUT" "myapp: mapped=resources/js/app.js:ALL;"
   assert_contains "$OUT" "map .ai/verify/php.map)"
   assert_no_file artisan.log
   assert_no_file phpunit.log
@@ -866,14 +866,14 @@ test_profile_laravel_tests_go_to_a_project_profile_with_php_map() {
 test_profile_laravel_explain_plans_its_tests_covered() {
   _laravel_install
   _artisan_stub 0 artisan.log
-  JIG_VERIFY_COVERED="tests=warehouse"
+  JIG_VERIFY_COVERED="tests=myapp"
   JIG_VERIFY_EXPLAIN=1
   export JIG_VERIFY_COVERED JIG_VERIFY_EXPLAIN
   run bash .ai/profiles/laravel/verify.sh
-  assert_contains "$OUT" "PLAN laravel: artisan test: skip (scope: covered by warehouse, laravel:tests)"
+  assert_contains "$OUT" "PLAN laravel: artisan test: skip (scope: covered by myapp, laravel:tests)"
   unset JIG_VERIFY_EXPLAIN
   run bash .ai/profiles/laravel/verify.sh
   unset JIG_VERIFY_COVERED
-  assert_contains "$OUT" "laravel: artisan test: skip (scope: covered by warehouse, laravel:tests)"
+  assert_contains "$OUT" "laravel: artisan test: skip (scope: covered by myapp, laravel:tests)"
   assert_no_file artisan.log
 }

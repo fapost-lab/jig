@@ -47,7 +47,7 @@ check by its role name. That is several phases away. This decision is its first 
   covering profile applies to the project (`profiles_applies`: its `detect` is `always`, absent, or
   matches — `laravel` without an `artisan` covers nothing, as #411's artisan test did), and the
   covered profile lists the check under `checks`. A cover of an unnamed check is a warning and the
-  check runs. The first covering profile in run order wins. Covers chain (`warehouse` over
+  check runs. The first covering profile in run order wins. Covers chain (`myapp` over
   `laravel` over `php`): each is followed to the profile that finally runs the check
   (`_verify_covers_resolve`), and a chain that returns to its start is dropped with a warning,
   since it would run the check nowhere.
@@ -98,7 +98,8 @@ check by its role name. That is several phases away. This decision is its first 
 ## Consequences
 
 - A project profile replaces a stock profile's tests with one line, and the stock profile stays
-  managed and keeps receiving upgrades. The warehouse case is `covers: [laravel:tests]`.
+  managed and keeps receiving upgrades. A project profile over stock `laravel` is
+  `covers: [laravel:tests]`.
 - A Laravel project runs its suite once, with or without `php.map` and `laravel.map`.
 - A covering profile whose own check cannot run (its tool is missing) leaves the suite unrun; its
   skip is not a `scope:` skip, so the run is not read as narrowing.
