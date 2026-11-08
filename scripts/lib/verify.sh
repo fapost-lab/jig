@@ -351,8 +351,10 @@ _verify_covers() {
         jig_warn "profile '$u' covers '$item', which is not <profile>:<check>; ignored"
         continue
       fi
+      # The letters are spelled out: a range such as a-z follows the locale,
+      # and under some (macOS en_US.UTF-8) it admits capitals.
       case "$check" in
-        *[!a-z0-9_-]*) jig_warn "profile '$u' covers '$item', which is not <profile>:<check>; ignored"; continue ;;
+        *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) jig_warn "profile '$u' covers '$item', which is not <profile>:<check>; ignored"; continue ;;
       esac
       [ "$b" != "$u" ] || continue
       case "$run" in
