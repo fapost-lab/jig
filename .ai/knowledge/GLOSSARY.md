@@ -67,6 +67,14 @@ removed by each write. Its branch, the **write branch** (`spec/<id>`, `knowledge
 what waits until it lands (adr-20261104-a-write-goes-in-jigs-own-tree). Not a Task Worktree: no
 task owns it, and nobody ever works in it. Informal synonyms: write tree.
 
+## Review Tree
+
+The detached git worktree at `<git.worktree_root>/.pr-<n>` that `jig pr fetch` makes of a
+pull request's head for the `jig-pr-review` skill to read, with the head and base in
+`refs/jig/pr/<n>/`. Only read: nothing in it is run, and `jig pr cleanup` removes it with its
+refs and record (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone). Not a
+Task Worktree: no task owns it, and housekeeping leaves it alone. Informal synonyms: PR tree.
+
 ## Directory Link
 
 A link from one directory to another that bash sees as a symlink (`-L`, `find -type l`): a

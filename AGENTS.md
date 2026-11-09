@@ -76,6 +76,11 @@ writes the answers to their gitignored `.ai/config.local.yaml` through
 when a newer release is out, `jig upgrade`, and the steps the release asks for by hand; what would
 stop the upgrade is named to the person, never worked around.
 
+`jig-pr-review` reviews a colleague's pull request that is not a task: `jig pr fetch <url>`
+reads it in a detached worktree of this clone, the review follows `jig-review`'s method with the
+rules taken from the base and nothing of the head run, and the comments are shown as a draft
+word for word (`jig pr draft`) before anything is posted; `jig pr cleanup` takes it all back.
+
 The queue (`jig queue`) holds each task's priority, order and dependencies, and `jig queue next`
 advises from it. A task gets its priority when it is filed; to set priorities or order the tasks,
 start with the `jig-task` skill, which holds the `0`–`5` scale. The answer goes in the queue, not
