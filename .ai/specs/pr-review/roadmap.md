@@ -17,7 +17,7 @@ step done by hand — fetch, review, second check, draft, account, post, read-ba
   specification found, a blind second check of P0–P2, personal-rule findings in a group of their
   own, the draft shown verbatim with the login it would post as. (after: `review-smells-and-two-axes`
   — the method this skill reuses is being changed there)
-- [ ] Post the draft to GitHub — `jig pr comments check` (line positions from the forge's diff,
+- [ ] `pr-review-github-post` — Post the draft to GitHub — `jig pr comments check` (line positions from the forge's diff,
   out-of-diff comments moved to the summary, the size ceiling) and `jig pr comments post` (account
   proposed by access, payload through a file, refused unless its hash matches what was shown and
   the PR's head is still the reviewed one, a hidden marker, read-back of what landed, idempotent on
