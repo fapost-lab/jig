@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-07
+reviewed_at: 2026-11-09
 ---
 # Housekeeping
 
@@ -77,6 +77,10 @@ evidence it inferred itself.
   `base-unreleased` the workspace is kept anyway. When git succeeds but the directory remains —
   Windows leaves the Directory Links in it — only links and empty directories are removed
   there; anything else is reason `leftover` (ADR-0037).
+- Not a **Review Tree**'s: a detached `<git.worktree_root>/.pr-<n>` and `refs/jig/pr/<n>/*`, made
+  by `jig pr fetch`, are neither a task's worktree nor a branch, so housekeeping neither removes
+  nor reports them; `jig pr list` shows them and `jig pr cleanup` takes them back
+  (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone).
 - Deleting the **branches Jig made** once their work landed — the other deletion outside
   `.ai/`, and git performs it too (`_hk_branch_sweep`,
   adr-20261007-a-merged-branch-leaves-with-its-work). After the task loop, in the main checkout

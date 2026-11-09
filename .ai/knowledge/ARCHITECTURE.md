@@ -91,7 +91,7 @@ adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci), `jig_verify_bus
 `jig_verify_busy_ttl` and `jig_verify_busy_holder` ("is `jig verify` running in this clone, and where" —
 `verify` holds the record, and `upgrade` will not replace the scripts of a checkout it is running in), and
 `jig_worktree_leftover` ("clear what `git worktree remove` left: links and empty directories only" —
-housekeeping for a task worktree, `owntree.sh` for its tree). One command
+housekeeping for a task worktree, `owntree.sh` for its tree, `pr.sh` for a review tree). One command
 library never sources another: `context`
 and `knowledge` share code only through `common.sh`.
 
