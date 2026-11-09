@@ -16,7 +16,7 @@ staging. Done when: in a test project with `git.flow: staging` and `git.staging_
 request into staging, the pull request lands on staging — merged on the forge, or merged directly when
 it conflicts — and `jig status` shows the task on staging, with no pull request into the base branch.
 
-- [ ] Choose a flow — `git.flow: direct | staging` in the shared config with the bricks'
+- [ ] `choose-git-flow` — Choose a flow — `git.flow: direct | staging` in the shared config with the bricks'
   defaults and overrides (`staging_branch`, `staging_land`, `staging_review`, `promote_merge`); `jig init`
   and `jig-setup` describe both flows in plain words and offer `staging` when origin has a
   `stage`/`staging` branch; `direct` stays the default.
