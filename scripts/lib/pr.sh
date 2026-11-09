@@ -35,12 +35,13 @@ cmd_pr() {
 
 # _pr_git <dir> <args>... — git in <dir> with hooks pointed at /dev/null (a file,
 # so no hook can exist under it), submodules not followed and LFS objects not
-# downloaded. MSYS2_ARG_CONV_EXCL keeps Git Bash from rewriting a refspec that
-# holds both `/` and `:` as a path list (conventions/shell.md).
+# downloaded. No MSYS2_ARG_CONV_EXCL here: under Git Bash it would hand <dir>
+# to git as an MSYS path (`/c/Users/...`) that git cannot change into, and the
+# refspecs and ref names passed here start with `refs/`, which MSYS leaves alone.
 _pr_git() {
   local dir="$1"
   shift
-  GIT_LFS_SKIP_SMUDGE=1 MSYS2_ARG_CONV_EXCL='*' \
+  GIT_LFS_SKIP_SMUDGE=1 \
     git -C "$dir" -c core.hooksPath=/dev/null -c submodule.recurse=false "$@"
 }
 
