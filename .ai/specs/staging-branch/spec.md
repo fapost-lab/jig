@@ -1,4 +1,4 @@
-# Git flows — a project picks how its tasks travel; `github` and `staging` ship
+# Git flows — a project picks how its tasks travel; `direct` and `staging` ship
 
 Depth: normal — with the independent failure hunt: the idea changes a task's lifecycle and what
 guards a merge into the default branch, so an outside read is worth its cost.
@@ -84,18 +84,23 @@ The human's words (translated from Russian, meaning kept):
 ## Scope and non-goals
 
 - In scope:
-  - `git.staging_branch` and its offer in `jig init` / `jig-setup`.
+  - `git.flow` with the flows `direct` and `staging`, the bricks' keys (`git.staging_branch`,
+    `git.staging_land`, `git.staging_review`, `git.promote_merge`), and the offer in `jig init` /
+    `jig-setup`.
   - `jig task ship` in a staging project: commit, push the task branch, open a pull request into
     staging for colleagues' review; no pull request into the base branch yet.
   - Landing the pull request on staging: merged on the forge when it merges cleanly, a direct merge
-    into staging only when it conflicts; without an approval Jig warns and asks whether to merge
-    without review or wait.
-  - "Prepare for prod" for one task: refuse unless the task is on staging and not behind it, bring
-    the base branch in on conflict, open the pull request into the base branch, print its link.
+    into staging only when it conflicts; without an approval, by `staging_review`: Jig warns and
+    asks whether to merge without review or wait (`ask`), waits (`require`), or lands without
+    asking (`none`). With `staging_land: external` CI lands the task and Jig only reads it.
+  - "Prepare for prod" for one task, for several named with `--commit <sha> <id>…`, or for all
+    with `--all`, each handled on its own: refuse unless the task is on staging and not behind it, bring
+    the base branch in on conflict, open the pull request into the base branch, print its link. `promote_merge` decides who
+    merges it.
   - Staging state in `jig task list --json`, `jig status` and housekeeping: on staging, behind
     staging, promoted; a pull request merged into staging is no longer `wrong-base`.
-  - Autopilot asks at an unapproved staging pull request (unattended: stops, "waiting for review")
-    and stops after it lands ("waiting for QA"); it never approves and never promotes.
+  - Autopilot asks at an unapproved staging pull request (unattended: stops, parked with
+    reason `review`) and stops after it lands (parked with reason `signal`); it never approves and never promotes.
   - Drift report: tasks on staging that nobody promoted for long, and staging work no live task owns.
 - Not doing:
   - Jig UI's card move (another developer's project). It is feasible: "prepare for prod" is a
@@ -132,11 +137,13 @@ The decisions below this subsection were made before the catalogue and still hol
   - `staging_branch` — one intermediate branch a task lands on before the base branch, or none;
   - `staging_land` — how a task lands on the staging branch: `pr` (a pull request, merged directly into the
     staging branch only when it conflicts) or `external` (CI merges into the staging branch; Jig only reads it);
-  - `staging_review` — whether an approval is needed before landing on the staging branch: `ask`, `require`
-    or `none`;
+  - `staging_review` — whether an approval is needed before landing on the staging branch: `ask` (warn and
+    ask, the decision below), `require` (wait for an approval, as an unattended run does) or `none`
+    (land without asking);
   - `promote_merge` — who merges the pull request into the base branch that "prepare for prod" opens:
     `human` (Jig stops at the link) or `auto` (the forge merges it on green CI).
-- **Two named flows ship**: `github` — the base branch only, today's Jig and the default; and
+- **Two named flows ship**: `direct` — a task goes straight to the base branch, today's Jig and
+  the default; and
   `staging` — the base branch plus a staging branch, defaults `staging_land: pr`, `staging_review: ask`,
   `promote_merge: human`. The
   shared `.ai/config.yaml` names one with `git.flow`; `staging` needs `git.staging_branch` (the
@@ -145,27 +152,36 @@ The decisions below this subsection were made before the catalogue and still hol
   words and offer `staging` when origin has a `stage`/`staging` branch. This changes the decision
   below that named `git.staging_branch` alone as the switch: it is now the flow's parameter.
 - **The flow knows nothing about QA.** Promotion waits for a signal from outside Jig — a person's
-  word or a green CI run — whoever gives it. This changes the decision below on two states: a
-  task waiting at the staging branch has one state, *parked*, whose reason Jig derives from git and the
+  word or a green CI run — whoever gives it. A task waiting at the staging branch has one state, *parked*, whose reason Jig derives from git and the
   forge (its staging pull request waits for review, or it is on the staging branch and waits for the signal).
   It is not the current task and holds no queue or concurrency slot, as decided below for both.
-- **Parked is derived, never written**, the way remote merge state is today: a task is parked
-  when its status is `ready`, its branch has a pull request into the staging branch or is contained in the
-  staging branch, and it has no pull request into the base branch yet. Its reason is one of `review` (the staging branch pull
-  request is open without an approval), `landing` (it may land, but the person's `agent.git` is
-  below `merge`, so the person lands it) and `signal` (it is on the staging branch and waits for "prepare
-  for prod"). It ends in one of two ways: `jig task resume <id>` makes it `active` for a fix,
-  which ships to the staging branch again and parks again; or "prepare for prod" opens the pull request
-  into the base branch, and the task leaves the staging side of the flow and is judged as any task with an
-  open pull request is today. Unlike a pause, which a person writes in one checkout, parking is
-  read from git and the forge, so a colleague, a CI runner and a UI see the same thing.
+- **Parked is derived from the branch and its pull requests alone, never written**, the way
+  remote merge state is today: a task is parked when its branch `task/<id>` has an open pull
+  request into the staging branch or is contained in the staging branch, and it has no pull
+  request into the base branch yet. Task status and `agent.git` are local to one checkout, so
+  neither is part of it. The reason anyone can read is `review` (the staging pull request is still
+  open) or `signal` (the task is on the staging branch and waits for "prepare for prod"). The
+  owner's checkout adds what only it knows: the hint `landing` (the pull request may land, but
+  the person's `agent.git` is below `merge`, so the person lands it), and that a task resumed for
+  a fix is `active`, not parked. A colleague, a CI runner and a UI read that task as parked until
+  the fix ships; that is accepted, since only the owner's workspace knows the work has resumed.
+  Parking ends in one of two ways: `jig task resume <id>` makes the task `active` for a fix, which
+  ships to the staging branch again and parks again; or "prepare for prod" opens the pull request
+  into the base branch, and the task leaves the staging side of the flow and is judged as any task
+  with an open pull request is today. Unlike a pause, which a person writes in one checkout,
+  parking is read from git and the forge, so a colleague, a CI runner and a UI see the same state
+  and the same shared reason.
 - **`promote_merge: auto` is a merge, deferred.** Jig does not merge; it switches on the forge's
   auto-merge, and the pull request into the base branch merges itself on green CI. In a person's checkout
   switching it on needs `agent.git: merge`, the same rule as landing on the staging branch; below it Jig
   opens the pull request and says auto-merge was not switched on and why. On a CI runner, which
   has no `agent.git`, the flow's setting decides: the team put the token in the pipeline and chose
-  `auto`. A promotion that raises the declared version is a release (the 2026-10-26 ADR), and
-  `release.merge: human` leaves its merge to the person whatever `promote_merge` says. Rejected:
+  `auto`. A promotion that raises the declared version is a release
+  (`20261026-a-task-that-raises-the-version-is-a-release`), and `promote_merge: auto` never applies
+  to it, in a checkout or on a CI runner: `release.merge` is local-only, so a runner never has it,
+  and a guard that exists in one place only is none. Jig opens the pull request, switches nothing
+  on and says the merge is a person's; a `major` release opens as a draft whose body starts with
+  `Needs a human: major release?`, as that ADR requires. Rejected:
   `auto` from the shared config with no `agent.git` read — one shared key would hand every
   developer's agent the right to merge into the base branch, which `agent.git` keeps personal on purpose;
   `auto` on CI only — a team that promotes by hand but wants auto-merge would lose it.
@@ -210,7 +226,9 @@ The decisions below this subsection were made before the catalogue and still hol
     a hotfix path, a back-merge into the train and a rule for cutting the next one, repeats what
     an epic already does, and no real team has asked for it. It can be added later as a third
     named flow on the epic mechanism; nothing here closes that door;
-  - more than one staging branch (`dev → stage → prod`): the brick allows it, no team has asked for it.
+  - more than one staging branch (`dev → stage → prod`): the brick allows it, no team has asked for it;
+  - the name `github` for the default flow: it would read as wrong in a GitLab project, and Jig
+    serves both forges.
 
 - Staging is an option of a project, not the default flow: a project without it is unchanged.
 - "Tested on staging" is a signal from outside Jig — a QA person's word, or a staging pipeline
@@ -238,28 +256,30 @@ The decisions below this subsection were made before the catalogue and still hol
 - Colleagues' review is the team's usual step, not a rule: not every task goes through it. Before
   either merge into staging, Jig reads the pull request's approval from the forge. Approved — it
   merges. Not approved, or the forge cannot say (no `gh`/`glab`, no forge) — it warns and asks
-  the person: merge without review, or wait for review. Waiting leaves the task in "waiting for
-  review". An unattended run, with nobody to ask, waits. Rejected: refusing an unapproved pull
+  the person: merge without review, or wait for review. Waiting leaves the task parked with
+  reason `review`. An unattended run, with nobody to ask, waits. Rejected: refusing an unapproved pull
   request — it blocks the tasks the team deliberately ships without review; merging without a
-  word — the review the team relies on for most tasks would be skipped unseen.
+  word — the review the team relies on for most tasks would be skipped unseen. *Changed by the
+  Flow model:* this is `staging_review: ask`, the default; the rejections are of those behaviours
+  as the default, and a team that wants them sets `require` or `none` on purpose.
 - The agent resolves any conflict with staging, its task's files or not, and pushes — what the
   team's people do by hand today; QA checks staging. The resolution is named in the ship report
   and in a comment on the pull request. Rejected: stopping on conflicts in code the task does
   not own (failure mode 2) — the team accepts that risk on staging already.
-- A task whose staging pull request waits for review, and a task on staging waiting for QA, each have
-  a state of their own; for both: it is not the current task, does not
+- A parked task (two states when first decided, one since the Flow model) has a state of its
+  own: it is not the current task, does not
   hold `jig queue next` or a concurrency slot, and `jig status` lists it on its own line
   (failure mode 10). `jig task resume <id>` brings it back to work — for a fix QA asked for, or to
   answer a reviewer; a commit cannot be the trigger, since the work has to be resumed before
   anything is committed. Rejected: a plain pause — the UI and
-  `jig status` could not tell "waiting for QA" from any other pause.
+  `jig status` could not tell a parked task from any other pause.
 - A task QA rejects is fixed in the same task and shipped to staging again — as a new pull request
   into staging, reviewed like the first. The fix takes implement, a review of what changed since
   the last review (the re-review Jig already has), verify, ship — not the whole route again; Jig takes nothing off
   staging and has no "unstage" command. Failure mode 7 (a revert leaves a task "on staging") is
   accepted: the team does not revert on staging.
 - The work is built on an epic, `epic/staging-branch`, and released once as a `minor` version:
-  the mode is off until `git.staging_branch` is set, so nothing changes for existing projects, and
+  the mode is off until `git.flow` names `staging`, so nothing changes for existing projects, and
   the human wants the staging flow to arrive whole rather than a staging step without its promotion.
 - Everything shared — on staging, behind staging, the drift report, the state a UI reads — is read
   from git and the forge by branch name (`task/<id>`), never from one checkout's workspace
@@ -274,8 +294,8 @@ The decisions below this subsection were made before the catalogue and still hol
   to; merging staging into the task branch to clear the conflict — it would carry other tasks'
   untested work into the base branch; a throwaway `stage/<id>` branch with a second pull request — a
   second review of the same change, with one more branch to clean up.
-- The staging branch is named in the shared `.ai/config.yaml` as `git.staging_branch`; empty means
-  off. `jig init` and `jig-setup` look for a `stage`/`staging` branch on origin and offer to turn
+- The staging branch is named in the shared `.ai/config.yaml` as `git.staging_branch`, the
+  `staging` flow's parameter (Flow model); the flow is off unless `git.flow` names it. `jig init` and `jig-setup` look for a `stage`/`staging` branch on origin and offer to turn
   it on; the agent writes the key after a yes. Rejected: turning it on whenever such a branch
   exists — some projects keep a branch by that name for something else.
 - "Prepare for prod" works on one task: it opens that task's pull request into the base branch, merging
@@ -285,7 +305,9 @@ The decisions below this subsection were made before the catalogue and still hol
   person who deploys merges all of them or one at a time. Rejected: making it `jig-release` —
   a release today plans tasks not yet started and cuts them from an epic, while a staged task is
   started and cut from the base branch; the command would mean two different things by project setting,
-  and the team does not version a batch anyway. `jig-release` stays as it is.
+  and the team does not version a batch anyway. `jig-release` stays as it is. *Changed by the Flow
+  model:* a run may name several tasks or use `--all`; each is still handled on its own, with a
+  pull request of its own, and merging them together or apart stays the merger's choice.
 - Whether a task is on staging is derived from git, not stored (ADR-0005): its branch tip is
   contained in origin's staging branch. A task with commits of its own after that — a fix QA asked
   for — is "behind staging", and shipping it again merges the new commits in the same way. Merges
@@ -295,7 +317,7 @@ The decisions below this subsection were made before the catalogue and still hol
 - Who may land a task on staging follows `agent.git`, with staging treated like any shared branch:
   merging the pull request on the forge and the direct merge pushed to staging both need level
   `merge`. Below it, `jig task ship` opens the pull request into staging and stops, saying the task
-  is not on staging yet; the person lands it. The task is "waiting for QA" only once git shows it
+  is not on staging yet; the person lands it. The task is parked with reason `signal` only once git shows it
   on staging — never because the ship step ran. Rejected: letting `push` cover the direct merge —
   a push to a branch the team shares is a merge in effect, not the task's own push.
 - The knowledge decision (ADR-0030) is recorded before the task's first ship to staging, since
@@ -315,10 +337,12 @@ The decisions below this subsection were made before the catalogue and still hol
 - Pushing a merge that contains a pull request's head into its base marks the pull request as
   merged — true of GitHub as far as known; not checked for GitLab, where it may stay open and
   need closing with a note.
-
 - The team's staging branch accepts direct pushes — taken from the human's account of their
   practice; tested by the first phase-1 run against a real project.
 - Agents resolving staging conflicts in others' code cause no more harm than people doing it by
   hand today — taken at normal depth; tested by the regressions QA reports in the first weeks.
 - A CI runner can run Jig's promote command (bash, git, `gh`/`glab`, forge token) — not checked
   against any real pipeline.
+- The forge has auto-merge enabled, a repository setting on GitHub, which `promote_merge: auto`
+  relies on — not checked against any real project; without it Jig should say so and stop at the
+  link.
