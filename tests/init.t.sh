@@ -1062,3 +1062,19 @@ test_init_rerun_keeps_the_section_record_when_markers_were_removed() {
   jig init --from "$JIG_HOME" >/dev/null
   assert_eq "$recorded" "$(sed -n 's/^instructions\.section: //p' .ai/manifest)"
 }
+
+test_init_offers_the_staging_flow_only_when_origin_has_the_branch() {
+  fixture_repo
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "git flow:"
+
+  fixture_repo
+  git update-ref refs/remotes/origin/staging HEAD
+  run jig init --from "$JIG_HOME"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "origin has a branch named staging"
+  assert_contains "$OUT" "the direct flow"
+  # An offer, never a write.
+  assert_eq "" "$(sed -n 's/^git\.flow: //p' .ai/config.yaml)"
+}

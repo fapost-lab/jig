@@ -190,6 +190,14 @@ The branch a task was cut from and has to land on, recorded as `base_branch` in 
 judgement of whether a task landed is made against it; work merged anywhere else is flagged
 `wrong-base` (ADR-0039). Informal synonyms: base, target branch.
 
+## Git Flow
+
+How a project's tasks travel to the base branch, named by `git.flow`: `direct` (straight there, the default) or `staging` (through a Staging Branch first). A flow is assembled from bricks, the `git.staging_*` and `git.promote_merge` keys, and a project picks a named flow rather than assembling one. Jig's own branches and `agent.git` are the same in every flow.
+
+## Staging Branch
+
+The branch `git.staging_branch` names, on which a task lands for testing before the base branch in the `staging` Git Flow. Nothing reaches the base branch from it: a task goes there from its own branch. Informal synonyms: stage, staging.
+
 ## Epic Branch
 
 `epic/<spec-id>`: the branch a Specification released once, at the end, is built on. Its phases'

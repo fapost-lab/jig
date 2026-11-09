@@ -28,6 +28,11 @@ adapters: [claude, codex]
 git.base_branch: main                 # merge target for ancestry checks
 git.branch_per_task: true             # `jig task start` creates and checks out a branch
 git.branch_template: task/{id}        # {id} is the task id; validated by git itself
+# git.flow: direct                    # direct (a task goes straight to the base branch) | staging (through a staging branch first)
+# git.staging_branch: staging         # the staging flow's branch; the flow needs it
+# git.staging_land: pr                # pr | external (CI merges into the staging branch)
+# git.staging_review: ask             # ask | require | none: an approval before landing on the staging branch
+# git.promote_merge: human            # human | auto: who merges the pull request into the base branch
 # git.worktree_root: ../<project>.worktrees   # where `jig task start --worktree` puts worktrees
 # git.delete_merged_branches: true    # Jig deletes a branch it made once its work has landed
 # worktree.carry: [.env.testing]        # extra paths copied into a new worktree, beyond profiles
