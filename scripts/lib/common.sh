@@ -2279,10 +2279,12 @@ jig_branch_recorded() {
     done < <(
       for f in "$ai"/workspace/tasks/*/state "$ai"/runtime/trash/*/*/state; do
         [ -f "$f" ] || continue
-        case "$f" in
-          "$ai"/runtime/trash/*) where=trash ;;
-          *) where=workspace ;;
-        esac
+        # An `if`, not a `case`: bash 3.2 cannot parse a case pattern's `)`
+        # inside a process substitution.
+        where=workspace
+        if [ "${f#"$ai"/runtime/trash/}" != "$f" ]; then
+          where=trash
+        fi
         awk -v w="$where" -v d="$(basename "$(dirname "$f")")" '
           /^branch:/ { v = $0; sub(/^branch:[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v); print w "\t" d "\t" v; exit }
         ' "$f" 2>/dev/null || true
