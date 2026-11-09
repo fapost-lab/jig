@@ -5187,6 +5187,37 @@ test_task_ship_merge_puts_the_checkout_back_on_main_and_deletes_the_branch() {
   assert_branch_gone task/T-1
 }
 
+# Under a template with nothing before {id} the branch name alone says nothing;
+# the task's record does, and a merged ship leaves the branch gone all the same.
+test_task_ship_merge_deletes_a_recorded_branch_under_a_bare_id_template() {
+  task_setup_clean
+  ship_cfg git.branch_template '{id}'
+  git add .ai/config.yaml
+  git commit -q -m "fixture: bare id branch template"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  assert_eq T-1 "$(git symbolic-ref --short HEAD)"
+  ship_exclude_fixture
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: deleted branch T-1"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_branch_gone T-1
+}
+
 # A squash leaves the branch's commits off main; `git branch -d` still takes
 # it, against its upstream, because the local branch goes before origin's.
 test_task_ship_squash_merge_still_deletes_the_branch() {

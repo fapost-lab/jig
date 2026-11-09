@@ -2202,6 +2202,105 @@ jig_branch_is_jigs() {
   jig_valid_id "$mid"
 }
 
+# jig_branch_deletable <branch> — exit 0 when <branch> is Jig's to delete once
+# its work has landed: a name jig_branch_is_jigs calls Jig's, or, under a
+# `git.branch_template` with nothing before `{id}`, a branch a task record says
+# Jig made (jig_branch_recorded). Asked by the three sites that delete —
+# _hk_branch_sweep, jig_branch_leave, jig_ship_leave — and by nothing else:
+# jig_branch_is_jigs keeps its meaning for the readers that want upgrade
+# branches only (adr-20261007-a-merged-branch-leaves-with-its-work, amended
+# 2026-11-09).
+jig_branch_deletable() {
+  local template
+  jig_branch_is_jigs "$1" && return 0
+  # Never the base branch, whatever a record says.
+  [ "$1" != "$(cfg git.base_branch main)" ] || return 1
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    '{id}'*) ;;
+    *) return 1 ;;
+  esac
+  # Under git.branch_per_task: false Jig cuts no branch: `task start` records
+  # the one the person is on, and a task named after it — PROJ-123 started on
+  # the person's own PROJ-123 — would pass the name check. No record vouches
+  # for a branch there.
+  cfg_bool git.branch_per_task true || return 1
+  jig_branch_recorded "$1"
+}
+
+# The branches task records name as Jig's, one per line, read once per process
+# by jig_branch_recorded; _JIG_RECORDED_READ=0 asks for a fresh read, as the
+# sweep does after its run moved workspaces to trash.
+_JIG_RECORDED_BRANCHES=""
+_JIG_RECORDED_READ=0
+
+# jig_branch_recorded <branch> — exit 0 when a task's `state`, in the workspace
+# or in trash under any date, records <branch> as the task's branch, and
+# <branch> is the name `git.branch_template` gives that record's own id. Only
+# `task start` writes `branch:`, and it refuses a branch that already exists,
+# so the record names a branch Jig cut — except under `git.branch_per_task:
+# false`, where it records the branch the person was on, which is why
+# jig_branch_deletable does not ask here in that mode. The name check keeps out
+# a record of a branch other than the task's own. A trash directory may carry
+# a `-<n>` suffix (jig_trash_dest), so there its name is tried without it too.
+# A name that is not a valid id never counts (RULES.md). The state is read
+# with awk, not task.sh's reader: common.sh is loaded where task.sh is not.
+jig_branch_recorded() {
+  local b="$1" template suffix ai where dir branch id tail
+  [ -n "$b" ] || return 1
+  if [ "$_JIG_RECORDED_READ" != 1 ]; then
+    _JIG_RECORDED_BRANCHES=""
+    template=$(cfg git.branch_template "task/{id}")
+    suffix=""
+    case "$template" in
+      *'{id}'*) suffix=${template#*'{id}'} ;;
+    esac
+    ai="$JIG_PROJECT/$JIG_AI_DIR"
+    while IFS="$(printf '\t')" read -r where dir branch; do
+      [ -n "$dir" ] && [ -n "$branch" ] || continue
+      for id in "$dir" "-"; do
+        if [ "$id" = "-" ]; then
+          # The trash's collision suffix: `<id>-<n>`, digits only.
+          [ "$where" = trash ] || continue
+          tail=${dir##*-}
+          case "$tail" in
+            '' | *[!0-9]*) continue ;;
+          esac
+          [ "$tail" != "$dir" ] || continue
+          id=${dir%-*}
+        fi
+        jig_valid_id "$id" || continue
+        if [ "$branch" = "$id$suffix" ]; then
+          _JIG_RECORDED_BRANCHES="$_JIG_RECORDED_BRANCHES$branch
+"
+          break
+        fi
+      done
+    done < <(_jig_state_branches "$ai")
+    _JIG_RECORDED_READ=1
+  fi
+  jig_has_line "$b" "$_JIG_RECORDED_BRANCHES"
+}
+
+# _jig_state_branches <ai-dir> — one line per task state that records a
+# branch: `<workspace|trash><TAB><directory name><TAB><branch>`. A function of
+# its own so the process substitution that reads it holds a single call:
+# bash 3.2 re-parses the text of a process substitution when it runs it, and
+# trips over a case pattern or a quote in a comment there.
+_jig_state_branches() {
+  local ai="$1" f where
+  for f in "$ai"/workspace/tasks/*/state "$ai"/runtime/trash/*/*/state; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      "$ai"/runtime/trash/*) where=trash ;;
+      *) where=workspace ;;
+    esac
+    awk -v w="$where" -v d="$(basename "$(dirname "$f")")" '
+      /^branch:/ { v = $0; sub(/^branch:[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v); print w "\t" d "\t" v; exit }
+    ' "$f" 2>/dev/null || true
+  done
+}
+
 # jig_branch_checked_out <branch> — exit 0 when <branch> is checked out in any
 # worktree of this clone, this checkout included; also when git cannot list
 # them: an unanswered question keeps the branch.
@@ -2243,7 +2342,7 @@ jig_branch_checked_out() {
 jig_branch_leave() {
   local who="$1" b="$2" sha="$3" merged="${4-$3}" out tip
   cfg_bool git.delete_merged_branches true || return 0
-  jig_branch_is_jigs "$b" || return 0
+  jig_branch_deletable "$b" || return 0
   if jig_branch_checked_out "$b"; then
     printf '%s: kept branch %s: it is checked out in a worktree\n' "$who" "$b"
     return 0
@@ -2335,7 +2434,7 @@ jig_ship_leave() {
   JIG_SHIP_BACK_ON=""
   [ "$JIG_SHIP_MERGED" = 1 ] || return 0
   cfg_bool git.delete_merged_branches true || return 0
-  jig_branch_is_jigs "$b" || return 0
+  jig_branch_deletable "$b" || return 0
   [ "$b" != "$base" ] || return 0
   cur=$(git -C "$JIG_PROJECT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   if [ "$cur" = "$b" ]; then

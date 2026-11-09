@@ -80,8 +80,10 @@ evidence it inferred itself.
 - Deleting the **branches Jig made** once their work landed — the other deletion outside
   `.ai/`, and git performs it too (`_hk_branch_sweep`,
   adr-20261007-a-merged-branch-leaves-with-its-work). After the task loop, in the main checkout
-  only: a local branch or `origin/` ref that `jig_branch_is_jigs` calls Jig's (`jig/upgrade-*`,
-  `finish/<id>`, the task template's name), that no workspace left in place holds and no
+  only: a local branch or `origin/` ref that `jig_branch_deletable` calls Jig's (`jig/upgrade-*`,
+  `finish/<id>`, the task template's name; under a template with nothing before `{id}`, only a
+  branch a task record in the workspace or trash names — read afresh in the sweep, after this
+  run's purges moved records to trash), that no workspace left in place holds and no
   worktree has checked out, and that landed — a merged pull request, or ancestry into the
   default branch. `git branch -d` first, against the upstream still there, which is what lets a
   squash merge through (hence `fetch --no-prune`); when somebody else's prune took that upstream
