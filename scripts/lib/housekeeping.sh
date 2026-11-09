@@ -1145,8 +1145,10 @@ _hk_branch_forge_merged() {
 # landed and that nothing here still needs (adr-20261007-a-merged-branch-
 # leaves-with-its-work). <keep> lists the branches of the workspaces this run
 # leaves in place, one per line. A candidate is a local branch or an origin/
-# ref that jig_branch_is_jigs (common.sh) calls Jig's, is in <keep> under
-# neither name, and is checked out in no worktree. It has landed when the
+# ref that jig_branch_deletable (common.sh) calls Jig's — under a template
+# with nothing before `{id}`, by a task record in the workspace or in trash,
+# read afresh here since this run may have just moved workspaces there — is
+# in <keep> under neither name, and is checked out in no worktree. It has landed when the
 # forge reports its pull request merged (_hk_branch_forge_merged) — the only
 # way a squash merge shows — or when its tip is an ancestor of the default
 # branch. The deleting is jig_branch_leave's, with git's own `-d` first and,
@@ -1165,6 +1167,7 @@ _hk_branch_sweep() {
   local dry="$1" keep="$2" lvl def_ref remote_ok=0 remote_rights=0 heads="" b tip sha merged landed have_local have_track rsha out origin_go=()
   cfg_bool git.delete_merged_branches true || return 0
   [ "$(jig_config_clone_root)" = "$JIG_PROJECT" ] || return 0
+  _JIG_RECORDED_READ=0
   def_ref=$(jig_base_ref "$_HK_DEFAULT_BASE")
   [ -n "$def_ref" ] || return 0
   # origin is shared: housekeeping writes to it only for a person whose own
@@ -1186,7 +1189,7 @@ _hk_branch_sweep() {
   fi
   while IFS= read -r b; do
     [ -n "$b" ] || continue
-    jig_branch_is_jigs "$b" || continue
+    jig_branch_deletable "$b" || continue
     ! jig_has_line "$b" "$keep" || continue
     ! jig_branch_checked_out "$b" || continue
     landed=0

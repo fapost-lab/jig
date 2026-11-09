@@ -2022,7 +2022,7 @@ spec_ship_final() {
   sha=$(git -C "$JIG_PROJECT" rev-parse HEAD)
   jig_ship_merge "spec ship" "$JIG_SHIP_URL" "$sha" merge-commit
   # The finish branch goes with the release; the epic is never Jig's to delete
-  # (jig_branch_is_jigs, adr-20261007-a-merged-branch-leaves-with-its-work).
+  # (jig_branch_deletable, adr-20261007-a-merged-branch-leaves-with-its-work).
   jig_ship_leave "spec ship" "$head" "$default" "$sha"
 }
 

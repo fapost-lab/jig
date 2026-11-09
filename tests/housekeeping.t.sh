@@ -3814,6 +3814,98 @@ test_jig_branch_is_jigs_names_only_jigs_own_branches() {
   if hk_is_jigs T-1; then fail "a template without a prefix names no branch as Jig's"; fi
 }
 
+# hk_deletable <branch> — call jig_branch_deletable (common.sh) directly, with
+# a fresh read of the task records.
+hk_deletable() {
+  bash -c '
+    set -eu
+    JIG_LIB="$JIG_HOME/scripts/lib"
+    . "$JIG_LIB/version.sh"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    JIG_PROJECT="$PWD"
+    _JIG_RECORDED_READ=0
+    jig_branch_deletable "$1"
+  ' _ "$1"
+}
+
+# hk_record <dir> <branch> [where] — a task `state` naming <branch>, in the
+# workspace (default) or in trash under a date.
+hk_record() {
+  local dir="$1" branch="$2" where="${3:-workspace}" d
+  if [ "$where" = trash ]; then
+    d=".ai/runtime/trash/2026-01-01/$dir"
+  else
+    d=".ai/workspace/tasks/$dir"
+  fi
+  mkdir -p "$d"
+  printf 'task_id: %s\nbranch: %s\nstatus: consolidated\n' "$dir" "$branch" > "$d/state"
+}
+
+test_jig_branch_deletable_under_a_bare_id_template_needs_a_task_record() {
+  hk_setup
+  hk_cfg git.branch_template '{id}'
+  if hk_deletable T-1; then fail "T-1 with no task record is not deletable"; fi
+  hk_record T-1 T-1
+  hk_deletable T-1 || fail "T-1 recorded by its workspace should be deletable"
+  hk_record T-2 T-2 trash
+  hk_deletable T-2 || fail "T-2 recorded only in trash should be deletable"
+  # A trash directory's collision suffix is not part of the id.
+  hk_record T-3-2 T-3 trash
+  hk_deletable T-3 || fail "T-3 recorded by trash dir T-3-2 should be deletable"
+  # The record must name the branch the template gives its own id.
+  hk_record T-4 main
+  if hk_deletable main; then fail "the base branch is never deletable"; fi
+  hk_record T-5 other-name
+  if hk_deletable other-name; then fail "a branch not named after its task is not deletable"; fi
+  hk_record T-6 feature/x
+  if hk_deletable feature/x; then fail "feature/x recorded by T-6 is not deletable"; fi
+  hk_record main main
+  if hk_deletable main; then fail "main recorded under its own name is still not deletable"; fi
+  if hk_deletable T-7; then fail "T-7 has no record"; fi
+}
+
+# With git.branch_per_task: false a record names the branch the person was on,
+# not one Jig cut, so it never makes a branch deletable.
+test_jig_branch_deletable_ignores_records_when_branch_per_task_is_off() {
+  hk_setup
+  hk_cfg git.branch_template '{id}'
+  hk_record T-6 T-6
+  hk_cfg git.branch_per_task false
+  if hk_deletable T-6; then fail "T-6 is not deletable with git.branch_per_task false"; fi
+  hk_cfg git.branch_per_task true
+  hk_deletable T-6 || fail "T-6 should be deletable with git.branch_per_task true"
+}
+
+test_jig_branch_deletable_keeps_the_name_based_rule_under_a_prefixed_template() {
+  hk_setup
+  hk_deletable task/T-1 || fail "task/T-1 should be deletable without a record"
+  hk_deletable jig/upgrade-1.0.0 || fail "an upgrade branch should be deletable"
+  if hk_deletable T-1; then fail "T-1 is not deletable under task/{id}"; fi
+  # A record does not widen the rule when the template has a prefix.
+  hk_record T-1 T-1
+  if hk_deletable T-1; then fail "a record is not enough under task/{id}"; fi
+  if hk_deletable main; then fail "main is never deletable"; fi
+}
+
+# Under a template with nothing before {id}, a merged branch goes only when a
+# task record says Jig made it; the record of a task purged in this run has
+# just moved to trash and still counts.
+test_housekeeping_deletes_a_merged_branch_a_task_recorded_under_a_bare_id_template() {
+  hk_setup
+  hk_cfg git.branch_template '{id}'
+  git add -A
+  git commit -q -m "jig init snapshot"
+  hk_branch T-9
+  hk_branch T-8
+  fixture_task T-9 T-9 consolidated
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "housekeeping: deleted branch T-9"
+  if git show-ref --verify --quiet refs/heads/T-9; then fail "the recorded branch T-9 is still here"; fi
+  git show-ref --verify --quiet refs/heads/T-8 || fail "T-8 has no record and was deleted"
+  git show-ref --verify --quiet refs/heads/main || fail "main was deleted"
+}
+
 # origin is shared: below agent.git push housekeeping never writes to it, and
 # the local branch still goes.
 test_housekeeping_leaves_origin_alone_below_agent_git_push() {
