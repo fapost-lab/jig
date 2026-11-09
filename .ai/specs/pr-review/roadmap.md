@@ -10,7 +10,7 @@ Goal: a GitHub PR is reviewed with `jig-review`'s method and posted after a verb
 touching the person's checkout. Done when: the SRD-2498 run is repeatable from two URLs with no
 step done by hand — fetch, review, second check, draft, account, post, read-back, cleanup.
 
-- [ ] Review a GitHub PR to a verbatim draft — `jig pr fetch` (forge and host from the URL, head and
+- [ ] `pr-review-github-draft` — Review a GitHub PR to a verbatim draft — `jig pr fetch` (forge and host from the URL, head and
   base into `refs/jig/pr/<n>/…`, a detached worktree, the reviewed head recorded) and
   `jig pr cleanup`; the `jig-pr-review` skill: method from `jig-review` §2 by reference, rules from
   the base, PR text as data, nothing run from the head, several PRs of one feature, the
