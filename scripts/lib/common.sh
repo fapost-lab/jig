@@ -2246,7 +2246,7 @@ _JIG_RECORDED_READ=0
 # A name that is not a valid id never counts (RULES.md). The state is read
 # with awk, not task.sh's reader: common.sh is loaded where task.sh is not.
 jig_branch_recorded() {
-  local b="$1" template suffix ai where dir branch id tail f
+  local b="$1" template suffix ai where dir branch id tail
   [ -n "$b" ] || return 1
   if [ "$_JIG_RECORDED_READ" != 1 ]; then
     _JIG_RECORDED_BRANCHES=""
@@ -2276,23 +2276,29 @@ jig_branch_recorded() {
           break
         fi
       done
-    done < <(
-      for f in "$ai"/workspace/tasks/*/state "$ai"/runtime/trash/*/*/state; do
-        [ -f "$f" ] || continue
-        # An `if`, not a `case`: bash 3.2 cannot parse a case pattern's `)`
-        # inside a process substitution.
-        where=workspace
-        if [ "${f#"$ai"/runtime/trash/}" != "$f" ]; then
-          where=trash
-        fi
-        awk -v w="$where" -v d="$(basename "$(dirname "$f")")" '
-          /^branch:/ { v = $0; sub(/^branch:[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v); print w "\t" d "\t" v; exit }
-        ' "$f" 2>/dev/null || true
-      done
-    )
+    done < <(_jig_state_branches "$ai")
     _JIG_RECORDED_READ=1
   fi
   jig_has_line "$b" "$_JIG_RECORDED_BRANCHES"
+}
+
+# _jig_state_branches <ai-dir> — one line per task state that records a
+# branch: `<workspace|trash><TAB><directory name><TAB><branch>`. A function of
+# its own so the process substitution that reads it holds a single call:
+# bash 3.2 re-parses the text of a process substitution when it runs it, and
+# trips over a case pattern or a quote in a comment there.
+_jig_state_branches() {
+  local ai="$1" f where
+  for f in "$ai"/workspace/tasks/*/state "$ai"/runtime/trash/*/*/state; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      "$ai"/runtime/trash/*) where=trash ;;
+      *) where=workspace ;;
+    esac
+    awk -v w="$where" -v d="$(basename "$(dirname "$f")")" '
+      /^branch:/ { v = $0; sub(/^branch:[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v); print w "\t" d "\t" v; exit }
+    ' "$f" 2>/dev/null || true
+  done
 }
 
 # jig_branch_checked_out <branch> — exit 0 when <branch> is checked out in any
