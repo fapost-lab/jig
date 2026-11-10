@@ -1,7 +1,9 @@
 # cmd_pr — somebody else's pull request, read in the person's own clone
 # (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone; the
 # `jig-pr-review` skill): `fetch` takes its head and base into refs of Jig's
-# own and a detached worktree beside the repository, `draft` checks and keeps
+# own and a detached worktree beside the repository, `followup` reads an
+# earlier review of it back from the forge (its open threads and the head it
+# reviewed), `draft` checks and keeps
 # the review as it will be shown (skills/jig-pr-review/references/draft.md), `list` says what is
 # fetched, and `cleanup` takes all of it back.
 #
@@ -13,7 +15,7 @@
 # on another host.
 # shellcheck shell=bash
 
-PR_USAGE="usage: jig pr fetch <url> | jig pr draft <n|url> [--from <file>] | jig pr comments check <n|url> | jig pr comments post <n|url> --shown <hash> | jig pr list | jig pr cleanup <n|url>"
+PR_USAGE="usage: jig pr fetch <url> | jig pr followup <n|url> [--login <login>] | jig pr draft <n|url> [--from <file>] | jig pr comments check <n|url> | jig pr comments post <n|url> --shown <hash> | jig pr list | jig pr cleanup <n|url>"
 
 cmd_pr() {
   local sub="${1:-}"
@@ -22,6 +24,7 @@ cmd_pr() {
   _pr_refuse_inside_a_review_tree
   case "$sub" in
     fetch) _pr_fetch "$@" ;;
+    followup) _pr_followup "$@" ;;
     draft) _pr_draft "$@" ;;
     comments) _pr_comments "$@" ;;
     list) _pr_list "$@" ;;
@@ -64,11 +67,14 @@ _pr_refuse_inside_a_review_tree() {
 
 # --- names --------------------------------------------------------------------------
 
-# _pr_parse_url <url> — sets _PR_HOST, _PR_OWNER, _PR_REPO, _PR_N and _PR_URL
-# (the canonical form) from https://<host>/<owner>/<repo>/pull/<n>, with any
-# trailing path (`/files`), query or fragment dropped. Exit 2 for a GitLab merge
-# request, 1 for anything else that is not a pull request URL.
-_PR_HOST="" _PR_OWNER="" _PR_REPO="" _PR_N="" _PR_URL=""
+# _pr_parse_url <url> — sets _PR_FORGE (github or gitlab), _PR_FORGE_NAME,
+# _PR_HOST, _PR_OWNER, _PR_REPO, _PR_N and _PR_URL (the canonical form) from
+# https://<host>/<owner>/<repo>/pull/<n> or a GitLab merge request,
+# https://<host>/<group>[/<subgroup>…]/<project>/-/merge_requests/<iid>, with any
+# trailing path (`/files`, `/diffs`), query or fragment dropped. For GitLab
+# _PR_OWNER is the whole namespace, so "$_PR_OWNER/$_PR_REPO" is the project's
+# full path. Exit 1 for anything else.
+_PR_FORGE="" _PR_FORGE_NAME="" _PR_HOST="" _PR_OWNER="" _PR_REPO="" _PR_N="" _PR_URL=""
 _pr_parse_url() {
   local rest host path owner repo kind n
   case "$1" in
@@ -78,10 +84,16 @@ _pr_parse_url() {
   esac
   rest=${rest%%#*}
   rest=${rest%%\?*}
-  case "$rest" in */-/merge_requests/*) return 2 ;; esac
   host=${rest%%/*}
   [ "$host" != "$rest" ] || return 1
+  case "$host" in '' | *[!A-Za-z0-9.:-]*) return 1 ;; esac
   path=${rest#*/}
+  case "$path" in
+    */-/merge_requests/*)
+      _pr_parse_gitlab "$host" "$path"
+      return
+      ;;
+  esac
   owner=${path%%/*}
   path=${path#*/}
   repo=${path%%/*}
@@ -90,10 +102,10 @@ _pr_parse_url() {
   path=${path#*/}
   n=${path%%/*}
   [ "$kind" = pull ] || return 1
-  case "$host" in '' | *[!A-Za-z0-9.:-]*) return 1 ;; esac
   _pr_valid_slug_part "$owner" || return 1
   _pr_valid_slug_part "$repo" || return 1
   _pr_valid_number "$n" || return 1
+  _PR_FORGE=github _PR_FORGE_NAME=GitHub
   _PR_HOST=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
   _PR_OWNER="$owner"
   _PR_REPO="$repo"
@@ -101,7 +113,32 @@ _pr_parse_url() {
   _PR_URL="https://$_PR_HOST/$owner/$repo/pull/$n"
 }
 
-# An owner or repository name: GitHub's characters, and never `.` or `..`.
+# _pr_parse_gitlab <host> <path after the host> — the GitLab half of
+# _pr_parse_url: a project path of two or more segments, each in GitLab's
+# characters and never `.` or `..`, then `/-/merge_requests/<iid>`.
+_pr_parse_gitlab() {
+  local host="$1" proj rest n seg
+  proj=${2%%/-/merge_requests/*}
+  rest=${2#*/-/merge_requests/}
+  n=${rest%%/*}
+  _pr_valid_number "$n" || return 1
+  case "$proj" in */*) ;; *) return 1 ;; esac
+  rest="$proj/"
+  while [ -n "$rest" ]; do
+    seg=${rest%%/*}
+    rest=${rest#*/}
+    _pr_valid_slug_part "$seg" || return 1
+  done
+  _PR_FORGE=gitlab _PR_FORGE_NAME=GitLab
+  _PR_HOST=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+  _PR_OWNER=${proj%/*}
+  _PR_REPO=${proj##*/}
+  _PR_N="$n"
+  _PR_URL="https://$_PR_HOST/$proj/-/merge_requests/$n"
+}
+
+# An owner, repository or GitLab path segment: [A-Za-z0-9._-], and never `.`
+# or `..`.
 _pr_valid_slug_part() {
   case "$1" in
     '' | . | .. | *[!A-Za-z0-9._-]*) return 1 ;;
@@ -127,11 +164,7 @@ _pr_resolve() {
     return 0
   fi
   _pr_parse_url "$arg" || rc=$?
-  case "$rc" in
-    0) ;;
-    2) jig_fail usage "pr $who: GitLab merge requests are not supported yet: $arg" ;;
-    *) jig_fail usage "pr $who: not a pull request number or URL: $arg" ;;
-  esac
+  [ "$rc" = 0 ] || jig_fail usage "pr $who: not a pull request number or URL: $arg"
   rec="$(_pr_state_dir "$_PR_N")/record"
   if [ -f "$rec" ]; then
     recorded=$(_pr_record_get "$rec" url)
@@ -425,17 +458,711 @@ _pr_pull_info() {
   printf '%s\n' "$out" | tr -d '\r'
 }
 
+# _pr_gh_as <who> <login> — the token gh keeps for <login> on _PR_HOST (or the
+# environment's, when gh keeps none for it) into _PR_TOKEN, confirmed by GitHub
+# naming that very login, and what it may do on _PR_SLUG into _PR_ACC; dies
+# when either does not hold.
+_PR_ACC=""
+_pr_gh_as() {
+  local who="$1" login="$2" who_am
+  command -v gh >/dev/null 2>&1 || jig_die "pr $who: the GitHub CLI (gh) is needed"
+  _PR_TOKEN=$(_pr_stored_token "$login") || _PR_TOKEN=$(_pr_env_token)
+  [ -n "$_PR_TOKEN" ] \
+    || jig_die "pr $who: gh gives no token for $login on $_PR_HOST (gh auth login --hostname $_PR_HOST; gh auth token --user needs gh 2.40 or later)"
+  who_am=$(_pr_gh user --jq .login 2>/dev/null | tr -d '\r') || who_am=""
+  if [ "$(printf '%s' "$who_am" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" ]; then
+    jig_die "pr $who: the token for $login answers as ${who_am:-nobody}; the draft's login is the one it posts as"
+  fi
+  _PR_ACC=$(_pr_access "$_PR_SLUG")
+  [ "$_PR_ACC" != none ] || jig_die "pr $who: $login cannot reach $_PR_SLUG on $_PR_HOST"
+}
+
+# --- GitLab ---------------------------------------------------------------------------------
+#
+# adr-20261110-a-merge-request-review-is-posted-as-discussions. `glab api` has
+# no filter of its own, so its answers reach the shell as JSON: always asked
+# for with `--output ndjson` (one value a line) and read by _pr_json_lines,
+# never by pattern over the raw text.
+
+# The token variables glab takes before any stored account.
+_PR_GL_TOKEN_VARS="GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN"
+
+# 1: the next _pr_glab call keeps the environment's token; otherwise every
+# token variable is unset and glab answers as the account it keeps for the host.
+_PR_GL_ENV=0
+
+# _pr_glab <args>... — `glab api --hostname <_PR_HOST> --output ndjson <args>`,
+# in a subshell: the token variables unset (unless _PR_GL_ENV is 1), the host
+# variables unset so that --hostname alone names the instance, and glab told
+# not to prompt or look for its own updates. Jig never reads, passes or writes
+# the token itself; glab's configuration and active account stay as they are.
+# API paths are given without a leading `/` (MSYS, as for gh).
+_pr_glab() (
+  # shellcheck disable=SC2086 # a fixed list of names
+  if [ "$_PR_GL_ENV" != 1 ]; then unset $_PR_GL_TOKEN_VARS CI_JOB_TOKEN; fi
+  unset GITLAB_HOST GL_HOST GITLAB_URI GITLAB_URL
+  GLAB_CHECK_UPDATE=false NO_PROMPT=1
+  export GLAB_CHECK_UPDATE NO_PROMPT
+  jig_net glab api --hostname "$_PR_HOST" --output ndjson "$@"
+)
+
+# _pr_json_lines — ndjson on stdin, one `<path><TAB><value>` line per scalar
+# out: <path> is the value's record number (0 for the first line) and its keys
+# and array indices joined by `.` (`3.notes.0.author.username`). A string is
+# decoded (\uXXXX into UTF-8; \r dropped; \t, \b, \f and other control
+# characters a space); each newline in it starts a continuation line, a TAB
+# and the next line of the text. A number, true, false or null is printed as it
+# stands. A record jig cannot read prints a line `!`, which every reader takes
+# for a refusal. Run under the C locale, where awk's strings are bytes.
+_pr_json_lines() {
+  # shellcheck disable=SC2016 # an awk program
+  env LC_ALL=C awk '
+    BEGIN {
+      r = 0
+      for (i = 0; i < 256; i++) chr[i] = sprintf("%c", i)
+      for (i = 0; i < 16; i++) { hv[substr("0123456789abcdef", i + 1, 1)] = i; hv[substr("0123456789ABCDEF", i + 1, 1)] = i }
+    }
+    function hex4(t,   i, v, c) {
+      v = 0
+      for (i = 1; i <= 4; i++) { c = substr(t, i, 1); if (!(c in hv)) return -1; v = v * 16 + hv[c] }
+      return v
+    }
+    function utf8(cp) {
+      if (cp < 128) return chr[cp]
+      if (cp < 2048) return chr[192 + int(cp / 64)] chr[128 + cp % 64]
+      if (cp < 65536) return chr[224 + int(cp / 4096)] chr[128 + int(cp / 64) % 64] chr[128 + cp % 64]
+      return chr[240 + int(cp / 262144)] chr[128 + int(cp / 4096) % 64] chr[128 + int(cp / 64) % 64] chr[128 + cp % 64]
+    }
+    function ws(   c) {
+      while (p <= n) { c = substr(s, p, 1); if (c != " " && c != "\t" && c != "\r" && c != "\n") break; p++ }
+    }
+    # str(path) — the string at p; printed under <path> when it is not empty,
+    # kept whole in sv otherwise (a key).
+    function str(path,   a, c, e, cp, lo, cur, pre) {
+      p++
+      cur = ""; pre = path "\t"; a = p
+      while (p <= n) {
+        c = substr(s, p, 1)
+        if (c != "\"" && c != "\\") { p++; continue }
+        cur = cur substr(s, a, p - a)
+        if (c == "\"") {
+          p++
+          if (path != "") printf "%s%s\n", pre, cur
+          sv = cur
+          return 1
+        }
+        e = substr(s, p + 1, 1); p += 2
+        if (e == "n") {
+          if (path != "") { printf "%s%s\n", pre, cur; pre = "\t"; cur = "" } else cur = cur "\n"
+        } else if (e == "r") {
+        } else if (e == "t" || e == "b" || e == "f") cur = cur " "
+        else if (e == "u") {
+          cp = hex4(substr(s, p, 4)); p += 4
+          if (cp < 0) return 0
+          if (cp >= 55296 && cp < 56320 && substr(s, p, 2) == "\\u") {
+            lo = hex4(substr(s, p + 2, 4))
+            if (lo >= 56320 && lo < 57344) { cp = 65536 + (cp - 55296) * 1024 + (lo - 56320); p += 6 }
+          }
+          if (cp == 10) {
+            if (path != "") { printf "%s%s\n", pre, cur; pre = "\t"; cur = "" } else cur = cur "\n"
+          } else if (cp == 13) {
+          } else if (cp < 32) cur = cur " "
+          else cur = cur utf8(cp)
+        } else if (e == "\"" || e == "\\" || e == "/") cur = cur e
+        else return 0
+        a = p
+      }
+      return 0
+    }
+    function value(path,   c, a) {
+      ws()
+      c = substr(s, p, 1)
+      if (c == "{") return object(path)
+      if (c == "[") return array(path)
+      if (c == "\"") return str(path)
+      a = p
+      while (p <= n) { c = substr(s, p, 1); if (index(",]} \t\r\n", c)) break; p++ }
+      if (p == a) return 0
+      c = substr(s, a, p - a)
+      if (c !~ /^(true|false|null|-?[0-9][0-9.eE+-]*)$/) return 0
+      printf "%s\t%s\n", path, c
+      return 1
+    }
+    function object(path,   k, c) {
+      p++; ws()
+      if (substr(s, p, 1) == "}") { p++; return 1 }
+      while (1) {
+        ws()
+        if (substr(s, p, 1) != "\"") return 0
+        if (!str("")) return 0
+        k = sv
+        ws()
+        if (substr(s, p, 1) != ":") return 0
+        p++
+        if (!value(path "." k)) return 0
+        ws(); c = substr(s, p, 1); p++
+        if (c == "}") return 1
+        if (c != ",") return 0
+      }
+    }
+    function array(path,   i, c) {
+      p++; ws()
+      if (substr(s, p, 1) == "]") { p++; return 1 }
+      i = 0
+      while (1) {
+        if (!value(path "." i)) return 0
+        i++
+        ws(); c = substr(s, p, 1); p++
+        if (c == "]") return 1
+        if (c != ",") return 0
+      }
+    }
+    {
+      s = $0; n = length(s); p = 1
+      ws()
+      if (p > n) next
+      if (!value(r)) { print "!"; next }
+      ws()
+      if (p <= n) print "!"
+      r++
+    }
+  '
+}
+
+# _pr_gl_token_env — the token variables set in this environment, which glab
+# takes before the account it keeps for any host.
+_pr_gl_token_env() {
+  local names="" v
+  for v in $_PR_GL_TOKEN_VARS; do
+    eval "[ -z \"\${$v:-}\" ]" || names="$names${names:+ }$v"
+  done
+  printf '%s\n' "$names"
+}
+
+# _pr_gl_project_path — the project's full path, URL-encoded as the API takes it.
+_pr_gl_project_path() {
+  local v
+  _jig_replace_all_v v "$_PR_OWNER/$_PR_REPO" / %2F
+  printf '%s\n' "$v"
+}
+
+# _pr_gl_user — the username the next _pr_glab call answers as; nothing when
+# GitLab names none.
+_pr_gl_user() {
+  local out line tab
+  tab=$(printf '\t')
+  out=$(_pr_glab user 2>/dev/null | _pr_json_lines) || return 0
+  while IFS= read -r line; do
+    case "$line" in "0.username$tab"*) printf '%s\n' "${line#*"$tab"}"; return 0 ;; esac
+  done <<EOF
+$out
+EOF
+}
+
+# _pr_gl_access <project> — `<access> <id>`: what the next _pr_glab call's
+# account may do on <project> (an id or the encoded path) — `comment` as a
+# member (Reporter or above, or any membership of a project that is not
+# public), `read` when it only sees it (on a public project everybody does),
+# `none` when GitLab shows it nothing — and the project's numeric id.
+_pr_gl_access() {
+  local out line tab id="" vis="" pa=0 ga=0 v lvl
+  tab=$(printf '\t')
+  out=$(_pr_glab "projects/$1" 2>/dev/null | _pr_json_lines) || out=""
+  while IFS= read -r line; do
+    v=${line#*"$tab"}
+    case "$line" in
+      "0.id$tab"*) id="$v" ;;
+      "0.visibility$tab"*) vis="$v" ;;
+      "0.permissions.project_access.access_level$tab"*) pa="$v" ;;
+      "0.permissions.group_access.access_level$tab"*) ga="$v" ;;
+    esac
+  done <<EOF
+$out
+EOF
+  case "$id" in '' | *[!0-9]*) printf 'none \n'; return 0 ;; esac
+  case "$pa" in '' | *[!0-9]*) pa=0 ;; esac
+  case "$ga" in '' | *[!0-9]*) ga=0 ;; esac
+  lvl=$pa
+  [ "$ga" -le "$lvl" ] || lvl=$ga
+  if [ "$lvl" -ge 20 ] || { [ "$lvl" -ge 10 ] && [ "$vis" != public ]; }; then
+    printf 'comment %s\n' "$id"
+  else
+    printf 'read %s\n' "$id"
+  fi
+}
+
+# _pr_gl_propose_login <owner/repo> — the GitLab half of _pr_propose_login:
+# sets _PR_ACCOUNTS and _PR_ACTIVE (glab keeps one account a host: the one
+# GitLab names for a call without a token variable), _PR_TOKEN_ENV, _PR_LOGIN
+# (that account when it may comment as a member, or `ask` with _PR_WHY), the
+# project's id in _PR_GL_PID, and in _PR_GL_ENV the token the reads that
+# follow use: the environment's when it has one, as glab itself would.
+_PR_GL_PID=""
+_pr_gl_propose_login() {
+  local slug="$1" u acc
+  _PR_GL_ENV=0
+  u=$(_pr_gl_user)
+  _PR_ACCOUNTS="$u" _PR_ACTIVE="$u"
+  _PR_TOKEN_ENV=$(_pr_gl_token_env)
+  _PR_LOGIN=ask _PR_WHY="" _PR_GL_PID=""
+  if [ -n "$_PR_TOKEN_ENV" ]; then
+    _PR_GL_ENV=1
+    read -r acc _PR_GL_PID <<EOF
+$(_pr_gl_access "$(_pr_gl_project_path)")
+EOF
+    _PR_WHY="$_PR_TOKEN_ENV in the environment overrides glab's account"
+    return 0
+  fi
+  read -r acc _PR_GL_PID <<EOF
+$(_pr_gl_access "$(_pr_gl_project_path)")
+EOF
+  if [ -z "$u" ]; then
+    _PR_WHY="glab holds no account for $_PR_HOST"
+  elif [ "$acc" = comment ]; then
+    _PR_LOGIN="$u"
+  else
+    _PR_WHY="$u may not comment on $slug as a member"
+  fi
+}
+
+# _pr_gl_as <who> <login> — the GitLab half of _pr_gh_as: the account glab
+# keeps for the host, or the environment's token when that is the one that
+# answers as <login> (_PR_GL_ENV); GitLab must name that very login either
+# way. What it may do on project _PR_GL_PID goes into _PR_ACC.
+_pr_gl_as() {
+  local who="$1" login="$2" who_am me
+  command -v glab >/dev/null 2>&1 || jig_die "pr $who: the GitLab CLI (glab) is needed"
+  me=$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')
+  _PR_GL_ENV=0
+  who_am=$(_pr_gl_user)
+  if [ "$(printf '%s' "$who_am" | tr '[:upper:]' '[:lower:]')" != "$me" ] && [ -n "$(_pr_gl_token_env)" ]; then
+    _PR_GL_ENV=1
+    who_am=$(_pr_gl_user)
+  fi
+  if [ "$(printf '%s' "$who_am" | tr '[:upper:]' '[:lower:]')" != "$me" ]; then
+    jig_die "pr $who: glab answers for $_PR_HOST as ${who_am:-nobody}; the draft's login, $login, is the one it posts as"
+  fi
+  read -r _PR_ACC _ <<EOF
+$(_pr_gl_access "$_PR_GL_PID")
+EOF
+  [ "$_PR_ACC" != none ] || jig_die "pr $who: $login cannot reach $_PR_SLUG on $_PR_HOST"
+}
+
+# _pr_gl_mr_info — merge request _PR_N of project _PR_GL_PID into _PR_GL_STATE,
+# _PR_GL_TARGET, _PR_GL_SHA (its head), _PR_GL_LOCKED, _PR_GL_CHANGES and the
+# three shas of its diff: _PR_GL_BASE, _PR_GL_START and _PR_GL_HEADSHA.
+_PR_GL_STATE="" _PR_GL_TARGET="" _PR_GL_SHA="" _PR_GL_LOCKED="" _PR_GL_CHANGES=""
+_PR_GL_BASE="" _PR_GL_START="" _PR_GL_HEADSHA=""
+_pr_gl_mr_info() {
+  local out line tab v
+  tab=$(printf '\t')
+  _PR_GL_STATE="" _PR_GL_TARGET="" _PR_GL_SHA="" _PR_GL_LOCKED="" _PR_GL_CHANGES=""
+  _PR_GL_BASE="" _PR_GL_START="" _PR_GL_HEADSHA=""
+  out=$(_pr_glab "projects/$_PR_GL_PID/merge_requests/$_PR_N" 2>/dev/null | _pr_json_lines) || return 1
+  while IFS= read -r line; do
+    v=${line#*"$tab"}
+    case "$line" in
+      '!') return 1 ;;
+      "0.state$tab"*) _PR_GL_STATE="$v" ;;
+      "0.target_branch$tab"*) _PR_GL_TARGET="$v" ;;
+      "0.sha$tab"*) _PR_GL_SHA="$v" ;;
+      "0.discussion_locked$tab"*) _PR_GL_LOCKED="$v" ;;
+      "0.changes_count$tab"*) _PR_GL_CHANGES="$v" ;;
+      "0.diff_refs.base_sha$tab"*) _PR_GL_BASE="$v" ;;
+      "0.diff_refs.start_sha$tab"*) _PR_GL_START="$v" ;;
+      "0.diff_refs.head_sha$tab"*) _PR_GL_HEADSHA="$v" ;;
+    esac
+  done <<EOF
+$out
+EOF
+  [ -n "$_PR_GL_SHA" ]
+}
+
+# _pr_gl_read_files — merge request _PR_N's files as GitLab's diff has them,
+# into the arrays _pr_read_files fills (_PR_F_NAME, _PR_F_OLD, _PR_F_SHOWN,
+# _PR_F_HUNKS) and _PR_F_KINDS: per hunk, a letter per line of it — `c` a
+# context line, `a` an added one, `d` a deleted one — each hunk ending in `;`,
+# as its header does in _PR_F_HUNKS. From `merge_requests/<n>/diffs`, or
+# `/changes` on a GitLab older than 15.7.
+_pr_gl_read_files() {
+  local out line tab i=-1 rec field v pre="" infield="" diffs=1 ren="" big="" seen=0
+  tab=$(printf '\t')
+  _PR_F_NAME=() _PR_F_OLD=() _PR_F_SHOWN=() _PR_F_HUNKS=() _PR_F_KINDS=()
+  if ! out=$(_pr_glab --paginate "projects/$_PR_GL_PID/merge_requests/$_PR_N/diffs?per_page=100" 2>/dev/null | _pr_json_lines); then
+    diffs=0
+    out=$(_pr_glab "projects/$_PR_GL_PID/merge_requests/$_PR_N/changes" 2>/dev/null | _pr_json_lines) \
+      || jig_die "pr comments: GitLab did not give the diff of merge request $_PR_N"
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '!') jig_die "pr comments: GitLab gave a diff of merge request $_PR_N that jig cannot read" ;;
+      "$tab"*)
+        # A continuation: another line of the string read last.
+        case "$infield" in
+          diff) _pr_gl_diff_line "$i" "${line#?}" ;;
+          new_path | old_path) jig_die "pr comments: merge request $_PR_N has a file whose name holds a newline; jig cannot place comments in it" ;;
+        esac
+        continue
+        ;;
+    esac
+    if [ "$diffs" = 0 ]; then
+      case "$line" in "0.changes."*) line=${line#0.changes.} ;; *) infield=""; continue ;; esac
+    fi
+    rec=${line%%.*}
+    pre=${line#*.}
+    field=${pre%%"$tab"*}
+    v=${line#*"$tab"}
+    case "$rec" in '' | *[!0-9]*) infield=""; continue ;; esac
+    if [ "$rec" != "$seen" ] || [ "$i" -lt 0 ]; then
+      if [ "$i" -ge 0 ]; then _pr_gl_file_done "$i" "$ren" "$big"; fi
+      i=$((i + 1))
+      seen="$rec" ren="" big=""
+      _PR_F_NAME[i]="" _PR_F_OLD[i]="" _PR_F_SHOWN[i]=0 _PR_F_HUNKS[i]="" _PR_F_KINDS[i]=""
+    fi
+    infield="$field"
+    case "$field" in
+      new_path) _PR_F_NAME[i]="$v" ;;
+      old_path) _PR_F_OLD[i]="$v" ;;
+      renamed_file) ren="$v" ;;
+      too_large) big="$v" ;;
+      diff) _pr_gl_diff_line "$i" "$v" ;;
+    esac
+  done <<EOF
+$out
+EOF
+  if [ "$i" -ge 0 ]; then _pr_gl_file_done "$i" "$ren" "$big"; fi
+}
+
+# _pr_gl_diff_line <file> <line> — one line of GitLab's `diff` text of file
+# <file>: a hunk header (only at the start of a line) opens a hunk; ` `, `+`
+# and `-` lines inside one are recorded; `\ No newline…` and the rest are not.
+_pr_gl_diff_line() {
+  local i="$1" l="$2"
+  case "$l" in
+    "@@ -"*)
+      _pr_hunk "$l" || jig_die "pr comments: GitLab gave a hunk header jig cannot read: $l"
+      _PR_F_HUNKS[i]="${_PR_F_HUNKS[i]}$_PR_HUNK;"
+      _PR_F_KINDS[i]="${_PR_F_KINDS[i]};"
+      ;;
+    *)
+      [ -n "${_PR_F_KINDS[i]}" ] || return 0
+      case "$l" in
+        " "*) _PR_F_KINDS[i]="${_PR_F_KINDS[i]%;}c;" ;;
+        "+"*) _PR_F_KINDS[i]="${_PR_F_KINDS[i]%;}a;" ;;
+        "-"*) _PR_F_KINDS[i]="${_PR_F_KINDS[i]%;}d;" ;;
+      esac
+      ;;
+  esac
+}
+
+# _pr_gl_file_done <file> <renamed_file> <too_large> — whether GitLab shows the
+# file: a diff with a hunk, or a rename with nothing changed; never a file it
+# calls too large. An old path equal to the new one is no rename.
+_pr_gl_file_done() {
+  local i="$1"
+  if [ "${_PR_F_OLD[i]}" = "${_PR_F_NAME[i]}" ]; then _PR_F_OLD[i]=""; fi
+  if [ "$3" = true ]; then
+    _PR_F_SHOWN[i]=0
+  elif [ -n "${_PR_F_HUNKS[i]}" ]; then
+    _PR_F_SHOWN[i]=1
+  elif [ "$2" = true ]; then
+    _PR_F_SHOWN[i]=1
+  else
+    _PR_F_SHOWN[i]=0
+  fi
+}
+
+# _pr_gl_lines <R|L> <line> — the line pair of a position on GitLab's diff,
+# for the hunk _pr_place found (_PR_PLACED_F, _PR_PLACED_H): into _PR_GL_OLD
+# and _PR_GL_NEW, either empty when the line has no number on that side (an
+# added line has no old one, a deleted line no new one; a context line has
+# both, and GitLab wants both).
+_PR_GL_OLD="" _PR_GL_NEW=""
+_pr_gl_lines() {
+  local side="$1" t="$2" hs ks h k j=0 o nn c len
+  _PR_GL_OLD="" _PR_GL_NEW=""
+  hs=${_PR_F_HUNKS[_PR_PLACED_F]}
+  ks=${_PR_F_KINDS[_PR_PLACED_F]}
+  while [ "$j" -lt "$_PR_PLACED_H" ]; do
+    hs=${hs#*;}
+    ks=${ks#*;}
+    j=$((j + 1))
+  done
+  h=${hs%%;*}
+  k=${ks%%;*}
+  set -f
+  # shellcheck disable=SC2086 # four numbers
+  set -- $h
+  set +f
+  o=$1 nn=$3 j=0 len=${#k}
+  while [ "$j" -lt "$len" ]; do
+    c=${k:j:1}
+    case "$c" in
+      c)
+        if { [ "$side" = R ] && [ "$nn" = "$t" ]; } || { [ "$side" = L ] && [ "$o" = "$t" ]; }; then
+          _PR_GL_OLD=$o _PR_GL_NEW=$nn
+          return 0
+        fi
+        o=$((o + 1)) nn=$((nn + 1))
+        ;;
+      a)
+        if [ "$side" = R ] && [ "$nn" = "$t" ]; then _PR_GL_NEW=$nn; return 0; fi
+        nn=$((nn + 1))
+        ;;
+      d)
+        if [ "$side" = L ] && [ "$o" = "$t" ]; then _PR_GL_OLD=$o; return 0; fi
+        o=$((o + 1))
+        ;;
+    esac
+    j=$((j + 1))
+  done
+  return 1
+}
+
+# _pr_gl_comments_prepare <who> — the GitLab half of _pr_comments_prepare,
+# after the draft and the record are read: the draft's login confirmed, its
+# access, the merge request's head and diff checked against the review, and
+# GitLab's diff read.
+_pr_gl_comments_prepare() {
+  local who="$1" acc
+  _PR_GL_PID=$(_pr_record_get "$_PR_DIR/record" project_id)
+  case "$_PR_GL_PID" in
+    '' | *[!0-9]*) jig_die "pr comments $who: the record of merge request $_PR_N names no GitLab project; fetch it again" ;;
+  esac
+  _pr_gl_as "comments $who" "$_PR_D_LOGIN"
+  acc="$_PR_ACC"
+  _pr_gl_mr_info || jig_die "pr comments $who: GitLab did not answer for $_PR_URL"
+  if [ "$_PR_GL_SHA" != "$_PR_HEAD" ] || [ "$_PR_GL_HEADSHA" != "$_PR_HEAD" ]; then
+    jig_die "pr comments $who: merge request $_PR_N moved since it was reviewed (GitLab's head is ${_PR_GL_SHA:-unknown}, its diff's ${_PR_GL_HEADSHA:-unknown}, the reviewed head $_PR_HEAD); fetch it again and review what changed — nothing was posted"
+  fi
+  if [ "$_PR_GL_LOCKED" = true ] && [ "$acc" != comment ]; then
+    jig_die "pr comments $who: the discussion of merge request $_PR_N is locked, and $_PR_D_LOGIN is not a member who may still comment"
+  fi
+  [ "$_PR_GL_BASE" = "$_PR_MB" ] \
+    || jig_die "pr comments $who: GitLab's diff starts at ${_PR_GL_BASE:-an unknown commit}, the review at $_PR_MB; fetch it again — old-side lines would point elsewhere"
+  case "$_PR_GL_START" in
+    '' | *[!0-9a-f]*) jig_die "pr comments $who: GitLab named no start commit for the diff of $_PR_URL" ;;
+  esac
+  # `1000+` is GitLab's own ceiling: more files than it lists.
+  _PR_CHANGED=${_PR_GL_CHANGES%+}
+  case "$_PR_GL_CHANGES" in *+) _PR_CHANGED=$((_PR_CHANGED + 1)) ;; esac
+  _pr_gl_read_files
+  _pr_unshown "$_PR_MB" "$_PR_HEAD" "$_PR_CHANGED"
+}
+
+# _pr_gl_readback — the GitLab half of _pr_readback, from the merge request's
+# discussions, each by its first note: the same _PR_LANDED, _PR_LANDED_AT,
+# _PR_REVIEW_URL (the summary's note) and _PR_OTHER, and _PR_MISPLACED
+# (" <part> …") with _PR_MISPLACED_AT: a part of this version whose note is not
+# where it was shown — a comment without its position or on another line, a
+# summary with one. A misplaced part is never posted again. _PR_GL_SEEN
+# (" <note id> …") holds every note of this version, wherever it sits.
+_PR_MISPLACED="" _PR_GL_SEEN=""
+_pr_gl_readback() {
+  local out line tab me key rec ni f v cur="" infield="" body="" login="" nid="" npath="" nold="" nnew="" haspos=""
+  local -a dids
+  tab=$(printf '\t')
+  me=$(printf '%s' "$_PR_D_LOGIN" | tr '[:upper:]' '[:lower:]')
+  _PR_LANDED=" " _PR_REVIEW_URL="" _PR_OTHER="" _PR_MISPLACED=" " _PR_GL_SEEN=" "
+  _PR_LANDED_AT=() _PR_MISPLACED_AT=()
+  out=$(_pr_glab --paginate "projects/$_PR_GL_PID/merge_requests/$_PR_N/discussions?per_page=100" 2>/dev/null | _pr_json_lines) \
+    || jig_die "pr comments: could not read back the discussions of merge request $_PR_N"
+  # Each discussion's id first: a reply is counted by the thread it is in.
+  while IFS= read -r line; do
+    case "$line" in
+      '!') jig_die "pr comments: GitLab gave discussions of merge request $_PR_N that jig cannot read" ;;
+      *".id$tab"*)
+        key=${line%%"$tab"*}
+        rec=${key%.id}
+        case "$rec" in '' | *[!0-9]*) ;; *) dids[rec]=${line#*"$tab"} ;; esac
+        ;;
+    esac
+  done <<EOF
+$out
+EOF
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$tab"*)
+        if [ "$infield" = body ]; then body="$body$_PR_NL${line#?}"; fi
+        continue
+        ;;
+    esac
+    v=${line#*"$tab"}
+    key=${line%%"$tab"*}
+    rec=${key%%.*}
+    f=${key#*.}
+    case "$f" in notes.*) ;; *) infield=""; continue ;; esac
+    f=${f#notes.}
+    ni=${f%%.*}
+    f=${f#*.}
+    if [ "$rec.$ni" != "$cur" ]; then
+      if [ -n "$cur" ]; then _pr_gl_readback_one "$me" "$login" "$body" "$nid" "$haspos" "$npath" "$nold" "$nnew" "${cur#*.}" "${dids[${cur%%.*}]:-}"; fi
+      cur="$rec.$ni"
+      body="" login="" nid="" npath="" nold="" nnew="" haspos=""
+    fi
+    infield="$f"
+    case "$f" in
+      body) body="$v" ;;
+      id) nid="$v" ;;
+      author.username) login="$v" ;;
+      position) haspos="" ;;
+      position.*) haspos=1 ;;
+    esac
+    case "$f" in
+      position.new_path) npath="$v" ;;
+      position.old_line) nold="$v" ;;
+      position.new_line) nnew="$v" ;;
+    esac
+  done <<EOF
+$out
+EOF
+  if [ -n "$cur" ]; then _pr_gl_readback_one "$me" "$login" "$body" "$nid" "$haspos" "$npath" "$nold" "$nnew" "${cur#*.}" "${dids[${cur%%.*}]:-}"; fi
+}
+
+# _pr_gl_readback_one <me> <login> <body> <note id> <has position> <new path>
+# <old line> <new line> <note index> <discussion id> — one note, counted as
+# _pr_gl_readback says: a discussion's first note for the summary and the
+# comments, a later one for a follow-up's replies.
+_pr_gl_readback_one() {
+  local me="$1" login="$2" body="$3" nid="$4" haspos="$5" npath="$6" nold="$7" nnew="$8" ni="$9" d="${10}" m url want at
+  case "$body" in *"jig-pr-review id="*) ;; *) return 0 ;; esac
+  [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" = "$me" ] || return 0
+  m=${body##*jig-pr-review }
+  m=${m%%-->*}
+  _pr_marker "$m"
+  [ "$_PR_M_HEAD" = "$_PR_HEAD" ] || return 0
+  url="$_PR_URL#note_$nid"
+  if [ "$_PR_M_ID" != "$_PR_H" ]; then
+    if [ -z "$_PR_OTHER" ]; then _PR_OTHER="$url"; fi
+    return 0
+  fi
+  _PR_GL_SEEN="$_PR_GL_SEEN$nid "
+  case "$_PR_M_PART" in '' | *[!0-9]*) return 0 ;; esac
+  [ "$_PR_M_PART" -le "$_PR_NP" ] || return 0
+  if [ "$_PR_M_PART" -gt "$_PR_NC" ]; then
+    # A reply has landed only as a later note of the thread it was shown for.
+    if [ "$ni" != 0 ] && [ "$d" = "${_PR_R_THREAD[_PR_M_PART]}" ]; then
+      _PR_LANDED="$_PR_LANDED$_PR_M_PART "
+      _PR_LANDED_AT[_PR_M_PART]="thread $d"
+    else
+      _PR_MISPLACED="$_PR_MISPLACED$_PR_M_PART "
+      _PR_MISPLACED_AT[_PR_M_PART]="thread ${d:-none}"
+    fi
+    return 0
+  fi
+  [ "$ni" = 0 ] || return 0
+  # Where the note sits, on the side it was posted on: a context line has a
+  # number on both.
+  want=${_PR_C_WANT[_PR_M_PART]:-}
+  at="no line"
+  if [ -n "$haspos" ]; then
+    case "$want" in
+      L*) at="L$nold $npath" ;;
+      *) at="R$nnew $npath" ;;
+    esac
+  fi
+  if [ "$_PR_M_PART" = 0 ]; then
+    if [ -z "$haspos" ]; then
+      _PR_LANDED="${_PR_LANDED}0 "
+      _PR_REVIEW_URL="$url"
+    else
+      _PR_MISPLACED="${_PR_MISPLACED}0 "
+      _PR_MISPLACED_AT[0]="$at"
+    fi
+    return 0
+  fi
+  if [ -n "$haspos" ] && [ "$at" = "$want" ]; then
+    _PR_LANDED="$_PR_LANDED$_PR_M_PART "
+    _PR_LANDED_AT[_PR_M_PART]="$at"
+  else
+    _PR_MISPLACED="$_PR_MISPLACED$_PR_M_PART "
+    _PR_MISPLACED_AT[_PR_M_PART]="$at"
+  fi
+}
+
+# _pr_gh_refuse_a_lost_reply — the GitHub half of _pr_gl_refuse_a_lost_note
+# for a follow-up's replies: a reply GitHub took for this version (an id under
+# `replies:` of `posted`) that the read-back does not find with its marker is
+# never posted again blindly.
+_PR_GH_SEEN=""
+_pr_gh_refuse_a_lost_reply() {
+  local id
+  [ -f "$_PR_DIR/posted" ] || return 0
+  [ "$(_pr_record_get "$_PR_DIR/posted" hash)" = "$_PR_H" ] || return 0
+  for id in $(_pr_record_get "$_PR_DIR/posted" replies); do
+    case "$_PR_GH_SEEN" in
+      *" $id "*) ;;
+      *) jig_die "pr comments post: GitHub took reply $id of this version, but it does not come back with its marker; look at $_PR_URL before posting anything again — nothing was posted" ;;
+    esac
+  done
+}
+
+# _pr_gl_refuse_a_lost_note — a note GitLab took for this version (an id in
+# `posted`) that the read-back does not find with its marker was deleted or
+# edited since: what is missing may be that very part, so nothing is posted
+# again blindly (adr-20261109-a-review-is-posted-as-it-was-shown).
+_pr_gl_refuse_a_lost_note() {
+  local id ids
+  [ -f "$_PR_DIR/posted" ] || return 0
+  [ "$(_pr_record_get "$_PR_DIR/posted" hash)" = "$_PR_H" ] || return 0
+  ids=" $(_pr_record_get "$_PR_DIR/posted" review) "
+  while [ "$ids" != " " ] && [ -n "$ids" ]; do
+    ids=${ids# }
+    id=${ids%% *}
+    ids=${ids#"$id"}
+    [ -n "$id" ] || continue
+    case "$_PR_GL_SEEN" in
+      *" $id "*) ;;
+      *) jig_die "pr comments post: GitLab took note $id of this version, but it does not come back with its marker; look at $_PR_URL before posting anything again — nothing was posted" ;;
+    esac
+  done
+}
+
+# _pr_gl_post_part <k> — post part <k> (0 the summary) as a discussion of its
+# own (a follow-up's reply as a note of its thread), its JSON written to a file of the state directory and handed to glab
+# with --input; the new note's id, or glab's complaint, in _PR_OUT.
+_pr_gl_post_part() {
+  local k="$1" file="$_PR_DIR/part-$1.json" rc=0 out line tab id="" ep idkey="0.notes.0.id"
+  tab=$(printf '\t')
+  ep="projects/$_PR_GL_PID/merge_requests/$_PR_N/discussions"
+  jig_cleanup_add "$file"
+  if [ "$k" = 0 ]; then
+    _pr_write "$file" "{$_PR_SUMMARY_FIELDS}"
+  else
+    _pr_write "$file" "{${_PR_C_FIELDS[k]}}"
+  fi
+  # A follow-up's reply is a note of the thread it answers.
+  if [ "$k" -gt "$_PR_NC" ]; then
+    ep="$ep/${_PR_R_THREAD[k]}/notes"
+    idkey="0.id"
+  fi
+  # glab's stderr goes straight into the capture; its stdout through the
+  # reader, so that the id is read from the answer and nothing else.
+  out=$( (_pr_glab --method POST "$ep" --input "$file" | _pr_json_lines) 2>&1) || rc=$?
+  rm -f "$file"
+  while IFS= read -r line; do
+    case "$line" in "$idkey$tab"*) id=${line#*"$tab"} ;; esac
+  done <<EOF
+$out
+EOF
+  case "$id" in '' | *[!0-9]*) id="" ;; esac
+  if [ "$rc" = 0 ] && [ -n "$id" ]; then
+    _PR_OUT="$id"
+    return 0
+  fi
+  _PR_OUT=$(printf '%s' "$out" | tr '\t\r' '  ')
+  return 1
+}
+
 # --- fetch --------------------------------------------------------------------------------
 
 _pr_fetch() {
   local rc=0 remote info base api_head state slug dir rec wt kind recorded head base_sha mb accounts active tok login why now t
+  local head_ref extra=""
   [ $# -eq 1 ] || jig_fail usage "pr fetch: one pull request URL is required; $PR_USAGE"
   _pr_parse_url "$1" || rc=$?
-  case "$rc" in
-    0) ;;
-    2) jig_fail usage "pr fetch: GitLab merge requests are not supported yet: $1" ;;
-    *) jig_fail usage "pr fetch: not a pull request URL (https://<host>/<owner>/<repo>/pull/<n>): $1" ;;
-  esac
+  [ "$rc" = 0 ] \
+    || jig_fail usage "pr fetch: not a pull request URL (https://<host>/<owner>/<repo>/pull/<n>, https://<host>/<group>/<project>/-/merge_requests/<n>): $1"
   slug="$_PR_OWNER/$_PR_REPO"
   remote=$(_pr_remote_for "$_PR_HOST" "$slug") \
     || jig_die "pr fetch: no remote of this clone reaches $slug on $_PR_HOST; run it in a local clone of that repository"
@@ -455,34 +1182,42 @@ _pr_fetch() {
     *) jig_die "pr fetch: $wt is a worktree jig did not make ($kind); move it" ;;
   esac
 
-  command -v gh >/dev/null 2>&1 || jig_die "pr fetch: the GitHub CLI (gh) is needed to read $_PR_URL"
   t=$(printf '\t')
-  _pr_propose_login "$slug"
-  info=$(_pr_pull_info "$slug") \
-    || jig_die "pr fetch: GitHub did not answer for $_PR_URL (gh auth status --hostname $_PR_HOST)"
-  IFS="$t" read -r base api_head state _ <<EOF
+  if [ "$_PR_FORGE" = gitlab ]; then
+    command -v glab >/dev/null 2>&1 || jig_die "pr fetch: the GitLab CLI (glab) is needed to read $_PR_URL"
+    _pr_gl_propose_login "$slug"
+    [ -n "$_PR_GL_PID" ] \
+      || jig_die "pr fetch: GitLab did not show $slug on $_PR_HOST (glab auth status --hostname $_PR_HOST)"
+    _pr_gl_mr_info \
+      || jig_die "pr fetch: GitLab did not answer for $_PR_URL (glab auth status --hostname $_PR_HOST)"
+    base="$_PR_GL_TARGET" api_head="$_PR_GL_SHA" state="$_PR_GL_STATE"
+    head_ref="refs/merge-requests/$_PR_N/head"
+  else
+    command -v gh >/dev/null 2>&1 || jig_die "pr fetch: the GitHub CLI (gh) is needed to read $_PR_URL"
+    _pr_propose_login "$slug"
+    info=$(_pr_pull_info "$slug") \
+      || jig_die "pr fetch: GitHub did not answer for $_PR_URL (gh auth status --hostname $_PR_HOST)"
+    IFS="$t" read -r base api_head state _ <<EOF
 $info
 EOF
+    head_ref="refs/pull/$_PR_N/head"
+  fi
   git check-ref-format --branch "$base" >/dev/null 2>&1 \
-    || jig_die "pr fetch: GitHub named no usable base branch for $_PR_URL: $base"
+    || jig_die "pr fetch: $_PR_FORGE_NAME named no usable base branch for $_PR_URL: $base"
   case "$api_head" in
-    *[!0-9a-f]* | '') jig_die "pr fetch: GitHub named no head commit for $_PR_URL" ;;
+    *[!0-9a-f]* | '') jig_die "pr fetch: $_PR_FORGE_NAME named no head commit for $_PR_URL" ;;
   esac
 
   # Only into refs of Jig's own: the person's branches, remote-tracking refs and
   # FETCH_HEAD stay as they are.
   # --refmap= (empty) keeps git from also moving refs/remotes/<remote>/<base>,
   # which it does for a named remote whose fetch refspec covers the branch.
-  local fetch_opts="--no-tags --no-recurse-submodules --refmap=" help
-  # `fetch -h` exits 129, so its text is caught, not piped.
-  help=$(git fetch -h 2>&1) || true
-  case "$help" in
-    *write-fetch-head*) fetch_opts="$fetch_opts --no-write-fetch-head" ;;
-  esac
+  local fetch_opts
+  fetch_opts=$(_pr_fetch_opts)
   # shellcheck disable=SC2086 # fetch_opts is a list of fixed flags
   GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
     jig_net _pr_git "$JIG_PROJECT" fetch -q $fetch_opts "$remote" \
-      "+refs/pull/$_PR_N/head:refs/jig/pr/$_PR_N/head" \
+      "+$head_ref:refs/jig/pr/$_PR_N/head" \
       "+refs/heads/$base:refs/jig/pr/$_PR_N/base" >/dev/null \
     || jig_die "pr fetch: could not fetch pull request $_PR_N and $base from $remote"
 
@@ -492,9 +1227,24 @@ EOF
     jig_die "pr fetch: the fetch left no head or base for pull request $_PR_N"
   fi
   [ "$head" = "$api_head" ] \
-    || jig_die "pr fetch: pull request $_PR_N moved while it was fetched (GitHub says $api_head, the fetch got $head); run it again"
-  mb=$(_pr_git "$JIG_PROJECT" merge-base "$base_sha" "$head" 2>/dev/null) \
-    || jig_die "pr fetch: $base and the head of pull request $_PR_N share no commit here; a shallow clone needs git fetch --unshallow $remote"
+    || jig_die "pr fetch: pull request $_PR_N moved while it was fetched ($_PR_FORGE_NAME says $api_head, the fetch got $head); run it again"
+  if [ "$_PR_FORGE" = gitlab ]; then
+    # GitLab's diff, which every position is read from, starts at its own
+    # base_sha: the review reads from there, not from today's merge base.
+    [ "$_PR_GL_HEADSHA" = "$head" ] \
+      || jig_die "pr fetch: GitLab's diff of merge request $_PR_N is of ${_PR_GL_HEADSHA:-no commit}, not of its head $head; run it again in a moment"
+    mb="$_PR_GL_BASE"
+    case "$mb" in
+      '' | *[!0-9a-f]*) jig_die "pr fetch: GitLab named no base commit for the diff of $_PR_URL" ;;
+    esac
+    _pr_git "$JIG_PROJECT" merge-base --is-ancestor "$mb" "$head" 2>/dev/null \
+      || jig_die "pr fetch: GitLab's diff starts at $mb, which this clone does not hold below the head; a shallow clone needs git fetch --unshallow $remote"
+    extra="project_id: $_PR_GL_PID
+"
+  else
+    mb=$(_pr_git "$JIG_PROJECT" merge-base "$base_sha" "$head" 2>/dev/null) \
+      || jig_die "pr fetch: $base and the head of pull request $_PR_N share no commit here; a shallow clone needs git fetch --unshallow $remote"
+  fi
 
   if [ "$kind" = detached ]; then
     _pr_git "$wt" checkout -q --detach "$head" \
@@ -511,9 +1261,10 @@ EOF
   mkdir -p "$dir"
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   _pr_write "$rec" "url: $_PR_URL
+forge: $_PR_FORGE
 host: $_PR_HOST
 repo: $slug
-number: $_PR_N
+${extra}number: $_PR_N
 state: $state
 remote: $remote
 base: $base
@@ -547,16 +1298,27 @@ fetched_at: $now
 
 # _pr_draft_check <draft> <record> — print the draft with CRs dropped when it
 # keeps skills/jig-pr-review/references/draft.md and agrees with the record; die naming the first
-# line that does not.
+# line that does not. A draft with `follows:` is a follow-up: it agrees with
+# the `followup` file beside the record, answers each of its threads once, and
+# comments only on lines the author added since the head reviewed last.
 _pr_draft_check() {
   local file="$1" rec="$2" line no=0 phase=head key val have="" seen_summary=0 blocks=0 body=0 kind pos path side a b sha out=""
-  local url head accounts tok mb entry tab
+  local url head accounts tok mb entry tab fu follows="" fu_follows="" fu_login="" fu_reviewed="" nthreads=0 replied=" " k dlogin=""
   tab=$(printf '\t')
   url=$(_pr_record_get "$rec" url)
   head=$(_pr_record_get "$rec" head)
   mb=$(_pr_record_get "$rec" merge_base)
   accounts=$(_pr_record_get "$rec" accounts)
   tok=$(_pr_record_get "$rec" token_env)
+  fu="${rec%/record}/followup"
+  if [ -f "$fu" ]; then
+    fu_follows=$(_pr_record_get "$fu" follows)
+    fu_login=$(_pr_record_get "$fu" login)
+    fu_reviewed=$(_pr_record_get "$fu" reviewed)
+    if [ "$(_pr_record_get "$fu" head)" != "$head" ]; then fu_follows="" fu_login=""; fi
+    nthreads=$(_pr_record_get "$fu" threads)
+    case "$nthreads" in '' | *[!0-9]*) nthreads=0 ;; esac
+  fi
   while IFS= read -r line || [ -n "$line" ]; do
     no=$((no + 1))
     line=${line%"$(printf '\r')"}
@@ -579,11 +1341,21 @@ _pr_draft_check() {
       case "$key" in
         url) [ "$val" = "$url" ] || jig_die "pr draft: line $no: url is $val, but the fetched pull request is $url" ;;
         head) [ "$val" = "$head" ] || jig_die "pr draft: line $no: head is $val, but the reviewed head is $head; review what changed, or fetch again" ;;
+        follows)
+          [ -n "$fu_follows" ] || jig_die "pr draft: line $no: a follow-up needs jig pr followup of the reviewed head first"
+          [ "$val" = "$fu_follows" ] || jig_die "pr draft: line $no: follows is $val, but jig pr followup found $fu_follows; run it again, or follow that head"
+          follows="$val"
+          ;;
         login)
           [ -n "$val" ] && [ "$val" != ask ] || jig_die "pr draft: line $no: login names no account"
+          dlogin="$val"
           case " $accounts " in
             *" $val "*) ;;
-            *) [ -n "$tok" ] || jig_die "pr draft: line $no: gh holds no account $val for this host (accounts: ${accounts:-none})" ;;
+            *)
+            if [ -z "$tok" ] && [ "$val" != "$fu_login" ]; then
+              jig_die "pr draft: line $no: gh holds no account $val for this host (accounts: ${accounts:-none})"
+            fi
+            ;;
           esac
           ;;
         language) [ -n "$val" ] || jig_die "pr draft: line $no: language is empty" ;;
@@ -609,6 +1381,18 @@ _pr_draft_check() {
             [ "$seen_summary" = 0 ] || jig_die "pr draft: line $no: a second summary"
             [ "$blocks" = 1 ] || jig_die "pr draft: line $no: the summary comes first"
             seen_summary=1
+            ;;
+          reply)
+            [ "$seen_summary" = 1 ] || jig_die "pr draft: line $no: the summary comes first"
+            [ -n "$follows" ] || jig_die "pr draft: line $no: a reply answers a thread of a follow-up; the header has no follows"
+            [ $# -eq 3 ] || jig_die "pr draft: line $no: '=== reply <thread> fixed|open'"
+            case "$3" in fixed | open) ;; *) jig_die "pr draft: line $no: a reply is fixed or open: $3" ;; esac
+            k="$2"
+            if ! _pr_valid_number "$k" || [ "$k" -gt "$nthreads" ]; then
+              jig_die "pr draft: line $no: jig pr followup lists no thread $k (threads: $nthreads)"
+            fi
+            case "$replied" in *" $k "*) jig_die "pr draft: line $no: thread $k is answered twice" ;; esac
+            replied="$replied$k "
             ;;
           comment | personal)
             [ "$seen_summary" = 1 ] || jig_die "pr draft: line $no: the summary comes first"
@@ -645,6 +1429,13 @@ _pr_draft_check() {
                 jig_die "pr draft: line $no: $path is not a file of the merge base (L is the old side)"
               fi
             fi
+            # A follow-up's new findings come only from what the author
+            # changed since the head reviewed last.
+            if [ "$kind" = comment ] && [ -n "$follows" ] && [ "$fu_reviewed" != unreachable ]; then
+              [ "$side" = R ] || jig_die "pr draft: line $no: a follow-up comments only on lines added since $follows (R lines): $pos"
+              _pr_in_interdiff "$follows" "$mb" "$head" "$path" "$a" "${b:-$a}" \
+                || jig_die "pr draft: line $no: $pos $path is not on a line the author added since $follows; a follow-up comments only on what changed"
+            fi
             ;;
           *) jig_die "pr draft: line $no: unknown block: === $kind" ;;
         esac
@@ -663,6 +1454,15 @@ _pr_draft_check() {
   done
   [ "$seen_summary" = 1 ] || jig_die "pr draft: there is no '=== summary' block"
   [ "$body" = 1 ] || jig_die "pr draft: the last block is empty"
+  if [ -n "$follows" ]; then
+    [ "$dlogin" = "$fu_login" ] \
+      || jig_die "pr draft: the follow-up answers threads of $fu_login; the draft's login is $dlogin"
+    k=1
+    while [ "$k" -le "$nthreads" ]; do
+      case "$replied" in *" $k "*) ;; *) jig_die "pr draft: thread $k of jig pr followup has no '=== reply $k fixed|open'" ;; esac
+      k=$((k + 1))
+    done
+  fi
   printf '%s' "$out"
 }
 
@@ -738,17 +1538,18 @@ _PR_NL='
 '
 
 # _pr_read_draft <file> — the kept (already checked) draft into _PR_D_LOGIN,
-# _PR_D_SUMMARY and the block arrays _PR_D_KIND, _PR_D_POS, _PR_D_PATH and
-# _PR_D_BODY.
-_PR_D_LOGIN="" _PR_D_SUMMARY=""
+# _PR_D_FOLLOWS, _PR_D_SUMMARY and the block arrays _PR_D_KIND, _PR_D_POS,
+# _PR_D_PATH and _PR_D_BODY (for a reply: the thread and the verdict).
+_PR_D_LOGIN="" _PR_D_SUMMARY="" _PR_D_FOLLOWS=""
 _pr_read_draft() {
   local line phase=head n=-1 rest body=""
-  _PR_D_LOGIN="" _PR_D_SUMMARY=""
+  _PR_D_LOGIN="" _PR_D_SUMMARY="" _PR_D_FOLLOWS=""
   _PR_D_KIND=() _PR_D_POS=() _PR_D_PATH=() _PR_D_BODY=()
   while IFS= read -r line || [ -n "$line" ]; do
     if [ "$phase" = head ]; then
       case "$line" in
         "login: "*) _PR_D_LOGIN=${line#login: } ;;
+        "follows: "*) _PR_D_FOLLOWS=${line#follows: } ;;
         '') phase=blocks ;;
       esac
       continue
@@ -845,13 +1646,14 @@ EOF
 }
 
 # _pr_place <R|L> <start> <end> <path> — exit 0 when lines <start>..<end> of
-# <path> lie inside one hunk of GitHub's diff on that side, with the path the
-# comment is posted under in _PR_PLACED (the new name: an `L` comment on a
+# <path> lie inside one hunk of the forge's diff on that side, with the path the
+# comment is posted under in _PR_PLACED and the file's and the hunk's index in
+# _PR_PLACED_F and _PR_PLACED_H (the new name: an `L` comment on a
 # renamed file is posted under the name the pull request gives it). An `L` path
 # is the merge base's: a renamed file's previous name, or an unrenamed file's.
-_PR_PLACED=""
+_PR_PLACED="" _PR_PLACED_F=-1 _PR_PLACED_H=-1
 _pr_place() {
-  local side="$1" a="$2" b="$3" path="$4" i=0 n=${#_PR_F_NAME[@]} f=-1 hs h s c
+  local side="$1" a="$2" b="$3" path="$4" i=0 n=${#_PR_F_NAME[@]} f=-1 hs h s c j=-1
   if [ "$side" = L ]; then
     while [ "$i" -lt "$n" ]; do
       if [ "${_PR_F_OLD[i]}" = "$path" ]; then f=$i; break; fi
@@ -873,13 +1675,14 @@ _pr_place() {
   while [ -n "$hs" ]; do
     h=${hs%%;*}
     hs=${hs#*;}
+    j=$((j + 1))
     set -f
     # shellcheck disable=SC2086 # four numbers
     set -- $h
     set +f
     if [ "$side" = L ]; then s=$1 c=$2; else s=$3 c=$4; fi
     if [ "$c" -gt 0 ] && [ "$a" -ge "$s" ] && [ "$b" -le $((s + c - 1)) ]; then
-      _PR_PLACED=${_PR_F_NAME[f]}
+      _PR_PLACED=${_PR_F_NAME[f]} _PR_PLACED_F=$f _PR_PLACED_H=$j
       return 0
     fi
   done
@@ -916,12 +1719,12 @@ EOF
 }
 
 # _pr_comments_prepare <who> <n|url> — everything a post is built from, each
-# checked against GitHub as the draft's login: sets _PR_DIR, _PR_SLUG,
+# checked against the forge as the draft's login: sets _PR_DIR, _PR_SLUG,
 # _PR_HEAD and the draft and file arrays; dies on the first thing that does
-# not hold.
+# not hold. A record without `forge:` is GitHub's (written before GitLab was).
 _PR_DIR="" _PR_SLUG="" _PR_HEAD="" _PR_MB="" _PR_CHANGED="" _PR_DRAFT=""
 _pr_comments_prepare() {
-  local who="$1" arg="$2" rec info tab base api_head state base_sha locked changed who_am acc mb
+  local who="$1" arg="$2" rec info tab base api_head state base_sha locked changed acc mb
   _pr_resolve "comments $who" "$arg"
   _PR_DIR=$(_pr_state_dir "$_PR_N")
   rec="$_PR_DIR/record"
@@ -932,24 +1735,23 @@ _pr_comments_prepare() {
   # moved the reviewed head.
   _pr_draft_check "$_PR_DRAFT" "$rec" >/dev/null
   _pr_read_draft "$_PR_DRAFT"
+  _PR_FT_N=0
+  _PR_FT_ID=() _PR_FT_DESC=()
+  if [ -n "$_PR_D_FOLLOWS" ]; then _pr_fu_load; fi
   _PR_HOST=$(_pr_record_get "$rec" host)
   _PR_URL=$(_pr_record_get "$rec" url)
   _PR_SLUG=$(_pr_record_get "$rec" repo)
   _PR_HEAD=$(_pr_record_get "$rec" head)
   _PR_MB=$(_pr_record_get "$rec" merge_base)
-  command -v gh >/dev/null 2>&1 || jig_die "pr comments $who: the GitHub CLI (gh) is needed"
-
-  # The login: its own stored token, or the environment's when gh keeps none
-  # for it; either way GitHub must answer with that very login.
-  _PR_TOKEN=$(_pr_stored_token "$_PR_D_LOGIN") || _PR_TOKEN=$(_pr_env_token)
-  [ -n "$_PR_TOKEN" ] \
-    || jig_die "pr comments $who: gh gives no token for $_PR_D_LOGIN on $_PR_HOST (gh auth login --hostname $_PR_HOST; gh auth token --user needs gh 2.40 or later)"
-  who_am=$(_pr_gh user --jq .login 2>/dev/null | tr -d '\r') || who_am=""
-  if [ "$(printf '%s' "$who_am" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$_PR_D_LOGIN" | tr '[:upper:]' '[:lower:]')" ]; then
-    jig_die "pr comments $who: the token for $_PR_D_LOGIN answers as ${who_am:-nobody}; the draft's login is the one it posts as"
+  _PR_FORGE=$(_pr_record_get "$rec" forge)
+  if [ "$_PR_FORGE" = gitlab ]; then
+    _PR_FORGE_NAME=GitLab
+    _pr_gl_comments_prepare "$who"
+    return 0
   fi
-  acc=$(_pr_access "$_PR_SLUG")
-  [ "$acc" != none ] || jig_die "pr comments $who: $_PR_D_LOGIN cannot reach $_PR_SLUG on $_PR_HOST"
+  _PR_FORGE=github _PR_FORGE_NAME=GitHub
+  _pr_gh_as "comments $who" "$_PR_D_LOGIN"
+  acc="$_PR_ACC"
 
   tab=$(printf '\t')
   info=$(_pr_pull_info "$_PR_SLUG") || jig_die "pr comments $who: GitHub did not answer for $_PR_URL"
@@ -976,17 +1778,25 @@ EOF
 # post: _PR_SHOWN (the text shown, markers included), _PR_H (its hash, taken
 # over the same text without the markers, which are made from it), _PR_PAYLOAD
 # (the JSON of the one review), _PR_SUMMARY_FIELDS and _PR_C_FIELDS[k],
-# _PR_C_DESC[k] for k = 1.. (each part's JSON fields and its position).
-_PR_SHOWN="" _PR_H="" _PR_PAYLOAD="" _PR_SUMMARY_FIELDS="" _PR_MOVED=0 _PR_PERSONAL=0 _PR_NC=0
+# _PR_C_DESC[k] for k = 1.. (each part's JSON fields and its position), and
+# _PR_C_LABEL[k] (how it is named in a read-back). Comments are parts
+# 1.._PR_NC; a follow-up's replies follow them, up to _PR_NP, each with the
+# thread it answers in _PR_R_THREAD[k] and its verdict in _PR_R_VERDICT[k].
+_PR_SHOWN="" _PR_H="" _PR_PAYLOAD="" _PR_SUMMARY_FIELDS="" _PR_MOVED=0 _PR_PERSONAL=0 _PR_NC=0 _PR_NP=0
 _pr_comments_build() {
-  local i=1 n=${#_PR_D_KIND[@]} pos side a b path body moved="" k=0 sbody line unshown="" canon marker head
-  local -a cbody cside cline cstart cpath
-  _PR_C_FIELDS=() _PR_C_DESC=()
+  local i=1 n=${#_PR_D_KIND[@]} pos side a b path body moved="" k=0 sbody line unshown="" canon marker head replies="" r t v
+  local -a cbody cside cline cstart cpath cpos
+  _PR_C_FIELDS=() _PR_C_DESC=() _PR_C_WANT=() _PR_C_LABEL=() _PR_R_THREAD=() _PR_R_VERDICT=()
   _PR_MOVED=0 _PR_PERSONAL=0
   head="$_PR_HEAD"
   while [ "$i" -lt "$n" ]; do
     if [ "${_PR_D_KIND[i]}" = personal ]; then
       _PR_PERSONAL=$((_PR_PERSONAL + 1))
+      i=$((i + 1))
+      continue
+    fi
+    if [ "${_PR_D_KIND[i]}" = reply ]; then
+      replies="$replies $i"
       i=$((i + 1))
       continue
     fi
@@ -1006,6 +1816,20 @@ _pr_comments_build() {
       if [ "$b" != "$a" ]; then cstart[k]="$a"; fi
       if [ "$side" = L ]; then cside[k]=LEFT; else cside[k]=RIGHT; fi
       _PR_C_DESC[k]="$pos $_PR_PLACED"
+      _PR_C_LABEL[k]="comment $pos $_PR_PLACED"
+      if [ "$_PR_FORGE" = gitlab ]; then
+        # GitLab takes a range only with a line code (a SHA-1 of the path),
+        # which jig does not compute: a range is posted at its last line, and
+        # the text shown says so.
+        if [ "$b" != "$a" ]; then
+          _PR_C_DESC[k]="$pos $_PR_PLACED, at $side$b"
+          _PR_C_LABEL[k]="comment ${_PR_C_DESC[k]}"
+        fi
+        _PR_C_WANT[k]="$side$b $_PR_PLACED"
+        _pr_gl_lines "$side" "$b" \
+          || jig_die "pr comments: line $b of $path is in GitLab's hunk but not in its lines"
+        cpos[k]=$(_pr_gl_position_json "${_PR_F_OLD[_PR_PLACED_F]:-$_PR_PLACED}" "$_PR_PLACED")
+      fi
     else
       _PR_MOVED=$((_PR_MOVED + 1))
       moved="$moved$_PR_NL**$pos \`$path\`**$_PR_NL$_PR_NL$body$_PR_NL"
@@ -1013,6 +1837,20 @@ _pr_comments_build() {
     i=$((i + 1))
   done
   _PR_NC=$k
+  # A follow-up's replies, each to the thread jig pr followup listed under
+  # its number: the thread's id is part of the text shown, and so of the hash.
+  for r in $replies; do
+    t=${_PR_D_POS[r]}
+    v=${_PR_D_PATH[r]}
+    [ -n "${_PR_FT_ID[t]:-}" ] || jig_die "pr comments: jig pr followup lists no thread $t; run it again and write the draft again"
+    k=$((k + 1))
+    cbody[k]="${_PR_D_BODY[r]}"
+    _PR_R_THREAD[k]="${_PR_FT_ID[t]}"
+    _PR_R_VERDICT[k]="$v"
+    _PR_C_DESC[k]="$t $v ${_PR_FT_DESC[t]}, thread ${_PR_FT_ID[t]}"
+    _PR_C_LABEL[k]="reply ${_PR_C_DESC[k]}"
+  done
+  _PR_NP=$k
 
   sbody="$_PR_D_SUMMARY"
   if [ -n "$moved" ]; then
@@ -1026,7 +1864,7 @@ _pr_comments_build() {
     done <<EOF
 $_PR_UNSHOWN
 EOF
-    sbody="$sbody$_PR_NL${_PR_NL}Not in GitHub's diff, so not commented on: $unshown."
+    sbody="$sbody$_PR_NL${_PR_NL}Not in $_PR_FORGE_NAME's diff, so not commented on: $unshown."
   fi
 
   # The hash is taken over the text without markers; the markers carry it.
@@ -1038,7 +1876,11 @@ EOF
   sbody="$sbody$_PR_NL$_PR_NL$marker part=0 -->"
   i=1
   while [ "$i" -le "$k" ]; do
-    cbody[i]="${cbody[i]}$_PR_NL$_PR_NL$marker part=$i -->"
+    if [ "$i" -gt "$_PR_NC" ]; then
+      cbody[i]="${cbody[i]}$_PR_NL$_PR_NL$marker part=$i verdict=${_PR_R_VERDICT[i]} -->"
+    else
+      cbody[i]="${cbody[i]}$_PR_NL$_PR_NL$marker part=$i -->"
+    fi
     i=$((i + 1))
   done
   _PR_SHOWN=$(_pr_comments_render "$sbody" "$_PR_H" cbody; printf x)
@@ -1046,6 +1888,22 @@ EOF
 
   json_quote "$sbody"
   _PR_SUMMARY_FIELDS="\"body\":$_JSON"
+  if [ "$_PR_FORGE" = gitlab ]; then
+    # One discussion a part; payload.json is the list of them, for reading.
+    _PR_PAYLOAD="[{$_PR_SUMMARY_FIELDS}"
+    i=1
+    while [ "$i" -le "$_PR_NC" ]; do
+      json_quote "${cbody[i]}"
+      _PR_C_FIELDS[i]="\"body\":$_JSON,\"position\":${cpos[i]}"
+      _PR_PAYLOAD="$_PR_PAYLOAD,{${_PR_C_FIELDS[i]}}"
+      i=$((i + 1))
+    done
+    _PR_PAYLOAD="$_PR_PAYLOAD]"
+    _pr_reply_fields cbody
+    return 0
+  fi
+  _pr_reply_fields cbody
+  k=$_PR_NC
   i=1
   while [ "$i" -le "$k" ]; do
     json_quote "${cpath[i]}"
@@ -1072,16 +1930,57 @@ EOF
   _PR_PAYLOAD="$_PR_PAYLOAD}"
 }
 
+# _pr_reply_fields <bodies array name> — each reply's JSON fields (its body
+# alone: the thread is in the endpoint) into _PR_C_FIELDS.
+_pr_reply_fields() {
+  local i=$((_PR_NC + 1)) ref
+  while [ "$i" -le "$_PR_NP" ]; do
+    ref="$1[$i]"
+    json_quote "${!ref}"
+    _PR_C_FIELDS[i]="\"body\":$_JSON"
+    i=$((i + 1))
+  done
+}
+
+# _pr_gl_position_json <old path> <new path> — a GitLab position on the line
+# pair _pr_gl_lines found, with the three shas of the merge request's diff.
+_pr_gl_position_json() {
+  local j o
+  json_quote "$1"
+  o=$_JSON
+  json_quote "$2"
+  j="{\"position_type\":\"text\",\"base_sha\":\"$_PR_GL_BASE\",\"start_sha\":\"$_PR_GL_START\",\"head_sha\":\"$_PR_HEAD\",\"old_path\":$o,\"new_path\":$_JSON"
+  if [ -n "$_PR_GL_OLD" ]; then j="$j,\"old_line\":$_PR_GL_OLD"; fi
+  if [ -n "$_PR_GL_NEW" ]; then j="$j,\"new_line\":$_PR_GL_NEW"; fi
+  printf '%s}\n' "$j"
+}
+
 # _pr_comments_render <summary> <hash or empty> <bodies array name> — the text
 # a person is shown: the header, the summary, and each comment under the
-# position it is posted at (the draft's notation, the path as posted).
+# position it is posted at (the draft's notation, the path as posted). On
+# GitLab the header names the diff's base and start too: a position carries
+# them, so a diff GitLab made again is a new version to show.
 _pr_comments_render() {
   local sbody="$1" i=1 ref
-  printf 'jig-pr-post: 1\nurl: %s\nhead: %s\nlogin: %s\nevent: COMMENT\n\n' "$_PR_URL" "$_PR_HEAD" "$_PR_D_LOGIN"
+  if [ "$_PR_FORGE" = gitlab ]; then
+    printf 'jig-pr-post: 1\nurl: %s\nhead: %s\nbase: %s\nstart: %s\n' "$_PR_URL" "$_PR_HEAD" "$_PR_GL_BASE" "$_PR_GL_START"
+  else
+    printf 'jig-pr-post: 1\nurl: %s\nhead: %s\n' "$_PR_URL" "$_PR_HEAD"
+  fi
+  if [ -n "$_PR_D_FOLLOWS" ]; then printf 'follows: %s\n' "$_PR_D_FOLLOWS"; fi
+  if [ "$_PR_FORGE" = gitlab ]; then
+    printf 'login: %s\nevent: discussions\n\n' "$_PR_D_LOGIN"
+  else
+    printf 'login: %s\nevent: COMMENT\n\n' "$_PR_D_LOGIN"
+  fi
   printf '=== summary\n%s\n' "$sbody"
-  while [ "$i" -le "$_PR_NC" ]; do
+  while [ "$i" -le "$_PR_NP" ]; do
     ref="$3[$i]"
-    printf '=== comment %s\n%s\n' "${_PR_C_DESC[i]}" "${!ref}"
+    if [ "$i" -gt "$_PR_NC" ]; then
+      printf '=== reply %s\n%s\n' "${_PR_C_DESC[i]}" "${!ref}"
+    else
+      printf '=== comment %s\n%s\n' "${_PR_C_DESC[i]}" "${!ref}"
+    fi
     i=$((i + 1))
   done
 }
@@ -1109,7 +2008,7 @@ shown_at: $now
 "
   printf 'jig: to post: %s\n' "$_PR_DIR/shown.md" >&2
   if [ "$_PR_MOVED" -gt 0 ]; then
-    printf 'jig: moved into the summary: %s comment(s) outside GitHub'"'"'s diff\n' "$_PR_MOVED" >&2
+    printf 'jig: moved into the summary: %s comment(s) outside %s'"'"'s diff\n' "$_PR_MOVED" "$_PR_FORGE_NAME" >&2
   fi
   if [ "$_PR_PERSONAL" -gt 0 ]; then
     printf 'jig: left out: %s personal block(s), never posted\n' "$_PR_PERSONAL" >&2
@@ -1125,11 +2024,16 @@ shown_at: $now
 # another version: a half-done one may have left comments and no review). Markers by anybody else are not ours to count.
 _PR_LANDED="" _PR_REVIEW_URL="" _PR_OTHER=""
 _pr_readback() {
-  local out line tab login marker url rest w lline lside lstart lpath me
+  local out line tab login marker url rest w lline lside lstart lirt lpath me
+  if [ "$_PR_FORGE" = gitlab ]; then
+    _pr_gl_readback
+    return 0
+  fi
+  _PR_MISPLACED=" "
   tab=$(printf '\t')
   me=$(printf '%s' "$_PR_D_LOGIN" | tr '[:upper:]' '[:lower:]')
-  _PR_LANDED=" " _PR_REVIEW_URL="" _PR_OTHER=""
-  _PR_LANDED_AT=()
+  _PR_LANDED=" " _PR_REVIEW_URL="" _PR_OTHER="" _PR_GH_SEEN=" "
+  _PR_LANDED_AT=() _PR_MISPLACED_AT=()
   out=$(_pr_gh --paginate "repos/$_PR_SLUG/pulls/$_PR_N/reviews?per_page=100" \
     --jq '.[] | select(.body | tostring | contains("<!-- jig-pr-review ")) | (.id | tostring) + "\t" + .user.login + "\t" + (.body | split("<!-- jig-pr-review ")[1] | split(" -->")[0]) + "\t" + .html_url' \
     2>/dev/null) || jig_die "pr comments: could not read back the reviews of pull request $_PR_N"
@@ -1156,7 +2060,7 @@ _pr_readback() {
 $out
 EOF
   out=$(_pr_gh --paginate "repos/$_PR_SLUG/pulls/$_PR_N/comments?per_page=100" \
-    --jq '.[] | select(.body | tostring | contains("<!-- jig-pr-review ")) | (.id | tostring) + "\t" + .user.login + "\t" + (.body | split("<!-- jig-pr-review ")[1] | split(" -->")[0]) + "\t" + (.line | tostring) + "\t" + (.side | tostring) + "\t" + (.start_line | tostring) + "\t" + .html_url + "\t" + .path' \
+    --jq '.[] | select(.body | tostring | contains("<!-- jig-pr-review ")) | (.id | tostring) + "\t" + .user.login + "\t" + (.body | split("<!-- jig-pr-review ")[1] | split(" -->")[0]) + "\t" + (.line | tostring) + "\t" + (.side | tostring) + "\t" + (.start_line | tostring) + "\t" + (.in_reply_to_id | tostring) + "\t" + .html_url + "\t" + .path' \
     2>/dev/null) || jig_die "pr comments: could not read back the comments of pull request $_PR_N"
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%"$(printf '\r')"}
@@ -1172,6 +2076,8 @@ EOF
     rest=${rest#*"$tab"}
     lstart=${rest%%"$tab"*}
     rest=${rest#*"$tab"}
+    lirt=${rest%%"$tab"*}
+    rest=${rest#*"$tab"}
     url=${rest%%"$tab"*}
     lpath=${rest#*"$tab"}
     [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" = "$me" ] || continue
@@ -1181,8 +2087,20 @@ EOF
       if [ -z "$_PR_OTHER" ]; then _PR_OTHER="$url"; fi
       continue
     fi
+    _PR_GH_SEEN="$_PR_GH_SEEN${line%%"$tab"*} "
     case "$_PR_M_PART" in '' | 0 | *[!0-9]*) continue ;; esac
-    [ "$_PR_M_PART" -le "$_PR_NC" ] || continue
+    [ "$_PR_M_PART" -le "$_PR_NP" ] || continue
+    if [ "$_PR_M_PART" -gt "$_PR_NC" ]; then
+      # A reply has landed only in the thread it was shown for.
+      if [ "$lirt" = "${_PR_R_THREAD[_PR_M_PART]}" ]; then
+        _PR_LANDED="$_PR_LANDED$_PR_M_PART "
+        _PR_LANDED_AT[_PR_M_PART]="thread $lirt"
+      else
+        _PR_MISPLACED="$_PR_MISPLACED$_PR_M_PART "
+        _PR_MISPLACED_AT[_PR_M_PART]="thread $lirt"
+      fi
+      continue
+    fi
     _PR_LANDED="$_PR_LANDED$_PR_M_PART "
     w="$lline"
     if [ "$lstart" != null ] && [ -n "$lstart" ]; then w="$lstart-$lline"; fi
@@ -1192,11 +2110,12 @@ $out
 EOF
 }
 
-# _pr_marker <id=… head=… part=…> — into _PR_M_ID, _PR_M_HEAD and _PR_M_PART.
-_PR_M_ID="" _PR_M_HEAD="" _PR_M_PART=""
+# _pr_marker <id=… head=… part=… [verdict=…]> — into _PR_M_ID, _PR_M_HEAD,
+# _PR_M_PART and _PR_M_VERDICT (a reply's: fixed or open).
+_PR_M_ID="" _PR_M_HEAD="" _PR_M_PART="" _PR_M_VERDICT=""
 _pr_marker() {
   local w
-  _PR_M_ID="" _PR_M_HEAD="" _PR_M_PART=""
+  _PR_M_ID="" _PR_M_HEAD="" _PR_M_PART="" _PR_M_VERDICT=""
   set -f
   # shellcheck disable=SC2086 # the marker's words
   set -- $1
@@ -1206,14 +2125,34 @@ _pr_marker() {
       id=*) _PR_M_ID=${w#id=} ;;
       head=*) _PR_M_HEAD=${w#head=} ;;
       part=*) _PR_M_PART=${w#part=} ;;
+      verdict=*) _PR_M_VERDICT=${w#verdict=} ;;
     esac
   done
 }
 
-# _pr_count_landed — how many of the review's parts _PR_LANDED holds.
+# _pr_misplaced_list — the parts _PR_MISPLACED holds, with where each is.
+_pr_misplaced_list() {
+  local k=0 out=""
+  while [ "$k" -le "$_PR_NP" ]; do
+    case "$_PR_MISPLACED" in
+      *" $k "*)
+        if [ "$k" = 0 ]; then
+          out="$out${out:+; }summary at ${_PR_MISPLACED_AT[0]}"
+        else
+          out="$out${out:+; }${_PR_C_LABEL[k]} at ${_PR_MISPLACED_AT[k]}"
+        fi
+        ;;
+    esac
+    k=$((k + 1))
+  done
+  printf '%s\n' "$out"
+}
+
+# _pr_count_landed [<last part>] — how many of the review's parts, up to
+# <last part> (all of them by default), _PR_LANDED holds.
 _pr_count_landed() {
   local n=0 k=0
-  while [ "$k" -le "$_PR_NC" ]; do
+  while [ "$k" -le "${1:-$_PR_NP}" ]; do
     case "$_PR_LANDED" in *" $k "*) n=$((n + 1)) ;; esac
     k=$((k + 1))
   done
@@ -1236,8 +2175,48 @@ _pr_post_file() {
   return "$rc"
 }
 
+# _pr_gh_posted <review id> <reply ids> — `posted` for this version on
+# GitHub: the review GitHub took and the replies it took since, each recorded
+# as soon as it is given.
+_pr_gh_posted() {
+  local now
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  _pr_write "$_PR_DIR/posted" "hash: $_PR_H
+review: $1
+replies: $2
+login: $_PR_D_LOGIN
+posted_at: $now
+"
+}
+
+# _pr_gh_post_replies — a follow-up's replies GitHub does not hold yet, each
+# into its thread (`pulls/<n>/comments/<id>/replies`), one call each; the
+# first refusal stops the rest, into `err` of _pr_comments_post, as on GitLab.
+_pr_gh_post_replies() {
+  local k=$((_PR_NC + 1)) rid="" rids=""
+  if [ -f "$_PR_DIR/posted" ] && [ "$(_pr_record_get "$_PR_DIR/posted" hash)" = "$_PR_H" ]; then
+    rid=$(_pr_record_get "$_PR_DIR/posted" review)
+    rids=$(_pr_record_get "$_PR_DIR/posted" replies)
+  fi
+  while [ "$k" -le "$_PR_NP" ]; do
+    case "$_PR_LANDED" in
+      *" $k "*) ;;
+      *)
+        if ! _pr_post_file "part-$k.json" "{${_PR_C_FIELDS[k]}}" \
+          "repos/$_PR_SLUG/pulls/$_PR_N/comments/${_PR_R_THREAD[k]}/replies"; then
+          err="$err$_PR_OUT$_PR_NL"
+          return 0
+        fi
+        rids="$rids${rids:+ }$_PR_OUT"
+        _pr_gh_posted "$rid" "$rids"
+        ;;
+    esac
+    k=$((k + 1))
+  done
+}
+
 _pr_comments_post() {
-  local arg="" shown="" recorded total landed k out rc=0 now prev posted_id="" missing=0 err=""
+  local arg="" shown="" recorded total landed k out rc=0 now prev posted_id="" missing=0 err="" ids="" misplaced=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --shown)
@@ -1269,28 +2248,61 @@ _pr_comments_post() {
     || jig_die "pr comments post: what would be posted now ($_PR_H) is not what was shown ($shown); run jig pr comments check $_PR_N and show it again — nothing was posted"
 
   _pr_readback
-  total=$((_PR_NC + 1))
+  total=$((_PR_NP + 1))
   landed=$(_pr_count_landed)
+  if [ "$_PR_MISPLACED" != " " ]; then
+    jig_die "pr comments post: a part of this version is on $_PR_URL, but not where it was shown ($(_pr_misplaced_list)); decide there what stays — nothing was posted"
+  fi
+  if [ "$_PR_FORGE" = gitlab ]; then
+    _pr_gl_refuse_a_lost_note
+  else
+    _pr_gh_refuse_a_lost_reply
+  fi
   if [ "$landed" = 0 ] && [ -n "$_PR_OTHER" ]; then
     jig_die "pr comments post: $_PR_D_LOGIN already posted another version of a review of this head: $_PR_OTHER; decide there what stays — nothing was posted"
   fi
   if [ "$landed" = 0 ] && [ -f "$_PR_DIR/posted" ] && [ "$(_pr_record_get "$_PR_DIR/posted" hash)" = "$_PR_H" ]; then
-    jig_die "pr comments post: this version was posted as review $(_pr_record_get "$_PR_DIR/posted" review), but GitHub shows none of its markers; look at $_PR_URL before posting anything again"
+    jig_die "pr comments post: this version was posted as review $(_pr_record_get "$_PR_DIR/posted" review), but $_PR_FORGE_NAME shows none of its markers; look at $_PR_URL before posting anything again"
   fi
 
   if [ "$landed" = "$total" ]; then
     printf 'already posted: nothing is missing\n'
-  elif [ "$landed" = 0 ]; then
+  elif [ "$_PR_FORGE" = gitlab ]; then
+    # One discussion a call, the summary first; the first refusal stops the
+    # rest (a rate limit refuses them too), and a run again posts only what is
+    # missing. Each id goes into `posted` as soon as GitLab gives it, after
+    # those an earlier run of this version recorded.
+    if [ -f "$_PR_DIR/posted" ] && [ "$(_pr_record_get "$_PR_DIR/posted" hash)" = "$_PR_H" ]; then
+      ids=$(_pr_record_get "$_PR_DIR/posted" review)
+    fi
+    k=0
+    while [ "$k" -le "$_PR_NP" ]; do
+      case "$_PR_LANDED" in
+        *" $k "*) ;;
+        *)
+          if ! _pr_gl_post_part "$k"; then
+            err="$_PR_OUT"
+            break
+          fi
+          if [ -z "$posted_id" ]; then posted_id="$_PR_OUT"; fi
+          ids="$ids${ids:+ }$_PR_OUT"
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          _pr_write "$_PR_DIR/posted" "hash: $_PR_H
+review: $ids
+login: $_PR_D_LOGIN
+posted_at: $now
+"
+          ;;
+      esac
+      k=$((k + 1))
+    done
+  elif [ "$(_pr_count_landed "$_PR_NC")" = 0 ]; then
     _pr_post_file post.json "$_PR_PAYLOAD" "repos/$_PR_SLUG/pulls/$_PR_N/reviews" || rc=$?
     out="$_PR_OUT"
     if [ "$rc" = 0 ]; then
       posted_id="$out"
-      now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      _pr_write "$_PR_DIR/posted" "hash: $_PR_H
-review: $posted_id
-login: $_PR_D_LOGIN
-posted_at: $now
-"
+      _pr_gh_posted "$posted_id" ""
+      _pr_gh_post_replies
     else
       err="$out"
     fi
@@ -1316,6 +2328,7 @@ posted_at: $now
       esac
       k=$((k + 1))
     done
+    if [ -z "$err" ]; then _pr_gh_post_replies; fi
   fi
 
   _pr_readback
@@ -1326,21 +2339,43 @@ posted_at: $now
     *) printf 'missing: summary\n'; missing=$((missing + 1)) ;;
   esac
   k=1
-  while [ "$k" -le "$_PR_NC" ]; do
+  while [ "$k" -le "$_PR_NP" ]; do
     case "$_PR_LANDED" in
-      *" $k "*) printf 'landed: comment %s at %s\n' "${_PR_C_DESC[k]}" "${_PR_LANDED_AT[k]}" ;;
+      *" $k "*) printf 'landed: %s at %s\n' "${_PR_C_LABEL[k]}" "${_PR_LANDED_AT[k]}" ;;
       *)
-        printf 'missing: comment %s\n' "${_PR_C_DESC[k]}"
+        printf 'missing: %s\n' "${_PR_C_LABEL[k]}"
         missing=$((missing + 1))
         ;;
     esac
     k=$((k + 1))
   done
+  case "$_PR_MISPLACED" in
+    " ") ;;
+    *)
+      k=0
+      while [ "$k" -le "$_PR_NP" ]; do
+        case "$_PR_MISPLACED" in
+          *" $k "*)
+            if [ "$k" = 0 ]; then
+              printf 'misplaced: summary at %s\n' "${_PR_MISPLACED_AT[0]}"
+            else
+              printf 'misplaced: %s at %s\n' "${_PR_C_LABEL[k]}" "${_PR_MISPLACED_AT[k]}"
+            fi
+            misplaced=$((misplaced + 1))
+            ;;
+        esac
+        k=$((k + 1))
+      done
+      ;;
+  esac
   if [ -n "$err" ]; then
-    jig_warn "pr comments post: GitHub answered: $(printf '%s' "$err" | tr '\n' ' ')"
+    jig_warn "pr comments post: $_PR_FORGE_NAME answered: $(printf '%s' "$err" | tr '\n' ' ')"
+  fi
+  if [ "$misplaced" -gt 0 ]; then
+    jig_die "pr comments post: $misplaced part(s) landed where they were not shown; do not post again — look at $_PR_URL"
   fi
   if [ "$missing" = "$total" ] && [ -n "$posted_id" ]; then
-    jig_die "pr comments post: GitHub took review $posted_id, but none of its markers came back; do not post again — look at $_PR_URL"
+    jig_die "pr comments post: $_PR_FORGE_NAME took review $posted_id, but none of its markers came back; do not post again — look at $_PR_URL"
   fi
   if [ "$missing" = "$total" ]; then
     jig_die "pr comments post: nothing landed on $_PR_URL"
@@ -1348,6 +2383,463 @@ posted_at: $now
   if [ "$missing" -gt 0 ]; then
     jig_die "pr comments post: half-done: $((total - missing)) of $total parts landed; run jig pr comments post $_PR_N --shown $_PR_H again to post only what is missing"
   fi
+}
+
+# --- followup: an earlier review, read back from the forge -----------------------------------
+#
+# adr-20261110-a-follow-up-answers-its-own-threads. What jig posted carries a
+# marker with the head it reviewed, so the forge itself says what was
+# reviewed: `followup` reads the login's markers back, takes the head of the
+# latest of them as the one to follow, makes sure that commit is in the clone
+# (or says it is gone), and lists the threads still to answer — every
+# top-level comment of an earlier head that no reply of the login has called
+# fixed. Nothing the author wrote is printed: their replies are data, read on
+# the forge.
+
+# _pr_valid_sha <s> — a full commit id, 40 (or, in a SHA-256 repository, 64)
+# lowercase hex digits. A marker's head comes from the forge and reaches git
+# as an argument: nothing else passes.
+_pr_valid_sha() {
+  case "$1" in '' | *[!0-9a-f]*) return 1 ;; esac
+  [ "${#1}" = 40 ] || [ "${#1}" = 64 ]
+}
+
+# _pr_valid_thread <id> — a thread's id as it goes into an API path: GitHub's
+# comment ids are digits, GitLab's discussion ids hex.
+_pr_valid_thread() {
+  case "$1" in '' | *[!0-9a-f]*) return 1 ;; esac
+  [ "${#1}" -le 64 ]
+}
+
+# _pr_added_ranges <from> <to> <path> — the lines git's diff of <from>..<to>
+# adds to <path> on the <to> side, as "<first> <last>;" each.
+_pr_added_ranges() {
+  local out line a o c d
+  out=$(_pr_git "$JIG_PROJECT" diff --no-ext-diff --no-textconv --no-color --no-renames --diff-algorithm=myers -U0 "$1" "$2" -- "$3" 2>/dev/null) || out=""
+  a=""
+  while IFS= read -r line; do
+    case "$line" in "@@ -"*) ;; *) continue ;; esac
+    _pr_hunk "$line" || continue
+    # shellcheck disable=SC2086 # four numbers
+    set -- $_PR_HUNK
+    c=$3 d=$4
+    if [ "$d" -gt 0 ]; then a="$a$c $((c + d - 1));"; fi
+  done <<EOT
+$out
+EOT
+  printf '%s\n' "$a"
+}
+
+# _pr_in_interdiff <follows> <merge base> <head> <path> <start> <end> — exit 0
+# when lines <start>..<end> of <path> at <head> take in a line added both since
+# <follows> and since <merge base>: a line the author changed after the last
+# review, not one a rebase brought in from the base.
+_pr_in_interdiff() {
+  local r1 r2 x y s1 e1 s2 e2 lo hi
+  r1=$(_pr_added_ranges "$1" "$3" "$4")
+  r2=$(_pr_added_ranges "$2" "$3" "$4")
+  x="$r1"
+  while [ -n "$x" ]; do
+    s1=${x%%;*}
+    x=${x#*;}
+    e1=${s1#* } s1=${s1% *}
+    y="$r2"
+    while [ -n "$y" ]; do
+      s2=${y%%;*}
+      y=${y#*;}
+      e2=${s2#* } s2=${s2% *}
+      lo=$5 hi=$6
+      [ "$s1" -le "$lo" ] || lo=$s1
+      [ "$s2" -le "$lo" ] || lo=$s2
+      [ "$e1" -ge "$hi" ] || hi=$e1
+      [ "$e2" -ge "$hi" ] || hi=$e2
+      if [ "$lo" -le "$hi" ]; then return 0; fi
+    done
+  done
+  return 1
+}
+
+# The markers of the login, one item each: _PR_I_KIND (top: a comment that
+# opens a thread; reply: a note in one; summary), _PR_I_ID (the thread's id
+# for a top, the parent's for a reply), _PR_I_HEAD, _PR_I_PART, _PR_I_VERDICT,
+# _PR_I_AT (when it was made, ISO 8601), _PR_I_POS, _PR_I_PATH, _PR_I_URL and
+# _PR_I_BODY (without its marker line).
+_PR_NI=0
+_pr_fu_reset() {
+  _PR_NI=0
+  _PR_I_KIND=() _PR_I_ID=() _PR_I_HEAD=() _PR_I_PART=() _PR_I_VERDICT=() _PR_I_AT=()
+  _PR_I_POS=() _PR_I_PATH=() _PR_I_URL=() _PR_I_BODY=()
+}
+
+# _pr_fu_add <me> <login> <kind> <id> <marker> <at> <pos> <path> <url> <body> —
+# one item, kept when it is the login's and its marker names a head and a part.
+_pr_fu_add() {
+  local me="$1" kind="$3" body="" line i
+  [ "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" = "$me" ] || return 0
+  _pr_marker "$5"
+  _pr_valid_sha "$_PR_M_HEAD" || return 0
+  case "$_PR_M_PART" in '' | *[!0-9]*) return 0 ;; esac
+  if [ "$kind" = top ] && [ "$_PR_M_PART" = 0 ]; then kind=summary; fi
+  if [ "$kind" != summary ]; then _pr_valid_thread "$4" || return 0; fi
+  while IFS= read -r line; do
+    case "$line" in *"jig-pr-review id="*) continue ;; esac
+    body="$body$line$_PR_NL"
+  done <<EOT
+${10}
+EOT
+  _pr_trim_nl "$body"
+  i=$_PR_NI
+  _PR_I_KIND[i]="$kind" _PR_I_ID[i]="$4" _PR_I_HEAD[i]="$_PR_M_HEAD" _PR_I_PART[i]="$_PR_M_PART"
+  _PR_I_VERDICT[i]="$_PR_M_VERDICT" _PR_I_AT[i]="$6" _PR_I_POS[i]="$7" _PR_I_PATH[i]="$8"
+  _PR_I_URL[i]="$9" _PR_I_BODY[i]="$_PR_S"
+  _PR_NI=$((i + 1))
+}
+
+# _pr_gh_followup_read <login> — the login's markers on pull request _PR_N:
+# its reviews (the summary) and its review comments, each with the lines of its
+# body (`B`), through gh's filter.
+_pr_gh_followup_read() {
+  local me out line tab kind="" id="" login="" marker="" at="" pos="" path="" url="" body="" rest irt oline side ostart
+  tab=$(printf '\t')
+  me=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _pr_fu_reset
+  out=$(_pr_gh --paginate "repos/$_PR_SLUG/pulls/$_PR_N/reviews?per_page=100" \
+    --jq '.[] | select(.body | tostring | contains("<!-- jig-pr-review ")) | ("S\t" + (.id | tostring) + "\t" + .user.login + "\t" + (.body | split("<!-- jig-pr-review ")[1] | split(" -->")[0]) + "\t" + (.submitted_at | tostring) + "\t" + .html_url), (.body | split("\n") | .[] | "B\t" + .)' \
+    2>/dev/null) || jig_die "pr followup: could not read the reviews of pull request $_PR_N"
+  out="$out$_PR_NL"$(_pr_gh --paginate "repos/$_PR_SLUG/pulls/$_PR_N/comments?per_page=100" \
+    --jq '.[] | select(.body | tostring | contains("<!-- jig-pr-review ")) | ("C\t" + (.id | tostring) + "\t" + .user.login + "\t" + (.body | split("<!-- jig-pr-review ")[1] | split(" -->")[0]) + "\t" + (.created_at | tostring) + "\t" + (.in_reply_to_id | tostring) + "\t" + (.original_line | tostring) + "\t" + (.side | tostring) + "\t" + (.original_start_line | tostring) + "\t" + .html_url + "\t" + (.path | tostring | gsub("\n"; " "))), (.body | split("\n") | .[] | "B\t" + .)' \
+    2>/dev/null) || jig_die "pr followup: could not read the comments of pull request $_PR_N"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%"$(printf '\r')"}
+    case "$line" in
+      "B$tab"*) body="$body${line#B?}$_PR_NL"; continue ;;
+      "S$tab"* | "C$tab"*) ;;
+      *) continue ;;
+    esac
+    if [ -n "$kind" ]; then _pr_fu_add "$me" "$login" "$kind" "$id" "$marker" "$at" "$pos" "$path" "$url" "$body"; fi
+    body=""
+    rest=${line#?"$tab"}
+    id=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+    login=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+    marker=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+    at=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+    pos="" path=""
+    case "$line" in
+      S*)
+        kind=top url="$rest"
+        ;;
+      C*)
+        irt=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+        oline=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+        side=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+        ostart=${rest%%"$tab"*}; rest=${rest#*"$tab"}
+        url=${rest%%"$tab"*}
+        path=${rest#*"$tab"}
+        if [ "$side" = LEFT ]; then pos=L; else pos=R; fi
+        if [ -n "$ostart" ] && [ "$ostart" != null ] && [ "$ostart" != "$oline" ]; then pos="$pos$ostart-$oline"; else pos="$pos$oline"; fi
+        if [ -n "$irt" ] && [ "$irt" != null ]; then kind=reply id="$irt"; else kind=top; fi
+        ;;
+    esac
+  done <<EOT
+$out
+EOT
+  if [ -n "$kind" ]; then _pr_fu_add "$me" "$login" "$kind" "$id" "$marker" "$at" "$pos" "$path" "$url" "$body"; fi
+  # A review's summary is a `top` of part 0, which _pr_fu_add calls summary;
+  # a review is no thread.
+  return 0
+}
+
+# _pr_gl_followup_read <login> — the GitLab half: every note of every
+# discussion of merge request _PR_N; a discussion's first note opens a thread
+# (or is a summary), the notes after it are replies in it.
+_pr_gl_followup_read() {
+  local me out line tab key rest rec ni f v cur="" infield="" body="" login="" nid="" at="" npath="" opath="" nnew="" nold="" pos path
+  local -a dids
+  tab=$(printf '\t')
+  me=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  _pr_fu_reset
+  out=$(_pr_glab --paginate "projects/$_PR_GL_PID/merge_requests/$_PR_N/discussions?per_page=100" 2>/dev/null | _pr_json_lines) \
+    || jig_die "pr followup: could not read the discussions of merge request $_PR_N"
+  while IFS= read -r line; do
+    case "$line" in
+      '!') jig_die "pr followup: GitLab gave discussions of merge request $_PR_N that jig cannot read" ;;
+      *".id$tab"*)
+        key=${line%%"$tab"*}
+        rec=${key%.id}
+        case "$rec" in '' | *[!0-9]*) ;; *) dids[rec]=${line#*"$tab"} ;; esac
+        ;;
+    esac
+  done <<EOT
+$out
+EOT
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$tab"*)
+        if [ "$infield" = body ]; then body="$body$_PR_NL${line#?}"; fi
+        continue
+        ;;
+    esac
+    key=${line%%"$tab"*}
+    v=${line#*"$tab"}
+    rec=${key%%.*}
+    rest=${key#*.}
+    case "$rest" in notes.*) ;; *) infield=""; continue ;; esac
+    rest=${rest#notes.}
+    ni=${rest%%.*}
+    f=${rest#*.}
+    if [ "$rec.$ni" != "$cur" ]; then
+      if [ -n "$cur" ]; then _pr_gl_followup_note; fi
+      cur="$rec.$ni"
+      body="" login="" nid="" at="" npath="" opath="" nnew="" nold=""
+    fi
+    infield="$f"
+    case "$f" in
+      body) body="$v" ;;
+      id) nid="$v" ;;
+      author.username) login="$v" ;;
+      created_at) at="$v" ;;
+      position.new_path) npath="$v" ;;
+      position.old_path) opath="$v" ;;
+      position.new_line) nnew="$v" ;;
+      position.old_line) nold="$v" ;;
+    esac
+  done <<EOT
+$out
+EOT
+  if [ -n "$cur" ]; then _pr_gl_followup_note; fi
+}
+
+# _pr_gl_followup_note — one note _pr_gl_followup_read has gathered (it reads
+# that function's locals).
+_pr_gl_followup_note() {
+  local r=${cur%%.*} i=${cur#*.} marker kind pos="" path=""
+  case "$body" in *"jig-pr-review id="*) ;; *) return 0 ;; esac
+  marker=${body##*jig-pr-review }
+  marker=${marker%%-->*}
+  if [ "$i" = 0 ]; then kind=top; else kind=reply; fi
+  if [ -n "$nnew" ] && [ "$nnew" != null ]; then
+    pos="R$nnew" path="$npath"
+  elif [ -n "$nold" ] && [ "$nold" != null ]; then
+    pos="L$nold" path="$opath"
+  fi
+  _pr_fu_add "$me" "$login" "$kind" "${dids[r]:-}" "$marker" "$at" "$pos" "$path" "$_PR_URL#note_$nid" "$body"
+}
+
+# _pr_fu_pick — from the items, the head to follow (_PR_FU_HEAD: that of the
+# latest item of a head other than the one fetched now), the summary posted
+# with it (_PR_FU_SUMMARY), and the threads to answer, in the order the forge
+# gave them: _PR_T_ID[k], _PR_T_DESC[k] ("<pos> <path>"), _PR_T_URL[k],
+# _PR_T_BODY[k] for k = 1.._PR_NT. A thread is closed by a reply of the login
+# whose verdict was fixed, on an earlier head; what the current head's own
+# post holds never closes one, so a half-done follow-up lists the same threads
+# again. _PR_FU_CLOSED counts the closed ones.
+_PR_FU_HEAD="" _PR_FU_SUMMARY="" _PR_NT=0 _PR_FU_CLOSED=0
+_pr_fu_pick() {
+  local i=0 j last="" closed
+  _PR_FU_HEAD="" _PR_FU_SUMMARY="" _PR_NT=0 _PR_FU_CLOSED=0
+  _PR_T_ID=() _PR_T_DESC=() _PR_T_URL=() _PR_T_BODY=()
+  while [ "$i" -lt "$_PR_NI" ]; do
+    if [ "${_PR_I_HEAD[i]}" != "$_PR_HEAD" ] && { [ -z "$last" ] || [[ "${_PR_I_AT[i]}" > "$last" ]] || [ "${_PR_I_AT[i]}" = "$last" ]; }; then
+      last="${_PR_I_AT[i]}"
+      _PR_FU_HEAD="${_PR_I_HEAD[i]}"
+    fi
+    i=$((i + 1))
+  done
+  i=0
+  while [ "$i" -lt "$_PR_NI" ]; do
+    if [ "${_PR_I_KIND[i]}" = summary ] && [ "${_PR_I_HEAD[i]}" = "$_PR_FU_HEAD" ]; then
+      _PR_FU_SUMMARY="${_PR_I_BODY[i]}"
+    fi
+    if [ "${_PR_I_KIND[i]}" = top ] && [ "${_PR_I_HEAD[i]}" != "$_PR_HEAD" ]; then
+      closed=0
+      j=0
+      while [ "$j" -lt "$_PR_NI" ]; do
+        if [ "${_PR_I_KIND[j]}" = reply ] && [ "${_PR_I_ID[j]}" = "${_PR_I_ID[i]}" ] \
+           && [ "${_PR_I_HEAD[j]}" != "$_PR_HEAD" ] && [ "${_PR_I_VERDICT[j]}" = fixed ]; then
+          closed=1
+        fi
+        j=$((j + 1))
+      done
+      if [ "$closed" = 1 ]; then
+        _PR_FU_CLOSED=$((_PR_FU_CLOSED + 1))
+      else
+        _PR_NT=$((_PR_NT + 1))
+        _PR_T_ID[_PR_NT]="${_PR_I_ID[i]}"
+        _PR_T_DESC[_PR_NT]="${_PR_I_POS[i]:-?} ${_PR_I_PATH[i]}"
+        _PR_T_URL[_PR_NT]="${_PR_I_URL[i]}"
+        _PR_T_BODY[_PR_NT]="${_PR_I_BODY[i]}"
+      fi
+    fi
+    i=$((i + 1))
+  done
+}
+
+# _pr_fetch_opts — the flags every fetch of jig pr passes: no tags, no
+# submodules, no refmap (so no remote-tracking ref moves) and, where git has
+# it, no FETCH_HEAD.
+_pr_fetch_opts() {
+  local opts="--no-tags --no-recurse-submodules --refmap=" help
+  # `fetch -h` exits 129, so its text is caught, not piped.
+  help=$(git fetch -h 2>&1) || true
+  case "$help" in
+    *write-fetch-head*) opts="$opts --no-write-fetch-head" ;;
+  esac
+  printf '%s\n' "$opts"
+}
+
+# _pr_fu_keep <sha> <remote> — pin the head reviewed last at
+# refs/jig/pr/<n>/reviewed: from this clone when it still holds the commit,
+# else fetched from <remote> by its id (after a force-push the forge may still
+# serve it). Into _PR_FU_HOW: `here`, `fetched` or `unreachable`. Nothing is
+# deleted here: a ref an earlier follow-up left is cleanup's to take back.
+_PR_FU_HOW=""
+_pr_fu_keep() {
+  local sha="$1" remote="$2" ref="refs/jig/pr/$_PR_N/reviewed" got opts
+  _PR_FU_HOW=unreachable
+  if _pr_git "$JIG_PROJECT" cat-file -e "$sha^{commit}" 2>/dev/null; then
+    _PR_FU_HOW=here
+  else
+    opts=$(_pr_fetch_opts)
+    # shellcheck disable=SC2086 # opts is a list of fixed flags
+    if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+      jig_net _pr_git "$JIG_PROJECT" fetch -q $opts "$remote" "+$sha:$ref" >/dev/null 2>&1; then
+      _PR_FU_HOW=fetched
+    fi
+  fi
+  if [ "$_PR_FU_HOW" != unreachable ]; then
+    _pr_git "$JIG_PROJECT" update-ref "$ref" "$sha" || jig_die "pr followup: could not keep $sha at $ref"
+    got=$(_pr_git "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}") || got=""
+    [ "$got" = "$sha" ] || _PR_FU_HOW=unreachable
+  fi
+}
+
+_pr_followup() {
+  local arg="" login="" rec remote base_sha old_mb="" k threads="" fu now reviewed
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --login)
+        [ $# -ge 2 ] || jig_fail usage "pr followup: --login requires the account that reviewed it"
+        login="$2"
+        shift 2
+        ;;
+      -*) jig_fail usage "pr followup: unknown argument: $1; $PR_USAGE" ;;
+      *)
+        [ -z "$arg" ] || jig_fail usage "pr followup: one pull request at a time; $PR_USAGE"
+        arg="$1"
+        shift
+        ;;
+    esac
+  done
+  [ -n "$arg" ] || jig_fail usage "pr followup: a pull request number or URL is required; $PR_USAGE"
+  _pr_resolve followup "$arg"
+  _PR_DIR=$(_pr_state_dir "$_PR_N")
+  rec="$_PR_DIR/record"
+  [ -f "$rec" ] || jig_die "pr followup: pull request $_PR_N is not fetched here; jig pr fetch <url> first, to read its new head"
+  _PR_HOST=$(_pr_record_get "$rec" host)
+  _PR_URL=$(_pr_record_get "$rec" url)
+  _PR_SLUG=$(_pr_record_get "$rec" repo)
+  _PR_HEAD=$(_pr_record_get "$rec" head)
+  _PR_MB=$(_pr_record_get "$rec" merge_base)
+  _PR_FORGE=$(_pr_record_get "$rec" forge)
+  remote=$(_pr_record_get "$rec" remote)
+  base_sha=$(_pr_record_get "$rec" base_sha)
+  [ -n "$login" ] || login=$(_pr_record_get "$rec" login)
+  if [ -z "$login" ] || [ "$login" = ask ]; then
+    jig_die "pr followup: the fetch could not tell which account to read the earlier review of; name it: jig pr followup $_PR_N --login <login>"
+  fi
+  case "$login" in *[!A-Za-z0-9._-]*) jig_die "pr followup: not a login: $login" ;; esac
+
+  if [ "$_PR_FORGE" = gitlab ]; then
+    _PR_FORGE_NAME=GitLab
+    _PR_GL_PID=$(_pr_record_get "$rec" project_id)
+    case "$_PR_GL_PID" in
+      '' | *[!0-9]*) jig_die "pr followup: the record of merge request $_PR_N names no GitLab project; fetch it again" ;;
+    esac
+    _pr_gl_as followup "$login"
+    _pr_gl_followup_read "$login"
+  else
+    _PR_FORGE=github _PR_FORGE_NAME=GitHub
+    _pr_gh_as followup "$login"
+    _pr_gh_followup_read "$login"
+  fi
+  _pr_fu_pick
+  [ -n "$_PR_FU_HEAD" ] \
+    || jig_die "pr followup: $login has posted no review of an earlier head of $_PR_URL; review it as a first review"
+
+  _pr_fu_keep "$_PR_FU_HEAD" "$remote"
+  if [ "$_PR_FU_HOW" = unreachable ]; then
+    reviewed=unreachable
+  else
+    reviewed=available
+    old_mb=$(_pr_git "$JIG_PROJECT" merge-base "$base_sha" "$_PR_FU_HEAD" 2>/dev/null) || old_mb=""
+  fi
+
+  k=1
+  while [ "$k" -le "$_PR_NT" ]; do
+    threads="${threads}thread: $k ${_PR_T_ID[k]} ${_PR_T_DESC[k]}$_PR_NL"
+    k=$((k + 1))
+  done
+  fu="$_PR_DIR/followup"
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  _pr_write "$fu" "login: $login
+head: $_PR_HEAD
+follows: $_PR_FU_HEAD
+reviewed: $reviewed
+old_merge_base: $old_mb
+threads: $_PR_NT
+${threads}read_at: $now
+"
+  printf 'pull request: %s\n' "$_PR_URL"
+  printf 'login: %s\n' "$login"
+  printf 'head: %s (the head to review now)\n' "$_PR_HEAD"
+  printf 'follows: %s (the head %s reviewed last)\n' "$_PR_FU_HEAD" "$login"
+  case "$_PR_FU_HOW" in
+    here) printf 'reviewed: in this clone, kept at refs/jig/pr/%s/reviewed\n' "$_PR_N" ;;
+    fetched) printf 'reviewed: fetched from %s, kept at refs/jig/pr/%s/reviewed\n' "$remote" "$_PR_N" ;;
+    *) printf 'reviewed: unreachable — neither this clone nor %s has %s (a force-push made it unreachable); judge each thread against the new head, and take new findings from the whole diff\n' "$remote" "$_PR_FU_HEAD" ;;
+  esac
+  if [ "$reviewed" = available ]; then
+    printf 'interdiff: git -C %s diff %s %s\n' "$JIG_PROJECT" "$_PR_FU_HEAD" "$_PR_HEAD"
+    if [ -n "$old_mb" ] && [ "$old_mb" != "$_PR_MB" ]; then
+      printf 'range-diff: git -C %s range-diff %s..%s %s..%s   (the base moved: a rebase)\n' "$JIG_PROJECT" "$old_mb" "$_PR_FU_HEAD" "$_PR_MB" "$_PR_HEAD"
+    fi
+  else
+    printf 'diff: git -C %s diff %s %s\n' "$JIG_PROJECT" "$_PR_MB" "$_PR_HEAD"
+  fi
+  printf 'state: %s\n' "$fu"
+  printf 'threads: %s to answer' "$_PR_NT"
+  if [ "$_PR_FU_CLOSED" -gt 0 ]; then printf ' (%s answered fixed before)' "$_PR_FU_CLOSED"; fi
+  printf '\n'
+  k=1
+  while [ "$k" -le "$_PR_NT" ]; do
+    printf '=== thread %s %s\n%s\n%s\n' "$k" "${_PR_T_DESC[k]}" "${_PR_T_URL[k]}" "${_PR_T_BODY[k]}"
+    k=$((k + 1))
+  done
+  if [ -n "$_PR_FU_SUMMARY" ]; then
+    printf '=== earlier summary\n%s\n' "$_PR_FU_SUMMARY"
+  fi
+}
+
+# _pr_fu_load — the threads of the kept `followup` into _PR_FT_ID[k] and
+# _PR_FT_DESC[k], k = 1.._PR_FT_N, for a draft that follows up.
+_PR_FT_N=0
+_pr_fu_load() {
+  local line rest k id
+  _PR_FT_N=0
+  _PR_FT_ID=() _PR_FT_DESC=()
+  [ -f "$_PR_DIR/followup" ] || jig_die "pr comments: the draft follows up, but there is no jig pr followup for pull request $_PR_N"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "thread: "*) ;; *) continue ;; esac
+    rest=${line#thread: }
+    k=${rest%% *}
+    rest=${rest#* }
+    id=${rest%% *}
+    _pr_valid_number "$k" || continue
+    _pr_valid_thread "$id" || jig_die "pr comments: the followup of pull request $_PR_N names a thread jig cannot use: $id"
+    _PR_FT_ID[k]="$id"
+    _PR_FT_DESC[k]=${rest#* }
+    [ "$k" -le "$_PR_FT_N" ] || _PR_FT_N=$k
+  done < "$_PR_DIR/followup"
 }
 
 # --- list ---------------------------------------------------------------------------------------
@@ -1383,9 +2875,9 @@ _pr_list() {
 #   it there detached and unlocked; git refuses one with changes, and then
 #   nothing else goes either. What git leaves behind (Windows) is cleared by
 #   jig_worktree_leftover: links and empty directories only.
-# - the refs refs/jig/pr/<n>/head and /base, each by `update-ref -d` at the
-#   commit it holds when read.
-# - the record and the draft, by name, then `rmdir` of their directory, which
+# - the refs refs/jig/pr/<n>/head, /base and /reviewed (a follow-up's), each
+#   by `update-ref -d` at the commit it holds when read.
+# - the record, the draft and the rest jig writes there, by name, then `rmdir` of their directory, which
 #   refuses anything else in it.
 _pr_cleanup() {
   local n wt kind dir r sha did=0
@@ -1413,7 +2905,7 @@ _pr_cleanup() {
     locked) jig_die "pr cleanup: the worktree $wt is locked; git worktree unlock it first, then run cleanup again" ;;
     *) jig_die "pr cleanup: $wt has a branch checked out; it is not a pull request jig fetched, so it stays" ;;
   esac
-  for r in head base; do
+  for r in head base reviewed; do
     sha=$(_pr_git "$JIG_PROJECT" rev-parse --verify --quiet "refs/jig/pr/$n/$r") || continue
     _pr_git "$JIG_PROJECT" update-ref -d "refs/jig/pr/$n/$r" "$sha" \
       || jig_die "pr cleanup: could not delete refs/jig/pr/$n/$r"
@@ -1422,7 +2914,7 @@ _pr_cleanup() {
   done
   dir=$(_pr_state_dir "$n")
   if [ -d "$dir" ]; then
-    rm -f "$dir/record" "$dir/draft.md" "$dir/payload.json" "$dir/shown.md" "$dir/shown" "$dir/posted" "$dir/post.json"
+    rm -f "$dir/record" "$dir/draft.md" "$dir/payload.json" "$dir/shown.md" "$dir/shown" "$dir/posted" "$dir/post.json" "$dir/followup"
     for r in "$dir"/part-*.json; do
       r=${r##*/part-}
       r=${r%.json}

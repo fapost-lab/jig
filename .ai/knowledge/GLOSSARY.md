@@ -73,7 +73,15 @@ The detached git worktree at `<git.worktree_root>/.pr-<n>` that `jig pr fetch` m
 pull request's head for the `jig-pr-review` skill to read, with the head and base in
 `refs/jig/pr/<n>/`. Only read: nothing in it is run, and `jig pr cleanup` removes it with its
 refs and record (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone). Not a
-Task Worktree: no task owns it, and housekeeping leaves it alone. Informal synonyms: PR tree.
+Task Worktree: no task owns it, and housekeeping leaves it alone. A follow-up adds
+`refs/jig/pr/<n>/reviewed`, the head reviewed last. Informal synonyms: PR tree.
+
+## Follow-up
+
+A second review of a pull request after its author pushed fixes: `jig pr followup` reads the
+earlier review back from the forge's hidden markers, and the next post answers each of its open
+threads "fixed" or "still open" and comments only on what changed
+(adr-20261110-a-follow-up-answers-its-own-threads). Not a re-review of a task (`jig-review` §5).
 
 ## Directory Link
 
@@ -141,6 +149,15 @@ stays live with `partly_in`, and `<to>` records `absorbs_partly`. Not a status o
 `.ai/runtime/trash/<date>/<task-id>/`, where a purged Workspace of a closed task is moved rather than
 deleted. Recovery is a plain `mv` back for `trash_ttl` days (ADR-0006). Never committed.
 
+## Idea Draft
+
+An idea's conversation before its Specification is written: `.ai/workspace/ideas/<id>/draft.md`
+(`<git-common-dir>/jig/ideas/` where a clone has no main checkout), ignored by git, in the human's
+language, rewritten by the `jig-idea` skill after every round through `jig spec draft write`. It
+leaves only when the `jig spec ship` that committed its spec moves it to Trash, or when a person
+runs `jig spec draft drop` (adr-20261110-an-idea-draft-waits-outside-git). Not Proposed Knowledge,
+whose informal synonym is also "draft", and not a draft pull request.
+
 ## Purge
 
 Ending the life of a closed task's Workspace, in two stages: move to Trash, then permanent
@@ -184,7 +201,7 @@ Informal synonyms: draft, candidate.
 ## Specification (Spec)
 
 The committed plan for work larger than one task, under `.ai/specs/<spec-id>/`: `spec.md`
-(the idea, its stress test, decisions, open questions) and `roadmap.md` (destination,
+(the idea, its stress test, decisions, open questions, what was set aside) and `roadmap.md` (destination,
 phases, items, fog, waves). Created by `jig spec new` and developed with the `jig-idea`
 skill. A plan, not Knowledge: `jig context` never resolves it, and it has no status —
 progress is read from the roadmap's checkboxes (ADR-0035). A task filed from it links back

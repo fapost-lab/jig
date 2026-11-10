@@ -9,7 +9,7 @@ paths:
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
 summary: Why jig pr reads a pull request in refs/jig/pr/<n>/ and a detached .pr-<n> worktree of the person's clone with hooks off, where the review state lives, and what cleanup may delete.
-reviewed_at: 2026-11-09
+reviewed_at: 2026-11-10
 ---
 # A pull request is read in a detached tree of the person's clone, and nothing of its head runs
 
@@ -35,9 +35,10 @@ end. Three forces shape the mechanics:
 
 - **The forge comes from the URL.** `https://<host>/<owner>/<repo>/pull/<n>`; owner and repository
   in GitHub's characters, `<n>` digits without a leading zero. Not `jig_forge_kind`, which answers
-  for `origin` and fails as a whole when one `gh` account is broken. A GitLab URL is refused for
-  now. One `gh api --hostname <host>` call, filtered by gh's own `--jq`, names the base branch and
-  the head.
+  for `origin` and fails as a whole when one `gh` account is broken. A GitLab merge request URL
+  is taken since adr-20261110-a-merge-request-review-is-posted-as-discussions, which says how
+  GitLab differs. One `gh api --hostname <host>` call, filtered by gh's own `--jq`, names the base
+  branch and the head.
 - **A local clone is required.** The remote is the first whose configured URL reaches the same
   host and `<owner>/<repo>` (https, ssh, scp form, `.git` or not, case aside, an SSH alias
   resolved).
@@ -67,7 +68,8 @@ end. Three forces shape the mechanics:
   the formats Jig's scripts read usually live (ADR-0028): the agent writes this file in projects,
   and `schemas/` is not installed there, while a skill's references are.
 - **`gh` is needed for the whole command**, not only for merge detection as ADR-0002 describes
-  it: `jig pr fetch` refuses without it. Jig as a whole still needs only git.
+  it: `jig pr fetch` refuses without it — and without `glab` for a GitLab merge request. Jig as a
+  whole still needs only git.
 - **Cleanup takes back only what fetch made.** The worktree by `git worktree remove` without
   `--force`, at the one path built from a checked number, only while git lists it there detached
   and unlocked — git refuses one with changes, and then the refs and the record stay too; what
@@ -100,3 +102,5 @@ end. Three forces shape the mechanics:
 - A forgotten review stays until `jig pr cleanup`: a detached tree and two refs, no data at risk.
 - The posting item (`pr-review-github-post`) reads the record and the draft from the same place
   and adds its own checks — diff positions, the hash of what was shown, the head unchanged.
+- A follow-up (adr-20261110-a-follow-up-answers-its-own-threads) adds a third ref,
+  `refs/jig/pr/<n>/reviewed`, and a `followup` file; cleanup takes both back the same way.

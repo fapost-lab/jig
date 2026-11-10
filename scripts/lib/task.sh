@@ -553,27 +553,37 @@ _task_count_lines() {
 # becoming permanently ambiguous once finished-but-unmerged workspaces pile
 # up on the same branch.
 _task_candidates_for_branch() {
-  local branch="$1" base dir id br st paused list=""
+  local branch="$1" base dir id br st paused list="" n=0
   base="$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks"
+  # Asked by nearly every `jig task` command, of every workspace: the id comes
+  # off the path and the state into variables, with no process per task
+  # (convention-shell, `<name>_v`).
   for dir in "$base"/*/; do
     [ -f "${dir}state" ] || continue
-    id=$(basename "$dir")
+    id=${dir%/}
+    id=${id##*/}
     # A directory that is not a well-formed task id is not ours to read
-    # (RULES.md): task_state_get would die on it, and take `task current` with it.
+    # (RULES.md): task_state_var would die on it, and take `task current` with it.
     _task_valid_id "$id" || continue
-    br=$(task_state_get "$id" branch)
+    task_state_var br "$id" branch
     [ "$br" = "$branch" ] || continue
-    st=$(task_state_get "$id" status)
+    task_state_var st "$id" status
     case "$st" in
       active | ready) ;;
       *) continue ;;
     esac
-    paused=$(task_state_get "$id" paused)
+    task_state_var paused "$id" paused
     [ "$paused" = "true" ] && continue
-    list="$list
-$id"
+    list="$list${list:+
+}$id"
+    n=$((n + 1))
   done
-  printf '%s\n' "$list" | sed '/^$/d' | sort
+  # Nothing to put in order below two; the common answers are none and one.
+  case "$n" in
+    0) ;;
+    1) printf '%s\n' "$list" ;;
+    *) printf '%s\n' "$list" | sort ;;
+  esac
 }
 
 # The single candidate on <branch>, or nothing when there are zero or several

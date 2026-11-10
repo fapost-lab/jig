@@ -713,10 +713,14 @@ EOF
 # the count a human is shown on arrival would not match the list they then act
 # on — the same argument that made jig_knowledge_status_resolvable a single
 # helper in ADR-0016.
+#
+# One reading of the file and no process: `jig status` asks it of every document
+# (convention-shell, `<name>_v`).
 km_is_proposed() {
-  local doc="$1"
-  fm_has "$doc" || return 1
-  [ "$(fm_get "$doc" status)" = proposed ]
+  local __kip_block __kip_status
+  fm_read_v __kip_block "$1" || return 1
+  fm_get_block_v __kip_status "$__kip_block" status
+  [ "$__kip_status" = proposed ]
 }
 
 # km_proposed_count — how many documents are awaiting a decision, as a bare
@@ -2585,25 +2589,31 @@ _km_status_state() {
 # The one definition of "changed", because three commands report it: `jig
 # status` counts, `knowledge stale` lists and `knowledge sources` shows.
 km_source_states() {
-  local doc src rows paths hashes t
-  t=$(printf '\t')
+  local doc src rows paths hashes block status t=$'\t'
   rows=$(mktemp "${TMPDIR:-/tmp}/jig-knowledge-sources.XXXXXX")
   jig_cleanup_add "$rows"
   paths="$rows.paths"
   hashes="$rows.hashes"
   : > "$paths"
+  local state recorded current
+  # Asked of every document, so each is read once and its fields come out of
+  # that reading without a process (fm_read_v, fm_get_block_v). What a stub
+  # recorded as its hash rides along as the second column of the scratch rows,
+  # `-` for none: the source stays last, where a tab in it is still its own.
   while IFS= read -r doc; do
     [ -n "$doc" ] || continue
-    fm_has "$doc" || continue
-    src=$(jig_knowledge_source "$doc")
+    fm_read_v block "$doc" || continue
+    fm_get_block_v src "$block" source
     [ -n "$src" ] || continue
-    _km_status_state "$(fm_get "$doc" status)"
+    fm_get_block_v status "$block" status
+    _km_status_state "$status"
     if [ -n "$_KM_STATUS_STATE" ]; then
-      printf '%s%s%s%s%s\n' "$_KM_STATUS_STATE" "$t" "$doc" "$t" "$src" >> "$rows"
+      printf '%s%s-%s%s%s%s\n' "$_KM_STATUS_STATE" "$t" "$t" "$doc" "$t" "$src" >> "$rows"
     elif ! jig_knowledge_read_path "$doc" >/dev/null; then
-      printf 'missing%s%s%s%s\n' "$t" "$doc" "$t" "$src" >> "$rows"
+      printf 'missing%s-%s%s%s%s\n' "$t" "$t" "$doc" "$t" "$src" >> "$rows"
     else
-      printf 'hash%s%s%s%s\n' "$t" "$doc" "$t" "$src" >> "$rows"
+      fm_get_block_v recorded "$block" source_hash
+      printf 'hash%s%s%s%s%s%s\n' "$t" "${recorded:--}" "$t" "$doc" "$t" "$src" >> "$rows"
       printf '%s\n' "$src" >> "$paths"
     fi
   done < <(km_docs)
@@ -2611,14 +2621,12 @@ km_source_states() {
     rm -f "$rows" "$paths" "$hashes"
     jig_die "knowledge: could not hash the linked sources"
   fi
-  local state recorded current
   exec 3< "$hashes"
-  while IFS="$t" read -r state doc src; do
+  while IFS="$t" read -r state recorded doc src; do
     [ -n "$doc" ] || continue
     if [ "$state" = hash ]; then
       IFS= read -r current <&3 || current=""
-      recorded=$(fm_get "$doc" source_hash)
-      if [ -z "$recorded" ]; then
+      if [ "$recorded" = - ]; then
         state=unrecorded
       elif [ "$recorded" = "$current" ]; then
         state=ok

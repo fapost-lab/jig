@@ -104,18 +104,22 @@ jig_config_clone_root() {
 : "${_JIG_TS_ON:=0}"
 
 # jig_config_clone_root_v <var> — jig_config_clone_root's answer into <var>.
-# Inside a read snapshot (jig_read_snapshot_begin) it is worked out once per
-# process; a main checkout costs no process at all, a worktree one subshell.
+# Worked out once per process for each JIG_PROJECT: a main checkout costs no
+# process at all, a worktree three, and every config read asks. Which checkout
+# a worktree was added from does not change while a command runs, so the answer
+# is kept outside a read snapshot too, under the JIG_PROJECT it was found for —
+# a command that reads another checkout (`status --json`, _task_touched_in) is
+# answered for that one. A subshell inherits what its parent has found.
 _CFG_CLONE_ROOT=""
+_CFG_CLONE_ROOT_OF=""
 jig_config_clone_root_v() {
-  if [ "$_JIG_TS_ON" = 1 ] && [ -n "$_CFG_CLONE_ROOT" ]; then
+  if [ -n "$_CFG_CLONE_ROOT" ] && [ "$_CFG_CLONE_ROOT_OF" = "$JIG_PROJECT" ]; then
     printf -v "$1" '%s' "$_CFG_CLONE_ROOT"
     return 0
   fi
-  local __ccr_root
-  __ccr_root=$(_jig_config_clone_root_find)
-  [ "$_JIG_TS_ON" != 1 ] || _CFG_CLONE_ROOT=$__ccr_root
-  printf -v "$1" '%s' "$__ccr_root"
+  _CFG_CLONE_ROOT=$(_jig_config_clone_root_find)
+  _CFG_CLONE_ROOT_OF=$JIG_PROJECT
+  printf -v "$1" '%s' "$_CFG_CLONE_ROOT"
 }
 
 _jig_config_clone_root_find() {
@@ -369,9 +373,9 @@ jig_config_unknown() {
 # reads it. Reporting only, for `jig status` and `jig doctor`: nothing here
 # changes what `cfg` answers.
 jig_config_project_ignored() {
-  local key value
+  local key value file="$JIG_PROJECT/$JIG_AI_DIR/config.yaml"
   for key in $JIG_CFG_LOCAL_ONLY_KEYS; do
-    value=$(_cfg_read "$(jig_config_file)" "$key")
+    _cfg_read_v value "$file" "$key" || continue
     [ -n "$value" ] || continue
     printf '%s\t%s\n' "$key" "$value"
   done
@@ -391,11 +395,11 @@ jig_config_local_ignored() {
 # `ignored` is a key outside JIG_CFG_LOCAL_KEYS, including a misspelt one.
 jig_config_local_entries() {
   local file key value
-  file=$(jig_config_local_file)
+  jig_config_local_file_v file
   [ -f "$file" ] || return 0
   while IFS= read -r key; do
     [ -n "$key" ] || continue
-    value=$(_cfg_read "$file" "$key")
+    _cfg_read_v value "$file" "$key" || continue
     [ -n "$value" ] || continue
     if jig_config_local_key "$key"; then
       printf '%s\t%s\tlocal\n' "$key" "$value"
@@ -532,8 +536,36 @@ cfg_v() {
 }
 
 # cfg_list <key> [default-list] — print an inline list as space-separated words.
+#
+# Brackets are dropped wherever they stand, a comma is a space, and the words
+# between runs of spaces are printed one space apart. Builtins only: a command
+# asks several lists, and each was three `tr` and a `sed`.
 cfg_list() {
-  cfg "$1" "${2:-}" | tr -d '[]' | tr ',' ' ' | tr -s ' ' | sed 's/^ //; s/ $//'
+  local __cll_v __cll_c __cll_w __cll_out=""
+  cfg_v __cll_v "$1" "${2:-}"
+  for __cll_c in '[' ']'; do
+    while :; do
+      case "$__cll_v" in
+        *"$__cll_c"*) __cll_v=${__cll_v%%"$__cll_c"*}${__cll_v#*"$__cll_c"} ;;
+        *) break ;;
+      esac
+    done
+  done
+  while :; do
+    case "$__cll_v" in
+      *,*) __cll_v="${__cll_v%%,*} ${__cll_v#*,}" ;;
+      *) break ;;
+    esac
+  done
+  while [ -n "$__cll_v" ]; do
+    __cll_w=${__cll_v%% *}
+    [ -z "$__cll_w" ] || __cll_out="$__cll_out${__cll_out:+ }$__cll_w"
+    case "$__cll_v" in
+      *" "*) __cll_v=${__cll_v#* } ;;
+      *) __cll_v="" ;;
+    esac
+  done
+  printf '%s\n' "$__cll_out"
 }
 
 # cfg_list_lines <key> — items of an inline list `key: [a, b]`, one per line,

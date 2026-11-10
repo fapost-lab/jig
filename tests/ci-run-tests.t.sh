@@ -20,12 +20,12 @@ STUB
   chmod +x tests/run.sh
 }
 
-# The job these tests run in exports its own JIG_TEST_DURATIONS and
-# JIG_TEST_REPORT; without taking them out, a test of "no table for this
-# platform" read the real job's table and failed on a full Linux run.
+# JIG_TEST_DURATIONS is emptied on the way in: a CI job that runs this file
+# was itself handed its platform's table, and the script under test would
+# pass that one on where the test's own plan holds none.
 crt_run() {
-  run env -u JIG_TEST_DURATIONS -u JIG_TEST_REPORT RUNNER_TEMP="$PWD/temp" RUNNER_OS="${CRT_OS:-Linux}" SUITE="$1" \
-    JIG_TEST_SHARD=2/3 "$JIG_HOME/.github/scripts/ci-run-tests.sh"
+  run env RUNNER_TEMP="$PWD/temp" RUNNER_OS="${CRT_OS:-Linux}" SUITE="$1" \
+    JIG_TEST_SHARD=2/3 JIG_TEST_DURATIONS= "$JIG_HOME/.github/scripts/ci-run-tests.sh"
 }
 
 test_ci_run_tests_runs_the_whole_suite_with_this_platforms_durations() {

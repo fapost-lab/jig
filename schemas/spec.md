@@ -4,11 +4,16 @@
 developed by the `jig-idea` skill; everything `jig spec list` and `jig status` report is read
 from these files.
 
+A conversation that has not been written down yet is kept as a draft,
+`.ai/workspace/ideas/<id>/draft.md`: ignored by git, free-form, in the human's language, written
+by `jig spec draft write`. It is not a spec and nothing below describes it; `jig spec ship` moves it
+to trash when the spec of the same id is committed.
+
 ## Directory
 
 | Path | Required | Content |
 |---|---|---|
-| `spec.md` | yes | idea, goal and problem, stress test, scope and non-goals, decisions, open questions, untested assumptions, depth |
+| `spec.md` | yes | idea, goal and problem, stress test, scope and non-goals, decisions, open questions, set aside, untested assumptions, depth |
 | `roadmap.md` | yes | destination, phases, items, waves |
 | anything else | no | `architecture.md`, `stack.md`, `research.md`, … |
 
@@ -20,7 +25,8 @@ or `incomplete (no spec.md, roadmap.md)` — not an error.
 ## `spec.md`
 
 The first line starting with `# ` is the spec's title in `jig spec list`; `-` when there is
-none. The sections are the template's (`templates/spec/spec.md`); no script reads them.
+none. The sections are the template's (`templates/spec/spec.md`); only closing a spec reads them, by
+heading (below).
 
 ## `roadmap.md`
 
@@ -219,8 +225,8 @@ for each open epic.
 ## Leftovers and closing a spec
 
 A spec lives while it holds work not yet done (ADR-0035 as amended). Its leftovers are what removing it
-would lose: every unchecked roadmap item, `fog:` included, and every entry of the "Open questions" and
-"Assumptions left untested" sections of `spec.md`; the template's `<placeholder>` entries are not
+would lose: every unchecked roadmap item, `fog:` included, and every entry of the "Open questions",
+"Set aside" and "Assumptions left untested" sections of `spec.md`; the template's `<placeholder>` entries are not
 leftovers. A human decides each one — moved to another spec or task, or dropped — before the spec goes.
 
 When `jig spec done` leaves no planned item unchecked it prints `roadmap complete` and the command that

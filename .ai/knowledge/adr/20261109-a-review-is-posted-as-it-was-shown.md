@@ -9,6 +9,7 @@ paths:
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
 summary: Why jig pr comments posts one COMMENT review only as shown (hash, reviewed head), as the one account that may comment, with a token for one call, through a file, idempotent by marker.
+reviewed_at: 2026-11-10
 ---
 # A review is posted only as it was shown, as the account that may comment, once
 
@@ -110,4 +111,6 @@ head, the merge base and a checked draft. This decision covers what turns that d
 - Untested until the first real post: that GitHub keeps a hidden HTML comment in a review's body
   and in each comment and returns it through the API, and that gh's built-in jq (gojq) reads the
   filters as `jq` does. A marker that does not come back is reported, not retried.
-- GitLab, and a re-review that reads the marker back, are phase 2 of the spec.
+- GitLab is adr-20261110-a-merge-request-review-is-posted-as-discussions: the same gate, posted
+  one discussion a call. A re-review that reads the marker back is
+  adr-20261110-a-follow-up-answers-its-own-threads.

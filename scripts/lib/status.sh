@@ -323,6 +323,14 @@ $rel"
   else
     printf 'specs: none\n'
   fi
+  # Only when there is one: a `jig-idea` conversation kept on disk before it
+  # became a spec (spec.sh, "idea drafts"). It is in no branch and no tree, so
+  # this line is how the next session learns there is one to continue from.
+  local drafts
+  drafts=$(spec_draft_count)
+  if [ "$drafts" -gt 0 ]; then
+    printf 'drafts: %s (jig spec draft list)\n' "$drafts"
+  fi
   # Only when something waits: the edits Jig committed in its own tree that have not
   # landed. Counted, not listed, as specs are: `jig writes` lists.
   # shellcheck source=lib/owntree.sh
@@ -661,6 +669,11 @@ _status_terminal() {
       "specs: "*" (jig spec list)")
         t=${l#specs: }
         _STT_KNOW+=("specs"$'\t'"${t% (jig spec list)}"$'\t'"jig spec list")
+        ;;
+      # A draft waits for nobody: a row beside the specs, not something to do.
+      "drafts: "*" (jig spec draft list)")
+        t=${l#drafts: }
+        _STT_KNOW+=("drafts"$'\t'"${t% (jig spec draft list)}"$'\t'"jig spec draft list")
         ;;
       "epic: "*", branch missing") _status_need warn "$l" ;;
       "epic: "*) _STT_KNOW+=("epic"$'\t'"${l#epic: }"$'\t') ;;
@@ -2818,6 +2831,11 @@ _status_html_summary() {
   [ -z "$_STATUS_NEXT" ] || _status_html_item "Next task" "${_STATUS_NEXT#next: }" 0
   _status_html_count "Knowledge awaiting decision" "$_SC_PROPOSALS"
   _status_html_count "Linked sources changed" "$_SC_SOURCES"
+  # Only when there is one, as the text report: counted here and not among the
+  # saved counts, because it is one glob of the workspace.
+  local drafts
+  drafts=$(spec_draft_count)
+  [ "$drafts" -eq 0 ] || _status_html_item "Idea drafts" "$drafts" 0
   _status_html_count "Needs consolidation" "$(_status_hk_count needs-consolidation)"
   _status_html_count "Worktrees kept" "$(_status_hk_count worktree-kept)"
   _status_html_count "Landed on the wrong base" "$(_status_hk_count wrong-base)"
