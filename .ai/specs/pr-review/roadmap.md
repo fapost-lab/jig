@@ -30,7 +30,7 @@ Goal: the same on GitLab, and a second review that reads only what changed and a
 threads. Done when: a merge request is reviewed and posted end to end, and a re-review of a PR whose
 author pushed fixes replies "fixed" or "still open" in each of its earlier threads.
 
-- [ ] Post the draft to a GitLab merge request — discussions with a `position` of base, start and head
+- [ ] `pr-review-gitlab-post` — Post the draft to a GitLab merge request — discussions with a `position` of base, start and head
   sha, checked on a live merge request; one call per discussion, so the read-back and the marker
   carry a half-done post. (after: Post the draft to GitHub — it adds a second forge to the posting
   that item builds)
