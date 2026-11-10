@@ -7,7 +7,7 @@ it the review as it will be posted â€” what the person approves, byte for byte â
 
 ```
 jig-pr-draft: 1
-url: https://github.com/<owner>/<repo>/pull/<n>
+url: <the URL jig pr fetch printed: https://github.com/<owner>/<repo>/pull/<n>, or https://<host>/<group>/<project>/-/merge_requests/<n>>
 head: <the reviewed head, 40 hex>
 login: <the account it will be posted as>
 language: <the comments' language, e.g. en>
@@ -32,4 +32,5 @@ language: <the comments' language, e.g. en>
   head for `R`, of the merge base for `L`.
 - **Bodies** are markdown and may not be empty. No body line may start with `=== `.
 - Whether a line lies inside the pull request's diff is decided by `jig pr comments check`, against
-  GitHub's own diff: a comment outside it is moved into the summary, never dropped.
+  the forge's own diff (GitHub's or GitLab's): a comment outside it is moved into the summary, never
+  dropped.

@@ -234,7 +234,7 @@ test_pr_fetch_refuses_what_it_cannot_review() {
   _pr_repo
   run jig pr fetch "https://gitlab.com/acme/widget/-/merge_requests/7"
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "GitLab merge requests are not supported yet"
+  assert_contains "$OUT" "no remote of this clone reaches acme/widget on gitlab.com"
   run jig pr fetch "https://github.com/acme/widget/issues/7"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "not a pull request URL"
@@ -815,4 +815,403 @@ test_pr_usage() {
   assert_contains "$OUT" "unknown subcommand: bogus"
   run jig help
   assert_contains "$OUT" "pr fetch <url>"
+}
+
+# --- GitLab -------------------------------------------------------------------
+#
+# adr-20261110-a-merge-request-review-is-posted-as-discussions: a merge request
+# of a project in a nested group, read through a stub of glab that answers in
+# GitLab's JSON, since jig reads glab's answers itself.
+
+_pr_gl_url="https://gitlab.example.com/acme/team/widget/-/merge_requests/7"
+
+# _pr_gl_repo — as _pr_repo, for GitLab: origin publishes merge request 7 as
+# refs/merge-requests/7/head, the clone reaches it as
+# https://gitlab.example.com/acme/team/widget.git, and bin/glab stands in for
+# GitLab (_pr_stub_glab).
+_pr_gl_repo() {
+  local top="$PWD" sha
+  git init -q --bare origin.git
+  mkdir clone
+  cd clone || return 1
+  fixture_repo
+  printf 'old\n' > old.txt
+  git add old.txt
+  git commit -q -m "old"
+  git push -q "$top/origin.git" main
+  git checkout -q -b feature
+  printf 'new\n' > feature.txt
+  git rm -q old.txt
+  git add feature.txt
+  git commit -q -m "feature"
+  git push -q "$top/origin.git" feature:refs/merge-requests/7/head
+  git checkout -q main
+  git branch -q -D feature
+  git remote add origin https://gitlab.example.com/acme/team/widget.git
+  git config url."$top/origin.git".insteadOf https://gitlab.example.com/acme/team/widget.git
+  sha=$(git --git-dir="$top/origin.git" rev-parse refs/merge-requests/7/head)
+  _pr_stub_glab "$top/bin" "$sha"
+  PATH="$top/bin:$PATH"
+  export PATH
+  unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN CI_JOB_TOKEN GITLAB_HOST GL_HOST
+}
+
+# _pr_gl_mr <dir> <sha> <base_sha> [<diff head>] [<locked>] [<changes>] — the merge
+# request as GitLab answers for it, into <dir>/mr.
+_pr_gl_mr() {
+  printf '{"iid":7,"state":"opened","target_branch":"main","sha":"%s","discussion_locked":%s,"changes_count":"%s","diff_refs":{"base_sha":"%s","start_sha":"%s","head_sha":"%s"}}\n' \
+    "$2" "${5:-false}" "${6:-2}" "$3" "$3" "${4:-$2}" > "$1/mr"
+}
+
+# _pr_stub_glab <dir> <head> — a glab that stands in for GitLab. `api` answers
+# each endpoint with a file of <dir> holding GitLab's JSON, one value a line —
+# `mr`, `project`, `diffs`, `changes`, `discussions`; `<file>.<login>` first —
+# and `user` with the login the call stands for: <dir>/stored (the account
+# glab keeps; none without the file), or <dir>/envlogin when GITLAB_TOKEN is
+# set. A POST to discussions copies its --input file to <dir>/posted.<n>,
+# answers with the new discussion and adds it to <dir>/discussions as GitLab
+# would: its note is the posted fields, by that login, `<` and `>` written
+# < and > when <dir>/escape-html exists, without its position when
+# <dir>/drop-position does; refused (exit 1) when <dir>/refuse-at holds <n>.
+# Every call goes to <dir>/calls, with whether a token variable was set.
+_pr_stub_glab() {
+  local main
+  mkdir -p "$1"
+  main=$(git rev-parse main)
+  _pr_gl_mr "$1" "$2" "$main"
+  printf '{"id":42,"visibility":"private","permissions":{"project_access":{"access_level":30},"group_access":null}}\n' > "$1/project"
+  printf '%s\n' '{"old_path":"feature.txt","new_path":"feature.txt","new_file":true,"renamed_file":false,"deleted_file":false,"diff":"@@ -0,0 +1 @@\n+new\n"}' \
+    '{"old_path":"old.txt","new_path":"old.txt","new_file":false,"renamed_file":false,"deleted_file":true,"diff":"@@ -1 +0,0 @@\n-old\n"}' > "$1/diffs"
+  : > "$1/discussions"
+  printf 'alice\n' > "$1/stored"
+  cat > "$1/glab" <<STUB
+#!/bin/sh
+d='$1'
+printf '%s token=%s\n' "\$*" "\${GITLAB_TOKEN:+set}" >> "\$d/calls"
+if [ -n "\${GITLAB_TOKEN:-}" ]; then who=\$(cat "\$d/envlogin" 2>/dev/null || echo env)
+else who=\$(cat "\$d/stored" 2>/dev/null || true)
+fi
+[ "\$1" = api ] || exit 1
+shift
+method=GET input="" ep=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    --hostname | --output) shift 2 ;;
+    --method) method="\$2"; shift 2 ;;
+    --input) input="\$2"; shift 2 ;;
+    --paginate) shift ;;
+    *) ep="\$1"; shift ;;
+  esac
+done
+ep=\${ep%%\?*}
+case "\$ep" in
+  user) [ -n "\$who" ] || exit 1; printf '{"id":1,"username":"%s"}\n' "\$who"; exit 0 ;;
+  projects/*/merge_requests/*/diffs) key=diffs ;;
+  projects/*/merge_requests/*/changes) key=changes ;;
+  projects/*/merge_requests/*/discussions) key=discussions ;;
+  projects/*/merge_requests/*) key=mr ;;
+  projects/*) key=project ;;
+  *) exit 1 ;;
+esac
+if [ "\$method" = POST ]; then
+  n=\$(cat "\$d/npost" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  echo "\$n" > "\$d/npost"
+  cp "\$input" "\$d/posted.\$n"
+  if [ "\$(cat "\$d/refuse-at" 2>/dev/null)" = "\$n" ]; then
+    echo 'ERROR: 400 Bad request - Note {:line_code=>["can'"'"'t be blank"]}' >&2
+    exit 1
+  fi
+  fields=\$(tail -c +2 "\$input")
+  if [ -f "\$d/drop-position" ]; then fields=\$(printf '%s' "\$fields" | sed 's/,"position":{[^}]*}//'); fi
+  line=\$(printf '{"id":"d%s","individual_note":false,"notes":[{"id":900%s,"author":{"username":"%s"},%s]}' "\$n" "\$n" "\$who" "\$fields")
+  if [ -f "\$d/escape-html" ]; then line=\$(printf '%s' "\$line" | sed 's/</\\\\u003c/g; s/>/\\\\u003e/g'); fi
+  printf '%s\n' "\$line" >> "\$d/discussions"
+  printf '%s\n' "\$line"
+  exit 0
+fi
+if [ -f "\$d/\$key.\$who" ]; then cat "\$d/\$key.\$who"
+elif [ -f "\$d/\$key" ]; then cat "\$d/\$key"
+else exit 1
+fi
+STUB
+  chmod +x "$1/glab"
+}
+
+# _pr_gl_checked <draft lines>... — _pr_checked, for the merge request.
+_pr_gl_checked() {
+  local head
+  run jig pr fetch "$_pr_gl_url"
+  assert_eq 0 "$RC" "$OUT"
+  head=$(git rev-parse refs/jig/pr/7/head)
+  {
+    printf 'jig-pr-draft: 1\nurl: %s\nhead: %s\nlogin: alice\nlanguage: en\n\n' "$_pr_gl_url" "$head"
+    printf '=== summary\nReads well.\n\n'
+    printf '%s\n' "$@"
+  } > ../draft.md
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr comments check 7
+  assert_eq 0 "$RC" "$OUT"
+  _pr_hash=$(printf '%s\n' "$OUT" | sed -n 's/^hash: //p')
+  [ -n "$_pr_hash" ] || fail "check printed no hash: $OUT"
+}
+
+test_pr_gitlab_fetch_reads_a_merge_request_of_a_nested_group() {
+  _pr_gl_repo
+  local head main
+  head=$(git -C ../origin.git rev-parse refs/merge-requests/7/head)
+  main=$(git rev-parse main)
+  run jig pr fetch "$_pr_gl_url/diffs?view=inline#note_1"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pull request: $_pr_gl_url (opened)"
+  assert_contains "$OUT" "head: $head (the reviewed head)"
+  assert_contains "$OUT" "merge base: $main"
+  assert_contains "$OUT" "login: alice"
+  assert_eq "$head" "$(git rev-parse refs/jig/pr/7/head)"
+  assert_eq "$main" "$(git rev-parse refs/jig/pr/7/base)"
+  assert_file_contains .git/jig/pr/7/record "forge: gitlab"
+  assert_file_contains .git/jig/pr/7/record "repo: acme/team/widget"
+  assert_file_contains .git/jig/pr/7/record "project_id: 42"
+  assert_file_contains ../bin/calls "--hostname gitlab.example.com --output ndjson projects/acme%2Fteam%2Fwidget token="
+  assert_file_contains ../bin/calls "projects/42/merge_requests/7 token="
+  if grep -q 'token=set' ../bin/calls; then fail "a token variable reached glab"; fi
+  # GitLab's diff starts at its own base: an older commit of main.
+  printf 'more\n' > more.txt
+  git add more.txt
+  git commit -q -m "main moves on"
+  git push -q ../origin.git main
+  _pr_gl_mr ../bin "$head" "$main"
+  run jig pr fetch "$_pr_gl_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "merge base: $main"
+  assert_eq "$(git rev-parse HEAD)" "$(git rev-parse refs/jig/pr/7/base)"
+  # A diff GitLab has not made for this head yet.
+  _pr_gl_mr ../bin "$head" "$main" "$main"
+  run jig pr fetch "$_pr_gl_url"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitLab's diff of merge request 7 is of $main"
+}
+
+test_pr_gitlab_fetch_refuses_what_is_not_a_merge_request() {
+  _pr_gl_repo
+  run jig pr fetch "https://gitlab.example.com/widget/-/merge_requests/7"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a pull request URL"
+  run jig pr fetch "https://gitlab.example.com/acme/../widget/-/merge_requests/7"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a pull request URL"
+  run jig pr fetch "https://gitlab.example.com/acme/team/widget/-/merge_requests/07"
+  assert_eq 1 "$RC"
+  run jig pr fetch "https://gitlab.example.com/acme/other/-/merge_requests/7"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no remote of this clone reaches acme/other on gitlab.example.com"
+  if git rev-parse --verify --quiet refs/jig/pr/7/head >/dev/null; then fail "a refusal fetched"; fi
+}
+
+test_pr_gitlab_fetch_asks_for_the_login_when_it_is_not_one() {
+  _pr_gl_repo
+  # A public project alice is no member of: she reads, as everybody does.
+  printf '{"id":42,"visibility":"public","permissions":{"project_access":null,"group_access":null}}\n' > ../bin/project
+  run jig pr fetch "$_pr_gl_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "login: ask (alice may not comment on acme/team/widget as a member)"
+  # A Guest of a private project may comment; a Reporter by the group too.
+  printf '{"id":42,"visibility":"private","permissions":{"project_access":{"access_level":10},"group_access":null}}\n' > ../bin/project
+  run jig pr fetch "$_pr_gl_url"
+  assert_contains "$OUT" "login: alice"
+  printf '{"id":42,"visibility":"public","permissions":{"project_access":null,"group_access":{"access_level":20}}}\n' > ../bin/project
+  run jig pr fetch "$_pr_gl_url"
+  assert_contains "$OUT" "login: alice"
+  GITLAB_TOKEN=secret run jig pr fetch "$_pr_gl_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "login: ask (GITLAB_TOKEN in the environment overrides glab's account)"
+  assert_not_contains "$OUT" "secret"
+  if grep -q 'secret' ../bin/calls; then fail "a token was an argument"; fi
+  rm ../bin/stored
+  run jig pr fetch "$_pr_gl_url"
+  assert_contains "$OUT" "login: ask (glab holds no account for gitlab.example.com)"
+}
+
+test_pr_gitlab_check_places_comments_on_gitlabs_lines() {
+  _pr_gl_repo
+  _pr_gl_checked '=== comment R1 feature.txt' 'Say "why" — почему?' '' \
+    '=== comment L1 old.txt' 'Gone?' '' \
+    '=== comment R5 feature.txt' 'Outside the diff.' '' \
+    '=== personal R1 feature.txt' 'My own rule.'
+  local head main state=.git/jig/pr/7
+  head=$(git rev-parse refs/jig/pr/7/head)
+  main=$(git rev-parse main)
+  assert_contains "$OUT" "jig-pr-post: 1
+url: $_pr_gl_url
+head: $head
+base: $main
+start: $main
+login: alice
+event: discussions
+
+=== summary
+Reads well."
+  assert_contains "$OUT" "**R5 \`feature.txt\`**"
+  assert_contains "$OUT" "=== comment R1 feature.txt"
+  assert_contains "$OUT" "=== comment L1 old.txt"
+  assert_contains "$OUT" "<!-- jig-pr-review id=$_pr_hash head=$head part=2 -->"
+  assert_not_contains "$OUT" "My own rule"
+  assert_contains "$OUT" "outside GitLab's diff"
+  _pr_valid_json "$state/payload.json"
+  # An added line has only a new number, a deleted one only an old one.
+  assert_file_contains "$state/payload.json" "\"position\":{\"position_type\":\"text\",\"base_sha\":\"$main\",\"start_sha\":\"$main\",\"head_sha\":\"$head\",\"old_path\":\"feature.txt\",\"new_path\":\"feature.txt\",\"new_line\":1}"
+  assert_file_contains "$state/payload.json" '"old_path":"old.txt","new_path":"old.txt","old_line":1}'
+  assert_contains "$(cat "$state/payload.json")" 'Say \"why\" — почему?'
+  if grep -q 'POST' ../bin/calls; then fail "check posted"; fi
+}
+
+test_pr_gitlab_check_maps_context_lines_renames_and_ranges() {
+  _pr_gl_repo
+  # GitLab's diff: old.txt renamed to feature.txt — a context line, a line
+  # changed into two, another context line — a binary file and one too large.
+  printf '%s\n' '{"old_path":"old.txt","new_path":"feature.txt","renamed_file":true,"diff":"@@ -1,3 +1,4 @@ func\n a\n-b\n+B\n+C\n c\n\\ No newline at end of file\n"}' \
+    '{"old_path":"logo.png","new_path":"logo.png","new_file":true,"diff":""}' \
+    '{"old_path":"big.txt","new_path":"big.txt","too_large":true,"diff":""}' \
+    '{"old_path":"a.txt","new_path":"b.txt","renamed_file":true,"diff":""}' > ../bin/diffs
+  _pr_gl_checked '=== comment R1 feature.txt' 'Context.' '' '=== comment R4 feature.txt' 'Last context.' '' \
+    '=== comment L2 old.txt' 'Old line.' '' '=== comment R2-3 feature.txt' 'New lines.' '' \
+    '=== comment R1-5 feature.txt' 'Past the hunk.'
+  local state=.git/jig/pr/7
+  assert_contains "$OUT" "=== comment R2-3 feature.txt, at R3"
+  assert_contains "$OUT" "=== comment L2 feature.txt"
+  assert_contains "$OUT" "**R1-5 \`feature.txt\`**"
+  assert_contains "$OUT" "Not in GitLab's diff, so not commented on: \`logo.png\`, \`big.txt\`."
+  _pr_valid_json "$state/payload.json"
+  assert_file_contains "$state/payload.json" '"old_path":"old.txt","new_path":"feature.txt","old_line":1,"new_line":1}'
+  assert_file_contains "$state/payload.json" '"old_path":"old.txt","new_path":"feature.txt","old_line":3,"new_line":4}'
+  assert_file_contains "$state/payload.json" '"body":"Old line.'
+  assert_file_contains "$state/payload.json" '"old_path":"old.txt","new_path":"feature.txt","old_line":2}'
+  assert_file_contains "$state/payload.json" '"old_path":"old.txt","new_path":"feature.txt","new_line":3}'
+  # An older GitLab without merge_requests/<n>/diffs: the same, from /changes.
+  {
+    printf '{"id":1,"description":"two\\nlines","changes":['
+    sed '$!s/$/,/' ../bin/diffs | tr -d '\n'
+    printf ']}\n'
+  } > ../bin/changes
+  rm ../bin/diffs
+  run jig pr comments check 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "hash: $_pr_hash"
+}
+
+test_pr_gitlab_post_posts_a_discussion_a_part_and_reads_them_back() {
+  _pr_gl_repo
+  _pr_gl_checked '=== comment R1 feature.txt' 'Say why.' '' '=== comment L1 old.txt' 'Gone?'
+  local state=.git/jig/pr/7
+  # GitLab gives the markers back HTML-escaped.
+  touch ../bin/escape-html
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "posted as: alice"
+  assert_contains "$OUT" "review: $_pr_gl_url#note_9001"
+  assert_contains "$OUT" "landed: summary"
+  assert_contains "$OUT" "landed: comment R1 feature.txt at R1 feature.txt"
+  assert_contains "$OUT" "landed: comment L1 old.txt at L1 old.txt"
+  # One discussion a part, the summary first, each through a file.
+  assert_eq 3 "$(cat ../bin/npost)"
+  _pr_valid_json ../bin/posted.1
+  _pr_valid_json ../bin/posted.3
+  assert_not_contains "$(cat ../bin/posted.1)" '"position"'
+  assert_file_contains ../bin/posted.1 "part=0 -->"
+  assert_file_contains ../bin/posted.3 '"old_line":1}'
+  assert_contains "$(cat ../bin/calls)" "--method POST projects/42/merge_requests/7/discussions --input"
+  assert_file_contains "$state/posted" "review: 9001 9002 9003"
+  if grep -q 'token=set' ../bin/calls; then fail "a token variable reached glab"; fi
+  # Again: everything is there, nothing is posted twice.
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "already posted: nothing is missing"
+  assert_eq 3 "$(cat ../bin/npost)"
+  run jig pr cleanup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file "$state"
+}
+
+test_pr_gitlab_post_stops_at_a_refusal_and_posts_only_the_rest_again() {
+  _pr_gl_repo
+  _pr_gl_checked '=== comment R1 feature.txt' 'Say why.' '' '=== comment L1 old.txt' 'Gone?'
+  printf '2\n' > ../bin/refuse-at
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitLab answered: ERROR: 400 Bad request"
+  assert_contains "$OUT" "landed: summary"
+  assert_contains "$OUT" "missing: comment R1 feature.txt"
+  assert_contains "$OUT" "missing: comment L1 old.txt"
+  assert_contains "$OUT" "half-done: 1 of 3 parts landed; run jig pr comments post 7 --shown $_pr_hash again"
+  # The refusal stopped the rest.
+  assert_eq 2 "$(cat ../bin/npost)"
+  assert_file_contains .git/jig/pr/7/posted "review: 9001"
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq 4 "$(cat ../bin/npost)"
+  assert_file_contains ../bin/posted.3 "part=1 -->"
+  assert_file_contains ../bin/posted.4 "part=2 -->"
+  assert_file_contains .git/jig/pr/7/posted "review: 9001 9003 9004"
+  assert_eq 3 "$(wc -l < ../bin/discussions | tr -d ' ')"
+  # A note this version posted is gone from GitLab: the part it held is not
+  # posted again.
+  grep -v '"id":9003,' ../bin/discussions > ../bin/discussions.kept
+  mv ../bin/discussions.kept ../bin/discussions
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitLab took note 9003 of this version, but it does not come back with its marker"
+  assert_eq 4 "$(cat ../bin/npost)"
+}
+
+test_pr_gitlab_post_refuses_what_does_not_hold() {
+  _pr_gl_repo
+  _pr_gl_checked '=== comment R1 feature.txt' 'Say why.'
+  local head main
+  head=$(git rev-parse refs/jig/pr/7/head)
+  main=$(git rev-parse main)
+  # The head moved on GitLab since the review.
+  _pr_gl_mr ../bin 0123456789012345678901234567890123456789 "$main"
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "moved since it was reviewed"
+  # GitLab made its diff from another base.
+  _pr_gl_mr ../bin "$head" "$head"
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitLab's diff starts at $head"
+  # The discussion is locked and alice only reads.
+  _pr_gl_mr ../bin "$head" "$main" "$head" true
+  printf '{"id":42,"visibility":"public","permissions":{"project_access":null,"group_access":null}}\n' > ../bin/project
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is locked"
+  _pr_gl_mr ../bin "$head" "$main"
+  # glab answers as somebody else.
+  printf 'mallory\n' > ../bin/stored
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "glab answers for gitlab.example.com as mallory"
+  # A token in the environment that answers as alice is the one used.
+  printf 'alice\n' > ../bin/envlogin
+  touch ../bin/drop-position
+  GITLAB_TOKEN=secret run jig pr comments post 7 --shown "$_pr_hash"
+  if grep -q 'secret' ../bin/calls; then fail "a token was an argument"; fi
+  assert_contains "$(cat ../bin/calls)" "discussions --input"
+  # GitLab took the comment without its position: it is not where it was
+  # shown, and it is never posted again.
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "misplaced: comment R1 feature.txt at no line"
+  assert_contains "$OUT" "landed where they were not shown"
+  GITLAB_TOKEN=secret run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not where it was shown (comment R1 feature.txt at no line)"
+  assert_eq 2 "$(cat ../bin/npost)"
+  # Another version of a review of this head by the same login stops a post.
+  printf '{"id":"x","notes":[{"id":5,"author":{"username":"alice"},"body":"x\\n<!-- jig-pr-review id=0000 head=%s part=0 -->","position":null}]}\n' "$head" > ../bin/discussions
+  printf 'alice\n' > ../bin/stored
+  rm ../bin/drop-position .git/jig/pr/7/posted
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already posted another version of a review of this head: $_pr_gl_url#note_5"
 }

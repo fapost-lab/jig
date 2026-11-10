@@ -300,11 +300,12 @@ writes the answers to their gitignored `.ai/config.local.yaml` through
 when a newer release is out, `jig upgrade`, and the steps the release asks for by hand; what would
 stop the upgrade is named to the person, never worked around.
 
-`jig-pr-review` reviews a colleague's pull request that is not a task: `jig pr fetch <url>`
-reads it in a detached worktree of this clone, the review follows `jig-review`'s method with the
-rules taken from the base and nothing of the head run, `jig pr comments check` shows the review
-word for word as it would be posted, and only after the person's yes to that version does
-`jig pr comments post` post it, as one comment-only review; `jig pr cleanup` takes it all back.
+`jig-pr-review` reviews a colleague's pull request (GitHub) or merge request (GitLab) that is not
+a task: `jig pr fetch <url>` reads it in a detached worktree of this clone, the review follows
+`jig-review`'s method with the rules taken from the base and nothing of the head run,
+`jig pr comments check` shows the review word for word as it would be posted, and only after the
+person's yes to that version does `jig pr comments post` post it — one comment-only review on
+GitHub, one discussion per comment on GitLab; `jig pr cleanup` takes it all back.
 
 The queue (`jig queue`) holds each task's priority, order and dependencies, and `jig queue next`
 advises from it. A task gets its priority when it is filed; to set priorities or order the tasks,

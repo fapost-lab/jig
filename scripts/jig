@@ -130,10 +130,11 @@ Usage: jig <command> [args]
   queue request|cancel <ref> pause [--reason <text>] [--revision <n>] [--json]
                                  ask a task to pause at its next stage boundary,
                                  or take the request back
-  pr fetch <url>                 a GitHub pull request into refs/jig/pr/<n>/ and a detached
-                                 worktree beside the repository, for jig-pr-review
+  pr fetch <url>                 a GitHub pull request or GitLab merge request into
+                                 refs/jig/pr/<n>/ and a detached worktree beside the
+                                 repository, for jig-pr-review
   pr draft <n|url> [--from <f>]  check and keep the review draft; print it as it is shown
-  pr comments check <n|url>      place the draft on GitHub's diff; print the review as it
+  pr comments check <n|url>      place the draft on the forge's diff; print the review as it
                                  would be posted, and its hash
   pr comments post <n|url> --shown <hash>
                                  post that review, refused unless it is the version shown;
