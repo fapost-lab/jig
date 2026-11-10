@@ -34,7 +34,7 @@ author pushed fixes replies "fixed" or "still open" in each of its earlier threa
   sha, checked on a live merge request; one call per discussion, so the read-back and the marker
   carry a half-done post. (after: Post the draft to GitHub — it adds a second forge to the posting
   that item builds)
-- [ ] Re-review after the author's fixes — the reviewed head read back from the marker on the forge,
+- [ ] `pr-review-follow-up` — Re-review after the author's fixes — the reviewed head read back from the marker on the forge,
   the interdiff since it (surviving a force-push that made it unreachable), each earlier finding
   judged against the new code and answered in its own thread, new findings only from the interdiff.
   (after: Post the draft to a GitLab merge request — it replies in threads on both forges)
