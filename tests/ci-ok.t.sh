@@ -8,11 +8,16 @@
 
 # co_run <full> <windows> <event> <base-ref> <head-ref> <job=result>... — run
 # the script the way the `ci-ok` job does. CO_REUSE, when set, is scope's
-# `reuse` output.
+# `reuse` output; CO_SUITE, when set, is its `suite` (else all or none, as
+# `full` says).
 co_run() {
   local full="$1" windows="$2" event="$3" base="$4" head="$5"
   shift 5
-  run env FULL="$full" WINDOWS="$windows" REUSE="${CO_REUSE:-}" EVENT="$event" \
+  local suite="${CO_SUITE:-}"
+  if [ -z "$suite" ]; then
+    if [ "$full" = true ]; then suite=all; else suite=none; fi
+  fi
+  run env FULL="$full" SUITE="$suite" WINDOWS="$windows" REUSE="${CO_REUSE:-}" EVENT="$event" \
     BASE_REF="$base" HEAD_REF="$head" \
     "$JIG_HOME/.github/scripts/ci-ok.sh" "$@"
 }
@@ -221,7 +226,7 @@ test_ci_ok_expectations_match_the_conditions_in_the_workflow() {
   {
     grep -qF "knowledge: needs: scope if: needs.scope.outputs.full != 'true'" <<< "$flat" ||
       fail "the condition of knowledge changed; update ci-ok.sh"
-    grep -qF "name: \${{ matrix.os }} \${{ matrix.shard }} needs: scope if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true' runs-on:" <<< "$flat" ||
+    grep -qF "name: \${{ matrix.os }} \${{ matrix.shard }} (\${{ needs.scope.outputs.suite }}) needs: scope if: needs.scope.outputs.full == 'true' && needs.scope.outputs.reuse != 'true' runs-on:" <<< "$flat" ||
       fail "the condition of test changed; update ci-ok.sh"
     grep -qF "if: >- needs.scope.outputs.full == 'true' && needs.scope.outputs.windows == 'true' && needs.scope.outputs.reuse != 'true' runs-on: windows-latest" <<< "$flat" ||
       fail "the condition of test-windows changed; update ci-ok.sh"
@@ -232,4 +237,25 @@ test_ci_ok_expectations_match_the_conditions_in_the_workflow() {
     grep -qF "&& github.event_name == 'pull_request' && github.base_ref == 'main' && (startsWith(github.head_ref, 'epic/') || startsWith(github.head_ref, 'finish/'))" <<< "$flat" ||
       fail "the condition of epic-pr changed; update ci-ok.sh"
   }
+}
+
+# A run of the tests the change reaches needs the same jobs as a run of the
+# whole suite (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches).
+test_ci_ok_passes_a_selected_run_like_a_full_one() {
+  CO_SUITE=selected co_full_push
+  assert_eq 0 "$RC" "$OUT"
+  CO_SUITE=selected co_run true true push "" "" \
+    scope=success knowledge=skipped test=skipped test-windows=success \
+    smoke-windows=success changelog=skipped epic-pr=skipped
+  assert_eq 1 "$RC" "$OUT"
+}
+
+test_ci_ok_fails_when_the_suite_does_not_fit_the_scope() {
+  CO_SUITE=none co_full_push
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "does not fit full=true"
+  CO_SUITE=selected co_run false false pull_request main x \
+    scope=success knowledge=success test=skipped test-windows=skipped \
+    smoke-windows=skipped changelog=success epic-pr=skipped
+  assert_eq 1 "$RC"
 }

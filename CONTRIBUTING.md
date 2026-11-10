@@ -143,8 +143,11 @@ bash tests/run.sh knowledge::test_reject   # a filter that matches no test exits
 bash tests/run.sh                  # everything, in parallel, one job per CPU — CI's job
 ```
 
-`JIG_TEST_JOBS=1` runs the tests one at a time, or sets another width. `JIG_TEST_SHARD=2/3` runs every
-third test starting with the second, so a slow platform can split the suite across machines.
+`JIG_TEST_JOBS=1` runs the tests one at a time, or sets another width. Several filters run their
+union (`tests/run.sh task:: queue::`). `JIG_TEST_SHARD=2/3` runs the second of three shares, so a
+slow platform can split the suite across machines: every third test starting with the second, or,
+with `JIG_TEST_DURATIONS=<report>`, shares balanced by measured duration. `JIG_TEST_REPORT=<file>`
+writes each test's exit code, seconds and name, the form `JIG_TEST_DURATIONS` reads.
 `JIG_TEST_SKIP=file::test,...` reports the named tests as skipped. `tests/install.t.ps1` runs only on
 Windows CI.
 
@@ -213,19 +216,29 @@ needs every other one, runs with `always()`, and fails when a job failed, was ca
 skipped although `scope` and the event required it to run (`.github/scripts/ci-ok.sh`) — so the
 merge button stays off while the suite runs, and a skipped job counts only when `scope` decided it.
 
-Do not require a matrix job by name. `test` is named `${{ matrix.os }} ${{ matrix.shard }}`; when
+Do not require a matrix job by name. `test` is named `${{ matrix.os }} ${{ matrix.shard }} (<suite>)`; when
 `scope` skips it the expression is never expanded, and GitHub reports one skipped check named after
 the expression instead of `ubuntu-latest 1/2` and the rest. A rule naming those waits for a status
 nobody will send, and the pull request cannot be merged although its CI is green. `test-windows`
-(`${{ matrix.shard }}/${{ strategy.job-total }}`) behaves the same way. A new job therefore joins
+(`windows-latest (Git Bash) ${{ matrix.shard }} (<suite>)`) behaves the same way. A new job therefore joins
 `ci-ok`'s `needs` rather than the rule. It is also why the number of shares on any platform can be
 changed without touching the branch rules: the share count is in the job names, and `ci-ok`'s name
-never moves.
+never moves. The count now changes from run to run: `scope` sizes each platform by the work the run
+selected (`.github/scripts/ci-matrix.sh`).
+
+### What a pull request tests
+
+A pull request runs the tests its change reaches — the same answer a local `jig verify` acts on, from
+`.ai/verify/shell.map` and the shell profile — and the whole suite only where the profile cannot name
+them, for a change to `.github/`, `tests/run.sh`, `tests/lib/` or `JIG_VERSION`, and nightly
+(adr-20261110-a-pull-request-runs-the-tests-its-change-reaches). The `scope` job's log says which
+(`scope: selected (…; tests: …)`). A test the nightly run is the first to fail is one a change
+skipped: the `red-main` issue names it, and the fix is usually a line in `shell.map`.
 
 One job stands outside `ci-ok`'s `needs`: `red-main`, which runs after it on main's pushes and
 nightly runs and decides nothing about a merge. While main is red it keeps one open issue labelled
 `red-main` — opened by the first red run, commented on by each further one, closed by the next
-green full run (`.github/scripts/red-main.sh`). GitHub's notification of that issue is how a red
+green run of the whole suite (`.github/scripts/red-main.sh`). GitHub's notification of that issue is how a red
 main reaches the maintainer; watch the repository to receive it.
 
 ### Routing evals

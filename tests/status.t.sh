@@ -11,8 +11,7 @@ test_status_not_initialised() {
 }
 
 test_status_initialised_no_drift_no_tasks() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "initialised: yes"
@@ -33,8 +32,7 @@ status_share_repo() {
 }
 
 test_status_hints_a_directory_of_repositories_worktree_share_should_name() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   printf 'packages/\nvendor/\nlinked/\n' >> .gitignore
   status_share_repo packages/alpha
   # Two levels down, as composer --prefer-source leaves it: not a candidate.
@@ -220,8 +218,7 @@ test_status_warns_when_local_config_is_not_gitignored() {
 }
 
 test_status_reports_drift() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   printf '\n# drift\n' >> .ai/scripts/lib/config.sh
   rm -f .ai/profiles/generic/profile.yaml
 
@@ -240,8 +237,7 @@ test_status_reports_drift() {
 # line sits between drift and the task lines (ARCHITECTURE.md, Scripts layout).
 
 test_status_reports_no_proposals_by_default() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
 
   run jig status
   assert_eq 0 "$RC"
@@ -249,8 +245,7 @@ test_status_reports_no_proposals_by_default() {
 }
 
 test_status_reports_proposal_count() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   jig knowledge new feature one >/dev/null
   jig knowledge new feature two >/dev/null
   sed 's/^status: active/status: proposed/' .ai/knowledge/features/one.md \
@@ -270,8 +265,7 @@ test_status_reports_proposal_count() {
 # proposed` are backed by the same km_is_proposed helper (see knowledge.sh);
 # this pins that they never disagree about how many documents are proposed.
 test_status_proposal_count_matches_knowledge_proposed_listing() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   jig knowledge new feature one >/dev/null
   jig knowledge new feature two >/dev/null
   jig knowledge new feature three >/dev/null
@@ -305,8 +299,7 @@ test_status_proposal_count_matches_knowledge_proposed_listing() {
 # `jig status` gives that something in .ai/knowledge/ needs a human.
 
 test_status_omits_sources_changed_line_when_nothing_changed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p docs
   printf 'line one\n' > docs/x.md
   git add docs/x.md
@@ -320,8 +313,7 @@ test_status_omits_sources_changed_line_when_nothing_changed() {
 }
 
 test_status_reports_sources_changed_count() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p docs
   printf 'line one\n' > docs/x.md
   git add docs/x.md
@@ -336,8 +328,7 @@ test_status_reports_sources_changed_count() {
 }
 
 test_status_lists_active_tasks() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -356,8 +347,7 @@ EOF
 }
 
 test_status_appends_blocking_count_for_a_task_with_an_open_p1_finding() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -377,8 +367,7 @@ EOF
 }
 
 test_status_omits_blocking_when_findings_do_not_block() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -401,8 +390,7 @@ EOF
 # review receipt (design.md, review-receipt) ---------------------------------
 
 test_status_marks_review_stale_for_a_task_with_a_stale_receipt() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -484,8 +472,7 @@ test_status_page_says_not_checked_where_it_did_not_look_at_the_knowledge() {
 }
 
 test_status_omits_review_stale_when_there_is_no_receipt_at_all() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -504,8 +491,7 @@ EOF
 }
 
 test_status_housekeeping_age() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig status
   assert_contains "$OUT" "housekeeping: never"
 
@@ -516,8 +502,7 @@ test_status_housekeeping_age() {
 }
 
 test_status_via_installed_copy() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig_installed status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "initialised: yes"
@@ -525,8 +510,7 @@ test_status_via_installed_copy() {
 }
 
 test_status_reports_current_task_ambiguous() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   # Two tasks on one branch, which branch-per-task otherwise prevents.
   sed 's|^git.branch_per_task:.*|git.branch_per_task: false|' .ai/config.yaml > c.tmp
   mv c.tmp .ai/config.yaml
@@ -541,8 +525,7 @@ test_status_reports_current_task_ambiguous() {
 }
 
 test_status_paused_task_line_shows_marker_and_reason() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -563,8 +546,7 @@ EOF
 }
 
 test_status_paused_task_line_shows_marker_without_reason() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -801,8 +783,7 @@ _status_project_hash() {
 }
 
 test_status_framework_versions_current() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -820,8 +801,7 @@ test_status_framework_versions_current() {
 }
 
 test_status_framework_versions_mismatch_global_newer() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -853,8 +833,7 @@ _st_upgrade_item() {
 # A program listing many projects learns from the JSON which need `jig
 # upgrade`: the item names both versions, and only for an older project.
 test_status_json_names_a_project_behind_this_machines_jig() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version
   version=$(_status_project_version)
   _st_upgrade_item 9.0.0
@@ -872,8 +851,7 @@ test_status_json_names_a_project_behind_this_machines_jig() {
 }
 
 test_status_framework_versions_mismatch_project_newer() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -890,8 +868,7 @@ test_status_framework_versions_mismatch_project_newer() {
 }
 
 test_status_framework_versions_non_release_global_is_the_development_channel() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -923,8 +900,7 @@ _status_unrelease_stub() {
 # past its tag declares a released number and holds code no release has, so
 # "the same number" is not "current".
 test_status_framework_versions_unreleased_global_is_named_by_its_build() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir sha
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -944,8 +920,7 @@ test_status_framework_versions_unreleased_global_is_named_by_its_build() {
 }
 
 test_status_framework_versions_unreleased_global_without_git_is_unknown_build() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -962,8 +937,7 @@ test_status_framework_versions_unreleased_global_without_git_is_unknown_build() 
 }
 
 test_status_framework_versions_project_that_took_unreleased_code_says_so() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin path_dir
   version=$(_status_project_version)
   sed "s/^jig\\.version: .*/jig.version: $version+abc1234/" .ai/manifest > manifest.tmp
@@ -984,8 +958,7 @@ test_status_framework_versions_project_that_took_unreleased_code_says_so() {
 # A release the project could upgrade to is a release; unreleased code is not
 # something to offer.
 test_status_json_offers_no_upgrade_to_an_unreleased_global() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1001,8 +974,7 @@ test_status_json_offers_no_upgrade_to_an_unreleased_global() {
 # The project took unreleased code built on its number; the release it can
 # upgrade to is measured from that number.
 test_status_json_measures_a_project_with_unreleased_code_by_its_release_number() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version
   version=$(_status_project_version)
   sed "s/^jig\\.version: .*/jig.version: $version+abc1234/" .ai/manifest > manifest.tmp
@@ -1014,8 +986,7 @@ test_status_json_measures_a_project_with_unreleased_code_by_its_release_number()
 }
 
 test_status_framework_versions_no_global_on_path() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version
   version=$(_status_project_version)
 
@@ -1026,8 +997,7 @@ test_status_framework_versions_no_global_on_path() {
 }
 
 test_status_framework_versions_non_source_jig_is_unavailable() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version plain_bin
   version=$(_status_project_version)
   plain_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-plainbin.XXXXXX")
@@ -1046,8 +1016,7 @@ EOF
 }
 
 test_status_framework_versions_two_declared_versions_are_unavailable() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -1066,8 +1035,7 @@ JIG_VERSION=\"9.9.9\""
 }
 
 test_status_framework_versions_malformed_version_file_is_unavailable() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local version stub_root stub_bin
   version=$(_status_project_version)
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
@@ -1103,8 +1071,7 @@ test_status_framework_versions_link_mode_reports_current() {
 
 # AC-06: mismatch guidance is purely diagnostic; it must never touch the project.
 test_status_framework_versions_mismatch_causes_no_project_mutation() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir before after
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1130,8 +1097,7 @@ test_status_framework_versions_mismatch_causes_no_project_mutation() {
 # tests/housekeeping.t.sh).
 
 test_status_new_release_hint_when_recorded_version_is_newer() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1148,8 +1114,7 @@ test_status_new_release_hint_when_recorded_version_is_newer() {
 }
 
 test_status_no_new_release_hint_when_recorded_version_is_not_newer() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1165,8 +1130,7 @@ test_status_no_new_release_hint_when_recorded_version_is_not_newer() {
 }
 
 test_status_no_new_release_hint_without_a_file() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1180,8 +1144,7 @@ test_status_no_new_release_hint_without_a_file() {
 }
 
 test_status_no_new_release_hint_when_the_check_failed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1197,8 +1160,7 @@ test_status_no_new_release_hint_when_the_check_failed() {
 }
 
 test_status_html_shows_a_card_for_a_new_release() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1217,8 +1179,7 @@ test_status_html_shows_a_card_for_a_new_release() {
 }
 
 test_status_html_shows_no_card_when_no_new_release_is_recorded() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local stub_root stub_bin path_dir
   stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
   stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
@@ -1238,16 +1199,14 @@ test_status_html_shows_no_card_when_no_new_release_is_recorded() {
 # --- session hook and housekeeping flags (domains/housekeeping; ARCHITECTURE.md, Scripts layout) ---------------------
 
 test_status_session_hook_not_installed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "session hook (claude): not installed"
 }
 
 test_status_session_hook_installed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .claude
   printf '{ "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": ".ai/scripts/jig-session-hook" } ] } ] } }\n' \
     > .claude/settings.json
@@ -1260,15 +1219,13 @@ test_status_session_hook_installed() {
 test_status_omits_runtimes_that_have_no_session_hook() {
   # Codex has none, so there is nothing to install and nothing to report: a
   # permanent "not installed" line would be noise nobody can clear.
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig status
   assert_not_contains "$OUT" "session hook (codex)"
 }
 
 test_status_reports_tasks_needing_consolidation() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/runtime
   printf '2026-09-10T00:00:00Z task=t1 status=active remote=merged via=ancestry action=preserve flags=needs-consolidation\n' \
     > .ai/runtime/housekeeping.log
@@ -1279,8 +1236,7 @@ test_status_reports_tasks_needing_consolidation() {
 }
 
 test_status_silent_about_consolidation_when_nothing_is_flagged() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/runtime
   printf '2026-09-10T00:00:00Z task=t1 status=consolidated remote=merged via=ancestry action=purge\n' \
     > .ai/runtime/housekeeping.log
@@ -1292,8 +1248,7 @@ test_status_silent_about_consolidation_when_nothing_is_flagged() {
 # --- specs: specifications outside knowledge (jig-idea) ----------------------
 
 test_status_reports_no_specs_by_default() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
 
   run jig status
   assert_eq 0 "$RC"
@@ -1301,8 +1256,7 @@ test_status_reports_no_specs_by_default() {
 }
 
 test_status_reports_spec_count() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/specs/idea-a .ai/specs/idea-b
   printf '%s\n' '# Idea A' > .ai/specs/idea-a/spec.md
   printf '%s\n' '- [ ] item' > .ai/specs/idea-a/roadmap.md
@@ -1316,8 +1270,7 @@ test_status_reports_spec_count() {
 }
 
 test_status_does_not_count_invalid_id_spec_directories() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/specs/idea-a
   printf '%s\n' '# Idea A' > .ai/specs/idea-a/spec.md
   printf '%s\n' '- [ ] item' > .ai/specs/idea-a/roadmap.md
@@ -1335,8 +1288,7 @@ test_status_does_not_count_invalid_id_spec_directories() {
 # and branches.
 
 status_epic_setup() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   git add -A
   git commit -q -m "jig init snapshot"
 }
@@ -1433,8 +1385,7 @@ test_status_shows_where_a_task_started_in_a_worktree_is() {
 # --- instruction files (adapter_<a>_instructions_hint) ------------------------
 
 test_status_instructions_ok_after_fresh_init() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig status
   assert_contains "$OUT" "instructions (claude): ok"
   assert_contains "$OUT" "instructions (codex): ok"
@@ -1451,8 +1402,7 @@ test_status_instructions_reports_a_kept_foreign_agents() {
 }
 
 test_status_instructions_reports_a_missing_agents_md() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   rm AGENTS.md
   run jig status
   assert_contains "$OUT" "instructions (codex): no Jig section in AGENTS.md"
@@ -1463,8 +1413,7 @@ test_status_instructions_reports_a_missing_agents_md() {
 # where nobody looks, so `jig status` names that state separately
 # (adr-20260924-jig-owns-a-marked-section-of-the-instructions).
 test_status_instructions_reports_an_unmarked_section() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   grep -v 'jig:begin\|jig:end' AGENTS.md > AGENTS.md.new
   mv AGENTS.md.new AGENTS.md
   run jig status
@@ -1474,8 +1423,7 @@ test_status_instructions_reports_an_unmarked_section() {
 }
 
 test_status_instructions_reports_a_changed_section() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   sed 's/^## Read first$/## Read first (our version)/' AGENTS.md > AGENTS.md.new
   mv AGENTS.md.new AGENTS.md
   run jig status
@@ -1486,8 +1434,7 @@ test_status_instructions_reports_a_changed_section() {
 # --- autopilot (design.md under .ai/workspace/tasks/autopilot-run) -------------
 
 test_status_marks_autopilot_on_for_a_running_task() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -1507,8 +1454,7 @@ EOF
 }
 
 test_status_marks_autopilot_stopped_for_a_stopped_run() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -1528,8 +1474,7 @@ EOF
 }
 
 test_status_omits_autopilot_marker_when_the_run_is_done() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   mkdir -p .ai/workspace/tasks/TASK-1
   cat > .ai/workspace/tasks/TASK-1/state <<'EOF'
 task_id: TASK-1
@@ -3582,8 +3527,7 @@ _st_json_cards() {
 # cards say exactly what the items say — title, subject, detail, what to do,
 # link — in the same order, with the badge on the two stopped kinds.
 test_status_json_and_the_page_name_the_same_items() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local t stub_root stub_bin path_dir p
   for t in ph-1 ph-2; do
     jig task new "$t" --class T2 >/dev/null

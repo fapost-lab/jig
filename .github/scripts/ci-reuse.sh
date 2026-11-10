@@ -37,8 +37,12 @@
 # everything — which is exactly the case where main's tree is new.
 #
 # The run counts only when it was full: `knowledge` skipped (the scope was
-# full), no other job skipped but those in CR_PR_SKIPS, which never run on a
-# pull request into main, and at least one Windows Git Bash share passed —
+# full), every test share ran the whole suite — its name ends in
+# CR_ALL_SUFFIX, where a run of the tests a change reaches ends in
+# `(selected)` (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches)
+# and a share of neither kind does not count —, no other job skipped but those
+# in CR_PR_SKIPS, which never run on a pull request into main, and at least
+# one Windows Git Bash share passed —
 # a pull request that skipped Windows covers Linux and macOS only, and main
 # releases for Windows too. The name prefix below is the second copy of the
 # `test-windows` job's name; tests/ci-workflow.t.sh holds the two together,
@@ -61,6 +65,11 @@ CR_WINDOWS_PREFIX="windows-latest (Git Bash) "
 # tests/ci-reuse.t.sh holds every job of ci.yml to this list or to the list
 # of jobs a full pull-request run runs, so a new job is a decision made here.
 CR_PR_SKIPS="release epic-pr red-main"
+# The end of a test share's name when it ran the whole suite; the job names
+# in ci.yml carry the suite, and tests/ci-workflow.t.sh holds them to it.
+CR_ALL_SUFFIX=" (all)"
+# Test shares, by the start of their names: Linux, macOS and Windows.
+CR_TEST_PREFIXES="ubuntu-latest macos-latest"
 
 _cr_line() {
   printf '%s (%s)\n' "$1" "$2"
@@ -79,7 +88,7 @@ _cr_have() {
 # included, judged from its jobs. Status 1 when it did not or the jobs cannot
 # be read; the reason goes to stdout.
 _cr_full() {
-  local jobs line conclusion name knowledge="" windows=0
+  local jobs line conclusion name knowledge="" windows=0 unix=0 p
   jobs=$(gh api -X GET "repos/$CR_SLUG/actions/runs/$1/jobs" -f per_page=100 \
     --jq '.jobs[] | "\(.conclusion) \(.name)"' 2>/dev/null) || {
     echo "its jobs cannot be read"
@@ -98,12 +107,33 @@ _cr_full() {
       echo "job '$name' ended as '$conclusion'"
       return 1
     fi
-    case "$name" in "$CR_WINDOWS_PREFIX"*) windows=$((windows + 1)) ;; esac
+    case "$name" in
+      "$CR_WINDOWS_PREFIX"*)
+        case "$name" in
+          *"$CR_ALL_SUFFIX") windows=$((windows + 1)) ;;
+          *) echo "share '$name' did not run the whole suite"; return 1 ;;
+        esac
+        ;;
+    esac
+    for p in $CR_TEST_PREFIXES; do
+      case "$name" in
+        "$p "*)
+          case "$name" in
+            *"$CR_ALL_SUFFIX") unix=$((unix + 1)) ;;
+            *) echo "share '$name' did not run the whole suite"; return 1 ;;
+          esac
+          ;;
+      esac
+    done
   done <<EOF
 $jobs
 EOF
   if [ "$knowledge" != skipped ]; then
     echo "its scope was light"
+    return 1
+  fi
+  if [ "$unix" -eq 0 ]; then
+    echo "it ran no Linux or macOS share of the whole suite"
     return 1
   fi
   if [ "$windows" -eq 0 ]; then

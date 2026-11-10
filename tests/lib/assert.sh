@@ -103,6 +103,70 @@ fixture_cache_prepare() {
   touch "$JIG_TEST_CACHE/ready" || return 1
 }
 
+# fixture_source_v2_build <dir> — <dir> (existing, empty) becomes the "source
+# v2" the upgrade tests install over a project: a released copy of $JIG_HOME
+# with a changed profile script, version 9.9.9 and a brand-new skill (with a
+# slash invocation, so the codex transform is exercised on install too).
+fixture_source_v2_build() {
+  local dest="$1" tmp_version
+  cp -R "$JIG_HOME"/. "$dest"/ || return 1
+  fixture_release_source "$dest" || return 1
+  printf '\n# v2 marker\n' >> "$dest/profiles/generic/verify.sh"
+  mkdir -p "$dest/skills/jig-newthing"
+  cat > "$dest/skills/jig-newthing/SKILL.md" <<'EOT'
+---
+name: jig-newthing
+description: fixture skill added in source-v2
+---
+# jig-newthing
+Run `/jig-newthing` to do the thing.
+EOT
+  tmp_version="$dest/scripts/lib/version.sh.tmp"
+  sed 's/^JIG_VERSION=.*/JIG_VERSION="9.9.9"/' "$dest/scripts/lib/version.sh" > "$tmp_version"
+  mv "$tmp_version" "$dest/scripts/lib/version.sh"
+  fixture_release_source "$dest"
+}
+
+# fixture_source_v2_copy <dir> — put the source v2 into the existing directory
+# <dir>: a copy of the cached build when fixture_caches_prepare made one, else
+# a fresh build (serial runner, cache absent). Same tree either way.
+fixture_source_v2_copy() {
+  if [ -n "${JIG_TEST_CACHE:-}" ] && [ -f "$JIG_TEST_CACHE/source-v2-ready" ]; then
+    cp -R "$JIG_TEST_CACHE/source-v2/." "$1"/
+    return $?
+  fi
+  fixture_source_v2_build "$1"
+}
+
+# fixture_caches_prepare <list-file> — what a parallel runner calls once, before
+# it starts any worker, in place of fixture_cache_prepare. <list-file> holds the
+# selected tests, one per line: `<idx>\t<file>\t<name>\t<full>`. It always
+# builds the install cache (fixture_cache_prepare) and builds the source-v2
+# cache only when a selected test is in a file that uses it (upgrade::). Safe to
+# call again: a cache that is ready is left alone. No locks — never call it
+# from two processes at once, nor from a worker.
+fixture_caches_prepare() {
+  local list="$1" file name full build tab want=0
+  tab=$(printf '\t')
+  fixture_cache_prepare || return 1
+  if [ -f "$JIG_TEST_CACHE/source-v2-ready" ]; then
+    return 0
+  fi
+  while IFS="$tab" read -r _ file name full; do
+    case "$full" in
+      upgrade::*) want=1 ;;
+    esac
+  done < "$list"
+  if [ "$want" -eq 0 ]; then
+    return 0
+  fi
+  build=$(mktemp -d "$JIG_TEST_CACHE/source-v2-build.XXXXXX") || return 1
+  [ -n "$build" ] && [ -d "$build" ] || return 1
+  fixture_source_v2_build "$build" || return 1
+  mv "$build" "$JIG_TEST_CACHE/source-v2" || return 1
+  touch "$JIG_TEST_CACHE/source-v2-ready"
+}
+
 # Build the merge topologies housekeeping has to tell apart, on top of the
 # current repository (call after fixture_jig_repo). Every branch below is
 # created off main and left behind so ancestry detection can be asserted

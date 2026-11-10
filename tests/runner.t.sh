@@ -565,3 +565,256 @@ test_runner_does_not_queue_behind_the_verify_that_started_it() {
   # And it left the holder's record exactly as it found it.
   assert_file_contains root/.ai/runtime/verify/busy/run "checkout: /elsewhere"
 }
+
+# --- several filters, JIG_TEST_REPORT and JIG_TEST_DURATIONS ---------------------
+
+# rn_run_args <env assignment>... -- <filter>... — the copied runner with one job,
+# no inherited shard/skip/report/durations, the given assignments and filters.
+# Leaves OUT/RC set (the test's stdout and stderr are both in OUT).
+rn_run_args() {
+  local -a envargs=(-u JIG_TEST_SHARD -u JIG_TEST_SKIP -u JIG_TEST_REPORT -u JIG_TEST_DURATIONS JIG_TEST_JOBS=1)
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+    envargs+=("$1")
+    shift
+  done
+  [ $# -eq 0 ] || shift
+  run env "${envargs[@]}" "$PWD/root/tests/run.sh" "$@"
+}
+
+# rn_write_ten_fixture — one file, ten trivial tests, named so that discovery
+# order (alphabetical) is d::test_01 .. d::test_10.
+rn_write_ten_fixture() {
+  {
+    printf '# shellcheck shell=bash\n'
+    local i
+    for i in 01 02 03 04 05 06 07 08 09 10; do
+      printf 'test_%s() { :; }\n' "$i"
+    done
+  } > root/tests/d.t.sh
+}
+
+# rn_shard_names <i> <n> [env assignment]... — the names share i/n ran, sorted.
+rn_shard_names() {
+  local i="$1" n="$2"
+  shift 2
+  rn_run_args JIG_TEST_SHARD="$i/$n" "$@" --
+  assert_eq 0 "$RC" "share $i/$n: $OUT"
+  rn_names "$OUT" | sort
+}
+
+# rn_assert_cover <n> <label> [env assignment]... — across the n shares every test
+# of the suite ran in exactly one.
+rn_assert_cover() {
+  local n="$1" label="$2" i all="" want
+  shift 2
+  for i in $(seq 1 "$n"); do
+    all="$all$(rn_shard_names "$i" "$n" "$@")"$'\n'
+  done
+  want=$(printf '%s\n' a::test_1_drop a::test_2_keep a::test_3_drop a::test_4_keep \
+    b::test_1_keep b::test_2_drop b::test_3_keep d::test_01 d::test_02 d::test_03 \
+    d::test_04 d::test_05 d::test_06 d::test_07 d::test_08 d::test_09 d::test_10 | sort)
+  assert_eq "$want" "$(printf '%s' "$all" | grep . | sort)" "$label, n=$n: every test in exactly one share"
+}
+
+test_runner_several_filters_select_the_union() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run_args -- a::test_1_drop b::test_3_keep
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$(printf 'a::test_1_drop\nb::test_3_keep')" "$(rn_names "$OUT")" "the union, in discovery order"
+
+  # A test both filters select runs once.
+  rn_run_args -- keep b::test_1_keep a.t.sh::test_2
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq 4 "$(rn_names "$OUT" | grep -c .)" "four distinct tests, none twice"
+}
+
+test_runner_a_filter_that_selects_nothing_among_several_is_an_error() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run_args -- a::test_1_drop nonesuch b::test_3_keep
+  assert_eq 1 "$RC" "exit code"
+  assert_contains "$OUT" "no test matched nonesuch"
+  assert_not_contains "$OUT" "no test matched a::test_1_drop"
+  assert_eq 0 "$(rn_names "$OUT" | grep -c .)" "nothing ran"
+
+  # An empty argument is no filter, not an error.
+  rn_run_args -- "" b::test_3_keep
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "b::test_3_keep" "$(rn_names "$OUT")" "the empty argument is ignored"
+}
+
+test_runner_report_has_one_line_per_test_with_rc_secs_and_name() {
+  rn_build_suite
+  rn_write_c_fixture
+  mkdir -p root/tests
+  cat > root/tests/e.t.sh <<'FIX'
+# shellcheck shell=bash
+test_1_skips() { skip "not here"; }
+FIX
+
+  rn_run_args JIG_TEST_REPORT="$PWD/report.tsv" --
+  assert_eq 1 "$RC" "the failing test fails the run"
+  assert_file report.tsv
+  local want got
+  got=$(cut -f1,3 report.tsv)
+  want=$(printf '0\tc::test_1_ok\n1\tc::test_2_bad\n0\tc::test_3_ok\n77\te::test_1_skips')
+  assert_eq "$want" "$got" "rc and name per test, in discovery order"
+  assert_eq 4 "$(grep -c '' report.tsv)" "one line per test"
+  assert_eq 0 "$(cut -f2 report.tsv | grep -vc '^[0-9][0-9]*$')" "secs are integers"
+  assert_eq "" "$(find . -name 'report.tsv.tmp.*' -print)" "no temporary file left"
+
+  # A share reports only what it ran.
+  rn_run_args JIG_TEST_SHARD=1/2 JIG_TEST_REPORT="$PWD/report1.tsv" --
+  assert_eq "$(printf '0\tc::test_1_ok\n0\tc::test_3_ok')" "$(cut -f1,3 report1.tsv)" "share 1/2"
+}
+
+test_runner_report_that_cannot_be_written_warns_and_keeps_the_exit_code() {
+  rn_build_suite
+  rn_write_ab_fixture
+
+  rn_run_args JIG_TEST_REPORT="$PWD/no/such/dir/report.tsv" --
+  assert_eq 0 "$RC" "the run's own verdict stands"
+  assert_contains "$OUT" "warning: could not write JIG_TEST_REPORT"
+  assert_contains "$OUT" "7 passed"
+}
+
+test_runner_shares_by_round_robin_cover_the_suite_without_a_table() {
+  rn_build_suite
+  rn_write_ab_fixture
+  rn_write_ten_fixture
+
+  local n
+  for n in 1 2 3 4; do
+    rn_assert_cover "$n" "no table"
+  done
+  rn_run_args JIG_TEST_SHARD=1/2 --
+  assert_contains "$OUT" "shard: 1/2 by round-robin"
+  assert_not_contains "$OUT" "sharding by round-robin"
+}
+
+test_runner_shares_by_durations_cover_the_suite_for_any_table() {
+  rn_build_suite
+  rn_write_ab_fixture
+  rn_write_ten_fixture
+
+  : > empty.tsv
+  printf 'garbage\nx\ty\tz\nabc\td::test_01\n-3\td::test_01\n1.5\td::test_02\n7\t\n' > garbage.tsv
+  # Partial: only some tests have rows, one of them twice, one in the 2-column form.
+  printf '0\t9\td::test_01\n0\t2\td::test_01\n5\td::test_02\n1\t4\ta::test_1_drop\n0\t1\tgone::test_x\n' > partial.tsv
+  # A full report-shaped table.
+  printf '0\t3\ta::test_1_drop\n0\t0\ta::test_2_keep\n0\t8\tb::test_1_keep\n0\t1\td::test_05\n' > full.tsv
+
+  local n tbl
+  for n in 1 2 3 4; do
+    rn_assert_cover "$n" "empty table" JIG_TEST_DURATIONS="$PWD/empty.tsv"
+    rn_assert_cover "$n" "garbage table" JIG_TEST_DURATIONS="$PWD/garbage.tsv"
+    rn_assert_cover "$n" "missing table" JIG_TEST_DURATIONS="$PWD/absent.tsv"
+    rn_assert_cover "$n" "partial table" JIG_TEST_DURATIONS="$PWD/partial.tsv"
+    rn_assert_cover "$n" "full table" JIG_TEST_DURATIONS="$PWD/full.tsv"
+  done
+
+  for tbl in empty garbage absent; do
+    rn_run_args JIG_TEST_SHARD=1/2 JIG_TEST_DURATIONS="$PWD/$tbl.tsv" --
+    assert_contains "$OUT" "has no usable row; sharding by round-robin" "$tbl: said so"
+    assert_contains "$OUT" "shard: 1/2 by round-robin" "$tbl"
+  done
+  rn_run_args JIG_TEST_SHARD=1/2 JIG_TEST_DURATIONS="$PWD/partial.tsv" --
+  assert_contains "$OUT" "shard: 1/2 by durations"
+  assert_not_contains "$OUT" "sharding by round-robin"
+}
+
+test_runner_shares_by_durations_balance_the_work() {
+  rn_build_suite
+  rn_write_ten_fixture
+
+  # Ten tests: 100 s, 90 s, 10 s, ... Round-robin would put 100 and 10 and
+  # others together; LPT into two shares puts 100 alone against everything else
+  # that fits: loads 2*100+1 = 201 vs 2*90+1 + the rest.
+  {
+    printf '0\t100\td::test_01\n'
+    printf '0\t90\td::test_02\n'
+    printf '0\t60\td::test_03\n'
+    printf '0\t50\td::test_04\n'
+    printf '0\t1\td::test_05\n'
+    printf '0\t1\td::test_06\n'
+    printf '0\t1\td::test_07\n'
+    printf '0\t1\td::test_08\n'
+    printf '0\t1\td::test_09\n'
+    printf '0\t1\td::test_10\n'
+  } > table.tsv
+  local s1 s2
+  s1=$(rn_shard_names 1 2 JIG_TEST_DURATIONS="$PWD/table.tsv")
+  s2=$(rn_shard_names 2 2 JIG_TEST_DURATIONS="$PWD/table.tsv")
+  # LPT by hand, weights 2*secs+1: 01(201)->s1; 02(181)->s2; 03(121)->s2 (181<201
+  # is false: s2 has 181, s1 has 201, so the smaller is s2: 302);
+  # 04(101)->s1 (302 vs 201: s1 -> 302); then the 1 s tests (weight 3) go to the
+  # lighter share each time, tie to share 1.
+  local w1 w2
+  w1=$(printf '%s\n' "$s1" | grep -c .)
+  w2=$(printf '%s\n' "$s2" | grep -c .)
+  assert_contains "$s1" "d::test_01"
+  assert_contains "$s2" "d::test_02"
+  assert_contains "$s2" "d::test_03"
+  assert_contains "$s1" "d::test_04"
+  assert_eq 10 "$((w1 + w2))" "every test once"
+  # Seconds per share, by the table: 100+50+k vs 90+60+(6-k) with k small ones.
+  local secs1=0 secs2=0 name v
+  for name in $s1; do
+    v=$(awk -F'\t' -v n="$name" '$3 == n { print $2 }' table.tsv)
+    secs1=$((secs1 + v))
+  done
+  for name in $s2; do
+    v=$(awk -F'\t' -v n="$name" '$3 == n { print $2 }' table.tsv)
+    secs2=$((secs2 + v))
+  done
+  local diff=$((secs1 - secs2))
+  [ "$diff" -ge 0 ] || diff=$((-diff))
+  [ "$diff" -le 2 ] || fail "the shares differ by $diff s (s1=$secs1, s2=$secs2)"
+}
+
+test_runner_shares_by_durations_give_unknown_tests_the_median() {
+  rn_build_suite
+  rn_write_ten_fixture
+
+  # Known: 01 -> 30 s, 02 -> 30 s, 03 -> 30 s (median 30). The seven unknown tests
+  # cost 30 s each too, so three shares of ten tests come out 4/3/3.
+  printf '0\t30\td::test_01\n0\t30\td::test_02\n0\t30\td::test_03\n' > table.tsv
+  local i counts=""
+  for i in 1 2 3; do
+    counts="$counts$(rn_shard_names "$i" 3 JIG_TEST_DURATIONS="$PWD/table.tsv" | grep -c .) "
+  done
+  assert_eq "4 3 3 " "$counts" "the unknown tests weigh the median"
+}
+
+test_runner_shares_by_durations_are_deterministic_and_start_the_longest_first() {
+  rn_build_suite
+  rn_write_ten_fixture
+
+  printf '0\t1\td::test_01\n0\t9\td::test_02\n0\t5\td::test_03\n0\t9\td::test_04\n' > table.tsv
+  local first second order
+  rn_run_args JIG_TEST_SHARD=1/1 JIG_TEST_DURATIONS="$PWD/table.tsv" --
+  first=$OUT
+  rn_run_args JIG_TEST_SHARD=1/1 JIG_TEST_DURATIONS="$PWD/table.tsv" --
+  second=$OUT
+  assert_eq "$(rn_names "$first")" "$(rn_names "$second")" "same share, same order"
+
+  # One job runs in dispatch order: longest first, a tie in discovery order, the
+  # unknown tests (median 5... the lower median of 1,5,9,9 is 5) among them by
+  # their position.
+  order=$(rn_names "$first" | head -n 4 | tr '\n' ' ')
+  assert_eq "d::test_02 d::test_04 d::test_03 d::test_05 " "$order" "longest first"
+
+  # The report, though, stays in discovery order.
+  rn_run_args JIG_TEST_SHARD=1/1 JIG_TEST_DURATIONS="$PWD/table.tsv" JIG_TEST_REPORT="$PWD/r.tsv" --
+  assert_eq "d::test_01" "$(sed -n 1p r.tsv | cut -f3)" "report line 1"
+  assert_eq "d::test_10" "$(sed -n 10p r.tsv | cut -f3)" "report line 10"
+
+  # The partition itself is the same on every call.
+  local a b
+  a=$(rn_shard_names 2 3 JIG_TEST_DURATIONS="$PWD/table.tsv")
+  b=$(rn_shard_names 2 3 JIG_TEST_DURATIONS="$PWD/table.tsv")
+  assert_eq "$a" "$b" "share 2/3 twice"
+}

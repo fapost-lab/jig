@@ -257,3 +257,154 @@ test_ci_scope_too_many_arguments_exits_2() {
   assert_eq 2 "$RC"
   assert_contains "$OUT" "usage: ci-scope.sh <base-commit>"
 }
+
+# --- selected: the tests the change reaches ----------------------------------
+# (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches)
+
+# cs_suite <dir> — a project the shell profile can narrow: an executable
+# tests/run.sh and two test files, each named after a script.
+cs_suite() {
+  local dir="$1"
+  cs_write "$dir" tests/run.sh "#!/usr/bin/env bash"
+  chmod +x "$dir/tests/run.sh"
+  cs_write "$dir" tests/foo.t.sh "test_foo_works() { :; }"
+  cs_write "$dir" tests/bar.t.sh "test_bar_works() { :; }"
+  cs_write "$dir" scripts/foo.sh "foo() { :; }"
+  cs_write "$dir" scripts/bar.sh "bar() { :; }"
+  cs_write "$dir" scripts/lib/version.sh 'JIG_VERSION="1.0.0"'
+  cs_commit "$dir" "a suite"
+}
+
+test_ci_scope_a_script_with_its_own_tests_is_selected() {
+  local repo="$PWD/repo" base
+  cs_new_repo "$repo"
+  cs_suite "$repo"
+  base=$(cs_head "$repo")
+
+  cs_write "$repo" scripts/foo.sh "foo() { echo changed; }"
+  cs_commit "$repo" "change foo"
+
+  run cs_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "selected (scripts/foo.sh may affect tests; tests: foo:: knowledge::test_real_repository_knowledge_passes_with_no_failures)"
+}
+
+test_ci_scope_writes_the_selected_filters_to_the_named_file() {
+  local repo="$PWD/repo" base
+  cs_new_repo "$repo"
+  cs_suite "$repo"
+  base=$(cs_head "$repo")
+
+  cs_write "$repo" scripts/foo.sh "foo() { echo changed; }"
+  cs_write "$repo" scripts/bar.sh "bar() { echo changed; }"
+  cs_commit "$repo" "change both"
+
+  # shellcheck disable=SC2016 # expanded by the inner bash, from its arguments
+  run env CI_SCOPE_FILTERS="$PWD/filters" "$(command -v bash)" -c \
+    'cd "$1" && "$2/.github/scripts/ci-scope.sh" "$3"' _ "$repo" "$JIG_HOME" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "tests: bar:: foo::"
+  assert_eq "bar::
+foo::
+knowledge::test_real_repository_knowledge_passes_with_no_failures" "$(cat "$PWD/filters")"
+}
+
+test_ci_scope_a_profile_answer_of_all_is_full() {
+  local repo="$PWD/repo" base
+  cs_new_repo "$repo"
+  cs_suite "$repo"
+  base=$(cs_head "$repo")
+
+  # No test file is named after it and no other script calls it: the
+  # profile cannot say what it reaches.
+  cs_write "$repo" scripts/lonely.sh "lonely() { :; }"
+  cs_commit "$repo" "add a lonely script"
+
+  run cs_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "full (scripts/lonely.sh may affect tests)"
+}
+
+test_ci_scope_the_test_harness_is_always_full() {
+  local repo="$PWD/repo" base path
+  for path in tests/run.sh tests/lib/assert.sh; do
+    rm -rf "$repo"
+    cs_new_repo "$repo"
+    cs_suite "$repo"
+    base=$(cs_head "$repo")
+    cs_write "$repo" "$path" "# changed"
+    cs_commit "$repo" "change $path"
+
+    run cs_scope "$repo" "$base"
+    assert_eq 0 "$RC"
+    assert_contains "$OUT" "full ($path changes the test harness)"
+  done
+}
+
+test_ci_scope_a_version_change_is_full() {
+  local repo="$PWD/repo" base
+  cs_new_repo "$repo"
+  cs_suite "$repo"
+  base=$(cs_head "$repo")
+
+  cs_write "$repo" scripts/foo.sh "foo() { echo changed; }"
+  cs_write "$repo" scripts/lib/version.sh 'JIG_VERSION="1.1.0"'
+  cs_commit "$repo" "release 1.1.0"
+
+  run cs_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "full (JIG_VERSION changes; a release is tested whole)"
+}
+
+test_ci_scope_an_unreadable_profile_plan_is_full() {
+  local repo="$PWD/repo" base
+  cs_new_repo "$repo"
+  cs_suite "$repo"
+  # No runner: the profile plans no tests at all, which is not a selection.
+  cs_rm "$repo" tests/run.sh
+  cs_commit "$repo" "drop the runner"
+  base=$(cs_head "$repo")
+  cs_write "$repo" scripts/foo.sh "foo() { echo changed; }"
+  cs_commit "$repo" "change foo"
+
+  run cs_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "full ("
+  assert_not_contains "$OUT" "selected"
+}
+
+# What decides the selection is never selected by itself: a map line written
+# today would choose the tests of the pull request that adds it and of every
+# one after it.
+test_ci_scope_what_decides_the_selection_is_always_full() {
+  local repo="$PWD/repo" base path
+  for path in .ai/verify/shell.map profiles/shell/verify.sh scripts/lib/verify.sh scripts/lib/profile.sh; do
+    rm -rf "$repo"
+    cs_new_repo "$repo"
+    cs_suite "$repo"
+    base=$(cs_head "$repo")
+    cs_write "$repo" "$path" "# changed"
+    cs_commit "$repo" "change $path"
+
+    run cs_scope "$repo" "$base"
+    assert_eq 0 "$RC"
+    assert_contains "$OUT" "full ($path decides which tests run)"
+  done
+}
+
+# A selection still checks the repository's knowledge, which the whole suite
+# did and the `knowledge` job does only on a light run.
+test_ci_scope_a_selection_with_a_knowledge_change_checks_the_knowledge() {
+  local repo="$PWD/repo" base
+  cs_new_repo "$repo"
+  cs_suite "$repo"
+  base=$(cs_head "$repo")
+  cs_write "$repo" scripts/foo.sh "foo() { echo changed; }"
+  cs_write "$repo" .ai/knowledge/x.md "broken"
+  cs_commit "$repo" "code and knowledge"
+
+  run cs_scope "$repo" "$base"
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "selected ("
+  assert_contains "$OUT" "knowledge::test_real_repository_knowledge_passes_with_no_failures"
+}
