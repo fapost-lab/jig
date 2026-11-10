@@ -2838,29 +2838,36 @@ _km_utf8_clean() {
 # would drop the carriage return of a CRLF line under Git Bash (conventions/shell.md). The text is
 # split on F4 by word splitting, not stripped with ${s//pattern/}: on bash 3.2 that substitution
 # costs the text's length once per match, and a source file can be long and hold many of them.
-# Splitting is done in memory, with no read, here-document or $(...) a CR could be lost in on
-# Git Bash; globbing is off for it, and the `x` keeps a trailing F4's empty field.
+# The `x` keeps a trailing F4's empty field, and the trailing newlines $(...) would strip.
+#
+# The work runs in a $(...) with a plain LC_ALL=C, never under `local LC_ALL=C`: bash restores a
+# local locale on return, which crashes Homebrew's bash on macOS now and then, while the
+# subshell's assignment dies with it, unrestored (conventions/shell.md). The text comes back
+# through the same sentinel-guarded $(...) that _km_utf8_clean already passes it through first,
+# and globbing needs no restoring there.
 _km_drop_above_unicode() {
-  local LC_ALL=C IFS=$'\364' out part first=1 noglob=
-  local -a parts acc
-  case $1 in *$'\364'*) ;; *) _KM_CLEAN=$1; return 0 ;; esac
-  case $- in *f*) noglob=1 ;; esac
-  set -f
-  # shellcheck disable=SC2206 # the split on IFS is the point; globbing is off
-  parts=(${1}x)
-  [ -n "$noglob" ] || set +f
-  # The pieces are joined once at the end: appending each to one string would
-  # copy all of it again per F4.
-  for part in "${parts[@]}"; do
-    if [ -n "$first" ]; then acc[0]=$part; first=; continue; fi
-    case $part in
-      [$'\220'-$'\277']*) acc[${#acc[@]}]=${part#?} ;;
-      *) acc[${#acc[@]}]=$'\364'$part ;;
-    esac
-  done
-  IFS=
-  out="${acc[*]}"
-  _KM_CLEAN=${out%x}
+  _KM_CLEAN=$(
+    LC_ALL=C
+    # Each pattern opens with `(`: bash 3.2 cannot parse a bare `pattern)` inside $(...).
+    case $1 in (*$'\364'*) ;; (*) printf '%sx' "$1"; exit 0 ;; esac
+    local IFS=$'\364' part first=1
+    local -a parts acc
+    set -f
+    # shellcheck disable=SC2206 # the split on IFS is the point; globbing is off
+    parts=(${1}x)
+    # The pieces are joined once at the end: appending each to one string would
+    # copy all of it again per F4.
+    for part in "${parts[@]}"; do
+      if [ -n "$first" ]; then acc[0]=$part; first=; continue; fi
+      case $part in
+        ([$'\220'-$'\277']*) acc[${#acc[@]}]=${part#?} ;;
+        (*) acc[${#acc[@]}]=$'\364'$part ;;
+      esac
+    done
+    IFS=
+    printf '%s' "${acc[*]}"
+  )
+  _KM_CLEAN=${_KM_CLEAN%x}
 }
 
 # _km_json_print <json> — the producer's one value, free of bytes that are not

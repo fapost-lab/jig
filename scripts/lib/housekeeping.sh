@@ -1864,8 +1864,12 @@ _hk_log_trim() {
   pre=1
   case "$(head -n 1 "$log" 2>/dev/null)" in '--- run '*) pre=0 ;; esac
   tmp="$log.trim"
+  # The C locale goes through env, never as `LC_ALL=C awk` here: bash would
+  # restore its own locale after the command, which crashes Homebrew's bash on
+  # macOS now and then (conventions/shell.md).
+  # shellcheck disable=SC2016 # the program is awk's, run by env
   if JIG_HK_FIRST=$((runs + pre - $(_hk_log_keep_runs) + 1)) JIG_HK_OUT=$(_hk_log_keep_output) \
-    JIG_HK_PRE="$pre" LC_ALL=C awk '
+    JIG_HK_PRE="$pre" env LC_ALL=C awk '
     function flush() {
       if (over > 0) printf "housekeeping: log trimmed: %d more lines of output in this run dropped\n", over
       out = 0; over = 0
