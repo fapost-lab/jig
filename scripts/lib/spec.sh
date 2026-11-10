@@ -3435,7 +3435,7 @@ _spec_item_build_file() {
   local id="$1" item="$2" task="$3" norm="$4" new="$5" msg="$6" i
   _spec_map_find "$item"
   i=$_SPEC_I
-  [ -z "${M_TID[$i]}" ] || jig_fail already-exists "spec item file: $item already names task ${M_TID[$i]}"
+  [ -z "${M_TID[$i]}" ] || jig_fail already-filed "spec item file: $item already names task ${M_TID[$i]}"
   [ "${M_CHECKED[$i]}" != 1 ] || jig_fail not-linkable "spec item file: $item is checked; a done item files no task"
   if [ -n "$_SPEC_ITEM_NEW" ]; then
     _spec_new_task_check "$task"
