@@ -8,6 +8,7 @@ paths:
   - scripts/lib/gh.sh
   - tests/gh.t.sh
   - scripts/lib/common.sh
+  - scripts/lib/owntree.sh
 summary: "Why every gh call about the project's repository goes through jig_gh with the clone's own account token: github.account, else the one account that may push; gh auth switch is never run."
 reviewed_at: 2026-11-10
 ---
