@@ -92,14 +92,13 @@ human may ask for another circle as often as they like (§7). Record the level i
 ## 4. Circles and rounds
 
 A **round** is one message of yours and the human's answer to it. A **circle** is a bounded
-run of rounds that ends in a summary (§7). How a round is laid out is in
-[rounds](references/rounds.md).
+run of rounds that ends in a summary (§7). How a round is laid out, where widening looks
+and how the frontier is worked out is in [rounds](references/rounds.md).
 
 - **The first round of a circle widens.** Bring two or three thoughts of your own that the
-  human did not say, each with its reason: what sits next to the idea, what becomes
-  possible if it works, another road to the same goal. In the first circle the same round
-  also asks what you need in order to understand: the idea in one sentence, who is worse
-  off without it, what success looks like.
+  human did not say, each with its reason. In the first circle the same round also asks
+  what you need in order to understand: the idea in one sentence, who is worse off without
+  it, what success looks like.
 - **The later rounds narrow.** Put weight on what is now on the table — hidden assumptions
   ("this holds only if X — and if not?"), trade-offs, vague words, the cost of being wrong —
   with the lenses in [pressure](references/pressure.md); pick the ones that fit, do not name
@@ -118,7 +117,7 @@ run of rounds that ends in a summary (§7). How a round is laid out is in
   and the rejected options with their reasons, your proposals and what became of each, the
   open questions, the assumptions you took, the directions not opened, and which round of
   which circle comes next. Write it in the human's language: it is theirs to read, and it
-  lives in `.ai/workspace/ideas/<id>/`, outside git. For an existing spec the id is the
+  lives outside git — `jig spec draft list` prints where. For an existing spec the id is the
   spec's, and the draft holds what this session settled and has not written yet.
 
 When the spec is for a new project, the widening includes its architecture: two or three
@@ -151,15 +150,11 @@ questions of that round.
 
 ## 7. Close the circle, and write only after the yes
 
-A circle always ends with the same message, in three parts:
-
-1. the idea after this circle, in one sentence;
-2. what you would write down — the decisions, each rejected option with its reason, the
-   open questions, and every assumption you took yourself instead of asking;
-3. where else this could go — the directions you see and did not open, numbered, one line
-   each.
-
-Then ask one thing: write it down, or another circle — and on which direction. Wait.
+A circle always ends with the same message, laid out as
+[rounds](references/rounds.md) shows: the idea in one sentence, everything you would write
+down — every assumption you took instead of asking included — and the directions you see
+and did not open. Then ask one thing: write it down, or another circle — and on which
+direction. Wait.
 Anything the human adds, corrects or widens opens a new round. You never start another
 circle on your own, and you never write on your own: a "yes" to a question inside a round
 is an answer to that question, not the yes to write.
@@ -184,7 +179,7 @@ is an answer to that question, not the yes to write.
 Write everything the summary held. A rejected option is recorded with its reason: the next
 session must not reopen the argument. What is unresolved goes to "Open questions", an
 assumption you took to "Assumptions left untested". What the
-human liked and put off goes to "Set aside" with the reason; a direction from part 3 that
+human liked and put off goes to "Set aside" with the reason; a direction from the summary that
 nobody opened goes there too, as `unexplored:` — the next session starts from that list.
 
 A spec is written in the project's durable language (AGENTS.md), whatever language the
