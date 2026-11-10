@@ -110,4 +110,5 @@ head, the merge base and a checked draft. This decision covers what turns that d
 - Untested until the first real post: that GitHub keeps a hidden HTML comment in a review's body
   and in each comment and returns it through the API, and that gh's built-in jq (gojq) reads the
   filters as `jq` does. A marker that does not come back is reported, not retried.
-- GitLab, and a re-review that reads the marker back, are phase 2 of the spec.
+- GitLab is adr-20261110-a-merge-request-review-is-posted-as-discussions: the same gate, posted
+  one discussion a call. A re-review that reads the marker back is phase 2 of the spec.
