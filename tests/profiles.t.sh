@@ -61,6 +61,90 @@ test_profile_get_on_real_generic_profile() {
   assert_eq "always" "$OUT"
 }
 
+# profile_get was `sed | sed | head` and _profiles_list_lines a `sed`, a `tr`
+# and two more `sed`: a process per key of every profile `init` looks at. Read
+# with builtins they answer the same for every shape a profile.yaml line takes.
+test_profile_get_answers_what_the_sed_it_replaced_answered() {
+  fixture_repo
+  mkdir -p fx
+  {
+    printf 'name: fixture   # a comment\n'
+    printf 'spaced:    two words   \n'
+    printf 'hash: a#b\n'
+    printf 'empty:\n'
+    printf 'twice: first\n'
+    printf 'twice: second\n'
+    printf 'crlf: value\r\n'
+    printf 'detect: [composer.json, "src/**/*.php"]\n'
+    printf ' indented: no\n'
+    printf 'last: no newline'
+  } > fx/profile.yaml
+  profiles_harness '
+    was() {
+      sed -n "s/^${1}:[[:space:]]*//p" "$PWD/fx/profile.yaml" | sed "s/[[:space:]]*#.*//; s/[[:space:]]*\$//" | head -n 1
+    }
+    for key in name spaced hash empty twice crlf detect indented last absent; do
+      now=$(profile_get "$PWD/fx" "$key")
+      [ "$(was "$key")" = "$now" ] || printf "%s: was <%s> now <%s>\n" "$key" "$(was "$key")" "$now"
+      printf "%s=<%s> " "$key" "$now"
+    done
+    profile_get_v v "$PWD/fx" name && printf "v=<%s> " "$v"
+    profile_get_v v "$PWD/none" name || printf "none=<%s>" "$v"
+  '
+  assert_eq 0 "$RC"
+  assert_eq 'name=<fixture> spaced=<two words> hash=<a> empty=<> twice=<first> crlf=<value> detect=<[composer.json, "src/**/*.php"]> indented=<> last=<no newline> absent=<> v=<fixture> none=<>' "$OUT"
+}
+
+test_profiles_list_lines_answers_what_the_pipeline_it_replaced_answered() {
+  fixture_repo
+  mkdir -p fx
+  {
+    printf 'plain: [a, b, c]\n'
+    printf 'tight: [a,b]\n'
+    printf 'quoted: ["src/**/*.php", "a b" , c]   # globs\n'
+    printf 'holes: [a,, b, ]\n'
+    printf 'none: []\n'
+    printf 'scalar: always\n'
+    printf 'half: "a, b"\n'
+    printf 'lone: ["]\n'
+  } > fx/profile.yaml
+  profiles_harness '
+    was() {
+      raw=$(profile_get "$PWD/fx" "$1")
+      case "$raw" in
+        \[*\])
+          raw=$(printf "%s" "$raw" | sed "s/^\[//; s/\]\$//")
+          printf "%s\n" "$raw" | tr "," "\n" \
+            | sed "s/^[[:space:]]*//; s/[[:space:]]*\$//; s/^\"\(.*\)\"\$/\1/" \
+            | sed "/^\$/d"
+          ;;
+      esac
+    }
+    for key in plain tight quoted holes none scalar half lone absent; do
+      now=$(_profiles_list_lines "$PWD/fx" "$key" | tr "\n" "|")
+      [ "$(was "$key" | tr "\n" "|")" = "$now" ] || printf "%s: was <%s> now <%s>\n" "$key" "$(was "$key" | tr "\n" "|")" "$now"
+      printf "%s=<%s> " "$key" "$now"
+    done
+    _profiles_list_lines "$PWD/none" plain; printf "rc=%s" "$?"
+  '
+  assert_eq 0 "$RC"
+  assert_eq 'plain=<a|b|c|> tight=<a|b|> quoted=<src/**/*.php|a b|c|> holes=<a|b|> none=<> scalar=<> half=<> lone=<"|> absent=<> rc=0' "$OUT"
+}
+
+test_profiles_glob_to_findpath_collapses_double_stars() {
+  fixture_repo
+  profiles_harness '
+    for glob in "src/**/*.php" "**/*.sh" "a/**" "plain.json" "a/***/b" "****"; do
+      was=$(printf "%s" "$glob" | sed "s#[*][*]/#*#g; s#[*][*]#*#g")
+      _profiles_glob_to_findpath_v now "$glob"
+      [ "$was" = "$now" ] || printf "%s: was <%s> now <%s>\n" "$glob" "$was" "$now"
+      printf "<%s> " "$now"
+    done
+  '
+  assert_eq 0 "$RC"
+  assert_eq "<src/*.php> <*.sh> <a/*> <plain.json> <a/*b> <**> " "$OUT"
+}
+
 # --- profiles_active -------------------------------------------------------
 
 test_profiles_active_defaults_to_generic() {

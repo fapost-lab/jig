@@ -11172,6 +11172,106 @@ test_status_json_starts_a_fixed_number_of_processes_per_task() {
   [ "$few" -le 5 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
 }
 
+# `jig status` counts the documents awaiting a decision and the linked sources
+# that changed (km_proposed_count, km_changed_sources_count): four subshells
+# per document, each document read five times — 580 of the 2024 processes it
+# started on a project of 144 documents.
+test_status_starts_no_process_per_knowledge_document() {
+  task_setup
+  local i=1 two six ten
+  mkdir -p .ai/knowledge/features
+  _tl_status_docs() {
+    while [ "$i" -le "$1" ]; do
+      printf -- '---\nid: feature-s%s\ntype: feature\nstatus: active\n---\n# S%s\n' "$i" "$i" \
+        > ".ai/knowledge/features/s$i.md"
+      i=$((i + 1))
+    done
+  }
+  _tl_status_docs 2
+  # The first run saves what later runs find made (the counts, the records).
+  _tl_forks status >/dev/null || fail "status failed under the probe"
+  two=$(_tl_forks status) || fail "status failed under the probe"
+  _tl_status_docs 6
+  six=$(_tl_forks status) || fail "status failed under the probe"
+  _tl_status_docs 10
+  ten=$(_tl_forks status) || fail "status failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more documents started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more documents started $((ten - six)) more processes (6: $six, 10: $ten)"
+}
+
+# Nearly every `jig task` command asks which task is current, and the answer
+# walks every workspace (_task_candidates_for_branch): a `basename` and up to
+# three `$(task_state_get)` each — 143 of `task current`'s 196 processes on a
+# project of 47 tasks.
+test_task_current_starts_no_process_per_task() {
+  task_setup
+  local branch two six ten
+  branch=$(git symbolic-ref --short HEAD)
+  fixture_task here "$branch" active "class:T1"
+  _tl_live_tasks lean 2
+  _tl_forks task current >/dev/null || fail "task current failed under the probe"
+  two=$(_tl_forks task current) || fail "task current failed under the probe"
+  _tl_live_tasks more 4
+  six=$(_tl_forks task current) || fail "task current failed under the probe"
+  # Tasks whose branch is this one but which are closed or paused: read
+  # further than the others, and still none of them a process.
+  fixture_task done-1 "$branch" consolidated
+  fixture_task done-2 "$branch" abandoned
+  fixture_task held-1 "$branch" active "paused:true"
+  fixture_task held-2 "$branch" ready "paused:true"
+  ten=$(_tl_forks task current) || fail "task current failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more tasks started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more tasks on this branch started $((ten - six)) more processes (6: $six, 10: $ten)"
+  run jig task current
+  assert_eq 0 "$RC"
+  assert_eq here "$OUT"
+}
+
+# `jig queue next` counts the live tasks that are not queued, and asked each
+# of them with a `basename`, two `$(...)` and an awk over the queue.
+test_queue_next_starts_no_process_per_task_outside_the_queue() {
+  task_setup
+  local two six ten
+  _tl_live_tasks lean 2
+  _tl_forks queue next >/dev/null || fail "queue next failed under the probe"
+  two=$(_tl_forks queue next) || fail "queue next failed under the probe"
+  _tl_live_tasks more 4
+  six=$(_tl_forks queue next) || fail "queue next failed under the probe"
+  _tl_live_tasks rich 4 "paused:true" "issue:X-1" "route_depth:lean"
+  ten=$(_tl_forks queue next) || fail "queue next failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more tasks started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more paused tasks started $((ten - six)) more processes (6: $six, 10: $ten)"
+  # Counted as before: six live tasks outside the queue, the paused ones not.
+  run jig queue next
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not queued: 6 tasks"
+}
+
+# In link mode `jig status` and `jig verify` ask `jig upgrade --dry-run` about
+# every link (upgrade_pending). A link in place used to cost a `dirname`, a
+# `readlink`, an awk and eight subshells; what is left per profile is
+# _upgrade_link naming its two directories, never the link itself.
+test_upgrade_dry_run_starts_no_process_per_link_in_place() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local one five
+  _tl_link_profiles() {
+    sed "s|^profiles:.*|profiles: [$1]|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+    jig upgrade >/dev/null || fail "upgrade failed for profiles: $1"
+  }
+  _tl_link_profiles "generic, shell"
+  _tl_forks upgrade --dry-run >/dev/null || fail "upgrade --dry-run failed under the probe"
+  one=$(_tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  _tl_link_profiles "generic, shell, php, node, python, go"
+  five=$(_tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  [ -L .ai/profiles/go ] || fail "the added profiles were not linked"
+  # Three per profile: its source directory, its place, and the source's
+  # physical path. One more for a once-per-run record.
+  [ $((five - one)) -le 13 ] || fail "4 more linked profiles started $((five - one)) more processes (2: $one, 6: $five)"
+}
+
 # _ts_lib — run the rest of the arguments as a script with the libraries a
 # listing uses sourced, in this project.
 _ts_lib() {
