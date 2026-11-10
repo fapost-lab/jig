@@ -778,7 +778,7 @@ _upgrade_hash_table() {
 # the same way the copy-mode decision table does.
 _upgrade_link_one() {
   local target_abs="$1" link_abs="$2" dry_run="$3" rel before_created before_conflict
-  rel=$(jig_relpath "$link_abs" "$JIG_PROJECT")
+  jig_relpath_v rel "$link_abs" "$JIG_PROJECT"
   before_created=$created_count
   before_conflict=$conflict_count
   _init_place_symlink "$target_abs" "$link_abs" "$dry_run"
@@ -836,7 +836,7 @@ _upgrade_link() {
     for skill_dir in "$source"/skills/*/; do
       [ -d "$skill_dir" ] || continue
       skill_dir="${skill_dir%/}"
-      sname=$(basename "$skill_dir")
+      sname=${skill_dir##*/}
       _upgrade_link_one "$skill_dir" "$JIG_PROJECT/$sdir/$sname" "$dry_run"
     done
   done
