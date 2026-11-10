@@ -121,3 +121,5 @@ help, and picks by effort rather than by risk.
 > design, the review or architecture-review receipt, verify's `status ready` — and lowering a class
 > takes `--reason`, shown wherever the class is; an unattended run cannot lower a T3/T4 task below
 > T3. Re-classification stays normal. See adr-20261004-a-route-stage-is-proven-by-its-record.
+
+> **Amendment (2026-11-09).** The design no longer goes verbatim into the pull request: the body is a short English summary, and the agent's approval is one English `approve --reason` line naming the ADR or knowledge that holds the detail. The design is shown whole to a person in the conversation (adr-20261109-an-autopilot-pull-request-carries-no-design).

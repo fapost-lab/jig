@@ -164,8 +164,10 @@ not a stop, so there is no question to answer.
 
 At the end — or at a stop — the agent shows the run's report: which stages it went through, each
 fixing attempt and why, each stop and its reason, the route's depth (`full` or
-[`lean`](/concepts#a-lighter-route)), and how it ended. At the `pr` level or above the report
-is also in the pull request's description. You can see it any time with:
+[`lean`](/concepts#a-lighter-route)), and how it ended. At the `pr` level or above the pull
+request's description is short and in English: what changed and why, the review and check results,
+and the report's sections listing what the agent chose without you. You can see the whole report
+any time with:
 
 ```bash
 jig task autopilot <task-id> report
@@ -350,7 +352,7 @@ request, in plain words:
 
 | Where it would ask | What it does instead |
 |---|---|
-| Approving the design of a risky task | Approves its own design. The design is in the pull request under **Design — approved by the agent, not a human** |
+| Approving the design of a risky task | Approves its own design. One line under **Approved by the agent, not a human** says what was approved and names the decision record the task wrote; the design itself is not pasted into the pull request |
 | A decision nobody has made | Picks the most careful option, the one easiest to undo. Listed under **Decided without you** |
 | Something that would destroy data or history | Never does it. It finds another way or leaves that part out, and says so under **Decided without you** |
 | A problem still there after two attempts to fix it | Stops working and opens a **draft** pull request that starts with **Not finished** and says why. A draft is never merged, and the run never resumes itself for more attempts |
