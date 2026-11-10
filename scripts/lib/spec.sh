@@ -3548,6 +3548,16 @@ spec_draft_root() {
   printf '%s/%s/workspace/ideas\n' "$root" "$JIG_AI_DIR"
 }
 
+# spec_draft_dir <id> — the directory of the draft <id>, or non-zero for an
+# invalid id: the one place a draft's path is built from a name, so the id is
+# checked wherever the path is (RULES.md, paths from a validated name), as
+# spec_task_dir does for a task. Whether the directory or draft.md is a link
+# is the writer's to judge (spec_draft_write).
+spec_draft_dir() {
+  spec_valid_id "$1" || return 1
+  printf '%s/%s\n' "$(spec_draft_root)" "$1"
+}
+
 # spec_draft_ids — the ids that have a draft, one per line, in directory
 # order. As spec_ids: a directory whose name is not a valid id is skipped,
 # and so is one without draft.md, which holds nothing to continue from.
@@ -3604,7 +3614,7 @@ spec_draft() {
 # copy of the conversation.
 spec_draft_write() {
   [ $# -ge 1 ] || jig_die "spec draft write: missing draft id (usage: jig spec draft write <id> --from <file>|-)"
-  local id="$1" from="" seen=0 root dir dest tmp made=0
+  local id="$1" from="" seen=0 dir dest tmp made=0
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -3626,8 +3636,7 @@ spec_draft_write() {
     [ -f "$from" ] || jig_die "spec draft write: --from: not a regular file: $from"
     [ -r "$from" ] || jig_die "spec draft write: --from: file not readable: $from"
   fi
-  root=$(spec_draft_root)
-  dir="$root/$id"
+  dir=$(spec_draft_dir "$id")
   dest="$dir/draft.md"
   # A link is refused rather than written through, as `task artifact` refuses
   # one: the write would land wherever it points.
@@ -3666,21 +3675,20 @@ spec_draft_write() {
 spec_draft_rename() {
   [ $# -ge 2 ] || jig_die "spec draft rename: missing argument (usage: jig spec draft rename <id> <new-id>)"
   [ $# -eq 2 ] || jig_die "spec draft rename: unexpected argument: $3"
-  local id="$1" new="$2" root
-  spec_valid_id "$id" || jig_die "spec draft rename: invalid draft id: $id"
-  spec_valid_id "$new" \
+  local id="$1" new="$2" from to
+  from=$(spec_draft_dir "$id") || jig_die "spec draft rename: invalid draft id: $id"
+  to=$(spec_draft_dir "$new") \
     || jig_die "spec draft rename: invalid draft id: $new (letters, digits, '.', '_', '-'; no leading dot or dash)"
   jig_require_init
-  root=$(spec_draft_root)
-  [ -f "$root/$id/draft.md" ] || jig_die "spec draft rename: no such draft: $id"
+  [ -f "$from/draft.md" ] || jig_die "spec draft rename: no such draft: $id"
   [ "$id" != "$new" ] || jig_die "spec draft rename: the draft is already named $new"
-  if [ -e "$root/$new" ] || [ -L "$root/$new" ]; then
+  if [ -e "$to" ] || [ -L "$to" ]; then
     jig_die "spec draft rename: a draft $new already exists"
   fi
-  mv "$root/$id" "$root/$new" || jig_die "spec draft rename: could not rename $id to $new"
+  mv "$from" "$to" || jig_die "spec draft rename: could not rename $id to $new"
   jig_status_page_dirty
   printf 'renamed: %s -> %s\n' "$id" "$new"
-  _spec_draft_shown "$root/$new/draft.md"
+  _spec_draft_shown "$to/draft.md"
 }
 
 # spec_draft_list — one aligned line per draft: its id, where draft.md is,
@@ -3692,11 +3700,11 @@ spec_draft_rename() {
 spec_draft_list() {
   [ $# -eq 0 ] || jig_die "spec draft list: unexpected argument: $1"
   jig_require_repo
-  local root id file mtime at age spec rows=""
-  root=$(spec_draft_root)
+  local dir id file mtime at age spec rows=""
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    file="$root/$id/draft.md"
+    dir=$(spec_draft_dir "$id") || continue
+    file="$dir/draft.md"
     age=""
     if mtime=$(jig_file_mtime "$file") && at=$(jig_utc_from_epoch "$mtime"); then
       age=$(jig_utc_ago "$at")
@@ -3733,17 +3741,27 @@ IDS
 # (jig_status_page_dirty).
 _SPEC_DRAFT_DEST=""
 
-# _spec_draft_trash <id> — move the draft <id> to trash, in the checkout that
-# holds it: the clone's main checkout, whose housekeeping empties trash by
-# `trash_ttl` (ADR-0006). Named `idea-<id>` there, beside `spec-<id>`. Never
+# _spec_draft_trash <id> — move the draft <id> to trash: the clone's main
+# checkout's, whose housekeeping empties it by `trash_ttl` (ADR-0006). Named
+# `idea-<id>` there, beside `spec-<id>`.
+#
+# An accepted limit: where a clone has no main checkout to find
+# (jig_config_odd_common), jig_config_clone_root is the checkout jig runs in,
+# so a draft dropped or consumed inside a task worktree goes to that worktree's
+# trash and leaves with the worktree before `trash_ttl` runs out. The draft had
+# already gone by then — its spec committed, or the person dropped it — and
+# only the window to take it back is shorter. A trash under the git common dir
+# would need housekeeping to delete there too, a new deletion root
+# (adr-20261110-an-idea-draft-waits-outside-git, Consequences). Never
 # dies: non-zero when the move could not be made, and the draft is where it
-# was. <id> is valid and the draft exists; the callers checked.
+# was. The draft exists; the callers checked.
 _spec_draft_trash() {
-  local id="$1" root dest
+  local id="$1" dir root dest
+  dir=$(spec_draft_dir "$id") || return 1
   jig_config_clone_root_v root
   dest=$(JIG_PROJECT="$root" jig_trash_dest "idea-$id")
   mkdir -p "${dest%/*}" 2>/dev/null || return 1
-  mv "$(spec_draft_root)/$id" "$dest" 2>/dev/null || return 1
+  mv "$dir" "$dest" 2>/dev/null || return 1
   jig_status_page_dirty
   _SPEC_DRAFT_DEST=$dest
 }
@@ -3753,10 +3771,10 @@ _spec_draft_trash() {
 spec_draft_drop() {
   [ $# -ge 1 ] || jig_die "spec draft drop: missing draft id (usage: jig spec draft drop <id>)"
   [ $# -eq 1 ] || jig_die "spec draft drop: unexpected argument: $2"
-  local id="$1"
-  spec_valid_id "$id" || jig_die "spec draft drop: invalid draft id: $id"
+  local id="$1" dir
+  dir=$(spec_draft_dir "$id") || jig_die "spec draft drop: invalid draft id: $id"
   jig_require_init
-  [ -f "$(spec_draft_root)/$id/draft.md" ] || jig_die "spec draft drop: no such draft: $id"
+  [ -f "$dir/draft.md" ] || jig_die "spec draft drop: no such draft: $id"
   _spec_draft_trash "$id" || jig_die "spec draft drop: could not move the draft $id to trash"
   printf 'dropped: %s -> %s\n' "$id" "$(_spec_draft_shown "$_SPEC_DRAFT_DEST")"
 }
@@ -3768,8 +3786,9 @@ spec_draft_drop() {
 # draft that could not be moved is said in a warning and stays for
 # `spec draft drop`.
 _spec_draft_consume() {
-  local id="$1"
-  [ -f "$(spec_draft_root)/$id/draft.md" ] || return 0
+  local id="$1" dir
+  dir=$(spec_draft_dir "$id") || return 0
+  [ -f "$dir/draft.md" ] || return 0
   if _spec_draft_trash "$id"; then
     printf 'draft consumed: %s -> %s\n' "$id" "$(_spec_draft_shown "$_SPEC_DRAFT_DEST")"
   else

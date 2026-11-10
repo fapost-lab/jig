@@ -5,7 +5,8 @@ developed by the `jig-idea` skill; everything `jig spec list` and `jig status` r
 from these files.
 
 A conversation that has not been written down yet is kept as a draft,
-`.ai/workspace/ideas/<id>/draft.md`: ignored by git, free-form, in the human's language, written
+`.ai/workspace/ideas/<id>/draft.md` of the clone's main checkout — `<git-common-dir>/jig/ideas/<id>/draft.md`
+where a clone has none (`--separate-git-dir`, a bare repository's worktrees): ignored by git, free-form, in the human's language, written
 by `jig spec draft write`. It is not a spec and nothing below describes it; `jig spec ship` moves it
 to trash when the spec of the same id is committed.
 

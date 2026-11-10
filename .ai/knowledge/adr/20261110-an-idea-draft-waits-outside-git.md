@@ -87,7 +87,9 @@ automatically: "only a person can give the command to delete".
   it. The skill makes the agent check `draft list` before filing and settle such a draft first; the
   script cannot tell the difference. Trash keeps it for `trash_ttl`.
 - In a clone with no main checkout to find, a draft dropped or consumed inside a task worktree goes
-  to that worktree's trash and leaves with the worktree before `trash_ttl` runs out (review finding
-  F4, left open).
+  to that worktree's trash and leaves with the worktree before `trash_ttl` runs out. Accepted by the
+  human (2026-11-10): the draft has already gone legitimately by then, only the window to take it
+  back is shorter, and a trash under the git common directory would make housekeeping delete in a
+  new place — a change to RULES.md's deletion invariant, out of proportion to a rare layout.
 - Trash gains a third kind of entry, `idea-<id>` (ADR-0006 as amended).
 - Reverting the change leaves existing drafts as harmless ignored files that nothing reads.
