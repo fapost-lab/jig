@@ -15,9 +15,12 @@
 #     that failed;
 #   - a red run while one is open comments on it, so a repeat is one more
 #     notification in the same thread rather than a new issue each time;
-#   - a green full run while one is open comments with its link and closes it;
+#   - a green run of the whole suite while one is open comments with its link
+#     and closes it;
 #   - a green light run leaves it open: the scope decided to test nothing, so
-#     its green says nothing about what broke main;
+#     its green says nothing about what broke main. So does a green run of the
+#     tests a change reaches (`selected`): it did not run what broke main
+#     (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches);
 #   - a green run with none open does nothing.
 #
 # Red means a job named in the arguments ended as `failure` or `cancelled`.
@@ -31,7 +34,11 @@
 #   RUN_URL   the run's page, linked from every message
 #   EVENT     github.event_name
 #   SHA       github.sha
-#   FULL      scope's `full` output ('true' when the whole suite ran)
+#   FULL      scope's `full` output ('true' when tests ran)
+#   SUITE     scope's `suite` output ('all' when the whole suite ran)
+#   REPORTS   optional: a directory holding the shares' per-test reports
+#             (tests/run.sh JIG_TEST_REPORT, `<rc>\t<secs>\t<file::test>`),
+#             from which the failed tests are named
 # Arguments: one <job>=<result> per job in the `needs` list of red-main.
 # Exit 0 when the issue says what the run found; non-zero when gh failed, so
 # a broken alert is a red job rather than silence.
@@ -65,8 +72,40 @@ _rm_failed_jobs() {
   printf '%s\n' "$names"
 }
 
+# _rm_failed_tests — the tests the shares' reports name as failed or not
+# completed, `<file::test> (<why>)`, at most RM_MAX_TESTS of them and a line
+# for the rest. Prints nothing without reports.
+RM_MAX_TESTS=30
+_rm_failed_tests() {
+  local dir="${REPORTS:-}"
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  find "$dir" -name report.tsv -type f -exec cat {} + 2>/dev/null \
+    | awk -F '\t' -v max="$RM_MAX_TESTS" '
+      NF >= 3 && $1 != "0" && $1 != "77" && !seen[$3]++ {
+        why = ($1 == "missing" || $1 + 0 >= 128) ? "not completed" : "failed"
+        if (++n <= max) printf "%s (%s)\n", $3, why
+      }
+      END { if (n > max) printf "... and %d more\n", n - max }
+    ' || true
+}
+
+# _rm_since_green — the commits main took since the last green nightly run,
+# which always runs the whole suite: the change that broke main is among
+# them. One line per first-parent commit, at most twenty; nothing when the
+# API or the history cannot answer.
+_rm_since_green() {
+  local green
+  green=$(gh api -X GET "repos/{owner}/{repo}/actions/workflows/ci.yml/runs" \
+    -f branch=main -f event=schedule -f status=success -f per_page=1 \
+    --jq '.workflow_runs[0].head_sha // empty' 2>/dev/null) || return 0
+  [ -n "$green" ] && [ -n "${SHA:-}" ] || return 0
+  git cat-file -e "$green^{commit}" 2>/dev/null || return 0
+  printf 'Since the last green nightly run (%s):\n' "${green:0:12}"
+  git log --first-parent --format='- %h %s' "$green..$SHA" 2>/dev/null | sed -n '1,20p' || true
+}
+
 main() {
-  local pair job red=0 open run_url="${RUN_URL:-}" sha="${SHA:-}" event="${EVENT:-}"
+  local pair job red=0 tests open run_url="${RUN_URL:-}" sha="${SHA:-}" event="${EVENT:-}"
 
   [ $# -gt 0 ] || _rm_die "no job results were reported"
   for pair in "$@"; do
@@ -91,6 +130,10 @@ main() {
       echo "red-main: a light run tested nothing; #$open stays open"
       return 0
     fi
+    if [ "${SUITE:-}" != all ]; then
+      echo "red-main: a run of part of the suite (${SUITE:-unknown}) cannot vouch for main; #$open stays open"
+      return 0
+    fi
     gh issue close "$open" --comment "Green again: $run_url ($event, ${sha:0:12})."
     echo "red-main: main is green again; closed #$open"
     return 0
@@ -103,7 +146,17 @@ main() {
     while IFS= read -r job; do
       if [ -n "$job" ]; then printf -- '- %s\n' "$job"; fi
     done < <(_rm_failed_jobs "$@")
-    printf '\nNothing is released while main is red. This issue closes itself on the next green run of main.\n'
+    tests=$(_rm_failed_tests)
+    if [ -n "$tests" ]; then
+      printf '\nFailed tests:\n'
+      printf '%s\n' "$tests" | sed 's/^/- /'
+      if [ "$event" = schedule ]; then
+        printf '\nThe nightly run tests the whole suite. Pull requests and pushes test only what their change reaches, so a test that fails here first may be one a change skipped: check .ai/verify/shell.map and the shell profile for the path that should have reached it.\n'
+      fi
+    fi
+    printf '\n'
+    _rm_since_green
+    printf '\nNothing is released while main is red. This issue closes itself on the next green run of the whole suite on main.\n'
   } > "$RM_BODY"
 
   if [ -n "$open" ]; then

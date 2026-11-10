@@ -115,3 +115,5 @@ after the fact, which tree a pull-request run tested.
   one, and its tree was fully tested, so nothing falls between two runs.
 - The name prefix of the Windows shares is copied into `ci-reuse.sh`; `tests/ci-reuse.t.sh` holds
   it to `ci.yml`. A rename that slipped past would only make `main` test everything.
+
+> **Amendment (2026-11-10).** A pull request's run counts only when it ran the whole suite: test shares are named `… (all)` or `… (selected)`, and `ci-reuse.sh` refuses a run with any share not ending in `(all)` (adr-20261110-a-pull-request-runs-the-tests-its-change-reaches).

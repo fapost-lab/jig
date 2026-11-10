@@ -172,3 +172,5 @@ never be checked on `main` (it happened on the first day, to the change that int
 > alone, a file misses what it breaks in code that calls it, which CI finds; files named on its
 > command line also bypass its `exclude`, so a changed file in an excluded directory is checked
 > there. `tsc` (the `typecheck` script) is always left to CI in a narrowed run.
+
+> **Amendment (2026-11-10): there is a partial run.** "There is no partial run" above is replaced by adr-20261110-a-pull-request-runs-the-tests-its-change-reaches: a pull request or a push runs the tests the shell profile says the change reaches (`suite: selected`), and the whole suite runs nightly, by hand, for a change of `JIG_VERSION`, of `.github/` or of the test harness, and wherever the profile answers ALL. In CI the ALL is not deferred: `ci-scope.sh` asks the profile without `verify.full_run: ci`.

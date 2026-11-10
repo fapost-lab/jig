@@ -23,6 +23,9 @@
 #
 # Input, from the environment (set by the job from `github` and `needs`):
 #   FULL      scope's `full` output ('true' or 'false')
+#   SUITE     scope's `suite` output: 'all' or 'selected' when FULL is true
+#             (the whole suite, or the tests the change reaches; the same jobs
+#             run either way), 'none' when it is false
 #   WINDOWS   scope's `windows` output
 #   REUSE     scope's `reuse` output: 'true' when a pull request's run already
 #             tested this tree (.github/scripts/ci-reuse.sh) and the suite's
@@ -39,7 +42,7 @@ _ok_fail() { printf 'ci-ok: %s\n' "$*"; exit 1; }
 
 main() {
   local pair job result expect failed=0
-  local full="${FULL:-}" windows="${WINDOWS:-}" reuse="${REUSE:-}" event="${EVENT:-}"
+  local full="${FULL:-}" suite="${SUITE:-}" windows="${WINDOWS:-}" reuse="${REUSE:-}" event="${EVENT:-}"
   local base="${BASE_REF:-}" head="${HEAD_REF:-}"
 
   [ $# -gt 0 ] || _ok_fail "no job results were reported"
@@ -51,6 +54,12 @@ main() {
     [ "${pair#*=}" = success ] || _ok_fail "scope ended as '${pair#*=}'; the scope of the change is unknown"
   done
   case "$full" in true | false) ;; *) _ok_fail "scope published no 'full' answer ('$full')" ;; esac
+  # The suite says how much of it the test jobs ran; it must agree with
+  # `full`, or the jobs expected below are not the ones scope meant.
+  case "$full:$suite" in
+    true:all | true:selected | false:none) ;;
+    *) _ok_fail "scope's suite '$suite' does not fit full=$full" ;;
+  esac
   # Reuse skips the suite, so it is held to the one case scope asks it in: a
   # full push. Anywhere else a 'true' would skip a suite nobody tested.
   if [ "$reuse" = true ] && { [ "$event" != push ] || [ "$full" != true ]; }; then

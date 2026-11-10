@@ -103,3 +103,5 @@ one that does, and main, in about 22 instead of 34–37.
   which is why no branch rule may name them (conventions/ci-gating.md).
 - adr-20260925-windows-runs-in-six-shares keeps its reasoning about counting shares once and
   about the process-count lever; its number six is replaced here.
+
+> **Superseded in part (2026-11-10)** by adr-20261110-a-pull-request-runs-the-tests-its-change-reaches: the number of shares is no longer fixed. `.github/scripts/ci-matrix.sh` sizes each platform by the estimated work of the selected tests, with ceilings of 4 Linux, 4 macOS and 10 Windows shares, and the tests are divided by measured duration instead of round-robin.

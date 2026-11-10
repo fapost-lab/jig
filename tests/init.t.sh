@@ -675,8 +675,7 @@ test_init_requires_git_repository() {
 }
 
 test_init_via_installed_copy_without_from_dies() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig_installed init
   assert_eq 1 "$RC"
   assert_contains "$OUT" "cannot determine the framework source root"

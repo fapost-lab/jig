@@ -5,23 +5,7 @@
 # script, a bumped version, and a brand-new skill (with a slash invocation,
 # so the codex transform is exercised on install too).
 _mk_source_v2() {
-  local dest="$1"
-  cp -R "$JIG_HOME"/. "$dest"/
-  fixture_release_source "$dest"
-  printf '\n# v2 marker\n' >> "$dest/profiles/generic/verify.sh"
-  mkdir -p "$dest/skills/jig-newthing"
-  cat > "$dest/skills/jig-newthing/SKILL.md" <<'EOF'
----
-name: jig-newthing
-description: fixture skill added in source-v2
----
-# jig-newthing
-Run `/jig-newthing` to do the thing.
-EOF
-  local tmp_version="$dest/scripts/lib/version.sh.tmp"
-  sed 's/^JIG_VERSION=.*/JIG_VERSION="9.9.9"/' "$dest/scripts/lib/version.sh" > "$tmp_version"
-  mv "$tmp_version" "$dest/scripts/lib/version.sh"
-  fixture_release_source "$dest"
+  fixture_source_v2_copy "$1"
 }
 
 # _unbump_source <dest> — give a source made by _mk_source_v2 the running
@@ -43,8 +27,7 @@ test_upgrade_requires_initialised_project() {
 }
 
 test_upgrade_from_without_value_dies() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   run jig upgrade --from
   assert_eq 1 "$RC"
   assert_contains "$OUT" "requires a value"
@@ -203,8 +186,7 @@ EOF
 }
 
 test_upgrade_dry_run_makes_no_changes() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
@@ -225,8 +207,7 @@ test_upgrade_dry_run_makes_no_changes() {
 # Exercises every row of the domains/install decision table in one pass:
 # replace, keep-modified, install, keep-conflict, delete, keep-orphaned-modified.
 test_upgrade_decision_table_full() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
@@ -294,8 +275,7 @@ test_upgrade_decision_table_full() {
 # deleted means the project is still the install it was, so neither
 # jig.source nor jig.version may move to the checkout it was offered.
 test_upgrade_copy_mode_keeps_manifest_when_nothing_was_placed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src before_version
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
@@ -328,8 +308,7 @@ test_upgrade_copy_mode_keeps_manifest_when_nothing_was_placed() {
 # Moving a project onto another checkout stays possible: an upgrade that does
 # place files from it records it, exactly as before.
 test_upgrade_copy_mode_records_the_source_it_placed_from() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   src=$(cd "$src" && pwd) # $TMPDIR can end in a slash; the manifest records a clean path
@@ -353,8 +332,7 @@ test_upgrade_copy_mode_records_the_source_it_placed_from() {
 # below is the installed one plus a trailing block, so a shell that reads past
 # the end of the file it started lands exactly on it and says so.
 test_upgrade_copy_mode_replaces_the_running_dispatcher_without_running_its_tail() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   src=$(cd "$src" && pwd)
@@ -414,8 +392,7 @@ EOF
 # this file wrote the line. Kept, and reported `keep-outside`, not `delete`
 # (scripts/lib/upgrade.sh, _upgrade_deletable).
 test_upgrade_keeps_manifest_entry_outside_delete_roots() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
 
   mkdir -p docs
   printf 'not framework-owned\n' > docs/x.md
@@ -436,8 +413,7 @@ test_upgrade_keeps_manifest_entry_outside_delete_roots() {
 # regardless of where it points — refused the same way even without a real
 # file behind it (a project's manifest is not proof of what a path is).
 test_upgrade_keeps_manifest_entry_with_path_traversal() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
 
   printf '%s\n' "0000000000000000000000000000000000000000 ../x" >> .ai/manifest
 
@@ -538,8 +514,7 @@ EOF
 }
 
 test_upgrade_propagates_changed_knowledge_template() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
@@ -561,8 +536,7 @@ test_upgrade_propagates_changed_knowledge_template() {
 # (mirrors test_upgrade_copy_mode_installs_newly_activated_profile).
 
 test_upgrade_dry_run_reports_missing_spec_templates_as_pending() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   rm -rf .ai/templates/spec
   grep -v '\.ai/templates/spec/' .ai/manifest > .ai/manifest.tmp
   mv .ai/manifest.tmp .ai/manifest
@@ -575,8 +549,7 @@ test_upgrade_dry_run_reports_missing_spec_templates_as_pending() {
 }
 
 test_upgrade_installs_spec_templates_for_a_pre_spec_install_copy_mode() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   rm -rf .ai/templates/spec
   grep -v '\.ai/templates/spec/' .ai/manifest > .ai/manifest.tmp
   mv .ai/manifest.tmp .ai/manifest
@@ -619,8 +592,7 @@ test_upgrade_link_mode_links_spec_templates_for_a_pre_spec_install() {
 }
 
 test_upgrade_missing_from_falls_back_to_manifest_source() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   # from inside the installed copy's own tree, jig_source_root cannot find a
   # source checkout, so upgrade must fall back to the manifest's jig.source.
   run jig_installed upgrade
@@ -901,8 +873,7 @@ _mk_source_v2_section() {
 }
 
 test_upgrade_replaces_the_marked_instructions_section() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -917,8 +888,7 @@ test_upgrade_replaces_the_marked_instructions_section() {
 }
 
 test_upgrade_keeps_a_modified_instructions_section() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src before
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -936,8 +906,7 @@ test_upgrade_keeps_a_modified_instructions_section() {
 }
 
 test_upgrade_keeps_a_section_whose_markers_were_removed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src before
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -972,8 +941,7 @@ Use tabs." "$(cat AGENTS.md)"
 }
 
 test_upgrade_reports_a_malformed_marker_pair() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src before
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -1009,8 +977,7 @@ test_upgrade_reports_conflict_for_markers_it_did_not_write() {
 }
 
 test_upgrade_dry_run_leaves_the_section_alone() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src before
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -1026,8 +993,7 @@ test_upgrade_dry_run_leaves_the_section_alone() {
 # and `jig verify` refuses a stale install because of it — which is why the
 # report reuses the verb `replace` instead of inventing one.
 test_upgrade_pending_includes_a_section_replace() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -1050,8 +1016,7 @@ test_upgrade_pending_excludes_an_unmarked_section() {
 }
 
 test_upgrade_installs_the_instructions_template_for_an_older_install() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   # An install made before the template was framework-owned.
   rm -f .ai/templates/AGENTS.md
   grep -v ' \.ai/templates/AGENTS\.md$' .ai/manifest > .ai/manifest.new
@@ -1140,8 +1105,7 @@ test_upgrade_dry_run_says_nothing_about_config_keys() {
 # with earlier paths already placed.
 test_upgrade_finishes_a_run_interrupted_midway() {
   skip_unless_readonly_dirs
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
@@ -1193,8 +1157,7 @@ test_upgrade_finishes_a_run_interrupted_midway() {
 # framework-owned and was never updated again.
 test_upgrade_adopts_a_path_an_interrupted_run_installed() {
   skip_unless_readonly_dirs
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
@@ -1297,8 +1260,7 @@ test_upgrade_hashes_both_sides_alike_in_a_sha256_repository() {
 # process would ask the old decision table, which is satisfied by construction
 # and would stay silent.
 test_upgrade_names_what_is_still_not_installed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
 
   # A complete run says nothing about leftovers.
   run jig upgrade --from "$JIG_HOME"
@@ -1352,8 +1314,7 @@ test_upgrade_names_what_is_still_not_installed() {
 # to what it was before, which is exactly the state a run interrupted after
 # writing the section and before writing the manifest leaves behind.
 test_upgrade_reconciles_a_section_an_interrupted_run_had_written() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2_section "$src"
@@ -1391,8 +1352,7 @@ test_upgrade_reconciles_a_section_an_interrupted_run_had_written() {
 # which satisfies that count on its own; this one isolates the term. The source
 # passed is deliberately not the recorded one, which is when the count decides.
 test_upgrade_writes_the_manifest_for_a_reconciliation_alone() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src2.XXXXXX")
   _mk_source_v2 "$src"
@@ -1466,8 +1426,7 @@ test_upgrade_link_mode_reconciles_a_section_without_moving_the_source() {
 # _unit_project — an installed project with its install committed on main, the
 # way a real one stands before an upgrade.
 _unit_project() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   git add -A
   git commit -q -m "jig init"
 }
@@ -2280,8 +2239,7 @@ test_upgrade_a_terminal_colours_the_level_words() {
 # The two readers inside jig — upgrade_pending and the self-check — filter the
 # plain lines, so a reader who asked for the terminal form must not blind them.
 test_upgrade_a_terminal_reader_does_not_blind_the_pending_check() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   rm -f .ai/scripts/lib/spec.sh
   run env JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
   assert_eq 0 "$RC"
@@ -2289,8 +2247,7 @@ test_upgrade_a_terminal_reader_does_not_blind_the_pending_check() {
 }
 
 test_upgrade_a_terminal_reader_still_hears_what_is_not_installed() {
-  fixture_repo
-  jig init --from "$JIG_HOME" >/dev/null
+  fixture_jig_repo
   local src anchor
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-next.XXXXXX")
   _mk_source_v2 "$src"
