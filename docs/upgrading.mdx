@@ -471,6 +471,25 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.41.0 to 0.42.0
+
+Nothing to do by hand, unless you have several GitHub accounts in `gh`. The installer and
+`.ai/config.yaml` did not change, and no new setting appears in the upgrade's report. The upgrade
+brings new scripts, the new `jig-pr-review` skill, a new row and paragraph in the Jig section of
+`AGENTS.md`, a "Set aside" section in the spec template, and new text for the `jig-autopilot`,
+`jig-consolidate`, `jig-idea`, `jig-init`, `jig-release` and `jig-setup` skills.
+
+**Several GitHub accounts.** Jig now asks GitHub as this clone's account rather than the one `gh`
+has active. If several of your accounts may push to the repository and the active one is not among
+them, `jig task ship` and `jig gh` refuse until you name it once:
+`jig config set --local github.account <login>`, or let the agent ask. It needs `gh` 2.40 or later
+([Two GitHub accounts](/agent-ships#two-github-accounts)). With one account, nothing changes.
+
+**What you will notice.** `jig status` shows a `github.account:` line when Jig chose among several
+accounts, and a `drafts:` line while an idea's draft exists. An autopilot pull request's body is
+shorter: no design and no journal. A program that reads Jig's JSON may see `already-filed` from
+`jig spec item file` where it used to see `already-exists`.
+
 ## From 0.40.0 to 0.41.0
 
 Nothing to do by hand, if the Jig on your machine is a release and you have not edited a stock
@@ -573,7 +592,8 @@ not affected, and upgrades as before.
 
 Nothing else to do by hand. The installer and `.ai/config.yaml` did not change, and no new setting
 appears in the upgrade's report. The upgrade brings new scripts and new text for the
-`jig-consolidate` skill.
+`jig-consolidate`, `jig-review` and `jig-architecture-review` skills and for `jig-task`'s delegation
+reference.
 
 **What you will notice.** `jig upgrade` writes `jig.source: global` into `.ai/manifest` the first
 time it places a file; commit it with the rest. After an upgrade that ended in a pull request,
@@ -583,7 +603,8 @@ time it places a file; commit it with the rest. After an upgrade that ended in a
 nothing staged now stages the changes to tracked files and ships them, where it used to refuse, and
 refuses instead when a new file is neither staged nor ignored: stage the new files a task added, or
 add them to `.gitignore`. A program that reads `jig status --json` may see the two new
-`upgrade-pull-request-*` kinds, and no `upgrade-available` while one stands.
+`upgrade-pull-request-*` kinds, and no `upgrade-available` while one stands (from 0.40.0, only
+while it is for this machine's version or a newer one).
 
 ## From 0.37.0 to 0.38.0
 
@@ -607,8 +628,10 @@ field on each item.
 
 **A pause that was already stuck.** If `jig task resume` on 0.37.0 left a stash's conflicts in your
 files and the task is still paused, the first resume on 0.38.0 does not know the stash is already
-there: it applies it once more and the conflicts come back. Resolve them, `git add` the files and
-resume again; that resume ends the pause. To skip the second resolution, delete the `paused_stash:`
+there. While the conflicts are not resolved, it refuses with `stash-conflict` and asks you to
+resolve them; once they are resolved and the files `git add`ed, it applies the stash once more and
+the conflicts come back. Resolve them, `git add` the files and resume again; that resume ends the
+pause. To skip the second resolution, delete the `paused_stash:`
 line from `.ai/workspace/tasks/<id>/state` before that first resume: without a stash to apply, the
 resume only ends the pause, and the stash entry stays in `git stash list`.
 

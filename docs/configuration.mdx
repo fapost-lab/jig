@@ -485,3 +485,11 @@ a scheduler of its own. Pick one, or both; running it twice is harmless.
   in `.ai/templates/scheduler/`; use the project's absolute path in them.
 
 `jig status` reports whether the session hook is installed.
+
+## Environment variables
+
+Settings live in the files above; this variable is read from the environment.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `JIG_TERM_GRACE` | `5` | Seconds. When a `jig` command is stopped (`kill`, `pkill`, Ctrl-C), it and every process under it are sent SIGTERM; whatever has not ended after this many seconds gets SIGKILL. A value that is not a whole number counts as 5. |

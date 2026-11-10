@@ -32,10 +32,15 @@ and a moved tree asks for a new run.
 knowledge decision possible without moving your checkout, and a rule stops a write publishing commits
 origin never had. The faults found since, around pull requests closed or squashed under it and
 branches deleted on origin, are fixed in 0.41.0. Next, a smaller step: a spec created after a write
-already took its branch name should get another name, where `jig spec new` now refuses it and loses
-nothing.
+already took its branch name should get another name. `jig spec new` now refuses it when that branch
+is in your clone, and loses nothing; a write branch that exists only on origin is not caught yet.
 
 ## Then: what costs you time
+
+**A push goes as the project's GitHub account.** From 0.42.0 every `gh` call Jig makes is the
+clone's own account, whichever one `gh` has active. `git push` over HTTPS is not yet: it still goes
+through `gh`'s active account ([Known issues](/known-issues)). It gets the same account, without a
+token written anywhere.
 
 **A second review round must not open a new front.** A repeat review already reads only what
 changed since the review (0.30.0). What is left: a blocker that appears only in the second round
@@ -62,8 +67,8 @@ What is left: a way for `jig init` to tell an installed Jig UI about a new proje
 **Reviewing somebody else's pull request.** Give Jig the address of a colleague's pull or merge
 request on GitHub or GitLab, read the review exactly as it will be posted, say yes, and it lands as
 one comment-only review; after the author's fixes, a follow-up answers its own earlier comments.
-Reviewing and posting are built for GitHub and GitLab, GitLab's posting still to be checked on a
-live merge request; the follow-up after the author's fixes is what is left.
+All of it is in 0.42.0. What is left is checking GitLab's posting and the follow-up on a live merge
+or pull request, and a follow-up in a clone where Jig is not installed.
 
 **Project hooks.** A way for a project to bind its own rules and its own checks to stages of the
 route, so that what a project insists on is asked at the stage it belongs to rather than remembered.

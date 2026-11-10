@@ -61,6 +61,10 @@ If the trouble turns out to be Jig itself rather than your project, see [Known i
 | The pull request was not opened: `must be a collaborator`, or the agent asks you to switch your GitHub account | You are signed in to `gh` with several accounts and the wrong one is active. Do not switch: Jig finds this project's account by itself. If it still fails, tell it which one — add `github.account: <login>` to `.ai/config.local.yaml`. See [Two GitHub accounts](/agent-ships#two-github-accounts). |
 | `several gh accounts may push to …` | More than one of your accounts may write to this repository, so Jig cannot choose. Say which is this project's: `jig config set --local github.account <login>`. |
 | `github.account is …, and gh gives no token for it` | The account named in `.ai/config.local.yaml` is not signed in to `gh` on this machine. Sign it in with `gh auth login`, or change the name. |
+| `task start: <id> has no goal` (a warning) | The `## Goal` section of the task's `task.md` is empty, so the work would begin on an empty template. Write the goal with `jig task artifact write <id> task --from <file>`. For a T3 or T4 task it is a refusal (`task start: <id> is T3 and has no goal`): write the goal first, then start again. |
+| `task abandon: <id> is linked to spec <sid>; say why` | A task that a specification's roadmap points at is not given up silently. Run `jig task abandon <id> --reason <text>`, and add `--moved-to <repo>#<task-id>` if the work went to another repository ([Giving a task up, or moving it elsewhere](/working-with-tasks#giving-a-task-up-or-moving-it-elsewhere)). |
+| `task abandon: --reason must be a single line with no tab` | Put the reason on one line, without a tab character. |
+| `jig task ship` prints `warning: N open finding(s) not handed over: …` | The pull request was opened; only the hand-over of the review's open P2/P3 findings to a triage task failed, and they are still in the pull request's body. The text after the colon says why: the triage task `<id>-findings` already exists and is not this task's triage, `<id>-findings` is not a valid task id, or filing it with `jig task new` was refused for the reason quoted. Fix that, or file the findings yourself ([Review findings](/working-with-tasks#review-findings)). |
 | The status page says pull request data is *stale* | Run `jig housekeeping`; it asks GitHub or GitLab again. |
 
 ## Verification and upgrades
@@ -111,3 +115,33 @@ If the trouble turns out to be Jig itself rather than your project, see [Known i
 | `upgrade` says **N item(s) still not installed** | The run asked the install it had just made, and something is missing — usually because the upgrade was carried out by the older version, which did not know about every file the new one ships. Run `jig upgrade` again; the second run is done by the new code and finishes the job. |
 | `upgrade` cannot determine the framework source | The project's copy found no Jig to copy from: it is not a framework checkout, there is no `jig` on your `PATH`, and the source `.ai/manifest` records is not on this machine. Install Jig ([Install](/install)), or pass `--from /absolute/path/to/jig`. A project on Jig 0.38.1 or older also stops here, with `upgrade: cannot determine the framework source root; pass --from <dir>`, when the manifest names another person's folder: see the red box above this table. |
 | `upgrade` says `manifest unchanged` | It placed nothing, so the project stays on the checkout it was installed from. To move it onto the one you passed, run `jig init --from <dir>` (add `--link` in link mode). |
+| `upgrade --land: the pull request of <branch> is not merged yet (<url>)` | The upgrade's pull request is still open, and nothing was changed. Merge it, then run `jig upgrade --land` again ([An upgrade is a change of its own](/upgrading#an-upgrade-is-a-change-of-its-own)). |
+| `upgrade --land: nothing was changed:` followed by `- ...` lines | Each line is one reason, and all of them are listed at once. Act on each: commit or stash uncommitted changes, `git checkout <base>` when the checkout is on another branch, push or reconcile commits the base has that `origin/<base>` does not, and fetch when `origin/<base>` is not known or does not yet hold the merged upgrade. Then run `jig upgrade --land` again. |
+| `upgrade --land` says `this is a linked worktree on <branch>, and Jig never switches one to <base>; run jig upgrade --land in the main checkout` | Jig never moves a linked worktree onto the base branch. Run `jig upgrade --land` in the main checkout, the folder the message names. |
+
+## Writes on a branch of their own
+
+A change to a roadmap or a decision on knowledge, made from a program or with `jig writes ship`, is
+committed on a branch of its own ([Writes on a branch of their own](/reading-jig-as-data#writes-on-a-branch-of-their-own)).
+When Jig refuses it, the refusal has a code; nothing was written.
+
+| Code | What it means | What to do |
+|---|---|---|
+| `git-not-allowed` | `agent.git` is `none` in this clone, so Jig commits nothing. | `jig config set --local agent.git commit` (or `push`, `pr`, `merge`), or make the change in an agent session. |
+| `write-busy` | Another write holds this clone's lock (`another write is running in this clone`, `another write just started`), or has the tree at `<git-dir>/jig/tree` (`another write has the tree at <path>`). | Try again in a moment. The lock is taken back by itself when its holder is gone. It lives in `.ai/runtime/writes/lock` of the clone's main checkout, or, with `--separate-git-dir`, in a submodule, or in worktrees of a bare repository, under `<git-dir>/jig/writes/lock`. When the message says another write is taking back a lock, and it keeps saying so, delete the file it names: a `busy/clear.…` claim in that lock folder, left by a write that stopped part-way. |
+| `branch-checked-out` | The write's branch is checked out in a worktree (the message names it). | Finish the work there or switch that checkout to another branch; Jig never moves a checkout. |
+| `branch-has-other-commits` | The branch holds commits of yours that no Jig write made and origin does not have. | Push or merge them yourself, or move them to another branch. Jig does not publish them. |
+| `base-not-on-origin` | The base branch is not on origin, so no pull request could open into it. | Push the base branch yourself. |
+| `write-still-waits` | An earlier edit is still waiting: it never reached origin, its pull request was closed unmerged, or it waits to go into another base. | Merge or close what waits (`jig writes ship <target>` carries it on), or move its commits to a branch of your own with `git branch -m <branch> <name>`; then try again. |
+| `tree-in-the-way` | A write that did not finish left a folder where Jig makes its tree, and git will not remove it. | Delete the directory the message names (`<git-dir>/jig/tree`), then try again. |
+
+## Reviewing a colleague's pull request
+
+These come from `jig pr`, used by the `jig-pr-review` skill ([Skills](/skills#starting-and-shaping-work)).
+In each, nothing was posted.
+
+| Symptom | What to do |
+|---|---|
+| `pull request <n> moved since it was reviewed` (GitHub), or `merge request <n> moved since it was reviewed` (GitLab), ending `fetch it again and review what changed — nothing was posted` | The author pushed after the review was made, so its comments might no longer fit the code. Run `jig pr fetch <url>` again and review what changed. |
+| `the conversation of pull request <n> is locked` / `the discussion of merge request <n> is locked`, and the account `is not a member who may still comment` | The thread is locked and the account the review posts as may not comment on it. Ask the repository to unlock it, or post as an account that may comment. |
+| `the GitHub CLI (gh) is needed`, or `the GitLab CLI (glab) is needed` | Install the CLI for the forge the link points at, and sign in to it. |
