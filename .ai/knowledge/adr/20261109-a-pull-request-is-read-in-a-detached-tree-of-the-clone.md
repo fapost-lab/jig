@@ -9,7 +9,7 @@ paths:
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
 summary: Why jig pr reads a pull request in refs/jig/pr/<n>/ and a detached .pr-<n> worktree of the person's clone with hooks off, where the review state lives, and what cleanup may delete.
-reviewed_at: 2026-11-09
+reviewed_at: 2026-11-10
 ---
 # A pull request is read in a detached tree of the person's clone, and nothing of its head runs
 
@@ -102,3 +102,5 @@ end. Three forces shape the mechanics:
 - A forgotten review stays until `jig pr cleanup`: a detached tree and two refs, no data at risk.
 - The posting item (`pr-review-github-post`) reads the record and the draft from the same place
   and adds its own checks — diff positions, the hash of what was shown, the head unchanged.
+- A follow-up (adr-20261110-a-follow-up-answers-its-own-threads) adds a third ref,
+  `refs/jig/pr/<n>/reviewed`, and a `followup` file; cleanup takes both back the same way.

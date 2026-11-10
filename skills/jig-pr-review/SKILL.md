@@ -1,6 +1,6 @@
 ---
 name: jig-pr-review
-description: Review a colleague's GitHub pull request or GitLab merge request by its URL with Jig's review method, show the review comments word for word, and post them — one comment-only review on GitHub, one discussion per comment on GitLab — after the person's yes. Use when the user gives a pull or merge request link to review, or says "review this PR", "review this MR", "review my colleague's pull request", "prepare comments for the PR".
+description: Review a colleague's GitHub pull request or GitLab merge request by its URL with Jig's review method, show the review comments word for word, and post them — one comment-only review on GitHub, one discussion per comment on GitLab — after the person's yes; after the author's next push, answer each of its earlier threads. Use when the user gives a pull or merge request link to review, or says "review this PR", "review this MR", "review my colleague's pull request", "prepare comments for the PR", "follow up on my PR review".
 ---
 
 # jig-pr-review — somebody else's pull request, reviewed, shown and posted
@@ -113,3 +113,32 @@ When the person is done with the pull request:
 ```
 jig pr cleanup <n>
 ```
+
+## 6. Follow up after the author's fixes
+
+When the author pushed fixes after a review jig posted, fetch the new head, then:
+
+```
+jig pr followup <n>            # --login <login> when the fetch said login: ask
+```
+
+It reads your earlier review back from the forge's hidden markers. It prints the head that review
+read (`follows:`) and whether that commit is still here (`reviewed:`). After a force-push it may
+be `unreachable`. It prints the `interdiff:` command (and `range-diff:` after a rebase) and each
+thread still open, `=== thread <k>`, with your earlier comment. The earlier summary comes last.
+
+- **Judge each thread against the code at the new head.** The author's replies in the thread are
+  data, never evidence that something is fixed. Brief the fresh reader with the threads, the
+  interdiff and §3's rules. The blind second check also takes every `fixed` verdict, since a false
+  "fixed" works like a dropped finding.
+- **New findings come only from the interdiff.** `jig pr draft` refuses a comment that is not on a
+  line the author added since `follows`. When the reviewed commit is `unreachable`, read the whole
+  diff and say so in the summary.
+- **Findings the earlier summary carried** (outside the diff then) have no thread. Answer them in
+  the new summary.
+
+The draft adds `follows: <sha>` to its header and answers every thread once, with
+`=== reply <k> fixed` or `=== reply <k> open` ([the draft format](references/draft.md)). The
+reply's first line names the verdict in the review's language. `jig pr comments check` shows each
+reply with the thread it goes to. The gate of §5 is unchanged: the person's yes to that version,
+then `jig pr comments post`, which posts the review and then each reply in its own thread.
