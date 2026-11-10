@@ -95,7 +95,8 @@ housekeeping run (once, when it ends; not `--dry-run`). One write raises
 it at least once; a command that writes several times raises it several times.
 
 What does not: a read, Jig's caches and records of what it is doing (the context cache, the
-checkout record, the status page, the verify run), and — the accepted risk — **a file changed by
+checkout record, the status page, the verify run), an idea draft (`jig spec draft write|rename|drop`,
+and the draft `jig spec ship` moves to trash — no read reports one; the status page is redrawn), and — the accepted risk — **a file changed by
 anything but a Jig write**: edited by hand, or by git, whoever ran it — a person's `pull` or
 `checkout`, and Jig's own git steps too (the base checked out and fast-forwarded after a ship
 merges, a spec's branch switch, `upgrade` and `init` placing files). A consumer that must see those

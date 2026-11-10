@@ -39,6 +39,10 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute, amended 2026-11-10). What the
   human put off and the directions nobody opened are kept in the spec's "Set aside" section, which
   closing a spec lists as leftovers. It files a phase's tasks when asked.
+- The idea draft (adr-20261110-an-idea-draft-waits-outside-git): `jig spec draft write|rename|list|drop`
+  keep the conversation before the yes in `.ai/workspace/ideas/<id>/draft.md` of the main checkout
+  (`<git-common-dir>/jig/ideas/` where there is none), and `spec ship` in `declare` mode moves the
+  draft of its id to trash once its commit moved HEAD. `jig status` counts drafts on `drafts:`.
 - The epic branch of a spec released once (ADR-0040): the `Epic:` line, `jig spec epic` to declare,
   cut, finish and reopen it, and how `spec list` and `jig status` show it; the `Release:` line recorded
   at declaration (`spec_release_check`).

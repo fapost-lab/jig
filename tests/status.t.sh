@@ -4054,3 +4054,79 @@ test_status_json_offers_a_newer_upgrade_beside_an_old_waiting_one() {
   _st_upgrade_item 9.0.0
   assert_eq "" "$ITEM" "upgrade-available was offered beside an upgrade to a newer version"
 }
+
+# --- drafts: jig-idea conversations kept before there is a spec ---------------
+
+test_status_says_nothing_of_drafts_when_there_are_none() {
+  fixture_jig_repo
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "drafts:"
+}
+
+test_status_reports_the_draft_count() {
+  fixture_jig_repo
+  printf 'a conversation\n' > in.md
+  jig spec draft write idea-a --from in.md >/dev/null
+  jig spec draft write idea-b --from in.md >/dev/null
+  # Neither is a draft: a name no command can address, and a directory with
+  # nothing to continue from.
+  mkdir -p .ai/workspace/ideas/.hidden .ai/workspace/ideas/empty
+  printf 'x\n' > .ai/workspace/ideas/.hidden/draft.md
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "drafts: 2 (jig spec draft list)"
+  # A draft is not a spec.
+  assert_contains "$OUT" "specs: none"
+}
+
+test_status_a_dropped_draft_is_no_longer_counted() {
+  fixture_jig_repo
+  printf 'a conversation\n' > in.md
+  jig spec draft write idea-a --from in.md >/dev/null
+  jig spec draft drop idea-a >/dev/null
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "drafts:"
+}
+
+test_status_a_terminal_lists_drafts_beside_the_specs_not_as_something_to_do() {
+  fixture_jig_repo
+  printf 'a conversation\n' > in.md
+  jig spec draft write idea-a --from in.md >/dev/null
+
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "  drafts      1"
+  assert_contains "$OUT" "jig spec draft list"
+  assert_not_contains "$OUT" "drafts:"
+}
+
+test_status_page_shows_drafts_only_when_there_are_some() {
+  fixture_jig_repo
+  jig status --html >/dev/null 2>&1
+  assert_not_contains "$(cat .ai/runtime/status.html)" "Idea drafts"
+  printf 'a conversation\n' > in.md
+
+  # The write redraws the page that exists.
+  jig spec draft write idea-a --from in.md >/dev/null
+  assert_file_contains .ai/runtime/status.html "Idea drafts"
+}
+
+test_status_in_a_worktree_counts_the_main_checkouts_drafts() {
+  fixture_jig_repo
+  git add -A
+  git commit -q -m "jig init snapshot"
+  printf 'a conversation\n' > in.md
+  jig spec draft write idea-a --from in.md >/dev/null
+  local wt="$JIG_TEST_TMP.wt"
+  git worktree add -q -b side "$wt" >/dev/null 2>&1 || fail "could not add a worktree"
+  cd "$wt" || fail "no worktree"
+
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "drafts: 1 (jig spec draft list)"
+}

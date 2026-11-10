@@ -12,8 +12,9 @@ from it later — the next day, months later, or in a different repository.
 This skill talks first and writes second. The conversation is there to make the idea larger
 and sharper than it arrived — a round that only confirms what the human already said has
 done half the work — and nothing is written, committed or pushed until the human says the
-idea is ready to be written down (§7). It never starts a task, never changes code, and
-writes nothing outside `.ai/specs/<id>/`. `jig-task` stays the one entry into task routes
+idea is ready to be written down (§7). Until then the conversation is kept in a **draft**
+that git never sees (§4). It never starts a task, never changes code, and writes nothing
+outside `.ai/specs/<id>/` and that draft. `jig-task` stays the one entry into task routes
 (ADR-0009); this skill works before it.
 
 A specification is not knowledge. `.ai/specs/` sits outside `.ai/knowledge/`, so
@@ -25,11 +26,16 @@ status; progress is read from its roadmap.
 
 ```
 .ai/scripts/jig spec list
+.ai/scripts/jig spec draft list
 ```
 
-- **New idea.** Create nothing yet: no id, no branch, no file. `jig spec new` runs in §7,
-  after the human's yes. Look at `git status` now: uncommitted tracked changes will make it
-  refuse then, and the human would rather hear that before the conversation than after it.
+- **A draft of this idea is listed.** An earlier conversation stopped before the yes. Read
+  the file `draft list` names, tell the human where it stopped, and go on from there.
+- **New idea.** Create no spec yet: no branch, no file under `.ai/specs/`. `jig spec new`
+  runs in §7, after the human's yes. Pick a short kebab-case working id for the draft; the
+  human may change it when the spec is written. Look at `git status` now: uncommitted
+  tracked changes will make `spec new` refuse then, and the human would rather hear that
+  before the conversation than after it.
 - **Existing spec.** Before reading anything, put it back on a branch of its own:
 
   ```
@@ -102,6 +108,18 @@ run of rounds that ends in a summary (§7). How a round is laid out is in
   hangs on an answer not given yet waits for the next round.
 - **A round that changed neither the idea's one sentence nor the list of decisions ends the
   circle early.** There is nothing left in it to spend the budget on.
+- **After every answer, save the draft**, without asking — the whole of it, replaced:
+
+  ```
+  .ai/scripts/jig spec draft write <id> --from <file>
+  ```
+
+  It holds what a session starting cold would need: the idea in one sentence, the decisions
+  and the rejected options with their reasons, your proposals and what became of each, the
+  open questions, the assumptions you took, the directions not opened, and which round of
+  which circle comes next. Write it in the human's language: it is theirs to read, and it
+  lives in `.ai/workspace/ideas/<id>/`, outside git. For an existing spec the id is the
+  spec's, and the draft holds what this session settled and has not written yet.
 
 When the spec is for a new project, the widening includes its architecture: two or three
 approaches — a plain layered application, modules by domain, ports and adapters, or what the
@@ -148,7 +166,9 @@ is an answer to that question, not the yes to write.
 
 **After the yes**, and not before:
 
-- **New spec.** Choose a short kebab-case id with the human, then create it:
+- **New spec.** Choose a short kebab-case id with the human. If it is not the draft's id,
+  rename the draft first — `jig spec draft rename <draft-id> <id>` — so the ship finds it.
+  Then create the spec:
 
   ```
   .ai/scripts/jig spec new <id>
@@ -172,8 +192,17 @@ conversation was in. Show every written or changed section verbatim, as
 [show the document](../jig-task/references/show-the-document.md) says, then ship it (§9).
 A correction the human makes to what was shown is one more commit on the same pull request.
 
-**If the human stops before the yes**, nothing is on disk. Say so, and offer to write down
-what is settled so far.
+**If the human stops before the yes**, the draft holds the conversation: say that the next
+session will go on from it, and name its id.
+
+**The draft goes on its own.** `jig spec ship` moves it to trash once the spec is committed
+and says `draft consumed`. Otherwise a draft stays until the human asks for it to go: only
+then run `jig spec draft drop <id>`. Never drop one because it looks old or finished, and do
+not offer to while its conversation is unfinished.
+
+When the ship stops before it commits — exit 3 at `agent.git: none`, or a spec on an epic,
+whose edits the epic's own ship carries — the draft stays although the spec is written. Say
+so, and name `jig spec draft drop <id>` for the human to run once the spec is committed.
 
 ## 8. Roadmap
 
@@ -244,7 +273,9 @@ Check the result:
 
 "File the tasks for phase N": for each item of that phase with no task id and not `fog:`.
 Asked in the middle of a circle, it waits: close the circle and write what it settled (§7)
-first, so the roadmap is not rewritten ahead of the yes.
+first, so the roadmap is not rewritten ahead of the yes. The same when `jig spec draft list`
+shows a draft of this spec from an earlier session: the ship that follows the filing would
+take that draft with it, so say it is there and settle it first.
 
 1. Classify it with [the rubric](../jig-task/references/classification.md); say the class and
    the risk-test answer that decided it in one sentence.

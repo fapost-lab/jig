@@ -40,8 +40,11 @@ what it leaves out. Ask the agent to show you its plan and correct anything it m
   and compare alternatives. With no code to read yet, it looks up how others solve the same problem.
   You choose easy, normal, or deep exploration; deep includes an independent agent's challenge.
   The level sets the length of one circle of questions. Each circle ends with a summary and the
-  directions left unopened, and you decide: another circle, or write it down. Nothing is written
-  or committed before you say so.
+  directions left unopened, and you decide: another circle, or write it down. Nothing is committed
+  before you say so. Until then the agent keeps the conversation in a draft under
+  `.ai/workspace/ideas/`, outside git, in your language: if the session ends early, the next one
+  picks it up. `jig status` shows a `drafts:` line while one exists. A draft is removed when its
+  specification is committed, or when you ask for it (`jig spec draft drop <id>`) — never on its own.
 
   It then records the result in `.ai/specs/<id>/`: `spec.md`, `architecture.md`, `stack.md`, and
   `roadmap.md`. The roadmap holds phases, dependencies, parallel waves, and `fog:` for work that

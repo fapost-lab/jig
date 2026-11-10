@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-09
+reviewed_at: 2026-11-10
 ---
 # Housekeeping
 
@@ -177,6 +177,11 @@ Read these before changing anything here; each is a rule someone paid for.
   per-task stdout line keeps the task id first and the `flags=` field.
 
 ## Boundaries
+
+Outside: idea drafts. Housekeeping walks only `.ai/workspace/tasks/` and never touches
+`.ai/workspace/ideas/`; a draft leaves only by its spec's ship or a person's drop
+(adr-20261110-an-idea-draft-waits-outside-git). What lands in trash as `idea-<id>` is purged by
+`trash_ttl` like any entry.
 
 Outside: what a `status` value *means* and who may write it — that is the `task` domain
 (ADR-0005, ADR-0012). Housekeeping reads `state` and writes nothing into it, with one exception:
