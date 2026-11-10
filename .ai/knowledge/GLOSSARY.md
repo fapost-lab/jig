@@ -141,6 +141,15 @@ stays live with `partly_in`, and `<to>` records `absorbs_partly`. Not a status o
 `.ai/runtime/trash/<date>/<task-id>/`, where a purged Workspace of a closed task is moved rather than
 deleted. Recovery is a plain `mv` back for `trash_ttl` days (ADR-0006). Never committed.
 
+## Idea Draft
+
+An idea's conversation before its Specification is written: `.ai/workspace/ideas/<id>/draft.md`
+(`<git-common-dir>/jig/ideas/` where a clone has no main checkout), ignored by git, in the human's
+language, rewritten by the `jig-idea` skill after every round through `jig spec draft write`. It
+leaves only when the `jig spec ship` that committed its spec moves it to Trash, or when a person
+runs `jig spec draft drop` (adr-20261110-an-idea-draft-waits-outside-git). Not Proposed Knowledge,
+whose informal synonym is also "draft", and not a draft pull request.
+
 ## Purge
 
 Ending the life of a closed task's Workspace, in two stages: move to Trash, then permanent
