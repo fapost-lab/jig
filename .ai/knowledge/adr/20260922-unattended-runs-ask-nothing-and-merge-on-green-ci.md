@@ -16,7 +16,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-consolidate/SKILL.md
 summary: "Why an unattended autopilot run asks nothing and records its defaults in the pull request, and why agent.git: merge merges only on green CI at the shipped commit, never past branch protection."
-reviewed_at: 2026-11-08
+reviewed_at: 2026-11-10
 ---
 # An unattended run asks nothing, and a finished change merges itself once CI passed, never past the forge's rules
 
@@ -110,3 +110,6 @@ adr-20260921-agent-git-rights-are-a-local-setting.
 > **Amendment (2026-11-08).** Exhausted repairs end in a draft for a run *nobody takes over*. When a person takes the task on, `handover` ends the run; the gate is then theirs, the ship goes by `agent.git`, and every completion gate is asked as for any task (adr-20261108-a-person-takes-over-a-stopped-run).
 
 > **Amendment (2026-11-09).** The design no longer goes verbatim into the pull request: the body is a short English summary, and the agent's approval is one English `approve --reason` line naming the ADR or knowledge that holds the detail. The design is shown whole to a person in the conversation (adr-20261109-an-autopilot-pull-request-carries-no-design).
+
+> **Amendment (2026-11-10).** What an unattended finish drops and quotes in the pull request now
+> includes what the spec set aside, with fog, open questions and untested assumptions.

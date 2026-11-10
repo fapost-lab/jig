@@ -184,7 +184,7 @@ Informal synonyms: draft, candidate.
 ## Specification (Spec)
 
 The committed plan for work larger than one task, under `.ai/specs/<spec-id>/`: `spec.md`
-(the idea, its stress test, decisions, open questions) and `roadmap.md` (destination,
+(the idea, its stress test, decisions, open questions, what was set aside) and `roadmap.md` (destination,
 phases, items, fog, waves). Created by `jig spec new` and developed with the `jig-idea`
 skill. A plan, not Knowledge: `jig context` never resolves it, and it has no status —
 progress is read from the roadmap's checkboxes (ADR-0035). A task filed from it links back

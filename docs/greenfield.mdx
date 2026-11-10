@@ -17,8 +17,8 @@ By the end, you will have a plan and know how to ask the agent to build and show
 ```text Send to your agent
 I have an idea: a booking app for a small yoga studio.
 Visitors should see the class schedule and reserve a place.
-I have no programming experience. Help me shape the first version,
-ask one question at a time, and explain your recommendations simply.
+I have no programming experience. Help me shape the first version
+and explain your recommendations simply.
 ```
 
 The agent helps you work out who will use it, what problem it solves, and which features can wait.
@@ -36,10 +36,14 @@ first version need payments, or is reserving a place enough?
 what it leaves out. Ask the agent to show you its plan and correct anything it misunderstood.
 
 <Accordion title="For developers: the specification and roadmap">
-  The agent uses `jig-idea` to question the idea, stress-test assumptions, and compare alternatives.
+  The agent uses `jig-idea` to widen the idea with proposals of its own, stress-test assumptions,
+  and compare alternatives. With no code to read yet, it looks up how others solve the same problem.
   You choose easy, normal, or deep exploration; deep includes an independent agent's challenge.
+  The level sets the length of one circle of questions. Each circle ends with a summary and the
+  directions left unopened, and you decide: another circle, or write it down. Nothing is written
+  or committed before you say so.
 
-  It records the result in `.ai/specs/<id>/`: `spec.md`, `architecture.md`, `stack.md`, and
+  It then records the result in `.ai/specs/<id>/`: `spec.md`, `architecture.md`, `stack.md`, and
   `roadmap.md`. The roadmap holds phases, dependencies, parallel waves, and `fog:` for work that
   cannot yet be stated precisely. Replace its example items before using it.
 
@@ -101,7 +105,7 @@ be a class schedule; reservations could be the next task.
 
   `jig spec epic <id>` creates that branch once the spec is on the main branch. The roadmap records
   the release's version bump. `jig spec ship` follows your [Git permissions](/agent-ships#specs-and-epics).
-  Finishing the epic asks about any remaining items, fog, or open questions before retiring the spec.
+  Finishing the epic asks about any remaining items, fog, open questions, or ideas set aside before retiring the spec.
 
   At consolidation, completed tasks check their roadmap items in the same change as the implementation.
   See [manual control](/manual-control) for task commands and [autopilot](/autopilot#running-a-whole-phase)
