@@ -694,6 +694,12 @@ test_pr_comments_post_refuses_where_a_retry_could_duplicate() {
   assert_eq 2 "$(cat ../bin/npost)"
 }
 
+# Runs one of the filters jig gave gh through the system jq. jq.exe on Windows ends its lines in
+# CRLF; jig strips that CR from gh's output, so the comparison strips it too.
+_pr_jq() {
+  jq -r "$(cat "$1")" | tr -d '\r'
+}
+
 test_pr_comments_filters_print_what_the_stub_stands_in_for() {
   command -v jq >/dev/null 2>&1 || skip "jq is not here to run gh's filters"
   _pr_repo
@@ -703,20 +709,20 @@ test_pr_comments_filters_print_what_the_stub_stands_in_for() {
   # The filters jig gave gh, run over what GitHub answers.
   printf '[{"filename":"b.txt","previous_filename":"a.txt","status":"renamed","changes":3,"patch":"@@ -1,2 +1,3 @@ x\\n a\\n+b\\n@@ -9 +10 @@\\n-c\\n+d"},{"filename":"logo.png","status":"added","changes":0},{"filename":"big.txt","status":"modified","changes":900}]' > ../files.json
   assert_eq "$(printf 'F\trenamed\t3\t1\nN\tb.txt\nO\ta.txt\nH\t@@ -1,2 +1,3 @@ x\nH\t@@ -9 +10 @@\nF\tadded\t0\t0\nN\tlogo.png\nF\tmodified\t900\t0\nN\tbig.txt')" \
-    "$(jq -r "$(cat ../bin/jq.files)" < ../files.json)"
+    "$(_pr_jq ../bin/jq.files < ../files.json)"
   printf '{"base":{"ref":"main","sha":"b1"},"head":{"sha":"%s"},"state":"open","locked":false,"changed_files":3}' "$head" > ../pull.json
-  assert_eq "$(printf 'main\t%s\topen\tb1\tfalse\t3' "$head")" "$(jq -r "$(cat ../bin/jq.api)" < ../pull.json)"
+  assert_eq "$(printf 'main\t%s\topen\tb1\tfalse\t3' "$head")" "$(_pr_jq ../bin/jq.api < ../pull.json)"
   printf '{"private":false,"permissions":{"admin":false,"maintain":false,"push":true,"triage":false,"pull":true}}' > ../repo.json
-  assert_eq "false true true false false false" "$(jq -r "$(cat ../bin/jq.repo)" < ../repo.json)"
+  assert_eq "false true true false false false" "$(_pr_jq ../bin/jq.repo < ../repo.json)"
   printf '{"merge_base_commit":{"sha":"m1"}}' > ../compare.json
-  assert_eq "m1" "$(jq -r "$(cat ../bin/jq.compare)" < ../compare.json)"
+  assert_eq "m1" "$(_pr_jq ../bin/jq.compare < ../compare.json)"
   _pr_landed "$_pr_hash" 0 1
   run jig pr comments post 7 --shown "$_pr_hash"
   assert_eq 0 "$RC" "$OUT"
   printf '[{"id":5,"user":{"login":"alice"},"body":"Text\\n\\n<!-- jig-pr-review id=h1 head=h2 part=0 -->","html_url":"u5"},{"id":6,"user":{"login":"bob"},"body":null,"html_url":"u6"}]' > ../reviews.json
-  assert_eq "$(printf '5\talice\tid=h1 head=h2 part=0\tu5')" "$(jq -r "$(cat ../bin/jq.reviews)" < ../reviews.json)"
+  assert_eq "$(printf '5\talice\tid=h1 head=h2 part=0\tu5')" "$(_pr_jq ../bin/jq.reviews < ../reviews.json)"
   printf '[{"id":7,"user":{"login":"alice"},"body":"x\\n\\n<!-- jig-pr-review id=h1 head=h2 part=1 -->","line":4,"side":"LEFT","start_line":2,"html_url":"u7","path":"a b.txt"},{"id":8,"user":{"login":"alice"},"body":"plain","line":1,"side":"RIGHT","start_line":null,"html_url":"u8","path":"c"}]' > ../comments.json
-  assert_eq "$(printf '7\talice\tid=h1 head=h2 part=1\t4\tLEFT\t2\tu7\ta b.txt')" "$(jq -r "$(cat ../bin/jq.comments)" < ../comments.json)"
+  assert_eq "$(printf '7\talice\tid=h1 head=h2 part=1\t4\tLEFT\t2\tu7\ta b.txt')" "$(_pr_jq ../bin/jq.comments < ../comments.json)"
 }
 
 test_pr_cleanup_takes_back_what_check_and_post_wrote() {
