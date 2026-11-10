@@ -3894,7 +3894,10 @@ jig_git_change_rows() (
       printf '%s\t%s\n' "$path" "$layer" >> "$JIG_CHANGE_TMP/rows"
     done < "$JIG_CHANGE_TMP/paths"
   done
-  LC_ALL=C sort -u "$JIG_CHANGE_TMP/rows"
+  # Through env, never `LC_ALL=C sort` as a statement: bash would restore its
+  # own locale afterwards, which crashes Homebrew's bash on macOS in a forked
+  # shell such as this one (conventions/shell.md).
+  env LC_ALL=C sort -u "$JIG_CHANGE_TMP/rows"
 )
 
 # --- the verify run record, read ---------------------------------------------

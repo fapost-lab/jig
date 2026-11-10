@@ -4488,7 +4488,9 @@ test_sources_diff_json_stays_valid_in_the_c_locale_too() {
   _kmj_accepted_stub
   printf 'bad \377 \320\237\n' >> docs/x.md
   set +e
-  LC_ALL=C jig knowledge sources --diff convention-stub --json > kmj.out 2>/dev/null
+  # Through env, not `LC_ALL=C jig`: jig is a shell function here, and bash restores a locale
+  # assigned for one function call, which crashes Homebrew's bash on macOS now and then.
+  env LC_ALL=C "$JIG_BIN" knowledge sources --diff convention-stub --json > kmj.out 2>/dev/null
   RC=$?
   set -e
   assert_eq 0 "$RC"

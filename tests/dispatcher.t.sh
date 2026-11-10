@@ -200,6 +200,114 @@ test_pipe_guard_does_not_continue_on_a_backslash_before_a_space() {
   assert_eq "" "$hits"
 }
 
+# No script assigns a locale variable where bash restores it in its own shell:
+# `LC_ALL=C cmd` as a statement or a condition, as the prefix of a function
+# call, or `local LC_ALL=C`. Homebrew's bash 5.3 on macOS restores the locale
+# through libintl into CoreFoundation, which does not survive a fork without
+# exec, and dies there with SIGSEGV now and then — in any $(...) or ( … ) that
+# jig runs in (conventions/shell.md). A simple command in a pipeline, `$(cmd)`,
+# `<(…)` and `env LC_ALL=C cmd` exec the command and restore nothing, so the
+# scan drops quoted text, $((…)), <(…) and a $(…) of one command before it
+# looks, and what stands after a single `|` or `env` is never in a statement's
+# place — unless the command is a shell function, which restores anywhere.
+#
+# _locale_guard_hits <dir|file>… — one line per site, `<file>:<line>: <text>`,
+# line continuations joined as the pipe guard joins them.
+_locale_guard_hits() {
+  find "$@" -type f -exec awk '
+    function flag(text,   t, prev, body, fn) {
+      t = text
+      gsub(/\047[^\047]*\047/, "", t)
+      gsub(/"[^"]*"/, "", t)
+      sub(/[[:space:]]#.*$/, "", t)
+      # A command word with an underscore is taken for a shell function (jig
+      # names its own so; no external it runs has one): a locale prefix on it is
+      # restored on return wherever it stands, a pipeline or $(...) included.
+      fn = (t ~ /(LC_[A-Z]+|LANG)=[^[:space:];|&]*[[:space:]]+([A-Za-z_][A-Za-z0-9_]*=[^[:space:];|&]*[[:space:]]+)*[A-Za-z0-9-]*_[A-Za-z0-9_]*([[:space:];|&)]|$)/)
+      # A $(...) of one command execs it and goes; one holding a list runs it
+      # in a shell of its own, so its body is read as statements.
+      do {
+        prev = t
+        gsub(/\$\(\([^()]*\)\)/, "", t)
+        if (match(t, /\$\([^()]*\)/)) {
+          body = substr(t, RSTART + 2, RLENGTH - 3)
+          t = substr(t, 1, RSTART - 1) (body ~ /;|&&|\|\|/ ? "; " body " ;" : "") substr(t, RSTART + RLENGTH)
+        }
+        gsub(/<\([^()]*\)/, "", t)
+      } while (t != prev)
+      if (fn ||
+          t ~ /(^|[;!{()&]|\|\||(^|[[:space:]])(if|then|else|elif|do|while|until))[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:];|&]*[[:space:]]+)*(LC_[A-Z]+|LANG)=[^[:space:];|&]*[[:space:]]+[^[:space:];|&#]/ ||
+          t ~ /(^|[[:space:];])(local|declare|typeset)[[:space:]]+([^;]*[[:space:]])?(LC_[A-Z]+|LANG)=/)
+        printf "%s:%d: %s\n", origin, start, text
+    }
+    FNR == 1 { flag(buf); buf = "" }
+    {
+      line = $0
+      if (buf == "" && line ~ /^[[:space:]]*#/) next
+      if (buf == "") { origin = FILENAME; start = FNR }
+      sub(/\r$/, "", line)
+      if (line ~ /\\$/) { sub(/\\$/, " ", line); buf = buf line; next }
+      flag(buf line)
+      buf = ""
+    }
+    END { flag(buf) }
+  ' {} +
+}
+
+test_no_script_restores_a_locale_in_its_own_shell() {
+  local hits
+  hits=$(_locale_guard_hits "$JIG_HOME/scripts" "$JIG_HOME/profiles" \
+    "$JIG_HOME/adapters" "$JIG_HOME/.github/scripts")
+  assert_eq "" "$hits"
+}
+
+# The guard above reads files that must stay clean, so it is green whether it
+# sees anything or not. This one plants every form it must report — the
+# housekeeping trim as it was, prefixes and $((…)) included — and the forms it
+# must let through.
+test_locale_guard_tells_the_forms_apart() {
+  mkdir -p sample
+  cat > sample/bad.sh <<'EOF'
+  LC_ALL=C sort -u "$f"
+if LC_ALL=C grep -q "^$mark" "$err"; then :; fi
+  if JIG_HK_FIRST=$((runs + pre - $(_keep) + 1)) JIG_HK_OUT=$(_out) \
+    JIG_HK_PRE="$pre" LC_ALL=C awk '
+    { print }' "$log" > "$tmp"; then :; fi
+  local LC_ALL=C
+  local s="$1" LC_CTYPE=C n=0
+[ -s "$f" ] || LC_ALL=C tr -d a < "$f"
+  LC_ALL=C jig knowledge sources --json > out
+case $x in a) LC_ALL=C sort -o "$f" "$f" ;; esac
+wait_for & LC_ALL=C sort -o "$f" "$f"
+n=$(LC_ALL=C sort -u "$f"; printf x)
+n=$(LC_ALL=C _my_func "$f")
+printf '%s' "$x" | LC_ALL=C jig_cut 80
+EOF
+  cat > sample/good.sh <<'EOF'
+# LC_ALL=C grep -q x "$f" in a comment
+printf '%s\n' "$x" | LC_ALL=C sort -u
+n=$(LC_ALL=C grep -c x "$f")
+done < <(find . -type f | LC_ALL=C sort)
+path=$(LC_ALL=C comm -3 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | sed -n 1p)
+env LC_ALL=C sort -o "$f" "$f"
+  JIG_HK_PRE="$pre" env LC_ALL=C awk '{ print }' "$log"
+( LC_ALL=C; out_init )
+_cut() (
+  LC_ALL=C
+  printf '%s' "${#1}"
+)
+  } 2>/dev/null | sed '/^$/d' \
+    | LC_ALL=C sort -u
+EOF
+  local hits
+  hits=$(_locale_guard_hits sample)
+  assert_not_contains "$hits" "good.sh"
+  assert_eq 12 "$(printf '%s\n' "$hits" | grep -c 'sample/bad.sh:')"
+  for line in 1 2 3 6 7 8 9 10 11 12 13 14; do
+    assert_contains "$hits" "sample/bad.sh:$line:"
+  done
+}
+
 # --- .ai/config.local.yaml (ADR-0038) ----------------------------------------
 
 test_cfg_local_value_wins_for_a_whitelisted_key() {
