@@ -14,7 +14,7 @@ paths:
   - templates/gitignore
   - templates/config.yaml
 summary: Why a contributor's own settings go in a gitignored config.local.yaml that answers only for whitelisted keys, one file per clone, and warns rather than refuses when it is not ignored.
-reviewed_at: 2026-10-03
+reviewed_at: 2026-11-09
 ---
 # ADR-0038: Per-clone settings live in a gitignored local layer that answers only for whitelisted keys
 
@@ -173,3 +173,7 @@ Measured on 2026-10-03 in a scratch project with a local file setting `housekeep
 the owner's three values; declaring `.ai/config.local.yaml` in `worktree.carry` or `.ai` in
 `worktree.share` was refused with "inside .ai/". The decision, the layers and the key lists are
 unchanged.
+
+## Amendment (2026-11-09): the agent may write the team's git flow, after a yes
+
+"Changed by hand" no longer covers one case: `jig-setup` §4 has the agent add `git.flow`, and in the staging flow `git.staging_branch`, to `.ai/config.yaml` after a person's yes, in a task's tree, shipped as a pull request. The file is still reviewed like code and no command writes it: `jig config set` still refuses without `--local` (adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes).

@@ -13,6 +13,11 @@ Absent keys take the default. Paths are not configurable.
 | `git.branch_template` | `task/{id}` | | branch name; `{id}` is the task id |
 | `git.worktree_root` | `../<project>.worktrees` | yes | where `jig task start --worktree` puts worktrees |
 | `git.delete_merged_branches` | `true` | yes | a branch Jig made goes once its work has landed: right after a merge Jig made (back on the base branch, then `git branch -d` and origin's copy), and in housekeeping once its task is purged (origin's copy there only at `agent.git` `push` or above); `false` keeps every branch (adr-20261007-a-merged-branch-leaves-with-its-work) |
+| `git.flow` | `direct` | | how a task travels: `direct` (straight to the base branch) or `staging` (through a staging branch first). `jig doctor` fails on a choice that cannot work |
+| `git.staging_branch` | - | | the branch a task lands on before the base branch; the `staging` flow needs it, and it may not be the base branch |
+| `git.staging_land` | `pr` | | `staging` flow: how a task lands on the staging branch: `pr` (a pull request, merged directly only when it conflicts) or `external` (CI merges) |
+| `git.staging_review` | `ask` | | `staging` flow: an approval before landing on the staging branch: `ask` (warn and ask), `require` (wait for one) or `none` (land without asking) |
+| `git.promote_merge` | `human` | | `staging` flow: who merges the pull request into the base branch that prepare for prod opens: `human` or `auto` (the forge, on green CI) |
 | `worktree.carry` | `[]` | | extra paths this project needs copied into a new worktree, beyond what the active profiles already declare (`vendor`, `node_modules`, `.env`) |
 | `worktree.share` | `[]` | | directories a new worktree shares with this checkout rather than copies — each given as a real directory whose entries link to this checkout's, for separate repositories under edit such as `packages/` |
 | `worktree.setup` | - | | a command run with `sh -c` in a new task worktree after share and carry, by `jig task start --worktree` and every `jig task bootstrap`, on this machine (never through `run.exec`); told `JIG_TASK_ID`, `JIG_OWNER_CHECKOUT`, `JIG_SHARED`, `JIG_DANGLING`; never fatal, its outcome kept as the task's `setup` (adr-20261026-a-worktree-is-finished-by-the-projects-command) |
