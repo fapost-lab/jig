@@ -1077,6 +1077,36 @@ test_pr_followup_drafts_answer_every_thread_and_comment_only_on_the_fix() {
   assert_eq 0 "$RC" "$OUT"
 }
 
+test_pr_followup_ignores_the_users_diff_settings() {
+  _pr_repo
+  _pr_fix "$(printf 'b\nc\nd')"
+  run jig pr fetch "$_pr_url"
+  local old head
+  old=$(git rev-parse refs/jig/pr/7/head)
+  _pr_earlier "$old"
+  # The fix changes lines 2 and 4; line 3 between them stays as it was.
+  _pr_fix "$(printf 'B\nc\nD')"
+  printf 'F\tadded\t4\t1\nN\tfeature.txt\nH\t@@ -0,0 +1,4 @@\nF\tremoved\t1\t1\nN\told.txt\nH\t@@ -1 +0,0 @@\n' > ../bin/files
+  run jig pr fetch "$_pr_url"
+  head=$(git rev-parse refs/jig/pr/7/head)
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  # Settings that would merge the two hunks into one and count line 3 as added.
+  git config diff.interHunkContext 1
+  git config diff.indentHeuristic false
+  {
+    printf 'jig-pr-draft: 1\nurl: %s\nhead: %s\nfollows: %s\n' "$_pr_url" "$head" "$old"
+    printf 'login: alice\nlanguage: en\n\n=== summary\nBetter.\n\n'
+    printf '=== comment R3 feature.txt\nOld news.\n\n=== reply 1 fixed\nFixed.\n\n=== reply 2 open\nOpen.\n'
+  } > ../draft.md
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "R3 feature.txt is not on a line the author added since $old"
+  sed 's/^=== comment R3 /=== comment R4 /' ../draft.md > ../draft4.md
+  run jig pr draft 7 --from ../draft4.md
+  assert_eq 0 "$RC" "$OUT"
+}
+
 test_pr_followup_survives_a_force_push() {
   _pr_repo
   run jig pr fetch "$_pr_url"
@@ -1171,7 +1201,7 @@ _pr_gl_repo() {
   _pr_stub_glab "$top/bin" "$sha"
   PATH="$top/bin:$PATH"
   export PATH
-  unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN CI_JOB_TOKEN GITLAB_HOST GL_HOST
+  unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN CI_JOB_TOKEN GITLAB_HOST GL_HOST GITLAB_URI GITLAB_URL
 }
 
 # _pr_gl_mr <dir> <sha> <base_sha> [<diff head>] [<locked>] [<changes>] — the merge
@@ -1193,7 +1223,8 @@ _pr_gl_mr() {
 # <dir>/drop-position does; refused (exit 1) when <dir>/refuse-at holds <n>.
 # A POST to discussions/<id>/notes adds its note to the end of discussion
 # <id>'s line and answers with the note.
-# Every call goes to <dir>/calls, with whether a token variable was set.
+# Every call goes to <dir>/calls, with whether a token variable and a host
+# variable were set.
 _pr_stub_glab() {
   local main
   mkdir -p "$1"
@@ -1207,7 +1238,7 @@ _pr_stub_glab() {
   cat > "$1/glab" <<STUB
 #!/bin/sh
 d='$1'
-printf '%s token=%s\n' "\$*" "\${GITLAB_TOKEN:+set}" >> "\$d/calls"
+printf '%s token=%s host=%s\n' "\$*" "\${GITLAB_TOKEN:+set}" "\${GITLAB_HOST:+set}\${GL_HOST:+set}\${GITLAB_URI:+set}\${GITLAB_URL:+set}" >> "\$d/calls"
 if [ -n "\${GITLAB_TOKEN:-}" ]; then who=\$(cat "\$d/envlogin" 2>/dev/null || echo env)
 else who=\$(cat "\$d/stored" 2>/dev/null || true)
 fi
@@ -1292,7 +1323,9 @@ test_pr_gitlab_fetch_reads_a_merge_request_of_a_nested_group() {
   local head main
   head=$(git -C ../origin.git rev-parse refs/merge-requests/7/head)
   main=$(git rev-parse main)
-  run jig pr fetch "$_pr_gl_url/diffs?view=inline#note_1"
+  # A host variable glab reads would name another instance than the URL's.
+  GITLAB_HOST=other.example.com GL_HOST=other.example.com GITLAB_URI=https://other.example.com GITLAB_URL=https://other.example.com \
+    run jig pr fetch "$_pr_gl_url/diffs?view=inline#note_1"
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "pull request: $_pr_gl_url (opened)"
   assert_contains "$OUT" "head: $head (the reviewed head)"
@@ -1306,6 +1339,7 @@ test_pr_gitlab_fetch_reads_a_merge_request_of_a_nested_group() {
   assert_file_contains ../bin/calls "--hostname gitlab.example.com --output ndjson projects/acme%2Fteam%2Fwidget token="
   assert_file_contains ../bin/calls "projects/42/merge_requests/7 token="
   if grep -q 'token=set' ../bin/calls; then fail "a token variable reached glab"; fi
+  if grep -q 'host=set' ../bin/calls; then fail "a host variable reached glab"; fi
   # GitLab's diff starts at its own base: an older commit of main.
   printf 'more\n' > more.txt
   git add more.txt
