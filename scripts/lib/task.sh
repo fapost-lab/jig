@@ -6545,6 +6545,7 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
     return 0
   fi
 
+  jig_ship_account "task ship" "$level"
   jig_ship_push "task ship" "$branch"
 
   if [ "$level" = push ]; then

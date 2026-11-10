@@ -22,7 +22,7 @@
 # answer
 # *only* from this list, never falling back to the project layer the way every
 # other key here does.
-JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model executor.implement_runtime executor.review_runtime executor.implement_model executor.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
+JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_ttl housekeeping.abandoned_ttl housekeeping.stale_after checkout.busy_ttl verify.busy_ttl git.worktree_root git.delete_merged_branches agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model executor.implement_runtime executor.review_runtime executor.implement_model executor.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive github.account"
 
 # Keys whose project-layer value `cfg` never reads at all: only the local
 # file and the default answer. A key belongs here, rather than merely in
@@ -70,9 +70,13 @@ JIG_CFG_LOCAL_KEYS="housekeeping.cadence housekeeping.fetch housekeeping.trash_t
 # (adr-20261009-autopilot-stops-reach-telegram). `notify.interactive` says
 # whether an ordinary session that waits for them sends one too, through the
 # hook they opted into (adr-20261010-a-waiting-session-reaches-telegram).
+# `github.account` names the `gh` account this clone's GitHub calls are made
+# as, for a person who holds several: a login is one person's, and a committed
+# one would send every contributor's calls out under it
+# (adr-20261110-a-clone-names-its-github-account).
 # `jig_config_project_ignored` reports a project-layer value here so it does
 # not silently do nothing.
-JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model executor.implement_runtime executor.review_runtime executor.implement_model executor.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive"
+JIG_CFG_LOCAL_ONLY_KEYS="agent.git autopilot.git agent.ci_timeout autopilot.unattended autopilot.parallel route.depth release.merge run.exec run.path claude.implement_model claude.review_model codex.implement_model codex.review_model executor.implement_runtime executor.review_runtime executor.implement_model executor.review_model notify.telegram.token notify.telegram.chat_id notify.autopilot notify.interactive github.account"
 
 # Path of the config file for the current project (JIG_PROJECT must be set).
 jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
@@ -275,6 +279,7 @@ executor.implement_runtime||choice|claude,codex|The runtime that owns the implem
 executor.review_runtime||choice|claude,codex|The runtime that owns each review stage; empty keeps the current session.
 executor.implement_model||text||The model for an external implementation process.
 executor.review_model||text||The model for an external review process.
+github.account||text||The gh account GitHub is asked as from this clone; unset, Jig finds it.
 notify.telegram.token||text||The Telegram bot token messages are sent with; never shown.
 notify.telegram.chat_id||text||The Telegram chat messages go to: digits or @name.
 notify.autopilot|true|boolean|true,false|Whether autopilot runs send Telegram messages.
@@ -770,6 +775,8 @@ _cfg_parallel() {
 # - claude.*_model and codex.*_model: anything — the value is
 #   the runtime's to understand, never Jig's
 #   (adr-20261005-jig-names-the-roles-not-the-models);
+# - github.account: a GitHub login, as `gh auth status` names it (an
+#   Enterprise Managed User's carries a `_shortcode`);
 # - notify.telegram.chat_id: a chat id, digits with an optional `-`, or an
 #   `@name`; notify.autopilot and notify.interactive: `true` or `false`;
 # - notify.telegram.token: never — a token on a command line is in `ps`, the
@@ -852,6 +859,14 @@ jig_config_value_problem() {
       esac
       ;;
     claude.implement_model | claude.review_model | codex.implement_model | codex.review_model | executor.implement_model | executor.review_model) ;;
+    github.account)
+      case "$value" in
+        -* | *- | *--* | *[!A-Za-z0-9_-]* | ????????????????????????????????????????*)
+          printf 'not a GitHub login: letters, digits and single hyphens, as gh auth status names it\n'
+          return 1
+          ;;
+      esac
+      ;;
     notify.telegram.chat_id)
       _cfg_chat_id "$value" \
         || { printf 'not a chat id: digits (a group starts with -), or @name\n'; return 1; }

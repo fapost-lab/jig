@@ -112,6 +112,28 @@ test_writes_take_the_pull_request_from_what_gh_answers_not_from_its_warning() {
   assert_contains "$(cat .ai/runtime/writes/spec-idea-x)" "pr: https://github.com/example/example/pull/42"
 }
 
+# The GitHub account a pull request is opened as is named before the push
+# (jig_ship_account, common.sh): an account gh does not hold is an answer with
+# the write committed and nothing sent, not a refusal after the branch went out.
+test_writes_at_pr_name_the_github_account_before_the_push() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  # A GitHub name for origin that resolves nowhere, and the bare repository
+  # for whatever does get pushed.
+  git remote set-url origin https://github.com.invalid/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  printf 'github.account: dave\n' >> .ai/config.local.yaml
+  _w_add "New"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"committed":true'
+  assert_contains "$OUT" '"pushed":false'
+  assert_contains "$OUT" 'github.account is dave'
+  if git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "spec/idea-x was pushed before the account was named"
+  fi
+  assert_no_file stub-gh/create.argv
+}
+
 test_writes_at_merge_do_not_wait_for_ci_and_say_how_to_merge() {
   own_tree_repo merge
   own_tree_stub_gh

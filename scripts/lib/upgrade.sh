@@ -1286,6 +1286,7 @@ _upgrade_finish() {
   fi
   base=$(cfg git.base_branch main)
   jig_ship_require_commits "upgrade" "$_UPGRADE_BRANCH" "$base"
+  jig_ship_account "upgrade" "$level"
   jig_ship_push "upgrade" "$_UPGRADE_BRANCH"
   _UPGRADE_J_PUSHED=1
   if [ "$level" = push ]; then
@@ -1755,7 +1756,7 @@ _upgrade_land_prs() {
   local forge="$1" base="$2" rows
   case "$forge" in
     github)
-      rows=$(gh pr list --state all --base "$base" --limit 100 \
+      rows=$(jig_gh pr list --state all --base "$base" --limit 100 \
         --json headRefName,state,headRefOid,url \
         --jq '.[] | "\(.headRefName)\t\(.state)\t\(.headRefOid)\t\(.url)"' 2>/dev/null) || return 1
       ;;
@@ -1846,6 +1847,7 @@ _upgrade_land_run() {
   forge=$(jig_forge_kind) || exit 1
   [ "$forge" != none ] \
     || jig_die "upgrade --land: no GitHub or GitLab CLI is signed in here, so whether the upgrade was merged cannot be asked; nothing was changed"
+  [ "$forge" != github ] || jig_gh_require "upgrade --land"
   prs=$(_upgrade_land_prs "$forge" "$base") \
     || jig_die "upgrade --land: the forge did not answer; nothing was changed"
   jig_fetch_branches "upgrade" "$base"

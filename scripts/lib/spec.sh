@@ -1830,6 +1830,7 @@ spec_ship_steps() {
     printf "stopped at commit: push is the human's\n"
     return 0
   fi
+  jig_ship_account "spec ship" "$level"
   jig_ship_push "spec ship" "$branch"
   if [ "$level" = push ]; then
     printf "stopped at push: the pull request is the human's\n"

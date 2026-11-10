@@ -922,6 +922,32 @@ test_config_route_depth_is_local_only() {
     "config.local: route.depth in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
 }
 
+# github.account names the gh account this clone asks GitHub as
+# (adr-20261110-a-clone-names-its-github-account): one person's login, so it
+# is local only, free text, and unset by default.
+test_config_github_account_is_local_only_text_set_shown_and_unset() {
+  fixture_jig_repo
+  _config_accepts github.account bob
+  assert_file_contains .ai/config.local.yaml "^github.account: bob$"
+  run jig config show --local
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "github.account: bob"
+  assert_not_contains "$OUT" "ignored:"
+  run jig config unset github.account --local
+  assert_eq 0 "$RC" "$OUT"
+  run jig config show --local
+  assert_not_contains "$OUT" "github.account"
+  _config_rejects github.account ''
+  printf 'github.account: carol\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "config.local: github.account in .ai/config.yaml is ignored (set it in .ai/config.local.yaml)"
+  run jig config keys
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(printf '%s\n' "$OUT" | awk '$1 == "github.account" { print $2, $3, $4 }')" "- local only"
+}
+
 # --- jig-setup covers every local key ----------------------------------------
 #
 # A key `jig config set --local` accepts but the `jig-setup` skill never names

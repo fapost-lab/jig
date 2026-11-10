@@ -4906,6 +4906,178 @@ test_task_ship_pr_level_creates_pr_into_base_branch() {
   assert_contains "$argv" "$(printf -- '--title\nShip T-1')"
 }
 
+# ship_stub_gh_accounts — ship_stub_gh's gh for a person who holds two
+# accounts, alice (active) and bob: `auth status` lists both, `auth token
+# --user <login>` gives `tok-<login>`, and every other call is logged to
+# gh-token.log as `<arguments> GH_TOKEN=<value>`, the token the call ran under.
+# `pr list` answers `null` (none open), `pr create` prints a made-up URL.
+ship_stub_gh_accounts() {
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "auth status")
+    printf 'github.com\n'
+    printf '  \342\234\223 Logged in to github.com account alice (keyring)\n  - Active account: true\n'
+    printf '  \342\234\223 Logged in to github.com account bob (keyring)\n  - Active account: false\n'
+    exit 0 ;;
+  "auth token")
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --user ]; then printf 'tok-%s\n' "$2"; exit 0; fi
+      shift
+    done
+    exit 1 ;;
+esac
+printf '%s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> gh-token.log
+case "$1 $2" in
+  "pr list") printf 'null\n' ;;
+  "pr create") printf 'https://github.com/example/example/pull/99\n' ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# A clone that names its GitHub account opens the pull request as that
+# account, although another one is active in gh
+# (adr-20261110-a-clone-names-its-github-account).
+test_task_ship_pr_level_opens_the_pr_under_the_account_the_clone_names() {
+  ship_setup
+  ship_cfg forge github
+  # The remote reads as a GitHub repository (`git remote get-url` applies
+  # insteadOf, so a rewrite would show Jig the local path); pushes still go
+  # to the bare repository.
+  git remote set-url origin https://github.com/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  ship_stub_gh_accounts
+  ship_cfg_local agent.git pr
+  ship_cfg_local github.account bob
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$(grep '^pr create' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr list' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_not_contains "$OUT" "tok-"
+  assert_not_contains "$(cat gh-token.log)" "GH_TOKEN=tok-alice"
+}
+
+# ship_stub_gh_ambiguous — a gh that holds three accounts, alice (active), bob
+# and carol, of which bob and carol may push to the repository: the clone names
+# none, and the active one is not among the two. Every call but the account
+# questions is logged to gh-token.log; `pr create` prints a made-up URL.
+ship_stub_gh_ambiguous() {
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+printf '%s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> gh-token.log
+case "$1 $2" in
+  "auth status")
+    printf 'github.com\n'
+    printf '  Logged in to github.com account alice (keyring)\n  - Active account: true\n'
+    printf '  Logged in to github.com account bob (keyring)\n  - Active account: false\n'
+    printf '  Logged in to github.com account carol (keyring)\n  - Active account: false\n'
+    exit 0 ;;
+  "auth token")
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --user ]; then
+        case "$2" in alice | bob | carol) printf 'tok-%s\n' "$2"; exit 0 ;; esac
+      fi
+      shift
+    done
+    exit 1 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create") printf 'https://github.com/example/example/pull/99\n' ;;
+esac
+if [ "$1" = api ]; then
+  case "${GH_TOKEN:-}" in
+    tok-bob | tok-carol) printf 'true false false\n' ;;
+    *) printf 'false false false\n' ;;
+  esac
+fi
+exit 0
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# ship_ambiguous_setup <level> — a ship at agent.git <level> on a GitHub
+# remote, with ship_stub_gh_ambiguous standing in for gh.
+ship_ambiguous_setup() {
+  ship_setup
+  ship_cfg forge github
+  git remote set-url origin https://github.com/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  ship_stub_gh_ambiguous
+  ship_cfg_local agent.git "$1"
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+# Several accounts may push and the active one is not among them: a ship that
+# would open a pull request refuses before the first commit
+# (adr-20260925-a-ship-refuses-before-it-sends).
+test_task_ship_pr_level_refuses_before_pushing_when_the_account_is_ambiguous() {
+  local head_before
+  ship_ambiguous_setup pr
+  head_before=$(git rev-parse HEAD)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "several gh accounts may push"
+  assert_contains "$OUT" "github.account"
+  assert_contains "$OUT" "Nothing was sent; the commit is on this machine"
+  # The commit stays local: a ship that refuses for its own reasons has not
+  # asked the forge anything yet, so the account is named after it.
+  assert_eq "$head_before" "$(git rev-parse HEAD~1)" "the refusal left more or less than the one local commit"
+  assert_eq "main" "$(git --git-dir=origin.git for-each-ref --format='%(refname:short)' refs/heads)" "origin got a new branch"
+  assert_eq "0" "$(grep -c '^pr create' gh-token.log || true)" "a pull request was opened"
+  # Naming the account is the way out.
+  ship_cfg_local github.account bob
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(grep '^pr create' gh-token.log)" "GH_TOKEN=tok-bob"
+}
+
+test_task_ship_pr_level_refuses_before_pushing_when_github_account_is_not_held() {
+  local head_before
+  ship_ambiguous_setup pr
+  ship_cfg_local github.account dave
+  head_before=$(git rev-parse HEAD)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "github.account is dave"
+  assert_contains "$OUT" "Nothing was sent; the commit is on this machine"
+  # The commit stays local: a ship that refuses for its own reasons has not
+  # asked the forge anything yet, so the account is named after it.
+  assert_eq "$head_before" "$(git rev-parse HEAD~1)" "the refusal left more or less than the one local commit"
+  assert_eq "0" "$(grep -c '^pr create' gh-token.log || true)"
+}
+
+# ship_level_ignores_accounts <level> — at a level below pr, accounts that
+# would be refused at pr do not stop the ship, and gh is not asked about them.
+ship_level_ignores_accounts() {
+  ship_ambiguous_setup "$1"
+  : > gh-token.log
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$1: $OUT"
+  assert_not_contains "$OUT" "several gh accounts"
+  assert_eq "0" "$(grep -c '^api\|^auth' gh-token.log || true)" "$1: gh's accounts were consulted"
+}
+
+test_task_ship_commit_level_does_not_consult_the_accounts() {
+  ship_level_ignores_accounts commit
+}
+
+test_task_ship_push_level_does_not_consult_the_accounts() {
+  ship_level_ignores_accounts push
+}
+
 test_task_ship_pr_level_does_not_duplicate_an_existing_open_pr() {
   ship_setup
   ship_cfg forge github

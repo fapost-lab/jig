@@ -12,6 +12,7 @@ test_help_lists_commands() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "housekeeping"
   assert_contains "$OUT" "knowledge check"
+  assert_contains "$OUT" "gh <args>..."
 }
 
 test_unknown_command_fails() {
