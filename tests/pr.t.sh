@@ -48,7 +48,8 @@ _pr_repo() {
 # prints <dir>/auth; `auth token --user <login>` prints `tok-<login>` for an
 # account <dir>/auth names. `api` answers each endpoint with a file of <dir>
 # holding what its --jq filter would print — `api` (the pull request), `repo`,
-# `compare`, `files`, `reviews`, `comments`; `<file>.<login>` first, the
+# `compare`, `files`, `reviews`, `comments`, and `reviews.fu` and
+# `comments.fu` for the filters of jig pr followup; `<file>.<login>` first, the
 # login being the one the token in GH_TOKEN stands for — and `user` with that
 # login. A POST copies its --input file to <dir>/posted.<n>.<endpoint>, prints
 # 900<n> as the new id, and lands every <dir>/*.landed file (the read-back
@@ -63,6 +64,8 @@ _pr_stub_gh() {
   printf 'F\tadded\t1\t1\nN\tfeature.txt\nH\t@@ -0,0 +1 @@\nF\tremoved\t1\t1\nN\told.txt\nH\t@@ -1 +0,0 @@\n' > "$1/files"
   : > "$1/reviews"
   : > "$1/comments"
+  : > "$1/reviews.fu"
+  : > "$1/comments.fu"
   printf 'alice\n' > "$1/active"
   cat > "$1/auth" <<'EOF'
 github.com
@@ -112,6 +115,7 @@ case "\$1" in
     ep=\${ep%%\?*}
     case "\$ep" in
       user) printf '%s\n' "\$who"; exit 0 ;;
+      repos/*/*/pulls/*/comments/*/replies) key=replies ;;
       repos/*/*/pulls/*/files) key=files ;;
       repos/*/*/pulls/*/reviews) key=reviews ;;
       repos/*/*/pulls/*/comments) key=comments ;;
@@ -120,6 +124,7 @@ case "\$1" in
       repos/*/*) key=repo ;;
       *) exit 1 ;;
     esac
+    case "\$jq" in *'"S\t'* | *'"C\t'*) key="\$key.fu" ;; esac
     printf '%s\n' "\$jq" > "\$d/jq.\$key"
     if [ "\$method" = POST ]; then
       n=\$(cat "\$d/npost" 2>/dev/null || echo 0)
@@ -564,7 +569,7 @@ _pr_landed() {
     if [ "$k" = 0 ]; then
       printf '9001\talice\tid=%s head=%s part=0\t%s#pullrequestreview-9001\n' "$h" "$head" "$_pr_url" >> ../bin/reviews.landed
     else
-      printf '%s\talice\tid=%s head=%s part=%s\t1\tRIGHT\tnull\t%s#discussion_r%s\tfeature.txt\n' "$k" "$h" "$head" "$k" "$_pr_url" "$k" >> ../bin/comments.landed
+      printf '%s\talice\tid=%s head=%s part=%s\t1\tRIGHT\tnull\tnull\t%s#discussion_r%s\tfeature.txt\n' "$k" "$h" "$head" "$k" "$_pr_url" "$k" >> ../bin/comments.landed
     fi
   done
 }
@@ -669,7 +674,7 @@ test_pr_comments_post_refuses_where_a_retry_could_duplicate() {
   assert_contains "$OUT" "already posted another version of a review of this head: $_pr_url#pullrequestreview-8001"
   # A half-done other version left only a comment.
   : > ../bin/reviews
-  printf '3\talice\tid=%s head=%s part=1\t1\tRIGHT\tnull\t%s#discussion_r3\tfeature.txt\n' 0000 "$head" "$_pr_url" > ../bin/comments
+  printf '3\talice\tid=%s head=%s part=1\t1\tRIGHT\tnull\tnull\t%s#discussion_r3\tfeature.txt\n' 0000 "$head" "$_pr_url" > ../bin/comments
   run jig pr comments post 7 --shown "$_pr_hash"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "already posted another version of a review of this head: $_pr_url#discussion_r3"
@@ -721,8 +726,15 @@ test_pr_comments_filters_print_what_the_stub_stands_in_for() {
   assert_eq 0 "$RC" "$OUT"
   printf '[{"id":5,"user":{"login":"alice"},"body":"Text\\n\\n<!-- jig-pr-review id=h1 head=h2 part=0 -->","html_url":"u5"},{"id":6,"user":{"login":"bob"},"body":null,"html_url":"u6"}]' > ../reviews.json
   assert_eq "$(printf '5\talice\tid=h1 head=h2 part=0\tu5')" "$(_pr_jq ../bin/jq.reviews < ../reviews.json)"
-  printf '[{"id":7,"user":{"login":"alice"},"body":"x\\n\\n<!-- jig-pr-review id=h1 head=h2 part=1 -->","line":4,"side":"LEFT","start_line":2,"html_url":"u7","path":"a b.txt"},{"id":8,"user":{"login":"alice"},"body":"plain","line":1,"side":"RIGHT","start_line":null,"html_url":"u8","path":"c"}]' > ../comments.json
-  assert_eq "$(printf '7\talice\tid=h1 head=h2 part=1\t4\tLEFT\t2\tu7\ta b.txt')" "$(_pr_jq ../bin/jq.comments < ../comments.json)"
+  printf '[{"id":7,"user":{"login":"alice"},"body":"x\\n\\n<!-- jig-pr-review id=h1 head=h2 part=1 -->","line":4,"side":"LEFT","start_line":2,"in_reply_to_id":null,"html_url":"u7","path":"a b.txt"},{"id":8,"user":{"login":"alice"},"body":"plain","line":1,"side":"RIGHT","start_line":null,"html_url":"u8","path":"c"},{"id":9,"user":{"login":"alice"},"body":"y\\n<!-- jig-pr-review id=h1 head=h2 part=2 verdict=fixed -->","line":4,"side":"LEFT","start_line":null,"in_reply_to_id":7,"html_url":"u9","path":"a b.txt"}]' > ../comments.json
+  assert_eq "$(printf '7\talice\tid=h1 head=h2 part=1\t4\tLEFT\t2\tnull\tu7\ta b.txt\n9\talice\tid=h1 head=h2 part=2 verdict=fixed\t4\tLEFT\tnull\t7\tu9\ta b.txt')" "$(_pr_jq ../bin/jq.comments < ../comments.json)"
+  # The filters of jig pr followup, over a review and its comments: every line
+  # of a body on a line of its own, a reply with the comment it answers.
+  run jig pr followup 7
+  printf '[{"id":5,"user":{"login":"alice"},"body":"Text\\n\\n<!-- jig-pr-review id=h1 head=h2 part=0 -->","submitted_at":"t5","html_url":"u5"},{"id":6,"user":{"login":"bob"},"body":null,"html_url":"u6"}]' > ../reviews.json
+  assert_eq "$(printf 'S\t5\talice\tid=h1 head=h2 part=0\tt5\tu5\nB\tText\nB\t\nB\t<!-- jig-pr-review id=h1 head=h2 part=0 -->')" "$(_pr_jq ../bin/jq.reviews.fu < ../reviews.json)"
+  printf '[{"id":7,"user":{"login":"alice"},"body":"x\\ny\\n<!-- jig-pr-review id=h1 head=h2 part=1 -->","created_at":"t7","in_reply_to_id":null,"original_line":4,"side":"LEFT","original_start_line":2,"line":null,"html_url":"u7","path":"a b.txt"},{"id":9,"user":{"login":"alice"},"body":"z <!-- jig-pr-review id=h1 head=h2 part=2 verdict=open -->","created_at":"t9","in_reply_to_id":7,"original_line":4,"side":"LEFT","original_start_line":null,"html_url":"u9","path":"a b.txt"},{"id":8,"user":{"login":"bob"},"body":"plain","html_url":"u8","path":"c"}]' > ../comments.json
+  assert_eq "$(printf 'C\t7\talice\tid=h1 head=h2 part=1\tt7\tnull\t4\tLEFT\t2\tu7\ta b.txt\nB\tx\nB\ty\nB\t<!-- jig-pr-review id=h1 head=h2 part=1 -->\nC\t9\talice\tid=h1 head=h2 part=2 verdict=open\tt9\t7\t4\tLEFT\tnull\tu9\ta b.txt\nB\tz <!-- jig-pr-review id=h1 head=h2 part=2 verdict=open -->')" "$(_pr_jq ../bin/jq.comments.fu < ../comments.json)"
 }
 
 test_pr_cleanup_takes_back_what_check_and_post_wrote() {
@@ -817,6 +829,312 @@ test_pr_usage() {
   assert_contains "$OUT" "pr fetch <url>"
 }
 
+# --- followup: a re-review after the author's fixes ------------------------------
+#
+# adr-20261110-a-follow-up-answers-its-own-threads: the earlier review is read
+# back from the forge's markers, the head it reviewed is kept (or said to be
+# gone), each open thread is answered once, and new comments only land on
+# lines the author added since.
+
+# _pr_fix <text> — the author pushes a fix on top of pull request 7's head:
+# <text> becomes line 2 of feature.txt. GitHub's pull request and diff follow.
+_pr_fix() {
+  local top sha
+  top=$(cd .. && pwd -P)
+  git -C "$top/origin.git" rev-parse refs/pull/7/head > ../old-head
+  rm -rf ../author
+  git clone -q "$top/origin.git" ../author 2>/dev/null
+  (
+    cd ../author || exit 1
+    git fetch -q origin refs/pull/7/head
+    git checkout -q FETCH_HEAD
+    printf 'new\n%s\n' "$1" > feature.txt
+    git add feature.txt
+    git -c user.name=a -c user.email=a@example.com commit -q -m fix
+    git push -q -f origin HEAD:refs/pull/7/head
+  )
+  sha=$(git -C "$top/origin.git" rev-parse refs/pull/7/head)
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' "$sha" "$(git rev-parse main)" > ../bin/api
+  printf 'F\tadded\t2\t1\nN\tfeature.txt\nH\t@@ -0,0 +1,2 @@\nF\tremoved\t1\t1\nN\told.txt\nH\t@@ -1 +0,0 @@\n' > ../bin/files
+}
+
+# _pr_earlier <head> — what GitHub holds of alice's first review of <head>, as
+# the filters of jig pr followup print it: the summary, comment 11 on R1
+# feature.txt and comment 12 on L1 old.txt, and bob's marker, which is not
+# hers to answer.
+_pr_earlier() {
+  {
+    printf 'S\t9001\talice\tid=h0 head=%s part=0\t2026-11-01T10:00:00Z\t%s#pullrequestreview-9001\n' "$1" "$_pr_url"
+    printf 'B\tReads well.\nB\t\nB\t<!-- jig-pr-review id=h0 head=%s part=0 -->\n' "$1"
+  } > ../bin/reviews.fu
+  {
+    printf 'C\t11\talice\tid=h0 head=%s part=1\t2026-11-01T10:00:00Z\tnull\t1\tRIGHT\tnull\t%s#discussion_r11\tfeature.txt\n' "$1" "$_pr_url"
+    printf 'B\tSay why.\nB\t\nB\t<!-- jig-pr-review id=h0 head=%s part=1 -->\n' "$1"
+    printf 'C\t12\talice\tid=h0 head=%s part=2\t2026-11-01T10:00:01Z\tnull\t1\tLEFT\tnull\t%s#discussion_r12\told.txt\n' "$1" "$_pr_url"
+    printf 'B\tGone?\nB\t<!-- jig-pr-review id=h0 head=%s part=2 -->\n' "$1"
+    printf 'C\t13\tbob\tid=h9 head=%s part=1\t2026-11-02T10:00:00Z\tnull\t1\tRIGHT\tnull\t%s#discussion_r13\tfeature.txt\n' "$1" "$_pr_url"
+    printf 'B\tNot alice.\n'
+  } > ../bin/comments.fu
+}
+
+test_pr_followup_reads_the_earlier_review_back_and_answers_each_thread() {
+  _pr_repo
+  run jig pr fetch "$_pr_url"
+  local old head state=.git/jig/pr/7
+  old=$(git rev-parse refs/jig/pr/7/head)
+  _pr_earlier "$old"
+  _pr_fix fixed
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  head=$(git rev-parse refs/jig/pr/7/head)
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "follows: $old (the head alice reviewed last)"
+  assert_contains "$OUT" "reviewed: in this clone, kept at refs/jig/pr/7/reviewed"
+  assert_contains "$OUT" "interdiff: git -C $(pwd -P) diff $old $head"
+  assert_contains "$OUT" "threads: 2 to answer"
+  assert_contains "$OUT" "=== thread 1 R1 feature.txt
+$_pr_url#discussion_r11
+Say why."
+  assert_contains "$OUT" "=== thread 2 L1 old.txt"
+  assert_contains "$OUT" "=== earlier summary
+Reads well."
+  assert_not_contains "$OUT" "Not alice"
+  assert_not_contains "$OUT" "jig-pr-review id="
+  assert_eq "$old" "$(git rev-parse refs/jig/pr/7/reviewed)"
+  assert_file_contains "$state/followup" "thread: 1 11 R1 feature.txt"
+  assert_file_contains "$state/followup" "thread: 2 12 L1 old.txt"
+  # The draft: a reply to each thread, and a new comment on the line the fix
+  # added.
+  {
+    printf 'jig-pr-draft: 1\nurl: %s\nhead: %s\nfollows: %s\nlogin: alice\nlanguage: en\n\n' "$_pr_url" "$head" "$old"
+    printf '=== summary\nBetter.\n\n=== comment R2 feature.txt\nAnd this line?\n\n'
+    printf '=== reply 1 fixed\nFixed: the line says why now.\n\n=== reply 2 open\nStill open: old.txt is still gone.\n'
+  } > ../draft.md
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr comments check 7
+  assert_eq 0 "$RC" "$OUT"
+  local h
+  h=$(printf '%s\n' "$OUT" | sed -n 's/^hash: //p')
+  assert_contains "$OUT" "head: $head
+follows: $old
+login: alice
+event: COMMENT"
+  assert_contains "$OUT" "=== comment R2 feature.txt
+And this line?"
+  assert_contains "$OUT" "=== reply 1 fixed R1 feature.txt, thread 11
+Fixed: the line says why now.
+
+<!-- jig-pr-review id=$h head=$head part=2 verdict=fixed -->"
+  assert_contains "$OUT" "=== reply 2 open L1 old.txt, thread 12"
+  assert_contains "$OUT" "part=3 verdict=open -->"
+  # The review is the summary and the new comment; the replies go after it.
+  _pr_valid_json "$state/payload.json"
+  assert_not_contains "$(cat "$state/payload.json")" "Still open"
+  {
+    printf '9101\talice\tid=%s head=%s part=0\t%s#pullrequestreview-9101\n' "$h" "$head" "$_pr_url"
+  } > ../bin/reviews.landed
+  {
+    printf '21\talice\tid=%s head=%s part=1\t2\tRIGHT\tnull\tnull\t%s#discussion_r21\tfeature.txt\n' "$h" "$head" "$_pr_url"
+    printf '9002\talice\tid=%s head=%s part=2 verdict=fixed\t1\tRIGHT\tnull\t11\t%s#discussion_r22\tfeature.txt\n' "$h" "$head" "$_pr_url"
+    printf '9003\talice\tid=%s head=%s part=3 verdict=open\t1\tLEFT\tnull\t12\t%s#discussion_r23\told.txt\n' "$h" "$head" "$_pr_url"
+  } > ../bin/comments.landed
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed: summary"
+  assert_contains "$OUT" "landed: comment R2 feature.txt at RIGHT 2 feature.txt"
+  assert_contains "$OUT" "landed: reply 1 fixed R1 feature.txt, thread 11 at thread 11"
+  assert_contains "$OUT" "landed: reply 2 open L1 old.txt, thread 12 at thread 12"
+  assert_eq 3 "$(cat ../bin/npost)"
+  assert_contains "$(cat ../bin/calls)" "--method POST repos/acme/widget/pulls/7/comments/11/replies --input"
+  assert_contains "$(cat ../bin/calls)" "--method POST repos/acme/widget/pulls/7/comments/12/replies --input"
+  _pr_valid_json ../bin/posted.2.replies
+  assert_file_contains ../bin/posted.2.replies "verdict=fixed -->"
+  assert_file_contains ../bin/posted.3.replies "Still open"
+  assert_file_contains "$state/posted" "replies: 9002 9003"
+  if grep -q 'tok-' ../bin/calls; then fail "a token was an argument"; fi
+  # Again: nothing is missing, nothing is posted twice.
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "already posted: nothing is missing"
+  assert_eq 3 "$(cat ../bin/npost)"
+  # A reply GitHub took no longer comes back with its marker: never posted
+  # again blindly.
+  grep -v '^9003' ../bin/comments > ../bin/comments.kept
+  cp ../bin/comments ../bin/comments.all
+  mv ../bin/comments.kept ../bin/comments
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitHub took reply 9003 of this version, but it does not come back with its marker"
+  assert_eq 3 "$(cat ../bin/npost)"
+  mv ../bin/comments.all ../bin/comments
+  # A followup file somebody edited names a thread no API path may hold.
+  cp "$state/followup" ../followup.kept
+  sed 's/^thread: 1 11 /thread: 1 ..\/x /' ../followup.kept > "$state/followup"
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "names a thread jig cannot use: ../x"
+  cp ../followup.kept "$state/followup"
+  # The next round: thread 11 was answered fixed, thread 12 still open.
+  {
+    cat ../bin/comments.fu
+    printf 'C\t22\talice\tid=%s head=%s part=2 verdict=fixed\t2026-11-03T10:00:00Z\t11\t1\tRIGHT\tnull\t%s#discussion_r22\tfeature.txt\n' "$h" "$head" "$_pr_url"
+    printf 'B\tFixed.\n'
+    printf 'C\t23\talice\tid=%s head=%s part=3 verdict=open\t2026-11-03T10:00:01Z\t12\t1\tLEFT\tnull\t%s#discussion_r23\told.txt\n' "$h" "$head" "$_pr_url"
+    printf 'B\tStill open.\n'
+  } > ../bin/comments.fu.next
+  mv ../bin/comments.fu.next ../bin/comments.fu
+  _pr_fix "fixed again"
+  run jig pr fetch "$_pr_url"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "follows: $head (the head alice reviewed last)"
+  assert_contains "$OUT" "threads: 1 to answer (1 answered fixed before)"
+  assert_contains "$OUT" "=== thread 1 L1 old.txt"
+  run jig pr cleanup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "deleted ref refs/jig/pr/7/reviewed"
+  assert_no_file "$state"
+}
+
+test_pr_followup_refuses_what_it_cannot_follow() {
+  _pr_repo
+  run jig pr followup 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "pull request 7 is not fetched here"
+  run jig pr fetch "$_pr_url"
+  # Nothing of alice's is on the pull request.
+  run jig pr followup 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "alice has posted no review of an earlier head of $_pr_url"
+  # Her review of this very head is no earlier one.
+  _pr_earlier "$(git rev-parse refs/jig/pr/7/head)"
+  run jig pr followup 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "has posted no review of an earlier head"
+  # A thread id that could not be an id never reaches an API path.
+  _pr_earlier "$(git rev-parse main)"
+  awk -F '\t' -v OFS='\t' '$1 == "C" && $2 == "11" { $2 = "../11" } $1 == "C" && $2 == "12" { $2 = "12x" } { print }' ../bin/comments.fu > ../bin/comments.fu.bad
+  mv ../bin/comments.fu.bad ../bin/comments.fu
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "threads: 0 to answer"
+  # A marker whose head is no commit id never reaches git.
+  _pr_earlier "--upload-pack=touch_pwned"
+  run jig pr followup 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "has posted no review of an earlier head"
+  run jig pr followup 7 --login 'a b'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not a login: a b"
+}
+
+test_pr_followup_drafts_answer_every_thread_and_comment_only_on_the_fix() {
+  _pr_repo
+  run jig pr fetch "$_pr_url"
+  local old head
+  old=$(git rev-parse refs/jig/pr/7/head)
+  _pr_earlier "$old"
+  _pr_fix fixed
+  run jig pr fetch "$_pr_url"
+  head=$(git rev-parse refs/jig/pr/7/head)
+  _pr_fu_draft() {
+    {
+      printf 'jig-pr-draft: 1\nurl: %s\nhead: %s\n' "$_pr_url" "$head"
+      if [ -n "$1" ]; then printf 'follows: %s\n' "$1"; fi
+      printf 'login: alice\nlanguage: en\n\n=== summary\nBetter.\n\n'
+      shift
+      printf '%s\n' "$@"
+    } > ../draft.md
+    run jig pr draft 7 --from ../draft.md
+  }
+  _pr_fu_draft "$old" '=== reply 1 fixed' 'Fixed.'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a follow-up needs jig pr followup of the reviewed head first"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  _pr_fu_draft "" '=== reply 1 fixed' 'Fixed.'
+  assert_contains "$OUT" "a reply answers a thread of a follow-up; the header has no follows"
+  _pr_fu_draft "$head" '=== reply 1 fixed' 'Fixed.'
+  assert_contains "$OUT" "follows is $head, but jig pr followup found $old"
+  _pr_fu_draft "$old" '=== reply 1 fixed' 'Fixed.'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "thread 2 of jig pr followup has no '=== reply 2 fixed|open'"
+  _pr_fu_draft "$old" '=== reply 3 fixed' 'Fixed.'
+  assert_contains "$OUT" "jig pr followup lists no thread 3 (threads: 2)"
+  _pr_fu_draft "$old" '=== reply 1 done' 'Fixed.'
+  assert_contains "$OUT" "a reply is fixed or open: done"
+  _pr_fu_draft "$old" '=== reply 1 fixed' 'Fixed.' '' '=== reply 1 open' 'Open.'
+  assert_contains "$OUT" "thread 1 is answered twice"
+  # Line 1 of feature.txt was there before the fix: no new finding there.
+  _pr_fu_draft "$old" '=== comment R1 feature.txt' 'Old news.' '' '=== reply 1 fixed' 'Fixed.' '' '=== reply 2 open' 'Open.'
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "R1 feature.txt is not on a line the author added since $old"
+  _pr_fu_draft "$old" '=== comment L1 old.txt' 'Old side.' '' '=== reply 1 fixed' 'Fixed.' '' '=== reply 2 open' 'Open.'
+  assert_contains "$OUT" "a follow-up comments only on lines added since $old (R lines): L1"
+  _pr_fu_draft "$old" '=== comment R1-2 feature.txt' 'Takes in the fix.' '' '=== reply 1 fixed' 'Fixed.' '' '=== reply 2 open' 'Open.'
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_pr_followup_survives_a_force_push() {
+  _pr_repo
+  run jig pr fetch "$_pr_url"
+  local old head
+  old=$(git rev-parse refs/jig/pr/7/head)
+  _pr_earlier "$old"
+  # The author rewrites the commit and force-pushes: the head reviewed is
+  # reachable from nothing on origin, but this clone still holds it.
+  (
+    cd ../author 2>/dev/null || { git clone -q ../origin.git ../author && cd ../author; } || exit 1
+    git fetch -q origin refs/pull/7/head
+    git checkout -q FETCH_HEAD
+    printf 'new, rewritten\n' > feature.txt
+    git add feature.txt
+    git -c user.name=a -c user.email=a@example.com commit -q --amend -m feature
+    git push -q -f origin HEAD:refs/pull/7/head
+  )
+  head=$(git -C ../origin.git rev-parse refs/pull/7/head)
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' "$head" "$(git rev-parse main)" > ../bin/api
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "reviewed: in this clone"
+  # Gone from this clone too: fetched by its id from origin, which still
+  # serves it (as a forge may after a force-push).
+  run jig pr cleanup 7
+  git reflog expire --expire=now --all
+  git gc -q --prune=now 2>/dev/null
+  if git cat-file -e "$old^{commit}" 2>/dev/null; then fail "the clone still holds $old"; fi
+  git -C ../origin.git config uploadpack.allowAnySHA1InWant true
+  run jig pr fetch "$_pr_url"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "reviewed: fetched from origin, kept at refs/jig/pr/7/reviewed"
+  assert_eq "$old" "$(git rev-parse refs/jig/pr/7/reviewed)"
+  # Gone everywhere: said so, and the threads are still to answer.
+  run jig pr cleanup 7
+  git reflog expire --expire=now --all
+  git gc -q --prune=now 2>/dev/null
+  git -C ../origin.git gc -q --prune=now 2>/dev/null
+  run jig pr fetch "$_pr_url"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "reviewed: unreachable — neither this clone nor origin has $old"
+  assert_contains "$OUT" "diff: git -C $(pwd -P) diff"
+  assert_contains "$OUT" "threads: 2 to answer"
+  assert_file_contains .git/jig/pr/7/followup "reviewed: unreachable"
+  if git rev-parse --verify --quiet refs/jig/pr/7/reviewed >/dev/null; then fail "a ref names a commit that is gone"; fi
+  # Nothing to compare against: a new comment may sit anywhere in the diff.
+  {
+    printf 'jig-pr-draft: 1\nurl: %s\nhead: %s\nfollows: %s\nlogin: alice\nlanguage: en\n\n' "$_pr_url" "$head" "$old"
+    printf '=== summary\nRead again whole.\n\n=== comment R1 feature.txt\nRewritten.\n\n=== reply 1 open\nOpen.\n\n=== reply 2 open\nOpen.\n'
+  } > ../draft.md
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 0 "$RC" "$OUT"
+}
+
 # --- GitLab -------------------------------------------------------------------
 #
 # adr-20261110-a-merge-request-review-is-posted-as-discussions: a merge request
@@ -873,6 +1191,8 @@ _pr_gl_mr() {
 # would: its note is the posted fields, by that login, `<` and `>` written
 # < and > when <dir>/escape-html exists, without its position when
 # <dir>/drop-position does; refused (exit 1) when <dir>/refuse-at holds <n>.
+# A POST to discussions/<id>/notes adds its note to the end of discussion
+# <id>'s line and answers with the note.
 # Every call goes to <dir>/calls, with whether a token variable was set.
 _pr_stub_glab() {
   local main
@@ -906,6 +1226,7 @@ done
 ep=\${ep%%\?*}
 case "\$ep" in
   user) [ -n "\$who" ] || exit 1; printf '{"id":1,"username":"%s"}\n' "\$who"; exit 0 ;;
+  projects/*/merge_requests/*/discussions/*/notes) key=notes ;;
   projects/*/merge_requests/*/diffs) key=diffs ;;
   projects/*/merge_requests/*/changes) key=changes ;;
   projects/*/merge_requests/*/discussions) key=discussions ;;
@@ -923,6 +1244,15 @@ if [ "\$method" = POST ]; then
     exit 1
   fi
   fields=\$(tail -c +2 "\$input")
+  if [ "\$key" = notes ]; then
+    did=\${ep%/notes}
+    did=\${did##*/}
+    note=\$(printf '{"id":900%s,"author":{"username":"%s"},%s' "\$n" "\$who" "\$fields")
+    NOTE="\$note" DID="\$did" awk 'index(\$0, "{\"id\":\"" ENVIRON["DID"] "\"") == 1 { \$0 = substr(\$0, 1, length(\$0) - 2) "," ENVIRON["NOTE"] "]}" } { print }' "\$d/discussions" > "\$d/discussions.new"
+    mv "\$d/discussions.new" "\$d/discussions"
+    printf '%s\n' "\$note"
+    exit 0
+  fi
   if [ -f "\$d/drop-position" ]; then fields=\$(printf '%s' "\$fields" | sed 's/,"position":{[^}]*}//'); fi
   line=\$(printf '{"id":"d%s","individual_note":false,"notes":[{"id":900%s,"author":{"username":"%s"},%s]}' "\$n" "\$n" "\$who" "\$fields")
   if [ -f "\$d/escape-html" ]; then line=\$(printf '%s' "\$line" | sed 's/</\\\\u003c/g; s/>/\\\\u003e/g'); fi
@@ -1214,4 +1544,85 @@ test_pr_gitlab_post_refuses_what_does_not_hold() {
   run jig pr comments post 7 --shown "$_pr_hash"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "already posted another version of a review of this head: $_pr_gl_url#note_5"
+}
+
+test_pr_gitlab_followup_replies_in_each_discussion() {
+  _pr_gl_repo
+  run jig pr fetch "$_pr_gl_url"
+  local old head main state=.git/jig/pr/7 top
+  old=$(git rev-parse refs/jig/pr/7/head)
+  main=$(git rev-parse main)
+  top=$(cd .. && pwd -P)
+  # alice's first review of the old head: a summary and a comment on R1, in
+  # discussions of their own; bob's reply is no marker of hers.
+  {
+    printf '{"id":"aaaa1111","individual_note":false,"notes":[{"id":501,"created_at":"2026-11-01T10:00:00.000Z","author":{"username":"alice"},"body":"Reads well.\\n\\n<!-- jig-pr-review id=h0 head=%s part=0 -->","position":null}]}\n' "$old"
+    printf '{"id":"bbbb2222","individual_note":false,"notes":[{"id":502,"created_at":"2026-11-01T10:00:01.000Z","author":{"username":"alice"},"body":"Say why.\\n\\n<!-- jig-pr-review id=h0 head=%s part=1 -->","position":{"new_path":"feature.txt","old_path":"feature.txt","new_line":1,"old_line":null}},{"id":503,"created_at":"2026-11-02T10:00:00.000Z","author":{"username":"bob"},"body":"Done, see the fix.","position":null}]}\n' "$old"
+  } > ../bin/discussions
+  # The author pushes a fix: line 2 of feature.txt.
+  git clone -q "$top/origin.git" ../author 2>/dev/null
+  (
+    cd ../author || exit 1
+    git fetch -q origin refs/merge-requests/7/head
+    git checkout -q FETCH_HEAD
+    printf 'new\nfixed\n' > feature.txt
+    git add feature.txt
+    git -c user.name=a -c user.email=a@example.com commit -q -m fix
+    git push -q origin HEAD:refs/merge-requests/7/head
+  )
+  head=$(git -C ../origin.git rev-parse refs/merge-requests/7/head)
+  _pr_gl_mr ../bin "$head" "$main"
+  printf '%s\n' '{"old_path":"feature.txt","new_path":"feature.txt","new_file":true,"renamed_file":false,"deleted_file":false,"diff":"@@ -0,0 +1,2 @@\n+new\n+fixed\n"}' \
+    '{"old_path":"old.txt","new_path":"old.txt","new_file":false,"renamed_file":false,"deleted_file":true,"diff":"@@ -1 +0,0 @@\n-old\n"}' > ../bin/diffs
+  run jig pr fetch "$_pr_gl_url"
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "follows: $old (the head alice reviewed last)"
+  assert_contains "$OUT" "threads: 1 to answer"
+  assert_contains "$OUT" "=== thread 1 R1 feature.txt
+$_pr_gl_url#note_502
+Say why."
+  assert_contains "$OUT" "=== earlier summary
+Reads well."
+  assert_not_contains "$OUT" "Done, see the fix"
+  assert_file_contains "$state/followup" "thread: 1 bbbb2222 R1 feature.txt"
+  if grep -q 'token=set' ../bin/calls; then fail "a token variable reached glab"; fi
+  {
+    printf 'jig-pr-draft: 1\nurl: %s\nhead: %s\nfollows: %s\nlogin: alice\nlanguage: en\n\n' "$_pr_gl_url" "$head" "$old"
+    printf '=== summary\nBetter.\n\n=== comment R2 feature.txt\nAnd this?\n\n=== reply 1 fixed\nFixed — исправлено.\n'
+  } > ../draft.md
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr comments check 7
+  assert_eq 0 "$RC" "$OUT"
+  local h
+  h=$(printf '%s\n' "$OUT" | sed -n 's/^hash: //p')
+  assert_contains "$OUT" "start: $main
+follows: $old
+login: alice
+event: discussions"
+  assert_contains "$OUT" "=== reply 1 fixed R1 feature.txt, thread bbbb2222"
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed: summary"
+  assert_contains "$OUT" "landed: comment R2 feature.txt at R2 feature.txt"
+  assert_contains "$OUT" "landed: reply 1 fixed R1 feature.txt, thread bbbb2222 at thread bbbb2222"
+  assert_eq 3 "$(cat ../bin/npost)"
+  assert_contains "$(cat ../bin/calls)" "--method POST projects/42/merge_requests/7/discussions/bbbb2222/notes --input"
+  _pr_valid_json ../bin/posted.3
+  assert_file_contains ../bin/posted.3 "verdict=fixed -->"
+  assert_not_contains "$(cat ../bin/posted.3)" '"position"'
+  assert_file_contains "$state/posted" "review: 9001 9002 9003"
+  # Again: nothing is missing.
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "already posted: nothing is missing"
+  assert_eq 3 "$(cat ../bin/npost)"
+  # A reply GitLab put in another discussion is not where it was shown.
+  printf '{"id":"cccc3333","individual_note":false,"notes":[{"id":601,"author":{"username":"alice"},"body":"x\\n<!-- jig-pr-review id=%s head=%s part=2 verdict=fixed -->","position":null},{"id":602,"author":{"username":"alice"},"body":"y\\n<!-- jig-pr-review id=%s head=%s part=2 verdict=fixed -->","position":null}]}\n' "$h" "$head" "$h" "$head" >> ../bin/discussions
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not where it was shown (reply 1 fixed R1 feature.txt, thread bbbb2222 at thread cccc3333)"
+  assert_eq 3 "$(cat ../bin/npost)"
 }

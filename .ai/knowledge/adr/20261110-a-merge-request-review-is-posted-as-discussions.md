@@ -9,6 +9,7 @@ paths:
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
 summary: Why jig pr posts a GitLab merge request review as one discussion per part with a base/start/head position from GitLab's diff, reads glab's JSON itself, keeps glab's own account, and counts a part landed only where it was shown.
+reviewed_at: 2026-11-10
 ---
 # A merge request review is posted as one discussion per part, read back by marker and position
 
@@ -104,6 +105,8 @@ a file, with a hidden marker, and never by a switched account. What differs:
 
 - Every comment on GitLab is a notification of its own to the author, where GitHub sends one for
   the review.
+- A follow-up's replies are later notes of a discussion, so the read-back reads every note since
+  adr-20261110-a-follow-up-answers-its-own-threads.
 - `jig pr fetch` needs `glab` for a GitLab URL, as it needs `gh` for a GitHub one, and a `glab`
   that has `--output ndjson`.
 - The state directory holds the same files as on GitHub. `payload.json` is the list of

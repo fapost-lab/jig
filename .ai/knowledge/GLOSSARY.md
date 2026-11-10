@@ -73,7 +73,15 @@ The detached git worktree at `<git.worktree_root>/.pr-<n>` that `jig pr fetch` m
 pull request's head for the `jig-pr-review` skill to read, with the head and base in
 `refs/jig/pr/<n>/`. Only read: nothing in it is run, and `jig pr cleanup` removes it with its
 refs and record (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone). Not a
-Task Worktree: no task owns it, and housekeeping leaves it alone. Informal synonyms: PR tree.
+Task Worktree: no task owns it, and housekeeping leaves it alone. A follow-up adds
+`refs/jig/pr/<n>/reviewed`, the head reviewed last. Informal synonyms: PR tree.
+
+## Follow-up
+
+A second review of a pull request after its author pushed fixes: `jig pr followup` reads the
+earlier review back from the forge's hidden markers, and the next post answers each of its open
+threads "fixed" or "still open" and comments only on what changed
+(adr-20261110-a-follow-up-answers-its-own-threads). Not a re-review of a task (`jig-review` §5).
 
 ## Directory Link
 

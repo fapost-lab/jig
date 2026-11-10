@@ -81,7 +81,9 @@ a task: `jig pr fetch <url>` reads it in a detached worktree of this clone, the 
 `jig-review`'s method with the rules taken from the base and nothing of the head run,
 `jig pr comments check` shows the review word for word as it would be posted, and only after the
 person's yes to that version does `jig pr comments post` post it — one comment-only review on
-GitHub, one discussion per comment on GitLab; `jig pr cleanup` takes it all back.
+GitHub, one discussion per comment on GitLab; `jig pr cleanup` takes it all back. After the
+author's fixes, `jig pr followup` reads that review back from the forge, and the next post answers
+each of its threads "fixed" or "still open" (not yet checked on a live pull request).
 
 The queue (`jig queue`) holds each task's priority, order and dependencies, and `jig queue next`
 advises from it. A task gets its priority when it is filed; to set priorities or order the tasks,
