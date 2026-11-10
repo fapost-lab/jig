@@ -40,8 +40,10 @@ cmd_pr() {
 # _pr_git <dir> <args>... — git in <dir> with hooks pointed at /dev/null (a file,
 # so no hook can exist under it), submodules not followed and LFS objects not
 # downloaded. No MSYS2_ARG_CONV_EXCL here: under Git Bash it would hand <dir>
-# to git as an MSYS path (`/c/Users/...`) that git cannot change into, and the
-# refspecs and ref names passed here start with `refs/`, which MSYS leaves alone.
+# to git as an MSYS path (`/c/Users/...`) that git cannot change into. The
+# refspecs passed here need none either: MSYS reads an argument as a path list
+# only where a `:` is followed by `/`, `.` or `:`, and in `refs/a:refs/b` it is
+# followed by `r`.
 _pr_git() {
   local dir="$1"
   shift
@@ -2412,10 +2414,13 @@ _pr_valid_thread() {
 }
 
 # _pr_added_ranges <from> <to> <path> — the lines git's diff of <from>..<to>
-# adds to <path> on the <to> side, as "<first> <last>;" each.
+# adds to <path> on the <to> side, as "<first> <last>;" each. Every option that
+# shapes the hunks is pinned, so the person's diff.* settings change nothing:
+# with diff.interHunkContext two hunks merge and the unchanged lines between
+# them would count as added.
 _pr_added_ranges() {
   local out line a o c d
-  out=$(_pr_git "$JIG_PROJECT" diff --no-ext-diff --no-textconv --no-color --no-renames --diff-algorithm=myers -U0 "$1" "$2" -- "$3" 2>/dev/null) || out=""
+  out=$(_pr_git "$JIG_PROJECT" diff --no-ext-diff --no-textconv --no-color --no-renames --diff-algorithm=myers --indent-heuristic --inter-hunk-context=0 -U0 "$1" "$2" -- "$3" 2>/dev/null) || out=""
   a=""
   while IFS= read -r line; do
     case "$line" in "@@ -"*) ;; *) continue ;; esac
