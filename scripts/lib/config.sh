@@ -85,9 +85,11 @@ jig_config_file() { printf '%s/%s/config.yaml\n' "$JIG_PROJECT" "$JIG_AI_DIR"; }
 # to. A worktree answers with the checkout it was added from, so one local
 # file serves every worktree of a clone, including one made after the file.
 #
-# Read from git's own files rather than `git rev-parse --git-common-dir`: cfg
-# runs in a command substitution per key, where a cached answer does not
-# survive, and the session hook promises no git on its idle path. A worktree's
+# Read from git's own files rather than `git rev-parse --git-common-dir`: the
+# answer is cached once per process for each JIG_PROJECT
+# (jig_config_clone_root_v), but a `$(cfg ...)` started before the first lookup
+# finds nothing cached and pays the search itself, and the session hook
+# promises no git on its idle path. A worktree's
 # `.git` is a file naming its git directory, and that directory's `commondir`
 # names the shared one. Anything else — a main checkout, a submodule (no
 # commondir), a separate git dir or a bare repository (common dir not named

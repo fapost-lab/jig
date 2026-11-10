@@ -11369,6 +11369,39 @@ test_status_starts_no_process_per_knowledge_document() {
   ten=$(_tl_forks status) || fail "status failed under the probe"
   [ $((six - two)) -le 1 ] || fail "4 more documents started $((six - two)) more processes (2: $two, 6: $six)"
   [ $((ten - six)) -le 1 ] || fail "4 more documents started $((ten - six)) more processes (6: $six, 10: $ten)"
+  # Stubs linking a source take the other road through km_source_states: the
+  # recorded source_hash read, every source hashed. Each batch holds one whose
+  # hash is recorded and current, one changed since and two never recorded;
+  # the first batch brings the one git process that hashes them all. What a
+  # stub still costs is pinned, not zero: jig_knowledge_read_path, the guard
+  # that keeps a source inside the repository, starts five subshells and a
+  # `dirname` per stub — a known gap, so the bound is six per stub and one more
+  # for a once-per-run record. A seventh per stub fails here.
+  local four eight
+  mkdir -p .ai/knowledge/sources docs
+  _tl_status_stubs() {
+    while [ "$i" -le "$1" ]; do
+      printf 'source %s\n' "$i" > "docs/s$i.md"
+      {
+        printf -- '---\nid: convention-s%s\ntype: convention\nstatus: active\nsource: docs/s%s.md\n' "$i" "$i"
+        case $((i % 4)) in
+          1) printf 'source_hash: %s\n' "$(git hash-object "docs/s$i.md")" ;;
+          2) printf 'source_hash: 0000000000000000000000000000000000000000\n' ;;
+        esac
+        printf -- '---\n'
+      } > ".ai/knowledge/sources/s$i.md"
+      i=$((i + 1))
+    done
+  }
+  _tl_status_stubs 14
+  four=$(_tl_forks status) || fail "status failed under the probe"
+  _tl_status_stubs 18
+  eight=$(_tl_forks status) || fail "status failed under the probe"
+  run jig knowledge sources
+  assert_contains "$OUT" "ok          .ai/knowledge/sources/s17.md"
+  assert_contains "$OUT" "changed     .ai/knowledge/sources/s18.md"
+  assert_contains "$OUT" "unrecorded  .ai/knowledge/sources/s16.md"
+  [ $((eight - four)) -le 25 ] || fail "4 more stubs started $((eight - four)) more processes (4: $four, 8: $eight)"
 }
 
 # Nearly every `jig task` command asks which task is current, and the answer
@@ -11442,6 +11475,37 @@ test_upgrade_dry_run_starts_no_process_per_link_in_place() {
   # Three per profile: its source directory, its place, and the source's
   # physical path. One more for a once-per-run record.
   [ $((five - one)) -le 13 ] || fail "4 more linked profiles started $((five - one)) more processes (2: $one, 6: $five)"
+}
+
+# Every skill of the framework is a link per adapter, and a link in place is
+# known by the file system alone (_init_place_symlink's `-ef`): more skills
+# start no more processes. The skills are grown in a copy of the framework,
+# run from that copy so a plain upgrade reads from it (upgrade_source).
+test_upgrade_dry_run_starts_no_process_per_skill_link_in_place() {
+  skip_unless_symlinks
+  mkdir src project
+  cp -R "$JIG_HOME"/. src/ || fail "could not copy the framework"
+  cd project || fail "no project directory"
+  fixture_repo
+  local bin="$PWD/../src/scripts/jig" n=0 four eight
+  "$bin" init --from "$PWD/../src" --link >/dev/null || fail "init --link failed"
+  _tl_link_skills() {
+    while [ "$n" -lt "$1" ]; do
+      n=$((n + 1))
+      mkdir -p "../src/skills/extra-$n"
+      printf -- '---\nname: extra-%s\ndescription: x\n---\n' "$n" > "../src/skills/extra-$n/SKILL.md"
+    done
+    "$bin" upgrade >/dev/null || fail "upgrade failed with $1 extra skills"
+  }
+  _tl_link_skills 4
+  JIG_BIN=$bin _tl_forks upgrade --dry-run >/dev/null || fail "upgrade --dry-run failed under the probe"
+  four=$(JIG_BIN=$bin _tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  _tl_link_skills 8
+  eight=$(JIG_BIN=$bin _tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  [ -L .claude/skills/extra-8 ] || fail "the added skills were not linked"
+  # Four more skills are four more links per adapter; one more process is
+  # allowed for a once-per-run record.
+  [ $((eight - four)) -le 1 ] || fail "4 more skills started $((eight - four)) more processes (4: $four, 8: $eight)"
 }
 
 # _ts_lib — run the rest of the arguments as a script with the libraries a

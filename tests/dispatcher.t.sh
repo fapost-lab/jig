@@ -496,6 +496,38 @@ EOF
   assert_eq "9d|$main_root" "$OUT"
 }
 
+# The clone root is found once per process and kept under the JIG_PROJECT it
+# was found for (jig_config_clone_root_v): a command that goes on to read
+# another checkout (`status --json`, _task_touched_in) is answered for that
+# one, local file included, never with the first checkout's cached root.
+test_clone_root_follows_a_change_of_checkout_within_one_process() {
+  mkdir repo other
+  (cd other && fixture_repo && mkdir -p .ai \
+    && printf 'housekeeping.cadence: 3d\n' > .ai/config.local.yaml) || fail "setup other"
+  cd repo || fail "setup"
+  fixture_repo
+  mkdir -p .ai
+  printf 'housekeeping.cadence: 9d\n' > .ai/config.local.yaml
+  git worktree add -q ../wt -b wtbranch >/dev/null
+  local main_root other_root
+  main_root=$(pwd -P)
+  other_root=$(cd ../other && pwd -P)
+
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    for dir in ../wt ../other ../wt; do
+      JIG_PROJECT=$(cd "$dir" && pwd -P)
+      jig_config_clone_root_v root
+      printf "%s|%s\n" "$root" "$(cfg housekeeping.cadence)"
+    done
+  '
+  assert_eq 0 "$RC"
+  assert_eq "$main_root|9d
+$other_root|3d
+$main_root|9d" "$OUT"
+}
+
 # --- JIG_CFG_LOCAL_ONLY_KEYS: agent.git (design.md, .ai/specs/autopilot/) ----
 # A value committed to .ai/config.yaml would hand every contributor's agent
 # the same git rights, so `cfg` must never read `agent.git` from the project
