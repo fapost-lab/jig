@@ -2101,8 +2101,8 @@ spec_epic_unmerged_tasks() {
 
 # spec_leftovers <spec-dir> — what removing the spec would lose, one line each:
 # `item: <text>` for every unchecked roadmap item, fog included, and
-# `question: <text>` / `assumption: <text>` for every entry of the spec's
-# "Open questions" and "Assumptions left untested" sections. The template's own
+# `question: <text>` / `aside: <text>` / `assumption: <text>` for every entry of
+# the spec's "Open questions", "Set aside" and "Assumptions left untested" sections. The template's own
 # `<placeholder>` entries are not leftovers. Only the first line of a wrapped
 # entry is printed: enough to name it.
 spec_leftovers() {
@@ -2116,6 +2116,7 @@ spec_leftovers() {
   if [ -f "$dir/spec.md" ]; then
     awk '
       /^## / { kind = ""; if ($0 ~ /^## Open questions[[:space:]]*$/) kind = "question"
+               else if ($0 ~ /^## Set aside[[:space:]]*$/) kind = "aside"
                else if ($0 ~ /^## Assumptions left untested[[:space:]]*$/) kind = "assumption"; next }
       kind != "" && /^[-*][[:space:]]+/ {
         t = $0; sub(/^[-*][[:space:]]+/, "", t)

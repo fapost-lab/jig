@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - "skills/jig-idea/**"
 summary: Why jig spec new and the new jig spec resume cut a spec's own branch (spec/<id>) instead of leaving it uncommitted on the default branch until spec ship.
-reviewed_at: 2026-09-30
+reviewed_at: 2026-11-10
 ---
 # A spec lives on its own branch from the first minute
 
@@ -93,3 +93,18 @@ in `task.sh`, reading `git status --porcelain` the same way `jig_tracked_changes
   to it; two (`sship_declared`, `sship_cut`) instead build the spec directory by hand,
   deliberately bypassing `spec new`, to keep `spec_ship_declare`'s own hand-authored-on-main
   fallback covered.
+
+> **Amendment (2026-11-10).** The decision stands — a spec is cut onto `spec/<id>` at the point it
+> starts being written — but for a new idea that point moved. `jig-idea` no longer opens with
+> `jig spec new`: the conversation comes first, in circles of rounds, and nothing is written,
+> committed or pushed until the human says to write it down (§7). `spec new` runs then, the files
+> are filled in, and §9 ships once. The consequence above, "§1 opens every session — new or
+> existing spec — with the branch already switched", now holds for an existing spec only, which
+> `spec resume` still switches before anything is read; its files too are edited only after the
+> yes. The trap this ADR closes stays closed, because before `spec new` there is nothing on disk
+> to leave uncommitted on the default branch. Why: a spec written and shipped while the idea was
+> still being shaped had to be amended, committed and pushed again each time the human took the
+> thought further. Rejected: writing as you go on `spec/<id>` and holding only the ship — one rule
+> for a new and an existing spec is simpler, and the summary that closes every circle already
+> holds what would be written. Until a draft outside the spec exists, a conversation that stops
+> before the yes leaves nothing on disk; the skill says so and offers to write what is settled.

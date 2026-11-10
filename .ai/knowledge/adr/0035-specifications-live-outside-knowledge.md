@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
 summary: Why plans for work larger than one task are committed under .ai/specs/, never resolved as knowledge, and carry no status.
-reviewed_at: 2026-10-29
+reviewed_at: 2026-11-10
 ---
 # ADR-0035: Specifications are committed plans under `.ai/specs/`, outside knowledge, with no status
 
@@ -146,3 +146,7 @@ so it cannot live where everything is read as describing it.
 > `jig context resolve` then lists the spec's `spec.md` and `roadmap.md` on `linked:` lines — the
 > work points at it, as above, now across a repository boundary
 > (adr-20261029-a-task-reads-a-neighbouring-repository-through-a-link).
+
+> **Amendment (2026-11-10).** A spec's leftovers now include the entries of its "Set aside" section
+> — what the human liked and put off, and the directions the conversation saw and did not open —
+> next to open questions and untested assumptions: a human decides each before the spec goes.

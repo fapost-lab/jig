@@ -2023,7 +2023,7 @@ test_spec_close_refuses_a_spec_with_conflicting_epic_lines() {
 }
 
 # spec_leftovers (AC-01): unchecked roadmap items, fog included, and the
-# spec's own Open questions / Assumptions left untested bullets; the
+# spec's own Open questions / Set aside / Assumptions left untested bullets; the
 # template's `<placeholder>` bullets are never leftovers, and bullets under
 # any other heading (e.g. Decisions) are never counted.
 test_spec_close_lists_leftovers_including_fog_and_skips_placeholders() {
@@ -2054,6 +2054,13 @@ EOF
 - Real open question — what depends on it.
 - <placeholder question> — what depends on it.
 
+## Set aside
+
+- Real parked idea — set aside because later.
+- unexplored: a direction nobody opened.
+- <placeholder aside> — set aside because <reason>.
+- <unexplored: placeholder direction.>
+
 ## Assumptions left untested
 
 - Real assumption — untested.
@@ -2062,6 +2069,10 @@ EOF
 
   run jig spec close alpha
   assert_eq 1 "$RC"
+  assert_contains "$OUT" "  aside: Real parked idea — set aside because later."
+  assert_contains "$OUT" "  aside: unexplored: a direction nobody opened."
+  assert_not_contains "$OUT" "placeholder aside"
+  assert_not_contains "$OUT" "placeholder direction"
   assert_contains "$OUT" "  item: \`T-1\` — do the thing"
   assert_contains "$OUT" "  item: plain item not filed"
   assert_contains "$OUT" "  item: fog: something uncertain"
