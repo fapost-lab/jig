@@ -44,12 +44,26 @@ _pr_repo() {
   unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
 }
 
-# _pr_stub_gh <dir> <head> — a gh that answers `api` with <dir>/api (base,
-# head, state; tab-separated) and `auth status` with <dir>/auth, and logs
-# every call to <dir>/calls.
+# _pr_stub_gh <dir> <head> — a gh that stands in for GitHub. `auth status`
+# prints <dir>/auth; `auth token --user <login>` prints `tok-<login>` for an
+# account <dir>/auth names. `api` answers each endpoint with a file of <dir>
+# holding what its --jq filter would print — `api` (the pull request), `repo`,
+# `compare`, `files`, `reviews`, `comments`; `<file>.<login>` first, the
+# login being the one the token in GH_TOKEN stands for — and `user` with that
+# login. A POST copies its --input file to <dir>/posted.<n>.<endpoint>, prints
+# 900<n> as the new id, and lands every <dir>/*.landed file (the read-back
+# after it). Every call goes to <dir>/calls and each filter to <dir>/jq.<file>.
 _pr_stub_gh() {
+  local main
   mkdir -p "$1"
-  printf 'main\t%s\topen\n' "$2" > "$1/api"
+  main=$(git rev-parse main)
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' "$2" "$main" > "$1/api"
+  printf 'false true true false false false\n' > "$1/repo"
+  printf '%s\n' "$main" > "$1/compare"
+  printf 'F\tadded\t1\t1\nN\tfeature.txt\nH\t@@ -0,0 +1 @@\nF\tremoved\t1\t1\nN\told.txt\nH\t@@ -1 +0,0 @@\n' > "$1/files"
+  : > "$1/reviews"
+  : > "$1/comments"
+  printf 'alice\n' > "$1/active"
   cat > "$1/auth" <<'EOF'
 github.com
   ✓ Logged in to github.com account alice (keyring)
@@ -59,9 +73,71 @@ EOF
 #!/bin/sh
 d='$1'
 printf '%s\n' "\$*" >> "\$d/calls"
+tok="\${GH_TOKEN:-\${GH_ENTERPRISE_TOKEN:-}}"
+case "\$tok" in
+  tok-*) who=\${tok#tok-} ;;
+  '') who=\$(cat "\$d/active") ;;
+  *) who=\$(cat "\$d/envlogin" 2>/dev/null || echo env) ;;
+esac
 case "\$1" in
-  api) cat "\$d/api" ;;
-  auth) cat "\$d/auth"; exit 1 ;;
+  auth)
+    case "\$2" in
+      status) cat "\$d/auth"; exit 1 ;;
+      token)
+        shift 2
+        user=""
+        while [ \$# -gt 0 ]; do
+          case "\$1" in --user) user="\$2"; shift 2 ;; *) shift ;; esac
+        done
+        [ ! -f "\$d/old-gh" ] || exit 1
+        grep -q "account \$user " "\$d/auth" || exit 1
+        printf 'tok-%s\n' "\$user"
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  api)
+    shift
+    method=GET input="" ep="" jq=""
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        --hostname) shift 2 ;;
+        --jq) jq="\$2"; shift 2 ;;
+        --method) method="\$2"; shift 2 ;;
+        --input) input="\$2"; shift 2 ;;
+        --paginate) shift ;;
+        *) ep="\$1"; shift ;;
+      esac
+    done
+    ep=\${ep%%\?*}
+    case "\$ep" in
+      user) printf '%s\n' "\$who"; exit 0 ;;
+      repos/*/*/pulls/*/files) key=files ;;
+      repos/*/*/pulls/*/reviews) key=reviews ;;
+      repos/*/*/pulls/*/comments) key=comments ;;
+      repos/*/*/compare/*) key=compare ;;
+      repos/*/*/pulls/*) key=api ;;
+      repos/*/*) key=repo ;;
+      *) exit 1 ;;
+    esac
+    printf '%s\n' "\$jq" > "\$d/jq.\$key"
+    if [ "\$method" = POST ]; then
+      n=\$(cat "\$d/npost" 2>/dev/null || echo 0)
+      n=\$((n + 1))
+      echo "\$n" > "\$d/npost"
+      cp "\$input" "\$d/posted.\$n.\$key"
+      if [ -f "\$d/refuse-post" ]; then echo 'HTTP 422: Unprocessable Entity' >&2; exit 1; fi
+      for f in "\$d"/*.landed; do
+        if [ -f "\$f" ]; then mv "\$f" "\${f%.landed}"; fi
+      done
+      echo "900\$n"
+      exit 0
+    fi
+    if [ -f "\$d/\$key.\$who" ]; then cat "\$d/\$key.\$who"
+    elif [ -f "\$d/\$key" ]; then cat "\$d/\$key"
+    else exit 1
+    fi
+    ;;
   *) exit 1 ;;
 esac
 STUB
@@ -237,7 +313,12 @@ github.com
 EOF
   run jig pr fetch "$_pr_url"
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "login: ask (several accounts: alice bob; active: alice)"
+  assert_contains "$OUT" "login: ask (several accounts may comment: alice bob; active: alice)"
+  # The right to comment, not to read: on a public repository bob reads, as
+  # everybody does, and is not proposed.
+  printf 'false true false false false false\n' > ../bin/repo.bob
+  run jig pr fetch "$_pr_url"
+  assert_contains "$OUT" "login: alice"
   printf 'github.com\n  ✓ Logged in to github.com account alice (keyring)\n' > ../bin/auth
   GH_TOKEN=secret run jig pr fetch "$_pr_url"
   assert_contains "$OUT" "login: ask (GH_TOKEN in the environment overrides every gh account)"
@@ -322,6 +403,345 @@ test_pr_draft_needs_a_fetch_first() {
   run jig pr draft 7 --from ../draft.md
   assert_eq 1 "$RC"
   assert_contains "$OUT" "pull request 7 is not fetched here"
+}
+
+# --- comments: check ------------------------------------------------------------
+
+# _pr_checked <draft lines>... — fetch, keep a draft with these blocks after
+# the summary, and check it; the hash check printed in _pr_hash.
+_pr_hash=""
+_pr_checked() {
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  _pr_draft_file "$@"
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr comments check 7
+  assert_eq 0 "$RC" "$OUT"
+  _pr_hash=$(printf '%s\n' "$OUT" | sed -n 's/^hash: //p')
+  [ -n "$_pr_hash" ] || fail "check printed no hash: $OUT"
+}
+
+# _pr_valid_json <file> — the file is one JSON value, when a tool is here to
+# say so.
+_pr_valid_json() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -e . < "$1" >/dev/null || fail "not valid JSON: $(cat "$1")"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1" || fail "not valid JSON: $(cat "$1")"
+  fi
+}
+
+test_pr_comments_check_places_comments_and_prints_what_will_be_posted() {
+  _pr_repo
+  # shellcheck disable=SC2016 # a literal backtick: the text a review is made of
+  _pr_checked '=== comment R1 feature.txt' 'Say "why", with a `tick` and a \ backslash.' '' \
+    '=== comment L1 old.txt' 'Gone — на самом деле?' '' \
+    '=== comment R5 feature.txt' 'Outside the diff.' '' \
+    '=== personal R1 feature.txt' 'My own rule.'
+  local head state
+  head=$(git rev-parse refs/jig/pr/7/head)
+  state=.git/jig/pr/7
+  assert_contains "$OUT" "jig-pr-post: 1
+url: $_pr_url
+head: $head
+login: alice
+event: COMMENT
+
+=== summary
+Reads well."
+  assert_contains "$OUT" "**R5 \`feature.txt\`**
+
+Outside the diff."
+  assert_contains "$OUT" "=== comment R1 feature.txt
+Say \"why\""
+  assert_contains "$OUT" "=== comment L1 old.txt"
+  assert_contains "$OUT" "<!-- jig-pr-review id=$_pr_hash head=$head part=0 -->"
+  assert_contains "$OUT" "<!-- jig-pr-review id=$_pr_hash head=$head part=2 -->"
+  assert_not_contains "$OUT" "My own rule"
+  assert_contains "$OUT" "moved into the summary: 1 comment(s)"
+  assert_contains "$OUT" "left out: 1 personal block(s)"
+  assert_file "$state/payload.json"
+  _pr_valid_json "$state/payload.json"
+  assert_file_contains "$state/payload.json" "\"commit_id\":\"$head\",\"event\":\"COMMENT\""
+  assert_file_contains "$state/payload.json" '"path":"old.txt"'
+  assert_file_contains "$state/payload.json" '"line":1,"side":"LEFT"'
+  # shellcheck disable=SC2016 # the same backtick, escaped as JSON
+  assert_contains "$(cat "$state/payload.json")" 'Say \"why\", with a `tick` and a \\ backslash.'
+  assert_file_contains "$state/shown" "hash: $_pr_hash"
+  # The same draft and the same diff are the same version.
+  run jig pr comments check 7
+  assert_contains "$OUT" "hash: $_pr_hash"
+  # Nothing was posted, and no token reached an argument.
+  if grep -q 'POST' ../bin/calls; then fail "check posted"; fi
+  if grep -q 'tok-' ../bin/calls; then fail "a token was an argument"; fi
+  if grep -q 'auth switch' ../bin/calls; then fail "the active account was switched"; fi
+}
+
+test_pr_comments_check_maps_renames_and_ranges_from_githubs_diff() {
+  _pr_repo
+  # GitHub's diff: old.txt renamed to feature.txt, two hunks, and a binary
+  # file it shows no patch for.
+  printf 'F\trenamed\t9\t1\nN\tfeature.txt\nO\told.txt\nH\t@@ -1,3 +1,4 @@ func\nH\t@@ -10,2 +11,3 @@\nF\tadded\t0\t0\nN\tlogo.png\nF\trenamed\t0\t0\nN\tb.txt\nO\ta.txt\nF\tmodified\t5000\t0\nN\tbig.txt\n' > ../bin/files
+  _pr_checked '=== comment L1-2 old.txt' 'Old lines.' '' '=== comment R2-4 feature.txt' 'New lines.' '' \
+    '=== comment R3-12 feature.txt' 'Across two hunks.' '' '=== comment R12 feature.txt' 'Second hunk.'
+  local state=.git/jig/pr/7
+  assert_contains "$OUT" "=== comment L1-2 feature.txt"
+  assert_contains "$OUT" "=== comment R2-4 feature.txt"
+  assert_contains "$OUT" "=== comment R12 feature.txt"
+  assert_contains "$OUT" "**R3-12 \`feature.txt\`**"
+  assert_contains "$OUT" "Not in GitHub's diff, so not commented on: \`logo.png\`, \`big.txt\`."
+  assert_file_contains "$state/payload.json" '"path":"feature.txt","body":"Old lines.'
+  assert_file_contains "$state/payload.json" '"line":2,"side":"LEFT","start_line":1,"start_side":"LEFT"'
+  assert_file_contains "$state/payload.json" '"line":4,"side":"RIGHT","start_line":2,"start_side":"RIGHT"'
+  assert_file_contains "$state/payload.json" '"line":12,"side":"RIGHT"}'
+  _pr_valid_json "$state/payload.json"
+}
+
+test_pr_comments_check_names_the_files_github_does_not_list() {
+  _pr_repo
+  # GitHub lists one of the two files the pull request changes.
+  printf 'F\tadded\t1\t1\nN\tfeature.txt\nH\t@@ -0,0 +1 @@\n' > ../bin/files
+  _pr_checked
+  assert_contains "$OUT" "Not in GitHub's diff, so not commented on: \`old.txt\`."
+}
+
+test_pr_comments_check_refuses_what_does_not_hold() {
+  _pr_repo
+  _pr_checked
+  local head
+  head=$(git rev-parse refs/jig/pr/7/head)
+  # The head moved on GitHub since the review.
+  cp ../bin/api ../bin/api.kept
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' 0123456789012345678901234567890123456789 "$(git rev-parse main)" > ../bin/api
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "moved since it was reviewed"
+  cp ../bin/api.kept ../bin/api
+  # GitHub's diff starts elsewhere.
+  cp ../bin/compare ../bin/compare.kept
+  printf '%s\n' "$head" > ../bin/compare
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitHub's diff starts at $head"
+  cp ../bin/compare.kept ../bin/compare
+  # The login cannot see the repository.
+  printf 'true false false false false false\n' > ../bin/repo.alice
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "alice cannot reach acme/widget"
+  # It reads, but the conversation is locked.
+  printf 'false true false false false false\n' > ../bin/repo.alice
+  printf 'main\t%s\topen\t%s\ttrue\t2\n' "$head" "$(git rev-parse main)" > ../bin/api
+  run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is locked"
+  cp ../bin/api.kept ../bin/api
+  rm ../bin/repo.alice
+  # The token in hand is somebody else's.
+  rm .git/jig/pr/7/shown
+  printf 'mallory\n' > ../bin/envlogin
+  printf 'github.com\n  ✓ Logged in to github.com account carol (keyring)\n' > ../bin/auth
+  touch ../bin/old-gh
+  GH_TOKEN=secret run jig pr comments check 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the token for alice answers as mallory"
+  assert_not_contains "$OUT" "secret"
+  assert_no_file .git/jig/pr/7/shown
+}
+
+# --- comments: post -------------------------------------------------------------
+
+# _pr_landed <hash> <parts>... — what GitHub will hold after the next POST:
+# the summary's review and comments 1.. with their markers, by alice.
+_pr_landed() {
+  local h="$1" head k
+  shift
+  head=$(git rev-parse refs/jig/pr/7/head)
+  : > ../bin/reviews.landed
+  : > ../bin/comments.landed
+  for k in "$@"; do
+    if [ "$k" = 0 ]; then
+      printf '9001\talice\tid=%s head=%s part=0\t%s#pullrequestreview-9001\n' "$h" "$head" "$_pr_url" >> ../bin/reviews.landed
+    else
+      printf '%s\talice\tid=%s head=%s part=%s\t1\tRIGHT\tnull\t%s#discussion_r%s\tfeature.txt\n' "$k" "$h" "$head" "$k" "$_pr_url" "$k" >> ../bin/comments.landed
+    fi
+  done
+}
+
+test_pr_comments_post_posts_the_shown_version_once_and_reads_it_back() {
+  _pr_repo
+  _pr_checked '=== comment R1 feature.txt' 'Say why.' '' '=== comment L1 old.txt' 'Gone?'
+  local state=.git/jig/pr/7
+  _pr_landed "$_pr_hash" 0 1 2
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "posted as: alice"
+  assert_contains "$OUT" "review: $_pr_url#pullrequestreview-9001"
+  assert_contains "$OUT" "landed: summary"
+  assert_contains "$OUT" "landed: comment R1 feature.txt at RIGHT 1 feature.txt"
+  assert_contains "$OUT" "landed: comment L1 old.txt at"
+  # One review, its body the payload check wrote, sent as a file.
+  assert_eq 1 "$(cat ../bin/npost)"
+  assert_eq "$(cat "$state/payload.json")" "$(cat ../bin/posted.1.reviews)"
+  _pr_valid_json ../bin/posted.1.reviews
+  assert_contains "$(cat ../bin/calls)" "--method POST repos/acme/widget/pulls/7/reviews --input"
+  assert_file_contains "$state/posted" "review: 9001"
+  if grep -q 'tok-' ../bin/calls; then fail "a token was an argument"; fi
+  if grep -q 'auth switch' ../bin/calls; then fail "the active account was switched"; fi
+  # Again: everything is there, nothing is posted twice.
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "already posted: nothing is missing"
+  assert_eq 1 "$(cat ../bin/npost)"
+}
+
+test_pr_comments_post_refuses_anything_but_the_version_shown() {
+  _pr_repo
+  run jig pr fetch "$_pr_url"
+  _pr_draft_file '=== comment R1 feature.txt' 'Say why.'
+  run jig pr draft 7 --from ../draft.md
+  run jig pr comments post 7 --shown 0123
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "nothing was shown for pull request 7"
+  run jig pr comments check 7
+  local h
+  h=$(printf '%s\n' "$OUT" | sed -n 's/^hash: //p')
+  run jig pr comments post 7
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--shown <hash> is required"
+  run jig pr comments post 7 --shown 0123
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "0123 is not the version shown last ($h)"
+  # The draft changed after it was shown.
+  _pr_draft_file '=== comment R1 feature.txt' 'Say why, edited.'
+  run jig pr draft 7 --from ../draft.md
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "is not what was shown ($h)"
+  # The head moved after it was shown.
+  _pr_draft_file '=== comment R1 feature.txt' 'Say why.'
+  run jig pr draft 7 --from ../draft.md
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' 0123456789012345678901234567890123456789 "$(git rev-parse main)" > ../bin/api
+  run jig pr comments post 7 --shown "$h"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "moved since it was reviewed"
+  assert_no_file ../bin/npost "something was posted"
+}
+
+test_pr_comments_post_posts_only_what_is_missing_after_a_half_done_post() {
+  _pr_repo
+  _pr_checked '=== comment R1 feature.txt' 'Say why.' '' '=== comment L1 old.txt' 'Gone?'
+  # The summary and comment 1 landed; the answer was lost.
+  _pr_landed "$_pr_hash" 0 1
+  mv ../bin/reviews.landed ../bin/reviews
+  mv ../bin/comments.landed ../bin/comments
+  _pr_landed "$_pr_hash" 0 1 2
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq 1 "$(cat ../bin/npost)"
+  assert_file ../bin/posted.1.comments
+  _pr_valid_json ../bin/posted.1.comments
+  assert_file_contains ../bin/posted.1.comments '"path":"old.txt"'
+  assert_file_contains ../bin/posted.1.comments "\"commit_id\":\"$(git rev-parse refs/jig/pr/7/head)\""
+  assert_file_contains ../bin/posted.1.comments "part=2 -->"
+  assert_contains "$OUT" "landed: summary"
+  # A post that leaves a part missing says so and how to finish it.
+  rm -f ../bin/npost ../bin/posted.*
+  _pr_landed "$_pr_hash" 0
+  mv ../bin/reviews.landed ../bin/reviews
+  mv ../bin/comments.landed ../bin/comments
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "missing: comment R1 feature.txt"
+  assert_contains "$OUT" "half-done: 1 of 3 parts landed; run jig pr comments post 7 --shown $_pr_hash again"
+}
+
+test_pr_comments_post_refuses_where_a_retry_could_duplicate() {
+  _pr_repo
+  _pr_checked '=== comment R1 feature.txt' 'Say why.'
+  local head
+  head=$(git rev-parse refs/jig/pr/7/head)
+  # Another version of a review of this head, by the same login, is there.
+  printf '8001\talice\tid=%s head=%s part=0\t%s#pullrequestreview-8001\n' 0000 "$head" "$_pr_url" > ../bin/reviews
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already posted another version of a review of this head: $_pr_url#pullrequestreview-8001"
+  # A half-done other version left only a comment.
+  : > ../bin/reviews
+  printf '3\talice\tid=%s head=%s part=1\t1\tRIGHT\tnull\t%s#discussion_r3\tfeature.txt\n' 0000 "$head" "$_pr_url" > ../bin/comments
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already posted another version of a review of this head: $_pr_url#discussion_r3"
+  : > ../bin/comments
+  # By somebody else, it is not ours to count.
+  printf '8001\tbob\tid=%s head=%s part=0\t%s#pullrequestreview-8001\n' 0000 "$head" "$_pr_url" > ../bin/reviews
+  # GitHub refuses the review: nothing landed, and it says why.
+  touch ../bin/refuse-post
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "HTTP 422"
+  assert_contains "$OUT" "nothing landed on $_pr_url"
+  assert_no_file .git/jig/pr/7/posted
+  # GitHub took it, but no marker came back: never post again blindly.
+  rm ../bin/refuse-post
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "GitHub took review 9002, but none of its markers came back"
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "this version was posted as review 9002, but GitHub shows none of its markers"
+  assert_eq 2 "$(cat ../bin/npost)"
+}
+
+# Runs one of the filters jig gave gh through the system jq. jq.exe on Windows ends its lines in
+# CRLF; jig strips that CR from gh's output, so the comparison strips it too.
+_pr_jq() {
+  jq -r "$(cat "$1")" | tr -d '\r'
+}
+
+test_pr_comments_filters_print_what_the_stub_stands_in_for() {
+  command -v jq >/dev/null 2>&1 || skip "jq is not here to run gh's filters"
+  _pr_repo
+  _pr_checked '=== comment R1 feature.txt' 'Say why.'
+  local head
+  head=$(git rev-parse refs/jig/pr/7/head)
+  # The filters jig gave gh, run over what GitHub answers.
+  printf '[{"filename":"b.txt","previous_filename":"a.txt","status":"renamed","changes":3,"patch":"@@ -1,2 +1,3 @@ x\\n a\\n+b\\n@@ -9 +10 @@\\n-c\\n+d"},{"filename":"logo.png","status":"added","changes":0},{"filename":"big.txt","status":"modified","changes":900}]' > ../files.json
+  assert_eq "$(printf 'F\trenamed\t3\t1\nN\tb.txt\nO\ta.txt\nH\t@@ -1,2 +1,3 @@ x\nH\t@@ -9 +10 @@\nF\tadded\t0\t0\nN\tlogo.png\nF\tmodified\t900\t0\nN\tbig.txt')" \
+    "$(_pr_jq ../bin/jq.files < ../files.json)"
+  printf '{"base":{"ref":"main","sha":"b1"},"head":{"sha":"%s"},"state":"open","locked":false,"changed_files":3}' "$head" > ../pull.json
+  assert_eq "$(printf 'main\t%s\topen\tb1\tfalse\t3' "$head")" "$(_pr_jq ../bin/jq.api < ../pull.json)"
+  printf '{"private":false,"permissions":{"admin":false,"maintain":false,"push":true,"triage":false,"pull":true}}' > ../repo.json
+  assert_eq "false true true false false false" "$(_pr_jq ../bin/jq.repo < ../repo.json)"
+  printf '{"merge_base_commit":{"sha":"m1"}}' > ../compare.json
+  assert_eq "m1" "$(_pr_jq ../bin/jq.compare < ../compare.json)"
+  _pr_landed "$_pr_hash" 0 1
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  printf '[{"id":5,"user":{"login":"alice"},"body":"Text\\n\\n<!-- jig-pr-review id=h1 head=h2 part=0 -->","html_url":"u5"},{"id":6,"user":{"login":"bob"},"body":null,"html_url":"u6"}]' > ../reviews.json
+  assert_eq "$(printf '5\talice\tid=h1 head=h2 part=0\tu5')" "$(_pr_jq ../bin/jq.reviews < ../reviews.json)"
+  printf '[{"id":7,"user":{"login":"alice"},"body":"x\\n\\n<!-- jig-pr-review id=h1 head=h2 part=1 -->","line":4,"side":"LEFT","start_line":2,"html_url":"u7","path":"a b.txt"},{"id":8,"user":{"login":"alice"},"body":"plain","line":1,"side":"RIGHT","start_line":null,"html_url":"u8","path":"c"}]' > ../comments.json
+  assert_eq "$(printf '7\talice\tid=h1 head=h2 part=1\t4\tLEFT\t2\tu7\ta b.txt')" "$(_pr_jq ../bin/jq.comments < ../comments.json)"
+}
+
+test_pr_cleanup_takes_back_what_check_and_post_wrote() {
+  _pr_repo
+  _pr_checked '=== comment R1 feature.txt' 'Say why.'
+  _pr_landed "$_pr_hash" 0 1
+  run jig pr comments post 7 --shown "$_pr_hash"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file .git/jig/pr/7/posted
+  printf 'x\n' > .git/jig/pr/7/part-3.json
+  printf 'mine\n' > .git/jig/pr/7/part-2-notes.json
+  run jig pr cleanup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file .git/jig/pr/7/part-3.json
+  assert_file .git/jig/pr/7/part-2-notes.json "cleanup deleted a file jig did not write"
+  assert_contains "$OUT" "holds files jig did not write"
+  rm .git/jig/pr/7/part-2-notes.json
+  run jig pr cleanup 7
+  assert_no_file .git/jig/pr/7
 }
 
 # --- list and cleanup ---------------------------------------------------------

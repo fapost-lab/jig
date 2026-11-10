@@ -79,8 +79,9 @@ stop the upgrade is named to the person, never worked around.
 
 `jig-pr-review` reviews a colleague's pull request that is not a task: `jig pr fetch <url>`
 reads it in a detached worktree of this clone, the review follows `jig-review`'s method with the
-rules taken from the base and nothing of the head run, and the comments are shown as a draft
-word for word (`jig pr draft`) before anything is posted; `jig pr cleanup` takes it all back.
+rules taken from the base and nothing of the head run, `jig pr comments check` shows the review
+word for word as it would be posted, and only after the person's yes to that version does
+`jig pr comments post` post it, as one comment-only review; `jig pr cleanup` takes it all back.
 
 The queue (`jig queue`) holds each task's priority, order and dependencies, and `jig queue next`
 advises from it. A task gets its priority when it is filed; to set priorities or order the tasks,
