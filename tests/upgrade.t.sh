@@ -2576,6 +2576,28 @@ test_upgrade_land_takes_no_other_argument() {
 }
 
 # GitLab answers as a merge request, whose own web_url follows its author's.
+# On GitHub the pull request is asked about under the clone's account: one gh
+# does not hold is a refusal before anything is asked or changed.
+test_upgrade_land_refuses_a_github_account_gh_does_not_hold() {
+  local head_before
+  _land_project merged
+  PATH=$LAND_PATH
+  git remote set-url origin https://github.com/example/example.git
+  jig config set --local github.account dave >/dev/null
+  head_before=$(git rev-parse HEAD)
+
+  run jig upgrade --land
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "upgrade --land:"
+  assert_contains "$OUT" "github.account is dave"
+  assert_eq "$head_before" "$(git rev-parse HEAD)" "HEAD moved"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/jig/upgrade-9.9.9 || fail "the upgrade branch was let go"
+  assert_eq "0" "$(grep -c '^pr list' stub-bin/calls || true)" "the forge was asked about pull requests"
+
+  rm -rf "$LAND_REMOTE"
+}
+
 test_upgrade_land_asks_gitlab_for_the_merge_request() {
   _land_project merged "" gitlab
   PATH=$LAND_PATH

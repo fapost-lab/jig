@@ -730,7 +730,8 @@ _hk_forge_init() {
 
   case "$_HK_FORGE_KIND" in
     github)
-      _HK_FORGE_PRS=$(gh pr list --state all --limit 200 \
+      jig_gh_prepare housekeeping
+      _HK_FORGE_PRS=$(jig_gh pr list --state all --limit 200 \
         --json headRefName,baseRefName,state,headRefOid,url \
         --jq '.[] | "\(.headRefName)\t\(.baseRefName)\t\(.state)\t\(.headRefOid)\t\(.url)"' 2>/dev/null || printf '__failed__')
       ;;
@@ -777,7 +778,7 @@ _hk_forge_init() {
 _hk_forge_ci() {
   [ "$_HK_FORGE_KIND" = github ] || return 0
   # shellcheck disable=SC2016 # $c is the --jq expression's variable, not the shell's
-  gh pr list --state open --limit 200 \
+  jig_gh pr list --state open --limit 200 \
     --json headRefName,baseRefName,statusCheckRollup \
     --jq '.[] | [.statusCheckRollup // []
           | group_by((.workflowName // "") + "/" + (.name // .context // ""))[]

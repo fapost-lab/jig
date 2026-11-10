@@ -216,6 +216,7 @@ _status_report() {
   _status_config_local
   _status_agent_git
   _status_autopilot_git
+  _status_github_account
   _status_notify
 
   if manifest_exists; then
@@ -3138,6 +3139,21 @@ $(jig_notify_failing)
 EOF
   [ -n "$at" ] || return 0
   printf 'notify: Telegram messages are failing: %s (%s, %s)\n' "$why" "$who" "$at"
+}
+
+# _status_github_account — one line while Jig itself chose, among several, the
+# gh account this clone asks GitHub as (jig_gh_resolve, common.sh): a choice
+# nobody typed is one a person should be able to see and change. Read from
+# what was remembered, never by asking gh; a clone that sets `github.account`
+# shows it on its config.local line, and one account needs no line.
+_status_github_account() {
+  local f login="" how=""
+  [ -z "$(cfg github.account "")" ] || return 0
+  f=$(jig_gh_memo_file)
+  [ -f "$f" ] || return 0
+  IFS=$'\t' read -r _ login how < "$f" || true
+  [ "$how" = detected ] && [ -n "$login" ] || return 0
+  printf 'github.account: %s (found: the gh account that may push here; jig config set --local github.account <login> names another)\n' "$login"
 }
 
 # _status_agent_git — one line naming the review queue `agent.git`'s level

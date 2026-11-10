@@ -3765,6 +3765,30 @@ test_spec_ship_declare_at_pr_pushes_and_opens_the_pr_into_main() {
   assert_contains "$argv" "$(printf -- '--title\nDeclare idea-x')"
 }
 
+# A clone whose github.account gh does not hold: a ship that would open a pull
+# request refuses before its first commit (jig_ship_account).
+test_spec_ship_declare_at_pr_refuses_before_pushing_when_the_account_is_not_held() {
+  local head_before
+  sship_declared idea-x
+  sship_origin
+  sship_stub_gh ""
+  git remote set-url origin https://github.com/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  sship_cfg_local agent.git pr
+  sship_cfg_local github.account dave
+  head_before=$(git rev-parse HEAD)
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "github.account is dave"
+  assert_contains "$OUT" "Nothing was sent; the commit is on this machine"
+  assert_eq "$head_before" "$(git rev-parse HEAD~1)" "the refusal left more or less than the one local commit"
+  if git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x >/dev/null; then
+    fail "spec/idea-x was pushed"
+  fi
+  assert_no_file gh-create.argv
+}
+
 test_spec_ship_epic_at_push_pushes_the_cut_epic() {
   sship_cut idea-x
   sship_cfg_local agent.git push

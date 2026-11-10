@@ -157,6 +157,9 @@ Usage: jig <command> [args]
                                  answers for it, and what .ai/config.yaml omits;
                                  --json adds each key's value, source, kind and
                                  description, and never a secret's value
+  gh <args>...                   run gh as this clone's GitHub account: github.account, else
+                                 the one account that may push here; gh's active account is
+                                 never switched
   notify setup                   in your own terminal: ask for the Telegram bot token
                                  (hidden) and chat id, write them, send a test message
   notify test                    send one Telegram test message now, as autopilot would
@@ -185,7 +188,7 @@ main() {
         v=$(jig_source_version "$root" 2>/dev/null) || v=""
       fi
       printf 'jig %s\n' "${v:-$JIG_VERSION}" ;;
-    init|upgrade|status|task|context|verify|knowledge|spec|queue|writes|pr|housekeeping|measure|doctor|config|notify)
+    init|upgrade|status|task|context|verify|knowledge|spec|queue|writes|pr|gh|housekeeping|measure|doctor|config|notify)
       if [ ! -f "$JIG_LIB/$cmd.sh" ]; then
         jig_die "command '$cmd' is not available in jig $JIG_VERSION"
       fi

@@ -329,57 +329,7 @@ _pr_remote_for() {
   return 1
 }
 
-# _pr_accounts <host> — "<accounts><TAB><active>": the logins `gh` holds for
-# <host> that are signed in, space-separated, and the active one. Read from
-# `gh auth status`, whose exit status is ignored: it fails as a whole when one
-# account is broken, and the others still count. An older gh that names one
-# account (`Logged in to <host> as <login>`) and no active line makes that one
-# active.
-_pr_accounts() {
-  local out
-  out=$(jig_net gh auth status --hostname "$1" 2>&1) || true
-  printf '%s\n' "$out" | awk '
-    /Logged in to / && !/Failed/ {
-      login = ""
-      for (i = 1; i < NF; i++) if ($i == "account" || $i == "as") { login = $(i + 1); break }
-      gsub(/[()]/, "", login)
-      if (login != "") { n++; names = names (names == "" ? "" : " ") login; last = login }
-      next
-    }
-    /Active account: true/ { if (last != "") active = last }
-    END {
-      if (active == "" && n == 1) active = last
-      printf "%s\t%s\n", names, active
-    }'
-}
-
-# _pr_token_env <host> — the token variables set in this environment that gh
-# would use for <host> instead of any stored account.
-_pr_token_env() {
-  local names="" v
-  if _pr_dotcom_kind "$1"; then
-    for v in GH_TOKEN GITHUB_TOKEN; do
-      eval "[ -z \"\${$v:-}\" ]" || names="$names${names:+ }$v"
-    done
-  else
-    for v in GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
-      eval "[ -z \"\${$v:-}\" ]" || names="$names${names:+ }$v"
-    done
-  fi
-  printf '%s\n' "$names"
-}
-
 # --- accounts and tokens ------------------------------------------------------------------
-
-# _pr_dotcom_kind <host> — exit 0 for a host gh reads GH_TOKEN/GITHUB_TOKEN for:
-# github.com and GitHub's tenancy hosts (*.ghe.com); any other host is a GitHub
-# Enterprise Server, read from GH_ENTERPRISE_TOKEN/GITHUB_ENTERPRISE_TOKEN.
-_pr_dotcom_kind() {
-  case "$1" in
-    github.com | *.ghe.com) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 # What _pr_propose_login found, and the token the next _pr_gh call uses.
 _PR_TOKEN="" _PR_ACCOUNTS="" _PR_ACTIVE="" _PR_TOKEN_ENV="" _PR_LOGIN="" _PR_WHY=""
@@ -397,7 +347,7 @@ _pr_gh() {
     if [ -n "$_PR_TOKEN" ]; then
       unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
       # shellcheck disable=SC2030 # set in the subshell on purpose: for this call only
-      if _pr_dotcom_kind "$_PR_HOST"; then
+      if jig_gh_dotcom_kind "$_PR_HOST"; then
         GH_TOKEN="$_PR_TOKEN"
         export GH_TOKEN
       else
@@ -410,24 +360,14 @@ _pr_gh() {
   )
 }
 
-# _pr_stored_token <login> — the token gh keeps for <login> on _PR_HOST, asked
-# with every token variable unset so that gh answers for the stored account
-# (`gh auth token --user`, gh 2.40 and later).
-_pr_stored_token() {
-  local t
-  t=$(
-    unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-    jig_net gh auth token --hostname "$_PR_HOST" --user "$1" 2>/dev/null
-  ) || return 1
-  t=$(printf '%s' "$t" | tr -d '\r\n')
-  [ -n "$t" ] || return 1
-  printf '%s\n' "$t"
-}
+# _pr_stored_token <login> — the token gh keeps for <login> on _PR_HOST
+# (jig_gh_stored_token, common.sh).
+_pr_stored_token() { jig_gh_stored_token "$_PR_HOST" "$1"; }
 
 # _pr_env_token — the token gh would take from the environment for _PR_HOST.
 # shellcheck disable=SC2031 # the environment's own, never _pr_gh's
 _pr_env_token() {
-  if _pr_dotcom_kind "$_PR_HOST"; then
+  if jig_gh_dotcom_kind "$_PR_HOST"; then
     printf '%s\n' "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   else
     printf '%s\n' "${GH_ENTERPRISE_TOKEN:-${GITHUB_ENTERPRISE_TOKEN:-}}"
@@ -468,9 +408,9 @@ _pr_propose_login() {
   local slug="$1" a t acc commenters="" reader="" n=0 tokens=0 tab
   tab=$(printf '\t')
   IFS="$tab" read -r _PR_ACCOUNTS _PR_ACTIVE <<EOF
-$(_pr_accounts "$_PR_HOST")
+$(jig_gh_accounts "$_PR_HOST")
 EOF
-  _PR_TOKEN_ENV=$(_pr_token_env "$_PR_HOST")
+  _PR_TOKEN_ENV=$(jig_gh_token_env "$_PR_HOST")
   _PR_LOGIN=ask _PR_WHY="" _PR_TOKEN=""
   if [ -n "$_PR_TOKEN_ENV" ]; then
     _PR_WHY="$_PR_TOKEN_ENV in the environment overrides every gh account"
