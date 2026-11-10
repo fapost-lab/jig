@@ -5005,7 +5005,7 @@ test_spec_item_file_refuses_an_item_that_names_a_task() {
   assert_eq 0 "$RC"
   run jig spec item file idea-x "$alpha" --task t-2 --json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"code":"already-exists"'
+  assert_contains "$OUT" '"code":"already-filed"'
   assert_contains "$OUT" "already names task t-1"
 }
 
@@ -5096,7 +5096,12 @@ test_spec_item_file_new_an_item_that_names_a_task_files_nothing() {
   assert_eq 0 "$RC"
   run jig spec item file idea-x "$alpha" --new t-2 --json
   assert_eq 1 "$RC"
-  assert_contains "$OUT" '"code":"already-exists"'
+  assert_contains "$OUT" '"code":"already-filed"'
+  # The item is checked first: named and taken at once reads as the item's case,
+  # since another id would not help.
+  run jig spec item file idea-x "$alpha" --new t-1 --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"already-filed"'
   assert_no_file .ai/workspace/tasks/t-2
 }
 
