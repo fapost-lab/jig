@@ -2733,12 +2733,25 @@ _task_queue_prune() {
 # task unpaused and the request standing, never a pause whose request would
 # pause it again after `resume`. A stale revision is another write landing in
 # between: read again, up to three times.
+#
+# A cancel that failed for any other reason may still have landed: its write
+# came before whatever ended it. So the queue is read again, and a request
+# that is gone counts as taken out — with the time and reason read before the
+# cancel, as jig_pause_request clears them — and a warning that names the
+# child's exit status and words. A request that still stands is refused with
+# them: the child's stderr is the only account of why.
 _task_pause_take_request() {
-  local id="$1" verb="$2" tries=0 out at reason
+  local id="$1" verb="$2" tries=0 out at reason err="" rc why
   while jig_pause_request "$id"; do
+    if [ -z "$err" ]; then
+      err=$(mktemp "${TMPDIR:-/tmp}/jig-cancel.XXXXXX") || jig_die "$verb: cannot create a temporary file"
+      jig_cleanup_add "$err"
+    fi
     at=$_JIG_PAUSE_AT
     reason=$_JIG_PAUSE_REASON
-    if out=$("$JIG_SELF" queue cancel "task:$id" pause --json 2>/dev/null); then
+    rc=0
+    out=$("$JIG_SELF" queue cancel "task:$id" pause --json 2>"$err") || rc=$?
+    if [ "$rc" -eq 0 ]; then
       _JIG_PAUSE_AT=$at
       _JIG_PAUSE_REASON=$reason
       return 0
@@ -2748,12 +2761,33 @@ _task_pause_take_request() {
     case "$out" in
       *'"code":"not-found"'*) return 1 ;;
       *'"code":"stale-revision"'*) ;;
-      *) jig_die "$verb: cannot take the pause request of $id out of the queue" ;;
+      *)
+        why=$(_task_pause_cancel_words "$err" "$out" "$rc")
+        if ! jig_pause_request "$id"; then
+          _JIG_PAUSE_AT=$at
+          _JIG_PAUSE_REASON=$reason
+          jig_warn "$verb: the pause request of $id left the queue, but jig queue cancel failed: $why"
+          return 0
+        fi
+        jig_die "$verb: cannot take the pause request of $id out of the queue: $why" ;;
     esac
     tries=$((tries + 1))
     [ "$tries" -lt 3 ] || jig_die "$verb: the queue kept changing; the pause request of $id stays"
   done
   return 1
+}
+
+# _task_pause_cancel_words <stderr file> <stdout> <exit status> — one line
+# saying how a child `jig queue cancel` failed: its exit status and what it
+# said on stderr, or, when it said nothing there, the envelope's message.
+_task_pause_cancel_words() {
+  local text
+  text=$(sed 's/^jig: error: //' "$1" 2>/dev/null | tr '\n' ' ' | sed 's/  *$//')
+  if [ -z "$text" ]; then
+    text=$(printf '%s\n' "$2" | sed -n 's/.*"error":{"code":"[^"]*","message":"\(.*\)"}}$/\1/p')
+  fi
+  [ -n "$text" ] || text="no message"
+  printf 'exit %s: %s\n' "$3" "$text"
 }
 
 # repair --reason <text>: one repair attempt, limited to 2 per run (gate

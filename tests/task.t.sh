@@ -7555,6 +7555,77 @@ test_task_pause_takes_a_pending_pause_request_out() {
   assert_eq "by hand" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
 }
 
+# _tp_cancel_lands_then_fails <dir> — a PATH directory whose `mv` lands the
+# queue file and then fails: a `jig queue cancel` whose write landed but which
+# exited non-zero after it, and whose envelope is neither not-found nor
+# stale-revision. Every other `mv` is the real one.
+_tp_cancel_lands_then_fails() {
+  local real
+  real=$(command -v mv)
+  mkdir -p "$1"
+  cat > "$1/mv" <<EOF
+#!/bin/sh
+for last in "\$@"; do :; done
+case "\$last" in
+  */runtime/queue) "$real" "\$@" || exit \$?; echo "landed, then failed" >&2; exit 1 ;;
+esac
+exec "$real" "\$@"
+EOF
+  chmod +x "$1/mv"
+}
+
+# A cancel that took the request out and still failed does not stand in the
+# way of the pause: the queue is read again, the request is gone, and the
+# pause carries the request's time and reason, with a warning naming the
+# child's failure (pause-request-cancel-landed-but-failed).
+test_task_pause_if_requested_honours_a_cancel_that_landed_but_failed() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause --reason "need the laptop" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  _tp_cancel_lands_then_fails "$PWD/shim"
+  run_split env PATH="$PWD/shim:$PATH" "$JIG_BIN" task pause T-1 --if-requested --stage implement
+  assert_eq 4 "$RC" "$OUT $ERR"
+  assert_eq "paused: T-1 (pause requested at $at: need the laptop); stage implement not entered" "$OUT"
+  assert_contains "$ERR" "the pause request of T-1 left the queue, but jig queue cancel failed: exit 1"
+  assert_contains "$ERR" "landed, then failed"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "pause requested at $at: need the laptop" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+}
+
+# The same for a pause made by hand: it is made, and the request is gone.
+test_task_pause_by_hand_honours_a_cancel_that_landed_but_failed() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  _tp_cancel_lands_then_fails "$PWD/shim"
+  run env PATH="$PWD/shim:$PATH" "$JIG_BIN" task pause T-1 --reason "by hand"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "paused T-1"
+  assert_eq "by hand" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+}
+
+# A cancel that really was refused leaves the request standing and the task
+# unpaused, and the refusal says why, in the child's own words. Forced with a
+# read-only runtime directory: the queue's new copy cannot be written there.
+test_task_pause_if_requested_shows_why_the_cancel_was_refused() {
+  skip_unless_readonly_dirs
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  chmod 555 .ai/runtime
+  run jig task pause T-1 --if-requested --stage implement
+  chmod 755 .ai/runtime
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "cannot take the pause request of T-1 out of the queue: exit 1: "
+  assert_contains "$OUT" "queue: cannot read"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:T-1\tpause')"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+}
+
 # --if-requested: the pause a stage boundary makes when only a person's
 # pending request asks for it — what `jig context resolve --stage` runs for
 # a session without autopilot. Nothing pending: silent, exit 0, not paused.
