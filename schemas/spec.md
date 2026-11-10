@@ -4,6 +4,11 @@
 developed by the `jig-idea` skill; everything `jig spec list` and `jig status` report is read
 from these files.
 
+A conversation that has not been written down yet is kept as a draft,
+`.ai/workspace/ideas/<id>/draft.md`: ignored by git, free-form, in the human's language, written
+by `jig spec draft write`. It is not a spec and nothing below describes it; `jig spec ship` moves it
+to trash when the spec of the same id is committed.
+
 ## Directory
 
 | Path | Required | Content |

@@ -3750,22 +3750,39 @@ jig_hash_list() {
 # computation, no filesystem access, so it also works for symlink targets that
 # do not exist yet.
 jig_relpath_from() {
-  awk -v from="$1" -v to="$2" '
-    BEGIN {
-      n1 = split(from, a, "/")
-      n2 = split(to, b, "/")
-      i = 1
-      while (i <= n1 && i <= n2 && a[i] == b[i]) i++
-      up = ""
-      for (j = i; j <= n1; j++) if (a[j] != "") up = up "../"
-      down = ""
-      for (j = i; j <= n2; j++) if (b[j] != "") down = down b[j] "/"
-      result = up down
-      sub(/\/$/, "", result)
-      if (result == "") result = "."
-      print result
-    }
-  '
+  local __rfp_out
+  jig_relpath_from_v __rfp_out "$1" "$2"
+  printf '%s\n' "$__rfp_out"
+}
+
+# jig_relpath_from_v <var> <from> <to> — jig_relpath_from's answer into <var>,
+# without a process: asked for every link of a link-mode install, on every
+# `jig status` (convention-shell, `<name>_v`). Both paths are walked one
+# `/`-separated component at a time: the shared leading ones are dropped, each
+# one left of <from> is a `..`, and what is left of <to> follows. An empty
+# component (a doubled or trailing `/`) is compared like any other and never
+# printed.
+jig_relpath_from_v() {
+  local __rf_a="$2" __rf_b="$3" __rf_x __rf_up="" __rf_down="" __rf_am=1 __rf_bm=1
+  [ -n "$__rf_a" ] || __rf_am=0
+  [ -n "$__rf_b" ] || __rf_bm=0
+  while [ "$__rf_am" = 1 ] && [ "$__rf_bm" = 1 ] && [ "${__rf_a%%/*}" = "${__rf_b%%/*}" ]; do
+    case "$__rf_a" in */*) __rf_a=${__rf_a#*/} ;; *) __rf_am=0 ;; esac
+    case "$__rf_b" in */*) __rf_b=${__rf_b#*/} ;; *) __rf_bm=0 ;; esac
+  done
+  while [ "$__rf_am" = 1 ]; do
+    [ -z "${__rf_a%%/*}" ] || __rf_up="$__rf_up../"
+    case "$__rf_a" in */*) __rf_a=${__rf_a#*/} ;; *) __rf_am=0 ;; esac
+  done
+  while [ "$__rf_bm" = 1 ]; do
+    __rf_x=${__rf_b%%/*}
+    [ -z "$__rf_x" ] || __rf_down="$__rf_down$__rf_x/"
+    case "$__rf_b" in */*) __rf_b=${__rf_b#*/} ;; *) __rf_bm=0 ;; esac
+  done
+  __rf_x="$__rf_up$__rf_down"
+  __rf_x=${__rf_x%/}
+  [ -n "$__rf_x" ] || __rf_x=.
+  printf -v "$1" '%s' "$__rf_x"
 }
 
 # jig_share_candidates <root> — the top-level directories of the checkout at
@@ -3814,10 +3831,18 @@ EOF
 
 # Path of <file> relative to <base>, both absolute. Pure string operation.
 jig_relpath() {
-  local base="${2%/}/" file="$1"
-  case "$file" in
-    "$base"*) printf '%s\n' "${file#"$base"}" ;;
-    *) printf '%s\n' "$file" ;;
+  local __rpp_out
+  jig_relpath_v __rpp_out "$1" "$2"
+  printf '%s\n' "$__rpp_out"
+}
+
+# jig_relpath_v <var> <file> <base> — jig_relpath's answer into <var>, without
+# a process: for a caller that asks it of every file it places.
+jig_relpath_v() {
+  local __rp_base="${3%/}/"
+  case "$2" in
+    "$__rp_base"*) printf -v "$1" '%s' "${2#"$__rp_base"}" ;;
+    *) printf -v "$1" '%s' "$2" ;;
   esac
 }
 

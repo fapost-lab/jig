@@ -103,7 +103,7 @@ makes the reader depend on that file's shape, which the owning domain records.
 
 **Reporting commands are the exception, and a narrow one.** `status` and `measure` exist
 to summarise what other commands already answer, so they source those libraries and call
-their entry points — `status` sources six (`spec` for its `specs:` count), `measure`
+their entry points — `status` sources six (`spec` for its `specs:` and `drafts:` counts), `measure`
 sources `task` and `knowledge`. What they may not do is *recompute* the answer: a second implementation of "how many documents
 are stale" is how the report and `jig knowledge stale` come to disagree, and the disagreement
 is invisible until someone reads both. A reporting command therefore consumes a peer's

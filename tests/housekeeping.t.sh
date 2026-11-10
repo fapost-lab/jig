@@ -888,6 +888,33 @@ test_housekeeping_ignores_non_date_directories_in_trash() {
   assert_dir ".ai/runtime/trash/not-a-date/x"
 }
 
+# --- idea drafts are never housekeeping's -------------------------------------
+# A draft (.ai/workspace/ideas/<id>/draft.md, `jig spec draft`) leaves only by
+# `spec ship` or on the person's word. The run below purges a task's workspace,
+# so it is one that does move things, and the draft beside it — a year old,
+# and named as that task is — stays where it is.
+test_housekeeping_never_touches_an_idea_draft_however_old() {
+  hk_setup
+  fixture_merge_repo
+  fixture_task ff "ff-merged" consolidated
+  local old
+  old=$(date -v-400d +%Y%m%d%H%M 2>/dev/null || date -d '400 days ago' +%Y%m%d%H%M)
+  mkdir -p .ai/workspace/ideas/ff .ai/workspace/ideas/idea-old
+  printf 'a conversation\n' > .ai/workspace/ideas/ff/draft.md
+  printf 'an older conversation\n' > .ai/workspace/ideas/idea-old/draft.md
+  touch -t "$old" .ai/workspace/ideas/ff/draft.md .ai/workspace/ideas/idea-old/draft.md \
+    .ai/workspace/ideas/ff .ai/workspace/ideas/idea-old .ai/workspace/ideas
+
+  run jig housekeeping
+  assert_eq 0 "$RC"
+  assert_no_file .ai/workspace/tasks/ff/state "the run purged the task, so it does move things"
+  assert_eq "a conversation" "$(cat .ai/workspace/ideas/ff/draft.md)"
+  assert_eq "an older conversation" "$(cat .ai/workspace/ideas/idea-old/draft.md)"
+  assert_not_contains "$OUT" "idea-old"
+  assert_no_file ".ai/runtime/trash/$(date +%Y-%m-%d)/idea-old"
+  assert_no_file ".ai/runtime/trash/$(date +%Y-%m-%d)/idea-ff"
+}
+
 # --- report, log, exit codes -------------------------------------------------
 
 test_housekeeping_exits_3_when_consolidation_is_needed() {

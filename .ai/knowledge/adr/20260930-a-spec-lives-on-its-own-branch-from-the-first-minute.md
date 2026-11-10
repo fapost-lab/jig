@@ -108,3 +108,8 @@ in `task.sh`, reading `git status --porcelain` the same way `jig_tracked_changes
 > for a new and an existing spec is simpler, and the summary that closes every circle already
 > holds what would be written. Until a draft outside the spec exists, a conversation that stops
 > before the yes leaves nothing on disk; the skill says so and offers to write what is settled.
+
+> **Amendment (2026-11-10, later).** The gap the amendment above ends on is closed: until the yes,
+> the conversation waits in a draft outside git, `.ai/workspace/ideas/<id>/draft.md`, and a
+> conversation cut short leaves that draft behind (adr-20261110-an-idea-draft-waits-outside-git).
+> Nothing about the spec's own branch changes.

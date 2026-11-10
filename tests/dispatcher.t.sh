@@ -49,6 +49,92 @@ EOF
   assert_eq "7d|generic php|dflt|[generic, php]|TF" "$OUT"
 }
 
+# cfg_list was three `tr` and a `sed`; what it prints for every shape a list
+# takes in the file is what that pipeline printed.
+test_cfg_list_prints_what_the_pipeline_it_replaced_printed() {
+  fixture_repo
+  mkdir -p .ai
+  cat > .ai/config.yaml <<'EOF'
+plain: [generic, php]   # comment
+tight: [a,b,c]
+loose: [  a ,   b  ,c ]
+bare: a b
+commas: a, b
+empty: []
+holes: [a,,b, ]
+inner: [a[b]c, d]
+EOF
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"; . "$JIG_LIB/config.sh"
+    jig_require_repo
+    for key in plain tight loose bare commas empty holes inner absent; do
+      was=$(cfg "$key" "x, y" | tr -d "[]" | tr "," " " | tr -s " " | sed "s/^ //; s/ \$//")
+      now=$(cfg_list "$key" "x, y")
+      [ "$was" = "$now" ] || printf "%s: was <%s> now <%s>\n" "$key" "$was" "$now"
+      printf "%s=<%s> " "$key" "$now"
+    done
+  '
+  assert_eq 0 "$RC"
+  assert_eq "plain=<generic php> tight=<a b c> loose=<a b c> bare=<a b> commas=<a b> empty=<> holes=<a b> inner=<abc d> absent=<x y> " "$OUT"
+}
+
+# jig_relpath_from was an awk process per link of a link-mode install; the
+# builtin walk answers what that awk answered, the odd paths included.
+test_jig_relpath_from_answers_what_the_awk_it_replaced_answered() {
+  run bash -c '
+    JIG_LIB="$JIG_HOME/scripts/lib"; . "$JIG_LIB/common.sh"
+    was() {
+      awk -v from="$1" -v to="$2" "
+        BEGIN {
+          n1 = split(from, a, \"/\")
+          n2 = split(to, b, \"/\")
+          i = 1
+          while (i <= n1 && i <= n2 && a[i] == b[i]) i++
+          up = \"\"
+          for (j = i; j <= n1; j++) if (a[j] != \"\") up = up \"../\"
+          down = \"\"
+          for (j = i; j <= n2; j++) if (b[j] != \"\") down = down b[j] \"/\"
+          result = up down
+          sub(/\\/\$/, \"\", result)
+          if (result == \"\") result = \".\"
+          print result
+        }"
+    }
+    n=0
+    while IFS="|" read -r from to; do
+      n=$((n + 1))
+      jig_relpath_from_v now "$from" "$to"
+      [ "$(was "$from" "$to")" = "$now" ] || printf "<%s> -> <%s>: was <%s> now <%s>\n" "$from" "$to" "$(was "$from" "$to")" "$now"
+      [ "$(jig_relpath_from "$from" "$to")" = "$now" ] || printf "<%s> -> <%s>: the wrapper differs\n" "$from" "$to"
+    done <<EOF
+/p/.ai|/src/scripts
+/p/.claude/skills|/p/skills/jig-task
+/p/a|/p/a
+/p/a|/p/a/b/c
+/p/a/b/c|/p/a
+/p/a/|/p/a/b
+/p/a|/p/a/
+/p//a|/p/a/b
+/p/a b/c|/p/a b/d e
+/|/a
+/a|/
+a/b|a/c
+a|b
+/p/a|
+|/p/a
+|
+EOF
+    printf "%s cases " "$n"
+    jig_relpath_from_v now /p/.ai/profiles /src/profiles/shell; printf "%s " "$now"
+    jig_relpath_v now /p/.ai/scripts /p; printf "%s " "$now"
+    jig_relpath_v now /p/.ai/scripts /p/; printf "%s " "$now"
+    jig_relpath_v now /q/.ai/scripts /p; printf "%s " "$now"
+    printf "%s" "$(jig_relpath /p/x/y /p)"
+  '
+  assert_eq 0 "$RC"
+  assert_eq "16 cases ../../../src/profiles/shell .ai/scripts .ai/scripts /q/.ai/scripts x/y" "$OUT"
+}
+
 # jig_has_line is how a script asks "is this a line of that text" without
 # piping printf into grep -q (conventions/shell.md, pipefail): whole lines,
 # compared as strings, never as patterns.
