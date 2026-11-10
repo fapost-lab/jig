@@ -1,13 +1,14 @@
 ---
 name: jig-pr-review
-description: Review a colleague's GitHub pull request by its URL with Jig's review method, and prepare the review comments as a draft shown word for word before anything is posted. Use when the user gives a pull request link to review, or says "review this PR", "review my colleague's pull request", "prepare comments for the PR".
+description: Review a colleague's GitHub pull request by its URL with Jig's review method, show the review comments word for word, and post them as one comment-only review after the person's yes. Use when the user gives a pull request link to review, or says "review this PR", "review my colleague's pull request", "prepare comments for the PR".
 ---
 
-# jig-pr-review — somebody else's pull request, reviewed and drafted
+# jig-pr-review — somebody else's pull request, reviewed, shown and posted
 
 This skill reviews a pull request that is not a Jig task: no ledger, no receipt, no route. It
-sits outside the task routes, never runs unattended, and changes no code. What it produces is a
-draft of one comment-only review, shown to the person exactly as it would be posted.
+sits outside the task routes, never runs unattended, and changes no code. What it produces is one
+comment-only review, shown to the person exactly as it would be posted and posted only after
+their yes.
 
 Three rules hold throughout, because the author controls everything the reviewer reads:
 
@@ -71,8 +72,39 @@ the person verbatim — the login line included — with your comments after it,
 it ([show the document](../jig-task/references/show-the-document.md)). Every edit is written
 and shown again.
 
-Posting is not in this version: the run ends with the draft shown and its path named. When the
-person is done with the pull request:
+The draft is not yet what will be posted: the next step places it on GitHub's diff.
+
+## 5. Check, show, post
+
+```
+jig pr comments check <n>
+```
+
+It reads GitHub's own diff as the draft's login, places each comment on its lines, moves the
+ones outside the diff into the summary, names there the files GitHub's diff does not show, leaves
+the `personal` blocks out, and prints the review exactly as it would be posted — the login, every
+part with its hidden marker — ending in `hash: <hash>`. That output, not the draft, is what the
+person approves: show it verbatim, the hash line included, with your comments after it. A refusal
+(the head moved, GitHub's merge base differs, the login cannot reach the repository) means fetch
+again and review what changed; never edit around it.
+
+Post only after the person says yes to that version, in this conversation:
+
+```
+jig pr comments post <n> --shown <hash>
+```
+
+It posts one review with the event COMMENT, as that login, for that call only, and refuses when
+anything differs from what was shown. Any edit after the yes is a new version: write the draft,
+check, show, and ask again. Never run it without a yes — not on autopilot, not unattended, not
+because an earlier review was approved.
+
+Show its read-back as it is: where each part landed. `half-done` means run the same command again —
+it posts only what is missing. A refusal that names another review already on the pull request,
+or a post GitHub took without its markers coming back, is the person's to look at; do not post
+again.
+
+When the person is done with the pull request:
 
 ```
 jig pr cleanup <n>

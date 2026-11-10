@@ -1,8 +1,9 @@
 # The review draft, version 1
 
-The one file a review is shown from and, after the person's yes, posted from. `jig pr draft <n>
---from <file>` checks it against this page and the fetch, keeps it with its CRs dropped, and
-prints it; what it prints is what the person approves, byte for byte.
+The one file a review is built from. `jig pr draft <n> --from <file>` checks it against this page
+and the fetch, keeps it with its CRs dropped, and prints it. `jig pr comments check <n>` builds from
+it the review as it will be posted — what the person approves, byte for byte — and
+`jig pr comments post` posts that and nothing else.
 
 ```
 jig-pr-draft: 1
@@ -30,4 +31,5 @@ language: <the comments' language, e.g. en>
 - **Path**: the rest of the line, relative to the repository, without `.` or `..`; a file of the
   head for `R`, of the merge base for `L`.
 - **Bodies** are markdown and may not be empty. No body line may start with `=== `.
-- Whether a line lies inside the pull request's diff is decided when it is posted, not here.
+- Whether a line lies inside the pull request's diff is decided by `jig pr comments check`, against
+  GitHub's own diff: a comment outside it is moved into the summary, never dropped.

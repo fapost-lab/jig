@@ -133,6 +133,11 @@ Usage: jig <command> [args]
   pr fetch <url>                 a GitHub pull request into refs/jig/pr/<n>/ and a detached
                                  worktree beside the repository, for jig-pr-review
   pr draft <n|url> [--from <f>]  check and keep the review draft; print it as it is shown
+  pr comments check <n|url>      place the draft on GitHub's diff; print the review as it
+                                 would be posted, and its hash
+  pr comments post <n|url> --shown <hash>
+                                 post that review, refused unless it is the version shown;
+                                 read back what landed, post only what is missing
   pr list | pr cleanup <n|url>   fetched pull requests; take one's worktree, refs and draft back
   writes [list] [--json]         edits Jig committed in its own tree that have not landed
   writes ship <target> [--json]  carry one as far as agent.git allows; at merge, merge it
