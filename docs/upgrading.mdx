@@ -471,6 +471,29 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.42.0 to 0.43.0
+
+Nothing to do by hand, unless your `origin` is an `https://github.com/...` address. The installer
+and `.ai/config.yaml` did not change, and no new setting appears in the upgrade's report. The
+upgrade brings new scripts and new text for the `jig-verify` skill.
+
+**An HTTPS origin on GitHub.** Jig's pushes and fetches now go as this clone's GitHub account, with
+a token it asks `gh` for, instead of whatever your credential helper holds. This starts with the
+upgrade's own push, which already runs the new code. If several of your accounts may push to the
+repository and none is named, a push now stops with nothing sent, at `agent.git: push` too: name it
+before you upgrade, with `jig config set --local github.account <login>`. If the upgrade's push has
+already stopped, its commit is on `jig/upgrade-0.43.0` and running `jig upgrade` again does not push
+it: push that branch yourself and open its pull request. A push that changes a file under
+`.github/workflows` needs that account's `gh` token to carry the `workflow` scope.
+`gh auth refresh -s workflow` adds it to the active account only; for another one, make it active
+for that one command with `gh auth switch --user <login>`, then switch back. Over SSH, or with a `GH_TOKEN` in the environment, nothing changes
+([Two GitHub accounts](/agent-ships#two-github-accounts)).
+
+**What you will notice.** Under `verify.full_run: ci`, the header of a plain `jig verify` in a
+task's checkout names the task and measures from the branch it was cut from. A program that reads
+Jig's JSON may see `not-merged` from `jig upgrade` where it used to see `failed`, when the
+upgrade's pull request is still open.
+
 ## From 0.41.0 to 0.42.0
 
 Nothing to do by hand, unless you have several GitHub accounts in `gh`. The installer and

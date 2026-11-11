@@ -319,8 +319,9 @@ without your yes.
 If you are signed in to `gh` with more than one account — a work one and a personal one, say —
 `gh` answers as whichever is active, on the whole machine. Jig does not depend on that. For each
 project it finds the one account of yours that may push to the repository and uses it for the pull
-request, the checks and the merge, whichever account is active. It never switches accounts, so a
-session in another project is not disturbed, and your agent does not ask you to switch either.
+request, the checks and the merge, and for a push over HTTPS, whichever account is active. It never
+switches accounts, so a session in another project is not disturbed, and your agent does not ask
+you to switch either.
 
 `jig status` shows the account it found:
 
@@ -353,6 +354,12 @@ To ask GitHub something about the project yourself as that account, put `jig` in
   an SSH `origin`, leaves `git` as it was. Over SSH your key decides the account.
 - When several accounts may push and none is named, a ship stops before its push, at every
   `agent.git` level, and says how to name one; nothing is sent.
+- A push that changes a file under `.github/workflows` needs the `workflow` scope on that
+  account's `gh` token. `gh auth refresh -s workflow` adds it to the active account only; for
+  another one, make it active for that one command with `gh auth switch --user <login>`, then
+  switch back. Jig itself never switches.
+- `jig pr fetch`, which reads a colleague's pull request, still fetches as your credential helper
+  answers.
 - The choice is remembered in `.ai/runtime/gh-account`; delete the file to have Jig look again.
 
 </Accordion>
