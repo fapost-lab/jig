@@ -1079,7 +1079,7 @@ EOF
 # never per commit (conventions/shell.md).
 jig_staging_branch_problems() {
   local branch="$1" tip="$2" base="$3" staging="$4" depth="${5:-0}" via="${6:-}"
-  local t=$'\t' base_ref base_sha s_sha fp sfp="" found line c p j short name ref dep dep_name
+  local t=$'\t' base_ref base_sha s_sha fp sfp="" found line c p short name ref dep dep_name
   local template prefix suffix sub one others=""
   base_ref=$(jig_base_ref "$base")
   [ -n "$base_ref" ] && [ -n "$tip" ] || return 0
@@ -1590,6 +1590,7 @@ jig_merge_conflicts() {
   fi
   git -C "$wt" merge --abort >/dev/null 2>&1 || true
   git -C "$JIG_PROJECT" worktree remove "$wt" >/dev/null 2>&1 || true
+  # shellcheck disable=SC2034 # JIG_MERGE_CONFLICTS is read by the caller
   JIG_MERGE_CONFLICTS=$out
   return "$rc"
 }

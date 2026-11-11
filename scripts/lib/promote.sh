@@ -248,7 +248,7 @@ It reaches $base only after it was tested on $staging: land it there (jig task s
   # dependency included: content made in that merge was never tested
   # otherwise (third architecture review, F11). _jig_staging_walk does not
   # count such a merge, since its other parent is on the tested commit.
-  local fpline fc fparents fpp fbase notin
+  local fpline fc fpp fbase notin
   notin=$(git -C "$JIG_PROJECT" rev-list "$tip" "^$base_sha" "^$csha" 2>/dev/null) || notin=""
   if [ -n "$notin" ]; then
     while IFS= read -r fpline; do
@@ -309,7 +309,7 @@ Nothing was pushed. Merge $base into the task branch and resolve it in the task'
 
   # 10. Dependencies on the staging branch but not in the base, where this
   # checkout has a queue: a warning, never a refusal.
-  local warnings="$carry_warn" dep reason dep_id dep_branch rows="" dline dkind did dstate
+  local warnings="$carry_warn" dep reason dep_id dep_branch rows="" dline dkind did
   if jig_queue_place "$id"; then
     while IFS="$t" read -r dep reason; do
       case "$dep" in task:*) ;; *) continue ;; esac
@@ -351,6 +351,7 @@ EOF
   local raise r_file r_old r_new r_level release_line=""
   raise=$(jig_release_raise "$base" "$tip")
   if [ -n "$raise" ]; then
+    # shellcheck disable=SC2034 # the level is part of the row, not shown here
     IFS="$t" read -r r_file r_old r_new r_level <<EOF
 $raise
 EOF
