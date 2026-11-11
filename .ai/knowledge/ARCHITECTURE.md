@@ -42,7 +42,9 @@ the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies h
 forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
-lifecycle.
+lifecycle. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
+`tests/promote.t.sh`) follows the same rule; it reads a task's staging state through common.sh's
+`jig_staging_branch_problems` and `jig_staging_states` and never recomputes them.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and

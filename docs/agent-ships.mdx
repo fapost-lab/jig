@@ -212,6 +212,31 @@ not merged: landing a task on staging is not built yet; task/csv-export is not o
 With `git.staging_land: external` it stops after the push and opens no pull request, since your CI
 lands the task. A flow `jig doctor` would fail on is refused before anything is committed. A task of
 an epic still goes into its epic.
+
+Once QA says the task is ready, tell your agent "prepare for prod". It runs
+`jig task promote <id>`, which opens the pull request from the task's branch into the main branch
+and prints its link. It refuses, and sends nothing, when the task's own commits are not all in the
+tested staging commit (a fix made after the test), when the task is not on staging, or when staging
+was merged into the task's branch. When the task conflicts with the main branch it exits 3 and names
+the files: the agent merges the main branch into the task's branch, resolves, verifies, commits and
+runs it again, which pushes that merge and opens the pull request. Run on a task already promoted,
+it prints the same link. Where your queue says the task depends on another one that is on staging
+but not in the main branch, it warns you, and the pull request says so too. The merge into the main
+branch stays yours.
+
+```text
+task promote: tested commit 3f2a91c of staging
+pr https://github.com/acme/app/pull/57
+task promote: the merge is the person's (git.promote_merge: human)
+```
+
+A CI job can run the same command with the staging commit it tested,
+`jig task promote <id> --commit <sha>`: on a runner (`CI` set) it needs no workspace and no
+`agent.git`, only the full history (`fetch-depth: 0` on GitHub Actions, `GIT_DEPTH: 0` on GitLab)
+and a forge token. A runner has no queue, so it cannot warn about dependencies: promote tasks that
+belong together in one go. In your own checkout the command needs `agent.git` at `pr` or above.
+Exit 0 means the pull request is open (or the task is in the main branch already), 1 a refusal,
+3 that a person is needed.
 </Accordion>
 
 <span id="specs-and-epics" />
