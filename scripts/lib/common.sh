@@ -3352,7 +3352,7 @@ jig_knowledge_source() {
 # fm_get's.
 jig_knowledge_source_v() {
   local __jksv_block
-  _fm_scan_v __jksv_block "$2" || :
+  fm_block_v __jksv_block "$2"
   fm_get_block_v "$1" "$__jksv_block" source
 }
 
@@ -3403,10 +3403,12 @@ jig_knowledge_read_path_v() {
     esac
     __jkr_dir="$__jkr_dir${__jkr_rest%%/*}/"
     __jkr_rest=${__jkr_rest#*/}
-    [ -L "$JIG_PROJECT/${__jkr_dir%/}" ] && break
+    if [ -L "$JIG_PROJECT/${__jkr_dir%/}" ]; then
+      break
+    fi
   done
   __jkr_root=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 3
-  __jkr_phys=$(cd -P "$(dirname "$JIG_PROJECT/$__jkr_src")" 2>/dev/null && pwd -P) || return 3
+  __jkr_phys=$(cd -P "$JIG_PROJECT/${__jkr_src%/*}" 2>/dev/null && pwd -P) || return 3
   case "$__jkr_phys/" in
     "$__jkr_root/"*) return 0 ;;
     *) return 3 ;;
