@@ -113,8 +113,9 @@ is closed without your yes.
 
 Tell the agent why, and it runs `jig task abandon <id> --reason "<why>"`. When the work belongs to
 another repository — a neighbouring package, say — it adds `--moved-to <repo>#<task-id>` (the same
-form as a `Linked:` line, a path from your main checkout), and prints the command that files the task
-there; Jig never writes to the other repository.
+form as a `Linked:` line, a path from your main checkout, or `<repo>#spec/<spec-id>`). When that task
+is not there yet, it prints the command that files it there — for a spec, it says to add the item
+yourself; Jig never writes to the other repository.
 
 The reason goes where the next agent reads it. If the task came from a spec's roadmap, the item that
 named it is closed in place — checked, with ` — moved to … (<date>): <why>` or ` — dropped (<date>):

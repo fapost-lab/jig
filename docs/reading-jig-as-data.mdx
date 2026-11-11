@@ -52,7 +52,11 @@ When the command refuses — an unknown flag, a project without Jig — it still
   is the same as on your last read, Jig changed nothing; if it differs, read again. It is `0` before
   Jig's first write, and only its changes mean anything: compare it, do not do arithmetic with it.
   A file changed by hand or by git — your `git pull`, or the branch Jig checks out after a merge —
-  does not change it: watch the files too if that matters to you.
+  does not change it: watch the files too if that matters to you. In a clone with no main checkout to
+  find — one made with `--separate-git-dir`, a submodule, or the worktrees of a bare repository —
+  the revision is kept under `<git-dir>/jig/` (the clone's git common directory) instead, where every
+  checkout of the clone finds it, and so are the lock and the records of
+  [a write on a branch of its own](#writes-on-a-branch-of-their-own).
 - `generated_at` is when the read started, in UTC.
 - `error.code` says why the command refused, in a word your program can act on (below).
   `error.message` is the same text the command prints after `jig: error:`, meant for a person.
@@ -216,20 +220,27 @@ phases, the items of each phase, and how far it has come.
       "title": "Book a table",
       "done": 1, "total": 3, "filed": 1, "fog": 1,
       "items": [
-        {"text": "`booking-form` — the form", "checked": true, "done": true, "task": "booking-form", "fog": false},
-        {"text": "`booking-message` — the confirmation", "checked": false, "done": false, "task": "booking-message", "fog": false},
-        {"text": "fog: reminders by text message", "checked": false, "done": false, "task": null, "fog": true}
+        {"id": "i-3f9a1c5e02b7", "text": "`booking-form` — the form", "checked": true, "done": true, "task": "booking-form", "fog": false},
+        {"id": "i-91d4e7a60c38", "text": "`booking-message` — the confirmation", "checked": false, "done": false, "task": "booking-message", "fog": false},
+        {"id": "i-5b02c8d7e419", "text": "fog: reminders by text message", "checked": false, "done": false, "task": null, "fog": true}
       ]
     }
-  ]
+  ],
+  "waiting": null
 }
 ```
 
-`progress` is the same count `jig spec list` prints, and the sum of the phases. Each item says
-whether it is checked, whether it counts as done, which task it names, if any, and whether it is
+`progress` is the same count `jig spec list` prints, and the sum of the phases. Each item has an `id`,
+which a [roadmap write](#changing-a-roadmap) names it by, and says whether it is checked, whether it
+counts as done, which task it names, if any, and whether it is
 still fog. An item counts as done when it is checked, or when the task it names is known on this
 machine to have merged — closed, or seen merged by the last `jig housekeeping` — even before its
 checkbox reaches the branch you read.
+
+`waiting` is the edit of this spec that has not landed yet, or `null` when none waits. It is the
+write as [`jig writes`](#writes-on-a-branch-of-their-own) lists it (`target`, `branch`, `base`,
+`commit`, `commits`, `pushed`, `pr` and `merged`) with `progress` and `phases` beside it: the roadmap
+as it is on that branch, so a page can show the edit right after it was written.
 
 A spec built on an epic branch keeps its roadmap there. When you read it from another branch, the
 phases come from the epic's branch as your repository last fetched it — `epic.ref` names it — and
@@ -320,8 +331,10 @@ changes nothing:
 
 `next` is the task to take, or `null` with a `reason` (`waiting`, `taken`, `paused` or `empty`)
 when there is none. `taken` lists each candidate another session is working on, with the
-`checkout` it works in, `since` when and `idle_seconds` since it was last active; such a task is
-never advised. `waiting` lists each dependency that holds a candidate back, in `state` `open`, `broken`
+`checkout` it works in, `since` when, `idle_seconds` since it was last active and the `command`, the
+words of the Jig command it last ran; such a task is never advised. Each of `checkout`, `since` and
+`command` is `null` when the note of that session does not hold it. `waiting` lists each dependency
+that holds a candidate back, in `state` `open`, `broken`
 (it never ends; drop it with `jig queue undepend`) or `unknown`. `not_queued` counts the active
 tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 
@@ -369,7 +382,8 @@ none`, the default, these writes are refused with `git-not-allowed`: Jig commits
 it may. **Edits in a row go on one branch and one pull request.** A write never merges, even at `merge`,
 because a merge waits for CI: `jig writes ship <target>` does that when the edits are done.
 
-Until the edit lands, it waits, and a read says where:
+Until the edit lands, it waits, and a read says where. `jig status` counts what waits on a line of
+its own, `writes: 1 waiting (jig writes)`, and prints it only when something does:
 
 ```bash
 jig writes --json
@@ -378,6 +392,18 @@ jig writes --json
 ```json
 {"schema":1,"revision":1793825285,"generated_at":"2026-11-04T20:55:48Z","data":{"writes":[{"target":"spec:foo","branch":"spec/foo","base":"main","commit":"4354faecc647079ac9e77cc352e8d007374c250e","commits":1,"pushed":true,"pr":null,"merged":false}]}}
 ```
+
+`jig writes` without `--json` prints one line for each: the target, the branch and the base it goes into,
+the number of commits, and the pull request, or `pushed, no pull request` or `not pushed`. To carry
+a waiting write further than the write itself did, as far as `agent.git` allows, name its target,
+`spec:<id>` or `knowledge`:
+
+```bash
+jig writes ship spec:foo --json
+```
+
+It answers `{"write": {...}}` with the same fields as a write above. With nothing waiting under that
+target it is refused with `not-found`.
 
 `jig spec list --json` gives each spec `waiting`, with the roadmap as it is on that branch, and
 `jig knowledge proposed --json` gives each proposal one with what was decided. It stops waiting once
@@ -730,7 +756,9 @@ jig config unset agent.git --local --json
 A write answers with the new state of each key it touched, as `keys` lists it, and `unset` also
 names in `removed` the keys it took out of the file. A key that cannot be written, or a value it
 does not accept, is refused with `unknown-key`, `not-local`, `invalid-value` or `secret-key`
-([Why a command refused](#why-a-command-refused)), and nothing is written. Both commands take
+([Why a command refused](#why-a-command-refused)), and nothing is written. `--dry-run` cannot be
+combined with `--json`: a dry run writes nothing and the answer is the state after a write, so the
+command is refused with `usage`. Both commands take
 `--revision <n>` like a queue write: another write in the project since your read is refused with
 `stale-revision`, so a page and `jig-setup` writing the same file cannot overwrite each other's
 change unseen. `.ai/config.yaml` is the team's; no command here writes it.
