@@ -540,7 +540,10 @@ it asks for has been done *and* the page can see that in your own files. Three d
 - *A worktree was kept* — goes when that worktree is no longer there.
 
 *A pull request was open at the last housekeeping run* goes too when you close its task after that
-run: a task with a pull request closes only once GitHub or GitLab says it merged.
+run: a task with a pull request closes only once GitHub or GitLab says it merged. When GitHub or GitLab
+cannot be asked — `gh` or `glab` missing from the PATH, not signed in, an error, no answer in time —
+the close is refused with the reason, and the pull request may well be merged already: run the same
+close again once the forge answers.
 
 Every other card that came from housekeeping waits for the next run, because only GitHub or GitLab
 can answer it and the page will not go to the network while you are working. *The work landed on a

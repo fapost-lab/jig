@@ -1951,8 +1951,11 @@ _task_close_write() {
 # the safe side to be wrong on: closing early cannot be taken back for
 # free, and the refusal is retried by re-running this same command, not by
 # `jig housekeeping`, which never feeds this gate.
+# When the forge could not be asked, the refusal names why (jig_pr_state_v)
+# and says the pull request may already be merged: "unknown" alone reads as a
+# verdict on the pull request, when it is only the forge that did not answer.
 _task_close_refusal() {
-  local id="$1" pr_state="$2" pr kc
+  local id="$1" pr_state="$2" pr kc why=""
   task_state_var kc "$id" knowledge_consolidated
   # A bare triage task's close records its knowledge decision too (task_set).
   if [ "$kc" != "true" ] && ! _task_is_bare_triage "$id"; then
@@ -1962,11 +1965,14 @@ _task_close_refusal() {
   task_state_var pr "$id" pr_url
   [ -n "$pr" ] || return 0
   if [ "$pr_state" = forge ]; then
-    pr_state=$(jig_pr_state "$pr") || return 1
+    jig_pr_state_v pr_state why "$pr"
   fi
   [ -n "$pr_state" ] || pr_state=unknown
-  [ "$pr_state" = merged ] \
-    || printf 'task set: status consolidated requires its pull request to be merged: %s is %s; merge it, then run this again\n' "$pr" "$pr_state"
+  if [ "$pr_state" = unknown ] && [ -n "$why" ]; then
+    printf 'task set: status consolidated requires its pull request to be merged: %s is unknown, the forge could not be asked (%s); it may already be merged: run this same command again once the forge answers, and merge it first if it is not\n' "$pr" "$why"
+  elif [ "$pr_state" != merged ]; then
+    printf 'task set: status consolidated requires its pull request to be merged: %s is %s; merge it, then run this again\n' "$pr" "$pr_state"
+  fi
   return 0
 }
 
