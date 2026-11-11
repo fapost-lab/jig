@@ -20,7 +20,7 @@ it conflicts — and `jig status` shows the task on staging, with no pull reques
   defaults and overrides (`staging_branch`, `staging_land`, `staging_review`, `promote_merge`); `jig init`
   and `jig-setup` describe both flows in plain words and offer `staging` when origin has a
   `stage`/`staging` branch; `direct` stays the default.
-- [ ] `ship-to-staging` — Ship a task to staging — `jig task ship` in a staging project opens the task's pull request
+- [x] `ship-to-staging` — Ship a task to staging — `jig task ship` in a staging project opens the task's pull request
   into staging for review; no pull request into the base branch. (after: Choose a flow — it reads the key)
 - [ ] Land a task on staging — merge the pull request on the forge; when it conflicts, merge the
   task branch into a fresh temporary worktree of staging, resolve, push (retried from a fresh fetch

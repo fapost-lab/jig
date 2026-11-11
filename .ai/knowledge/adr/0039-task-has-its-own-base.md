@@ -13,7 +13,7 @@ paths:
   - scripts/lib/common.sh
   - schemas/state.md
 summary: Why every task records its own base branch, why bases resolve origin first, and why work merged elsewhere is flagged wrong-base rather than merged.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-11-11
 ---
 # ADR-0039: A task records the branch it is cut from and has to land on
 
@@ -80,3 +80,8 @@ never read a pull request's base.
 - The reverse mistake — a task of `main` whose pull request went into an epic — is visible only with
   a forge.
 - The forge stub in `tests/housekeeping.t.sh` prints three tab-separated fields per pull request.
+
+> **Amendment (2026-11-11, the staging flow).** In a project on `git.flow: staging` a task keeps the
+> base branch as its recorded base but ships into `git.staging_branch`; until the staging state is
+> read, a staging pull request a person merges reads `wrong-base`
+> (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).

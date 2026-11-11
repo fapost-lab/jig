@@ -6164,6 +6164,119 @@ _task_ship_branch_refusal() {
   return 0
 }
 
+# _task_ship_flow_v <staging-var> <land-var> <id> <level> <base> — where the
+# project's git flow (config.sh, `git.flow`) sends <id>'s pull request: the
+# staging branch's name into <staging-var> and `git.staging_land` into
+# <land-var>, or both empty when the pull request goes into <base> as it
+# always did. Refuses, before anything is committed, a flow whose
+# configuration has a problem (jig_git_flow_problems, the lines `jig doctor`
+# fails on) and, at `pr` and above, a staging branch that exists neither here
+# nor on origin, where the forge would refuse only after the push.
+#
+# The staging flow applies to a task cut from the base branch only. A task of
+# an epic ships into its epic, as before: whether an epic's tasks go through
+# the staging branch is an open question of .ai/specs/staging-branch/.
+_task_ship_flow_v() {
+  local __tsf_id="$3" __tsf_level="$4" __tsf_base="$5" __tsf_problems __tsf_flow __tsf_branch __tsf_land=""
+  printf -v "$1" '%s' ""
+  printf -v "$2" '%s' ""
+  __tsf_problems=$(jig_git_flow_problems)
+  if [ -n "$__tsf_problems" ]; then
+    jig_die "task ship: the project's git flow cannot be shipped through:
+$__tsf_problems
+Nothing was committed. Fix it in .ai/config.yaml (jig doctor names the same) and run again."
+  fi
+  __tsf_flow=$(jig_git_flow) || __tsf_flow=""
+  # The base as origin has it now, not as this checkout last fetched it: a
+  # teammate's `git.flow: staging` pushed since must be seen. A fetch that
+  # fails only warns (jig_fetch_branches), as for `task start` and `upgrade`,
+  # and the comparison goes on with the refs this checkout has.
+  jig_fetch_branches "task ship" "$__tsf_base"
+  _task_ship_flow_agrees "$__tsf_base" "$__tsf_flow" "$(jig_staging_branch)"
+  [ "$__tsf_flow" = staging ] || return 0
+  if [ "$__tsf_base" != "$(cfg git.base_branch main)" ]; then
+    printf 'task ship: %s is cut from %s, not the base branch; the staging flow does not apply to it, so it ships into %s\n' \
+      "$__tsf_id" "$__tsf_base" "$__tsf_base"
+    return 0
+  fi
+  __tsf_branch=$(jig_staging_branch)
+  __tsf_land=$(jig_staging_land) || __tsf_land=""
+  case "$__tsf_level" in
+    pr | merge)
+      [ "$__tsf_land" != pr ] || jig_fetch_branches "task ship" "$__tsf_branch"
+      if [ "$__tsf_land" = pr ] && [ -z "$(jig_base_ref "$__tsf_branch")" ]; then
+        jig_die "task ship: the staging branch $__tsf_branch is neither here nor on origin, so there is nothing to open the pull request into.
+Nothing was committed. Fetch it, or create it on origin, and run again."
+      fi
+      ;;
+  esac
+  printf -v "$1" '%s' "$__tsf_branch"
+  printf -v "$2" '%s' "$__tsf_land"
+}
+
+# _task_ship_flow_agrees <base> <flow> <staging-branch> — refuse, before the
+# commit, when the tip of <base> (jig_base_ref: origin's, else the local
+# branch) names another flow or staging branch than this checkout does. The
+# flow is the team's and lives on the base branch: a task branch cut before
+# the team committed `git.flow: staging` — or one that dropped the key —
+# would otherwise ship, and at `merge` merge, straight into the base branch.
+# The base's config is read with the checkout's own parser (_cfg_read_v), on
+# a copy in a temporary file. A base that is unknown here, or that has no
+# config, cannot disagree: the checkout decides, as before.
+_task_ship_flow_agrees() {
+  local base="$1" flow="$2" staging="$3" ref tmp base_flow="" base_staging=""
+  ref=$(jig_base_ref "$base")
+  [ -n "$ref" ] || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-flow.XXXXXX")
+  jig_cleanup_add "$tmp"
+  jig_git_show_path "$ref" "$JIG_AI_DIR/config.yaml" > "$tmp" 2>/dev/null || return 0
+  _cfg_read_v base_flow "$tmp" git.flow || true
+  _cfg_read_v base_staging "$tmp" git.staging_branch || true
+  base_flow=${base_flow:-direct}
+  [ "$base_flow" = staging ] || base_staging=""
+  [ "$flow" = staging ] || staging=""
+  if [ "$base_flow" != "$flow" ] || [ "$base_staging" != "$staging" ]; then
+    jig_die "task ship: the git flow here is not the one $base has:
+  here: git.flow: $flow${staging:+, git.staging_branch: $staging}
+  $base: git.flow: $base_flow${base_staging:+, git.staging_branch: $base_staging}
+Nothing was committed. Merge $base into the task branch first (git merge ${ref#refs/remotes/}), then run again."
+  fi
+  return 0
+}
+
+# _task_ship_foreign_pr <branch> <staging> — refuse when <branch> already has
+# an open pull request into another branch than <staging>: jig_ship_pr finds
+# an open pull request by its head alone, and would report that one — into
+# the base branch, from a ship under `direct` or opened by hand — as the
+# staging pull request. Asked only in the staging flow, before the commit;
+# with no forge, or a forge that cannot answer (no network, no `gh`/`glab`
+# login), there is nothing to tell apart and the ship goes on, to fail where
+# it always did, at the pull request.
+_task_ship_foreign_pr() {
+  local branch="$1" staging="$2" kind rows="" target url found=""
+  kind=$(jig_forge_kind) || return 0
+  case "$kind" in
+    github)
+      rows=$(jig_net gh pr list --head "$branch" --state open --json url,baseRefName \
+        --jq '.[] | .baseRefName + "\t" + .url' 2>/dev/null) || rows="" ;;
+    gitlab)
+      rows=$(jig_net glab mr list --source-branch "$branch" --output json 2>/dev/null \
+        | jig_glab_fields target_branch web_url) || rows="" ;;
+    *) return 0 ;;
+  esac
+  while IFS=$'\t' read -r target url; do
+    [ -n "$target" ] || continue
+    [ "$target" != "$staging" ] || continue
+    found="$found
+  $url (into $target)"
+  done <<ROWS
+$rows
+ROWS
+  [ -z "$found" ] || jig_die "task ship: $branch already has an open pull request into another branch than $staging:$found
+In the staging flow its pull request goes into $staging. Close that pull request, or retarget it to $staging, and run again."
+  return 0
+}
+
 # _task_triage_id <id> — the id of the triage task that takes <id>'s open
 # P2/P3: `<id>-findings`. Derived, so a repeated ship finds the one it filed.
 _task_triage_id() {
@@ -6328,6 +6441,17 @@ EOF
   cur=$(_task_current_branch)
   [ "$cur" = "$branch" ] || jig_die "task ship: current branch is $cur, but $id is on $branch; switch branches first"
 
+  # The project's git flow, asked before anything changes: where the pull
+  # request goes is decided here, never after the commit or the push.
+  local staging="" land=""
+  _task_ship_flow_v staging land "$id" "$level" "$base"
+  # An open pull request into another branch is refused here, before the
+  # commit, not where the pull request is opened: by then the push would
+  # already have added this commit to it (adr-20260925-a-ship-refuses-before-it-sends).
+  if [ -n "$staging" ] && [ "$land" = pr ]; then
+    case "$level" in pr | merge) _task_ship_foreign_pr "$branch" "$staging" ;; esac
+  fi
+
   # The tracker issue into the commit's first line and the pull request's
   # title, where trackers' VCS integrations look for it — written to a copy,
   # so the task's own commit-message artifact stays as its author wrote it.
@@ -6409,13 +6533,20 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
     return 0
   fi
 
+  if [ -n "$staging" ] && [ "$land" = external ]; then
+    printf 'stopped at push: git.staging_land is external, so CI lands %s on %s; no pull request opened\n' "$branch" "$staging"
+    return 0
+  fi
+
   # A change that raises the version into the default branch is a release,
   # whoever planned it: its merge follows `release.merge` as an epic's final
   # pull request does (spec_ship_final), and a `major` one opens as a draft
   # for a person (adr-20261026-a-task-that-raises-the-version-is-a-release).
   # An epic is not the default branch: there the release is the epic's own.
+  # Nor is the staging branch: what reaches the default branch from there is
+  # the promotion's pull request, a later step.
   local raise="" r_file r_old r_new r_level release_hold="" pr_draft="$draft"
-  if [ "$base" = "$(cfg git.base_branch main)" ]; then
+  if [ -z "$staging" ] && [ "$base" = "$(cfg git.base_branch main)" ]; then
     raise=$(jig_release_raise "$base")
   fi
   if [ -n "$raise" ]; then
@@ -6442,7 +6573,12 @@ EOF
     fi
   fi
 
-  jig_ship_pr "task ship" "$branch" "$base" "$message_file" "$title" "$body_file" "$pr_draft"
+  local pr_base="$base"
+  if [ -n "$staging" ]; then
+    pr_base="$staging"
+    printf 'task ship: git flow staging: the pull request goes into %s, not %s\n' "$staging" "$base"
+  fi
+  jig_ship_pr "task ship" "$branch" "$pr_base" "$message_file" "$title" "$body_file" "$pr_draft"
   # The pull request's address, kept so the status page can link it the
   # moment it exists. A fact about what ship did, not a merge state: whether
   # it was merged is still derived by housekeeping every run (ADR-0005).
@@ -6458,6 +6594,21 @@ EOF
       fi
       ;;
   esac
+
+  # Landing on the staging branch — the approval, the merge on the forge, the
+  # direct merge when it conflicts — is not built yet, so even at `merge` the
+  # ship stops at the open pull request: merging it here would skip the
+  # review the staging flow keeps (.ai/specs/staging-branch/).
+  if [ -n "$staging" ]; then
+    if [ "$level" = merge ] && [ "$draft" -eq 1 ]; then
+      printf 'not merged: a draft pull request is never merged\n'
+    elif [ "$level" = merge ]; then
+      printf 'not merged: landing a task on %s is not built yet; %s is not on %s until a person lands the pull request\n' "$staging" "$branch" "$staging"
+    else
+      printf "%s is not on %s yet: landing the pull request is the human's\n" "$branch" "$staging"
+    fi
+    return 0
+  fi
 
   [ "$level" = merge ] || return 0
   if [ "$draft" -eq 1 ]; then
