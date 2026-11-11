@@ -3959,6 +3959,24 @@ test_status_names_the_staging_flow_and_where_each_task_stands() {
   assert_not_contains "$OUT" "staging="
 }
 
+# With `git.staging_land: external` CI merges a task into the staging branch
+# with no pull request; what it merged reads as for any landed task, from git
+# alone, once fetched.
+test_status_reads_what_ci_landed_on_staging() {
+  fixture_staging_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "flow: staging via staging; on staging: 2, behind staging: 1"
+  assert_contains "$OUT" "task never class=T2 status=active"$'\n'
+  fixture_staging_ci_lands never
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "flow: staging via staging; on staging: 3, behind staging: 1"
+  assert_contains "$OUT" "task never class=T2 status=active staging=on"
+  assert_contains "$OUT" "task behind class=T2 status=active staging=behind"
+}
+
 # A staging flow that cannot work, or whose branch origin does not have, is
 # named instead of counted.
 test_status_says_when_the_staging_flow_cannot_be_read() {

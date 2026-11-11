@@ -185,7 +185,7 @@ body: the task's goal and what verified it. When the task edited a file a stub l
 the block `jig knowledge changed --task <id> --to-review` prints, as it is (an autopilot run's
 report holds the same block): only a human approves the new text, in `jig-accept`.
 
-Once a pull request exists, `task ship` hands every P2 and P3 still `open` to one triage task,
+Once a pull request exists — or at the push under `git.staging_land: external`, which opens none — `task ship` hands every P2 and P3 still `open` to one triage task,
 `<id>-findings`, filed not started and not queued, and says so; a second ship files no second
 one. Name it in your report: it is where a person decides what the review left, and it closes as
 §6 says for a triage task.

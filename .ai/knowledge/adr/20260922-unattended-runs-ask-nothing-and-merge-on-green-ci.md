@@ -16,7 +16,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-consolidate/SKILL.md
 summary: "Why an unattended autopilot run asks nothing and records its defaults in the pull request, and why agent.git: merge merges only on green CI at the shipped commit, never past branch protection."
-reviewed_at: 2026-09-22
+reviewed_at: 2026-11-11
 ---
 # An unattended run asks nothing, and a finished change merges itself once CI passed, never past the forge's rules
 
@@ -64,7 +64,9 @@ alone.
 - **Exhausted repairs end in a draft, not a stop.** The third `repair` still stops the run with exit 3;
   the skill then ships with `task ship --draft`, which opens a draft saying what is unfinished. A draft
   completes nothing and is never merged, so it is the one ship the completion gates (knowledge
-  decision, findings, receipt) do not refuse.
+  decision, findings, receipt) do not refuse. (2026-11-11) Under `git.staging_land: external`, where
+  CI lands whatever is pushed, a draft is committed and not pushed
+  (adr-20261029-a-ship-hands-open-findings-to-one-triage-task, amendment of 2026-11-11).
 - **The epic's final merge is the release**, so `spec ship` in final mode merges it only at `merge` and
   only in an unattended run; attended, even at `merge`, it stays the human's. On top of the conditions
   above: only a merge commit (ADR-0040: squash and rebase break the ancestry its tasks are judged by);

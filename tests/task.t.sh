@@ -6002,6 +6002,81 @@ test_task_ship_staging_external_land_opens_no_pull_request() {
   assert_no_file gh-merge.argv
 }
 
+# Under `external` Jig opens no pull request and merges nothing, so it asks the
+# forge nothing — not even for a pull request into another branch — and needs
+# no staging branch of its own: CI owns the landing.
+test_task_ship_staging_external_land_asks_the_forge_nothing() {
+  sship_setup pr
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  git branch -q -D staging
+  git push -q origin --delete staging
+  git branch -q -d -r origin/staging
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
+  assert_not_contains "$OUT" "pr https://"
+  assert_no_file gh.log "the forge must not be asked anything"
+  assert_eq "" "$(git ls-remote origin staging)" "nothing may be pushed to the staging branch"
+}
+
+# No pull request will list the open P2/P3 under `external`, and nobody opens
+# one later: they go to their triage task at once, and the output says why.
+test_task_ship_staging_external_land_hands_open_findings_to_triage() {
+  sship_setup merge
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  triage_findings
+  task_route_done T-1
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: no pull request lists the open findings, so they go to their triage task"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_file_contains .ai/workspace/tasks/T-1-findings/task.md \
+    "- Pull request: none: git.staging_land is external, so CI lands task/T-1 on staging"
+  assert_file_contains .ai/workspace/tasks/T-1/state "triage_task: T-1-findings"
+}
+
+# At `push` too no pull request ever goes into the staging branch under
+# `external`: the ship says CI lands it and hands the findings over.
+test_task_ship_staging_external_land_at_push_hands_open_findings_to_triage() {
+  sship_setup push
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  triage_findings
+  task_route_done T-1
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
+  assert_not_contains "$OUT" "the pull request is the human's"
+  assert_contains "$OUT" "task ship: 2 open finding(s) handed to task T-1-findings"
+  assert_no_file gh-create.argv
+}
+
+# CI lands whatever is pushed under `external`, so a draft — never merged —
+# is committed and kept here, and nothing reaches origin.
+test_task_ship_staging_external_land_keeps_a_draft_local() {
+  sship_setup merge
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "stopped at commit: a draft is not pushed, since git.staging_land is external and CI lands whatever is pushed to task/T-1"
+  [ "$(git rev-parse HEAD)" != "$head_before" ] || fail "the draft was not committed"
+  assert_eq "Ship T-1" "$(git log -1 --format=%s)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "a draft must not be pushed"
+  assert_no_file gh-create.argv
+  assert_not_contains "$OUT" "handed"
+}
+
 # Whether an epic's tasks pass through staging is an open question of the
 # spec: until it is answered, an epic task ships into its epic as before.
 test_task_ship_staging_epic_task_ships_into_its_epic() {
@@ -9834,6 +9909,20 @@ test_task_list_json_says_whether_a_task_is_on_staging() {
   jig task pause behind >/dev/null 2>&1 || fail "could not pause behind"
   run_split jig task resume behind --json
   case "$OUT" in *'"staging":'*) ;; *) fail "task resume --json has no staging field: $OUT" ;; esac
+}
+
+# Under `git.staging_land: external` a task CI merged into the staging branch,
+# with no pull request, reads as on staging like any other.
+test_task_list_json_reads_what_ci_landed_on_staging() {
+  fixture_staging_repo
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  _tl_json
+  assert_eq null "$(_tl_staging_of never)"
+  fixture_staging_ci_lands never
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq on "$(_tl_staging_of never)"
+  assert_eq behind "$(_tl_staging_of behind)"
 }
 
 # The field is the staging flow's: a project on `direct`, or one whose staging
