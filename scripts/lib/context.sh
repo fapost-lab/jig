@@ -680,7 +680,7 @@ _ctx_read_rows() {
     jig_knowledge_source_v src "$doc"
     if [ -n "$src" ]; then
       jig_knowledge_read_path_v readp "$doc" || :
-      _fm_scan_v block "$doc" || :
+      fm_block_v block "$doc"
       fm_get_block_v id "$block" id
       printf '%s%s%s; linked by %s\n' "$readp" "$t" "$reason" "$id"
     else
