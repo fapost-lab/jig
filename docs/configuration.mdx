@@ -205,8 +205,8 @@ Some settings are a matter of personal taste rather than project policy. Put the
   See [A lighter route](/concepts#a-lighter-route).
 - `github.account` — which of your GitHub accounts this clone works as, when `gh` holds more
   than one. You rarely need it: Jig finds the one account that may push to the repository and
-  uses it for every pull request, check and merge, and for pushes over HTTPS, whichever account is
-  active in `gh`. Set it when several of your accounts may push here. See
+  uses it for every pull request, check, merge and push over HTTPS, whichever account `gh` has
+  active. Set it when several of your accounts may push here. See
   [Two GitHub accounts](/agent-ships#two-github-accounts).
 - `release.merge` — who merges a release in an unattended run at `agent.git: merge`: `agent` (the
   default) merges it once CI passed, `human` opens the pull request and leaves the merge to you. A

@@ -22,9 +22,10 @@ Two refusals that read as failures now say what they are waiting for.
   nothing is stored. When several accounts may push and none is named, a ship now stops before its
   push at every `agent.git` level, `push` included, with nothing sent. If your helper held another
   GitHub user's credentials, the push now goes as the `gh` account. `gh`'s token needs the
-  `workflow` scope for a change under `.github/workflows` (`gh auth login` asks for it). SSH, a
-  `GH_TOKEN` in the environment, and `jig pr fetch` are left as they were. Proven by tests with a
-  stand-in `gh`; a real push as a second account has not been checked yet. See
+  `workflow` scope for a change under `.github/workflows`; `gh auth refresh -s workflow` adds it to
+  the active account only, so switch to the clone's account first, or sign it in with that scope.
+  SSH, a `GH_TOKEN` in the environment, and `jig pr fetch` are left as they were. Proven by tests
+  with a stand-in `gh`; a real push as a second account has not been checked yet. See
   [Two GitHub accounts](/agent-ships#two-github-accounts).
 - **`jig verify` measures a task from the branch it was cut from.** Under `verify.full_run: ci`, a
   plain `jig verify` checks what changed since the current task's base, so a task of an epic no
