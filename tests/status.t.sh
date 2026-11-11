@@ -3935,3 +3935,52 @@ test_status_json_offers_a_newer_upgrade_beside_an_old_waiting_one() {
   _st_upgrade_item 9.0.0
   assert_eq "" "$ITEM" "upgrade-available was offered beside an upgrade to a newer version"
 }
+
+# --- the staging flow (.ai/specs/staging-branch) ---------------------------------
+
+# A project on the staging flow says so, with how many live tasks are on the
+# staging branch and behind it, and each task line says which; a project on
+# `direct` prints neither.
+test_status_names_the_staging_flow_and_where_each_task_stands() {
+  fixture_staging_repo
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "flow: staging via staging; on staging: 2, behind staging: 1"
+  assert_contains "$OUT" "task on class=T2 status=active staging=on"
+  assert_contains "$OUT" "task behind class=T2 status=active staging=behind"
+  assert_contains "$OUT" "task promoted class=T2 status=active staging=on"
+  assert_contains "$OUT" "task never class=T2 status=active"$'\n'
+  assert_contains "$OUT" "task fresh class=T2 status=active"$'\n'
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "flow:"
+  assert_not_contains "$OUT" "staging="
+}
+
+# A staging flow that cannot work, or whose branch origin does not have, is
+# named instead of counted.
+test_status_says_when_the_staging_flow_cannot_be_read() {
+  fixture_staging_repo
+  sed '/^git.staging_branch:/d' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "flow: staging, not usable: git.staging_branch: the staging flow needs the name of the staging branch (jig doctor)"
+  assert_not_contains "$OUT" "staging="
+  printf 'git.staging_branch: qa\n' >> .ai/config.yaml
+  run jig status
+  assert_contains "$OUT" "flow: staging via qa, which origin does not have (git fetch, or push it)"
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_contains "$OUT" "warn  flow: staging via qa, which origin does not have"
+}
+
+test_status_a_terminal_shows_the_staging_flow_with_the_tasks() {
+  fixture_staging_repo
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "  T2  behind              behind staging"
+  assert_contains "$OUT" "  T2  on                  on staging"
+  assert_contains "$OUT" "  .   flow: staging via staging; on staging: 2, behind staging: 1"
+}

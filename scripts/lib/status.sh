@@ -336,6 +336,10 @@ $rel"
   local found=0 rec line default_base blocking bcount autopilot_note qlines qon qreason qago
   [ -n "$_STATUS_LIVE_READY" ] || _status_live_collect
   default_base=$_STATUS_DEFAULT_BASE
+  # The project's git flow and where its tasks stand on the staging branch:
+  # nothing on the default `direct` flow, whose report stays what it was.
+  _status_flow
+  local staging_state sid sst
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     _status_rec "$rec"
@@ -387,6 +391,15 @@ EOF
     if [ -n "$_ST_BASE" ] && [ "$_ST_BASE" != "$default_base" ]; then
       line="$line base=$_ST_BASE"
     fi
+    # On the staging flow, whether the task's work is on the staging branch
+    # (jig_staging_states, read once in _status_flow).
+    staging_state=""
+    while IFS=$'\t' read -r sid sst; do
+      [ "$sid" != "$_ST_ID" ] || staging_state=$sst
+    done <<EOF
+$_STATUS_STAGING
+EOF
+    [ -z "$staging_state" ] || line="$line staging=$staging_state"
     if [ "$_ST_PAUSED" = "true" ]; then
       if [ -n "$_ST_REASON" ]; then
         line="$line paused ($_ST_REASON)"
@@ -458,6 +471,48 @@ EOF
   _status_instructions
 }
 
+# _status_flow — the `flow:` line, printed only off the default `direct` flow:
+# a flow jig doctor finds fault with, a staging branch origin does not have,
+# or how many live tasks are on the staging branch and how many behind it.
+# Fills _STATUS_STAGING with jig_staging_states' answer for the live tasks
+# ("<id><TAB>on|behind"), asked once for all of them; empty otherwise.
+_STATUS_STAGING=""
+_status_flow() {
+  local flow problems staging rows="" rec on=0 behind=0 id st t=$'\t'
+  _STATUS_STAGING=""
+  cfg_v flow git.flow direct
+  [ "$flow" != direct ] || return 0
+  problems=$(jig_git_flow_problems)
+  if [ -n "$problems" ]; then
+    printf 'flow: %s, not usable: %s (jig doctor)\n' "$flow" "${problems%%$'\n'*}"
+    return 0
+  fi
+  staging=$(jig_staging_branch)
+  if ! git -C "$JIG_PROJECT" show-ref --verify --quiet "refs/remotes/origin/$staging"; then
+    printf 'flow: staging via %s, which origin does not have (git fetch, or push it)\n' "$staging"
+    return 0
+  fi
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    [ -n "$_ST_BRANCH" ] || continue
+    rows="$rows$_ST_ID$t$_ST_BRANCH$t${_ST_BASE:-$_STATUS_DEFAULT_BASE}
+"
+  done <<EOF
+$_STATUS_LIVE
+EOF
+  _STATUS_STAGING=$(jig_staging_states "$staging" "$rows")
+  while IFS="$t" read -r id st; do
+    case "$st" in
+      on) on=$((on + 1)) ;;
+      behind) behind=$((behind + 1)) ;;
+    esac
+  done <<EOF
+$_STATUS_STAGING
+EOF
+  printf 'flow: staging via %s; on staging: %d, behind staging: %d\n' "$staging" "$on" "$behind"
+}
+
 # --- the terminal form (adr-20261005-output-is-decorated-only-on-a-terminal) ----
 #
 # At a terminal `jig status` is read by section. A heading names the version,
@@ -488,6 +543,7 @@ _STT_AGENT=""        # the agent.git line's value, when it is valid
 _STT_AUTOPILOT=""    # the autopilot.git line's value, when it is valid
 _STT_CURRENT=""      # the current task, when it is not ambiguous
 _STT_NEXT=""         # the advice line's text after "next: ", when the clone has a queue
+_STT_FLOW=""         # the flow line's text after "flow: ", off the direct flow
 _STT_UNSEEN=""       # 1 when the runtime does not name its sessions
 _STT_MODE=""         # the install's mode (copy, link)
 _STT_CURRENT_FW=""   # 1 when the project's framework is the global one
@@ -562,7 +618,7 @@ _status_terminal() {
   _STT_NEED_LEVEL=() _STT_NEED_TEXT=() _STT_NEED_DETAIL=() _STT_TASKS=() _STT_OTHERS=()
   _STT_INSTALL=() _STT_KNOW=() _STT_CFG=() _STT_REST=() _STT_HOOKS=() _STT_INSTR=()
   _STT_INSTR_OWN=()
-  _STT_AGENT="" _STT_CURRENT="" _STT_NEXT="" _STT_UNSEEN="" _STT_MODE="" _STT_CURRENT_FW="" _STT_INIT=""
+  _STT_AGENT="" _STT_CURRENT="" _STT_NEXT="" _STT_FLOW="" _STT_UNSEEN="" _STT_MODE="" _STT_CURRENT_FW="" _STT_INIT=""
   while IFS= read -r l || [ -n "$l" ]; do
     # A line indented by two spaces belongs to the list named above it
     # (modified:, missing:), which belongs to the drift line before that, or
@@ -681,6 +737,11 @@ _status_terminal() {
       # The queue's advice is a fact about the tasks, never something the
       # reader must do: `next: none` is an answer, not a warning.
       "next: "*) _STT_NEXT=${l#next: } ;;
+      # The flow is a fact about the tasks too, unless it cannot work.
+      "flow: "*", not usable: "*" (jig doctor)" | "flow: "*", which origin does not have"*)
+        _status_need warn "$l"
+        ;;
+      "flow: "*) _STT_FLOW=${l#flow: } ;;
       "working here: "*" (jig "*", "*" ago)")
         t=${l#working here: }
         v=${t%% (jig *}
@@ -1040,6 +1101,7 @@ _status_terminal_tasks() {
           uncommitted=0) ;;
           uncommitted=*) note+=("${wd#uncommitted=} uncommitted") ;;
           base=*) note+=("base ${wd#base=}") ;;
+          staging=*) note+=("${wd#staging=} staging") ;;
           autopilot=on) note+=("autopilot on") ;;
           queue=*) note+=("queue ${wd#queue=}") ;;
           priority=*) note+=("priority ${wd#priority=}") ;;
@@ -1064,7 +1126,8 @@ _status_terminal_tasks() {
       notes+=("$t")
     done
   fi
-  [ "$ntasks" -gt 0 ] || [ -n "$finished" ] || [ -n "$_STT_CURRENT" ] || [ -n "$_STT_NEXT" ] || return 0
+  [ "$ntasks" -gt 0 ] || [ -n "$finished" ] || [ -n "$_STT_CURRENT" ] || [ -n "$_STT_NEXT" ] \
+    || [ -n "$_STT_FLOW" ] || return 0
   out_section "Tasks" "$counts"
   w=20
   for id in "${ids[@]+"${ids[@]}"}"; do
@@ -1108,6 +1171,7 @@ _status_terminal_tasks() {
     done
   done
   [ -z "$_STT_NEXT" ] || out_row dim 4 "$OUT_MARK" plain 0 "next: $_STT_NEXT"
+  [ -z "$_STT_FLOW" ] || out_row dim 4 "$OUT_MARK" plain 0 "flow: $_STT_FLOW"
   [ -z "$_STT_CURRENT" ] || out_row dim 4 "$OUT_MARK" plain 0 "current task: $_STT_CURRENT"
 }
 

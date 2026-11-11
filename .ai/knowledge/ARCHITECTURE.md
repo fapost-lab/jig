@@ -53,7 +53,9 @@ own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rul
 its command (`jig writes`, what waits and carrying it further), and `housekeeping` and `status` read
 it; it sources nothing and calls the `jig_ship_*` steps every ship takes.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
-`jig_git_touched_files` ("what did this task touch"), `jig_task_base` and `jig_base_ref`
+`jig_git_touched_files` ("what did this task touch"), `jig_staging_in_use` and `jig_staging_states`
+("is this project on a sound staging flow, and which tasks' work is on its staging branch" —
+`task list --json`, `status` and housekeeping all show it), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`
 ("which spec does this task follow, and is it on an epic" — `task start` and `spec` both read them),
 `jig_task_ref`, `jig_task_ref_dir` and `jig_task_links` ("which task or spec in a neighbouring

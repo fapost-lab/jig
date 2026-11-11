@@ -875,6 +875,136 @@ jig_base_ref() {
   return 0
 }
 
+# jig_staging_states <staging-branch> <rows> — "<id><TAB>on|behind" for each
+# task of <rows> ("<id><TAB><branch><TAB><base>" lines) whose own work reached
+# origin's <staging-branch>; nothing for any other task. Derived from git by
+# branch name on every call and stored nowhere (ADR-0005), so a colleague, a CI
+# runner and the owner read the same answer from the same refs.
+#
+# A task's own commits are those its branch reaches and its base does not (the
+# base resolved as jig_base_ref does, origin first). A merge commit whose every
+# parent but the first is in the base or the staging branch brings those in and
+# is not the task's own work, so a task does not read "behind" the moment its
+# base is merged into it at promotion (.ai/specs/staging-branch, failure mode
+# 7), and staging merged into a task branch ("Update branch" on a pull request
+# into staging) neither makes the task behind nor puts it on staging: staging
+# is reached only along the task's own commits. The tip is the
+# local branch, else origin's, as housekeeping resolves it: commits the owner
+# has not pushed are commits after staging too.
+#   on      some own commit is in origin/<staging-branch>, and every own commit
+#           not in it is a merge of the base
+#   behind  some own commit is in origin/<staging-branch>, and another own
+#           commit is not
+# Nothing when no own commit is there: the task never reached staging, has no
+# branch or no work of its own, or its base or origin's staging branch is not
+# here. A squash merge into staging leaves the branch's commits out of it, so
+# such a task reads as not on staging (docs/known-issues.mdx).
+#
+# The processes it starts do not grow with the tasks (conventions/shell.md):
+# one for-each-ref, and per distinct base one rev-list of every tip's own
+# commits with their parents and one of staging's commits the base lacks; the
+# graph is walked in awk.
+jig_staging_states() {
+  local staging="$1" rows="$2" t=$'\t' resolved line base bsha tips stip
+  local -a bases=()
+  [ -n "$staging" ] && [ -n "$rows" ] || return 0
+  # Each task's tip and base, and staging's tip, from one listing of the refs:
+  # "T<TAB>id<TAB>tip<TAB>base<TAB>base-sha" lines, then "S<TAB>staging-sha".
+  resolved=$({
+    git -C "$JIG_PROJECT" for-each-ref --format='R%09%(refname)%09%(objectname)' \
+      refs/heads refs/remotes/origin 2>/dev/null || true
+    printf '%s\n' "$rows" | awk -F '\t' 'NF >= 3 && $1 != "" && $2 != "" && $3 != "" { print "Q\t" $0 }'
+  } | awk -F '\t' -v st="$staging" '
+    function tip(name) {
+      if (("refs/heads/" name) in ref) return ref["refs/heads/" name]
+      if (("refs/remotes/origin/" name) in ref) return ref["refs/remotes/origin/" name]
+      return ""
+    }
+    function base(name) {
+      if (("refs/remotes/origin/" name) in ref) return ref["refs/remotes/origin/" name]
+      if (("refs/heads/" name) in ref) return ref["refs/heads/" name]
+      return ""
+    }
+    $1 == "R" { ref[$2] = $3; next }
+    $1 == "Q" { n++; id[n] = $2; br[n] = $3; bs[n] = $4; next }
+    END {
+      if (!(("refs/remotes/origin/" st) in ref)) exit
+      for (i = 1; i <= n; i++) {
+        tp = tip(br[i]); b = base(bs[i])
+        if (tp != "" && b != "") print "T\t" id[i] "\t" tp "\t" bs[i] "\t" b
+      }
+      print "S\t" ref["refs/remotes/origin/" st]
+    }') || return 0
+  case "$resolved" in *"S$t"*) ;; *) return 0 ;; esac
+  stip=${resolved##*"S$t"}
+  stip=${stip%%$'\n'*}
+  # The distinct bases, each with its sha.
+  while IFS="$t" read -r line _ _ base bsha; do
+    [ "$line" = T ] || continue
+    case " ${bases[*]-} " in *" $base:$bsha "*) ;; *) bases+=("$base:$bsha") ;; esac
+  done <<EOF
+$resolved
+EOF
+  [ ${#bases[@]} -gt 0 ] || return 0
+  {
+    printf '%s\n' "$resolved"
+    for line in "${bases[@]}"; do
+      base=${line%:*}
+      bsha=${line##*:}
+      tips=$(printf '%s\n' "$resolved" | awk -F '\t' -v b="$base" '$1 == "T" && $4 == b { print $3 }')
+      # shellcheck disable=SC2086 # one argument per tip, each a hexadecimal sha
+      git -C "$JIG_PROJECT" rev-list --parents $tips "^$bsha" 2>/dev/null \
+        | awk -v b="$base" '{ print "C\t" b "\t" $0 }' || true
+      git -C "$JIG_PROJECT" rev-list "$stip" "^$bsha" 2>/dev/null \
+        | awk -v b="$base" '{ print "N\t" b "\t" $0 }' || true
+    done
+  } | awk -F '\t' '
+    $1 == "T" { n++; id[n] = $2; tp[n] = $3; bs[n] = $4; next }
+    $1 == "C" {
+      k = split($3, a, " ")
+      key = $2 SUBSEP a[1]
+      own[key] = 1
+      np[key] = k - 1
+      for (j = 2; j <= k; j++) par[key, j - 1] = a[j]
+      next
+    }
+    $1 == "N" { on[$2 SUBSEP $3] = 1; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        b = bs[i]
+        # A tip the base already has: no work of its own to be anywhere.
+        if (!((b SUBSEP tp[i]) in own)) continue
+        split("", seen)
+        sp = 0; stack[++sp] = tp[i]; reached = 0; behind = 0
+        while (sp > 0) {
+          c = stack[sp--]
+          if (c in seen) continue
+          seen[c] = 1
+          key = b SUBSEP c
+          # On staging, and so is everything it reaches.
+          if (key in on) { reached = 1; continue }
+          # Own work unless it is a merge that only brings the base or the
+          # staging branch in (GitHub'"'"'s "Update branch" on a pull request into
+          # staging). Such a parent is not followed either: staging reached
+          # only through it is not the task'"'"'s own work on staging.
+          mine = (np[key] <= 1)
+          for (j = 2; j <= np[key]; j++) {
+            p = b SUBSEP par[key, j]
+            if ((p in own) && !(p in on)) mine = 1
+          }
+          if (mine) behind = 1
+          for (j = 1; j <= np[key]; j++) {
+            p = par[key, j]
+            if (!((b SUBSEP p) in own) || (p in seen)) continue
+            if (j > 1 && ((b SUBSEP p) in on)) continue
+            stack[++sp] = p
+          }
+        }
+        if (reached) print id[i] "\t" (behind ? "behind" : "on")
+      }
+    }'
+}
+
 # jig_git_show_path <ref> <path> — the content of <path> as committed at <ref>,
 # on stdout; non-zero when <ref> names no commit or <path> is not in it.
 # The ref is resolved to a commit SHA first and git is handed `<sha>:<path>`,

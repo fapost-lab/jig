@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-07
+reviewed_at: 2026-11-11
 ---
 # Housekeeping
 
@@ -98,6 +98,14 @@ evidence it inferred itself.
   `unknown` — kept, exit 3, counted by `jig status`. A closed task merged into a base that has
   not reached the default branch — a phase of an open epic — is kept with `base-unreleased`
   until it has (ADR-0040).
+- On the staging flow, each task's **staging state** (`_hk_staging_init`, once per run after the
+  fetch, through `jig_staging_states` in common.sh): `on` or `behind`, derived from git by branch
+  name and written into no task's state (ADR-0005). It goes on the task's log and `--verbose` line
+  as `staging=on|behind`, after `flags=` and before a purge's facts, and into the report's note
+  (`on staging`, `behind staging`). A pull request merged into the staging branch is not
+  `wrong-base`, and a task on staging is not archived as stale — it is kept with
+  `STALE_CANDIDATE`, as work landed on the wrong base is (ADR-0039 as amended 2026-11-11). On any
+  other flow the run, its log and its report are what they were.
 
 ## What governs it
 

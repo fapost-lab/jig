@@ -13,7 +13,7 @@ paths:
   - scripts/lib/common.sh
   - schemas/state.md
 summary: Why every task records its own base branch, why bases resolve origin first, and why work merged elsewhere is flagged wrong-base rather than merged.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-11-11
 ---
 # ADR-0039: A task records the branch it is cut from and has to land on
 
@@ -80,3 +80,17 @@ never read a pull request's base.
 - The reverse mistake — a task of `main` whose pull request went into an epic — is visible only with
   a forge.
 - The forge stub in `tests/housekeeping.t.sh` prints three tab-separated fields per pull request.
+
+## Amendment (2026-11-11): the staging flow
+
+In a project on the staging flow (`git.flow: staging`, adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes),
+a pull request merged into `git.staging_branch` is the flow's own step, not work landed outside the
+task's base: `_hk_forge_state` passes over it, so it raises no `wrong-base`, and the task's remote
+state falls through to ancestry as before (`unknown` until it reaches its base). What the run reports
+instead is the task's staging state, `on` or `behind` (`jig_staging_states`, common.sh): derived
+from git by the branch's name on every read and stored nowhere (ADR-0005). Own work is what the
+branch reaches and its base does not; a merge whose other parents are all in the base or in
+`origin/<staging>` brings those in and is not own work, and staging reached only through such a
+parent does not count. A task on staging is kept from the stale archive (`STALE_CANDIDATE`), the
+protection `wrong-base` used to give it. On any other flow nothing here changes.
+

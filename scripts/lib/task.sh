@@ -4969,6 +4969,37 @@ _TASK_LIST_HK_FLAGS="needs-consolidation wrong-base abandoned? worktree-kept bas
 # every task it lists.
 _TASK_LIST_FORGE_CACHE=""
 
+# A task's staging state, read once per listing (_task_list_staging_read):
+# _TASK_LIST_STAGING_ON is 1 in a project on the staging flow, the one kind
+# whose objects carry `staging`, and _TASK_LIST_STAGING holds
+# "<id><TAB>on|behind" for the tasks whose work reached the staging branch.
+_TASK_LIST_STAGING_ON=""
+_TASK_LIST_STAGING=""
+
+# _task_list_staging_read <ids> — fill the two globals above for the tasks
+# <ids> names, one per line: their branch and base from the listing's snapshot,
+# and the answer from jig_staging_states (common.sh) in one call, so the
+# processes it starts do not grow with the tasks. A project on any other flow
+# reads nothing and its objects keep their shape byte for byte.
+_task_list_staging_read() {
+  local ids="$1" staging id branch base rows="" t=$'\t'
+  _TASK_LIST_STAGING_ON=""
+  _TASK_LIST_STAGING=""
+  staging=$(jig_staging_in_use) || return 0
+  _TASK_LIST_STAGING_ON=1
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    task_state_var branch "$id" branch
+    [ -n "$branch" ] || continue
+    jig_task_base_v base "$id"
+    rows="$rows$id$t$branch$t$base
+"
+  done <<EOF
+$ids
+EOF
+  _TASK_LIST_STAGING=$(jig_staging_states "$staging" "$rows")
+}
+
 # _task_list_hk_flagged — "<id><TAB><flag>" for every housekeeping flag that
 # still stands, asked once per flag rather than once per task. Needs hklog.sh
 # sourced. Pathname expansion is off for the split: `abandoned?` is a glob.
@@ -4998,6 +5029,7 @@ _task_json_one() {
   # shellcheck source=lib/forgecache.sh
   . "$JIG_LIB/forgecache.sh"
   _TASK_LIST_FORGE_CACHE=$(forgecache_read)
+  _task_list_staging_read "$1"
   _task_list_json_task "$1" "$(_task_worktrees)" "$(_task_list_hk_flagged)"
 }
 
@@ -5016,6 +5048,7 @@ _task_list_json() {
   # What housekeeping last heard from the forge, read once per listing.
   _TASK_LIST_FORGE_CACHE=$(forgecache_read)
   flagged=$(_task_list_hk_flagged)
+  _task_list_staging_read "$_TASK_LIST_IDS"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     _task_list_json_task_v row "$id" "$worktrees" "$flagged"
@@ -5108,6 +5141,17 @@ _task_list_json_task_v() {
   json_str_or_null "$branch"; o="$o,\"branch\":$_JSON"
   jig_task_base_v base "$id"
   json_quote "$base"; o="$o,\"base_branch\":$_JSON"
+  # Whether the task's work is on the staging branch, derived from git by its
+  # branch (jig_staging_states): only in a project on the staging flow.
+  if [ "$_TASK_LIST_STAGING_ON" = 1 ]; then
+    v=""
+    while IFS="$t" read -r line flag; do
+      [ "$line" != "$id" ] || v=$flag
+    done <<EOF
+$_TASK_LIST_STAGING
+EOF
+    json_str_or_null "$v"; o="$o,\"staging\":$_JSON"
+  fi
 
   wt=""
   [ -z "$branch" ] || _task_worktree_for_v wt "$branch" "$worktrees"
