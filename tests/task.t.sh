@@ -11323,6 +11323,45 @@ test_context_starts_no_process_per_document_it_does_not_select() {
   [ $((ten - six)) -le 1 ] || fail "4 more documents started $((ten - six)) more processes (6: $six, 10: $ten)"
 }
 
+# `jig context` asks the same guard of every stub it selects or lists
+# (_ctx_read_path, _ctx_read_rows, the catalog line): it cost five subshells
+# and a `dirname` per stub. A stub now costs what any document selected or
+# listed costs, the guard adding nothing (stub-read-path-without-processes).
+test_context_starts_no_process_for_the_source_of_a_stub() {
+  task_setup
+  local j plain_sel plain_cat stub_sel stub_cat
+  mkdir -p .ai/knowledge/sources .ai/knowledge/features docs
+  for j in 1 2 3 4; do
+    printf -- '---\nid: feature-p%s\ntype: feature\nstatus: active\ndomains:\n  - listed\n---\n# P%s\n' "$j" "$j" \
+      > ".ai/knowledge/features/p$j.md"
+  done
+  # The first run saves what later runs find made.
+  _tl_forks context --no-task --domains listed --files README.md --format paths >/dev/null \
+    || fail "context failed under the probe"
+  plain_sel=$(_tl_forks context --no-task --domains listed --files README.md --format paths) \
+    || fail "context failed under the probe"
+  plain_cat=$(_tl_forks context resolve --no-task --catalog --domains listed --files README.md) \
+    || fail "context failed under the probe"
+  for j in 1 2 3 4; do
+    printf 'listed %s\n' "$j" > "docs/l$j.md"
+    printf -- '---\nid: convention-l%s\ntype: convention\nstatus: active\nsource: docs/l%s.md\ndomains:\n  - listed\n---\n' "$j" "$j" \
+      > ".ai/knowledge/sources/l$j.md"
+    rm ".ai/knowledge/features/p$j.md"
+  done
+  stub_sel=$(_tl_forks context --no-task --domains listed --files README.md --format paths) \
+    || fail "context failed under the probe"
+  stub_cat=$(_tl_forks context resolve --no-task --catalog --domains listed --files README.md) \
+    || fail "context failed under the probe"
+  [ $((stub_sel - plain_sel)) -le 1 ] \
+    || fail "4 selected stubs started $((stub_sel - plain_sel)) more processes than 4 documents ($plain_sel)"
+  [ $((stub_cat - plain_cat)) -le 1 ] \
+    || fail "4 stubs in the catalog started $((stub_cat - plain_cat)) more processes than 4 documents ($plain_cat)"
+  run jig context --no-task --domains listed --files README.md --format paths
+  assert_contains "$OUT" "docs/l4.md"
+  run jig context resolve --no-task --catalog --domains listed --files README.md
+  assert_contains "$OUT" "catalog:   docs/l4.md  [convention-l4] (no summary)"
+}
+
 test_status_json_starts_a_fixed_number_of_processes_per_task() {
   task_setup
   local two six ten few many
@@ -11372,11 +11411,10 @@ test_status_starts_no_process_per_knowledge_document() {
   # Stubs linking a source take the other road through km_source_states: the
   # recorded source_hash read, every source hashed. Each batch holds one whose
   # hash is recorded and current, one changed since and two never recorded;
-  # the first batch brings the one git process that hashes them all. What a
-  # stub still costs is pinned, not zero: jig_knowledge_read_path, the guard
-  # that keeps a source inside the repository, starts five subshells and a
-  # `dirname` per stub — a known gap, so the bound is six per stub and one more
-  # for a once-per-run record. A seventh per stub fails here.
+  # the first batch brings the one git process that hashes them all. The guard
+  # that keeps a source inside the repository (jig_knowledge_read_path) once
+  # started five subshells and a `dirname` per stub; it starts none now, so
+  # four more stubs may cost one process, a once-per-run record, and no more.
   local four eight
   mkdir -p .ai/knowledge/sources docs
   _tl_status_stubs() {
@@ -11401,7 +11439,7 @@ test_status_starts_no_process_per_knowledge_document() {
   assert_contains "$OUT" "ok          .ai/knowledge/sources/s17.md"
   assert_contains "$OUT" "changed     .ai/knowledge/sources/s18.md"
   assert_contains "$OUT" "unrecorded  .ai/knowledge/sources/s16.md"
-  [ $((eight - four)) -le 25 ] || fail "4 more stubs started $((eight - four)) more processes (4: $four, 8: $eight)"
+  [ $((eight - four)) -le 1 ] || fail "4 more stubs started $((eight - four)) more processes (4: $four, 8: $eight)"
 }
 
 # Nearly every `jig task` command asks which task is current, and the answer
