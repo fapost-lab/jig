@@ -66,7 +66,7 @@ branch owns.
   the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
   the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it; after: Prepare a task for prod —
   it reports the pull requests that item opens)
-- [ ] `staging-land-external` — Staging landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
+- [x] `staging-land-external` — Staging landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
   merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
   state — it is the only thing Jig does on the staging branch then). The key exists from Choose a flow;
   `external` works only from here, harmless in an epic released once.

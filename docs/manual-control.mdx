@@ -277,7 +277,9 @@ git each time, by the task's branch, comparing it with origin's staging branch �
 what colleagues merged. When the flow cannot work, the line says so instead
 (`flow: staging, not usable: … (jig doctor)`). `jig housekeeping` puts the same word in its report
 (`on staging: …`, `behind staging: …`), and a task waiting on the staging branch is never archived
-as stale. On the default `direct` flow none of this appears.
+as stale. With `git.staging_land: external`, where your CI merges tasks into the staging branch and
+no pull request goes there, this is how you see what CI landed: the same words, read the same way. On
+the default `direct` flow none of this appears.
 
 ## Inspect the change and its review
 

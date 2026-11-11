@@ -33,7 +33,9 @@ send the task into the base branch nor merge into staging past the review the fl
   the checkout stays on the task branch and the branch stays. Below `merge` it says the task is not
   on staging yet and the person lands it. *Superseded by the amendment below: landing is built.*
 - **`git.staging_land: external` stops after the push** and opens no pull request: CI lands the
-  task. Reading what CI landed is a later item.
+  task. Reading what CI landed is a later item. The task staging-land-external built it: the staging
+  state reads what CI merged from git alone, with no pull request, and the ship files the triage task
+  for open P2/P3 there, since no pull request will list them.
 - **A task of an epic ships into its epic**, as before, with a line saying the staging flow does not
   apply to it: whether an epic's tasks pass through staging is the spec's open question.
 - **The flow is read from the base branch too.** Before the commit, the base is fetched

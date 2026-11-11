@@ -158,7 +158,7 @@ not cost another review round. If you want one fixed, ask — it is then an ordi
 re-review.
 
 Small findings left open do not get lost when the pull request is merged — by you, or by an agent
-allowed to merge. When the agent opens the pull request, Jig files one task, `<task-id>-findings`,
+allowed to merge. When the agent opens the pull request — or, with `git.staging_land: external`, when it pushes the branch your CI lands, with no pull request — Jig files one task, `<task-id>-findings`,
 holding every open P2 and P3 word for word with a link to the pull request. It is not started and
 not in the queue, so no agent takes it on its own: it waits for you to go through the findings —
 file a task for one, or set it aside with a reason. Shipping the same task again files no second

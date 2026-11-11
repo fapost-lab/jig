@@ -236,7 +236,8 @@ refused, at every level and before anything is committed, also while the merge i
 rebuild it from its own commits on the main branch.
 
 With `git.staging_land: external` it stops after the push and opens no pull request, since your CI
-lands the task. A flow `jig doctor` would fail on is refused before anything is committed. A task of
+lands the task; Jig asks your forge nothing and merges nothing into the staging branch. Once CI has
+merged the branch there, `jig status` shows the task `staging=on` (after `git fetch`). A flow `jig doctor` would fail on is refused before anything is committed. A task of
 an epic still goes into its epic.
 </Accordion>
 
