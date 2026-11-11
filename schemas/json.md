@@ -73,7 +73,7 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `not-local` | `jig config set --json` was given a key Jig reads but only the team's `.ai/config.yaml` answers for. Nothing was written |
 | `invalid-value` | `jig config set --json` was given a value its key does not accept: outside the fixed set, not a number, not a duration. Nothing was written |
 | `secret-key` | `jig config set --json` was asked to put a secret (`notify.telegram.token`) on a command line, which Jig never does. Nothing was written |
-| `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge. Nothing was changed; merge it and run the command again |
+| `not-merged` | `jig upgrade --land` found the upgrade's pull request still open on the forge; or `jig upgrade` found the upgrade to this version already on an unmerged `jig/upgrade-<version>` branch whose pull request the forge reports open — the upgrade is done and waits for its merge, and `message` names the pull request's URL. Nothing was changed; merge it and run `jig upgrade --land` |
 | `failed` | any other refusal: one that names no code of its own, a fault of the environment (a checkout that cannot be read, a failed command), or a producer that printed nothing |
 
 A refusal names its code with `jig_fail <code> <message>` (`scripts/lib/common.sh`); `jig_die
@@ -898,7 +898,10 @@ source holds a newer version than the jig that was called), that jig's data is t
 | `manual_steps` | the steps this release asks for by hand, as the upgrade commit lists them; empty when there are none |
 | `would_stop` | for a dry run, every reason a real run would refuse, as `upgrade-blocked` would name it; empty otherwise |
 
-Refusals: `upgrade-blocked` before anything is touched; `usage` for an argument the command does
+Refusals: `upgrade-blocked` before anything is touched; `not-merged` when the upgrade to this version
+is already on an unmerged `jig/upgrade-<version>` branch whose pull request the forge reports open
+(the forge is asked once, only then; without its answer, or for a merged or closed pull request, the
+refusal reads `failed`); `usage` for an argument the command does
 not take or `--from` without its value; `not-initialised` and `not-a-repository` as everywhere. Any
 other refusal — a source that is not a Jig checkout, a project in link mode where links cannot be
 made — reads `failed`. A failure after the commit (the push, the pull request or the merge) also

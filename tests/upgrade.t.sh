@@ -1979,6 +1979,11 @@ test_upgrade_refuses_a_second_branch_for_an_unmerged_upgrade() {
   assert_eq "main" "$(git symbolic-ref --short HEAD)"
   [ -z "$(git branch --list 'jig/upgrade-9.9.9-*')" ] || fail "a second upgrade branch was cut"
 
+  # No forge to ask: the refusal names no pull request and reads `failed`.
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"upgrade: the upgrade to 9.9.9 is already on branch jig/upgrade-9.9.9, which has not been merged into main yet. Merge it, or'
+
   rm -rf "$src"
 }
 
@@ -2502,6 +2507,84 @@ test_upgrade_land_refuses_an_upgrade_not_merged_yet() {
   assert_contains "$OUT" '"error":{"code":"not-merged","message":"upgrade --land: the pull request of jig/upgrade-9.9.9 is not merged yet'
 
   rm -rf "$LAND_REMOTE"
+}
+
+# The upgrade already waiting in an open pull request is not started again,
+# and the refusal names that pull request, as `not-merged`: done, waiting for
+# a merge, not failed. The forge is asked once.
+test_upgrade_refusal_names_the_open_pull_request() {
+  _land_project open
+  PATH=$LAND_PATH
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already on branch jig/upgrade-9.9.9, which has not been merged into main yet; its pull request is open and waits for a merge: https://github.com/example/example/pull/12"
+  assert_contains "$OUT" "jig upgrade --land"
+  assert_eq 1 "$(grep -c '^pr list' stub-bin/calls)"
+  assert_contains "$(cat stub-bin/calls)" "--head jig/upgrade-9.9.9"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  [ -z "$(git branch --list 'jig/upgrade-9.9.9-*')" ] || fail "a second upgrade branch was cut"
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"not-merged","message":"upgrade: the upgrade to 9.9.9 is already on branch jig/upgrade-9.9.9'
+
+  rm -rf "$src" "$LAND_REMOTE"
+}
+
+test_upgrade_refusal_names_the_open_merge_request_on_gitlab() {
+  _land_project open "" gitlab
+  PATH=$LAND_PATH
+  local src
+  src=$(_unit_source)
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-merged"'
+  assert_contains "$OUT" "its pull request is open and waits for a merge: https://gitlab.com/example/example/-/merge_requests/12"
+  assert_eq 1 "$(grep -c '^mr list' stub-bin/calls)"
+  assert_contains "$(cat stub-bin/calls)" "--source-branch jig/upgrade-9.9.9"
+
+  rm -rf "$src" "$LAND_REMOTE"
+}
+
+# A pull request closed without a merge is named with its state; the upgrade
+# is not waiting for anything, so the refusal stays `failed`.
+test_upgrade_refusal_names_a_closed_pull_request() {
+  _land_project closed
+  PATH=$LAND_PATH
+  local src
+  src=$(_unit_source)
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"failed"'
+  assert_contains "$OUT" "its pull request was closed without a merge: https://github.com/example/example/pull/12"
+
+  rm -rf "$src" "$LAND_REMOTE"
+}
+
+# A forge that does not answer leaves the refusal as it always was: no other
+# error, and still `failed`.
+test_upgrade_refusal_stays_when_the_forge_does_not_answer() {
+  _land_project open
+  PATH=$LAND_PATH
+  rm -f stub-bin/prs
+  local src
+  src=$(_unit_source)
+
+  run jig upgrade --from "$src"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "already on branch jig/upgrade-9.9.9, which has not been merged into main yet. Merge it, or"
+  assert_not_contains "$OUT" "pull request"
+
+  _up_json upgrade --from "$src" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"error":{"code":"failed","message":"upgrade: the upgrade to 9.9.9 is already on branch jig/upgrade-9.9.9'
+
+  rm -rf "$src" "$LAND_REMOTE"
 }
 
 # Uncommitted work and a checkout on somebody else's branch stop it, both

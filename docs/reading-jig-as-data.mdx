@@ -98,6 +98,7 @@ be reworded.
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
 | `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
+| `not-merged` | the upgrade is done and waits for its pull request to be merged: `jig upgrade --land` found it still open, or `jig upgrade` found this version already on an unmerged `jig/upgrade-<version>` branch whose pull request is open. Nothing was changed; the message names the pull request — merge it, then run `jig upgrade --land` |
 | `unknown-key`, `not-local`, `invalid-value`, `secret-key` | `jig config set --json` refused a key or value: a name Jig does not read, a key only the team's `.ai/config.yaml` answers for, a value the key does not accept, or a secret on a command line. Nothing was written |
 | `failed` | anything else: the message says what |
 
@@ -699,7 +700,10 @@ can do those, a script cannot. `jig upgrade --dry-run --json` changes nothing an
 An upgrade at `agent.git: pr` ends with its pull request open and the project back on its base
 branch, still at the old Jig. `jig status --json` keeps saying so — `upgrade-pull-request-waiting`,
 then `upgrade-pull-request-merged` — so a program shows the state from the project, not from its
-own memory. Once it is merged, the program brings it in:
+own memory. Run again before the merge, `jig upgrade --json` is refused as `not-merged` when the
+forge reports that pull request open, with its URL in the message: the upgrade is done and waits for
+the merge, which a program shows as waiting, not as a failure. Once it is merged, the program brings
+it in:
 
 ```bash
 jig upgrade --land --json
