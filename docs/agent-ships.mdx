@@ -197,6 +197,21 @@ When the work is finished and checked, the agent:
 
 The pull request goes into the branch the task was cut from: your main branch, or the epic branch
 of a specification released at once ([New project](/greenfield)). You do not have to pick it.
+
+In a project on the staging flow (`git.flow: staging`), a task cut from the main branch opens its
+pull request into the staging branch instead, for your colleagues' review, and none into the main
+branch. Landing that pull request on staging is not built yet, so even at `merge` the ship stops
+there and the person lands it:
+
+```text
+task ship: git flow staging: the pull request goes into staging, not main
+pr https://github.com/acme/app/pull/42
+not merged: landing a task on staging is not built yet; task/csv-export is not on staging until a person lands the pull request
+```
+
+With `git.staging_land: external` it stops after the push and opens no pull request, since your CI
+lands the task. A flow `jig doctor` would fail on is refused before anything is committed. A task of
+an epic still goes into its epic.
 </Accordion>
 
 <span id="specs-and-epics" />
