@@ -646,6 +646,10 @@ case "\$1" in
         if [ "$state" = FAIL ]; then
           exit 1
         fi
+        if [ "$state" = DENIED ]; then
+          printf 'HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login\n' >&2
+          exit 1
+        fi
         printf '%s\n' "$state"
         ;;
     esac
@@ -693,7 +697,38 @@ test_task_set_status_consolidated_refuses_when_the_forge_cannot_confirm() {
 
   run jig task set T-1 status consolidated
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "is unknown"
+  assert_contains "$OUT" "is unknown, the forge could not be asked (gh exited 1 with no message)"
+  assert_contains "$OUT" "it may already be merged: run this same command again once the forge answers"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+# The refusal names why the forge could not be asked: the first line of gh's
+# own error, never the lines after it.
+test_task_set_status_consolidated_names_the_forge_error() {
+  pr_check_ship_T1 DENIED
+
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "pull/99 is unknown, the forge could not be asked (gh: HTTP 401: Bad credentials (https://api.github.com/graphql)); it may already be merged"
+  assert_not_contains "$ERR" "Try authenticating"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+# Without a forge to ask, the refusal says which part is missing: the setting,
+# or the forge's CLI signed in.
+test_task_set_status_consolidated_names_a_missing_forge() {
+  pr_check_ship_T1 MERGED
+  ship_cfg forge none
+
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "is unknown, the forge could not be asked (no forge configured (forge: none)); it may already be merged"
+
+  ship_cfg forge github
+  printf '#!/bin/sh\nexit 1\n' > stub-bin/gh
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "(gh is not signed in: gh auth status failed)"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
 }
 
@@ -10323,7 +10358,7 @@ test_task_actions_close_reads_the_forge_cache_the_command_confirms() {
   assert_contains "$OUT" '"reason":"task set: status consolidated requires its pull request to be merged: https://github.com/example/example/pull/7 is unknown; merge it, then run this again"}'
   pr_check_stub_gh "" FAIL
   run_split jig task set T-1 status consolidated
-  assert_contains "$ERR" "is unknown; merge it, then run this again"
+  assert_contains "$ERR" "is unknown, the forge could not be asked (gh exited 1 with no message); it may already be merged"
 }
 
 # A ship the table offers is one `task ship` carries out.
