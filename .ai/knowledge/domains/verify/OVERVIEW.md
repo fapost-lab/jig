@@ -17,7 +17,7 @@ paths:
   - schemas/profile.md
   - scripts/lib/runenv.sh
   - scripts/lib/hostruntime.sh
-reviewed_at: 2026-11-07
+reviewed_at: 2026-11-11
 ---
 # Verify
 
@@ -44,7 +44,8 @@ it actually did.
   that declared they understand it, via `JIG_VERIFY_SCOPE` and `JIG_VERIFY_FILES`
   (ADR-0013).
 - The CI-backed mode (ADR-0041): with `verify.full_run: ci` a flag-less run narrows to what
-  changed since the merge base with `git.base_branch`, and `--full` or a non-empty `CI`
+  changed since the merge base with the current task's base (`jig_task_base`, ADR-0039;
+  `git.base_branch` without a task), and `--full` or a non-empty `CI`
   restore the full set. The mode and its reason are printed in a header line. A narrowed run
   under `ci` never starts a check's full set: profiles run what they can name and print
   `full set left to CI`, and the summary counts those checks (adr-0041, amendment 2026-10-08).

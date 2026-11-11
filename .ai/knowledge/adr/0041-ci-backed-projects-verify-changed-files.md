@@ -14,7 +14,7 @@ paths:
   - "skills/jig-verify/**"
   - tests/run.sh
 summary: Why a project that declares CI runs the full set gets a flag-less jig verify narrowed to changes since the merge base, and why the files-to-checks map is the project's file, parsed by jig verify.
-reviewed_at: 2026-09-18
+reviewed_at: 2026-11-11
 ---
 # ADR-0041: A project whose CI runs the full set verifies by changed files, through a project-owned map
 
@@ -174,3 +174,14 @@ never be checked on `main` (it happened on the first day, to the change that int
 > there. `tsc` (the `typecheck` script) is always left to CI in a narrowed run.
 
 > **Amendment (2026-11-10): there is a partial run.** "There is no partial run" above is replaced by adr-20261110-a-pull-request-runs-the-tests-its-change-reaches: a pull request or a push runs the tests the shell profile says the change reaches (`suite: selected`), and the whole suite runs nightly, by hand, for a change of `JIG_VERSION`, of `.github/` or of the test harness, and wherever the profile answers ALL. In CI the ALL is not deferred: `ci-scope.sh` asks the profile without `verify.full_run: ci`.
+
+> **Amendment (2026-11-11): the base is the current task's.** "The base is the configured one, not
+> the current task's" above is reversed (issue #458). A task cut from an epic (ADR-0039) measured
+> from `git.base_branch` re-ran the whole epic's diff: `ship-to-staging`'s own change was 9 files,
+> its verify took 24 and about 707 s, a sibling task's tests among them, and the longer an epic lives
+> the more every task pays. A flag-less run under `ci` now asks `jig_task_base` for the task in this
+> checkout — the answer `task ship`, housekeeping and context already judge it by — and the header
+> names it (`… (base of task <id>; verify.full_run: ci, …)`). Several live tasks on the branch give
+> their base only when they agree on it. No task, tasks that disagree, or a recorded base this clone
+> cannot resolve (an epic deleted after its merge, never fetched) keep `git.base_branch`, never the
+> working tree alone; `--base <ref>` still overrides. Projects without tasks are unchanged.
