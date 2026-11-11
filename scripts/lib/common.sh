@@ -2451,42 +2451,111 @@ _jig_ship_merge_gitlab() {
 # same forge, and one command library never sources another (ARCHITECTURE.md,
 # Scripts layout).
 jig_pr_state() {
-  local url="$1" kind
-  [ -n "$url" ] || { printf 'unknown\n'; return 0; }
-  kind=$(jig_forge_kind) || exit 1
-  case "$kind" in
-    github)
-      jig_gh_prepare "pull request state"
-      _jig_pr_state_github "$url"
-      ;;
-    gitlab) _jig_pr_state_gitlab "$url" ;;
-    *) printf 'unknown\n' ;;
+  local __jps_state __jps_why
+  jig_pr_state_v __jps_state __jps_why "$1"
+  printf '%s\n' "$__jps_state"
+}
+
+# jig_pr_state_v <state-var> <why-var> <url> — jig_pr_state into <state-var>,
+# and into <why-var> why the forge could not be asked when the state is
+# `unknown`: the first line of gh's or glab's error (a cut-off call says so
+# itself, jig_net), the account gh could not be given, the forge this clone
+# has none of, or what the forge answered that is not a state. Empty for any
+# other state, and for an empty <url>. Run in the caller's shell, never in
+# `$(...)`, or the cause is lost with the subshell; it costs no forge call
+# beyond the one jig_pr_state makes.
+jig_pr_state_v() {
+  local __jpsv_kind __jpsv_s="unknown" __jpsv_w=""
+  if [ -n "$3" ]; then
+    __jpsv_kind=$(jig_forge_kind) || exit 1
+    case "$__jpsv_kind" in
+      github)
+        jig_gh_prepare "pull request state"
+        _jig_pr_state_ask github "$3"
+        if [ "$__jpsv_s" = unknown ] && [ "$_JIG_GH_STATE" = refused ] && [ -n "$_JIG_GH_WHY" ]; then
+          __jpsv_w="${__jpsv_w:+$__jpsv_w; }gh account: $_JIG_GH_WHY"
+        fi
+        ;;
+      gitlab) _jig_pr_state_ask gitlab "$3" ;;
+      *) __jpsv_w=$(_jig_pr_state_no_forge) ;;
+    esac
+  fi
+  printf -v "$1" '%s' "$__jpsv_s"
+  printf -v "$2" '%s' "$__jpsv_w"
+}
+
+# _jig_pr_state_ask <github|gitlab> <url> — ask the forge; sets the caller's
+# __jpsv_s and __jpsv_w (jig_pr_state_v). The error goes to a file of its own,
+# so a warning gh prints on a call that succeeds never reaches the answer.
+_jig_pr_state_ask() {
+  local forge="$1" url="$2" err out rc=0 iid raw cli
+  err=$(mktemp "${TMPDIR:-/tmp}/jig-pr-state.XXXXXX") || { __jpsv_w="no temporary file for the forge's answer"; return 0; }
+  jig_cleanup_add "$err"
+  if [ "$forge" = github ]; then
+    cli=gh
+    out=$(jig_net jig_gh pr view "$url" --json state --jq .state 2>"$err") || rc=$?
+    raw=$(printf '%s' "$out" | tr '[:upper:]' '[:lower:]')
+  else
+    cli=glab
+    iid=$(_jig_ship_glab_mr "$url")
+    if [ -z "$iid" ]; then
+      rm -f "$err"
+      __jpsv_w="no merge request number in $url"
+      return 0
+    fi
+    out=$(jig_net glab mr view "$iid" --output json 2>"$err") || rc=$?
+    raw=$(printf '%s' "$out" | tr -d ' \n' | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
+    [ "$raw" != opened ] || raw=open
+  fi
+  if [ "$rc" -ne 0 ]; then
+    __jpsv_w=$(_jig_ship_first_line "$(cat "$err")")
+    [ -n "$__jpsv_w" ] || __jpsv_w="$cli exited $rc with no message"
+    case "$__jpsv_w" in
+      "$cli"*) ;;
+      *) __jpsv_w="$cli: $__jpsv_w" ;;
+    esac
+    rm -f "$err"
+    return 0
+  fi
+  rm -f "$err"
+  case "$raw" in
+    merged | open | closed) __jpsv_s=$raw ;;
+    *) __jpsv_w="$cli answered '${raw:-nothing}', which is no pull request state" ;;
   esac
 }
 
-_jig_pr_state_github() {
-  local state
-  state=$(jig_net jig_gh pr view "$1" --json state --jq .state 2>/dev/null) || { printf 'unknown\n'; return 0; }
-  case "$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')" in
-    merged) printf 'merged\n' ;;
-    open) printf 'open\n' ;;
-    closed) printf 'closed\n' ;;
-    *) printf 'unknown\n' ;;
+# _jig_pr_state_no_forge — why jig_forge_kind answered `none`, worked out here
+# without asking the forge: the setting, the origin, or the forge's CLI missing
+# from PATH (a program started outside a login shell may not see it) or not
+# signed in.
+_jig_pr_state_no_forge() {
+  local want origin cli
+  want=$(cfg forge auto)
+  if [ "$want" = none ]; then
+    printf 'no forge configured (forge: none)\n'
+    return 0
+  fi
+  origin=$(git -C "$JIG_PROJECT" remote get-url origin 2>/dev/null || printf '')
+  if [ -z "$origin" ]; then
+    printf 'no forge configured: this clone has no origin remote\n'
+    return 0
+  fi
+  if [ "$want" = auto ]; then
+    want=$(_jig_forge_by_name "$origin")
+    [ "$want" != none ] || want=$(_jig_forge_by_name "$(_jig_ssh_alias_hostname "$origin")")
+  fi
+  case "$want" in
+    github) cli=gh ;;
+    gitlab) cli=glab ;;
+    *)
+      printf 'no forge configured: origin is on no forge Jig knows; set forge to github or gitlab\n'
+      return 0 ;;
   esac
-}
-
-_jig_pr_state_gitlab() {
-  local iid json state
-  iid=$(_jig_ship_glab_mr "$1")
-  [ -n "$iid" ] || { printf 'unknown\n'; return 0; }
-  json=$(jig_net glab mr view "$iid" --output json 2>/dev/null) || { printf 'unknown\n'; return 0; }
-  state=$(printf '%s' "$json" | tr -d ' \n' | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
-  case "$state" in
-    merged) printf 'merged\n' ;;
-    opened) printf 'open\n' ;;
-    closed) printf 'closed\n' ;;
-    *) printf 'unknown\n' ;;
-  esac
+  if ! command -v "$cli" >/dev/null 2>&1; then
+    printf '%s is not on PATH\n' "$cli"
+  else
+    printf '%s is not signed in: %s auth status failed\n' "$cli" "$cli"
+  fi
 }
 
 # --- merged branches ---------------------------------------------------------
