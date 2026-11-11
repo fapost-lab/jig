@@ -384,10 +384,13 @@ land_clean_branch_refusal() {
   local -a heads=()
   base_ref=$(jig_base_ref "$base")
   staging_ref=$(jig_base_ref "$staging")
-  # No staging branch here at all: nothing it could have brought in. No base
-  # here: nothing can be judged against it, and the ship refuses that itself
-  # before it sends anything (jig_ship_require_commits), as land's fetch does.
-  [ -n "$staging_ref" ] && [ -n "$base_ref" ] || return 0
+  # No staging branch here: the rule cannot be judged, and is never read as
+  # met (its callers fetch it first). No base here: nothing can be judged
+  # against it, and the ship refuses that itself before it sends anything
+  # (jig_ship_require_commits), as land's fetch does.
+  [ -n "$staging_ref" ] \
+    || jig_die "$who: cannot tell whether task/$id carries commits of $staging: there is no $staging here or on origin; fetch it and run again"
+  [ -n "$base_ref" ] || return 0
   if [ "$tip" = HEAD ]; then
     file=$(git -C "$JIG_PROJECT" rev-parse --git-path MERGE_HEAD 2>/dev/null) || file=""
     case "$file" in '' | /*) ;; *) file="$JIG_PROJECT/$file" ;; esac

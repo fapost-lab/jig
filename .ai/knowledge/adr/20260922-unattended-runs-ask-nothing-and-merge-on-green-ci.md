@@ -108,3 +108,14 @@ adr-20260921-agent-git-rights-are-a-local-setting.
   human — the safe side of ADR-0040's ancestry rule.
 - Reverting the mechanism is removing a level, two keys and two journal events; a change already
   merged is reverted like any other, not by this.
+
+## Amendment (2026-11-11): the direct merge into the staging branch
+
+The green-CI rule covers the merges Jig makes into the base branch and into an epic, and the merge on
+the forge of a task's pull request into the staging branch. One merge is outside it, by the
+staging-branch spec's decision: when that pull request conflicts with the staging branch, the agent
+resolves the conflict in a temporary worktree and pushes the merge straight to the staging branch,
+with no CI, since a conflicting pull request runs none. The agent resolves and QA checks staging;
+the spec accepts that risk (failure mode 2). It happens only on a conflict, only into the staging
+branch, never past a refusal of branch protection, and the push is never forced
+(adr-20261111-a-task-lands-on-staging-through-its-pull-request).

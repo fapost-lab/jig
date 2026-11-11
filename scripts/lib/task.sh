@@ -6618,7 +6618,14 @@ EOF
   # The clean-branch rule, at every level and before the commit: a branch that
   # carries the staging branch goes neither into a pull request nor to origin
   # (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
+  # The staging branch as origin has it now, at every level and whoever lands:
+  # without it the rule cannot be judged, and a ship that cannot judge refuses.
   if [ -n "$staging" ]; then
+    local failed
+    if ! failed=$(jig_fetch_fresh "$staging"); then
+      jig_die "task ship: could not fetch $failed from origin; whether $branch carries $staging cannot be told without it.
+Nothing was committed. Fetch it (or create it on origin) and run again."
+    fi
     # shellcheck source=lib/land.sh
     . "$JIG_LIB/land.sh"
     land_clean_branch_refusal "task ship" "$id" HEAD "$base" "$staging"

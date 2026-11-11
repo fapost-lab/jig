@@ -6016,13 +6016,53 @@ test_task_ship_staging_external_land_opens_no_pull_request() {
 # Under `external` Jig opens no pull request and merges nothing, so it asks the
 # forge nothing — not even for a pull request into another branch — and needs
 # no staging branch of its own: CI owns the landing.
+# F11: under external landing the ship still fetches the staging branch and
+# judges the clean-branch rule: a clone that never fetched staging does not
+# read a branch carrying it as clean.
+test_task_ship_staging_external_land_refuses_a_branch_carrying_staging_it_never_fetched() {
+  sship_setup push 'git.flow: staging
+git.staging_branch: staging
+git.staging_land: external'
+  sland_staging_commit staging.txt 'another task'
+  git fetch -q origin
+  git reset -q
+  git merge -q --no-ff --no-edit origin/staging
+  ship_stage_change
+  git branch -q -D staging
+  git update-ref -d refs/remotes/origin/staging
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "through a merge of staging into the branch"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "nothing pushed"
+}
+
+test_task_ship_staging_external_land_refuses_without_the_staging_branch_on_origin() {
+  sship_setup push 'git.flow: staging
+git.staging_branch: staging
+git.staging_land: external'
+  git push -q origin --delete staging
+  git update-ref -d refs/remotes/origin/staging
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: could not fetch staging from origin; whether task/T-1 carries staging cannot be told without it."
+  assert_contains "$OUT" "Nothing was committed."
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+}
+
 test_task_ship_staging_external_land_asks_the_forge_nothing() {
   sship_setup pr
   printf 'git.staging_land: external\n' >> .ai/config.yaml
   git add .ai/config.yaml
   git branch -q -D staging
-  git push -q origin --delete staging
-  git branch -q -d -r origin/staging
+  local staging_before
+  staging_before=$(git ls-remote origin refs/heads/staging | cut -f1)
 
   run jig task ship T-1 --message-file msg.txt
   assert_eq 0 "$RC" "$OUT"
@@ -6030,7 +6070,7 @@ test_task_ship_staging_external_land_asks_the_forge_nothing() {
   assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
   assert_not_contains "$OUT" "pr https://"
   assert_no_file gh.log "the forge must not be asked anything"
-  assert_eq "" "$(git ls-remote origin staging)" "nothing may be pushed to the staging branch"
+  assert_eq "$staging_before" "$(git ls-remote origin refs/heads/staging | cut -f1)" "nothing may be pushed to the staging branch"
 }
 
 # No pull request will list the open P2/P3 under `external`, and nobody opens
