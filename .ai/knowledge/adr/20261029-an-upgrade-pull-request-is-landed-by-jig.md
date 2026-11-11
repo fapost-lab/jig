@@ -10,7 +10,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/forgecache.sh
 summary: Why jig status follows an upgrade's pull request from the forge cache and jig upgrade --land brings a merged one here, and what it refuses.
-reviewed_at: 2026-10-30
+reviewed_at: 2026-11-11
 ---
 # ADR: An upgrade that ended in a pull request is followed by `jig status` and landed by `jig upgrade --land`
 
@@ -50,6 +50,13 @@ person's git work: switch to the base, pull, delete the branch. Jig UI may not r
   only at `agent.git` `push` or above, as housekeeping's sweep does. It never stashes and never
   forces. A forge CLI that fails is `the forge did not answer`, never an empty list: its exit status
   is read on its own, not through the pipeline that parses its answer.
+- (Amended 2026-11-11, task upgrade-refusal-names-open-request.) `jig upgrade`, refusing a second
+  branch for the upgrade to a version already on an unmerged `jig/upgrade-<to>` branch, asks the
+  forge once, only on that refusal, through the same list `--land` reads: an open pull request from
+  that branch is refused `not-merged` with its URL — the upgrade is done and waits for its merge,
+  which a program shows as waiting, not as a failure; a merged or closed one is named with its
+  state and reads `failed`. No forge, a bad `forge:` value or a forge that did not answer leave the
+  refusal it always was: the lookup can add a pull request to the message, never another error.
 
 ## Alternatives
 
