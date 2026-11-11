@@ -42,7 +42,9 @@ the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies h
 forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
-lifecycle.
+lifecycle. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
+account, the merge request, its diff, the read-back and the post) is sourced by `lib/pr.sh` alone
+and tested through `tests/pr.t.sh`.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and
