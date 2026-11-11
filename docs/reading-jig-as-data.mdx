@@ -172,7 +172,7 @@ carries none, so there `ci` is `null`.
 ## What a person may do next
 
 `actions` lists what a person can do with the task right now, so a dashboard can show the right
-buttons without knowing Jig's rules. Every task carries the same fourteen actions, in the same order:
+buttons without knowing Jig's rules. Every task carries the same fifteen actions, in the same order:
 
 | `id` | What it does |
 |---|---|
@@ -183,6 +183,7 @@ buttons without knowing Jig's rules. Every task carries the same fourteen action
 | `answer-stop` | Answer an autopilot run that stopped to ask you something |
 | `set-class` | Change the task's class |
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
+| `land` | On the staging flow, land the task's open pull request on the staging branch: on the forge, or directly when it conflicts |
 | `close` | Close a task whose work has landed |
 | `abandon` | Give the task up; its `command` asks for `--reason <text>` when the task is linked to a spec |
 | `archive` | Put an active, ready or abandoned task away, without deleting it |

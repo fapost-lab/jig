@@ -200,14 +200,40 @@ of a specification released at once ([New project](/greenfield)). You do not hav
 
 In a project on the staging flow (`git.flow: staging`), a task cut from the main branch opens its
 pull request into the staging branch instead, for your colleagues' review, and none into the main
-branch. Landing that pull request on staging is not built yet, so even at `merge` the ship stops
-there and the person lands it:
+branch. Below `merge` the ship stops there and you land it. At `merge` it lands the pull request on
+staging, the way `jig task land <id>` does later — after a review you waited for, say:
 
 ```text
 task ship: git flow staging: the pull request goes into staging, not main
 pr https://github.com/acme/app/pull/42
-not merged: landing a task on staging is not built yet; task/csv-export is not on staging until a person lands the pull request
+landed https://github.com/acme/app/pull/42 on staging (merged on the forge)
 ```
+
+- **Review first**, as `git.staging_review` says. With `ask`, the default, a pull request nobody
+  approved stops the ship (exit 3) and the agent asks you: land without review (`jig task land <id>
+  --without-review`, which also says so on the pull request) or wait. `require` always waits, and so
+  does an unattended run; `none` lands without asking.
+- **Merged on the forge** when it merges cleanly, with a merge commit and only on green CI. A red
+  check or a refusal of the forge leaves it open: `not landed: <why>`.
+- **Merged directly only when it conflicts.** Jig fetches the staging branch and merges the task
+  into a temporary worktree of it beside your project (`<project>.worktrees/.land-<id>`), never in
+  your checkout, and stops (exit 5) with the paths in conflict. The agent resolves them there — in any
+  file, the task's or not, as you would by hand — runs the tests that matter, and continues with
+  `jig task land <id> --resolved --note-file <file>`, the note saying how each conflict was resolved.
+  Jig commits the merge with that note, pushes the staging branch without ever forcing it, and
+  comments on the pull request; when someone pushed to staging in the meantime it fetches again,
+  merges again with the same resolution and pushes again. `jig task land <id> --abort` gives it up.
+- A push the staging branch refuses — a protected branch, a hook — stops (exit 3) and keeps the
+  merge in the temporary worktree for you to push with your own rights or land on the forge. Jig
+  cannot tell when your own rights let a push past the protection (an admin's bypass); that is the
+  same push you make by hand.
+
+The task branch stays as it was, and so does your checkout: the resolution lives on staging only.
+That is why a task branch stays clean until it reaches the main branch: only the main branch and
+other clean task branches (a task it depends on, even one already on staging) may be merged into it.
+Staging merged into it — "Update branch" on the pull request included — or any other branch is
+refused, at every level and before anything is committed, also while the merge is not committed yet:
+rebuild it from its own commits on the main branch.
 
 With `git.staging_land: external` it stops after the push and opens no pull request, since your CI
 lands the task. A flow `jig doctor` would fail on is refused before anything is committed. A task of

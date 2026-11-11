@@ -152,7 +152,11 @@ is merged but by `task ship`. Before shipping, put `jig task autopilot <id> repo
 **Decided without you**, **Approved by the agent, not a human** and **Changed linked sources —
 need your review** blocks in the pull request body as they are. At the run's level `merge`, `task ship` merges once CI passed or prints
 `not merged: <why>` — both are a finished run; say which. After `merged`, close the task
-(`jig-consolidate` §6) without asking, then `end`.
+(`jig-consolidate` §6) without asking, then `end`. On the staging flow the ship lands on the
+staging branch instead: exit 5 is a conflict you resolve as `jig-consolidate` §5 says, attended or
+not; exit 3 on review is a stop when attended, and an unattended run is told to wait. After
+`landed …` or `not landed: …`, `end --reason "<that line>"` and do not close the task: it waits on
+staging for "prepare for prod", and nothing in a run approves or promotes it.
 
 ## 6. A roadmap phase
 
