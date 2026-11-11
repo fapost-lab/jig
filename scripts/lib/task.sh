@@ -6570,15 +6570,30 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
     return 0
   fi
 
-  jig_ship_push "task ship" "$branch"
-
-  if [ "$level" = push ]; then
-    printf "stopped at push: the pull request is the human's\n"
+  # Under `external` CI lands whatever reaches origin, so a pushed draft would
+  # be merged into the staging branch: a draft is kept on this machine.
+  if [ "$draft" -eq 1 ] && [ -n "$staging" ] && [ "$land" = external ]; then
+    printf 'stopped at commit: a draft is not pushed, since git.staging_land is external and CI lands whatever is pushed to %s; push it once it is finished\n' "$branch"
     return 0
   fi
 
+  jig_ship_push "task ship" "$branch"
+
   if [ -n "$staging" ] && [ "$land" = external ]; then
     printf 'stopped at push: git.staging_land is external, so CI lands %s on %s; no pull request opened\n' "$branch" "$staging"
+    # No pull request will ever list the open P2/P3 here, and no person opens
+    # one later, at any level: they go to their triage task now, as at the
+    # other ends (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+    # A draft's findings stay its own.
+    if [ "$draft" -eq 0 ] && [ -n "$(_task_open_minor_findings "$id")" ]; then
+      printf 'task ship: no pull request lists the open findings, so they go to their triage task\n'
+      _task_ship_triage "$id" "none: git.staging_land is external, so CI lands $branch on $staging"
+    fi
+    return 0
+  fi
+
+  if [ "$level" = push ]; then
+    printf "stopped at push: the pull request is the human's\n"
     return 0
   fi
 

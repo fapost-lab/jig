@@ -13,7 +13,7 @@ paths:
   - scripts/lib/init.sh
   - templates/config.yaml
 summary: Why a project's git flow is a shared setting, why the agent writes it into .ai/config.yaml after a person's yes and no script does, and how that narrows ADR-0038.
-reviewed_at: 2026-11-09
+reviewed_at: 2026-11-11
 ---
 # A project names its git flow in the shared config, and the agent writes it there after a yes
 
@@ -40,5 +40,5 @@ The specification says `jig init` and `jig-setup` find a `stage` or `staging` br
 ## Consequences
 
 - A project whose origin has a `stage` or `staging` branch gets a `jig doctor` warning, and a line from `jig init`, until someone names a flow. That is the offer; `git.flow: direct` ends it.
-- `git.staging_land: external` and the `staging` flow are accepted now and do nothing until later items of the same epic. The epic is released once, so no release carries them unbuilt.
+- `git.staging_land: external` and the `staging` flow are accepted now and do nothing until later items of the same epic. The epic is released once, so no release carries them unbuilt. The task staging-land-external built `external`: Jig reads what CI merged into the staging branch from git alone, with no pull request, and the ship files the triage task for open P2/P3 there.
 - `jig status` says nothing about the flow yet; that belongs to the roadmap item that reports a task's staging state.

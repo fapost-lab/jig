@@ -160,7 +160,8 @@ In a project on the staging flow (`git.flow: staging`), each task also carries `
 `base_branch`: `"on"` when its work is on the staging branch on origin, `"behind"` when it has commits
 of its own after that (a fix QA asked for, pushed or not), and `null` when none of its work is there.
 Merging the base branch into the task does not make it `behind`. Jig reads this from git every time and
-asks no forge. On any other flow the field is not there at all, so nothing changes for such a project.
+asks no forge, so a task your CI merged into the staging branch (`git.staging_land: external`) reads the
+same as one merged through a pull request. On any other flow the field is not there at all, so nothing changes for such a project.
 
 `pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
 went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
