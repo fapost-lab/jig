@@ -37,10 +37,6 @@ is in your clone, and loses nothing; a write branch that exists only on origin i
 
 ## Then: what costs you time
 
-**A push goes as the project's GitHub account.** From 0.42.0 every `gh` call Jig makes is the
-clone's own account, whichever one `gh` has active. `git push` and fetch over HTTPS get the same
-account in the next release, without a token written anywhere.
-
 **A second review round must not open a new front.** A repeat review already reads only what
 changed since the review (0.30.0). What is left: a blocker that appears only in the second round
 goes to you instead of starting a third. Each extra round is where the time goes, and this bounds
@@ -108,5 +104,7 @@ an upgrade's pull request is in `jig status --json`, and `jig upgrade --land --j
 merged, from 0.39.0, so a program no longer has to remember it; closing a task with the revision it
 read, the settings as JSON, the knowledge waiting for a person, its decisions and roadmap writes that
 leave your checkout alone are in 0.40.0; from 0.41.0 a finished task leaves the queue, so the board
-shows only the work left, and an upgrade from unreleased Jig is refused as `unreleased-source`. Its plans
+shows only the work left, and an upgrade from unreleased Jig is refused as `unreleased-source`; from
+0.43.0 an upgrade whose pull request is still open is refused as `not-merged`, not `failed`, and a
+refused close says why GitHub or GitLab could not be asked. Its plans
 live in its own repository, and its documentation at [jig-ui.fapost.in](https://jig-ui.fapost.in).

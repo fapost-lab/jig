@@ -8,6 +8,45 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.43.0 — 2026-11-11
+
+Jig's `git push` and fetch over HTTPS now go as the project's GitHub account, as its `gh` calls
+already did, so a machine with two accounts no longer pushes as the wrong one. Under
+`verify.full_run: ci`, a task cut from an epic is verified against the epic, not against `main`.
+Two refusals that read as failures now say what they are waiting for.
+
+- **A push over HTTPS goes as this project's GitHub account.** Jig's pushes, fetches and branch
+  deletions on your project's `origin` use the account its `gh` calls already use
+  (`github.account`, the one found among several, or the only one `gh` holds). For each call Jig
+  sets aside your credential helper for that host and has `git` ask `gh` for that account's token;
+  nothing is stored. When several accounts may push and none is named, a ship now stops before its
+  push at every `agent.git` level, `push` included, with nothing sent. If your helper held another
+  GitHub user's credentials, the push now goes as the `gh` account. `gh`'s token needs the
+  `workflow` scope for a change under `.github/workflows`; `gh auth refresh -s workflow` adds it to
+  the active account only, so switch to the clone's account first, or sign it in with that scope.
+  SSH, a `GH_TOKEN` in the environment, and `jig pr fetch` are left as they were. Proven by tests
+  with a stand-in `gh`; a real push as a second account has not been checked yet. See
+  [Two GitHub accounts](/agent-ships#two-github-accounts).
+- **`jig verify` measures a task from the branch it was cut from.** Under `verify.full_run: ci`, a
+  plain `jig verify` checks what changed since the current task's base, so a task of an epic no
+  longer re-checks the whole epic. Without a task, with tasks on the branch that disagree, or with
+  a base this clone cannot find, it measures from `git.base_branch` as before; the header names
+  the task ([Configure verification](/configuration#verification)).
+- **`jig upgrade` names the pull request it waits for.** When the upgrade to this version is
+  already on an unmerged `jig/upgrade-<version>` branch, Jig asks GitHub or GitLab once: an open
+  pull request is named with its URL and refused as `not-merged` instead of `failed`, so a program
+  shows the upgrade as waiting for its merge. A merged or closed one is named with its state.
+- **A refused close says why GitHub or GitLab could not be asked.** When
+  `jig task set <id> status consolidated` cannot learn whether the pull request merged — `gh` or
+  `glab` missing, not signed in, an error, no answer in time — the refusal names the cause and says
+  the pull request may already be merged: run the same command again once the forge answers.
+- **A stub costs no extra processes.** `jig status` and `jig context` read a knowledge document that
+  links a source file the way they read any other, without starting processes for it, unless a
+  directory on the way to that source is a symbolic link.
+- **Fixed:** the status page and `jig status --json` kept "A pull request was open at the last
+  housekeeping run" for a task closed after that run; a task with a pull request closes only once
+  it merged, so the item is gone.
+
 ## 0.42.0 — 2026-11-10
 
 Jig can now review a colleague's pull request on GitHub or GitLab and post the review only as you
