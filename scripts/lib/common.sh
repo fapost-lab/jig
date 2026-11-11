@@ -3129,7 +3129,19 @@ jig_knowledge_status_resolvable() {
 # must agree on what a stub is — so the question is asked here, once.
 # Callers have sourced frontmatter.sh, as both commands do.
 jig_knowledge_source() {
-  fm_get "$1" source
+  local __jks_src
+  jig_knowledge_source_v __jks_src "$1"
+  [ -z "$__jks_src" ] || printf '%s\n' "$__jks_src"
+}
+
+# jig_knowledge_source_v <var> <doc> — jig_knowledge_source into <var>, without
+# a process: `jig status` and `jig context` ask it of every stub. The block is
+# read as fm_block reads it, an unclosed frontmatter included, so the answer is
+# fm_get's.
+jig_knowledge_source_v() {
+  local __jksv_block
+  _fm_scan_v __jksv_block "$2" || :
+  fm_get_block_v "$1" "$__jksv_block" source
 }
 
 # jig_knowledge_read_path <doc> — the repository-relative path an agent reads
@@ -3142,24 +3154,49 @@ jig_knowledge_source() {
 # without touching the stub. Whether git tracks the file with this exact case
 # is `knowledge check`'s question, not this one's.
 jig_knowledge_read_path() {
-  local src
-  src=$(jig_knowledge_source "$1")
-  if [ -z "$src" ]; then
-    jig_relpath "$1" "$JIG_PROJECT"
+  local __jkrp_path __jkrp_rc=0
+  jig_knowledge_read_path_v __jkrp_path "$1" || __jkrp_rc=$?
+  printf '%s\n' "$__jkrp_path"
+  return "$__jkrp_rc"
+}
+
+# jig_knowledge_read_path_v <var> <doc> — jig_knowledge_read_path into <var>,
+# with the same exit, and no process for a source reached through no symlink:
+# `jig status` and `jig context` ask it of every stub, and the guard cost five
+# subshells and a `dirname` each. With `..` and an absolute path refused first,
+# the source's directory is inside the repository exactly when none of the
+# directories on its way is a symlink, which `-L` asks of each without a
+# process. Only when one is a symlink — it may still lead back inside — is the
+# directory resolved with `cd -P`, as it always was.
+jig_knowledge_read_path_v() {
+  local __jkr_src __jkr_rest __jkr_dir __jkr_root __jkr_phys
+  jig_knowledge_source_v __jkr_src "$2"
+  if [ -z "$__jkr_src" ]; then
+    jig_relpath_v "$1" "$2" "$JIG_PROJECT"
     return 0
   fi
-  printf '%s\n' "$src"
-  case "$src" in
+  printf -v "$1" '%s' "$__jkr_src"
+  case "$__jkr_src" in
     /* | ../* | */../* | *.. ) return 3 ;;
   esac
-  if [ ! -f "$JIG_PROJECT/$src" ] || [ -L "$JIG_PROJECT/$src" ]; then
+  if [ ! -f "$JIG_PROJECT/$__jkr_src" ] || [ -L "$JIG_PROJECT/$__jkr_src" ]; then
     return 3
   fi
-  local root dir
-  root=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 3
-  dir=$(cd -P "$(dirname "$JIG_PROJECT/$src")" 2>/dev/null && pwd -P) || return 3
-  case "$dir/" in
-    "$root/"*) return 0 ;;
+  __jkr_rest=$__jkr_src
+  __jkr_dir=""
+  while :; do
+    case "$__jkr_rest" in
+      */*) ;;
+      *) return 0 ;;
+    esac
+    __jkr_dir="$__jkr_dir${__jkr_rest%%/*}/"
+    __jkr_rest=${__jkr_rest#*/}
+    [ -L "$JIG_PROJECT/${__jkr_dir%/}" ] && break
+  done
+  __jkr_root=$(cd -P "$JIG_PROJECT" 2>/dev/null && pwd -P) || return 3
+  __jkr_phys=$(cd -P "$(dirname "$JIG_PROJECT/$__jkr_src")" 2>/dev/null && pwd -P) || return 3
+  case "$__jkr_phys/" in
+    "$__jkr_root/"*) return 0 ;;
     *) return 3 ;;
   esac
 }

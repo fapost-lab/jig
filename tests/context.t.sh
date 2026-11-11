@@ -1736,6 +1736,27 @@ test_context_resolve_treats_a_source_under_a_symlinked_directory_as_missing() {
   rm -rf "$outside"
 }
 
+# The guard answers without a process unless a directory on the source's way
+# is a symlink; then it resolves that directory as it always did, and one that
+# leads back inside the repository still resolves (stub-read-path-without-processes).
+test_context_resolve_follows_a_source_under_a_directory_symlinked_inside_the_repository() {
+  skip_unless_symlinks
+  ctx_source_stub_accept
+  mkdir -p real
+  mv docs/style.md real/style.md
+  rm -rf docs
+  ln -s real docs
+
+  run jig context resolve --no-task --ids convention-style --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "docs/style.md"
+  assert_not_contains "$OUT" "missing"
+
+  run jig context resolve --no-task --catalog --domains stubdomain --files - < /dev/null
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "catalog:   docs/style.md  [convention-style] (no summary)"
+}
+
 test_context_acknowledge_refuses_a_linked_source_swapped_for_a_symlink() {
   skip_unless_symlinks
   ctx_source_stub_accept
