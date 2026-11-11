@@ -90,11 +90,15 @@ Set it **only when your CI runs every check on every pull request**. Jig takes y
 does not check.
 
 With `ci`, a plain `jig verify` — the one the agent runs before declaring work done — checks only
-what changed since the branch left `git.base_branch`: committed, staged, unstaged and untracked
-changes. It prints why:
+what changed since the branch left its base: committed, staged, unstaged and untracked changes. The
+base is the one the task in this checkout was cut from — an epic for a task of an epic — and
+`git.base_branch` when there is no task, when several tasks on the branch were cut from different
+bases, or when the task's base cannot be found in this clone. `--base <ref>` names another. It
+prints why:
 
 ```text
 verify: scope changed since main@a1b2c3d (verify.full_run: ci, full set runs in CI)
+verify: scope changed since origin/epic/staging@e4f5a6b (base of task ship-to-staging; verify.full_run: ci, full set runs in CI)
 ```
 
 The full set still runs whenever it should:

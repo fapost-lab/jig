@@ -1315,7 +1315,8 @@ test_verify_survives_a_shellcheck_that_cannot_report_its_version() {
 # --- CI-backed projects: verify.full_run (ADR-0041) -------------------------
 # `verify.full_run: ci` in .ai/config.yaml is the project's claim that CI runs
 # the full set; a flag-less `jig verify` then narrows to what changed since
-# the merge base with git.base_branch, unless CI is set or --full is given.
+# the merge base with the current task's base, or git.base_branch without one,
+# unless CI is set or --full is given.
 
 test_verify_full_run_local_explicit_has_no_scope_text() {
   fixture_jig_repo
@@ -1415,6 +1416,118 @@ EOF
   assert_eq 0 "$RC"
   assert_contains "$OUT" \
     "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+}
+
+# A task cut from an epic is measured from the epic (ADR-0039), not from
+# git.base_branch: otherwise every task re-runs the whole epic's diff.
+# _verify_epic_fixture <task-id>... — main, epic/x with a sibling's file, and
+# task/kt cut from the epic with its own; each <task-id> is a live task on
+# task/kt whose recorded base is epic/x.
+_verify_epic_fixture() {
+  local id
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+  git checkout -q -b epic/x
+  echo sibling > sibling.txt
+  git add sibling.txt
+  git commit -q -m "a sibling task merged into the epic"
+  git checkout -q -b task/kt
+  echo own > own.txt
+  git add own.txt
+  git commit -q -m "the task's own work"
+  for id in "$@"; do
+    jig task new "$id" >/dev/null
+    printf 'branch: task/kt\nbase_branch: epic/x\n' >> ".ai/workspace/tasks/$id/state"
+  done
+}
+
+test_verify_ci_mode_scopes_from_the_current_tasks_base() {
+  _verify_epic_fixture T-1
+  local expect_sha
+  expect_sha=$(git rev-parse --short epic/x)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since epic/x@$expect_sha (base of task T-1; verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "own.txt"
+  assert_not_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_task_lookup_is_not_a_session_command() {
+  # The task lookup re-enters jig; it must leave the checkout record naming
+  # the command the session ran, not `task current`.
+  _verify_epic_fixture T-1
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/checkout "command: verify --profile probe"
+  assert_not_contains "$(cat .ai/runtime/checkout)" "command: task current"
+}
+
+test_verify_ci_mode_base_flag_wins_over_the_tasks_base() {
+  _verify_epic_fixture T-1
+  local base
+  base=$(git rev-parse main)
+
+  unset CI
+  run jig verify --base "$base" --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: scope changed since $base (--base)"
+  assert_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_tasks_that_agree_on_a_base_scope_from_it() {
+  _verify_epic_fixture T-1 T-2
+  local expect_sha
+  expect_sha=$(git rev-parse --short epic/x)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since epic/x@$expect_sha (base of tasks T-1, T-2; verify.full_run: ci, full set runs in CI)"
+  assert_not_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_tasks_that_disagree_use_the_configured_base() {
+  _verify_epic_fixture T-1 T-2
+  sed 's|^base_branch: epic/x|base_branch: epic/y|' .ai/workspace/tasks/T-2/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-2/state
+  local expect_sha
+  expect_sha=$(git rev-parse --short main)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_an_unresolvable_task_base_falls_back_to_the_configured_one() {
+  # An epic deleted after its merge, or never fetched here: the run is
+  # measured from git.base_branch, never from the working tree alone.
+  _verify_epic_fixture T-1
+  sed 's|^base_branch: epic/x|base_branch: epic/gone|' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  local expect_sha
+  expect_sha=$(git rev-parse --short main)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "own.txt"
+  assert_contains "$OUT" "sibling.txt"
 }
 
 test_verify_ci_mode_with_ci_env_set_runs_full_and_clears_scope() {

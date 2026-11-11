@@ -12,8 +12,9 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/common.sh
   - schemas/state.md
+  - scripts/lib/verify.sh
 summary: Why every task records its own base branch, why bases resolve origin first, and why work merged elsewhere is flagged wrong-base rather than merged.
-reviewed_at: 2026-09-17
+reviewed_at: 2026-11-11
 ---
 # ADR-0039: A task records the branch it is cut from and has to land on
 
@@ -80,3 +81,8 @@ never read a pull request's base.
 - The reverse mistake — a task of `main` whose pull request went into an epic — is visible only with
   a forge.
 - The forge stub in `tests/housekeeping.t.sh` prints three tab-separated fields per pull request.
+
+> **Amendment (2026-11-11): `verify` is a consumer too.** Under `verify.full_run: ci` a flag-less
+> `jig verify` measures its changed scope from the current task's `jig_task_base` (ADR-0041,
+> amendment of the same day; issue #458): measured from `git.base_branch`, a task cut from an epic
+> re-ran the whole epic's diff.

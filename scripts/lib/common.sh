@@ -833,10 +833,10 @@ jig_physical_path() {
 # jig_task_base <task-id> — the branch a task was cut from and has to land on:
 # `base_branch` from its state file, or `git.base_branch` when the task never
 # recorded one (not started, or started before the field existed). One answer
-# for `task`, `housekeeping`, `context` and `knowledge`, which must never
-# disagree about what a task is judged against (ADR-0039). The state file is
-# the task domain's; reading it here is allowed, writing it is not. An id that
-# is not a task id gets the configured base, never a path built from it.
+# for `task`, `housekeeping`, `context`, `knowledge` and `verify`, which must
+# never disagree about what a task is judged against (ADR-0039). The state
+# file is the task domain's; reading it here is allowed, writing it is not. An
+# id that is not a task id gets the configured base, never a path built from it.
 jig_task_base() {
   local value
   jig_task_base_v value "${1:-}"
