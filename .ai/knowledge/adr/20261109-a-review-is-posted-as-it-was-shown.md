@@ -8,8 +8,9 @@ paths:
   - scripts/lib/pr.sh
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
+  - scripts/lib/prgitlab.sh
 summary: Why jig pr comments posts one COMMENT review only as shown (hash, reviewed head), as the one account that may comment, with a token for one call, through a file, idempotent by marker.
-reviewed_at: 2026-11-10
+reviewed_at: 2026-11-11
 ---
 # A review is posted only as it was shown, as the account that may comment, once
 

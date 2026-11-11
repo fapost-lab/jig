@@ -8,8 +8,9 @@ paths:
   - scripts/lib/pr.sh
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
+  - scripts/lib/prgitlab.sh
 summary: Why jig pr posts a GitLab merge request review as one discussion per part with a base/start/head position from GitLab's diff, reads glab's JSON itself, keeps glab's own account, and counts a part landed only where it was shown.
-reviewed_at: 2026-11-10
+reviewed_at: 2026-11-11
 ---
 # A merge request review is posted as one discussion per part, read back by marker and position
 

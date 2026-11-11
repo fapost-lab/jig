@@ -8,8 +8,9 @@ paths:
   - scripts/lib/pr.sh
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
+  - scripts/lib/prgitlab.sh
 summary: Why jig pr followup reads the earlier review's head and open threads back from the forge's markers, keeps or reports the reviewed commit after a force-push, takes new comments only from lines added since it, and replies fixed/open in each thread on GitHub and GitLab.
-reviewed_at: 2026-11-10
+reviewed_at: 2026-11-11
 ---
 # A follow-up reads its earlier review back from the forge and answers each of its own threads
 

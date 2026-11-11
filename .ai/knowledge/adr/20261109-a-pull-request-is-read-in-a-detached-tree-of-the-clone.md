@@ -8,8 +8,9 @@ paths:
   - scripts/lib/pr.sh
   - "skills/jig-pr-review/**"
   - tests/pr.t.sh
+  - scripts/lib/prgitlab.sh
 summary: Why jig pr reads a pull request in refs/jig/pr/<n>/ and a detached .pr-<n> worktree of the person's clone with hooks off, where the review state lives, and what cleanup may delete.
-reviewed_at: 2026-11-10
+reviewed_at: 2026-11-11
 ---
 # A pull request is read in a detached tree of the person's clone, and nothing of its head runs
 
