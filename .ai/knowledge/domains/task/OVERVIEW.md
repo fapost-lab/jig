@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-11-08
+reviewed_at: 2026-11-11
 ---
 # Task
 
@@ -250,8 +250,11 @@ task answers `needs-consolidation`, abandoning one answers `abandoned?`, and rem
 answers `worktree-kept`, each with no housekeeping run in between. Those three, and no others.
 `wrong-base` fails the second half: only the forge and the history know where work landed, which
 costs a network request the page never makes on the write path. The pull-request cards fail the
-first: closing a task does not merge its pull request, so a `consolidated` task with
-`remote=open` is not a contradiction and "review and merge it" still stands. Both stay borrowed,
+first, with one exception: closing a task with a `pr_url` needs the forge to answer `merged`
+(`_task_close_refusal`), so a task the run saw unclosed and that is `consolidated` now has had its
+pull request merged, and its `remote=open` card is not built (`_status_attention`). A task the run
+already saw `status=consolidated remote=open`, or one without a `pr_url`, keeps the card: that
+close may predate the gate, and "review and merge it" may still stand. Both stay borrowed,
 past tense, marked "as of" the run that saw them. Read the two halves of `needs-consolidation`
 apart to see the shape: *merged* is borrowed, *nobody closed it yet* is asked again.
 

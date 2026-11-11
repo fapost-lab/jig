@@ -1991,7 +1991,7 @@ _status_attn() {
 # twice.
 _status_attention() {
   local stopped="" gates="" git_steps="" rec id stop_reason stop_at ago level queue url live hk_note pr_ids=""
-  local nc wrong kept closed open settled phase phase_stops="" todo
+  local nc wrong kept closed open open_closed settled phase phase_stops="" todo
   hk_note=""
   [ -z "$_STATUS_HK_AT" ] || hk_note="housekeeping at $_STATUS_HK_WHEN"
   level=$(jig_agent_git 2>/dev/null) || level=none
@@ -2152,18 +2152,26 @@ LIVE
   printf '%s' "$stopped$gates$git_steps"
 
   # 4. A pull request waits for review or merge: one jig opened (pr_url), or
-  # one the last housekeeping run saw open (a closed task's too).
+  # one the last housekeeping run saw open.
   #
-  # Deliberately outside hklog_flagged_ids, and "a closed task's too" is the
-  # reason: closing a task does not merge its pull request, so a consolidated
-  # task with `remote=open` contradicts nothing and this item still asks for
-  # something real. Only the forge can answer whether it is open, which is why
-  # it is worded in the past tense and asks for a refresh first.
+  # Deliberately outside hklog_flagged_ids: only the forge can answer whether
+  # a pull request is open, which is why this item is worded in the past
+  # tense and asks for a refresh first.
   #
-  # One live answer does reach it, in the loop below: a task the person
-  # abandoned. That disproves no flag either -- it makes the item's ask wrong,
-  # so the item changes what it asks instead of disappearing.
+  # Two live answers do reach it, in the loop below. A task the person
+  # abandoned disproves no flag -- it makes the item's ask wrong, so the item
+  # changes what it asks instead of disappearing. A task closed since the run
+  # does disprove it: `task set status consolidated` refuses a task with a
+  # pr_url unless the forge answers `merged` (_task_close_refusal), and a
+  # merge is final, so "open" is stale and the item is not built.
+  #
+  # Only a close after the run proves that: one the run itself already saw
+  # (`status=consolidated remote=open`) may predate the gate (2026-09-30),
+  # when a task could be closed with its pull request still open, and the
+  # forge called it open after that close -- so that item stays. A task with
+  # no pr_url never went through the forge's answer, and keeps its item too.
   open=$(hklog_ids ' remote=open ')
+  open_closed=$(hklog_ids ' status=consolidated remote=open ')
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     _status_in "$id" "$pr_ids" || pr_ids="$pr_ids$id
@@ -2181,15 +2189,20 @@ OPEN
       url=$(task_state_get "$id" pr_url)
       live=$(task_state_get "$id" status)
     fi
-    if [ "$live" = abandoned ] || [ "$live" = archived ]; then
+    if [ "$live" = consolidated ] && [ -n "$url" ] && _status_in "$id" "$open" \
+      && ! _status_in "$id" "$open_closed"; then
+      # Closed since the run, through the merge gate: see 4. above.
+      continue
+    elif [ "$live" = abandoned ] || [ "$live" = archived ]; then
       # `task abandon` never touches the forge, so a task the person gave up
       # on keeps its pull request. The flag stands -- only the forge knows
       # whether it is still open -- but the ask does not: work nobody wants is
       # not work to merge. So this item keeps the borrowed fact and changes
       # what it asks for, which is the one thing the local answer is good for
-      # here. `consolidated` is deliberately not treated this way: a closed
-      # task with an open pull request is worth looking at, and merging it is
-      # still the right move.
+      # here. `consolidated` is not treated this way: a task closed with a
+      # pull request had it merged (the gate above), and one the run saw
+      # closed may predate that gate -- merging its pull request is still the
+      # right move.
       #
       # Borrowed exactly as much as the item below it, and worded the same
       # way: past tense, and a refresh asked for first. Only what the task's
