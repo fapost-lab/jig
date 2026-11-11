@@ -38,9 +38,8 @@ is in your clone, and loses nothing; a write branch that exists only on origin i
 ## Then: what costs you time
 
 **A push goes as the project's GitHub account.** From 0.42.0 every `gh` call Jig makes is the
-clone's own account, whichever one `gh` has active. `git push` over HTTPS is not yet: it still goes
-through `gh`'s active account ([Known issues](/known-issues)). It gets the same account, without a
-token written anywhere.
+clone's own account, whichever one `gh` has active. `git push` and fetch over HTTPS get the same
+account in the next release, without a token written anywhere.
 
 **A second review round must not open a new front.** A repeat review already reads only what
 changed since the review (0.30.0). What is left: a blocker that appears only in the second round

@@ -663,8 +663,8 @@ _hk_fetch() {
   if ! git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
     return 0
   fi
-  if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-       git -C "$JIG_PROJECT" fetch --quiet --no-prune origin >/dev/null 2>&1; then
+  jig_git_origin_account housekeeping read
+  if ! jig_git_origin fetch --quiet --no-prune origin >/dev/null 2>&1; then
     _HK_STALE_REMOTE=1
   fi
   return 0
@@ -1181,10 +1181,14 @@ _hk_branch_sweep() {
       push | pr | merge) remote_rights=1 ;;
     esac
   done
+  # Named here, in this shell: the branch deletions below run in `$(...)`.
+  if [ "$dry" != 1 ] && [ "$remote_rights" = 1 ] \
+     && git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    jig_git_origin_account housekeeping read
+  fi
   if [ "$dry" != 1 ] && [ "$remote_rights" = 1 ] && cfg_bool housekeeping.fetch true \
      && git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
-    if heads=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-         git -C "$JIG_PROJECT" ls-remote --heads origin 2>/dev/null); then
+    if heads=$(jig_git_origin ls-remote --heads origin 2>/dev/null); then
       remote_ok=1
     fi
   fi

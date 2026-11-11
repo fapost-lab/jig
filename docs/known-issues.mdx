@@ -23,18 +23,4 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
-{/* Closed by task git-https-account-per-project. */}
-### With several GitHub accounts, `git push` over HTTPS goes as the active one
-
-**What you see.** Your `origin` is an `https://github.com/...` address, `gh` holds more than one of
-your accounts, and the one `gh` has active is not this project's. `jig status` names the right
-account and the pull request is opened as it, but the push before it (and any fetch) goes through
-`gh`'s credential helper, as the active account: it is refused, or the branch is pushed as the other
-account. This is read from the code; it has not yet been seen on a machine.
-
-**What it costs.** A `jig task ship` or `jig spec ship` that stops at the push, or commits pushed
-under an account you did not mean.
-
-**What to do instead.** Use an SSH address for `origin` (`git remote set-url origin
-git@github.com:<owner>/<repo>.git`): over SSH the key decides the account. Or make this project's
-account active in `gh` while you ship.
+No fault is listed right now.
