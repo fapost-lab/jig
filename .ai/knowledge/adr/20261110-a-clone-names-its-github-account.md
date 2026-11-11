@@ -10,7 +10,7 @@ paths:
   - scripts/lib/common.sh
   - scripts/lib/owntree.sh
 summary: "Why every gh call about the project's repository goes through jig_gh with the clone's own account token: github.account, else the one account that may push; gh auth switch is never run."
-reviewed_at: 2026-11-10
+reviewed_at: 2026-11-11
 ---
 # A clone names its GitHub account, and gh is run with that account's token
 
@@ -99,8 +99,9 @@ that sees none, and reported nothing merged.
   housekeeping entry points name it once, in their own shell.
 - "May push" is the test of membership, so a clone of a fork picks the account that owns the fork;
   a pull request into an upstream that account cannot push to is still opened as it.
-- `git` over HTTPS through gh's credential helper still answers as the active account: fetch and
-  push are not covered here. SSH remotes are decided by the key and are not Jig's to choose.
+- `git` over HTTPS is not covered here: its fetch and push go as the same account through
+  adr-20261111-git-over-https-asks-gh-for-the-clones-account. SSH remotes are decided by the key
+  and are not Jig's to choose.
 - GitLab (`glab`) is unchanged; the key's name leaves room for a `gitlab.account`.
 - A gh older than 2.40 gives no token per account: with the key set that is a refusal that says
   so; without it, gh runs as it did before.

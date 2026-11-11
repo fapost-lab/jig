@@ -1219,7 +1219,8 @@ esac
 # so a caller that reports what failed says why. Past the deadline it is not
 # started: 124 too. A program, never a shell function: the background job is
 # the program itself, so the kill reaches it and not a subshell its child
-# outlives. TERM, not KILL: git takes its own `.lock` files away on TERM. Its
+# outlives. The two exceptions, jig_gh and jig_git_origin, replace themselves
+# with their program (exec) when _JIG_GH_IN_NET is set. TERM, not KILL: git takes its own `.lock` files away on TERM. Its
 # output comes back through files once it has ended, stderr first and stdout
 # last: a caller that reads `2>&1` takes its answer from the last line (the
 # URL `gh pr create` prints), and a warning gh writes to stderr first must
@@ -1227,8 +1228,12 @@ esac
 # Bounded by hand for ADR-0002, as jig_ls_remote_tags is (conventions/shell.md).
 jig_net() {
   local now left out err pid rc=0 ticks=0 name="$1"
-  # jig_gh is gh under this clone's account; a reader knows the program.
-  [ "$name" != jig_gh ] || name=gh
+  # jig_gh is gh, and jig_git_origin git, under this clone's account; a reader
+  # knows the program.
+  case "$name" in
+    jig_gh) name=gh ;;
+    jig_git_origin) name=git ;;
+  esac
   if [ -z "$_JIG_NET_DEADLINE" ]; then
     "$@"
     return
@@ -1244,7 +1249,8 @@ jig_net() {
   jig_cleanup_add "$out"
   err="$out.err"
   jig_cleanup_add "$err"
-  if [ "$1" = jig_gh ]; then
+  if [ "$1" = jig_gh ] || [ "$1" = jig_git_origin ]; then
+    # Both replace themselves with their program (exec) when this is set.
     _JIG_GH_IN_NET=1 "$@" >"$out" 2>"$err" </dev/null &
   else
     "$@" >"$out" 2>"$err" </dev/null &
@@ -1355,16 +1361,17 @@ jig_check_newest_release() {
 # from origin, one at a time, so that a branch origin does not have fails
 # alone. Does nothing without an origin. A failure is a warning, never fatal:
 # the caller goes on with the refs it has, and says what it decided from them.
-# GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh): a command
-# that only wanted fresh refs must not stop and wait for a password.
+# Through jig_git_origin, which never waits for a prompt — a command that only
+# wanted fresh refs must not stop and wait for a password — and fetches over
+# HTTPS as the clone's GitHub account.
 jig_fetch_branches() {
   local who="$1" name
   shift
   git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 || return 0
+  jig_git_origin_account "$who" read
   for name in "$@"; do
     [ -n "$name" ] || continue
-    if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-         jig_net git -C "$JIG_PROJECT" fetch --quiet origin \
+    if ! jig_net jig_git_origin fetch --quiet origin \
          "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1; then
       jig_warn "$who: could not fetch $name from origin; using the refs this checkout has"
     fi
@@ -1730,12 +1737,139 @@ jig_gh() {
   # off that opens the pull request anyway.
   if [ -n "${_JIG_GH_IN_NET:-}" ]; then
     [ -z "$_JIG_GH_TOKEN" ] || _jig_gh_token_export "$_JIG_GH_TOKEN"
+    unset _JIG_GH_IN_NET
     exec gh "$@"
   fi
   (
     [ -z "$_JIG_GH_TOKEN" ] || _jig_gh_token_export "$_JIG_GH_TOKEN"
     exec gh "$@"
   )
+}
+
+# --- git over HTTPS as the account of this clone -----------------------------
+#
+# git asks its credential helper — the Keychain, gh's, a credential manager —
+# for whatever it holds for the host, which is one account: over HTTPS a push
+# or a fetch went as that one, whatever account jig_gh used for the pull
+# request. `jig_git_origin` is the one way a script reaches the project's
+# origin with git; when the URL is HTTPS to GitHub and an account is named —
+# by github.account, among several, or the one gh holds — it resets git's helpers
+# for that host for this one call and adds a helper of its own that asks gh's
+# store for that account's token when git asks for it
+# (adr-20261111-git-over-https-asks-gh-for-the-clones-account). The token is
+# never an argument, never in git's environment (its hooks would see it),
+# never on disk: only the host and the login are in the helper's text. SSH is
+# left to its key, and asks gh nothing.
+
+# _JIG_GIT_CRED — the `-c` options for the current call; _JIG_GIT_WARNED — a
+# read already warned that the account could not be named.
+_JIG_GIT_CRED=()
+_JIG_GIT_WARNED=""
+
+# _jig_git_origin_url <verb> — the URL git uses for <verb> on origin, with
+# insteadOf applied: the push URL for a push, the fetch URL otherwise.
+_jig_git_origin_url() {
+  if [ "$1" = push ]; then
+    git -C "$JIG_PROJECT" remote get-url --push origin 2>/dev/null || true
+  else
+    git -C "$JIG_PROJECT" remote get-url origin 2>/dev/null || true
+  fi
+}
+
+# _jig_git_https_github <url> — exit 0 when <url> is HTTPS, names GitHub
+# (forge github, or auto and a GitHub name) and gh is installed: the only case
+# in which Jig chooses git's credentials, and asks gh anything for it.
+_jig_git_https_github() {
+  # Never plain http: a token is not handed to an unencrypted URL.
+  case "$1" in
+    https://*) ;;
+    *) return 1 ;;
+  esac
+  case "$(cfg forge auto)" in
+    github) ;;
+    auto) [ "$(_jig_forge_by_name "$1")" = github ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  command -v gh >/dev/null 2>&1
+}
+
+# _jig_git_cred <url> — fill _JIG_GIT_CRED for a call to <url>: empty unless
+# it is HTTPS to GitHub, on the host jig_gh_resolve read, and an account was
+# named: by github.account (config), among several (detected), or as the one
+# gh held (only) — remembered, so a second account signed in later and made
+# active must not take the push while the pull request goes as the first.
+# With a token in the environment (env) or nothing named (gh), git's own
+# helper answers, as it always did.
+_jig_git_cred() {
+  local url="$1" scheme authority host login helper
+  _JIG_GIT_CRED=()
+  _jig_git_https_github "$url" || return 0
+  jig_gh_resolve || return 0
+  case "$_JIG_GH_HOW" in
+    config | detected | only) ;;
+    *) return 0 ;;
+  esac
+  scheme=${url%%://*}
+  authority=${url#*://}
+  authority=${authority%%/*}
+  authority=${authority#*@}
+  authority=$(printf '%s' "$authority" | tr '[:upper:]' '[:lower:]')
+  host=${authority%%:*}
+  [ "$host" = "$_JIG_GH_HOST" ] || return 0
+  login=$_JIG_GH_LOGIN
+  # The helper is shell text git runs: nothing but a login's and a host's
+  # characters goes into it.
+  case "$login" in
+    '' | -* | *[!A-Za-z0-9-]*) return 0 ;;
+  esac
+  case "$authority" in
+    '' | *[!a-z0-9.:-]*) return 0 ;;
+  esac
+  # git runs it with `get`, `store` or `erase`; only `get` answers. Its stdin
+  # is git's request, read to the end and ignored.
+  # shellcheck disable=SC2016 # expanded by the shell git starts, not here
+  helper='!f() { cat >/dev/null; test "$1" = get || return 0; t=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --hostname '"$host"' --user '"$login"' 2>/dev/null </dev/null) || return 0; test -n "$t" || return 0; printf "username=%s\npassword=%s\n" '"$login"' "$t"; }; f'
+  _JIG_GIT_CRED=(-c "credential.$scheme://$authority.helper=" -c "credential.$scheme://$authority.helper=$helper")
+}
+
+# jig_git_origin_account <who> <write|read> [<verb>] — name the account git
+# will reach origin as, once, in the command's own shell, before the first
+# `$(jig_git_origin ...)`: a subshell would lose the answer and ask again. Over
+# SSH, or to a forge that is not GitHub, nothing is asked. A refusal
+# (jig_gh_resolve) stops a write with nothing pushed; a read warns once and
+# goes on with git's own helper, as it did before.
+jig_git_origin_account() {
+  local who="$1" mode="$2" url
+  url=$(_jig_git_origin_url "${3:-fetch}")
+  _jig_git_https_github "$url" || return 0
+  jig_gh_resolve && return 0
+  if [ "$mode" = write ]; then
+    jig_die "$who: $_JIG_GH_WHY
+Nothing was pushed; the commit is on this machine, and running this again goes on from it."
+  fi
+  [ -n "$_JIG_GIT_WARNED" ] && return 0
+  _JIG_GIT_WARNED=1
+  jig_warn "$who: $_JIG_GH_WHY; reaching origin with git's own credentials"
+}
+
+# jig_git_origin <git-args>... — `git -C "$JIG_PROJECT" <git-args>` against
+# origin, as the account of this clone over HTTPS (above), never waiting for a
+# prompt: GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh) are
+# set here, so a caller cannot forget one. The first argument is git's verb;
+# `push` reads origin's push URL. Under jig_net git replaces this function,
+# so the kill that cuts a silent call off reaches git itself.
+jig_git_origin() {
+  _jig_git_cred "$(_jig_git_origin_url "$1")"
+  if [ -n "${_JIG_GH_IN_NET:-}" ]; then
+    GIT_SSH_COMMAND=$(jig_git_batch_ssh)
+    GIT_TERMINAL_PROMPT=0
+    export GIT_SSH_COMMAND GIT_TERMINAL_PROMPT
+    # Not into git's hooks: a jig they run is not under this jig_net.
+    unset _JIG_GH_IN_NET
+    exec git ${_JIG_GIT_CRED[@]+"${_JIG_GIT_CRED[@]}"} -C "$JIG_PROJECT" "$@"
+  fi
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+    git ${_JIG_GIT_CRED[@]+"${_JIG_GIT_CRED[@]}"} -C "$JIG_PROJECT" "$@"
 }
 
 # jig_forge_kind — which forge CLI this checkout should use: cfg `forge`
@@ -2063,13 +2197,15 @@ jig_ship_sends_no_commit() {
 
 # jig_ship_push <who> <branch> — push <branch> to origin and track it. Never
 # --force: a branch origin has moved past is refused by git, and the refusal
-# is the answer. GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND (jig_git_batch_ssh):
-# shipping is not a place to sit waiting for a credential prompt either.
+# is the answer. Through jig_git_origin: shipping is not a place to sit
+# waiting for a credential prompt either, and over HTTPS the push goes as the
+# account the pull request is opened as — or, when that account cannot be
+# named, nothing is pushed (jig_git_origin_account).
 jig_ship_push() {
   local who="$1" branch="$2" out
   _jig_ship_outward "$who"
-  if ! out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-             jig_net git -C "$JIG_PROJECT" push -u origin "$branch" 2>&1); then
+  jig_git_origin_account "$who" write push
+  if ! out=$(jig_net jig_git_origin push -u origin "$branch" 2>&1); then
     jig_die "$who: git push failed:
 $out"
   fi
@@ -2702,6 +2838,7 @@ jig_branch_leave() {
   fi
   [ -n "$sha" ] || return 0
   git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1 || return 0
+  jig_git_origin_account "$who" read push
   out=$(jig_branches_leave_origin "$who" "$b" "$sha")
   case "$out" in
     *": deleted branch $b on origin")
@@ -2709,8 +2846,7 @@ jig_branch_leave() {
       return 0
       ;;
   esac
-  if out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-       git -C "$JIG_PROJECT" ls-remote --heads origin "refs/heads/$b" 2>/dev/null) && [ -z "$out" ]; then
+  if out=$(jig_git_origin ls-remote --heads origin "refs/heads/$b" 2>/dev/null) && [ -z "$out" ]; then
     git -C "$JIG_PROJECT" branch -q -d -r "origin/$b" >/dev/null 2>&1 || true
     return 0
   fi
@@ -2739,8 +2875,8 @@ jig_branches_leave_origin() {
     shift 2
   done
   [ "${#refs[@]}" -gt 0 ] || return 0
-  out=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-    git -C "$JIG_PROJECT" push --porcelain "${leases[@]}" origin "${refs[@]/#/:refs/heads/}" 2>/dev/null || true)
+  jig_git_origin_account "$who" read push
+  out=$(jig_git_origin push --porcelain "${leases[@]}" origin "${refs[@]/#/:refs/heads/}" 2>/dev/null || true)
   for b in "${refs[@]}"; do
     if printf '%s\n' "$out" | awk -F '\t' -v r=":refs/heads/$b" \
          '$1 == "-" && $2 == r { found = 1 } END { exit !found }'; then

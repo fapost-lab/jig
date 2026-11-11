@@ -345,8 +345,14 @@ To ask GitHub something about the project yourself as that account, put `jig` in
   2.40 or later). Nothing is written to gh's configuration.
 - A `GH_TOKEN` or `GITHUB_TOKEN` already in the environment wins over everything, as it does for
   `gh` itself, so CI and a project `.envrc` keep working.
-- Pushing is not covered. Over SSH your key decides the account. Over HTTPS through gh's
-  credential helper, `git` still uses the active account.
+- Pushing and fetching over HTTPS go as the same account — the one you named, the one Jig found
+  among several, or the only one `gh` holds: for each of those `git` calls, Jig sets aside your
+  credential helper for that host and has `git` ask `gh` for that account's token. Nothing is
+  stored in your helper or in git's configuration. If your helper held another GitHub user's
+  credentials, the push now goes as the `gh` account instead; a `GH_TOKEN` in the environment, or
+  an SSH `origin`, leaves `git` as it was. Over SSH your key decides the account.
+- When several accounts may push and none is named, a ship stops before its push, at every
+  `agent.git` level, and says how to name one; nothing is sent.
 - The choice is remembered in `.ai/runtime/gh-account`; delete the file to have Jig look again.
 
 </Accordion>

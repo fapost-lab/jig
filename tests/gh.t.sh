@@ -702,3 +702,326 @@ test_gh_a_worktree_that_detects_first_leaves_the_memo_with_its_clone() {
   assert_no_file .ai/runtime/gh-account "the memo was written inside the worktree"
   assert_eq "$(printf 'https://github.com/acme/widget.git\tbob\tdetected')" "$(cat "$top/clone/.ai/runtime/gh-account")"
 }
+
+# --- git over HTTPS as the account of this clone ----------------------------------
+# (jig_git_origin, adr-20261111-git-over-https-asks-gh-for-the-clones-account)
+
+# _git_own_helper — the person's own credential helper in the clone: it answers
+# every host as alice and logs each action it is asked for to $PWD/own.log.
+_git_own_helper() {
+  : > "$PWD/own.log"
+  git config credential.helper "!f() { cat >/dev/null; echo \"\$1\" >> '$PWD/own.log'; test \"\$1\" = get && printf 'username=alice\npassword=own-alice\n'; return 0; }; f"
+}
+
+# _git_fill [host] — what git hands over for https://<host>/acme/widget.git
+# (default github.com) when asked through jig_git_origin: `user:password`.
+_git_fill() {
+  _gh_net "printf 'protocol=https\nhost=${1:-github.com}\npath=acme/widget.git\n\n' | jig_git_origin credential fill | awk -F= '\$1 == \"username\" { u = \$2 } \$1 == \"password\" { p = \$2 } END { print u \":\" p }'"
+}
+
+test_git_origin_over_https_hands_git_the_named_account_not_the_helpers_one() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  _git_own_helper
+  jig config set github.account bob --local >/dev/null
+  _git_fill
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "bob:tok-bob" "$OUT"
+  assert_eq "" "$(cat own.log)" "the person's own helper was asked"
+  assert_eq "0" "$(_gh_count 'auth switch')"
+}
+
+test_git_origin_over_https_hands_git_the_detected_account() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  _gh_pushers bob
+  _git_own_helper
+  _git_fill
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "bob:tok-bob" "$OUT"
+}
+
+test_git_origin_never_stores_or_erases_in_the_persons_helper() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  _git_own_helper
+  jig config set github.account bob --local >/dev/null
+  _gh_net "printf 'protocol=https\nhost=github.com\nusername=bob\npassword=tok-bob\n\n' | jig_git_origin credential approve
+printf 'protocol=https\nhost=github.com\nusername=bob\npassword=tok-bob\n\n' | jig_git_origin credential reject"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "" "$(cat own.log)" "the person's helper was told to store or erase"
+}
+
+test_git_origin_leaves_another_host_to_the_persons_helper() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  _git_own_helper
+  jig config set github.account bob --local >/dev/null
+  _git_fill gitlab.com
+  assert_eq "alice:own-alice" "$OUT"
+  assert_eq "get" "$(cat own.log)"
+}
+
+test_git_origin_leaves_git_as_it_is_when_no_account_is_named() {
+  _gh_repo
+  _git_own_helper
+  # Several accounts, none may push: gh's own choice, and git's own helper.
+  _gh_accounts alice alice bob
+  _git_fill
+  assert_eq "alice:own-alice" "$OUT"
+  # A token in the environment: it is in charge, as it is for gh.
+  jig config set github.account bob --local >/dev/null
+  run env GH_TOKEN=from-env TMPDIR="$PWD/tmp" bash "$PWD/net.sh"
+  assert_eq "alice:own-alice" "$OUT"
+}
+
+test_git_origin_over_ssh_asks_gh_nothing() {
+  _gh_repo git@github.com:acme/widget.git
+  _gh_accounts alice alice bob
+  _gh_pushers bob
+  _git_own_helper
+  _git_fill
+  assert_eq "alice:own-alice" "$OUT"
+  assert_eq "" "$(cat "$_GH_D/calls")" "gh was asked about an SSH origin"
+}
+
+test_git_origin_asks_gh_nothing_for_another_forge_or_forge_none() {
+  _gh_repo https://gitlab.com/acme/widget.git
+  _gh_accounts alice alice bob
+  _git_own_helper
+  _git_fill gitlab.com
+  assert_eq "alice:own-alice" "$OUT"
+  git remote set-url origin https://github.com/acme/widget.git
+  # forge is the team's key, in the shared file.
+  grep -v '^forge:' .ai/config.yaml > config.tmp
+  printf 'forge: none\n' >> config.tmp
+  mv config.tmp .ai/config.yaml
+  _git_fill
+  assert_eq "alice:own-alice" "$OUT"
+  assert_eq "" "$(cat "$_GH_D/calls")" "gh was asked although Jig chooses nothing here"
+}
+
+test_git_origin_reads_the_push_url_for_a_push() {
+  _gh_repo git@github.com:acme/widget.git
+  git remote set-url --push origin https://github.com/acme/widget.git
+  _gh_accounts alice alice bob
+  jig config set github.account bob --local >/dev/null
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_jig_git_cred "$(_jig_git_origin_url push)"; echo "push:${#_JIG_GIT_CRED[@]}"
+_jig_git_cred "$(_jig_git_origin_url fetch)"; echo "fetch:${#_JIG_GIT_CRED[@]}"'
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "push:4"
+  assert_contains "$OUT" "fetch:0"
+}
+
+test_git_origin_puts_nothing_but_a_login_into_the_helper() {
+  _gh_repo
+  _gh_accounts alice alice 'b;ob'
+  jig config set github.account 'b;ob' --local >/dev/null
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_jig_git_cred "$(_jig_git_origin_url fetch)"; echo "n:${#_JIG_GIT_CRED[@]}"'
+  assert_contains "$OUT" "n:0"
+}
+
+# _git_stub — a git on PATH in front of the real one. Every call logs its
+# arguments to $PWD/git.argv and its environment to $PWD/git.env; an
+# `ls-remote` stands for the network: it asks the real git, with the same
+# global options, to fill credentials for github.com into $PWD/git.fill, and
+# sleeps first when $PWD/git.sleep exists (writing its pid to $PWD/git.pid).
+_git_stub() {
+  local real
+  real=$(command -v git)
+  cat > "$_GH_D/git" <<STUB
+#!/bin/sh
+d='$PWD'
+printf '%s\n' "\$*" >> "\$d/git.argv"
+env >> "\$d/git.env"
+n=0
+for a in "\$@"; do
+  case "\$a" in ls-remote | push | fetch) break ;; esac
+  n=\$((n + 1))
+done
+case " \$* " in
+  *" ls-remote "*)
+    if [ -f "\$d/git.sleep" ]; then echo \$\$ > "\$d/git.pid"; sleep 4; : > "\$d/git.late"; fi
+    # Keep the global options alone: append them, then drop the originals.
+    total=\$#
+    i=0
+    for a in "\$@"; do
+      [ "\$i" -lt "\$n" ] || break
+      set -- "\$@" "\$a"
+      i=\$((i + 1))
+    done
+    shift "\$total"
+    printf 'protocol=https\nhost=github.com\n\n' | '$real' "\$@" credential fill > "\$d/git.fill" 2>/dev/null
+    exit 0
+    ;;
+  # Nothing in a test reaches a real remote.
+  *" push "* | *" fetch "*) exit 1 ;;
+esac
+exec '$real' "\$@"
+STUB
+  chmod +x "$_GH_D/git"
+}
+
+test_git_origin_under_a_deadline_git_gets_the_token_and_it_is_nowhere_else() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  jig config set github.account bob --local >/dev/null
+  _git_stub
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_JIG_NET_DEADLINE=$(($(date +%s) + 600))
+jig_git_origin_account test read
+jig_net jig_git_origin ls-remote --heads origin'
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat git.fill)" "username=bob"
+  assert_contains "$(cat git.fill)" "password=tok-bob"
+  assert_contains "$(cat git.argv)" "credential.https://github.com.helper="
+  assert_contains "$(cat git.env)" "GIT_TERMINAL_PROMPT=0"
+  assert_contains "$(cat git.env)" "BatchMode=yes"
+  assert_eq "" "$(grep 'tok-' git.argv || true)" "the token was an argument of git"
+  assert_eq "" "$(grep 'tok-' git.env || true)" "the token was in git's environment"
+  assert_eq "" "$(grep -r 'tok-' tmp 2>/dev/null || true)" "a token lies in a file under TMPDIR"
+  assert_not_contains "$OUT" "tok-"
+}
+
+test_git_origin_under_a_deadline_a_silent_git_is_cut_off_itself() {
+  local pid i
+  _gh_repo
+  _gh_accounts alice alice bob
+  jig config set github.account bob --local >/dev/null
+  _git_stub
+  : > git.sleep
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_JIG_NET_CALL=1
+_JIG_NET_DEADLINE=$(($(date +%s) + 600))
+jig_net jig_git_origin ls-remote --heads origin || echo "rc=$?"'
+  assert_contains "$OUT" "rc=124"
+  assert_contains "$OUT" "git: no answer within 1s; cut off"
+  assert_file git.pid "the stub git never ran"
+  pid=$(cat git.pid)
+  i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    fail "git (pid $pid) outlived the cut-off"
+  fi
+  sleep 4
+  assert_no_file git.late "git went on after it was cut off"
+}
+
+test_git_origin_a_push_refuses_with_nothing_pushed_when_no_account_is_named() {
+  _gh_repo
+  _gh_accounts alice alice bob carol
+  _gh_pushers bob carol
+  _git_stub
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_JIG_SHIP_SENDS=x
+jig_ship_push "task ship" main'
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: several gh accounts may push"
+  assert_contains "$OUT" "Nothing was pushed"
+  assert_eq "" "$(grep '^.*push' git.argv 2>/dev/null | grep -v 'get-url' || true)" "git push ran"
+}
+
+test_git_origin_a_read_warns_once_and_goes_on_with_gits_own_credentials() {
+  _gh_repo
+  _gh_accounts alice alice bob carol
+  _gh_pushers bob carol
+  _git_own_helper
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net 'jig_git_origin_account "task start" read
+jig_git_origin_account "task start" read
+printf "protocol=https\nhost=github.com\n\n" | jig_git_origin credential fill | grep "^username="'
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "1" "$(printf '%s\n' "$OUT" | grep -c "reaching origin with git's own credentials")"
+  assert_contains "$OUT" "username=alice"
+}
+
+test_git_origin_a_ship_at_push_level_pushes_as_the_named_account() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  jig config set github.account bob --local >/dev/null
+  _git_stub
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_JIG_SHIP_SENDS=x
+jig_ship_push "task ship" main || true'
+  assert_contains "$(grep ' push -u origin main' git.argv)" "credential.https://github.com.helper="
+  assert_contains "$(grep ' push -u origin main' git.argv)" "--user bob"
+}
+
+# --- no network git about origin without jig_git_origin ----------------------------
+
+# _git_bare_calls <scripts-dir> — the lines that run `git [-C <dir>] fetch|push|
+# ls-remote|pull` in command position — at the start of a line or after `$(`,
+# a pipe, `&&`, `||`, `;` or `{`, then any of then/do/else/if/exec/command/
+# jig_net/!/VAR=value, and git's own -C/-c options; never after a backtick,
+# the way a message quotes a command — without
+# jig_git_origin, as `<file>:<line>:<text>`. Exempt, as they reach another
+# repository than the project's: lib/self-update.sh (Jig's own source),
+# lib/pr.sh (its own account per pull request) and jig_ls_remote_tags in
+# lib/common.sh (Jig's public release tags).
+_git_bare_calls() {
+  local f
+  for f in $(find "$1" -type f \( -name '*.sh' -o -name jig \) | sort); do
+    case "$f" in */lib/pr.sh | */lib/self-update.sh) continue ;; esac
+    awk -v file="$f" '
+      /^jig_ls_remote_tags\(\)/ { skip = 1 }
+      skip && /^}/ { skip = 0; next }
+      skip { next }
+      /^[[:space:]]*#/ { next }
+      /(^|[$(|&;{])[[:space:]]*((then|do|else|if|exec|command|jig_net|!|[A-Z_][A-Z0-9_]*=[^[:space:]]*)[[:space:]]+)*git[[:space:]]+(-[cC][[:space:]]+[^[:space:]]+[[:space:]]+)*(fetch|push|ls-remote|pull)([[:space:]]|$)/ {
+        printf "%s:%d:%s\n", file, NR, $0
+      }' "$f"
+  done
+}
+
+test_git_origin_the_guard_tells_a_bare_call_from_a_comment_and_a_message() {
+  mkdir -p guard/lib
+  cat > guard/lib/x.sh <<'G'
+# git push origin main, in a comment
+jig_die "git push failed"
+printf 'push it with `git push -u origin %s`\n' "$b"
+jig_net jig_git_origin fetch --quiet origin
+git -C "$JIG_PROJECT" stash push -u
+G
+  assert_eq "" "$(_git_bare_calls guard)" "the guard flags what is not a call"
+  cat > guard/lib/y.sh <<'G'
+git -C "$JIG_PROJECT" fetch --quiet origin
+  out=$(git -C "$JIG_PROJECT" ls-remote --heads origin)
+jig_net git -C "$JIG_PROJECT" push -u origin "$b"
+if ! git pull --ff-only; then :; fi
+GIT_TERMINAL_PROMPT=0 git -C "$d" fetch origin
+  then git -c credential.helper= ls-remote origin
+G
+  assert_eq "6" "$(_git_bare_calls guard | grep -c . || true)" "the guard misses a bare call: $(_git_bare_calls guard)"
+}
+
+test_git_origin_no_script_reaches_origin_with_git_without_jig_git_origin() {
+  local found
+  found=$(_git_bare_calls "$JIG_HOME/scripts")
+  assert_eq "" "$found" "a script reaches origin with git without jig_git_origin (account of the clone):
+$found"
+}
+
+test_git_origin_a_remembered_only_account_keeps_the_push_after_a_second_one() {
+  _gh_repo
+  _gh_accounts alice alice
+  _git_own_helper
+  _git_fill
+  assert_eq "alice:tok-alice" "$OUT"
+  assert_eq "$(printf 'https://github.com/acme/widget.git\talice\tonly')" "$(cat .ai/runtime/gh-account)"
+  # bob signs in later and becomes active: the pull request stays alice's, so does the push.
+  _gh_accounts bob alice bob
+  _git_fill
+  assert_eq "alice:tok-alice" "$OUT"
+}
+
+test_git_origin_never_hands_a_token_to_plain_http() {
+  _gh_repo http://github.com/acme/widget.git
+  _gh_accounts alice alice bob
+  jig config set github.account bob --local >/dev/null
+  # shellcheck disable=SC2016 # the body expands in the shell it runs in
+  _gh_net '_jig_git_cred "$(_jig_git_origin_url fetch)"; echo "n:${#_JIG_GIT_CRED[@]}"'
+  assert_contains "$OUT" "n:0"
+}

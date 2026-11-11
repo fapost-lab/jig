@@ -351,8 +351,8 @@ _ot_origin_heads() {
     _OT_HEADS_STATE=none
     return 0
   fi
-  if _OT_HEADS=$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-    jig_net git -C "$JIG_PROJECT" ls-remote --heads origin 2>/dev/null); then
+  jig_git_origin_account "$OT_WHO" read
+  if _OT_HEADS=$(jig_net jig_git_origin ls-remote --heads origin 2>/dev/null); then
     _OT_HEADS_STATE=known
   else
     _OT_HEADS=""
