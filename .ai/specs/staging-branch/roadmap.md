@@ -16,11 +16,11 @@ staging. Done when: in a test project with `git.flow: staging` and `git.staging_
 request into staging, the pull request lands on staging — merged on the forge, or merged directly when
 it conflicts — and `jig status` shows the task on staging, with no pull request into the base branch.
 
-- [ ] `choose-git-flow` — Choose a flow — `git.flow: direct | staging` in the shared config with the bricks'
+- [x] `choose-git-flow` — Choose a flow — `git.flow: direct | staging` in the shared config with the bricks'
   defaults and overrides (`staging_branch`, `staging_land`, `staging_review`, `promote_merge`); `jig init`
   and `jig-setup` describe both flows in plain words and offer `staging` when origin has a
   `stage`/`staging` branch; `direct` stays the default.
-- [ ] Ship a task to staging — `jig task ship` in a staging project opens the task's pull request
+- [ ] `ship-to-staging` — Ship a task to staging — `jig task ship` in a staging project opens the task's pull request
   into staging for review; no pull request into the base branch. (after: Choose a flow — it reads the key)
 - [ ] Land a task on staging — merge the pull request on the forge; when it conflicts, merge the
   task branch into a fresh temporary worktree of staging, resolve, push (retried from a fresh fetch
@@ -28,7 +28,7 @@ it conflicts — and `jig status` shows the task on staging, with no pull reques
   (unattended: wait), by `staging_review` — `ask` as here, `require` always waits, `none` lands
   without asking; below `agent.git: merge`, stop at the open pull request. (after: Ship
   a task to staging — it lands that pull request)
-- [ ] See a task's staging state — on staging / behind staging (own commits only, merges of the base branch
+- [ ] `staging-state` — See a task's staging state — on staging / behind staging (own commits only, merges of the base branch
   excluded) derived from git by branch name, in
   `jig task list --json`, `jig status` and housekeeping; a pull request merged into staging is no
   longer `wrong-base`. (after: Choose a flow — it reads the key)
