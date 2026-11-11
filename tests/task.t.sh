@@ -5044,7 +5044,11 @@ printf '%s\n' "\$*" >> "\$d/gh.log"
 val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; else printf '%s\n' "\$2"; fi; }
 case "\$1 \$2" in
   "auth status") exit 0 ;;
-  "pr list") val gh-existing null ;;
+  "pr list")
+    case "\$*" in
+      *baseRefName*) val gh-heads "" ;;
+      *) val gh-existing null ;;
+    esac ;;
   "pr create")
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-create.argv"
@@ -5827,6 +5831,203 @@ test_task_ship_recognises_a_raised_composer_json() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "this change raises the version in composer.json: 2.0.0 -> 2.0.1"
   assert_no_file gh-merge.argv
+}
+
+# --- the staging flow (.ai/specs/staging-branch/, "Ship a task to staging")
+
+# sship_setup <agent.git level> [<flow lines>] — a project on `git.flow:
+# staging` (or on the config lines <flow lines> give) with the staging branch
+# `staging` on origin and GitHub stubbed (mship_stub_gh), committed on main
+# before T-1 is cut, with VERSION 1.0.0 declared; T-1 started, its route
+# done, the knowledge decision recorded and a change staged, shipping at
+# <level>. `gh pr list` for the base-aware query answers gh-heads.
+sship_setup() {
+  local lines="${2:-git.flow: staging
+git.staging_branch: staging}"
+  task_setup_clean
+  ship_cfg forge github
+  printf '%s\n' "$lines" >> .ai/config.yaml
+  printf '1.0.0\n' > VERSION
+  git add .ai/config.yaml VERSION
+  git commit -q -m "fixture: the staging flow"
+  git branch -q staging main
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  ship_exclude_fixture
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+  mship_stub_gh
+  ship_cfg_local agent.git "$1"
+  ship_cfg_local agent.ci_timeout 0
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+# assert_pr_base <branch> — the pull request was opened into <branch>.
+assert_pr_base() {
+  assert_contains "$(cat gh-create.argv)" "$(printf -- '--base\n%s\n' "$1")"
+}
+
+test_task_ship_staging_opens_the_pull_request_into_staging() {
+  sship_setup pr
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "task ship: git flow staging: the pull request goes into staging, not main"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "task/T-1 is not on staging yet: landing the pull request is the human's"
+  assert_pr_base staging
+  assert_not_contains "$(cat gh-create.argv)" "$(printf -- '--base\nmain')"
+  assert_file_contains .ai/workspace/tasks/T-1/state "pr_url: https://github.com/example/example/pull/99"
+}
+
+# Landing on staging is the next roadmap item: until it exists, `merge`
+# stops at the open pull request rather than merging past the review.
+test_task_ship_staging_at_merge_stops_at_the_open_pull_request() {
+  sship_setup merge
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_pr_base staging
+  assert_contains "$OUT" "not merged: landing a task on staging is not built yet; task/T-1 is not on staging until a person lands the pull request"
+  assert_no_file gh-merge.argv
+  assert_not_contains "$(cat gh.log)" "pr merge"
+  assert_not_contains "$(cat gh.log)" "pr checks"
+  assert_eq task/T-1 "$(git symbolic-ref --short HEAD)"
+  git show-ref --verify --quiet refs/heads/task/T-1 || fail "the task's branch must stay"
+}
+
+test_task_ship_staging_draft_at_merge_is_never_merged() {
+  sship_setup merge
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_pr_base staging
+  assert_contains "$(cat gh-create.argv)" "--draft"
+  assert_contains "$OUT" "not merged: a draft pull request is never merged"
+  assert_no_file gh-merge.argv
+}
+
+# A release is what reaches the base branch; a pull request into staging does
+# not, so a raised version neither holds nor drafts it.
+test_task_ship_staging_version_raise_is_not_a_release() {
+  sship_setup merge
+  ship_cfg_local release.merge human
+  printf '2.0.0\n' > VERSION
+  git add VERSION
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "raises the version"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+  assert_pr_base staging
+}
+
+test_task_ship_staging_refuses_a_flow_with_no_staging_branch_named() {
+  sship_setup merge
+  sed '/^git.staging_branch:/d' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: the project's git flow cannot be shipped through:"
+  assert_contains "$OUT" "git.staging_branch: the staging flow needs the name of the staging branch"
+  assert_contains "$OUT" "Nothing was committed."
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+# A flow nobody knows is not read as `direct`: it would ship into the base
+# branch what the team meant to send elsewhere. A draft is refused too.
+test_task_ship_refuses_an_unknown_flow() {
+  sship_setup pr
+  sed 's/^git.flow:.*/git.flow: stagin/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "git.flow: 'stagin' is not a flow: direct or staging"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+test_task_ship_staging_refuses_without_the_staging_branch() {
+  sship_setup pr
+  git branch -q -D staging
+  git push -q origin --delete staging
+  git branch -q -d -r origin/staging
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: the staging branch staging is neither here nor on origin"
+  assert_contains "$OUT" "Nothing was committed."
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+# At `commit` nothing goes near the staging branch, so its absence stops nothing.
+test_task_ship_staging_at_commit_needs_no_staging_branch() {
+  sship_setup commit
+  git branch -q -D staging
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "stopped at commit: push is the human's"
+}
+
+test_task_ship_staging_external_land_opens_no_pull_request() {
+  sship_setup merge
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pushed task/T-1"
+  assert_contains "$OUT" "stopped at push: git.staging_land is external, so CI lands task/T-1 on staging; no pull request opened"
+  assert_no_file gh-create.argv
+  assert_no_file gh-merge.argv
+}
+
+# Whether an epic's tasks pass through staging is an open question of the
+# spec: until it is answered, an epic task ships into its epic as before.
+test_task_ship_staging_epic_task_ships_into_its_epic() {
+  sship_setup pr
+  git branch -q epic/x main
+  git push -q origin epic/x
+  git fetch -q origin
+  sed 's|^base_branch:.*|base_branch: epic/x|' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 is cut from epic/x, not the base branch; the staging flow does not apply to it, so it ships into epic/x"
+  assert_pr_base epic/x
+  assert_not_contains "$OUT" "is not on staging"
+}
+
+# `git.flow: direct` written out is the default, and ships as before.
+test_task_ship_direct_flow_written_out_ships_into_the_base() {
+  sship_setup merge 'git.flow: direct'
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "git flow staging"
+  assert_pr_base main
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
 }
 
 # Only [project] (or [tool.poetry]) names the package's version: a `version`
@@ -11183,4 +11384,101 @@ test_task_ship_names_the_absorbed_issues_in_the_pull_request_body() {
   assert_eq "Absorbs: SRD-7" "$(sed '/^$/d' gh-create.body | tail -n 1)"
   assert_eq "PR body." "$(head -n 1 gh-create.body)"
   assert_eq "PR body." "$(cat body.txt)"
+}
+
+# The flow is the team's and lives on the base branch: a task branch that
+# says `direct` while main says `staging` must not ship into main.
+test_task_ship_refuses_a_task_branch_whose_flow_main_has_changed() {
+  sship_setup merge
+  sed -e 's/^git.flow:.*/git.flow: direct/' -e '/^git.staging_branch:/d' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: the git flow here is not the one main has:"
+  assert_contains "$OUT" "here: git.flow: direct"
+  assert_contains "$OUT" "main: git.flow: staging, git.staging_branch: staging"
+  assert_contains "$OUT" "Merge main into the task branch first (git merge origin/main)"
+  assert_eq "$head_before" "$(git rev-parse HEAD)"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh.log "the forge must not be asked anything"
+}
+
+# The other way round: a task cut before the team switched to staging ships,
+# and at `merge` would merge, straight into main unless it is refused.
+test_task_ship_refuses_a_task_cut_before_main_turned_staging_on() {
+  sship_setup merge 'git.flow: direct'
+  git checkout -q main
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  sed '/^git.flow: direct$/d' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git commit -q -m "turn the staging flow on" .ai/config.yaml
+  # Pushed behind this checkout's back: origin/main still says direct here,
+  # so only a ship that fetches sees the change.
+  git push -q origin main:main
+  git update-ref refs/remotes/origin/main "$(git rev-parse HEAD~1)"
+  git checkout -q task/T-1
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "here: git.flow: direct"
+  assert_contains "$OUT" "main: git.flow: staging, git.staging_branch: staging"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_no_file gh-create.argv
+  assert_no_file gh-merge.argv
+}
+
+# With no base known here at all, the flow check leaves the checkout to
+# decide, as before: the ship gets past it and stops where it always did,
+# at the base it cannot compare against.
+test_task_ship_staging_with_no_base_ref_reads_the_checkout() {
+  sship_setup pr
+  git branch -q -m main old-main
+  git branch -q -d -r origin/main
+  git --git-dir=origin.git symbolic-ref HEAD refs/heads/staging
+  git --git-dir=origin.git branch -q -D main
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: could not fetch main from origin; using the refs this checkout has"
+  assert_not_contains "$OUT" "is not the one"
+  assert_contains "$OUT" "committed "
+  assert_contains "$OUT" "no branch main here or on origin"
+}
+
+# An open pull request from the task's branch into main is not its staging
+# pull request: reported as one, no staging pull request would be opened.
+test_task_ship_staging_refuses_an_open_pull_request_into_another_branch() {
+  sship_setup pr
+  printf 'main\thttps://github.com/example/example/pull/7\n' > gh-heads
+  printf 'https://github.com/example/example/pull/7\n' > gh-existing
+
+  local head_before
+  head_before=$(git rev-parse HEAD)
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: task/T-1 already has an open pull request into another branch than staging:"
+  assert_contains "$OUT" "https://github.com/example/example/pull/7 (into main)"
+  assert_contains "$OUT" "Close that pull request, or retarget it to staging"
+  assert_eq "$head_before" "$(git rev-parse HEAD)" "nothing may be committed"
+  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
+  assert_contains "$(git diff --cached --name-only)" "ship.txt"
+  assert_no_file gh-create.argv
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "pr_url:"
+}
+
+# Its own pull request into staging, already open, is found as before.
+test_task_ship_staging_finds_its_own_open_pull_request_into_staging() {
+  sship_setup pr
+  printf 'staging\thttps://github.com/example/example/pull/8\n' > gh-heads
+  printf 'https://github.com/example/example/pull/8\n' > gh-existing
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/8 (already open)"
+  assert_no_file gh-create.argv
 }
