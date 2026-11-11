@@ -270,7 +270,7 @@ land_task() {
   base_branch=$(cfg git.base_branch main)
   [ "$base" = "$base_branch" ] \
     || jig_die "$who: $id is cut from $base, not $base_branch; the staging flow does not apply to it"
-  land=$(jig_staging_land) || land=pr
+  land=$(jig_staging_land) || land="pr"
   branch=$(task_state_get "$id" branch)
   [ "$land" != external ] \
     || jig_die "$who: git.staging_land is external, so CI lands ${branch:-task/$id} on $staging; Jig merges nothing there"
@@ -278,8 +278,9 @@ land_task() {
   pr=$(task_state_get "$id" pr_url)
   [ -n "$pr" ] || jig_die "$who: $id has no pull request into $staging; run jig task ship $id first"
   if [ "$resolved" = 1 ]; then
-    [ -n "$note" ] && [ -s "$note" ] && grep -q '[^[:space:]]' "$note" \
-      || jig_die "$who: --resolved needs --note-file with how each conflict was resolved; it goes into the merge commit and the pull request"
+    if [ -z "$note" ] || [ ! -s "$note" ] || ! grep -q '[^[:space:]]' "$note"; then
+      jig_die "$who: --resolved needs --note-file with how each conflict was resolved; it goes into the merge commit and the pull request"
+    fi
   fi
   if [ "$without" = 1 ]; then
     [ "$(jig_staging_review || true)" != require ] \

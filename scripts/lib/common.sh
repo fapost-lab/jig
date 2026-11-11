@@ -1131,7 +1131,7 @@ EOF
 # line, are the task's own (here and on origin), never a dependency.
 _jig_bcs_what() {
   local p="$1" base="$2" stage="$3" depth="$4" ref sha dep="" name sub why
-  if printf '%s\n' "$_JIG_BCS_SFP" | grep -qx "$p"; then
+  if printf '%s\n' "$_JIG_BCS_SFP" | grep -Fx -- "$p" >/dev/null; then
     printf '%s\n' "$_JIG_BCS_STAGING"
     return 0
   fi
@@ -1139,11 +1139,11 @@ _jig_bcs_what() {
     [ -n "$ref" ] || continue
     sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || continue
     ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$_JIG_BCS_TOP" "$sha" 2>/dev/null || continue
-    ! git -C "$JIG_PROJECT" rev-list --first-parent "$_JIG_BCS_TOP" "^$base" 2>/dev/null | grep -qx "$sha" || continue
+    ! git -C "$JIG_PROJECT" rev-list --first-parent "$_JIG_BCS_TOP" "^$base" 2>/dev/null | grep -Fx -- "$sha" >/dev/null || continue
     # That task's own work only: the merged commit on its first-parent line,
     # never a branch it merged in itself (a feature branch is a second parent
     # there, whatever it did since).
-    git -C "$JIG_PROJECT" rev-list --first-parent "$sha" "^$base" 2>/dev/null | grep -qx "$p" || continue
+    git -C "$JIG_PROJECT" rev-list --first-parent "$sha" "^$base" 2>/dev/null | grep -Fx -- "$p" >/dev/null || continue
     name=${ref#refs/remotes/origin/}
     name=${name#refs/heads/}
     # The one whose tip is the merged commit, else the first that holds it.
@@ -1174,11 +1174,11 @@ EOF
   # Named by a branch at it, else one that holds it and is no task's (a
   # feature branch that moved on), else by the commit.
   name=$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --points-at "$p" refs/heads refs/remotes/origin 2>/dev/null \
-    | grep -v -e '^refs/heads/task/' -e '^refs/remotes/origin/task/' | head -n 1 || true)
+    | grep -v -e '^refs/heads/task/' -e '^refs/remotes/origin/task/' | sed -n 1p || true)
   [ -n "$name" ] || name=$(git -C "$JIG_PROJECT" for-each-ref --format='%(refname)' --contains "$p" refs/heads refs/remotes/origin 2>/dev/null \
     | grep -v -e '^refs/heads/task/' -e '^refs/remotes/origin/task/' -e '^refs/remotes/origin/HEAD$' \
       -e "^refs/heads/$_JIG_BCS_BASE\$" -e "^refs/remotes/origin/$_JIG_BCS_BASE\$" \
-      -e "^refs/heads/$_JIG_BCS_STAGING\$" -e "^refs/remotes/origin/$_JIG_BCS_STAGING\$" | head -n 1 || true)
+      -e "^refs/heads/$_JIG_BCS_STAGING\$" -e "^refs/remotes/origin/$_JIG_BCS_STAGING\$" | sed -n 1p || true)
   name=${name#refs/remotes/origin/}
   name=${name#refs/heads/}
   printf '%s\n' "${name:-commit $(git -C "$JIG_PROJECT" rev-parse --short "$p" 2>/dev/null)}"
