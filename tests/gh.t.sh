@@ -731,6 +731,25 @@ test_git_origin_over_https_hands_git_the_named_account_not_the_helpers_one() {
   assert_eq "0" "$(_gh_count 'auth switch')"
 }
 
+# Git Bash on Windows turns a backslash in an argument to git.exe into `/`: a
+# helper that wrote `\n` reached git as one line, and the token went into the
+# user name and out in git's error. Guarded here, where every platform runs it.
+test_git_origin_helper_holds_no_backslash() {
+  _gh_repo
+  _gh_accounts alice alice bob
+  jig config set github.account bob --local >/dev/null
+  # shellcheck disable=SC2016 # expanded by the script _gh_net writes
+  _gh_net 'jig_git_origin_account test read
+_jig_git_cred https://github.com/acme/widget.git
+printf "%s\n" "${_JIG_GIT_CRED[@]}"'
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "gh auth token --hostname github.com --user bob"
+  case "$OUT" in
+    *\\*) fail "the helper holds a backslash: $OUT" ;;
+  esac
+  return 0
+}
+
 test_git_origin_over_https_hands_git_the_detected_account() {
   _gh_repo
   _gh_accounts alice alice bob

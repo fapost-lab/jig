@@ -1827,8 +1827,15 @@ _jig_git_cred() {
   esac
   # git runs it with `get`, `store` or `erase`; only `get` answers. Its stdin
   # is git's request, read to the end and ignored.
+  #
+  # No backslash anywhere in it: Git Bash on Windows turns a `\` in an
+  # argument to git.exe into `/`, so a `printf "...\n..."` here reached git as
+  # one line, `username=<login>/npassword=<token>/n` — the token became part
+  # of the user name, and git printed it in the URL of its error. `echo` ends
+  # each line without one; a login holds [A-Za-z0-9-] and a token no leading
+  # `-`, so neither reads as an option of echo.
   # shellcheck disable=SC2016 # expanded by the shell git starts, not here
-  helper='!f() { cat >/dev/null; test "$1" = get || return 0; t=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --hostname '"$host"' --user '"$login"' 2>/dev/null </dev/null) || return 0; test -n "$t" || return 0; printf "username=%s\npassword=%s\n" '"$login"' "$t"; }; f'
+  helper='!f() { cat >/dev/null; test "$1" = get || return 0; t=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --hostname '"$host"' --user '"$login"' 2>/dev/null </dev/null) || return 0; test -n "$t" || return 0; echo username='"$login"'; echo "password=$t"; }; f'
   _JIG_GIT_CRED=(-c "credential.$scheme://$authority.helper=" -c "credential.$scheme://$authority.helper=$helper")
 }
 
