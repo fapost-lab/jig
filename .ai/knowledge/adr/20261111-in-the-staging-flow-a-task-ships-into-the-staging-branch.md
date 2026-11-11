@@ -73,6 +73,8 @@ send the task into the base branch nor merge into staging past the review the fl
   base-branch comparison finds no difference there and asks no forge.
 - Until "See a task's staging state" lands, a staging pull request a person merges reads
   `wrong-base` in housekeeping (ADR-0039), since the task's recorded base is still the base branch.
+  The task staging-state made that untrue: housekeeping now reads the task's staging state instead
+  (ADR-0039 as amended 2026-11-11).
 - Until "Land a task on staging" lands, a person merges every staging pull request, whatever
   `agent.git` says.
 - A task branch behind its base on the flow must merge the base branch in before it ships.

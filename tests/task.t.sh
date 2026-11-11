@@ -9785,6 +9785,73 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
+# _tl_staging_of <id> — the `staging` value OUT gives the task <id>: on,
+# behind, null, or nothing when its object has no such field.
+_tl_staging_of() {
+  printf '%s\n' "$OUT" | grep -o "{\"id\":\"$1\",[^{]*" | sed -n 's/.*"staging":\([^,]*\),.*/\1/p' | tr -d '"'
+}
+
+# On the staging flow every task says whether its work is on the staging
+# branch, from git alone (.ai/specs/staging-branch): its tip in origin's
+# staging, or own commits after that — a merge of its base at promotion is
+# not one of them.
+test_task_list_json_says_whether_a_task_is_on_staging() {
+  fixture_staging_repo
+  fixture_task unstarted "" active
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq on "$(_tl_staging_of on)"
+  assert_eq behind "$(_tl_staging_of behind)"
+  assert_eq on "$(_tl_staging_of promoted)"
+  assert_eq null "$(_tl_staging_of never)"
+  assert_eq null "$(_tl_staging_of fresh)"
+  assert_eq null "$(_tl_staging_of unstarted)"
+  # Right after the base, as schemas/json.md places it.
+  assert_contains "$OUT" '"branch":"task/on","base_branch":"main","staging":"on","worktree":null'
+  # The fix pushed and merged into staging: on staging again.
+  git checkout -q -b staging origin/staging
+  git merge -q --no-ff -m "ship the fix" task/behind
+  git push -q origin staging
+  git checkout -q main
+  _tl_json
+  assert_eq on "$(_tl_staging_of behind)"
+  # Staging merged into a task branch ("Update branch" on its pull request
+  # into staging) is not the task's own work: one never shipped stays off
+  # staging, one already there stays on it.
+  git checkout -q -b task/upd main
+  printf 'upd\n' > upd.txt
+  git add upd.txt
+  git commit -q -m upd
+  git merge -q --no-ff -m "update branch" origin/staging
+  git checkout -q task/on
+  git merge -q --no-ff -m "update branch" origin/staging
+  git checkout -q main
+  fixture_task upd task/upd active "class:T2"
+  _tl_json
+  assert_eq null "$(_tl_staging_of upd)"
+  assert_eq on "$(_tl_staging_of on)"
+  # One task as a write answers with it carries the field too.
+  jig task pause behind >/dev/null 2>&1 || fail "could not pause behind"
+  run_split jig task resume behind --json
+  case "$OUT" in *'"staging":'*) ;; *) fail "task resume --json has no staging field: $OUT" ;; esac
+}
+
+# The field is the staging flow's: a project on `direct`, or one whose staging
+# flow names no branch, lists the shape it always did.
+test_task_list_json_has_no_staging_field_off_the_staging_flow() {
+  fixture_staging_repo
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"staging"'
+  sed -e 's|^git.flow:.*|git.flow: staging|' -e '/^git.staging_branch:/d' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"staging"'
+}
+
 test_task_list_json_with_no_tasks_is_an_empty_list() {
   task_setup
   _tl_json
@@ -11200,6 +11267,38 @@ test_task_list_json_starts_a_fixed_number_of_processes_per_task() {
   # None per task: the listing forks for none of these tasks, so a process
   # per task is a regression (one allowed for a once-per-run record).
   [ "$few" -le 1 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
+}
+
+# A task's staging state is one answer for the whole listing
+# (jig_staging_states): what the staging flow adds to the listing does not grow
+# with the started tasks it is asked about.
+test_task_list_json_on_the_staging_flow_starts_no_process_per_task() {
+  fixture_staging_repo
+  local i staged_two direct_two staged_six direct_six
+  _tl_staging_flow() {
+    sed "s|^git.flow:.*|git.flow: $1|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+  }
+  rm -rf .ai/workspace/tasks/*
+  for i in 1 2; do
+    git branch "task/s-$i" task/on
+    fixture_task "s-$i" "task/s-$i" active "class:T2"
+  done
+  _tl_forks task list --all --json >/dev/null || fail "task list --json failed under the probe"
+  staged_two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_staging_flow direct
+  direct_two=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  for i in 3 4 5 6; do
+    git branch "task/s-$i" task/behind
+    fixture_task "s-$i" "task/s-$i" active "class:T2"
+  done
+  direct_six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  _tl_staging_flow staging
+  staged_six=$(_tl_forks task list --all --json) || fail "task list --json failed under the probe"
+  run_split jig task list --json
+  assert_contains "$OUT" '"id":"s-6"'
+  assert_contains "$OUT" '"staging":"behind"'
+  _tl_same_cost $((staged_two - direct_two)) $((staged_six - direct_six))
 }
 
 # `jig context` is what `task list --json` pays for a task with a review receipt

@@ -28,7 +28,7 @@ it conflicts — and `jig status` shows the task on staging, with no pull reques
   (unattended: wait), by `staging_review` — `ask` as here, `require` always waits, `none` lands
   without asking; below `agent.git: merge`, stop at the open pull request. (after: Ship
   a task to staging — it lands that pull request)
-- [ ] `staging-state` — See a task's staging state — on staging / behind staging (own commits only, merges of the base branch
+- [x] `staging-state` — See a task's staging state — on staging / behind staging (own commits only, merges of the base branch
   excluded) derived from git by branch name, in
   `jig task list --json`, `jig status` and housekeeping; a pull request merged into staging is no
   longer `wrong-base`. (after: Choose a flow — it reads the key)

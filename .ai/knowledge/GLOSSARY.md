@@ -198,6 +198,17 @@ How a project's tasks travel to the base branch, named by `git.flow`: `direct` (
 
 The branch `git.staging_branch` names, on which a task lands for testing before the base branch in the `staging` Git Flow. Nothing reaches the base branch from it: a task goes there from its own branch. Informal synonyms: stage, staging.
 
+## On Staging
+
+A task in the `staging` Git Flow whose own work is on origin's Staging Branch, with nothing of its own
+after it. Own work is what the task's branch reaches and its base does not; a merge that only brings
+in the base or the Staging Branch is not own work. Derived from git by branch name, never stored.
+
+## Behind Staging
+
+A task in the `staging` Git Flow that is On Staging except for commits of its own the Staging Branch
+does not have yet — a fix QA asked for, pushed or not.
+
 ## Epic Branch
 
 `epic/<spec-id>`: the branch a Specification released once, at the end, is built on. Its phases'

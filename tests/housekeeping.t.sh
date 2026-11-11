@@ -4094,3 +4094,75 @@ test_status_still_reads_the_newest_run_after_a_trim() {
   run jig status
   assert_contains "$OUT" "needs consolidation: 1 task(s)"
 }
+
+# --- the staging flow (.ai/specs/staging-branch) ---------------------------------
+
+hk_staging_setup() {
+  fixture_staging_repo
+  hk_cfg forge none
+  hk_cfg housekeeping.fetch false
+}
+
+# Each task's staging state is derived every run and goes into the log and the
+# report, never into the task's state (ADR-0005).
+test_housekeeping_reports_each_tasks_staging_state() {
+  hk_staging_setup
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "on status=active remote=unknown via=none action=preserve staging=on"
+  assert_contains "$OUT" "behind status=active remote=unknown via=none action=preserve staging=behind"
+  assert_contains "$OUT" "never status=active remote=unknown via=none action=preserve"$'\n'
+  assert_contains "$OUT" "  behind staging: behind"
+  assert_contains "$OUT" "  on staging: on, promoted"
+  assert_contains "$(cat .ai/runtime/housekeeping.log)" "task=promoted status=active remote=unknown via=none action=preserve staging=on"
+  assert_not_contains "$(cat .ai/workspace/tasks/on/state)" "staging"
+  # Off the staging flow the run says what it always said.
+  hk_cfg git.flow direct
+  run jig housekeeping --verbose
+  assert_not_contains "$OUT" "staging"
+}
+
+# A task waiting on the staging branch for its promotion is not a task nobody
+# touches: it is kept and named stale, never archived (failure mode 10).
+test_housekeeping_does_not_archive_a_task_on_staging_as_stale() {
+  hk_staging_setup
+  local old
+  old=$(hk_days_ago 90)
+  fixture_task on task/on active "updated_at:$old"
+  fixture_task never task/never active "updated_at:$old"
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "on status=active remote=unknown via=none action=preserve flags=STALE_CANDIDATE staging=on"
+  assert_contains "$OUT" "never status=active remote=unknown via=none action=archive reason=stale"
+  assert_contains "$(cat .ai/workspace/tasks/on/state)" "status: active"
+}
+
+# A pull request merged into the staging branch is the flow's own step, not
+# work landed outside the task's base (ADR-0039 before the staging flow).
+test_housekeeping_a_pull_request_merged_into_staging_is_not_wrong_base() {
+  hk_staging_setup
+  hk_cfg forge github
+  hk_stub_gh "task/on$(printf '\t')staging$(printf '\t')MERGED"
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "on status=active remote=unknown via=none action=preserve staging=on"
+  assert_not_contains "$OUT" "wrong-base"
+  run jig status
+  assert_not_contains "$OUT" "wrong base"
+  # On the direct flow the same pull request is still work in the wrong place.
+  hk_cfg git.flow direct
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "on status=active remote=unknown via=forge action=preserve flags=wrong-base"
+}
+
+# The pull request a staging `task ship` leaves is into the staging branch: while
+# it is open the task is kept as one with an open pull request into its base is,
+# never archived as stale.
+test_housekeeping_an_open_pull_request_into_staging_keeps_an_old_task() {
+  hk_staging_setup
+  hk_cfg forge github
+  fixture_task never task/never active "updated_at:$(hk_days_ago 90)"
+  hk_stub_gh "task/never$(printf '\t')staging$(printf '\t')OPEN"
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "never status=active remote=open via=forge action=preserve"
+  assert_not_contains "$OUT" "action=archive"
+  assert_contains "$(cat .ai/workspace/tasks/never/state)" "status: active"
+}

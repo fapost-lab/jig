@@ -24,6 +24,9 @@ _HK_WT_NOTE=""      # ... and as a note in the grouped report
 _HK_BASE_LOG=""     # "<base>\t<ref>\t<epoch>\t<sha>" reflog of every task base's refs, newest first, read once per run
 _HK_WRONG_NOTE=""   # why the last task was flagged wrong-base, as a note in the grouped report
 _HK_DEFAULT_BASE="" # git.base_branch, read once per run
+_HK_STAGING_BRANCH="" # git.staging_branch on a sound staging flow, empty otherwise; read once per run
+_HK_STAGING=""      # "<task><TAB>on|behind" for the tasks on the staging branch (jig_staging_states), once per run
+_HK_STAGING_STATE="" # the last task's staging state: on, behind or empty
 _HK_LOCK_DIR=""      # the run's own lock directory, once claimed (_hk_lock_acquire); empty otherwise
 
 cmd_housekeeping() {
@@ -100,6 +103,7 @@ cmd_housekeeping() {
   _hk_forge_init
   [ "$dry" = 1 ] || _hk_forge_cache_write
   _hk_base_reflog_init "$tasks_dir"
+  _hk_staging_init "$tasks_dir"
 
   # Finished tasks leave the queue before any workspace is purged: a wait on a
   # closed task is read as met while its state is still here to say so
@@ -164,6 +168,7 @@ cmd_housekeeping() {
 $remote_pair
 EOF
       _HK_VIA=$via
+      _hk_staging_state_of "$tid"
 
       # A task of an epic that landed on its epic has not reached the default
       # branch yet; its records are kept for the epic's final review
@@ -228,10 +233,12 @@ EOF
           # Nobody abandoned this task, so a worktree or a dirty checkout on its
           # branch may hold work that is still being done: it is reported as
           # stale and left as it is. So is one whose work landed on the wrong
-          # base, which the policy could not see.
+          # base, which the policy could not see, and one whose work is on the
+          # staging branch, waiting for its promotion
+          # (.ai/specs/staging-branch, failure mode 10).
           wt=""
           [ -z "$branch" ] || wt=$(_task_worktree_for "$branch" "$worktrees")
-          if [ -n "$wt" ] || [ -n "$landed" ] \
+          if [ -n "$wt" ] || [ -n "$landed" ] || [ -n "$_HK_STAGING_STATE" ] \
              || { [ -n "$branch" ] && [ "$branch" = "$here" ] && ! _hk_checkout_keep "$dry" "$tid"; }; then
             action="preserve"
             reason=""
@@ -859,10 +866,23 @@ _hk_forge_state() {
   [ "$_HK_FORGE_KIND" = "none" ] && return 0
   [ -n "$_HK_FORGE_PRS" ] || return 0
 
-  line=$(printf '%s\n' "$_HK_FORGE_PRS" | awk -F'\t' -v b="$branch" -v base="$base" "$_HK_PR_STATE_AWK"'
+  # On the staging flow a pull request merged into the staging branch is the
+  # flow's own step, not work landed in the wrong place: it is passed over
+  # here, and the task's staging state says where it stands
+  # (.ai/specs/staging-branch). The newest one into the staging branch that is
+  # still open, or was closed unmerged, is the task's pull request while it has
+  # none into its base: a staging `task ship` leaves exactly that, and it must
+  # keep the task as an open pull request into the base would. Off that flow
+  # no base is named so.
+  line=$(printf '%s\n' "$_HK_FORGE_PRS" | awk -F'\t' -v b="$branch" -v base="$base" -v st="$_HK_STAGING_BRANCH" "$_HK_PR_STATE_AWK"'
     $1 == b && $2 == base { print prstate($3); found = 1; exit }
-    $1 == b && other == "" && prstate($3) == "merged" { other = $2 }
-    END { if (!found && other != "") print "wrong-base " other }')
+    $1 == b && st != "" && $2 == st && !seen_st { seen_st = 1; s = prstate($3); if (s == "open" || s == "closed") staged = s }
+    $1 == b && other == "" && (st == "" || $2 != st) && prstate($3) == "merged" { other = $2 }
+    END {
+      if (found) exit
+      if (staged != "") print staged
+      else if (other != "") print "wrong-base " other
+    }')
   [ -n "$line" ] || return 0
   printf '%s\n' "$line"
 }
@@ -1646,10 +1666,11 @@ _hk_report() {
   [ -n "$reason" ] && line="$line reason=$reason"
   [ -n "$rel" ] && line="$line dest=$rel"
   [ -n "$flags" ] && line="$line flags=$flags"
+  [ -n "$_HK_STAGING_STATE" ] && line="$line staging=$_HK_STAGING_STATE"
   [ "$_HK_VERBOSE" != 1 ] || printf '%s\n' "$line"
 
   [ "$dry" = 1 ] && return 0
-  _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid status=$st remote=$remote via=$_HK_VIA action=$shown${reason:+ reason=$reason}${rel:+ dest=$rel}${flags:+ flags=$flags}${facts:+ $facts}"
+  _hk_log "$(date -u +%Y-%m-%dT%H:%M:%SZ) task=$tid status=$st remote=$remote via=$_HK_VIA action=$shown${reason:+ reason=$reason}${rel:+ dest=$rel}${flags:+ flags=$flags}${_HK_STAGING_STATE:+ staging=$_HK_STAGING_STATE}${facts:+ $facts}"
 }
 
 # _hk_record <task> <status> <remote> <action> <flags> <age_days>
@@ -1708,6 +1729,15 @@ _hk_record() {
             if [ "$remote" = "open" ]; then note="pull request open"; fi
             ;;
         esac
+        # Where the task's work is on the staging flow says more than "cannot
+        # tell whether it landed": it landed on the staging branch, and the
+        # base is the step still to come.
+        if [ -n "$_HK_STAGING_STATE" ]; then
+          case "$group" in
+            progress) note="$_HK_STAGING_STATE staging${note:+, $note}" ;;
+            unknown) note="$_HK_STAGING_STATE staging, not on $base yet" ;;
+          esac
+        fi
         ;;
     esac
   fi
@@ -1715,6 +1745,51 @@ _hk_record() {
     *,STALE_CANDIDATE,*) note="${note:+$note, }untouched for more than the stale_after period" ;;
   esac
   printf '%s\t%s\t%s\n' "$group" "$tid" "$note" >> "$_HK_ROWS"
+}
+
+# _hk_staging_init <tasks-dir> — on a sound staging flow, the staging branch
+# into _HK_STAGING_BRANCH and every task's staging state into _HK_STAGING, in
+# one jig_staging_states call after this run's fetch: derived every run, like
+# the remote state, and written into no task's state (ADR-0005). Both stay
+# empty on any other flow, which this run then judges exactly as before.
+_hk_staging_init() {
+  local tasks_dir="$1" rows
+  _HK_STAGING_BRANCH=""
+  _HK_STAGING=""
+  _HK_STAGING_BRANCH=$(jig_staging_in_use) || { _HK_STAGING_BRANCH=""; return 0; }
+  [ -d "$tasks_dir" ] || return 0
+  # "<task><TAB><branch><TAB><base>" for every started task, read through the
+  # one reader of the state format (task_state_var, jig_task_base_v) as
+  # `task list --json` reads them, with no process per task. Found as the run
+  # finds them — `find` with no trailing slash, so a worktree that borrows the
+  # owner's tasks sees none — and a directory that is not a task id is skipped.
+  local state_file tid branch base t=$'\t'
+  rows=""
+  while IFS= read -r state_file; do
+    [ -n "$state_file" ] || continue
+    tid=${state_file%/state}
+    tid=${tid##*/}
+    _task_valid_id "$tid" || continue
+    task_state_var branch "$tid" branch
+    [ -n "$branch" ] || continue
+    jig_task_base_v base "$tid"
+    rows="$rows$tid$t$branch$t$base
+"
+  done < <(find "$tasks_dir" -mindepth 2 -maxdepth 2 -name state -type f 2>/dev/null | LC_ALL=C sort)
+  _HK_STAGING=$(jig_staging_states "$_HK_STAGING_BRANCH" "$rows")
+}
+
+# _hk_staging_state_of <task> — that task's staging state into
+# _HK_STAGING_STATE: on, behind, or empty.
+_hk_staging_state_of() {
+  local id st
+  _HK_STAGING_STATE=""
+  [ -n "$_HK_STAGING" ] || return 0
+  while IFS=$'\t' read -r id st; do
+    [ "$id" != "$1" ] || _HK_STAGING_STATE=$st
+  done <<EOF
+$_HK_STAGING
+EOF
 }
 
 # _hk_unknown_reason <branch> <base_commit> <base> — why the remote state of a

@@ -177,6 +177,53 @@ fixture_task() {
   printf '# %s\n' "$id" > ".ai/workspace/tasks/$id/task.md"
 }
 
+# fixture_staging_repo — a project on the staging flow (git.flow: staging,
+# git.staging_branch: staging) with an origin, and five started tasks, each on
+# its branch task/<id>: `on` merged into origin's staging; `behind` merged
+# there and then given a fix; `promoted` merged there and then given origin's
+# main, which moved since, by a merge; `never` with a commit nobody shipped;
+# `fresh` with no commit of its own. HEAD is back on main.
+fixture_staging_repo() {
+  local id fork
+  fixture_jig_repo
+  printf 'origin.git/\n' >> .git/info/exclude
+  printf 'git.flow: staging\ngit.staging_branch: staging\n' >> .ai/config.yaml
+  git add -A >/dev/null
+  git commit -q -m "jig init snapshot"
+  fork=$(git rev-parse HEAD)
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git branch staging
+  git push -q origin main staging
+  for id in on behind promoted never; do
+    git checkout -q -b "task/$id" main
+    printf '%s\n' "$id" > "$id.txt"
+    git add "$id.txt"
+    git commit -q -m "$id"
+  done
+  git branch task/fresh main
+  for id in on behind promoted; do
+    git checkout -q staging
+    git merge -q --no-ff -m "ship $id" "task/$id"
+  done
+  git push -q origin staging
+  git checkout -q task/behind
+  printf 'fix\n' >> behind.txt
+  git commit -q -am "fix behind"
+  git checkout -q main
+  printf 'later\n' > later.txt
+  git add later.txt
+  git commit -q -m "main moves on"
+  git push -q origin main
+  git checkout -q task/promoted
+  git merge -q --no-ff -m "bring main in" origin/main
+  git checkout -q main
+  git branch -D -q staging
+  for id in on behind promoted never fresh; do
+    fixture_task "$id" "task/$id" active "class:T2" "base_commit:$fork"
+  done
+}
+
 # Run jig from the framework source checkout.
 jig() { "$JIG_BIN" "$@"; }
 

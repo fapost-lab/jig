@@ -785,6 +785,19 @@ jig_git_flow_problems() {
   return 0
 }
 
+# jig_staging_in_use — print the staging branch's name and exit 0 when the
+# project's flow is `staging` and jig_git_flow_problems finds nothing in it;
+# exit 1, printing nothing, otherwise. Every reader of a task's staging state
+# asks this first, so a project on the `direct` flow, or one whose choice
+# cannot work, sees nothing new anywhere (jig doctor names what is wrong).
+jig_staging_in_use() {
+  local flow
+  cfg_v flow git.flow direct
+  [ "$flow" = staging ] || return 1
+  [ -z "$(jig_git_flow_problems)" ] || return 1
+  jig_staging_branch
+}
+
 # jig_staging_offer — the branches named stage or staging that origin has as of
 # the last fetch, one per line, and nothing once the project has named a flow:
 # turning the flow on is a person's answer, and a branch of that name may be for

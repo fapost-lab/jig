@@ -262,6 +262,23 @@ lines under it. `jig status` only reads that answer, it does not work it out aga
 `jig context --task <id>` gives the agent working on the task the same facts as `queue:` lines.
 Without a queue, none of this appears and the output looks as it always has.
 
+In a project on the staging flow (`git.flow: staging`), `jig status` names the flow before the task
+lines and says, on each task line, whether the task's work is on the staging branch:
+
+```text
+flow: staging via staging; on staging: 2, behind staging: 1
+task booking-form class=T2 status=active staging=on
+task booking-message class=T2 status=active staging=behind
+```
+
+`staging=behind` means the task has commits of its own that are not on the staging branch yet, such
+as a fix QA asked for; bringing the base branch into the task does not count. Jig reads this from
+git each time, by the task's branch, comparing it with origin's staging branch — `git fetch` to see
+what colleagues merged. When the flow cannot work, the line says so instead
+(`flow: staging, not usable: … (jig doctor)`). `jig housekeeping` puts the same word in its report
+(`on staging: …`, `behind staging: …`), and a task waiting on the staging branch is never archived
+as stale. On the default `direct` flow none of this appears.
+
 ## Inspect the change and its review
 
 ```bash
