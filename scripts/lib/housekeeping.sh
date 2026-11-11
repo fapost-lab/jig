@@ -869,11 +869,20 @@ _hk_forge_state() {
   # On the staging flow a pull request merged into the staging branch is the
   # flow's own step, not work landed in the wrong place: it is passed over
   # here, and the task's staging state says where it stands
-  # (.ai/specs/staging-branch). Off that flow no base is named so.
+  # (.ai/specs/staging-branch). The newest one into the staging branch that is
+  # still open, or was closed unmerged, is the task's pull request while it has
+  # none into its base: a staging `task ship` leaves exactly that, and it must
+  # keep the task as an open pull request into the base would. Off that flow
+  # no base is named so.
   line=$(printf '%s\n' "$_HK_FORGE_PRS" | awk -F'\t' -v b="$branch" -v base="$base" -v st="$_HK_STAGING_BRANCH" "$_HK_PR_STATE_AWK"'
     $1 == b && $2 == base { print prstate($3); found = 1; exit }
+    $1 == b && st != "" && $2 == st && !seen_st { seen_st = 1; s = prstate($3); if (s == "open" || s == "closed") staged = s }
     $1 == b && other == "" && (st == "" || $2 != st) && prstate($3) == "merged" { other = $2 }
-    END { if (!found && other != "") print "wrong-base " other }')
+    END {
+      if (found) exit
+      if (staged != "") print staged
+      else if (other != "") print "wrong-base " other
+    }')
   [ -n "$line" ] || return 0
   printf '%s\n' "$line"
 }

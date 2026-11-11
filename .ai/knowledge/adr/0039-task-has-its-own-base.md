@@ -84,7 +84,8 @@ never read a pull request's base.
 > **Amendment (2026-11-11, the staging flow).** In a project on `git.flow: staging` a task keeps the
 > base branch as its recorded base but ships into `git.staging_branch`; until the staging state is
 > read, a staging pull request a person merges reads `wrong-base`
-> (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).
+> (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch). The task staging-state
+> made that untrue: a merged staging pull request no longer reads `wrong-base` (the amendment below).
 
 ## Amendment (2026-11-11): the staging flow
 
@@ -97,4 +98,4 @@ from git by the branch's name on every read and stored nowhere (ADR-0005). Own w
 branch reaches and its base does not; a merge whose other parents are all in the base or in
 `origin/<staging>` brings those in and is not own work, and staging reached only through such a
 parent does not count. A task on staging is kept from the stale archive (`STALE_CANDIDATE`), the
-protection `wrong-base` used to give it. On any other flow nothing here changes.
+protection `wrong-base` used to give it. When a task has no pull request into its base, its newest pull request into the staging branch stands in for it: open or closed, it is the task's remote state, as one into the base would be; merged, it falls through as above. On any other flow nothing here changes.
