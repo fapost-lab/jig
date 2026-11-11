@@ -539,10 +539,13 @@ it asks for has been done *and* the page can see that in your own files. Three d
 - *The pull request was closed without merging* — goes when the task is abandoned.
 - *A worktree was kept* — goes when that worktree is no longer there.
 
+*A pull request was open at the last housekeeping run* goes too when you close its task after that
+run: a task with a pull request closes only once GitHub or GitLab says it merged.
+
 Every other card that came from housekeeping waits for the next run, because only GitHub or GitLab
 can answer it and the page will not go to the network while you are working. *The work landed on a
 different branch than planned* is one. So is *A pull request was open at the last housekeeping
-run*: closing a task does not merge its pull request, so that card still asks for something real.
+run* for a task still open, abandoned, or already closed when that run looked.
 Those cards are stamped with the time of the run they came from — a housekeeping time on a card
 means it is a report, not a fresh look.
 

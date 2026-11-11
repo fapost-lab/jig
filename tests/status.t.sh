@@ -2515,6 +2515,43 @@ test_status_asks_you_to_close_the_pull_request_of_a_task_you_abandoned() {
   assert_contains "$needs" "A pull request was open at the last housekeeping run</h3><p><code>closed-clean</code>"
 }
 
+test_status_drops_the_open_pull_request_of_a_task_closed_since_the_run() {
+  fixture_jig_repo
+  # Closing a task with a pr_url needs the forge to answer `merged`
+  # (_task_close_refusal), so a task the run saw unclosed and that is closed
+  # now had its pull request merged: the run's `open` is stale.
+  fixture_task merged-since task/merged-since consolidated "class:T1" \
+    "pr_url:https://example.com/o/r/pull/11"
+  # The run already saw it closed: that close may predate the gate, and the
+  # forge still called the pull request open after it. Kept.
+  fixture_task closed-before task/closed-before consolidated "class:T1" \
+    "pr_url:https://example.com/o/r/pull/12"
+  # No pr_url: the close never asked the forge. Kept.
+  fixture_task no-url task/no-url consolidated "class:T1"
+  mkdir -p .ai/runtime
+  {
+    printf -- '--- run %s forge=github\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '2026-11-10T19:53:53Z task=merged-since status=ready remote=open via=forge action=preserve\n'
+    printf '2026-11-10T19:53:53Z task=closed-before status=consolidated remote=open via=forge action=preserve\n'
+    printf '2026-11-10T19:53:53Z task=no-url status=ready remote=open via=forge action=preserve\n'
+  } > .ai/runtime/housekeeping.log
+
+  run jig status --html
+  assert_eq 0 "$RC"
+  local needs
+  needs=$(status_page_section "$(cat .ai/runtime/status.html)" needs)
+  assert_not_contains "$needs" "<code>merged-since</code>"
+  assert_not_contains "$needs" "pull/11"
+  assert_contains "$needs" "A pull request was open at the last housekeeping run</h3><p><code>closed-before</code>"
+  assert_contains "$needs" "A pull request was open at the last housekeeping run</h3><p><code>no-url</code>"
+
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"id":"merged-since"'
+  assert_contains "$OUT" '"kind":"pull-request-was-open","subject":{"type":"task","id":"closed-before"}'
+  assert_contains "$OUT" '"kind":"pull-request-was-open","subject":{"type":"task","id":"no-url"}'
+}
+
 test_status_asks_nothing_about_a_bad_id_on_the_pull_request_path_either() {
   fixture_jig_repo
   # The sister of the guard in _hklog_recheck, and it needs its own stand:
