@@ -22,7 +22,7 @@ it conflicts — and `jig status` shows the task on staging, with no pull reques
   `stage`/`staging` branch; `direct` stays the default.
 - [x] `ship-to-staging` — Ship a task to staging — `jig task ship` in a staging project opens the task's pull request
   into staging for review; no pull request into the base branch. (after: Choose a flow — it reads the key)
-- [ ] Land a task on staging — merge the pull request on the forge; when it conflicts, merge the
+- [ ] `land-on-staging` — Land a task on staging — merge the pull request on the forge; when it conflicts, merge the
   task branch into a fresh temporary worktree of staging, resolve, push (retried from a fresh fetch
   on rejection, never forced); without an approval, warn and ask: merge without review or wait
   (unattended: wait), by `staging_review` — `ask` as here, `require` always waits, `none` lands
@@ -45,7 +45,7 @@ in that commit; a task waiting on staging is listed as parked and holds no slot.
   it frees the current-task slot and the queue; `jig task resume` brings the task back; autopilot
   stops there, never approves and never promotes. (after: Land a task on staging — parking starts
   and ends at its steps)
-- [ ] Prepare a task for prod — refuses unless the task tip is in the tested staging commit;
+- [ ] `prepare-for-prod` — Prepare a task for prod — refuses unless the task tip is in the tested staging commit;
   merges the base branch into the task branch on conflict; opens the pull request into the base branch; prints the
   link — run again on a task already promoted, it merges the base branch in afresh and prints the same
   link instead of opening a second one; needs only git and the forge, and where the checkout has a queue it warns — in the output
@@ -66,7 +66,7 @@ branch owns.
   the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
   the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it; after: Prepare a task for prod —
   it reports the pull requests that item opens)
-- [ ] Staging landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
+- [ ] `staging-land-external` — Staging landed by CI — `staging_land: external`: Jig opens no pull request into the staging branch and
   merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
   state — it is the only thing Jig does on the staging branch then). The key exists from Choose a flow;
   `external` works only from here, harmless in an epic released once.
