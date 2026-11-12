@@ -1973,7 +1973,24 @@ spec_ship_epic() {
 # its notes still reach the tip of the default branch (_SPEC_SHIP_NOTES_BASE).
 _SPEC_SHIP_NOTES_BASE=""
 _spec_ship_notes_last_check() {
-  jig_release_notes_refusal "spec ship" "$_SPEC_SHIP_NOTES_BASE"
+  spec_ship_notes_refusal "$_SPEC_SHIP_NOTES_BASE"
+}
+
+# spec_ship_notes_refusal <default> — jig_release_notes_refusal for a release
+# epic, followed by where the trailer goes. The check reads only commits the
+# epic already has, so a Release-Notes-Through: trailer written into spec
+# ship's own --message-file is never seen, and an agent told only "record the
+# trailer" puts it there and is refused again. Nothing is added to a refusal
+# that is not about the trailer (origin did not answer).
+spec_ship_notes_refusal() {
+  local gap
+  gap=$(jig_release_notes_refusal "spec ship" "$1")
+  [ -n "$gap" ] || return 0
+  printf '%s\n' "$gap"
+  case "$gap" in
+    "could not fetch "*) return 0 ;;
+  esac
+  printf "the trailer counts only on a commit the epic already has, never in spec ship's own --message-file: on the release notes task, run jig task set <task> notes_through <sha>, ship that task into the epic, then run spec ship again\n"
 }
 
 # The body file spec_ship_final writes for a draft; script-global because the
@@ -2053,7 +2070,7 @@ spec_ship_final() {
     # A release epic raises the version: its notes must describe everything
     # that is on the default branch now (a notes task merged into the epic
     # carries the trailer in its commit).
-    gap=$(jig_release_notes_refusal "spec ship" "$default")
+    gap=$(spec_ship_notes_refusal "$default")
     [ -z "$gap" ] || jig_die "spec ship: not sent: the epic raises the version, and $gap"
     if [ "$level" = merge ] && jig_unattended; then
       [ "$(jig_release_merge)" = agent ] || refused=human
