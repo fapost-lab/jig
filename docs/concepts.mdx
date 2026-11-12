@@ -243,6 +243,15 @@ the task's knowledge decision is recorded, and merges only at `merge`, only on g
 and never past your repository's own branch protection
 ([Letting the agent ship](/agent-ships)).
 
+## Where a finished task goes
+
+Every project has a **flow**, chosen once for the whole team in `.ai/config.yaml`. In the
+**direct** flow, the default, a task's pull request goes into the main branch. In the **staging**
+flow it goes into a shared staging branch first and waits there, **parked**, while it is tested;
+when someone says "prepare for prod", a second pull request takes exactly the tested commits of
+that task into the main branch. Each task travels on its own, so one that failed its test holds
+up nobody else ([Test on staging first](/staging-flow)).
+
 ## Running without you
 
 The routes above assume you are there between stages. Two things change that.

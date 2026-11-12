@@ -282,10 +282,11 @@ other pages under `docs/`: a page that describes behaviour the release changed i
 capability the release added gets a place where a user will look for it — a line removed is as
 welcome as a line added.
 
-Raise `JIG_VERSION` in `scripts/lib/version.sh` in the pull request of the release's last task —
-the one that should become the release — together with its changelog entry. A separate pull request
-that only raises the version is the exception, for a release with nothing left to change but the
-version: it costs a run of the whole suite of its own. The version is
+Raise `JIG_VERSION` in `scripts/lib/version.sh` only in the release's notes task — the last pull
+request, cut from the freshest `main` — together with its changelog entry. Feature work, an epic's
+final pull request included, never raises it. The notes task records the commit of `main` its notes
+describe (`jig task set <id> notes_through <sha>`), and `jig task ship` and the `changelog` job refuse
+it while `main` has commits after that one (adr-20261112-release-notes-name-the-commit-they-describe). The version is
 `major.minor.patch` without leading zeros — patch for a fix, minor for a new capability, major for a
 change that breaks commands, the `.ai/` layout, `init`/`upgrade` or the installer (before `1.0.0`,
 such a change raises minor). After the merge, CI runs the tests and tags `v<JIG_VERSION>` itself; a
@@ -298,8 +299,8 @@ the moment it exists, and no pull request after it exists only to record it. The
 refuses a release whose manifest records another version.
 
 A release is planned with the `jig-release` skill: it proposes which live tasks go in and at what
-level, builds them on a release epic, and has a task of its own write the notes against the merged
-pull requests' diffs (adr-20261002-a-release-is-a-spec-with-an-epic).
+level, orders them in the queue, and has the notes task write the notes against the merged pull
+requests' diffs; a release epic is built only when tasks must reach `main` together.
 A red `main` gets no tag, so a release pull request has to show, before it merges, that the tag
 will follow. CI holds it to two things. A change to `JIG_VERSION` runs the whole suite on every
 platform, Windows (Git Bash) included, whatever else the diff touches

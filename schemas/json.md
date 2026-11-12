@@ -408,7 +408,8 @@ touches their changes. A base that cannot move is an answer, not a failure: `out
 the command exits 0. After a fetch that reached origin it also closes the writes in Jig's own tree
 that are over, as `jig writes ship` would find them: their pull request merged (by squash too, with
 the base changed again since), was closed unmerged, or origin dropped their branch. It raises the
-revision only when it closes one.
+revision when it closes a write, when the fetch moved an `origin/` ref, and when it moved the base; a
+fetch that brought nothing new raises nothing, since only `fetched_at` moved.
 
 ```json
 {"fetch": {"outcome": "done", "message": null, "fetched_at": "2026-11-12T15:24:39Z"},

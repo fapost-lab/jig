@@ -471,6 +471,40 @@ Two kinds of project work differently. One that uses a single branch
 installed with `jig init --link` — Jig's own repository — keeps upgrading in place, with no branch
 and no commit.
 
+## From 0.44.0 to 0.45.0
+
+Nothing to do by hand, unless your project raises its version inside a task or an epic. The
+installer did not change. The upgrade brings new scripts, commented-out `git.flow` keys in the
+template `.ai/config.yaml` (your own file is not touched), a changed row and two changed paragraphs
+in the Jig section of `AGENTS.md`, and new text for the `jig-autopilot`, `jig-consolidate`,
+`jig-idea`, `jig-release`, `jig-setup` and `jig-task` skills.
+
+**A project that raises its version.** A release is now made apart from feature work
+([Specs and epics](/agent-ships#specs-and-epics)). From `agent.git: pr`, `jig task ship` refuses a
+change that raises the version (`VERSION`, `package.json`, `composer.json`, `pyproject.toml` or
+`Cargo.toml`) until the task records the commit of the base branch its release notes describe —
+`jig task set <id> notes_through <sha>` — and while the base branch has commits after it. An epic
+whose roadmap has no `Release:` line is a feature epic, and `jig spec ship` refuses its final pull
+request if that raises the version: take the bump out and release with the `jig-release` skill, or
+make it a release epic. A project that never raises a version in these files sees no change.
+
+**What you will notice.** Your project stays on the direct flow: the [staging flow](/staging-flow)
+is switched on only by setting `git.flow: staging`. `jig init` and `jig doctor` mention it when
+origin has a branch named `stage` or `staging`. Your agent offers the next task that
+`jig queue next` names. A program that reads Jig's JSON sees an `origin` field in
+`jig status --json`, a new item asking for `jig refresh` while the base branch is behind origin,
+and a new reason, `landed`, in `jig knowledge proposed --json` for knowledge origin already decided.
+
+## From 0.43.0 to 0.44.0
+
+Nothing to do by hand. `.ai/config.yaml` did not change, and no new setting appears in the upgrade's
+report. The upgrade brings new scripts and new text for the `jig-pr-review` skill.
+
+**The review skill, for you.** From 0.44.0 the installer and `jig self-update` place
+`jig-pr-review` in your own skills folder, so it works in any repository. The first
+`jig self-update` from 0.43.0 or older runs the old updater, which does not place it: run
+`jig self-update` once more, or the installer again ([Install](/install)).
+
 ## From 0.42.0 to 0.43.0
 
 Nothing to do by hand, unless your `origin` is an `https://github.com/...` address. The installer

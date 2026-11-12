@@ -42,6 +42,7 @@
         "pages": [
           "working-with-tasks",
           "agent-ships",
+          "staging-flow",
           "autopilot",
           "troubleshooting"
         ]
