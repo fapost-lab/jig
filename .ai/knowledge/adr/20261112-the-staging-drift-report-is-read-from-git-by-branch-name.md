@@ -12,17 +12,19 @@ paths:
   - scripts/lib/housekeeping.sh
   - scripts/lib/forgecache.sh
 summary: "Why jig status and housekeeping read the staging drift report from git by branch name and from the forge cache: tasks are the template's branches, age is the landing commit's time against git.staging_stale_after, unowned work is staging minus base minus every task branch, and a conflicting promotion is the cache's new mergeable column."
+reviewed_at: 2026-11-12
 ---
 # The staging drift report is read from git by branch name, and from the forge cache
 
 ## Context
 
-On the staging flow (`.ai/specs/staging-branch/`) a staging branch drifts from the base branch in
-three ways the spec asks `jig status` and housekeeping to name: a task left on staging that nobody
+On the staging flow (adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes) a staging branch drifts from the base branch in
+three ways the staging-branch specification asked `jig status` and housekeeping to name: a task left on staging that nobody
 promotes, work on staging that no live task owns, and a promotion the forge reports as conflicting
 with the base ("A stale promotion is refreshed by running it again"). The spec binds how: everything
-shared is read from git and the forge by branch name, never required from one checkout's workspace
-(failure mode 3), and the report counts only what staging has and the base does not, or every
+shared is read from git and the forge by branch name, never required from one checkout's workspace —
+task state is per checkout, so a report of one checkout's tasks would read a colleague's work as
+orphaned — and the report counts only what staging has and the base does not, or every
 promoted task whose branch was deleted would read as orphaned. A read never asks the forge
 (adr-20261015-a-read-is-one-json-envelope), and the forge cache had no word for "conflicting".
 
@@ -49,8 +51,9 @@ promoted task whose branch was deleted would read as orphaned. A read never asks
   it reached staging (`reach`), and one `rev-list --parents --timestamp` of staging's own commits
   dates each one by the first-parent commit that brought it. A fix shipped again starts the count
   over; a value that is not a duration is said (`invalid`) and names no task. A task known here
-  only by its branch is named with `its owner runs jig task promote <id>`: this checkout cannot
-  promote it.
+  only by its branch is named with `jig task promote <id>, from any checkout, or ask its owner`:
+  promotion needs no workspace (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone),
+  so this checkout can promote it too, but the task is a colleague's.
 - **Work no live task owns** is `git rev-list --count --no-merges <staging> ^<base> --not
   --branches='<prefix>*<suffix>' --remotes='origin/<prefix>*<suffix>' <refs>`, in one process, the
   globs being `git.branch_template`'s and `<refs>` this checkout's task branches the template does
@@ -73,7 +76,7 @@ promoted task whose branch was deleted would read as orphaned. A read never asks
 - **Age from the task's own commits, or from the reflog.** A commit's date says when it was
   written, not when it landed, and a reflog exists only in the clone that fetched, never on a CI
   runner or in a colleague's clone.
-- **The checkout's tasks only.** Simpler, and exactly failure mode 3: a colleague's task, which
+- **The checkout's tasks only.** Simpler, and exactly the per-checkout blindness above: a colleague's task, which
   is most of what waits on a shared staging branch, would never be named, and its commits would be
   counted as nobody's.
 - **Ask the forge for mergeability from `jig status`.** A read never asks the forge; the cache

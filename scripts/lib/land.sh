@@ -118,6 +118,15 @@ _land_word_end() {
   [ "$_LAND_KEEP_WORD" = 1 ] || rm -f "$(_land_without_file "$_LAND_WORD_ID")"
 }
 
+# _land_branch <id> — the task's branch as its state records it, which
+# git.branch_template named when the task started; `task/<id>` only for a task
+# whose state names none.
+_land_branch() {
+  local b
+  b=$(task_state_get "$1" branch)
+  printf '%s\n' "${b:-task/$1}"
+}
+
 # _land_start_merge <who> <id> <tree> <staging> <sha> — a fresh tree at origin's
 # staging branch with <sha> merged in, not committed. Prints nothing.
 _land_start_merge() {
@@ -129,7 +138,7 @@ _land_start_merge() {
     || jig_die "$who: could not make a worktree of $staging at $tree: $out"
   _land_git "$tree" merge --no-ff --no-commit "$sha" >/dev/null 2>&1 || true
   [ -n "$(_land_merge_head "$tree")" ] \
-    || jig_die "$who: git did not start the merge of task/$id into $staging in $tree"
+    || jig_die "$who: git did not start the merge of $(_land_branch "$id") into $staging in $tree"
   # A path rerere resolved is staged, but the merge is not committed: what it
   # replayed is part of the recorded conflicts all the same.
   _land_git "$tree" rerere status 2>/dev/null >> "$(_land_conflicts_file "$id")" || true
@@ -147,7 +156,7 @@ _land_commit() {
   jig_cleanup_add "$msg"
   files=$(cat "$(_land_conflicts_file "$id")" 2>/dev/null || true)
   {
-    printf 'Merge task/%s into %s\n' "$id" "$staging"
+    printf 'Merge %s into %s\n' "$(_land_branch "$id")" "$staging"
     if [ -n "$files" ]; then
       printf '\nConflicts resolved:\n'
       printf '%s\n' "$files" | sed 's/^/  /'
@@ -169,7 +178,7 @@ _land_stop_conflict() {
   if [ "$moved" = 1 ]; then
     printf '%s: %s moved while landing; the earlier resolution was replayed, these conflicts are new:\n' "$who" "$staging"
   fi
-  printf '%s: task/%s conflicts with %s; resolve in %s:\n' "$who" "$id" "$staging" "$tree"
+  printf '%s: %s conflicts with %s; resolve in %s:\n' "$who" "$(_land_branch "$id")" "$staging" "$tree"
   if [ -n "$files" ]; then
     printf '%s\n' "$files" | sed 's/^/  /'
   else
@@ -302,6 +311,13 @@ land_task() {
     jig_on_exit '_land_word_end'
   fi
 
+  # On GitHub, the account this clone writes as, named here in this shell
+  # before the first question to the forge: landing comments and merges, and
+  # never as an account nobody named (adr-20261110-a-clone-names-its-github-account).
+  if [ "$(jig_forge_kind 2>/dev/null || true)" = github ]; then
+    jig_gh_require "$who"
+  fi
+
   state=$(jig_pr_state "$pr")
   case "$state" in
     merged)
@@ -382,16 +398,17 @@ land_task() {
 # along, so a ship never commits what this would refuse once committed.
 # The refs are origin's when this checkout has them (jig_base_ref).
 land_clean_branch_refusal() {
-  local who="$1" id="$2" tip="$3" base="$4" staging="$5" base_ref staging_ref carried n merge what file h
+  local who="$1" id="$2" tip="$3" base="$4" staging="$5" base_ref staging_ref carried n merge what file h br
   local -a heads=()
   base_ref=$(jig_base_ref "$base")
   staging_ref=$(jig_base_ref "$staging")
+  br=$(_land_branch "$id")
   # No staging branch here: the rule cannot be judged, and is never read as
   # met (its callers fetch it first). No base here: nothing can be judged
   # against it, and the ship refuses that itself before it sends anything
   # (jig_ship_require_commits), as land's fetch does.
   [ -n "$staging_ref" ] \
-    || jig_die "$who: cannot tell whether task/$id carries commits of $staging: there is no $staging here or on origin; fetch it and run again"
+    || jig_die "$who: cannot tell whether $br carries commits of $staging: there is no $staging here or on origin; fetch it and run again"
   [ -n "$base_ref" ] || return 0
   if [ "$tip" = HEAD ]; then
     file=$(git -C "$JIG_PROJECT" rev-parse --git-path MERGE_HEAD 2>/dev/null) || file=""
@@ -403,7 +420,7 @@ land_clean_branch_refusal() {
     fi
   fi
   if ! carried=$(jig_branch_carries_staging "$tip" "$base_ref" "$staging_ref" ${heads[@]+"${heads[@]}"}); then
-    jig_die "$who: cannot tell whether task/$id carries commits of $staging: $tip, ${base_ref:-$base} or $staging_ref names no commit here"
+    jig_die "$who: cannot tell whether $br carries commits of $staging: $tip, ${base_ref:-$base} or $staging_ref names no commit here"
   fi
   [ -n "$carried" ] || return 0
   n=$(printf '%s\n' "$carried" | awk 'NF { n++ } END { print n + 0 }')
@@ -412,9 +429,9 @@ $(printf '%s\n' "$carried" | awk 'NF { print; exit }')
 EOF
   [ "$merge" != "the merge in progress" ] || merge="the merge in progress, not committed yet"
   if [ "$merge" = - ]; then
-    jig_die "$who: task/$id is $what, not $base: $n commit(s) of its first-parent line are on $staging's own. A task branch stays clean until it reaches $base: only $base and clean task branches may be merged into it. Rebuild it from its own commits on $base and ship again; a conflict with $staging is resolved on $staging when the task lands"
+    jig_die "$who: $br is $what, not $base: $n commit(s) of its first-parent line are on $staging's own. A task branch stays clean until it reaches $base: only $base and clean task branches may be merged into it. Rebuild it from its own commits on $base and ship again; a conflict with $staging is resolved on $staging when the task lands"
   fi
-  jig_die "$who: task/$id carries $n commit(s) that $base does not have, through a merge of $what into the branch ($merge). A task branch stays clean until it reaches $base: only $base and clean task branches may be merged into it. Rebuild it without that merge (its own commits on $base) and ship again; a conflict with $staging is resolved on $staging when the task lands"
+  jig_die "$who: $br carries $n commit(s) that $base does not have, through a merge of $what into the branch ($merge). A task branch stays clean until it reaches $base: only $base and clean task branches may be merged into it. Rebuild it without that merge (its own commits on $base) and ship again; a conflict with $staging is resolved on $staging when the task lands"
 }
 
 # _land_on_forge <who> <id> <pr> <sha> <staging> — the clean case: the forge
@@ -448,7 +465,7 @@ _land_resolved() {
     jig_die "$who: nothing to resolve: no landing in progress for $id; run jig task land $id"
   fi
   [ "$head" = "$sha" ] \
-    || jig_die "$who: task/$id moved since the merge started ($head -> $sha); run jig task land $id --abort, then land again"
+    || jig_die "$who: $(_land_branch "$id") moved since the merge started ($head -> $sha); run jig task land $id --abort, then land again"
   left=$(_land_unmerged "$tree")
   unstaged=$(git -C "$tree" diff --name-only 2>/dev/null || true)
   if [ -n "$left" ] || [ -n "$unstaged" ]; then

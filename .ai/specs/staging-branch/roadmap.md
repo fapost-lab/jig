@@ -74,12 +74,16 @@ branch owns.
   names, or with `--all` every `task/*` branch contained in that commit and not yet in the base branch.
   (after: Prepare a task for prod — it runs that item's command once per task)
 
+- [x] `release-review-fixes` — Release review fixes — the review of the release pull request (#489): the flow can be turned on, land asks `gh` as the clone's account, and the smaller findings.
+  (after: Park at the staging branch; Merge the promotion by the flow — it fixes their code)
+
 ## Waves
 
 1. Choose a flow
 2. Ship a task to staging; See a task's staging state
 3. Land a task on staging; Prepare a task for prod; Staging landed by CI
 4. Park at the staging branch; Merge the promotion by the flow; Promote from CI; Staging drift report
+5. release-review-fixes
 
 <!--
 Rules (jig-idea §8):

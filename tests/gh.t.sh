@@ -489,7 +489,8 @@ test_gh_status_says_nothing_of_the_only_account() {
 # that run `gh pr|api|repo|run|release|issue|workflow` without jig_gh, as
 # `<file>:<line>:<text>`. A call is a `gh` in command position — at the start
 # of a line, or after `$(`, a pipe, `&&`, `||`, `;`, a backtick, `{`, or one of
-# then/do/else/if/exec/command/jig_net/!. A comment and a word in a message
+# then/do/else/if/exec/command/jig_net/! (itself after a blank or one of those,
+# so `$(jig_net gh pr view` is a call). A comment and a word in a message
 # ("gh pr create failed") are not calls. Exempt: lib/pr.sh, which chooses its
 # account per pull request, and the helpers of the GitHub-account section of
 # lib/common.sh (jig_gh_accounts, jig_gh_stored_token, _jig_gh_may_push,
@@ -503,7 +504,7 @@ _gh_bare_calls() {
       /^# jig_forge_kind / { skip = 0 }
       skip && file ~ /lib\/common\.sh$/ { next }
       /^[[:space:]]*#/ { next }
-      /(^|[$(|&;`{]|[[:space:]](then|do|else|if|exec|command|jig_net|!))[[:space:]]*gh[[:space:]]+(pr|api|repo|run|release|issue|workflow)([[:space:]]|$)/ {
+      /(^|[$(|&;`{]|(^|[$(|&;`{[:space:]])(then|do|else|if|exec|command|jig_net|!))[[:space:]]*gh[[:space:]]+(pr|api|repo|run|release|issue|workflow)([[:space:]]|$)/ {
         printf "%s:%d:%s\n", file, NR, $0
       }' "$f"
   done
@@ -541,7 +542,7 @@ gh pr list
   x=`gh pr list`
   ! gh pr list
 EOF
-  assert_eq "13" "$(_gh_bare_calls guard | grep -c . || true)" "the guard misses a bare call: $(_gh_bare_calls guard)"
+  assert_eq "14" "$(_gh_bare_calls guard | grep -c . || true)" "the guard misses a bare call: $(_gh_bare_calls guard)"
   # The exemptions: pr.sh whole, and only the GitHub-account section of common.sh.
   rm guard/lib/x.sh guard/lib/y.sh
   printf 'gh pr list\n' > guard/lib/pr.sh

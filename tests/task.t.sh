@@ -6097,7 +6097,7 @@ test_task_ship_recognises_a_raised_composer_json() {
   assert_no_file gh-merge.argv
 }
 
-# --- the staging flow (.ai/specs/staging-branch/, "Ship a task to staging")
+# --- the staging flow (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch)
 
 # sship_setup <agent.git level> [<flow lines>] — a project on `git.flow:
 # staging` (or on the config lines <flow lines> give) with the staging branch
@@ -6394,8 +6394,8 @@ test_task_ship_direct_flow_written_out_ships_into_the_base() {
   assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
 }
 
-# --- landing a task on staging (.ai/specs/staging-branch/, "Land a task on
-# staging"; adr-20261111-a-task-lands-on-staging-through-its-pull-request)
+# --- landing a task on staging
+# (adr-20261111-a-task-lands-on-staging-through-its-pull-request)
 
 # sland_tree — the temporary worktree a direct merge of T-1 is made in.
 sland_tree() {
@@ -6524,6 +6524,69 @@ test_task_land_ask_without_approval_asks_the_person() {
   assert_contains "$OUT" "task land: landing https://github.com/example/example/pull/99 without an approval (no review), at the person's word (--without-review)"
   assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
   assert_file_contains gh-comment.body "Landed without an approval, at the person's word."
+}
+
+# sland_as_bob — make the sship_setup project read as GitHub's
+# example/example to Jig while git still reaches the bare origin.git, and its
+# gh hold two accounts, alice (active) and bob, the one this clone names:
+# mship_stub_gh still answers, behind a gh that logs every call but the
+# account questions to gh-token.log as `<arguments> GH_TOKEN=<value>`.
+sland_as_bob() {
+  local real_git dir="$PWD"
+  real_git=$(command -v git)
+  git remote set-url origin https://github.com/example/example.git
+  mv stub-bin/gh stub-bin/gh-inner
+  cat > stub-bin/gh <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "auth status")
+    printf 'github.com\n'
+    printf '  Logged in to github.com account alice (keyring)\n  - Active account: true\n'
+    printf '  Logged in to github.com account bob (keyring)\n  - Active account: false\n'
+    exit 0 ;;
+  "auth token")
+    while [ \$# -gt 0 ]; do
+      if [ "\$1" = --user ]; then printf 'tok-%s\n' "\$2"; exit 0; fi
+      shift
+    done
+    exit 1 ;;
+esac
+printf '%s GH_TOKEN=%s\n' "\$*" "\${GH_TOKEN:-}" >> "$dir/gh-token.log"
+exec "$dir/stub-bin/gh-inner" "\$@"
+STUB
+  chmod +x stub-bin/gh
+  # git reaches GitHub's URL at the bare repository; `remote get-url` alone
+  # still shows the URL, which is how Jig tells the forge and its account.
+  cat > stub-bin/git <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+  *" remote get-url "* | *" config "*) exec "$real_git" "\$@" ;;
+esac
+exec "$real_git" -c "url.$dir/origin.git.insteadOf=https://github.com/example/example.git" "\$@"
+STUB
+  chmod +x stub-bin/git
+  ship_cfg_local github.account bob
+}
+
+# Landing asks GitHub as the account this clone names, never as the active
+# one: the approval, whether it merges, the merge and the comment
+# (adr-20261110-a-clone-names-its-github-account).
+test_task_land_asks_github_as_the_account_the_clone_names() {
+  sship_setup merge
+  sland_as_bob
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  run jig task land T-1 --without-review
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "landed https://github.com/example/example/pull/99 on staging (merged on the forge)"
+  assert_contains "$(grep 'reviewDecision' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep 'isDraft,mergeable' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr merge' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr comment' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr list' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_not_contains "$(cat gh-token.log)" "GH_TOKEN=tok-alice"
+  assert_not_contains "$(cat gh-token.log)" "GH_TOKEN= "
 }
 
 test_task_land_ask_names_changes_requested() {
@@ -6660,6 +6723,28 @@ test_task_land_resolved_refuses_what_is_not_resolved() {
   run jig task land T-1 --resolved --note-file "$PWD.note"
   assert_eq 1 "$RC" "$OUT"
   assert_contains "$OUT" "task land: nothing to resolve: no landing in progress for T-1; run jig task land T-1"
+}
+
+# Under a git.branch_template of the project's own, the direct merge and its
+# messages name the task's real branch, never `task/<id>`.
+test_task_land_names_the_branch_the_template_gave() {
+  sland_conflict_setup
+  git branch -q -m task/T-1 wip/T-1
+  sed 's|^branch: task/T-1$|branch: wip/T-1|' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  sed 's|^git.branch_template:.*|git.branch_template: wip/{id}|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 5 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: wip/T-1 conflicts with staging; resolve in"
+  sland_resolve
+
+  run jig task land T-1 --resolved --note-file "$PWD.note"
+  assert_eq 0 "$RC" "$OUT"
+  git fetch -q origin
+  assert_contains "$(git log -1 --format=%B origin/staging)" "Merge wip/T-1 into staging"
+  assert_not_contains "$(git log -1 --format=%B origin/staging)" "task/T-1"
 }
 
 # AC-09, AC-15: the resolution is committed on staging and pushed without
@@ -6814,6 +6899,23 @@ test_task_land_gitlab_reads_approved_by_not_approved() {
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "landed https://gitlab.example/example/example/-/merge_requests/99 on staging (merged on the forge)"
   assert_file glab-merge.argv
+}
+
+# Semi-linear history merges only a branch level with staging, and its
+# "Rebase" rewrites the commits the merge keeps the ancestry of: not a
+# merge-commit project.
+test_task_land_gitlab_does_not_land_on_a_semi_linear_project() {
+  sship_setup merge
+  ship_cfg forge gitlab
+  git add .ai/config.yaml
+  mship_stub_glab
+  printf '{"approved":true,"approved_by":[{"user":{"id":7}}]}\n' > glab-approvals
+  printf 'rebase_merge default_off\n' > glab-project
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "not landed: the project does not merge with a merge commit, and this merge keeps its ancestry only with one"
+  assert_no_file glab-merge.argv
 }
 
 test_task_land_gitlab_direct_merge_notes_the_merge_request() {
@@ -11172,7 +11274,7 @@ _tl_staging_of() {
 }
 
 # On the staging flow every task says whether its work is on the staging
-# branch, from git alone (.ai/specs/staging-branch): its tip in origin's
+# branch, from git alone (ADR-0039 as amended 2026-11-11): its tip in origin's
 # staging, or own commits after that — a merge of its base at promotion is
 # not one of them.
 test_task_list_json_says_whether_a_task_is_on_staging() {
@@ -11509,6 +11611,21 @@ _ship_resumed_hands_over() {
 
 test_task_ship_staging_at_none_drops_park_resumed_at() {
   _ship_resumed_hands_over none
+}
+
+# At `none` the record goes only with a fix that passes the completion gates:
+# one with a blocking finding open is not handed over as shipped.
+test_task_ship_staging_at_none_keeps_park_resumed_at_with_a_blocking_finding() {
+  sship_setup none
+  printf 'pr_url: https://github.com/example/example/pull/7\npark_resumed_at: 2026-11-12T10:00:00Z\n' \
+    >> .ai/workspace/tasks/T-1/state
+  jig task finding add T-1 --severity P1 --where - --summary "still broken" >/dev/null \
+    || fail "could not record the finding"
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 3 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "park_resumed_at: 2026-11-12T10:00:00Z"
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":null'
 }
 
 test_task_ship_staging_at_commit_drops_park_resumed_at() {
@@ -13419,25 +13536,70 @@ test_task_ship_names_the_absorbed_issues_in_the_pull_request_body() {
   assert_eq "PR body." "$(cat body.txt)"
 }
 
-# The flow is the team's and lives on the base branch: a task branch that
-# says `direct` while main says `staging` must not ship into main.
-test_task_ship_refuses_a_task_branch_whose_flow_main_has_changed() {
+# A task that turns the staging flow off changes the flow itself: main has
+# not changed it since the branch was cut, so the task goes into main as on
+# the direct flow, and at `merge` merges there like any direct-flow task.
+test_task_ship_turning_the_staging_flow_off_ships_into_main() {
   sship_setup merge
   sed -e 's/^git.flow:.*/git.flow: direct/' -e '/^git.staging_branch:/d' .ai/config.yaml > .ai/config.yaml.tmp
   mv .ai/config.yaml.tmp .ai/config.yaml
   git add .ai/config.yaml
-  local head_before
-  head_before=$(git rev-parse HEAD)
 
   run jig task ship T-1 --message-file msg.txt
-  assert_eq 1 "$RC" "$OUT"
-  assert_contains "$OUT" "task ship: the git flow here is not the one main has:"
-  assert_contains "$OUT" "here: git.flow: direct"
-  assert_contains "$OUT" "main: git.flow: staging, git.staging_branch: staging"
-  assert_contains "$OUT" "Merge main into the task branch first (git merge origin/main)"
-  assert_eq "$head_before" "$(git rev-parse HEAD)"
-  assert_eq "" "$(git ls-remote origin task/T-1)" "the branch must not be pushed"
-  assert_no_file gh.log "the forge must not be asked anything"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_not_contains "$OUT" "is not the one"
+  assert_not_contains "$OUT" "the pull request goes into staging"
+  assert_pr_base main
+  assert_not_contains "$(cat gh-create.argv)" "$(printf -- '--base\nstaging')"
+  assert_file gh-merge.argv
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
+# Renaming the staging branch changes the flow too: into main, not into either
+# staging branch.
+test_task_ship_renaming_the_staging_branch_ships_into_main() {
+  sship_setup pr
+  sed -e 's/^git.staging_branch:.*/git.staging_branch: stage/' .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_pr_base main
+}
+
+# A base whose flow is broken does not decide a flow-changing task's way, and
+# does not hold back the task that fixes it: the task goes into main.
+test_task_ship_fixing_a_broken_flow_on_main_ships_into_main() {
+  sship_setup pr 'git.flow: stagin'
+  sed -e 's/^git.flow:.*/git.flow: staging/' .ai/config.yaml > .ai/config.yaml.tmp
+  printf 'git.staging_branch: staging\n' >> .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_pr_base main
+}
+
+# The task that turns the staging flow on goes into main, as every task did
+# before it.
+test_task_ship_turning_the_staging_flow_on_ships_into_main() {
+  sship_setup pr 'git.flow: direct'
+  sed -e 's/^git.flow:.*/git.flow: staging/' .ai/config.yaml > .ai/config.yaml.tmp
+  printf 'git.staging_branch: staging\n' >> .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: T-1 changes the git flow; its pull request goes into main, as on the direct flow"
+  assert_not_contains "$OUT" "git flow staging: the pull request goes into staging"
+  assert_pr_base main
+  assert_contains "$(git show HEAD:.ai/config.yaml)" "git.staging_branch: staging"
 }
 
 # The other way round: a task cut before the team switched to staging ships,

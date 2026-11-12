@@ -4092,7 +4092,7 @@ test_status_json_offers_a_newer_upgrade_beside_an_old_waiting_one() {
   assert_eq "" "$ITEM" "upgrade-available was offered beside an upgrade to a newer version"
 }
 
-# --- the staging flow (.ai/specs/staging-branch) ---------------------------------
+# --- the staging flow ------------------------------------------------------------
 
 # A project on the staging flow says so, with how many live tasks are on the
 # staging branch and behind it, and each task line says which; a project on
@@ -4159,7 +4159,7 @@ test_status_a_terminal_shows_the_staging_flow_with_the_tasks() {
   assert_contains "$OUT" "  .   flow: staging via staging; on staging: 2, behind staging: 1"
 }
 
-# --- the staging drift report (.ai/specs/staging-branch, "Drift report") ------
+# --- the staging drift report (adr-20261112-the-staging-drift-report-is-read-from-git-by-branch-name)
 
 # st_backdate_staging <days> — origin's staging branch rebuilt with the commits
 # of its first-parent line <days> old: the same trees and other parents.
@@ -4233,7 +4233,7 @@ test_status_a_merged_promotion_is_not_waiting_on_staging() {
 }
 
 # Read from git by branch name: a task branch on origin that no workspace here
-# knows is named as well (failure mode 3).
+# knows is named as well: a colleague's work is not orphaned.
 test_status_names_a_colleagues_task_waiting_on_staging() {
   fixture_staging_repo
   git checkout -q -b task/theirs main
@@ -4250,10 +4250,10 @@ test_status_names_a_colleagues_task_waiting_on_staging() {
   printf 'git.staging_stale_after: 0d\n' >> .ai/config.yaml
   run jig status
   assert_eq 0 "$RC"
-  # Known here only by its branch: its owner promotes it, not this checkout.
-  assert_contains "$OUT" "staging: theirs has waited on staging 0 day(s) with no promotion (its owner runs jig task promote theirs)"
+  # Known here only by its branch: promoted by id from any checkout, or by its owner.
+  assert_contains "$OUT" "staging: theirs has waited on staging 0 day(s) with no promotion (jig task promote theirs, from any checkout, or ask its owner)"
   run jig status --json
-  assert_contains "$OUT" "its owner runs jig task promote theirs"
+  assert_contains "$OUT" "run jig task promote theirs from any checkout, or ask its owner"
 }
 
 # Commits on staging that the base lacks and no live task branch holds are

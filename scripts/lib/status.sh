@@ -2409,9 +2409,10 @@ PRS
             "Run jig task promote $da again: it pushes a merge of $dc into the task branch once that merge is resolved, and names the files that conflict." \
             "$de" "$db	$dc	open	$dd" ;;
         unpromoted)
-          # A task known here only by its branch is its owner's to promote.
+          # A task known here only by its branch is promoted by id from any
+          # checkout (_promote_branch_of), or by its owner.
           todo_promote="run jig task promote $da"
-          [ "$de" = here ] || todo_promote="its owner runs jig task promote $da"
+          [ "$de" = here ] || todo_promote="run jig task promote $da from any checkout, or ask its owner"
           _status_attn staging-unpromoted task "$da" "$da" \
             "Waiting on $staging_name with no promotion" "$db has been on $staging_name for $dd day(s)" \
             "Once it passed its test on $staging_name, $todo_promote. Jig takes nothing off $staging_name." \

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # "Prepare for prod": a task tested on the staging branch reaches a pull
-# request into the base branch (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone;
-# .ai/specs/staging-branch/). Sourced by task.sh for `jig task promote` alone,
+# request into the base branch (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone).
+# Sourced by task.sh for `jig task promote` alone,
 # so that every other task command pays for none of it.
 #
 # It runs from git and the forge alone: a CI runner has the repository and a
@@ -65,7 +65,11 @@ _promote_fetch() {
   # As the clone's account (jig_git_origin), named here, in this shell.
   jig_git_origin_account "$who" read
   for name in "$@"; do
-    if ! out=$(jig_net jig_git_origin fetch --quiet origin \
+    # In the C locale: git translates "couldn't find remote ref", and a
+    # missing branch must not read as a failed fetch under another language.
+    if ! out=$(LC_ALL=C
+         export LC_ALL
+         jig_net jig_git_origin fetch --quiet origin \
          "+refs/heads/$name:refs/remotes/origin/$name" 2>&1); then
       # Origin answered, and has no such branch: nothing there was tested.
       case "$out" in
@@ -174,12 +178,13 @@ _promote_tested_commit() {
 }
 
 # _promote_one <id> <commit> <title> <body-file> — promote one task: the steps
-# of design §2 in order. Returns 0 (the pull request is open, or the task is
-# in the base already) or 3 (a person is needed); a refusal exits 1 through
-# _promote_refuse.
+# numbered below, in order
+# (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). Returns
+# 0 (the pull request is open, or the task is in the base already) or 3 (a
+# person is needed); a refusal exits 1 through _promote_refuse.
 _promote_one() {
   local id="$1" commit_arg="$2" title="$3" body_file="$4"
-  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level=""
+  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level="" runner=0
   _task_valid_id "$id" || _promote_refuse usage "invalid task id: $id"
 
   # 1. The flow.
@@ -199,7 +204,10 @@ _promote_one() {
   fi
 
   # 3. Rights: a runner's pipeline is the team's decision; a checkout's is
-  # its person's agent.git.
+  # its person's agent.git. A runner is a process with CI set
+  # (jig_on_ci_runner) and no workspace for the task: a real runner has none,
+  # while a person's checkout with CI exported by some tool keeps its agent.git
+  # wherever it has the task's workspace.
   # Autopilot never promotes, on a runner as in a checkout (decided by the
   # person, 2026-11-11): wherever a workspace says a run is on.
   if [ "$have_ws" = 1 ]; then
@@ -207,7 +215,10 @@ _promote_one() {
     [ "$run" != on ] \
       || _promote_refuse failed "$who: $id runs on autopilot, which never promotes; stop it, or let the person say prepare for prod"
   fi
-  if ! jig_on_ci_runner; then
+  if [ "$have_ws" = 0 ] && jig_on_ci_runner; then
+    runner=1
+  fi
+  if [ "$runner" = 0 ]; then
     level=$(jig_agent_git) || _promote_refuse failed "$who: invalid agent.git: $level (expected none|commit|push|pr|merge)"
     case "$level" in
       pr | merge) ;;
@@ -275,13 +286,16 @@ EOF
   # said so (decided by the person, 2026-11-11). Asked before the tested
   # commit is, so staging merged in, newer than that commit, is named for
   # what it is rather than listed as the task's own commits.
-  local problems_line bad="" carry_warn="" dkind dval dsha
+  local problems_line bad="" carry_warn="" dkind dval dsha dhow
   problems_line=$(jig_staging_branch_problems "$branch" "$tip" "$base" "$staging")
   while IFS="$t" read -r dkind dval dsha; do
     case "$dkind" in
       bad) bad="$bad
   $dval" ;;
-      dep) carry_warn="$carry_warn$id carries $dval (merged at $(git -C "$JIG_PROJECT" rev-parse --short "$dsha")); it reaches $base with this task"$'\n' ;;
+      dep)
+        # Brought in by a merge, or the branch is cut from that task's.
+        if git -C "$JIG_PROJECT" rev-parse --verify --quiet "$dsha^2" >/dev/null 2>&1; then dhow="merged at"; else dhow="cut from it at"; fi
+        carry_warn="$carry_warn$id carries $dval ($dhow $(git -C "$JIG_PROJECT" rev-parse --short "$dsha")); it reaches $base with this task"$'\n' ;;
     esac
   done <<EOF
 $problems_line
@@ -297,7 +311,7 @@ It reaches $base only after it was tested on $staging: land it there (jig task s
   # On the task's first-parent line every commit but a merge of the base is
   # its own work and must be in the tested commit, a merge of a clean
   # dependency included: content made in that merge was never tested
-  # otherwise (third architecture review, F11). _jig_staging_walk does not
+  # otherwise. _jig_staging_walk does not
   # count such a merge, since its other parent is on the tested commit.
   local fpline fc fpp fbase notin
   notin=$(git -C "$JIG_PROJECT" rev-list "$tip" "^$base_sha" "^$csha" 2>/dev/null) || notin=""
@@ -417,7 +431,7 @@ EOF
   # (adr-20261026-a-task-that-raises-the-version-is-a-release).
   local pm may=0 draft=0
   pm=$(jig_promote_merge) || pm=human
-  if jig_on_ci_runner || [ "$level" = merge ]; then
+  if [ "$runner" = 1 ] || [ "$level" = merge ]; then
     may=1
   fi
   if [ "$pm" = auto ] && [ "$may" = 1 ] && [ "$r_level" = major ]; then
@@ -548,7 +562,8 @@ _promote_not_on() {
 
 # _promote_auto_state <url> — what the forge says of the pull request at
 # <url>, into _PROMOTE_PR_STATE (open|merged|closed|unknown), _PROMOTE_PR_DRAFT
-# (true|false), _PROMOTE_PR_HEAD (its head commit, GitHub only) and
+# (true|false), _PROMOTE_PR_HEAD (its head commit: GitHub's headRefOid,
+# GitLab's diff_refs.head_sha, else its top-level `sha`) and
 # _PROMOTE_PR_AUTO (on|off). Called directly, never in `$()`. Anything it
 # cannot read leaves `unknown`.
 _promote_auto_state() {
@@ -593,6 +608,11 @@ EOF
       case "$flat" in
         *'"merge_when_pipeline_succeeds":true'* | *'"auto_merge_enabled":true'*) _PROMOTE_PR_AUTO=on ;;
       esac
+      # The head: diff_refs.head_sha names it alone; `sha` is taken at its
+      # first occurrence, the merge request's own before its pipeline's.
+      h=$(printf '%s' "$flat" | jig_glab_fields head_sha)
+      [ -n "$h" ] || h=$(printf '%s' "$flat" | jig_glab_fields sha)
+      _PROMOTE_PR_HEAD=$h
       ;;
   esac
   return 0
@@ -709,7 +729,9 @@ EOF
 
 # _promote_auto_gitlab <url> <tip> — the same through glab: only in a project
 # that requires a successful pipeline to merge, merging with a merge commit
-# and no squash; `--sha` holds the merge request at <tip>.
+# and no squash — `merge`, not semi-linear `rebase_merge`, which merges only a
+# branch level with the target and rebases the tested commits to get there;
+# `--sha` holds the merge request at <tip>.
 _promote_auto_gitlab() {
   local url="$1" tip="$2" iid project mm so out
   _promote_auto_state "$url"
@@ -736,7 +758,7 @@ _promote_auto_gitlab() {
   mm=$(printf '%s' "$project" | sed -n 's/.*"merge_method":"\([^"]*\)".*/\1/p')
   so=$(printf '%s' "$project" | sed -n 's/.*"squash_option":"\([^"]*\)".*/\1/p')
   case "$mm:$so" in
-    merge:never | merge:default_off | rebase_merge:never | rebase_merge:default_off) ;;
+    merge:never | merge:default_off) ;;
     *)
       _promote_not_on "the repository does not allow merge commits, and a promotion keeps its ancestry only with one"
       return 0 ;;
@@ -821,7 +843,7 @@ _promote_task() {
 # is refused), whose tip the tested commit contains and the base does not. One per line, in origin's order. Read from the
 # branch names alone, so a CI runner with no workspace has them too.
 _promote_branch_ids() {
-  local who="$1" csha="$2" base_sha="$3" template pre suf heads sha ref name id own untested
+  local who="$1" csha="$2" base_sha="$3" template pre suf heads sha ref name id own untested raw
   _PROMOTE_IDS=""
   template=$(cfg git.branch_template "task/{id}")
   case "$template" in
@@ -852,13 +874,23 @@ $heads"
       # onto it, perhaps onto an open promotion: said, never promoted, and
       # not a failure of the run, or every untested fix would turn a pipeline
       # red. A branch with nothing in the tested commit stays unmentioned.
+      # A merge of the base on the branch's first-parent line — a conflict
+      # with the base resolved after the test — is not untested work, as the
+      # promotion of one task judges it (_promote_one, step 8): such a branch
+      # is promoted, and _promote_one judges the rest.
+      # Whether it is mentioned is read from the raw counts, as before: a
+      # branch with nothing in the tested commit stays silent, a merge of the
+      # base included.
       own=$(git -C "$JIG_PROJECT" rev-list --count "$sha" "^$base_sha" 2>/dev/null) || own=0
-      untested=$(git -C "$JIG_PROJECT" rev-list --count "$sha" "^$base_sha" "^$csha" 2>/dev/null) || untested=$own
-      if [ "$untested" -lt "$own" ]; then
-        printf '%s: skipped %s: it has commits the tested commit %s does not have; promote it after they are tested\n' \
-          "$who" "$id" "$(git -C "$JIG_PROJECT" rev-parse --short "$csha")"
+      untested=$(_promote_untested_count "$sha" "$base_sha" "$csha") || untested=$own
+      if [ "$untested" -gt 0 ]; then
+        raw=$(git -C "$JIG_PROJECT" rev-list --count "$sha" "^$base_sha" "^$csha" 2>/dev/null) || raw=$own
+        if [ "$raw" -lt "$own" ]; then
+          printf '%s: skipped %s: it has commits the tested commit %s does not have; promote it after they are tested\n' \
+            "$who" "$id" "$(git -C "$JIG_PROJECT" rev-parse --short "$csha")"
+        fi
+        continue
       fi
-      continue
     fi
     _PROMOTE_IDS="$_PROMOTE_IDS$id"$'\n'
   done <<HEADS
@@ -867,10 +899,42 @@ HEADS
   return 0
 }
 
+# _promote_untested_count <tip> <base-sha> <tested> — how many commits <tip>
+# has that neither the base nor the tested commit has, a merge of the base on
+# <tip>'s first-parent line not counted: every parent of it but the first is
+# in the base. Non-zero when git cannot list them.
+_promote_untested_count() {
+  local tip="$1" base_sha="$2" csha="$3" notin fpl n=0 c p fbase
+  notin=$(git -C "$JIG_PROJECT" rev-list "$tip" "^$base_sha" "^$csha" 2>/dev/null) || return 1
+  fpl=$(git -C "$JIG_PROJECT" rev-list --first-parent --parents "$tip" "^$base_sha" 2>/dev/null) || return 1
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    fbase=0
+    while IFS= read -r p; do
+      case "$p" in "$c "*" "*) ;; *) continue ;; esac
+      set -f
+      # shellcheck disable=SC2086 # the commit and its parents, hexadecimal
+      set -- $p
+      set +f
+      shift 2
+      fbase=1
+      for p in "$@"; do
+        git -C "$JIG_PROJECT" merge-base --is-ancestor "$p" "$base_sha" 2>/dev/null || fbase=0
+      done
+      break
+    done <<FPL
+$fpl
+FPL
+    [ "$fbase" = 1 ] || n=$((n + 1))
+  done <<NOTIN
+$notin
+NOTIN
+  printf '%s\n' "$n"
+}
+
 # _promote_many <commit> <all> <id>... — promote several tasks, or with <all>
 # = 1 every task branch the tested commit holds and the base does not
-# (.ai/specs/staging-branch/, "A CI run promotes the tasks it names, or all of
-# them only when told"). What would refuse every task — the flow, a shallow
+# (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone: a run promotes the tasks it names, or all of them only when told). What would refuse every task — the flow, a shallow
 # clone, a base or staging branch that cannot be fetched, a tested commit not
 # on staging — refuses the run before the first task. The tested commit is
 # resolved once, so every task is judged against the same one. Each task then

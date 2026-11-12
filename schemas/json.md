@@ -445,7 +445,7 @@ The kinds, in the order they are listed:
 | `pull-request-was-open` | task | the last housekeeping run saw a pull request open (it may have merged since) |
 | `pull-request-of-abandoned-task` | task | the task was abandoned, and its pull request was open at the last housekeeping run |
 | `promotion-conflicting` | task | on the staging flow, a promotion this checkout opened (`promote_url`) is open and the forge cache calls it conflicting with the base branch; `todo` says to run `jig task promote <id>` again, `url` is the promotion |
-| `staging-unpromoted` | task | on the staging flow, the task's work has been on origin's staging branch for `git.staging_stale_after` or longer and no promotion is open or merged for it; for a task with no workspace here, `todo` says its owner promotes it. Read from git by branch name: the task may be a colleague's, with no workspace here |
+| `staging-unpromoted` | task | on the staging flow, the task's work has been on origin's staging branch for `git.staging_stale_after` or longer and no promotion is open or merged for it; for a task with no workspace here, `todo` says it is promoted from any checkout, or by its owner. Read from git by branch name: the task may be a colleague's, with no workspace here |
 | `staging-unowned` | project | on the staging flow, commits on origin's staging branch, merges left out, that the base branch does not have and no task branch here or on origin holds |
 | `needs-consolidation` | task | merged; the task can be closed |
 | `wrong-base` | task | the work landed on another branch than planned |

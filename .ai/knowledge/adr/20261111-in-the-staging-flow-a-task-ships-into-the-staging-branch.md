@@ -8,7 +8,7 @@ domains:
 paths:
   - scripts/lib/task.sh
 summary: Why jig task ship in the staging flow opens the pull request into git.staging_branch and none into the base, does not merge until landing is built, stops after the push for external landing, ships an epic task into its epic, and reads the flow from the base branch too.
-reviewed_at: 2026-11-11
+reviewed_at: 2026-11-12
 ---
 # In the staging flow a task ships into the staging branch, and `task ship` does not land it there yet
 
@@ -16,7 +16,8 @@ reviewed_at: 2026-11-11
 
 `jig task ship` opened a task's pull request into the task's recorded base
 (adr-20260921-agent-git-rights-are-a-local-setting, ADR-0039) and, at `agent.git: merge`, merged it.
-The spec `staging-branch` adds named git flows: in `git.flow: staging` a task is cut from the base
+The staging-branch specification (adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes
+keeps its flow model) adds named git flows: in `git.flow: staging` a task is cut from the base
 branch, goes to `git.staging_branch` through a reviewed pull request, and reaches the base branch
 only on "prepare for prod". Its roadmap builds this in slices: "Ship a task to staging" (this
 decision), then "Land a task on staging" (the approval check, the merge on the forge, the direct
@@ -37,13 +38,16 @@ send the task into the base branch nor merge into staging past the review the fl
   state reads what CI merged from git alone, with no pull request, and the ship files the triage task
   for open P2/P3 there, since no pull request will list them.
 - **A task of an epic ships into its epic**, as before, with a line saying the staging flow does not
-  apply to it: whether an epic's tasks pass through staging is the spec's open question.
-- **The flow is read from the base branch too.** Before the commit, at `pr` and `merge`, the base is fetched
-  (`jig_fetch_branches`; a failed fetch only warns and the refs this checkout has are used, as in
-  `task start`), and `git.flow` and
+  apply to it: whether an epic's tasks pass through staging is an open question, held by the task
+  `epic-in-staging-flow`.
+- **The flow is read from the base branch too.** Before the commit, at every level, `git.flow` and
   `git.staging_branch` at the tip of `jig_base_ref <base>` are compared with the checkout's, read
-  with the same parser (`_cfg_read_v`); any difference refuses and says to merge the base branch
-  into the task branch first. A base unknown here, or one with no config, leaves the checkout to
+  with the same parser (`_cfg_read_v`); a difference refuses and says to merge the base branch into
+  the task branch first — unless the task made it itself (amendment of 2026-11-12, below). At `pr`
+  and `merge` the base is fetched first (`jig_fetch_branches`; a failed fetch only warns and the
+  refs this checkout has are used, as in `task start`); below `pr` the comparison reads the refs
+  this checkout has (amendment of 2026-11-12, "the base is fetched only where a pull request is
+  opened"). A base unknown here, or one with no config, leaves the checkout to
   decide. A flow `jig doctor` fails on (`jig_git_flow_problems`) refuses too, `--draft` included.
 - **An open pull request from the task branch into another branch than staging refuses**, naming
   it, rather than being reported as the staging pull request. It is asked before the commit, so a
@@ -66,8 +70,8 @@ send the task into the base branch nor merge into staging past the review the fl
 - **Read the flow from the base branch only.** Rejected: a task branch that changes the flow itself
   (the one that turns it on) would be judged by a config it is about to replace; a disagreement is
   better named than silently resolved either way.
-- **Send an epic's tasks through staging.** Rejected for now: the spec leaves it open until a real
-  epic meets a staging branch; today's behaviour changes nothing.
+- **Send an epic's tasks through staging.** Rejected for now: left open until a real epic meets a
+  staging branch (the task `epic-in-staging-flow`); today's behaviour changes nothing.
 
 ## Consequences
 
@@ -107,3 +111,30 @@ account at every level and warned at `commit` and `push` when it was ambiguous. 
 decides nothing — no pull request is opened — so the base is fetched only at `pr` and `merge`; at the
 lower levels the comparison reads the refs this checkout has. Under `git.staging_land: external` no
 pull request is opened either, so the ship does not name the account of one (`jig_ship_account`).
+
+## Amendment (2026-11-12): the task that changes the flow ships into the base
+
+As first built, the comparison refused every task whose config differed from its base's, and so
+refused the one task `jig-setup` §4 and adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes
+tell the agent to ship: the one that writes `git.flow: staging` (or turns the flow off, or renames
+the staging branch). Merging the base in could not help: the branch exists to change the flow.
+
+Now, when the checkout and the base tip disagree, the config at `merge-base(HEAD, <base>)` is read
+too. When it is the base tip's, the base has not changed the flow since the branch was cut, so the
+difference is the task's own change. Such a task ships into its base as on the direct flow, and says
+so (`task ship: <id> changes the git flow; its pull request goes into <base>, as on the direct
+flow`): turning the flow on, turning it off and renaming the staging branch alike. It opens no pull
+request into a staging branch, lands on none, is judged by no clean-branch rule, and at `merge`
+merges into the base as any direct-flow task does, after the same gates (green CI, findings,
+receipt, a release's hold). Neither the flow it leaves nor the one it brings decides its way: the
+change is the team's, reviewed in the pull request into the base. Only a base that changed the flow
+after the branch was cut refuses, as before. `jig task promote` keeps the plain comparison: its
+checkout is not the task's branch.
+
+The rejected alternative "read the flow from the base branch only" stays rejected for a task that
+does not touch the flow.
+
+The cost of the staging flow's strict fetch is said here too: on that flow a ship fetches the
+staging branch at every level, `commit` included, to judge the clean-branch rule, and refuses with
+nothing committed when it cannot. Offline, a commit-level ship on the staging flow refuses where the
+direct flow commits.

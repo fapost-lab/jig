@@ -1041,8 +1041,7 @@ jig_base_ref() {
 # base resolved as jig_base_ref does, origin first). A merge commit whose every
 # parent but the first is in the base or the staging branch brings those in and
 # is not the task's own work, so a task does not read "behind" the moment its
-# base is merged into it at promotion (.ai/specs/staging-branch, failure mode
-# 7), and staging merged into a task branch ("Update branch" on a pull request
+# base is merged into it at promotion (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone), and staging merged into a task branch ("Update branch" on a pull request
 # into staging) neither makes the task behind nor puts it on staging: staging
 # is reached only along the task's own commits. The tip is the
 # local branch, else origin's, as housekeeping resolves it: commits the owner
@@ -1270,7 +1269,7 @@ EOF
 }
 
 # jig_staging_drift <staging-branch> <stale-after> <rows> <cache> — the staging
-# drift report (.ai/specs/staging-branch, "Drift report"), as tagged lines for
+# drift report (adr-20261112-the-staging-drift-report-is-read-from-git-by-branch-name), as tagged lines for
 # `jig status` and housekeeping to word (jig_staging_drift_lines).
 # <stale-after> is `git.staging_stale_after` as jig_staging_stale_after reads
 # it, empty when it is not a duration; <rows> this checkout's live tasks,
@@ -1286,7 +1285,7 @@ EOF
 #       commits outside the base, and it waits for no promotion), or, where the
 #       cache knows none, this checkout records no promote_url for it. <here>
 #       is `here` for a task of this checkout, empty for one known only by its
-#       branch, whose owner promotes it. The time counted from is that of the commit on
+#       branch (a colleague's, promoted from any checkout or by its owner). The time counted from is that of the commit on
 #       staging's first-parent line that last brought the task's work in — its
 #       landing merge, or the commit itself when staging was fast-forwarded.
 #   conflicting<TAB><id><TAB><branch><TAB><base><TAB><fetched_at><TAB><url>
@@ -1300,9 +1299,10 @@ EOF
 # Read from git by branch name: the tasks are every branch
 # `git.branch_template` names, here or on origin, and this checkout's own; a
 # branch no workspace knows is judged against git.base_branch. The workspace
-# adds a base and promote_url, never more (failure mode 3). Only what the
-# staging branch has and the base does not is counted, so a promoted task whose
-# branch was deleted after it landed is nobody's drift (decided in the spec).
+# adds a base and promote_url, never more: a report of this checkout's tasks
+# alone would read a colleague's work as orphaned. Only what the staging
+# branch has and the base does not is counted, so a promoted task whose branch
+# was deleted after it landed is nobody's drift (the same ADR).
 #
 # The processes it starts do not grow with the tasks or the commits
 # (conventions/shell.md): one for-each-ref, _jig_staging_walk's, one rev-list
@@ -1484,7 +1484,7 @@ jig_staging_drift_lines() {
         if [ "$e" = here ]; then
           printf 'staging: %s has waited on %s %s day(s) with no promotion (jig task promote %s)\n' "$a" "$staging" "$d" "$a"
         else
-          printf 'staging: %s has waited on %s %s day(s) with no promotion (its owner runs jig task promote %s)\n' "$a" "$staging" "$d" "$a"
+          printf 'staging: %s has waited on %s %s day(s) with no promotion (jig task promote %s, from any checkout, or ask its owner)\n' "$a" "$staging" "$d" "$a"
         fi ;;
       unowned)
         printf 'staging: %s commit(s) on %s that no live task branch holds (%s)\n' "$a" "$staging" "$b" ;;
@@ -1500,8 +1500,8 @@ EOF
 # whether the line of <branch> up to <tip> is a clean task branch in the
 # staging flow: cut from <base>, with nothing of <staging> merged into it. A
 # task branch reaches the base from its own commits, never through the
-# staging branch (.ai/specs/staging-branch; decided by the person,
-# 2026-11-11). Prints tagged lines, nothing when the line is clean:
+# staging branch (adr-20261111-a-task-lands-on-staging-through-its-pull-request;
+# decided by the person, 2026-11-11). Prints tagged lines, nothing when the line is clean:
 #   bad<TAB><text>          what makes it unclean, in words for a person:
 #                           `<branch> is cut from <staging> (<sha>)`, `<branch>
 #                           is cut from <name>` (a dependency only), `a merge of
@@ -1523,10 +1523,13 @@ EOF
 #   - cut from another branch (at <depth> 1 and more, a merged dependency): the
 #     line holds the tip of an origin branch that is neither a task branch
 #     (git.branch_template), the base nor staging. It misses a branch whose
-#     tip moved on after the cut or that origin no longer has. A line that
-#     holds the tip of another task's branch (local or origin's) was cut from
-#     that branch: it is named as a dependency too and judged the same way,
-#     so no task's work reaches the base unnamed.
+#     tip moved on after the cut or that origin no longer has.
+#   - cut from another task's branch (at every depth, the task's own line
+#     included): the line holds the tip of that branch, local or origin's. It
+#     is named as a dependency and judged the same way. Like the case above,
+#     it misses a branch whose tip moved on after the cut, or that neither
+#     this clone nor origin has any more: that task's work then reaches the
+#     base under this task's name.
 #   - each merge on the line: a parent the base has is the base merged in; a
 #     parent on staging's first-parent line is staging merged in; a parent on
 #     the first-parent line of another task branch is that task's branch,
@@ -1557,19 +1560,20 @@ jig_staging_branch_problems() {
       case "$name" in HEAD | "$base" | "$staging" | "$prefix"*"$suffix") continue ;; esac
       others="${others}R$t$name$t$one"$'\n'
     done < <(git -C "$JIG_PROJECT" for-each-ref --format="%(refname:strip=3)$t%(objectname)" refs/remotes/origin 2>/dev/null)
-    # And the tips of other tasks' branches, for one cut from such a branch.
-    while IFS="$t" read -r name one; do
-      case "$name" in
-        refs/heads/*) name=${name#refs/heads/} ;;
-        refs/remotes/origin/*) name=${name#refs/remotes/origin/} ;;
-        *) continue ;;
-      esac
-      [ "$name" != "$branch" ] || continue
-      case "$name" in "$prefix"*"$suffix") ;; *) continue ;; esac
-      [ "$one" != "$tip" ] || continue
-      others="${others}T$t$name$t$one"$'\n'
-    done < <(git -C "$JIG_PROJECT" for-each-ref --format="%(refname)$t%(objectname)" refs/heads refs/remotes/origin 2>/dev/null)
   fi
+  # The tips of other tasks' branches, at every depth: a branch cut from
+  # another task's branch, the task's own included, carries that task's work.
+  while IFS="$t" read -r name one; do
+    case "$name" in
+      refs/heads/*) name=${name#refs/heads/} ;;
+      refs/remotes/origin/*) name=${name#refs/remotes/origin/} ;;
+      *) continue ;;
+    esac
+    [ "$name" != "$branch" ] || continue
+    case "$name" in "$prefix"*"$suffix") ;; *) continue ;; esac
+    [ "$one" != "$tip" ] || continue
+    others="${others}T$t$name$t$one"$'\n'
+  done < <(git -C "$JIG_PROJECT" for-each-ref --format="%(refname)$t%(objectname)" refs/heads refs/remotes/origin 2>/dev/null)
   # Cut from staging, or from another branch: one pass over the line.
   found=$({
     [ -z "$sfp" ] || printf '%s\n' "$sfp" | awk '{ print "S\t" $1 }'
@@ -2259,7 +2263,9 @@ jig_merge_conflicts() {
   jig_cleanup_add -d "$tmp"
   wt="$tmp/tree"
   git -C "$JIG_PROJECT" worktree add -q --detach "$wt" "$into" >/dev/null 2>&1 || return 1
-  if ! git -C "$wt" -c user.name=jig -c user.email=jig@localhost \
+  # Without the person's rerere: a recorded resolution would stage the paths,
+  # and the conflict would read as a merge that failed for another reason.
+  if ! git -C "$wt" -c user.name=jig -c user.email=jig@localhost -c rerere.enabled=false \
        merge -q --no-commit --no-ff "$from" >/dev/null 2>&1; then
     out=$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null) || out=""
     [ -n "$out" ] || rc=1
@@ -3436,7 +3442,10 @@ EOF
 
 # _jig_ship_merge_gitlab <url> <sha> <policy> <timeout> — the same through
 # `glab`. GitLab sets the method per project (merge_method, squash_option):
-# `merge-commit` needs a merge commit and a squash that is off by default.
+# `merge-commit` needs a merge commit and a squash that is off by default, and
+# plain `merge`: semi-linear history (`rebase_merge`) merges only a source
+# branch level with the target, and its "Rebase" rewrites the commits whose
+# ancestry the merge is kept for.
 # shellcheck disable=SC2034 # JIG_SHIP_MERGED is read by the caller
 _jig_ship_merge_gitlab() {
   local url="$1" sha="$2" policy="$3" timeout="$4" iid json project mm so squash="" state out
@@ -3458,8 +3467,7 @@ _jig_ship_merge_gitlab() {
   mm=$(printf '%s' "$project" | sed -n 's/.*"merge_method":[[:space:]]*"\([^"]*\)".*/\1/p')
   so=$(printf '%s' "$project" | sed -n 's/.*"squash_option":[[:space:]]*"\([^"]*\)".*/\1/p')
   case "$policy:$mm:$so" in
-    merge-commit:merge:never | merge-commit:merge:default_off \
-      | merge-commit:rebase_merge:never | merge-commit:rebase_merge:default_off) ;;
+    merge-commit:merge:never | merge-commit:merge:default_off) ;;
     merge-commit:?*:?*)
       printf 'not merged: the project does not merge with a merge commit, and this merge keeps its ancestry only with one\n'
       return 0 ;;
@@ -3610,7 +3618,9 @@ _jig_pr_state_no_forge() {
 # adr-20261111-a-task-lands-on-staging-through-its-pull-request. Three questions
 # about one open pull request, each answered `unknown` (or a failure) whenever
 # the forge cannot say: an unknown is never read as approved, as clean, or as
-# commented.
+# commented. On GitHub each asks through jig_gh, as this clone's account
+# (adr-20261110-a-clone-names-its-github-account); the caller resolves it first,
+# in its own shell (land_task: jig_gh_require), since these run in `$()`.
 
 # jig_pr_approval <url> — approved|changes|none|unknown: whether somebody
 # approved the pull request. GitHub: `reviewDecision` when branch protection
@@ -3625,7 +3635,7 @@ jig_pr_approval() {
   kind=$(jig_forge_kind) || exit 1
   case "$kind" in
     github)
-      out=$(jig_net gh pr view "$url" --json reviewDecision,latestReviews \
+      out=$(jig_net jig_gh pr view "$url" --json reviewDecision,latestReviews \
         --jq '"\(.reviewDecision // "")|\([.latestReviews[]?.state] | join(","))"' 2>/dev/null) \
         || { printf 'unknown\n'; return 0; }
       decision=${out%%|*}
@@ -3661,7 +3671,7 @@ _jig_pr_mergeable_once() {
   local kind="$1" url="$2" out iid draft state
   case "$kind" in
     github)
-      out=$(jig_net gh pr view "$url" --json isDraft,mergeable --jq '"\(.isDraft) \(.mergeable)"' 2>/dev/null) \
+      out=$(jig_net jig_gh pr view "$url" --json isDraft,mergeable --jq '"\(.isDraft) \(.mergeable)"' 2>/dev/null) \
         || { printf 'unknown\n'; return 0; }
       read -r draft state <<EOF
 $out
@@ -3722,7 +3732,7 @@ jig_pr_comment() {
   kind=$(jig_forge_kind) || exit 1
   case "$kind" in
     github)
-      out=$(jig_net gh pr comment "$url" --body-file "$body" 2>&1) || { _jig_ship_first_line "$out"; return 1; } ;;
+      out=$(jig_net jig_gh pr comment "$url" --body-file "$body" 2>&1) || { _jig_ship_first_line "$out"; return 1; } ;;
     gitlab)
       iid=$(_jig_ship_glab_mr "$url")
       [ -n "$iid" ] || { printf 'not a merge request: %s\n' "$url"; return 1; }

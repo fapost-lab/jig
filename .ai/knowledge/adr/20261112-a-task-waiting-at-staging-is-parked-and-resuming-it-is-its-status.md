@@ -11,14 +11,15 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/checkout.sh
 summary: Why a task waiting at the staging branch is parked by a rule over git and the forge cache, why the owner's checkout lays only status, agent.git and park_resumed_at over it, and why a person taking it back for a fix is the one thing recorded.
+reviewed_at: 2026-11-12
 ---
 # A task waiting at the staging branch is parked by derivation, and only a person taking it back is recorded
 
 ## Context
 
-In the staging flow (`.ai/specs/staging-branch/`) a task ships into the staging branch through a pull
+In the staging flow (adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes) a task ships into the staging branch through a pull
 request, lands there, and waits — for a colleague's review, then for "prepare for prod" — often for
-weeks (failure mode 10). The spec decided that such a task has one state of its own, *parked*,
+weeks, while the queue, concurrency limits and `jig status` fill up. The staging-branch specification decided that such a task has one state of its own, *parked*,
 "derived from the branch and its pull requests alone, never written": a colleague, a CI runner and a
 UI must read the same state, and task status and `agent.git` are local to one checkout. A parked
 task holds no current-task slot, no place in `jig queue next` and no concurrency slot; `jig task
@@ -57,7 +58,10 @@ again before it ships, so resuming has to take the task out of `ready` whatever 
   of parking through that verify (`ready` again) and up to the ship: the next `jig task ship` into
   the staging branch that is not a draft drops the key at every `agent.git` level — after the push
   at `push` and above, and before it hands the commit and the push to the person at `none` and
-  `commit`, since the fix is shipped then by hand from what the ship told them. The task is parked
+  `commit`, since the fix is shipped then by hand from what the ship told them. At `none` only once
+  the completion gates pass (`_task_ship_refusal`), as every other level asks them before it ships:
+  a fix with an open blocking finding or no receipt is not handed over, and keeps the key
+  (amended 2026-11-12). The task is parked
   again as soon as git or the forge gives a reason. `jig task set` refuses the key: only resume
   writes it and only ship removes it. A paused task keeps ADR-0012: the resume ends the pause and it returns to `ready`, so a
   parked one says `still parked (<reason>)` and a second resume takes it back. Neither paused nor

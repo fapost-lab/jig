@@ -51,8 +51,8 @@ and tested through `tests/pr.t.sh`. `lib/promote.sh` ("prepare for prod": `jig t
 `tests/promote.t.sh`) follows the same rule; it reads a task's staging state through common.sh's
 `jig_staging_branch_problems` and `jig_staging_states` and never recomputes them.
 `jig_staging_branch_problems` and `jig_branch_carries_staging` answer the same question — is this a
-clean task branch — for promote and for ship and land; until they are one walk (F15 of
-prepare-for-prod) a change to that rule goes into both.
+clean task branch — for promote and for ship and land; until they are one walk (task
+unify-clean-branch-walks) a change to that rule goes into both.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and

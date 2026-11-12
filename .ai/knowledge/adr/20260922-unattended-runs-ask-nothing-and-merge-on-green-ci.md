@@ -16,7 +16,7 @@ paths:
   - skills/jig-autopilot/SKILL.md
   - skills/jig-consolidate/SKILL.md
 summary: "Why an unattended autopilot run asks nothing and records its defaults in the pull request, and why agent.git: merge merges only on green CI at the shipped commit, never past branch protection."
-reviewed_at: 2026-11-11
+reviewed_at: 2026-11-12
 ---
 # An unattended run asks nothing, and a finished change merges itself once CI passed, never past the forge's rules
 
@@ -120,10 +120,11 @@ adr-20260921-agent-git-rights-are-a-local-setting.
 
 The green-CI rule covers the merges Jig makes into the base branch and into an epic, and the merge on
 the forge of a task's pull request into the staging branch. One merge is outside it, by the
-staging-branch spec's decision: when that pull request conflicts with the staging branch, the agent
+staging-branch specification's decision (adr-20261111-a-task-lands-on-staging-through-its-pull-request): when that pull request conflicts with the staging branch, the agent
 resolves the conflict in a temporary worktree and pushes the merge straight to the staging branch,
 with no CI, since a conflicting pull request runs none. The agent resolves and QA checks staging;
-the spec accepts that risk (failure mode 2). It happens only on a conflict, only into the staging
+the team accepts that risk on staging already: an agent's resolution of code it does not own,
+pushed with no review and no CI. It happens only on a conflict, only into the staging
 branch, never past a refusal of branch protection, and the push is never forced
 (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
 

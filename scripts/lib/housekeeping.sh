@@ -193,6 +193,19 @@ EOF
       action=${decision%% *}
       flags=${decision#* }
       [ "$flags" = "$decision" ] && flags=""
+      # A pull request into staging closed unmerged is no abandoned work when
+      # the work is on staging all the same: a landing pushed directly, its
+      # pull request closed by hand. Git says where the task stands.
+      if [ -n "$_HK_STAGING_STATE" ]; then
+        case ",$flags," in
+          *",abandoned?,"*)
+            flags=",$flags,"
+            flags=${flags//",abandoned?,"/,}
+            flags=${flags#,}
+            flags=${flags%,}
+            ;;
+        esac
+      fi
 
       # Work that landed on another branch than the task's base. The remote
       # state stays `unknown`, so the policy keeps the workspace; the flag is
@@ -235,8 +248,8 @@ EOF
           # branch may hold work that is still being done: it is reported as
           # stale and left as it is. So is one whose work landed on the wrong
           # base, which the policy could not see, and one whose work is on the
-          # staging branch, waiting for its promotion
-          # (.ai/specs/staging-branch, failure mode 10).
+          # staging branch, waiting for its promotion, perhaps for weeks
+          # (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
           wt=""
           [ -z "$branch" ] || wt=$(_task_worktree_for "$branch" "$worktrees")
           if [ -n "$wt" ] || [ -n "$landed" ] || [ -n "$_HK_STAGING_STATE" ] \
@@ -889,8 +902,8 @@ _hk_forge_state() {
 
   # On the staging flow a pull request merged into the staging branch is the
   # flow's own step, not work landed in the wrong place: it is passed over
-  # here, and the task's staging state says where it stands
-  # (.ai/specs/staging-branch). The newest one into the staging branch that is
+  # here, and the task's staging state says where it stands (ADR-0039 as
+  # amended 2026-11-11). The newest one into the staging branch that is
   # still open, or was closed unmerged, is the task's pull request while it has
   # none into its base: a staging `task ship` leaves exactly that, and it must
   # keep the task as an open pull request into the base would. Off that flow

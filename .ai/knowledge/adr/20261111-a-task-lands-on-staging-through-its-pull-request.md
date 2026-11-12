@@ -16,14 +16,15 @@ reviewed_at: 2026-11-12
 
 ## Context
 
-In the `staging` git flow (spec `staging-branch`) `jig task ship` opened the task's pull request
+In the `staging` git flow (adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes) `jig task ship` opened the task's pull request
 into `git.staging_branch` and stopped there, even at `agent.git: merge`
 (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch). The team's own practice is
 the next step: the pull request is reviewed and merged on the forge, and only when it conflicts with
-the staging branch is the task merged into it directly, by hand. The spec's decisions bind how Jig
+the staging branch is the task merged into it directly, by hand. The staging-branch specification's decisions bind how Jig
 does it: the direct merge only on conflict, in a temporary worktree of the staging branch fetched
-fresh, never in the person's checkout (failure mode 5); a rejected push retried from a fresh fetch,
-never forced (failure mode 6); the agent resolves the conflict, any file, and names the resolution;
+fresh, never in the person's checkout, where a dirty tree, staging held by another worktree or a merge
+left mid-conflict would follow the person's next commit onto staging; a rejected push retried from
+a fresh fetch, never forced, since several people and autopilots push to the one shared branch; the agent resolves the conflict, any file, and names the resolution;
 review by `git.staging_review`; landing needs `agent.git: merge`. At the gate the person added one
 rule: a task branch is cut from the base and stays clean of the staging branch until it reaches the
 base.
@@ -141,7 +142,8 @@ base.
 - `jig task ship` at `merge` in the staging flow may now exit 3 or 5 where it used to print `not
   merged` and exit 0; the skills read both.
 - A wrong landing is a merge commit on the shared staging branch; nothing is forced, so it is undone
-  by a person's `git revert -m 1` (failure mode 7 of the spec: the task then still reads on staging).
+  by a person's `git revert -m 1`; the task then still reads on staging, since "on staging" is
+  ancestry and a revert keeps it.
 - The agent's resolution of others' code reaches staging without CI (a conflicting pull request runs
   none); the skills ask for targeted tests in the tree before `--resolved`, and QA reads the comment.
 - rerere writes its cache to the clone's `rr-cache`; git prunes it on its own schedule.

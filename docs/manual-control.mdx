@@ -371,8 +371,9 @@ staging: 2 commit(s) on staging that no live task branch holds (git log --no-mer
   `git.staging_stale_after` (14 days unless you set it) and no pull request into the base branch is
   open or merged for it. The days count from the commit that last brought its work onto the staging branch —
   the landing merge — so shipping a fix QA asked for starts them again. Every task branch counts,
-  here or on origin, so a colleague's task is named too — with `(its owner runs jig task promote
-  <id>)`, since only the checkout that has its workspace can promote it.
+  here or on origin, so a colleague's task is named too — with `(jig task promote <id>, from any
+  checkout, or ask its owner)`: a task is promoted by its id from any checkout whose `agent.git` allows
+  it, or from CI, workspace or not.
 - **A promotion that conflicts.** A promotion this checkout opened (`jig task promote`) that the
   forge, at the last housekeeping run, called conflicting with the base branch. Running the command
   again names the files to resolve, and pushes the merge once you have resolved it.
