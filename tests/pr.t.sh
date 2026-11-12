@@ -185,6 +185,12 @@ test_pr_fetch_makes_refs_and_a_detached_worktree_and_leaves_the_checkout_alone()
   assert_contains "$OUT" "head: $head (the reviewed head)"
   assert_contains "$OUT" "merge base: $(git rev-parse main)"
   assert_contains "$OUT" "login: alice"
+  # The skill may be installed for the person, away from jig-review: the fetch
+  # names the method and the showing rule of the jig that ran it.
+  local fw
+  fw=$(cd -P "$JIG_HOME" && pwd -P)
+  assert_contains "$OUT" "method: $fw/skills/jig-review/SKILL.md"
+  assert_contains "$OUT" "show: $fw/skills/jig-task/references/show-the-document.md"
   local wt
   wt=$(cd -P .. && pwd -P)/clone.worktrees/.pr-7
   assert_contains "$OUT" "worktree: $wt"

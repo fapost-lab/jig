@@ -760,6 +760,32 @@ function Test-UninstallRemovesPathAndCheckout {
         '-Uninstall must remove the default install directory'
 }
 
+# Uninstall-JigGlobalSkill removes the marked copy install.sh made where links
+# cannot be made, and leaves a skill of the person's own where it is
+# (adr-20261112-the-pr-review-skill-is-installed-per-user).
+function Test-UninstallRemovesOnlyJigsOwnPrReviewSkill {
+    $profileDir = New-JigTempDir -Prefix 'globalskill'
+    $savedProfile = $env:USERPROFILE
+    $env:USERPROFILE = $profileDir
+    try {
+        $ours = Join-Path $profileDir '.claude\skills\jig-pr-review'
+        $theirs = Join-Path $profileDir '.agents\skills\jig-pr-review'
+        New-Item -ItemType Directory -Force -Path $ours, $theirs | Out-Null
+        Set-Content -LiteralPath (Join-Path $ours 'SKILL.md') -Value 'jig'
+        Set-Content -LiteralPath (Join-Path $ours '.jig-global') -Value 'version: 1.0.0'
+        Set-Content -LiteralPath (Join-Path $theirs 'SKILL.md') -Value 'mine'
+
+        Uninstall-JigGlobalSkill -InstallDir (Join-Path $profileDir '.local\share\jig')
+
+        Assert-JigTrue (-not (Test-Path -LiteralPath $ours)) 'the marked copy must be removed'
+        Assert-JigTrue (Test-Path -LiteralPath (Join-Path $theirs 'SKILL.md')) `
+            'a skill without the marker must be left in place'
+    }
+    finally {
+        $env:USERPROFILE = $savedProfile
+    }
+}
+
 function Test-MissingGitFails {
     # Stripping $env:Path alone does not reach the REQ-7 branch on
     # windows-latest: Find-JigGitCommand also falls back to
@@ -1077,6 +1103,7 @@ try {
     Invoke-JigTest 'UnreleasedInstallSkipsTheProjectUnderYes' { Test-UnreleasedInstallSkipsTheProjectUnderYes }
     Invoke-JigTest 'NoSessionHookLeavesSettingsOut' { Test-NoSessionHookLeavesSettingsOut }
     Invoke-JigTest 'UninstallRemovesPathAndCheckout' { Test-UninstallRemovesPathAndCheckout }
+    Invoke-JigTest 'UninstallRemovesOnlyJigsOwnPrReviewSkill' { Test-UninstallRemovesOnlyJigsOwnPrReviewSkill }
     Invoke-JigTest 'MissingGitFails' { Test-MissingGitFails }
 }
 finally {

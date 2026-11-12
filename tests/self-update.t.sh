@@ -753,3 +753,24 @@ test_self_update_rejects_arguments() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "unknown argument: --force"
 }
+
+# --- the per-user pr-review skill ---------------------------------------------
+# (adr-20261112-the-pr-review-skill-is-installed-per-user)
+
+test_self_update_places_the_pr_review_skill_and_leaves_a_foreign_one() {
+  skip_unless_symlinks
+  su_build_source "$HOME/work"
+  su_build_upstream "$HOME/work" "$HOME/upstream.git"
+  su_clone_global_detached "$HOME/upstream.git" v0.1.0
+  mkdir -p "$HOME/.claude" "$HOME/.agents/skills/jig-pr-review" "$HOME/.codex"
+  printf 'mine\n' > "$HOME/.agents/skills/jig-pr-review/SKILL.md"
+
+  run su_jig self-update
+  assert_eq 0 "$RC" "self-update should succeed: $OUT"
+  assert_contains "$OUT" "pr-review skill: linked $HOME/.claude/skills/jig-pr-review"
+  assert_contains "$OUT" "pr-review skill: left alone $HOME/.agents/skills/jig-pr-review (not installed by Jig)"
+  assert_symlink "$HOME/.claude/skills/jig-pr-review"
+  assert_file "$HOME/.claude/skills/jig-pr-review/SKILL.md"
+  assert_eq "mine" "$(cat "$HOME/.agents/skills/jig-pr-review/SKILL.md")"
+}
+
