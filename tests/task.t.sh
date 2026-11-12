@@ -11161,7 +11161,7 @@ test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq 15 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
+  assert_eq 16 "$(printf '%s\n' "$ACTIONS" | grep -o '{"id":' | wc -l | tr -d ' ')"
   assert_eq '{"schema":1,"revision":"R","generated_at":"T","data":{"tasks":[{"id":"bare","class":null,"status":"active","issue":null,"goal":null,"knowledge_consolidated":false,"paused":false,"pause_request":null,"created_at":"2026-10-01","updated_at":"2026-10-01","archived_at":null,"archived_reason":null,"archived_from":null,"absorbed_into":null,"absorbs":[],"absorbs_partly":[],"partly_in":[],"branch":null,"base_branch":"main","worktree":null,"gate":null,"autopilot":null,"pull_request":null,"housekeeping_flags":[]}],"hidden":0,"archived":0,"housekeeping":null}}' "$OUT"
 }
 
@@ -11468,7 +11468,7 @@ _tl_agree() {
   _tl_json --all
   assert_eq 0 "$RC" "$ERR"
   rows=$(_tl_action_rows)
-  assert_eq 15 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
+  assert_eq 16 "$(printf '%s\n' "$rows" | grep -c .)" "$OUT"
   saved=$(mktemp -d "${TMPDIR:-/tmp}/jig-tl-agree.XXXXXX")
   # The queue too: a pause request written by one command must not change
   # what the next is judged on.

@@ -6786,6 +6786,7 @@ EOF
   # without it the rule cannot be judged, and a ship that cannot judge refuses.
   if [ -n "$staging" ]; then
     local failed
+    jig_git_origin_account "task ship" read
     if ! failed=$(jig_fetch_fresh "$staging"); then
       jig_die "task ship: could not fetch $failed from origin; whether $branch carries $staging cannot be told without it.
 Nothing was committed. Fetch it (or create it on origin) and run again."

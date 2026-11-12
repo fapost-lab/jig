@@ -1693,7 +1693,9 @@ jig_fetch_branches() {
 # printing its name and returning 1: for a step that must act on origin's
 # branch as it is now, never on the refs this checkout last saw (a merge into
 # the staging branch, adr-20261111-a-task-lands-on-staging-through-its-pull-request).
-# No origin at all is a failure too.
+# No origin at all is a failure too. Through jig_git_origin, as the clone's
+# account: the caller names it first (jig_git_origin_account), in its own
+# shell, since this is called in `$()`.
 jig_fetch_fresh() {
   local name
   if ! git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
@@ -1702,8 +1704,7 @@ jig_fetch_fresh() {
   fi
   for name in "$@"; do
     [ -n "$name" ] || continue
-    if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
-         jig_net git -C "$JIG_PROJECT" fetch --quiet origin \
+    if ! jig_net jig_git_origin fetch --quiet origin \
          "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1; then
       printf '%s\n' "$name"
       return 1
