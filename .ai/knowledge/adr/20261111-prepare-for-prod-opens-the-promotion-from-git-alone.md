@@ -148,3 +148,43 @@ while a pull request into another branch than staging is open (adr-20261111-in-t
 So `behind-staging`, when a promotion is open, says to close it first, ship the fix to staging, and
 promote again after the test. The base-conflict refusal is told by exit 3 alone: promote has no
 `--json` yet, and `base-conflict` in schemas/json.md is reserved for it.
+
+## Amendment (2026-11-12): several tasks in one run ("Promote from CI")
+
+`jig task promote [--commit <sha>] <id> <id>…` promotes each task named, and
+`jig task promote --commit <sha> --all` every branch on origin that `git.branch_template` names a
+task's branch (the id read from the name, so a runner with no workspace has it) whose tip the tested
+commit contains and the base does not. `--all` needs `--commit` (`usage` without it): a build that
+merely ran green is no decision to send everything on staging to the base. `--all` with ids, and
+`--title` or `--body-file` with more than one task, are `usage` too; so is `--all` under a template
+with nothing before `{id}`, which, as for `jig_branch_is_jigs`, would take every branch whose name is
+a valid id — staging and the base included — for a task's.
+
+What would refuse every task — the flow, a shallow clone, a base or staging branch that cannot be
+fetched, a tested commit that names nothing or is not on staging — refuses the run once, before the
+first task. The tested commit is then resolved once and given to every task, so all are judged
+against the same commit even without `--commit`. Each task runs `_promote_one` unchanged, in a
+subshell of its own (`_promote_task`): a refusal anywhere on its path exits, as it does for one task,
+and ends that task alone; the subshell's explicit `exit` runs its own cleanup, the trial merge's
+worktree included. Each task is announced (`task promote: promoting <id>`), prints its own output,
+and ends in `task promote: <id>: promoted|refused|needs a person`; a summary line closes the run.
+
+The exit code summarises: 1 when any task was refused, else 3 when any needs a person, else 0 —
+every task open or in the base already, or `--all` found nothing to promote. A refusal outweighs a
+person needed: it means something is wrong, not only that someone must act, and either fails a
+pipeline. An interrupted task (130, 143) ends the run with its code. One task named alone keeps the
+one-task output and codes. A later step that acts on each task's pull request ("Merge the promotion
+by the flow") goes in that per-task step.
+
+A branch `--all` leaves out because some of its own commits are in the tested commit and some are
+not — tested, then fixed — is named (`task promote: skipped <id>: …`) and does not change the exit
+code: a pipeline must not turn red on every untested fix. A branch with nothing in the tested commit
+is not mentioned. "Not yet in the base" is ancestry alone, so a promotion merged by squash or rebase
+is taken again; teams using `--all` merge promotions with a merge commit (known issue, closed by a
+later task). `--all` must not run while an epic branch is on the staging branch: a runner has no
+workspace to tell an epic's tasks from the others, and the spec leaves epic-meets-staging open. A
+task reverted on staging still reads as tested (the spec's failure mode 7), and `--all` promotes it.
+
+Rejected: turning `_promote_refuse` into a `return` — the steps also exit through functions of
+common.sh and task.sh shared with `task ship` and `task land`; only a subshell isolates them all.
+Exit 3 outweighing 1 — a pipeline would read a run with a refused task as one waiting on a person.
