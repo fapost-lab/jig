@@ -62,7 +62,7 @@ Goal: staging stays explainable as tasks come and go, and a fully automated team
 Done when: `jig status` names tasks on staging nobody promoted for long and staging work no task
 branch owns.
 
-- [ ] `staging-drift-report` — Staging drift report — tasks on staging long unpromoted, staging commits that are not in
+- [x] `staging-drift-report` — Staging drift report — tasks on staging long unpromoted, staging commits that are not in
   the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
   the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it; after: Prepare a task for prod —
   it reports the pull requests that item opens)
@@ -70,7 +70,7 @@ branch owns.
   merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
   state — it is the only thing Jig does on the staging branch then). The key exists from Choose a flow;
   `external` works only from here, harmless in an epic released once.
-- [ ] `promote-from-ci` — Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
+- [x] `promote-from-ci` — Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
   names, or with `--all` every `task/*` branch contained in that commit and not yet in the base branch.
   (after: Prepare a task for prod — it runs that item's command once per task)
 
