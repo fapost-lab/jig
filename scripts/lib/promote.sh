@@ -179,7 +179,7 @@ _promote_tested_commit() {
 # _promote_refuse.
 _promote_one() {
   local id="$1" commit_arg="$2" title="$3" body_file="$4"
-  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level
+  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level=""
   _task_valid_id "$id" || _promote_refuse usage "invalid task id: $id"
 
   # 1. The flow.
