@@ -70,7 +70,7 @@ branch owns.
   merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
   state — it is the only thing Jig does on the staging branch then). The key exists from Choose a flow;
   `external` works only from here, harmless in an epic released once.
-- [ ] Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
+- [ ] `promote-from-ci` — Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
   names, or with `--all` every `task/*` branch contained in that commit and not yet in the base branch.
   (after: Prepare a task for prod — it runs that item's command once per task)
 
