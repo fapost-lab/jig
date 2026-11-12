@@ -47,8 +47,9 @@ inst_system_path() {
 inst_fixture_source_tree() {
   mkdir -p "$1"
   cp -R "$JIG_HOME/scripts" "$1/scripts"
-  mkdir -p "$1/skills" "$1/templates"
+  mkdir -p "$1/skills/jig-pr-review" "$1/templates"
   touch "$1/skills/.gitkeep" "$1/templates/.gitkeep"
+  printf 'pr review\n' > "$1/skills/jig-pr-review/SKILL.md"
 }
 
 # inst_set_version <source-tree-dir> <X.Y.Z>
@@ -1174,3 +1175,56 @@ test_install_block_is_byte_for_byte_out_status() {
   assert_eq 0 "$RC" "$OUT"
   assert_eq same "$OUT"
 }
+
+# --- the per-user pr-review skill ---------------------------------------------
+# (adr-20261112-the-pr-review-skill-is-installed-per-user)
+
+test_install_links_the_pr_review_skill_for_claude_code() {
+  skip_unless_symlinks
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  mkdir -p "$HOME/.claude"
+
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+  assert_contains "$OUT" "pr-review skill: linked $HOME/.claude/skills/jig-pr-review"
+  assert_symlink "$HOME/.claude/skills/jig-pr-review"
+  assert_eq "pr review" "$(cat "$HOME/.claude/skills/jig-pr-review/SKILL.md")"
+  assert_no_file "$HOME/.agents" "no Codex here, so no Codex directory"
+  # install.ps1 reads the closing line: it stays the last one.
+  assert_contains "$(printf '%s\n' "$OUT" | tail -n 1)" "jig installed:"
+}
+
+test_install_copies_the_pr_review_skill_where_links_cannot_be_made() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  mkdir -p "$HOME/.codex"
+  local lndir
+  lndir=$(stub_ln_copy_dir)
+  export PATH
+  PATH="$lndir:$(inst_system_path)"
+
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+  assert_contains "$OUT" "pr-review skill: copied $HOME/.agents/skills/jig-pr-review (0.1.0)"
+  assert_file_contains "$HOME/.agents/skills/jig-pr-review/.jig-global" "version: 0.1.0"
+  assert_no_file "$HOME/.claude"
+}
+
+test_install_without_a_runtime_places_no_skill() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" --no-path
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+  assert_not_contains "$OUT" "pr-review skill"
+  assert_no_file "$HOME/.claude"
+  assert_no_file "$HOME/.agents"
+}
+
+test_install_elsewhere_than_the_default_places_no_skill() {
+  inst_build_remote "$PWD/remote.git" v0.1.0
+  mkdir -p "$HOME/.claude"
+  run bash "$JIG_HOME/install.sh" --repository "$PWD/remote.git" \
+    --install-dir "$HOME/throwaway/jig" --bin-dir "$HOME/throwaway/bin" --no-path
+  assert_eq 0 "$RC" "install should succeed: $OUT"
+  assert_not_contains "$OUT" "pr-review skill"
+  assert_no_file "$HOME/.claude/skills/jig-pr-review"
+}
+

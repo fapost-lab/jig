@@ -153,3 +153,11 @@ decisions answer. It stands on a base per task (ADR-0039).
 > whose change raises the version into the default branch: that change is a release, and
 > `jig task ship` applies `release.merge`, the unattended condition and the `major` draft exactly as
 > the final pull request does (adr-20261026-a-task-that-raises-the-version-is-a-release).
+
+> **Amendment (2026-11-12).** An epic's final pull request no longer raises the version unless its
+> roadmap has a `Release:` line, which only a release epic declared by `jig-release` carries. A
+> feature epic merges finished into `main` without a version change — `jig spec ship` refuses one
+> that raises it — and the release is made apart, by a notes pull request from the fresh `main`. The
+> Context's reason against merging into `main` without a raise was half a feature there; an epic
+> merges whole. The `epic-pr` job no longer requires an unreleased version
+> (adr-20261112-release-notes-name-the-commit-they-describe).

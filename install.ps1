@@ -1409,6 +1409,8 @@ function Uninstall-JigFramework {
         }
     }
 
+    Uninstall-JigGlobalSkill -InstallDir $installDir
+
     if (-not (Test-Path -LiteralPath $installDir)) {
         Write-JigResult "nothing installed at $installDir"
         return
@@ -1434,6 +1436,48 @@ function Uninstall-JigFramework {
     }
     Remove-Item -Recurse -Force -LiteralPath $installDir
     Write-JigResult "removed: $installDir"
+}
+
+# Uninstall-JigGlobalSkill -- remove the per-user jig-pr-review that install.sh
+# placed (scripts/lib/globalskill.sh;
+# adr-20261112-the-pr-review-skill-is-installed-per-user): a copy carrying
+# Jig's .jig-global marker, or a link into this checkout's own skill. Anything
+# else at those paths is the person's and is left where it is.
+function Uninstall-JigGlobalSkill {
+    param([Parameter(Mandatory)][string]$InstallDir)
+
+    $expected = [System.IO.Path]::GetFullPath((Join-Path $InstallDir 'skills\jig-pr-review'))
+    $paths = @(
+        (Join-Path $env:USERPROFILE '.claude\skills\jig-pr-review'),
+        (Join-Path $env:USERPROFILE '.agents\skills\jig-pr-review')
+    )
+    foreach ($path in $paths) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if (-not $item) { continue }
+        $ours = $false
+        if ($item.LinkType) {
+            $target = $item.Target
+            if ($target -is [System.Array]) { $target = $target[0] }
+            if ($target) {
+                if (-not [System.IO.Path]::IsPathRooted($target)) {
+                    $target = Join-Path (Split-Path -Parent $path) $target
+                }
+                $ours = ([System.IO.Path]::GetFullPath($target).TrimEnd('\', '/') -ieq $expected.TrimEnd('\', '/'))
+            }
+            if ($ours) {
+                # A link is removed as a link: -Recurse would follow it.
+                $item.Delete()
+                Write-JigResult "removed: $path"
+                continue
+            }
+        }
+        elseif ($item.PSIsContainer -and (Test-Path -LiteralPath (Join-Path $path '.jig-global'))) {
+            Remove-Item -Recurse -Force -LiteralPath $path
+            Write-JigResult "removed: $path"
+            continue
+        }
+        Write-JigResult -Level warn "left in place (not installed by Jig): $path"
+    }
 }
 
 # --- the whole run -------------------------------------------------------------

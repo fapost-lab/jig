@@ -72,7 +72,14 @@ written at the end of a stage, not at its entry.
   `jig task resume <id>` ends the pause, and a new session continues the run at the stage it did
   not enter. The skill ends the session on exit 4 and records no stop.
 - **`jig task pause <id>` honours a pending request too**, taking it out the same way before it
-  sets the fields.
+  sets the fields. (Amended 2026-11-12, task `pause-not-started-directly`.) It is a write checked against a
+  revision, as `jig task resume` is: `--revision <n>` and `--json`, refusals as codes
+  (`already-paused`, `stale-revision`, `not-found`, `wrong-checkout`), the state built whole before
+  the claim and moved into place after it; the request is taken out after the claim and before the
+  stash. It is what a board calls for a task nobody started, whose `request-pause` the actions table
+  withholds: no stage of such a task would take the request. Pausing a task that was never begun is
+  the person's call from the board; the `jig-task` skill's "pause means set aside, not not-begun" is
+  advice to the agent filing work, not a rule the command enforces.
 - **`jig context resolve --task <id> --stage <stage>` honours it for any agent** (amended
   2026-10-21). A named task resolving the context of a named stage is entering that stage, so a
   pending request is honoured there, before any context is printed. The pause is `task`'s to write,

@@ -16,7 +16,7 @@ column is the way; the right-hand one is what it replaces.
 
 | When you need to | Use | Instead of |
 |---|---|---|
-| Take on work someone described | the `jig-task` skill | starting to edit code straight away |
+| Take on work someone described, or the next task | the `jig-task` skill; for the next task, `jig queue next` | starting to edit code straight away, or picking from the list yourself |
 | Decide how much process the work needs | the risk test in the `jig-task` skill | reading a class off one word in the route table |
 | File the work as a unit | `jig task new <id>`, then `jig queue set <id> --priority <0-5>` | the runtime's own background tasks (`spawn_task` in Claude Code): they open another session, not a task with a route, a workspace and consolidation |
 | Get a branch for the task, or a tree of its own | `jig task start <id>`, or `jig task start <id> --worktree` | `git checkout -b`, `git worktree add` |
@@ -63,8 +63,10 @@ epic branch (`jig spec epic`): its tasks are cut from the epic and their pull re
 into it.
 
 `jig-release` plans a release with a person: which filed tasks go in, in what order and at what
-version level. A release is a spec with an epic, so the same commands build it; `jig spec link`
-links a task filed earlier, and a started task stays out of the epic.
+version level. The release is its notes task, the last pull request, cut from the freshest default
+branch: it records the commit its notes describe (`jig task set <id> notes_through <sha>`), and
+`jig task ship` refuses the release while the default branch has moved past it. A release epic is
+built only when tasks must ship together; feature work never raises the version.
 
 `jig-autopilot` runs one task's route without waiting between stages and stops only where a
 human is needed; the route, the gates and `agent.git` stay what they are.
@@ -159,7 +161,11 @@ new class requires.
   `docs/known-issues.mdx` and `docs/roadmap.mdx` against the release — fixed entries out, narrowed
   ones rewritten, faults the release introduced or uncovered in, what was done and what comes next
   updated — and walks the other pages under `docs/` for anything the release made untrue or left
-  out.
+  out. That pull request is the release's notes task (`jig-release`), cut from the freshest `main`:
+  feature work, an epic's final pull request included, never raises `JIG_VERSION`. Its notes cover
+  everything since the last tag and record the commit of `main` they describe
+  (`jig task set <id> notes_through <sha>`); `jig task ship` and CI's `changelog` job refuse it
+  while `main` has commits after that one.
 - Task-specific notes live in `.ai/workspace/tasks/<id>/` (gitignored), never in the repo.
 - Before finishing a task, ask: what here should survive the task? Update
   `.ai/knowledge/` accordingly, or state `NO_DURABLE_KNOWLEDGE` — and record the decision

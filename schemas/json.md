@@ -44,10 +44,11 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
-| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task pause … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
 | `not-paused` | `jig task resume` was asked for a task that is neither paused nor parked at the staging branch: somebody resumed it first. Nothing was written |
-| `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
+| `already-paused` | `jig task pause` was asked for a task that is paused already: somebody paused it first. Nothing was written |
+| `wrong-checkout` | `jig task resume` has a stash to apply, or `jig task pause --stash` has one to make, and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `not-closable` | `jig task set <id> status consolidated` was asked for a task Jig does not offer to close: its knowledge decision is not recorded, or its pull request is not merged (the forge says so, or cannot be asked). `message` is the reason word for word, the one the task's `close` action carries. Nothing was written |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` with a `--new` id another task holds. Another id is the remedy. Nothing was written |
@@ -185,7 +186,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `start` | `jig task start <id>` | the task has not been started |
 | `pause` | `jig task pause <id>` | it is not paused |
 | `resume` | `jig task resume <id>` | it is paused, or parked at the staging branch (`parked` is not `null`) |
-| `request-pause` | `jig queue request task:<id> pause` | it is not paused and no pause of it is requested |
+| `request-pause` | `jig queue request task:<id> pause` | it is not paused, no pause of it is requested, and it has been started: a task nobody started enters no stage, so no stage would take the request, and the reason sends the person to `pause` (the command still takes it) |
 | `cancel-pause-request` | `jig queue cancel task:<id> pause` | a pause of it is requested |
 | `approve-gate` | `jig task gate <id> approved` | a T3/T4 design waits at its gate (`waiting` or `changed`), and the gate is a person's: not in a clone or a run where nobody answers (`autopilot.unattended`) |
 | `answer-stop` | `jig task autopilot <id> resume --answer <text>`, with ` --by human` for an unattended run | its autopilot run is `stopped`, and an unattended one has repairs left |
@@ -336,13 +337,21 @@ already, whichever id was given; `not-linkable` for a task `file` cannot link: f
 started, linked to another spec, or an item already checked, or a checkout that does not keep the clone's task workspaces for `--new`; `epic-missing` for an open epic neither
 here nor on origin; and the refusals of every write, below.
 
-## `jig knowledge accept|reject|reviewed` writes
+## `jig knowledge decide|accept|reject|reviewed` writes
 
 With `--json` or `--revision <n>`, a decision is committed on `knowledge/decisions`, in Jig's own tree
 (adr-20261104-a-write-goes-in-jigs-own-tree). Without either, the text form changes the working tree,
 as it always did. With `--json` alone the write checks against the revision it reads once its tree
 stands, before it reads the knowledge there, as the spec item writes do. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
 all.
+
+`jig knowledge decide [--accept <id>]... [--reject <id>]... [--reviewed <id>]... [--date <d>] [--revision <n>] [--json]`
+decides several documents several ways in one write — one fetch, one claim, one commit, one push — so a
+page can send what a person decided at the revision they read. It is always a write in the tree; it has no
+working-tree form. `decisions` lists them in the order of the flags. An id given twice, no decision at all,
+or `--date` with no `--reviewed` is `usage`; any other refusal refuses the whole call, as above. A call of one
+kind commits under that kind's subject (`Accept knowledge: …`); one of several kinds under
+`Decide knowledge: <n> decisions`, a line per kind in the body.
 
 ```json
 {"decisions": [{"id": "feature-alpha", "decision": "accepted", "path": ".ai/knowledge/features/alpha.md"}], "write": <write>}
@@ -389,6 +398,41 @@ base, or it was merged, or `jig writes ship` found it over. Like every read it a
 the next fetch. Refusals of every write: `git-not-allowed` at `agent.git: none`; `stale-revision`;
 `write-busy`; `branch-checked-out`; `branch-diverged`; `branch-has-other-commits`; `base-not-on-origin`; `write-still-waits`; `tree-in-the-way`; `commit-refused`. `jig writes ship` adds `not-found`, also when the record's pull request was closed unmerged or merged with the tip, or origin deleted a branch it held: it sends nothing, the record says so, so that the list stops counting the write, and the next edit takes a new name. What origin holds is what it answers it has, never a tracking ref of a branch it deleted.
 
+## `jig refresh --json`
+
+`jig refresh` brings this clone up to origin, the one command a program runs to make what it
+shows current (adr-20261112-refresh-brings-the-clone-up-to-origin): it fetches origin, as the
+clone's own account and without a prompt, then fast-forwards the base branch (`git.base_branch`)
+to `origin/<base>`. It never moves the person's checkout, never stashes, resets or forces, and never
+touches their changes. A base that cannot move is an answer, not a failure: `outcome` says why and
+the command exits 0. After a fetch that reached origin it also closes the writes in Jig's own tree
+that are over, as `jig writes ship` would find them: their pull request merged (by squash too, with
+the base changed again since), was closed unmerged, or origin dropped their branch. It raises the
+revision only when it closes one.
+
+```json
+{"fetch": {"outcome": "done", "message": null, "fetched_at": "2026-11-12T15:24:39Z"},
+ "base": {"name": "main", "outcome": "fast-forwarded", "from": "<sha>", "to": "<sha>", "checked_out_in": null, "message": null},
+ "writes": [{"target": "knowledge", "branch": "knowledge/decisions", "reason": "merged"}]}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `fetch.outcome` | string | `done`; `failed` (origin did not answer, or git refused: the base step then works on what the last fetch left); `skipped` (the clone has no `origin`) |
+| `fetch.message` | string or null | why it failed or was skipped, git's own last lines for a failure; `null` when `done` |
+| `fetch.fetched_at` | string or null | as `origin.fetched_at` in [`jig status --json`](#jig-status---json), read after the fetch |
+| `base.name` | string | `git.base_branch` |
+| `base.outcome` | string | `fast-forwarded`; `up-to-date`; `blocked-by-changes` (the base is checked out here and git refused the fast-forward, since it would overwrite changes in the checkout — staged, unstaged, or an untracked file it would create; changes it does not touch do not stop it); `checked-out-elsewhere` (the base is checked out, rebased or bisected in another worktree, named in `checked_out_in` when known; run it there — or git could not list the worktrees); `diverged` (the base here has commits `origin/<base>` does not, or it moved while being fast-forwarded); `missing` (no `origin/<base>`, or no base branch here) |
+| `base.from`, `base.to` | string or null | the base's commit before and after; equal unless `fast-forwarded`. `from` is what takes it back |
+| `base.checked_out_in` | string or null | the worktree the base is checked out in, for `checked-out-elsewhere` |
+| `base.message` | string or null | for a person, why the base did not move (for `blocked-by-changes`, git's message, which names the files); `null` otherwise |
+| `writes` | array | the writes this run closed, each `{"target", "branch", "reason"}`: `target` as `jig writes` names it, `branch` the write's branch, `reason` `merged`, `landed` (the base holds its work), `closed` (its pull request closed unmerged) or `dropped` (origin deleted the branch it held). Empty when none was over, when the fetch did not reach origin, or when another write held the lock: one that still waits is `jig writes`'s to show |
+
+Where the base is checked out here, it moves by `git merge --ff-only` (`merge.autoStash` off);
+where it is checked out nowhere — the person is on another branch — by `git branch -f`, so their
+checkout's branch and files stay as they are. Refusals: `usage` for any argument but `--json`;
+`not-initialised` and `not-a-repository` as everywhere.
+
 ## `jig status --json`
 
 What needs a person in this clone, as data: the items the status page shows under "Needs you", in
@@ -403,7 +447,8 @@ by the jig that was asked. An uninitialised project is a refusal.
 {
   "attention": [ <item>, ... ],
   "housekeeping": {"ran_at": "2026-10-15T09:00:00Z", "forge": "github", "stale": false},
-  "knowledge_counts_at": "2026-10-15T08:00:00Z"
+  "knowledge_counts_at": "2026-10-15T08:00:00Z",
+  "origin": {"base": "main", "fetched_at": "2026-10-15T08:55:00Z", "behind": 0, "ahead": 0}
 }
 ```
 
@@ -411,6 +456,7 @@ by the jig that was asked. An uninitialised project is a refusal.
 |---|---|
 | `attention` | the items, most urgent first; `[]` when nothing needs the reader |
 | `housekeeping` | the last `jig housekeeping` run the pull request and flag items come from: `ran_at` (UTC), `forge` (as in `jig task list --json`) and `stale` — `true` when the forge did not answer or the run is older than `housekeeping.cadence`, so a pull request waiting for the reader may be missing. `null` when housekeeping never ran in this checkout |
+| `origin` | how this clone stands against origin, as of the last fetch, read offline: `base` (`git.base_branch`); `fetched_at`, when the clone last fetched (UTC) — the newest of every worktree's non-empty `FETCH_HEAD`, Jig's own trees included, so a fetch from any of them counts, of any branch: it says when the clone last reached out, not that `origin/<base>` came back with it; a fetch that failed empties its file and is passed over, which also loses the fetch before it there; `null` when none shows; `behind` and `ahead`, the commits `origin/<base>` has that the base here does not and the other way, `null` each when either branch is missing. `jig refresh` brings it up |
 | `knowledge_counts_at` | when the knowledge counts behind `knowledge-proposed` and `sources-changed` were taken (UTC): the counts the last full `jig status` saved for the page, read as they are; when there are none, the two knowledge counts are taken now and saved nowhere |
 
 An item:
@@ -451,6 +497,7 @@ The kinds, in the order they are listed:
 | `wrong-base` | task | the work landed on another branch than planned |
 | `closed-unmerged` | task | the pull request was closed without merging (housekeeping's `abandoned?`) |
 | `worktree-kept` | task | a worktree was kept because it still holds work |
+| `base-behind-origin` | project | the base branch here is behind `origin/<base>` (`origin.behind` > 0), as of the last fetch: what landed there — a merged task, a knowledge decision — is not in this checkout yet; `todo` is `jig refresh` |
 | `knowledge-proposed` | project | knowledge documents wait for a decision |
 | `sources-changed` | project | adopted source files changed since they were approved |
 
@@ -637,6 +684,38 @@ stands beside `--from`; `not-initialised` and `not-a-repository` as everywhere. 
 a worktree that keeps a task directory of its own, a `--from` file that cannot be read — reads
 `failed`. Nothing is written on a refusal.
 
+## `jig task pause --json`
+
+`jig task pause <id> [--reason <text>] [--stash] [--revision <n>] --json` pauses a task at once and
+answers with the task. It is what a board calls for a task whose `request-pause` action is withheld
+because nobody started it: a request would wait for a stage that never begins. The write is checked
+against a revision as `jig task resume`'s is: with `--revision <n>`, the `revision` of the read the
+caller decided on; without it, the revision the command reads as it starts. When anything was
+written in the clone since, the pause is refused with `stale-revision` and changes nothing. A landed
+pause raises the revision by two (the claim and the write), and by two more when it took a pending
+pause request out of the queue with it (`jig queue cancel`). `--json` may stand anywhere among the
+arguments; without it the command prints its report, as it always has.
+`jig task pause <id> --if-requested --stage <name>`, the stage's form, takes neither.
+
+```json
+{"task": <task>, "pause": {"stash": null, "request": {"requested_at": "2026-11-12T09:30:00Z", "reason": "standup"}}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it, read after the write: `paused` is `true`, `pause_request` is `null` |
+| `pause.stash` | string or null | the stash `--stash` made of this checkout's changes; `null` without `--stash`, or when there was nothing to stash |
+| `pause.request` | object or null | the pause request that was pending and went with the pause, `{"requested_at", "reason"}` as `pause_request` carried it; `null` when none was pending |
+
+Refusals: `usage` for an argument the command does not take, a `--revision` without a value or that
+is not a revision, a `--reason` with a line break, `--if-requested` beside `--json` or `--revision`,
+and an id outside the grammar; `not-found` for no such task; `already-paused`, `wrong-checkout` and
+`stale-revision` as in the table above; `not-initialised` and `not-a-repository` as everywhere. Each
+of them happens before anything is written. A failure after the claim reads `failed` and leaves the task not
+paused: a pending request that could not be taken out of the queue stays, and the revision is raised
+by one; a `git stash push` that fails comes after the request went, and puts it back in the queue
+with its reason and the time it went back (a warning says when it could not).
+
 ## `jig task resume --json`
 
 `jig task resume <id> [--revision <n>] --json` ends a task's pause, or takes a task parked at the
@@ -796,12 +875,12 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `proposals[].source` | string or null | for a stub, the file it links, relative to the repository; `null` for any other document |
 | `proposals[].waiting` | object or null | a decision on this document committed in Jig's own tree that has not landed: `decision` (`accepted`, `rejected`), `branch` and `pr` (string or null). The document here still says `proposed`, and it is until that lands. `null` when none waits |
 | `proposals[].decidable` | boolean | a decision sent now (`accept` or `reject` with `--json`) would be judged on this document: its file is on the tip of the decisions waiting, or, when none waits, on the base as `origin/<base>` has it (the local base without origin), as of the last fetch. The write asks the same question of the commit its tree stands on. Whether it was decided already is `waiting`'s to say, and an id that differs there is still `not-found` |
-| `proposals[].reason` | string or null | `null` when `decidable`; otherwise the code the decision would be refused with: `not-on-base` (only in this checkout or in commits the base does not have: commit and push it) or `not-on-branch` (on the base, but not on the decisions waiting, cut before it got there) |
+| `proposals[].reason` | string or null | `null` when `decidable`; otherwise the code the decision would be refused with: `not-on-base` (only in this checkout or in commits the base does not have: commit and push it), `not-on-branch` (on the base, but not on the decisions waiting, cut before it got there), or `landed` (`origin/<base>` decided it already — the proposal is no longer `proposed` there — and this checkout is only behind: no decision is owed, `jig refresh` brings it here; a decision sent anyway is refused by the checks the write makes where it is judged) |
 | `proposals[].lossy` | boolean | `true` when a string of this proposal held bytes that are not UTF-8 and they were dropped: a `path` or `source` read without them may name another file. `false` otherwise |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
 
 ```json
-{"sources": [<source>, ...], "counts": {"linked": 2, "changed": 1, "unrecorded": 0, "missing": 0}, "waiting": <write or null>}
+{"sources": [<source>, ...], "counts": {"linked": 2, "changed": 1, "unrecorded": 0, "missing": 0, "landed": 0}, "waiting": <write or null>}
 ```
 
 | Field | Type | Value |
@@ -814,10 +893,10 @@ The knowledge waiting for a person, and the files its stubs link. Both read the 
 | `sources[].source` | string | the linked file, relative to the repository |
 | `sources[].bytes` | integer or null | the linked file's size in bytes; `null` when it is `missing` or not a file |
 | `sources[].waiting` | object or null | a decision on this stub waiting on a branch, as on a proposal; `decision` is also `reviewed` here, and `rejected` for a dropped link. `state` stays what it is here until that lands. `null` when none waits |
-| `sources[].decidable`, `.reason` | boolean, string or null | as on a proposal. For a `changed` or `missing` source the change is judged too: the stub has to be there with its source there not the approved text, or a `reject` there would find nothing to drop |
+| `sources[].decidable`, `.reason` | boolean, string or null | as on a proposal. For a `changed` or `missing` source the change is judged too: the stub has to be there with its source there not the approved text, or a `reject` there would find nothing to drop. `landed` when `origin/<base>` has the stub rejected (its link dropped), or approved at the text its source has there and here. Never for a document this checkout changed since it forked from the base |
 | `sources[].lossy` | boolean | as on a proposal: `true` when a string of this record lost bytes that are not UTF-8, so its `path` or `source` may name another file |
 | `waiting` | object or null | the [write](#jig-writes---json) those decisions are on; `null` when none waits |
-| `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints; what `jig status` counts as changed is `changed` plus `unrecorded` |
+| `counts` | object | `linked` (the length of `sources`), `changed`, `unrecorded` and `missing`: the figures the text form's last line prints, the states in this checkout; `landed`, how many of the `changed` and `unrecorded` ones have `reason` `landed`. What `jig status` counts as changed is `changed` plus `unrecorded`, less the `landed` ones |
 
 `jig knowledge sources --diff <id> --json` answers for one stub:
 

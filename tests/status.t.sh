@@ -3504,7 +3504,7 @@ test_status_json_says_when_nothing_needs_you() {
   printf 'at: 2026-10-15T08:00:00Z\nproposals: 0\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
   _st_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[],"housekeeping":null,"knowledge_counts_at":"2026-10-15T08:00:00Z"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[],"housekeeping":null,"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
 }
 
 # Every field of an item, and of the data around it, pinned whole.
@@ -3522,7 +3522,96 @@ test_status_json_pins_an_item_with_every_field() {
   } > .ai/runtime/housekeeping.log
   _st_json
   assert_eq 0 "$RC" "$ERR"
-  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Review it and merge it; jig merges one itself only at agent.git: merge, on green CI.","url":"https://example.com/o/r/pull/7"},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z"}}' "$OUT"
+  assert_eq '{"schema":1,"revision":R,"generated_at":"T","data":{"attention":[{"kind":"pull-request-waiting","subject":{"type":"task","id":"shipped"},"tasks":["shipped"],"title":"A pull request is waiting for review or merge","detail":"opened by jig task ship","todo":"Review it and merge it; jig merges one itself only at agent.git: merge, on green CI.","url":"https://example.com/o/r/pull/7"},{"kind":"pull-request-of-abandoned-task","subject":{"type":"task","id":"given-up"},"tasks":["given-up"],"title":"A pull request was open for a task you abandoned","detail":"open as of housekeeping at 2026-10-01 09:30 UTC","todo":"It may have been closed or merged since: jig last asked the forge then. Run jig housekeeping to refresh, then close on the forge what is still open, or reopen the task. Nothing here will merge it.","url":null},{"kind":"knowledge-proposed","subject":{"type":"project","id":null},"tasks":[],"title":"Knowledge is waiting for your decision","detail":"2 document(s) proposed","todo":"Ask the agent: what'"'"'s proposed? (jig-accept)","url":null}],"housekeeping":{"ran_at":"2026-10-01T09:30:00Z","forge":"github","stale":true},"knowledge_counts_at":"2026-10-15T08:00:00Z","origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}' "$OUT"
+}
+
+# _st_origin_repo — an installed project with a bare `origin.git` holding main, fetched, and
+# a second clone `other/` to move origin from. Both are excluded from git's view.
+_st_origin_repo() {
+  fixture_jig_repo
+  printf 'origin.git/\nother/\n' >> .git/info/exclude
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  git clone -q origin.git other
+  PATH=$(_status_path_without_jig)
+  mkdir -p .ai/runtime
+  printf 'at: 2026-10-15T08:00:00Z\nproposals: 0\nsources_changed: 0\npending: 0\n' > .ai/runtime/status-counts
+}
+
+# _st_origin_advance — origin's main gains a commit.
+_st_origin_advance() {
+  (
+    cd other || exit 1
+    printf 'more\n' > more.txt
+    git add more.txt
+    git -c user.name=t -c user.email=t@t commit -q -m "origin moves"
+    git push -q origin HEAD:main
+  )
+}
+
+test_status_json_origin_in_step_says_so_and_raises_no_item() {
+  _st_origin_repo
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"origin":{"base":"main","fetched_at":"'
+  assert_contains "$OUT" '"behind":0,"ahead":0}}}'
+  assert_not_contains "$OUT" 'base-behind-origin'
+}
+
+test_status_json_origin_behind_raises_an_item_that_names_the_command() {
+  _st_origin_repo
+  _st_origin_advance
+  git fetch -q origin
+  _st_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"behind":1,"ahead":0}}}'
+  assert_contains "$OUT" '{"kind":"base-behind-origin","subject":{"type":"project","id":null},"tasks":[],"title":"This checkout is behind origin","detail":"main is 1 commit(s) behind origin/main, as of the fetch at '
+  assert_contains "$OUT" '"todo":"jig refresh","url":null}'
+  # What the command does clears it.
+  run jig refresh
+  assert_eq 0 "$RC"
+  _st_json
+  assert_not_contains "$OUT" 'base-behind-origin'
+  assert_contains "$OUT" '"behind":0,"ahead":0}}}'
+}
+
+test_status_json_origin_is_as_of_the_last_fetch_and_reads_offline() {
+  _st_origin_repo
+  _st_origin_advance
+  # Not fetched: origin moved, the clone does not know.
+  _st_json
+  assert_not_contains "$OUT" 'base-behind-origin'
+  assert_contains "$OUT" '"behind":0,"ahead":0}}}'
+}
+
+test_status_json_origin_counts_what_the_base_has_that_origin_lacks() {
+  _st_origin_repo
+  printf 'l\n' > l.txt
+  git add l.txt
+  git commit -q -m local
+  _st_json
+  assert_contains "$OUT" '"behind":0,"ahead":1}}}'
+  assert_not_contains "$OUT" 'base-behind-origin'
+}
+
+test_status_json_origin_without_an_origin_has_no_counts() {
+  fixture_jig_repo
+  PATH=$(_status_path_without_jig)
+  _st_json
+  assert_contains "$OUT" '"origin":{"base":"main","fetched_at":null,"behind":null,"ahead":null}}}'
+  assert_not_contains "$OUT" 'base-behind-origin'
+}
+
+test_status_json_origin_fetched_at_ignores_an_empty_fetch_head() {
+  _st_origin_repo
+  : > .git/FETCH_HEAD
+  _st_json
+  assert_contains "$OUT" '"origin":{"base":"main","fetched_at":null,'
+  printf 'abc\t\tbranch main of origin\n' > .git/FETCH_HEAD
+  touch -t 202601020304.05 .git/FETCH_HEAD
+  _st_json
+  assert_contains "$OUT" '"origin":{"base":"main","fetched_at":"2026-'
 }
 
 # _st_json_cards <envelope> — each item of `jig status --json` drawn as the
@@ -4504,4 +4593,35 @@ test_status_in_a_worktree_counts_the_main_checkouts_drafts() {
   run jig status
   assert_eq 0 "$RC"
   assert_contains "$OUT" "drafts: 1 (jig spec draft list)"
+}
+
+# --- the per-user pr-review skill ---------------------------------------------
+# (adr-20261112-the-pr-review-skill-is-installed-per-user)
+
+test_status_names_a_personal_pr_review_skill_that_shadows_the_projects() {
+  skip_unless_symlinks
+  fixture_jig_repo
+  # The project lives in $HOME here; the person's own skills get a home of
+  # their own, so the two .claude directories are not one.
+  local stub_root stub_bin path_dir me="$JIG_TEST_TMP.me"
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"')
+  mkdir -p .claude/skills/jig-pr-review "$stub_root/skills/jig-pr-review" "$me/.claude/skills"
+  printf 'project\n' > .claude/skills/jig-pr-review/SKILL.md
+  printf 'released\n' > "$stub_root/skills/jig-pr-review/SKILL.md"
+  ln -s "$stub_root/skills/jig-pr-review" "$me/.claude/skills/jig-pr-review"
+
+  run env HOME="$me" PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr-review skill: personal 9.0.0 shadows this project's ($me/.claude/skills/jig-pr-review)"
+
+  # The same skill on both sides says nothing.
+  rm -rf .claude/skills/jig-pr-review
+  cp -R "$stub_root/skills/jig-pr-review" .claude/skills/jig-pr-review
+  run env HOME="$me" PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "pr-review skill"
+
+  rm -rf "$stub_root" "$stub_bin" "$me"
 }

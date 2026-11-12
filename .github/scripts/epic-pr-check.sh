@@ -5,27 +5,31 @@
 # commit, in the root of the checkout.
 #
 # An epic branch (epic/<id>) collects a multi-phase feature and reaches
-# `main` once, in one pull request that also raises JIG_VERSION. Two ways
-# that final merge can go wrong without any other signal (spec.md,
-# "Decisions", failure modes 6 and 7):
+# `main` once, in one pull request. That pull request does not raise
+# JIG_VERSION: a release is made apart from the features, by a short notes
+# pull request from fresh main (jig-release; `jig spec ship` enforces it for
+# a feature epic, and a release epic is the exception it knows). So this
+# script no longer asks whether the version is new. One way the final merge
+# can still go wrong without any other signal (spec.md, "Decisions", failure
+# mode 7):
 #
-#   - the epic's JIG_VERSION was already released from `main` while the epic
-#     was in flight (a patch release, or another epic finishing first). The
-#     release job then finds its tag already there and exits 0, so this
-#     merge would land a feature and tag nothing;
 #   - the epic is merged before `jig spec epic <id> --finish` removes its
 #     spec, so `main` gains the feature's code while a spec still declares the
 #     epic open, with no task left to close it.
 #
-# This script fails the pull request in either case, before it can be merged:
+# This script fails the pull request in that case, before it can be merged:
 #
 #   - the head ref is missing or is neither epic/<id> nor finish/<id> → fail;
-#   - JIG_VERSION already has a release tag on origin    → fail;
+#   - JIG_VERSION is not major.minor.patch               → fail;
 #   - a roadmap still declares the epic in an Epic: line → fail;
 #   - otherwise                                          → exit 0.
 #
+# The version-format check stays: it is cheap and a malformed version breaks
+# the release job later, far from its cause. Whether the version is released
+# is deliberately not asked.
+#
 # It never creates or pushes anything; release-tag.sh remains the only
-# script that tags a release, on the push to `main` that follows this merge.
+# script that tags a release.
 #
 # Usage: .github/scripts/epic-pr-check.sh <head-ref>
 set -eu
@@ -41,7 +45,7 @@ LIB_DIR="$(cd "$SCRIPT_DIR/../../scripts/lib" && pwd)"
 . "$SCRIPT_DIR/release-lib.sh"
 
 main() {
-  local head_ref="" epic_ref repo version remote_tags existing roadmap line norm found=0 epic_id
+  local head_ref="" epic_ref repo version roadmap line norm found=0 epic_id
 
   if [ $# -eq 1 ] && [ -n "$1" ]; then
     head_ref="$1"
@@ -66,15 +70,6 @@ main() {
     || _epic_die "cannot read a single JIG_VERSION=\"...\" line from scripts/lib/version.sh"
   jig_release_version "v$version" >/dev/null \
     || _epic_die "JIG_VERSION $version is not major.minor.patch"
-
-  # Tags come from the remote, not the checkout: actions/checkout fetches one
-  # commit and no tags, and the remote is where a release has to exist.
-  remote_tags=$(git -C "$repo" ls-remote --tags origin 2>/dev/null) \
-    || _epic_die "cannot list the tags of origin"
-
-  if existing=$(release_existing_tag "$version" "$remote_tags"); then
-    _epic_die "JIG_VERSION $version is already released as $existing; raise the version on $head_ref before merging"
-  fi
 
   # `jig spec epic <id> --finish` removes the epic's spec on the epic itself,
   # and this very pull request carries the removal to `main` (ADR-0040 as
@@ -101,7 +96,7 @@ main() {
     fi
   done
 
-  printf 'epic-pr-check: %s is finished and v%s is a new version\n' "$head_ref" "$version"
+  printf 'epic-pr-check: %s is finished\n' "$head_ref"
 }
 
 main "$@"

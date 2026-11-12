@@ -2109,3 +2109,148 @@ test_writes_refuse_a_persons_commit_whatever_number_of_branches_origin_has() {
   assert_eq "" "$(git --git-dir=origin.git rev-parse --verify --quiet refs/heads/spec/idea-x)"
 }
 
+# --- jig refresh closes what is over ----------------------------------------------
+
+# _w_squash_then_moved — the write's pull request merged by squash, and the base changed
+# the same file again after it: by ancestry and by content it still reads as waiting.
+_w_squash_then_moved() {
+  _w_on_origin_main squash spec/idea-x
+  git -C "$PWD.other" switch -q --detach origin/main
+  printf 'later\n' >> "$PWD.other/.ai/specs/idea-x/roadmap.md"
+  git -C "$PWD.other" add -A .ai/specs/idea-x
+  git -C "$PWD.other" commit -q -m "later"
+  git -C "$PWD.other" push -q origin HEAD:refs/heads/main
+  rm stub-gh/url
+}
+
+test_refresh_closes_a_write_a_squash_merged_and_the_base_moved_past() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squash_then_moved
+  printf 'MERGED\n' > stub-gh/state
+  assert_contains "$(jig writes)" "spec:idea-x"
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"writes":[{"target":"spec:idea-x","branch":"spec/idea-x","reason":"merged"}]'
+  assert_file_contains .ai/runtime/writes/spec-idea-x "merged: 1"
+  run jig writes --json
+  assert_contains "$OUT" '"writes":[]'
+  # Closed once: the next refresh has nothing to close.
+  run jig refresh
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "writes:"
+}
+
+test_refresh_says_in_words_which_write_it_closed() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squash_then_moved
+  printf 'MERGED\n' > stub-gh/state
+  run jig refresh
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "writes: closed spec:idea-x on spec/idea-x (merged)"
+}
+
+test_refresh_leaves_a_write_whose_pull_request_is_still_open() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  printf 'OPEN\n' > stub-gh/state
+  local before
+  before=$(cat .ai/runtime/writes/spec-idea-x)
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"writes":[]'
+  assert_eq "$before" "$(cat .ai/runtime/writes/spec-idea-x)"
+  assert_contains "$(jig writes)" "spec:idea-x"
+}
+
+test_refresh_closes_a_write_whose_pull_request_was_closed_unmerged() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "Turned down"
+  printf 'CLOSED\n' > stub-gh/state
+  rm stub-gh/url
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"reason":"closed"'
+  assert_file_contains .ai/runtime/writes/spec-idea-x "ended: closed"
+  run jig writes --json
+  assert_contains "$OUT" '"writes":[]'
+}
+
+# Judged on an old view, a write still open could read as over: without a fetch that
+# reached origin, refresh asks the forge nothing.
+test_refresh_after_a_failed_fetch_leaves_the_writes_alone() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squash_then_moved
+  printf 'MERGED\n' > stub-gh/state
+  git fetch -q origin
+  git remote set-url origin "$PWD/nowhere.git"
+  local before
+  before=$(cat .ai/runtime/writes/spec-idea-x)
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"fetch":{"outcome":"failed"'
+  assert_contains "$OUT" '"writes":[]'
+  assert_eq "$before" "$(cat .ai/runtime/writes/spec-idea-x)"
+}
+
+# Refresh is no write of Jig's: it closes a write at agent.git none too, since all it
+# changes is the record.
+test_refresh_closes_a_write_at_agent_git_none() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squash_then_moved
+  printf 'MERGED\n' > stub-gh/state
+  own_tree_level none
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"reason":"merged"'
+}
+
+
+# Another write holds the lock: the record stays as it was, for the next refresh.
+test_refresh_leaves_a_write_while_another_write_holds_the_lock() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "First"
+  _w_squash_then_moved
+  printf 'MERGED\n' > stub-gh/state
+  mkdir -p .ai/runtime/writes/lock/busy
+  # This shell lives, and it is not the jig below.
+  printf 'checkout: elsewhere\npid: %s\n' "$$" > .ai/runtime/writes/lock/busy/run
+  local before
+  before=$(cat .ai/runtime/writes/spec-idea-x)
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"writes":[]'
+  assert_eq "$before" "$(cat .ai/runtime/writes/spec-idea-x)"
+  assert_contains "$(cat .ai/runtime/writes/lock/busy/run)" "pid: $$"
+}
+
+# What ot_judge refuses is `jig writes ship`'s to say: edits that never reached origin
+# above a pull request closed unmerged leave the record as it was.
+test_refresh_leaves_a_closed_write_with_edits_that_never_reached_origin() {
+  own_tree_repo pr
+  own_tree_stub_gh
+  _w_add "Turned down"
+  own_tree_level commit
+  _w_add "Kept here"
+  assert_eq 0 "$RC" "$OUT"
+  printf 'CLOSED\n' > stub-gh/state
+  rm stub-gh/url
+  local before
+  before=$(cat .ai/runtime/writes/spec-idea-x)
+  run jig refresh --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"writes":[]'
+  assert_eq "$before" "$(cat .ai/runtime/writes/spec-idea-x)"
+  run jig writes ship spec:idea-x --json
+  assert_contains "$OUT" '"code":"write-still-waits"'
+}

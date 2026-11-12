@@ -637,6 +637,36 @@ Open a new terminal, or run this in the current one:
   _install_info "  export PATH=\"$PATH_DIR:\$PATH\""
 }
 
+# --- the per-user pr-review skill ----------------------------------------------
+
+# _install_global_skill — place jig-pr-review where Claude Code and Codex read
+# a person's own skills, with the code of the checkout just installed
+# (scripts/lib/globalskill.sh; adr-20261112-the-pr-review-skill-is-installed-per-user).
+# Last of all, after everything that can fail: the failure cleanup removes a
+# fresh checkout, and a link placed before it would be left pointing at
+# nothing. A release that predates the file places nothing, and a path it
+# cannot write is reported, never fatal.
+_install_global_skill() {
+  local lib="$INSTALL_DIR/scripts/lib/globalskill.sh" source version lines
+  [ -f "$lib" ] || return 0
+  # Only the global Jig: the default checkout, and the one `jig` selects. A
+  # checkout installed elsewhere, or one a `jig` from another checkout
+  # shadows, is not what `jig self-update` keeps current, and a link into it
+  # would outlive it.
+  [ "$INSTALL_DIR_IS_DEFAULT" = 1 ] || return 0
+  [ "$SYMLINK_ELSEWHERE" = 0 ] || return 0
+  source=$(cd -P "$INSTALL_DIR" 2>/dev/null && pwd -P) || return 0
+  version=$(jig_release_version "$ACTUAL_REF" 2>/dev/null) || version="$ACTUAL_REF"
+  # shellcheck source=scripts/lib/globalskill.sh
+  lines=$(. "$lib" && jig_global_skill_place "$source" "$version") || lines=""
+  [ -n "$lines" ] || return 0
+  if [ "$_INSTALL_OUT_TERMINAL" = 1 ]; then
+    _install_block "$_INSTALL_OUT_COLOR" ok "$lines"
+  else
+    printf '%s\n' "$lines"
+  fi
+}
+
 # --- failure cleanup ---------------------------------------------------------
 
 # _install_cleanup_on_failure — removes only what this run itself created
@@ -762,6 +792,8 @@ main() {
       _install_warn "$channel"
     fi
   fi
+
+  _install_global_skill
 
   # The closing line, and install.ps1's machine contract
   # (Get-JigInstalledInfo): it reads this line from a captured, never a

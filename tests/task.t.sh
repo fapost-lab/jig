@@ -2704,7 +2704,7 @@ test_task_start_worktree_refuses_a_t4_task_with_no_goal() {
 test_task_actions_withhold_start_from_a_t3_task_with_no_goal() {
   task_setup_clean
   jig task new big --class T3 >/dev/null
-  _tl_agree big "pause request-pause set-class abandon archive"
+  _tl_agree big "pause set-class abandon archive"
   _tl_json
   assert_contains "$OUT" "is T3 and has no goal"
 }
@@ -5094,6 +5094,61 @@ test_task_ship_pr_level_refuses_before_pushing_when_github_account_is_not_held()
   assert_eq "0" "$(grep -c '^pr create' gh-token.log || true)"
 }
 
+# ship_stub_gh_refusing — ship_stub_gh_ambiguous's accounts, but `pr create`
+# fails as GitHub does for an account that is no collaborator, and `api user`
+# answers the login behind the token: carol for an environment token, the
+# account of a stored one otherwise.
+ship_stub_gh_refusing() {
+  ship_stub_gh_ambiguous
+  mv stub-bin/gh stub-bin/gh.ambiguous
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr create")
+    printf '%s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> gh-token.log
+    printf 'pull request create failed: GraphQL: must be a collaborator (createPullRequest)\n' >&2
+    exit 1 ;;
+esac
+if [ "$1" = api ] && [ "${4:-}" = user ]; then
+  case "${GH_TOKEN:-}" in
+    tok-*) printf '%s\n' "${GH_TOKEN#tok-}" ;;
+    *) printf 'carol\n' ;;
+  esac
+  exit 0
+fi
+exec "$(dirname "$0")/gh.ambiguous" "$@"
+STUB
+  chmod +x stub-bin/gh
+}
+
+# A pull request GitHub refuses names the account it was asked as. A token in
+# the environment wins over github.account, and the failure says so and how to
+# get rid of it: a service started from a directory whose .envrc sets GH_TOKEN
+# otherwise fails with nothing but "must be a collaborator".
+test_task_ship_pr_create_failure_names_an_environment_token_and_its_account() {
+  ship_ambiguous_setup pr
+  ship_stub_gh_refusing
+  ship_cfg_local github.account bob
+  run env GH_TOKEN=from-a-direnv-envrc "$JIG_BIN" task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "gh pr create failed"
+  assert_contains "$OUT" "must be a collaborator"
+  assert_contains "$OUT" "It asked GitHub as carol: GH_TOKEN is set in the environment Jig runs in"
+  assert_contains "$OUT" "Remove GH_TOKEN from that environment"
+  assert_not_contains "$OUT" "from-a-direnv-envrc"
+}
+
+test_task_ship_pr_create_failure_names_the_account_the_clone_names() {
+  ship_ambiguous_setup pr
+  ship_stub_gh_refusing
+  ship_cfg_local github.account bob
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "must be a collaborator"
+  assert_contains "$OUT" "It asked GitHub as bob (github.account)."
+  assert_not_contains "$OUT" "tok-"
+}
+
 # ship_level_ignores_accounts <level> — at a level below pr, accounts that
 # would be refused at pr do not stop the ship, and gh is not asked about them.
 ship_level_ignores_accounts() {
@@ -5263,6 +5318,8 @@ case "\$1 \$2" in
       *) val gh-existing null ;;
     esac ;;
   "pr create")
+    # gh-hook.sh, when present, runs once: the base moving between the ship-time check and the merge.
+    if [ -f "\$d/gh-hook.sh" ]; then mv "\$d/gh-hook.sh" "\$d/gh-hook.ran"; (cd "\$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE sh "\$d/gh-hook.ran") > "\$d/gh-hook.out" 2>&1; fi
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-create.argv"
     while [ \$# -gt 0 ]; do
@@ -5287,7 +5344,10 @@ case "\$1 \$2" in
     [ "\$rc" -eq 0 ] || printf 'GraphQL: Resource not accessible by integration\n' >&2
     exit "\$rc" ;;
   "repo view") val gh-repo "true true true" ;;
-  "pr checks") val gh-checks pass ;;
+  "pr checks")
+    # gh-hook-checks.sh runs once, during the CI poll.
+    if [ -f "\$d/gh-hook-checks.sh" ]; then mv "\$d/gh-hook-checks.sh" "\$d/gh-hook-checks.ran"; (cd "\$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE sh "\$d/gh-hook-checks.ran") > "\$d/gh-hook-checks.out" 2>&1; fi
+    val gh-checks pass ;;
   "pr merge")
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-merge.argv"
@@ -5943,6 +6003,8 @@ rship_setup() {
   ship_cfg_local autopilot.unattended true
   task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
+  # The release's notes describe the base as it is now (the notes guard).
+  jig task set T-1 notes_through "$(git rev-parse origin/main)" >/dev/null
   rship_write "$file" "$new"
   git add "${file%+*}"
 }
@@ -7572,6 +7634,191 @@ test_task_ship_release_is_still_held_when_the_pr_is_already_open() {
   assert_contains "$OUT" "pr https://github.com/example/example/pull/99 (already open)"
   assert_contains "$OUT" "not merged: release.merge is human"
   assert_no_file gh-merge.argv
+}
+
+# --- a release's notes name the commit they describe
+# (adr-20261112-release-notes-name-the-commit-they-describe)
+
+# rship_advance_origin <subject> — a commit lands on origin's main after the
+# release's notes were written.
+rship_advance_origin() {
+  rm -rf adv-clone
+  git clone -q origin.git adv-clone
+  git -C adv-clone -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "$1"
+  git -C adv-clone push -q origin HEAD:main
+  rm -rf adv-clone
+}
+
+# rship_drop_notes_through — the task never recorded where its notes end.
+rship_drop_notes_through() {
+  sed '/^notes_through:/d' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+}
+
+test_task_set_notes_through_stores_the_full_sha() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  local full
+  full=$(git rev-parse origin/main)
+
+  run jig task set T-1 notes_through "$(git rev-parse --short origin/main)"
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/workspace/tasks/T-1/state)" "notes_through: $full"
+}
+
+test_task_set_notes_through_refuses_a_value_that_is_not_a_commit() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  local before
+  before=$(cat .ai/workspace/tasks/T-1/state)
+
+  run jig task set T-1 notes_through not-a-commit
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notes_through is not a commit here: not-a-commit"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/T-1/state)"
+}
+
+test_task_ship_appends_the_release_notes_through_trailer() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release notes describe the base through"
+  assert_contains "$(git log -1 --format=%B)" "Release-Notes-Through: $(git rev-parse origin/main)"
+}
+
+test_task_ship_does_not_duplicate_the_release_notes_through_trailer() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+  printf '\nRelease-Notes-Through: %s\n' "$(git rev-parse origin/main)" >> msg.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(git log -1 --format=%B | grep -c '^Release-Notes-Through: ')"
+}
+
+test_task_ship_release_without_notes_through_is_refused_before_the_push() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  rship_drop_notes_through
+  ship_cfg_local agent.git pr
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not sent: this change raises the version"
+  assert_contains "$OUT" "Release-Notes-Through"
+  assert_eq "" "$(git --git-dir=origin.git branch --list "$(git branch --show-current)")"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_release_with_notes_behind_the_base_is_refused_before_the_push() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local agent.git pr
+  rship_advance_origin "Late feature on main"
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not sent: this change raises the version"
+  assert_contains "$OUT" "1 commit(s) reached the base after"
+  assert_contains "$OUT" "Late feature on main"
+  assert_eq "" "$(git --git-dir=origin.git branch --list "$(git branch --show-current)")"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_release_with_notes_through_the_base_tip_opens_the_pr() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local agent.git pr
+  rship_advance_origin "Feature on main"
+  git fetch -q origin
+  jig task set T-1 notes_through "$(git rev-parse origin/main)" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_not_contains "$OUT" "not sent"
+}
+
+test_task_ship_release_is_not_merged_when_the_base_moves_before_the_merge() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.1
+  ship_cfg_local release.merge agent
+  # Runs inside the stub gh at `pr create`: after the push, before the merge.
+  cat > gh-hook.sh <<'HOOK'
+rm -rf adv-clone
+git clone -q origin.git adv-clone
+git -C adv-clone -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "Raced onto main"
+git -C adv-clone push -q origin HEAD:main
+rm -rf adv-clone
+HOOK
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "not merged: 1 commit(s) reached the base after"
+  assert_contains "$OUT" "Raced onto main"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_release_is_not_merged_when_the_base_moves_during_the_ci_wait() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.1
+  ship_cfg_local release.merge agent
+  # Runs inside the stub gh at `pr checks`: after the ship-time checks, before the merge.
+  cat > gh-hook-checks.sh <<'HOOK'
+rm -rf adv-clone
+git clone -q origin.git adv-clone
+git -C adv-clone -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "Landed during CI"
+git -C adv-clone push -q origin HEAD:main
+rm -rf adv-clone
+HOOK
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: 1 commit(s) reached the base after"
+  assert_contains "$OUT" "Landed during CI"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_release_again_with_only_newer_notes_makes_an_empty_notes_commit() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local agent.git pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  rship_advance_origin "Landed after the first ship"
+  git fetch -q origin
+  local tip first
+  tip=$(git rev-parse origin/main)
+  first=$(git rev-parse HEAD)
+  jig task set T-1 notes_through "$tip" >/dev/null
+  printf 'https://github.com/example/example/pull/99\n' > gh-existing
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no change but the release notes reaching $(git rev-parse --short "$tip")"
+  assert_not_contains "$OUT" "not sent"
+  [ "$first" != "$(git rev-parse HEAD)" ] || fail "no new commit was made"
+  assert_contains "$(git log -1 --format=%B)" "Release-Notes-Through: $tip"
+}
+
+# Below `pr` a person opens the pull request, and CI asks the question there.
+test_task_ship_release_at_push_is_not_checked_for_notes() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  rship_drop_notes_through
+  ship_cfg_local agent.git push
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stopped at push"
+  assert_not_contains "$OUT" "not sent"
+}
+
+test_task_ship_without_a_version_raise_ignores_missing_notes_through() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.0
+  rship_drop_notes_through
+  ship_cfg_local release.merge human
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "not sent"
+  assert_not_contains "$OUT" "Release-Notes-Through"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
 }
 
 test_task_ship_merge_level_invalid_ci_timeout_dies() {
@@ -11918,7 +12165,7 @@ EOF
 test_task_actions_of_a_task_not_started_agree_with_their_commands() {
   task_setup_clean
   jig task new fresh >/dev/null
-  _tl_agree fresh "start pause request-pause set-class abandon archive"
+  _tl_agree fresh "start pause set-class abandon archive"
 }
 
 # An attended run stopped at a T3 gate, on a paused task started here: the
@@ -12130,7 +12377,7 @@ test_task_actions_of_an_invalid_git_level_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git bogus
   jig task new lvl >/dev/null
-  _tl_agree lvl "start pause request-pause set-class abandon archive"
+  _tl_agree lvl "start pause set-class abandon archive"
   _tl_json
   assert_contains "$OUT" '"reason":"task ship: invalid agent.git: bogus (expected none|commit|push|pr|merge)"}'
 }
@@ -13854,4 +14101,200 @@ test_handover_needs_a_person_and_their_words() {
   run jig task set T-1 autopilot_handover now
   assert_eq 1 "$RC"
   assert_contains "$OUT" "key is not writable: autopilot_handover"
+}
+
+# --- a task nobody started is paused directly (pause-not-started-directly)
+
+# A pause request is honoured where a stage begins, and a task nobody started
+# enters none: the table withholds request-pause in its own words, sends the
+# person to the direct pause it offers, and offers the request again once the
+# task is started.
+test_task_actions_withhold_request_pause_from_a_task_not_started() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tl_json
+  assert_contains "$OUT" '{"id":"request-pause","command":"jig queue request task:fresh pause","offered":false,"reason":"task fresh is not started: no stage will take a pause request; pause it directly: jig task pause fresh"}'
+  assert_contains "$OUT" '{"id":"pause","command":"jig task pause fresh","offered":true,"reason":null}'
+  # The command still takes the request: the table withholds, it refuses not.
+  run jig queue request fresh pause
+  assert_eq 0 "$RC" "$OUT"
+  jig queue cancel fresh pause >/dev/null
+  jig task start fresh >/dev/null
+  _tl_json
+  assert_contains "$OUT" '{"id":"request-pause","command":"jig queue request task:fresh pause","offered":true,"reason":null}'
+}
+
+# _tp_json <args...> — `jig task pause <args> --json`; stdout in OUT, stderr
+# in ERR, status in RC.
+_tp_json() {
+  run_split jig task pause "$@" --json
+}
+
+test_task_pause_json_pauses_a_task_not_started_and_answers_with_it() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tr_rev
+  local before=$REV
+  _tp_json fresh --reason "lunch"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"fresh",'
+  assert_contains "$OUT" '"paused":true,'
+  assert_contains "$OUT" ',"pause":{"stash":null,"request":null}}}'
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused: true"
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused_reason: lunch"
+  _tr_rev
+  assert_eq $((before + 2)) "$REV" "a pause raises the revision by the claim and the write"
+  assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a pause left its new state behind"
+}
+
+# A request a board wrote before it knew better goes with the pause, and the
+# answer names it.
+test_task_pause_json_takes_a_pending_request_with_it() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  jig queue request fresh pause --reason "standup" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  _tp_json fresh
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" ",\"pause\":{\"stash\":null,\"request\":{\"requested_at\":\"$at\",\"reason\":\"standup\"}}}}"
+  assert_contains "$OUT" '"pause_request":null'
+  assert_not_contains "$(cat .ai/runtime/queue)" "request"
+}
+
+test_task_pause_json_with_a_stale_revision_changes_nothing() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tr_rev
+  local old=$((REV + 7)) state_before now=$REV
+  state_before=$(cat .ai/workspace/tasks/fresh/state)
+  _tp_json fresh --revision "$old"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_eq "$state_before" "$(cat .ai/workspace/tasks/fresh/state)" "a refused pause changed the state"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused pause moved the revision"
+  assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a refused pause left its new state behind"
+  # The text form refuses the same way.
+  run jig task pause fresh --revision "$old"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $old"
+}
+
+test_task_pause_json_with_the_current_revision_lands() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tr_rev
+  _tp_json fresh --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused: true"
+}
+
+test_task_pause_json_refusals_have_codes() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tp_json NOPE
+  assert_eq not-found "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "unknown task: NOPE"
+  _tp_json fresh --revision 08
+  assert_eq usage "$(_tr_code)" "08: $OUT"
+  _tp_json fresh --revision
+  assert_eq usage "$(_tr_code)" "empty: $OUT"
+  _tp_json fresh --bogus
+  assert_eq usage "$(_tr_code)" "bogus: $OUT"
+  _tp_json fresh --if-requested --stage implement
+  assert_eq usage "$(_tr_code)" "if-requested: $OUT"
+  jig task pause fresh >/dev/null
+  _tp_json fresh
+  assert_eq already-paused "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "already paused: fresh"
+}
+
+# --stash in the JSON form: the answer names the stash it made, and a task
+# checked out in another worktree is refused with its own code.
+test_task_pause_json_with_stash_names_the_stash() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  printf 'dirty change\n' >> README.md
+  _tp_json fresh --stash
+  assert_eq 0 "$RC" "$ERR"
+  local sha
+  sha=$(git rev-parse 'stash@{0}')
+  assert_contains "$OUT" ",\"pause\":{\"stash\":\"$sha\",\"request\":null}}}"
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused_stash: $sha"
+}
+
+test_task_pause_json_with_stash_refuses_a_task_checked_out_elsewhere() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task start T-1 --worktree >/dev/null 2>&1
+  printf 'unrelated\n' >> README.md
+  _tp_json T-1 --stash
+  assert_eq 1 "$RC"
+  assert_eq wrong-checkout "$(_tr_code)" "$OUT"
+  assert_eq "" "$(git stash list)"
+}
+
+test_task_pause_json_refuses_a_reason_with_a_line_break() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tp_json fresh --reason "one
+two"
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "--reason must be a single line"
+  if grep -q '^paused:' .ai/workspace/tasks/fresh/state; then
+    fail "a refused pause marked the task paused"
+  fi
+}
+
+# Taking a pending request out is a write of its own: two more on top of the
+# pause's claim and write (schemas/json.md).
+test_task_pause_json_that_takes_a_request_raises_the_revision_by_four() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  jig queue request fresh pause >/dev/null
+  _tr_rev
+  local before=$REV
+  _tp_json fresh
+  assert_eq 0 "$RC" "$ERR"
+  _tr_rev
+  assert_eq $((before + 4)) "$REV" "a pause that took a request out"
+}
+
+# _tp_stash_fails <dir> — a PATH directory whose `git stash` fails; every
+# other git call is the real one.
+_tp_stash_fails() {
+  local real
+  real=$(command -v git)
+  mkdir -p "$1"
+  cat > "$1/git" <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in stash) echo "stash refused" >&2; exit 1 ;; esac
+done
+exec "$real" "\$@"
+SHIM
+  chmod +x "$1/git"
+}
+
+# A stash that fails after the pending request was taken out puts the request
+# back, with its reason: the pause did not happen, and the person's request
+# stands. Nothing of the new state is left in the task.
+test_task_pause_stash_that_fails_puts_the_request_back() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  jig queue request fresh pause --reason "need the laptop" >/dev/null
+  printf 'dirty change\n' >> README.md
+  _tp_stash_fails "$PWD/shim"
+  run_split env PATH="$PWD/shim:$PATH" "$JIG_BIN" task pause fresh --stash
+  assert_eq 1 "$RC" "$OUT $ERR"
+  assert_contains "$ERR" "git stash push failed"
+  assert_contains "$ERR" "the pause request of fresh is back in the queue"
+  assert_eq "need the laptop" "$(awk -F '\t' '$1 == "request" { print $5 }' .ai/runtime/queue)"
+  if grep -q '^paused:' .ai/workspace/tasks/fresh/state; then
+    fail "a failed stash left the task paused"
+  fi
+  assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a failed pause left its new state behind"
 }
