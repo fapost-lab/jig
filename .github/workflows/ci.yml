@@ -559,7 +559,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check the epic is finished and its version is new
+      - name: Check the epic is finished
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: .github/scripts/epic-pr-check.sh "$HEAD_REF"
@@ -589,10 +589,20 @@ jobs:
       contents: read
       actions: read
     steps:
+      # The release-notes check walks the history between the base and this
+      # branch, so the checkout is whole and carries the base branch.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
+      # A release's notes must describe all of the base. GitHub does not
+      # re-run this check when the base moves, unless strict status checks are
+      # on; `jig task ship` and `jig spec ship` check again right before they
+      # merge, against the freshest base.
       - name: Check the changelog describes the version this branch declares
-        run: .github/scripts/changelog-check.sh
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: .github/scripts/changelog-check.sh --base "origin/$BASE_REF"
 
       # The base sha goes through env, like every value from the event.
       - name: Check main is green before releasing onto it

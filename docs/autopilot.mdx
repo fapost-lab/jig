@@ -389,8 +389,9 @@ always does. A project with no CI never gets merged: checks that never ran prove
 - It never dismisses a serious review finding, and never skips the review or the checks.
 - It never force-pushes, deletes branches or data, or rewrites history.
 - It never merges a draft, a pull request with a failed check, or one no check ran on.
-- It never releases a **major** version of a whole feature ([an epic](/agent-ships#specs-and-epics)) by
-  itself: that pull request opens as a draft that says "Needs a human: major release?".
+- It never releases a **major** version by itself: that pull request opens as a draft that says
+  "Needs a human: major release?". It never releases notes that miss work merged after they were
+  written ([release notes cover everything they release](/agent-ships#specs-and-epics)).
 
 ### Why a pull request can stay open
 

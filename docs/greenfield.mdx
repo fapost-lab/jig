@@ -106,8 +106,9 @@ be a class schedule; reservations could be the next task.
   an **epic branch** with you while shaping the roadmap. Its tasks branch from the epic and their
   pull requests target it; the main branch receives the combined work when the epic is merged.
 
-  `jig spec epic <id>` creates that branch once the spec is on the main branch. The roadmap records
-  the release's version bump. `jig spec ship` follows your [Git permissions](/agent-ships#specs-and-epics).
+  `jig spec epic <id>` creates that branch once the spec is on the main branch. The epic merges the
+  finished feature without raising the version; the release that ships it is made afterwards, by
+  the `jig-release` skill. `jig spec ship` follows your [Git permissions](/agent-ships#specs-and-epics).
   Finishing the epic asks about any remaining items, fog, open questions, or ideas set aside before retiring the spec.
 
   At consolidation, completed tasks check their roadmap items in the same change as the implementation.

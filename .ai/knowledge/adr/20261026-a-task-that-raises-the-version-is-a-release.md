@@ -81,3 +81,8 @@ published tag cannot be taken back.
 > with `origin/<base>` and the local `<base>`, so a stale remote-tracking ref does not take a raise
 > merged in from a fresher base for the task's own. The checks run in `spec_ship_final`'s order:
 > outside an unattended run first, then `release.merge`, then `major`.
+
+> **Amendment (2026-11-12).** Such a release is also refused, from level `pr`, before its push and
+> again after CI is green right before the merge, while its commits name no
+> `Release-Notes-Through:` commit of the base or the base has commits after it
+> (adr-20261112-release-notes-name-the-commit-they-describe).

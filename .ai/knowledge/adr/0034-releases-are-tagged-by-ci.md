@@ -110,3 +110,9 @@ installer or `self-update` has used it, deleting or moving it breaks those insta
 > only, tests skipped — never reaches `release`. A version bump whose own run was replaced in the queue
 > by a light one is tagged by the next full run, on the next code merge or the nightly scheduled run,
 > which may tag as a push does. The `epic-pr` check runs when no job it needs failed or was cancelled.
+
+> **Amendment (2026-11-12).** The `epic-pr` job no longer fails a version that is already released:
+> a feature epic's final pull request does not raise it. The `changelog` job also fails a pull
+> request into `main` declaring an unreleased version whose `Release-Notes-Through:` trailer does not reach the
+> base's tip; it checks out the full history for that
+> (adr-20261112-release-notes-name-the-commit-they-describe).

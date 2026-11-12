@@ -21,12 +21,24 @@
 #     `jig.source: .`) and the manifest records another version → fail:
 #     the release's own pull request runs `jig upgrade`, so the repository
 #     is on the release the moment it exists, not one pull request later;
+#   - the release notes do not describe all of the base the branch will land
+#     on (`--base <ref>`, default origin/main): no commit of the branch names
+#     the base commit the notes describe in a Release-Notes-Through: trailer,
+#     or the base has commits after it → fail. A release whose notes missed
+#     what reached main in the meantime would tag a version whose changelog
+#     is silent about part of it (jig_release_notes_gap, scripts/lib/common.sh);
 #   - otherwise                                           → exit 0.
+#
+# The base check runs only for a release; a version already tagged reads
+# neither the changelog nor the base. GitHub does not re-run it when the
+# base moves unless strict status checks are on, so the pull request that
+# is merged is also checked by `jig task ship`/`jig spec ship` against the
+# freshest base right before they merge.
 #
 # So the check turns itself on the moment a branch raises JIG_VERSION and
 # turns itself off again once that version is released.
 #
-# Usage: .github/scripts/changelog-check.sh [--changelog <path>]
+# Usage: .github/scripts/changelog-check.sh [--changelog <path>] [--base <ref>]
 set -eu
 set -o pipefail
 
@@ -63,14 +75,17 @@ changelog_has_entry() {
 }
 
 main() {
-  local changelog="" repo version remote_tags existing
+  local changelog="" base="origin/main" repo version remote_tags existing gap
 
   while [ $# -gt 0 ]; do
     case "$1" in
       --changelog)
         [ $# -ge 2 ] || _changelog_die "--changelog needs a path"
         changelog="$2"; shift 2 ;;
-      *) _changelog_die "unknown argument: $1 (usage: changelog-check.sh [--changelog <path>])" ;;
+      --base)
+        [ $# -ge 2 ] || _changelog_die "--base needs a ref"
+        base="$2"; shift 2 ;;
+      *) _changelog_die "unknown argument: $1 (usage: changelog-check.sh [--changelog <path>] [--base <ref>])" ;;
     esac
   done
 
@@ -103,6 +118,24 @@ main() {
 
   manifest_matches "$repo" "$version" \
     || _changelog_die ".ai/manifest records jig.version $(manifest_value "$repo/.ai/manifest" jig.version) while this branch releases $version; run jig upgrade in this branch so this repository records the release it makes"
+
+  # The notes must describe all of the base — the default branch only. A
+  # release epic's notes task opens its pull request into the epic: its notes
+  # name a commit of main, the epic's own commits come after it, and the
+  # question belongs to the epic's final pull request into main.
+  if [ "$base" != "origin/main" ]; then
+    printf 'changelog-check: %s describes %s; the notes are checked against main when the release reaches it, not against %s\n' \
+      "$CHANGELOG_REL" "$version" "$base"
+    return 0
+  fi
+  # The library reads JIG_PROJECT.
+  JIG_PROJECT="$repo"
+  export JIG_PROJECT
+  git -C "$repo" rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1 \
+    || _changelog_die "cannot resolve the base '$base'; the checkout needs its history (fetch-depth: 0) and the base branch"
+  gap=$(jig_release_notes_gap "$base")
+  [ -z "$gap" ] \
+    || _changelog_die "the release notes do not describe all of $base: $gap"
 
   printf 'changelog-check: %s describes %s\n' "$CHANGELOG_REL" "$version"
 }

@@ -1795,6 +1795,16 @@ _task_set_body() {
     knowledge_consolidated) _task_valid_bool "$value" || jig_die "task set: invalid knowledge_consolidated: $value" ;;
     domains) _task_valid_domains "$value" || jig_die "task set: invalid domains: $value" ;;
     route_depth) _cfg_route_depth "$value" || jig_die "task set: invalid route_depth: $value (full or lean)" ;;
+    # The commit of the base a release's notes were checked up to; `task ship`
+    # writes it into the commit as a Release-Notes-Through: trailer, and a
+    # release is refused while the base has commits after it
+    # (adr-20261112-release-notes-name-the-commit-they-describe). Kept as the
+    # full sha, so a short one that later grows ambiguous still means the same.
+    notes_through)
+      local full_sha
+      full_sha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$value^{commit}" 2>/dev/null) \
+        || jig_die "task set: notes_through is not a commit here: $value; fetch the base and name its commit"
+      value=$full_sha ;;
     executor_implement_runtime | executor_review_runtime | executor_implement_model | executor_review_model)
       [ -z "$(task_state_get "$id" branch)" ] \
         || jig_die "task set: executor choice is fixed when $id starts; stop this task and file a new one to change the stage executor"
@@ -6546,6 +6556,13 @@ _task_triage_md() {
 # (conventions/shell.md).
 _TASK_SHIP_BODY_TMP=""
 
+# _task_ship_notes_last_check — JIG_SHIP_LAST_CHECK for a release: whether its
+# notes still reach the tip of the base it merges into (_TASK_SHIP_NOTES_BASE).
+_TASK_SHIP_NOTES_BASE=""
+_task_ship_notes_last_check() {
+  jig_release_notes_refusal "task ship" "$_TASK_SHIP_NOTES_BASE"
+}
+
 task_ship() {
   jig_require_init
   [ $# -ge 1 ] || jig_die "$(_task_usage ship)"
@@ -6662,6 +6679,20 @@ EOF
     printf 'task ship: absorbed issues named: %s\n' "$absorbed_refs"
   fi
 
+  # The commit a release's notes were checked up to, recorded by the notes
+  # task (`task set <id> notes_through`), goes into the commit as a trailer:
+  # git is where `task ship`, `spec ship` and CI all read it from, whichever
+  # task wrote the notes (adr-20261112-release-notes-name-the-commit-they-describe).
+  local notes_through
+  notes_through=$(task_state_get "$id" notes_through)
+  if [ -n "$notes_through" ] && ! grep -q "^Release-Notes-Through: $notes_through\$" "$message_file"; then
+    msg_tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-msg.XXXXXX")
+    jig_cleanup_add "$msg_tmp"
+    { cat "$message_file"; printf '\nRelease-Notes-Through: %s\n' "$notes_through"; } > "$msg_tmp"
+    message_file="$msg_tmp"
+    printf 'task ship: release notes describe the base through %s\n' "$(git -C "$JIG_PROJECT" rev-parse --short "$notes_through" 2>/dev/null || printf '%s' "$notes_through")"
+  fi
+
   _task_ship_unverified_notice
   # Which key decided how far this goes: with autopilot.git and agent.git
   # apart, "stopped at push" alone would not say whose setting stopped it.
@@ -6681,6 +6712,19 @@ $left_out
 Nothing was committed. Stage what belongs to the task (git add -u, git add <path>) and run again; if the rest is not this task's, run again with --partial."
   fi
   jig_ship_commit "task ship" "$message_file" "$inputs_msg" "$inputs_body"
+  # Notes brought up to a base that moved by commits no user notices change no
+  # file; the newer notes_through still has to reach git, or the release would
+  # stay refused. Then the commit is empty but for its message.
+  if [ -n "$notes_through" ]; then
+    local notes_from="refs/remotes/origin/$base"
+    git -C "$JIG_PROJECT" rev-parse --verify --quiet "$notes_from" >/dev/null 2>&1 || notes_from=$base
+    if [ "$(jig_release_notes_through "$notes_from")" != "$notes_through" ]; then
+      git -C "$JIG_PROJECT" commit --allow-empty -F "$message_file" >/dev/null \
+        || jig_die "task ship: git commit failed"
+      printf 'committed %s: no change but the release notes reaching %s\n' \
+        "$(git -C "$JIG_PROJECT" rev-parse --short HEAD)" "$(git -C "$JIG_PROJECT" rev-parse --short "$notes_through")"
+    fi
+  fi
 
   # Before the first step that leaves this machine (common.sh, "what a ship
   # may send out"). Asked here rather than just before the push: "this branch
@@ -6694,6 +6738,25 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
     return 0
   fi
 
+  # A change that raises the version into the default branch is a release,
+  # whoever planned it: its merge follows `release.merge` as an epic's final
+  # pull request does (spec_ship_final), and a `major` one opens as a draft
+  # for a person (adr-20261026-a-task-that-raises-the-version-is-a-release).
+  # An epic is not the default branch: there the release is the epic's own.
+  local raise="" r_file r_old r_new r_level release_hold="" pr_draft="$draft" notes_gap
+  if [ "$base" = "$(cfg git.base_branch main)" ]; then
+    raise=$(jig_release_raise "$base")
+  fi
+  # Before anything is sent, a release's notes must describe every commit it
+  # carries into the base: one merged after they were written would reach the
+  # tag undescribed. Below `pr` a person opens the pull request, and this
+  # repository's CI asks the same question there.
+  if [ -n "$raise" ] && [ "$level" != push ]; then
+    notes_gap=$(jig_release_notes_refusal "task ship" "$base")
+    [ -z "$notes_gap" ] || jig_die "task ship: not sent: this change raises the version, and $notes_gap
+The commit stays on $branch here; nothing was pushed."
+  fi
+
   jig_ship_account "task ship" "$level"
   jig_ship_push "task ship" "$branch"
 
@@ -6702,15 +6765,6 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
     return 0
   fi
 
-  # A change that raises the version into the default branch is a release,
-  # whoever planned it: its merge follows `release.merge` as an epic's final
-  # pull request does (spec_ship_final), and a `major` one opens as a draft
-  # for a person (adr-20261026-a-task-that-raises-the-version-is-a-release).
-  # An epic is not the default branch: there the release is the epic's own.
-  local raise="" r_file r_old r_new r_level release_hold="" pr_draft="$draft"
-  if [ "$base" = "$(cfg git.base_branch main)" ]; then
-    raise=$(jig_release_raise "$base")
-  fi
   if [ -n "$raise" ]; then
     IFS=$'\t' read -r r_file r_old r_new r_level <<EOF
 $raise
@@ -6780,6 +6834,13 @@ EOF
       printf 'not merged: the route of %s is missing: %s\n' "$id" "$missing"
       return 0
     fi
+  fi
+  # The base may move while the pull request waits for CI: a release's notes
+  # are checked again after CI is green, right before the merge command.
+  if [ -n "$raise" ]; then
+    _TASK_SHIP_NOTES_BASE=$base
+    # shellcheck disable=SC2034 # read by jig_ship_merge (common.sh)
+    JIG_SHIP_LAST_CHECK=_task_ship_notes_last_check
   fi
   local sha
   sha=$(git -C "$JIG_PROJECT" rev-parse HEAD)
