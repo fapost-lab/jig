@@ -31,7 +31,7 @@ send the task into the base branch nor merge into staging past the review the fl
 - **`merge` does not merge in the staging flow** until "Land a task on staging" is built: the ship
   stops at the open pull request (`not merged: landing a task on <staging> is not built yet; …`),
   the checkout stays on the task branch and the branch stays. Below `merge` it says the task is not
-  on staging yet and the person lands it.
+  on staging yet and the person lands it. *Superseded by the amendment below: landing is built.*
 - **`git.staging_land: external` stops after the push** and opens no pull request: CI lands the
   task. Reading what CI landed is a later item. The task staging-land-external built it: the staging
   state reads what CI merged from git alone, with no pull request, and the ship files the triage task
@@ -81,3 +81,16 @@ send the task into the base branch nor merge into staging past the review the fl
   `agent.git` says.
 - A task branch behind its base on the flow must merge the base branch in before it ships.
 - The existing-pull-request check in the staging flow costs one more forge query per ship.
+
+## Amendment (2026-11-11): landing is built
+
+"Land a task on staging" is built
+(adr-20261111-a-task-lands-on-staging-through-its-pull-request), so at `merge` `task ship` no longer
+stops at the open pull request: right after opening it, it lands it as `jig task land` does — the
+approval by `git.staging_review`, the merge on the forge when it merges cleanly, the direct merge when
+it conflicts — and exits with that step's code (3 a person decides, 5 a conflict waits for the agent).
+The checkout stays on the task branch and the branch stays, as before. Below `merge` and for a draft
+nothing changes. One refusal is added before the commit, at every level: a task branch carrying
+commits of the staging branch its base did not bring (`jig_branch_carries_staging`) is not shipped. The
+consequence "until Land a task on staging lands, a person merges every staging pull request" no
+longer holds at `merge`.

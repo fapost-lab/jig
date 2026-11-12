@@ -375,6 +375,12 @@ Ask the agent to verify the result and record what the project should remember b
 `jig task ship` follows your personal permissions and checks the task's completion records.
 After the change lands, confirm whether the task can close.
 
+On the staging flow, `jig task land <id>` lands the task's open pull request on the staging branch
+when you allow `merge`: after an approval, on the forge, or by a direct merge when it conflicts
+([how a task ships](/agent-ships)). It exits 3 when you decide — no approval yet, or a push the
+staging branch refused — and 5 when a conflict waits in its temporary worktree for
+`jig task land <id> --resolved --note-file <file>`; `--abort` gives the landing up.
+
 <Tip>
   `jig help` lists the full command surface. Use [Skills](/skills) for the agent procedures,
   [Configuration](/configuration) for settings, and [Under the hood](/under-the-hood) for boundaries

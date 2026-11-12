@@ -42,7 +42,10 @@ the last run's lines (`hklog_ids`) to tell `jig queue next` which dependencies h
 forge cache and `task` reads it, and both find it through `_task_borrowed_tasks_root`. A subject large enough to crowd out its command gets a library of its own even
 with a single caller: `lib/bootstrap.sh` (carrying state into a new worktree, with
 `tests/bootstrap.t.sh`) is sourced by `lib/task.sh` alone, which keeps that file about the task
-lifecycle.
+lifecycle; so is `lib/land.sh`, landing a task's pull request on the staging branch — the approval,
+the merge on the forge, the direct merge in a temporary tree, the unforced push
+(adr-20261111-a-task-lands-on-staging-through-its-pull-request), tested in `tests/task.t.sh` with the
+ship it ends.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and
@@ -55,7 +58,9 @@ it; it sources nothing and calls the `jig_ship_*` steps every ship takes.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_staging_in_use` and `jig_staging_states`
 ("is this project on a sound staging flow, and which tasks' work is on its staging branch" —
-`task list --json`, `status` and housekeeping all show it), `jig_task_base` and `jig_base_ref`
+`task list --json`, `status` and housekeeping all show it), `jig_branch_carries_staging` ("what does this task
+branch carry that was merged into it from anything but the base and clean task branches" — `task
+ship` and `task land` refuse on it), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`
 ("which spec does this task follow, and is it on an epic" — `task start` and `spec` both read them),
 `jig_task_ref`, `jig_task_ref_dir` and `jig_task_links` ("which task or spec in a neighbouring
