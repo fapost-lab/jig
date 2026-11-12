@@ -17,6 +17,10 @@
 #   - the version is not major.minor.patch                → fail;
 #   - docs/changelog.mdx is missing, or carries no `## <version>` heading for
 #     the declared version                                → fail;
+#   - the repository installs Jig from itself (`.ai/manifest` names
+#     `jig.source: .`) and the manifest records another version → fail:
+#     the release's own pull request runs `jig upgrade`, so the repository
+#     is on the release the moment it exists, not one pull request later;
 #   - otherwise                                           → exit 0.
 #
 # So the check turns itself on the moment a branch raises JIG_VERSION and
@@ -97,7 +101,25 @@ main() {
   changelog_has_entry "$changelog" "$version" \
     || _changelog_die "$CHANGELOG_REL has no '## $version' section; add the entry for the release this branch declares"
 
+  manifest_matches "$repo" "$version" \
+    || _changelog_die ".ai/manifest records jig.version $(manifest_value "$repo/.ai/manifest" jig.version) while this branch releases $version; run jig upgrade in this branch so this repository records the release it makes"
+
   printf 'changelog-check: %s describes %s\n' "$CHANGELOG_REL" "$version"
+}
+
+# manifest_value <file> <key> — the value of a `key: value` header line.
+manifest_value() {
+  sed -n "s/^$2: *//p" "$1" | head -n 1
+}
+
+# manifest_matches <repo> <version> — true unless <repo> installs Jig from
+# itself (`jig.source: .`) and its manifest records a version other than
+# <version>. Any other project, or none, has nothing to say here.
+manifest_matches() {
+  local file="$1/.ai/manifest"
+  [ -f "$file" ] || return 0
+  [ "$(manifest_value "$file" jig.source)" = "." ] || return 0
+  [ "$(manifest_value "$file" jig.version)" = "$2" ]
 }
 
 main "$@"

@@ -269,3 +269,53 @@ test_changelog_check_changelog_flag_without_a_value_fails() {
   [ "$RC" != 0 ] || fail "changelog-check must refuse --changelog without a path: $OUT"
   assert_contains "$OUT" "changelog-check: error: --changelog needs a path"
 }
+
+# --- a repository that installs Jig from itself records its own release ------
+
+# cc_write_manifest <dir> <source> <version> — an .ai/manifest header, committed.
+cc_write_manifest() {
+  local dir="$1" source="$2" version="$3"
+  (
+    cd "$dir" || exit 1
+    mkdir -p .ai
+    printf '# jig manifest\njig.version: %s\njig.source: %s\njig.mode: link\n' "$version" "$source" > .ai/manifest
+    git add .ai/manifest
+    git commit -q -m "manifest"
+  )
+}
+
+test_changelog_check_refuses_a_self_install_whose_manifest_lags_the_release() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_write_manifest "$repo" . 0.1.0
+  cc_build_origin "$repo" "$bare"
+
+  run cc_check "$repo"
+  assert_eq 1 "$RC" "a lagging manifest must fail: $OUT"
+  assert_contains "$OUT" ".ai/manifest records jig.version 0.1.0 while this branch releases 0.2.0; run jig upgrade"
+}
+
+test_changelog_check_passes_a_self_install_that_records_the_release() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_write_manifest "$repo" . 0.2.0
+  cc_build_origin "$repo" "$bare"
+
+  run cc_check "$repo"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "describes 0.2.0"
+}
+
+test_changelog_check_ignores_the_manifest_of_a_project_installed_from_elsewhere() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_write_manifest "$repo" global 0.1.0
+  cc_build_origin "$repo" "$bare"
+
+  run cc_check "$repo"
+  assert_eq 0 "$RC" "$OUT"
+}
+

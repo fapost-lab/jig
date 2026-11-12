@@ -8,6 +8,34 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.44.0 — 2026-11-12
+
+A review of a colleague's pull request now reads like one: each finding carries its severity's
+colour and a number, and the summary lists them by severity. The review skill is installed for you,
+so it works in a clone of any repository. Several knowledge documents can be decided in one write,
+and a refused pull request names the GitHub account that asked.
+
+- **Review comments carry a severity and a number.** A review draft names its four severities in
+  the review's language (`=== levels`) and gives each comment one (`=== comment P2 R42 …`), with a
+  one-line title first. `jig pr comments check` puts the colour (🔴 🟠 🟡 🟢) and the finding's
+  number at the start of each comment, and adds a legend and a list of findings by severity to the
+  summary; a comment moved into the summary keeps its number. All of it is part of what you approve.
+  A draft without levels is posted as before. Not yet posted on a live pull request.
+  See [Review a colleague's pull request](/manual-control#review-a-colleagues-pull-request).
+- **The review skill works in any folder.** The installer and `jig self-update` place
+  `jig-pr-review` for you: a link in `~/.claude/skills` when you have Claude Code and in
+  `~/.agents/skills` when you have Codex, a copy on Windows. A skill of your own under that name is
+  left alone; `install.ps1 -Uninstall` removes Jig's copy, and on macOS and Linux you delete the link.
+  In Claude Code your copy wins over a project's, so `jig status` says when the two differ.
+  `jig pr fetch` now prints `method:` and `show:`, where the skill finds the review method.
+  See [Install](/install).
+- **Decide several knowledge documents in one write.** `jig knowledge decide --accept <id>
+  --reject <id> --reviewed <id> …` decides them all at one revision, as one commit and one push;
+  any refusal refuses the whole call before anything is written.
+- **A refused pull request names the account that asked.** When `gh pr create` fails during a ship,
+  the error now ends with the GitHub account Jig asked as and where it came from — including a
+  `GH_TOKEN` in the environment, with the variable to remove.
+
 ## 0.43.0 — 2026-11-11
 
 Jig's `git push` and fetch over HTTPS now go as the project's GitHub account, as its `gh` calls
