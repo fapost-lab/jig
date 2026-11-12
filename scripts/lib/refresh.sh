@@ -45,6 +45,7 @@ _refresh_main() {
   _REFRESH_BASE=$(cfg git.base_branch main)
   _refresh_fetch
   _refresh_base
+  _refresh_writes
   # What the status page shows moved with the base (base-behind-origin, landed knowledge).
   jig_status_page_touch >/dev/null 2>&1 || true
   if [ -n "$_REFRESH_AS_JSON" ]; then
@@ -153,6 +154,55 @@ _refresh_base() {
   fi
 }
 
+# _refresh_writes — close the writes in Jig's own tree that are over, as `jig writes
+# ship` would find them (ot_judge's `gone`): a squash merge the base changed again since
+# reads as waiting to the offline ot_waiting for ever. Only after a fetch that reached
+# origin: judged on an old view, a write still open could read as over. Each one under
+# the writes' lock, judged in a subshell, so that what ot_judge refuses — a diverged
+# branch, edits that never reached origin — leaves its record as it was and is
+# `jig writes ship`'s to say; a lock another write holds leaves it for the next refresh.
+# _REFRESH_WRITES <- `<target>\t<branch>\t<why>` per write it closed.
+_REFRESH_WRITES=""
+_refresh_writes() {
+  local target line
+  [ "$_REFRESH_FETCH" = "done" ] || return 0
+  # shellcheck source=lib/owntree.sh
+  . "$JIG_LIB/owntree.sh"
+  while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    ot_waiting "$target" || continue
+    _ot_lock_take refresh || continue
+    line=$(_refresh_write_judge "$target" 2>/dev/null) || line=""
+    _ot_lock_release
+    [ -z "$line" ] || _REFRESH_WRITES="$_REFRESH_WRITES$line"$'\n'
+  done < <(ot_targets)
+}
+
+# _refresh_write_judge <target> — in a subshell, under the lock: judge the write again
+# from its record and, when it is over, mark the record and print what was closed.
+_refresh_write_judge() {
+  local target="$1" rec_pushed
+  # shellcheck disable=SC2034 # read by lib/owntree.sh
+  OT_WHO=refresh
+  # shellcheck disable=SC2034
+  OT_TARGET=$target
+  # shellcheck disable=SC2034
+  _OT_PROJECT=$JIG_PROJECT
+  # shellcheck disable=SC2034
+  _OT_HEADS_STATE=""
+  # shellcheck disable=SC2034
+  _OT_HELD_STATE=""
+  ot_record_read "$target" || return 1
+  rec_pushed=$OT_R_PUSHED
+  ot_waiting "$target" || return 1
+  # ot_waiting read `pushed` from the refs; ot_judge wants what the record says.
+  OT_R_PUSHED=$rec_pushed
+  ot_judge "$OT_R_BRANCH" "$OT_R_BASE"
+  [ "$_OT_J" = gone ] || return 1
+  ot_record_over "$target"
+  printf '%s\t%s\t%s\n' "$target" "$OT_R_BRANCH" "$_OT_J_WHY"
+}
+
 _refresh_text() {
   case "$_REFRESH_FETCH" in
     done) printf 'fetch: done\n' ;;
@@ -163,6 +213,13 @@ _refresh_text() {
     up-to-date) printf '%s: up to date with origin/%s\n' "$_REFRESH_BASE" "$_REFRESH_BASE" ;;
     *) printf '%s: %s — %s\n' "$_REFRESH_BASE" "$_REFRESH_OUTCOME" "$(printf '%s' "$_REFRESH_MSG" | tr '\n' ' ' | sed 's/ *$//')" ;;
   esac
+  local target branch why
+  while IFS=$'\t' read -r target branch why; do
+    [ -n "$target" ] || continue
+    printf 'writes: closed %s on %s (%s)\n' "$target" "$branch" "$why"
+  done <<EOF
+$_REFRESH_WRITES
+EOF
 }
 
 _refresh_json() {
@@ -176,6 +233,18 @@ _refresh_json() {
   json_str_or_null "$_REFRESH_FROM"; rec="$rec,\"from\":$_JSON"
   json_str_or_null "$_REFRESH_TO"; rec="$rec,\"to\":$_JSON"
   json_str_or_null "$_REFRESH_WHERE"; rec="$rec,\"checked_out_in\":$_JSON"
-  json_str_or_null "$_REFRESH_MSG"; rec="$rec,\"message\":$_JSON}}"
+  json_str_or_null "$_REFRESH_MSG"; rec="$rec,\"message\":$_JSON}"
+  local target branch why sep=""
+  rec="$rec,\"writes\":["
+  while IFS=$'\t' read -r target branch why; do
+    [ -n "$target" ] || continue
+    json_quote "$target"; rec="$rec$sep{\"target\":$_JSON"
+    json_quote "$branch"; rec="$rec,\"branch\":$_JSON"
+    json_quote "$why"; rec="$rec,\"reason\":$_JSON}"
+    sep=","
+  done <<EOF
+$_REFRESH_WRITES
+EOF
+  rec="$rec]}"
   printf '%s\n' "$rec"
 }

@@ -13,7 +13,7 @@ paths:
   - "templates/scheduler/**"
   - scripts/lib/hklog.sh
   - scripts/lib/forgecache.sh
-reviewed_at: 2026-11-10
+reviewed_at: 2026-11-12
 ---
 # Housekeeping
 
@@ -59,7 +59,8 @@ evidence it inferred itself.
   forge answered, never on a dry run, never by a worktree that borrows the owner's task directory;
   a run without an answer leaves the last cache, whose entries keep their `fetched_at`.
 - **`jig refresh`**, outside housekeeping and on demand: the same fetch (`_hk_fetch`'s form), then
-  a fast-forward of the base only, never moving the checkout or touching its changes; the button a
+  a fast-forward of the base only, never moving the checkout or touching its changes, then the
+  closing of writes in Jig's own tree that are over (ot_judge's `gone`); the button a
   program shows while `jig status --json` reports `base-behind-origin`
   (adr-20261112-refresh-brings-the-clone-up-to-origin).
 - The **Session Hook** and the scheduler examples — triggers, both optional, neither

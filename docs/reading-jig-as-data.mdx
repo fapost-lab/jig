@@ -312,12 +312,14 @@ clone up, and a program may run it from a button or when its page opens:
 jig refresh --json
 ```
 
-It fetches origin, then fast-forwards the base branch to `origin/<base>`, and nothing else. It never
+It fetches origin, fast-forwards the base branch to `origin/<base>`, and closes the writes in Jig's
+own tree that are over — a pull request merged by squash, then the base changed the same files
+again, reads as waiting until something asks GitHub or GitLab — and nothing else. It never
 moves the person's checkout: on a task branch the base moves alone, and their branch and files stay
 as they are. It never stashes or forces, and changes in the checkout stop it only when the
 fast-forward would overwrite them. A base that cannot move is an answer, not an error: the command
 exits 0 and `base.outcome` says why — `blocked-by-changes` with git's message naming the files,
-`checked-out-elsewhere` with the worktree (git refuses to move a branch another worktree has checked out), `diverged`, `missing` — so the page can say it in words.
+`checked-out-elsewhere` with the worktree (git refuses to move a branch another worktree has checked out), `diverged`, `missing` — so the page can say it in words. `writes` lists each write it closed, with why.
 The fields are in [`schemas/json.md`](https://github.com/fapost-lab/jig/blob/main/schemas/json.md#jig-refresh---json).
 
 ## The queue

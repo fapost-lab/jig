@@ -1061,6 +1061,26 @@ ot_record_write() {
   jig_record_changed
 }
 
+# ot_record_over <target> — say in its record that the write is over (ot_judge's `gone`),
+# from the record as read (OT_R_*) and _OT_J_WHY: `merged: 1` for a merge, `ended: <why>`
+# otherwise. Under the lock. Reads go on counting the write as waiting until it does.
+ot_record_over() {
+  OT_BRANCH=$OT_R_BRANCH
+  OT_BASE=$OT_R_BASE
+  OT_COMMIT=$OT_R_COMMIT
+  OT_PUSHED=$OT_R_PUSHED
+  OT_PR=$OT_R_PR
+  OT_MERGED=$OT_R_MERGED
+  OT_ENDED=$OT_R_ENDED
+  OT_SENT=$OT_R_SENT
+  if [ "$_OT_J_WHY" = merged ]; then
+    OT_MERGED=1
+  else
+    OT_ENDED=$_OT_J_WHY
+  fi
+  ot_record_write "$1"
+}
+
 # ot_targets — the targets that have a record, one per line.
 ot_targets() {
   local dir f name
