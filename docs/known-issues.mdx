@@ -53,6 +53,33 @@ sent to the main branch piece by piece instead of once.
 branch when the promotion is merged. Do not run `--all` while an epic branch is on the staging
 branch; name the tasks instead.
 
+{/* Closed by task merge-promotion-findings: removed once a run with git.promote_merge: auto against a real GitLab project confirms the path. */}
+### Auto-merge of a promotion has not been tried against a real GitLab project
+
+**What you see.** Nothing different, as far as is known. With `git.promote_merge: auto` on GitLab,
+`jig task promote` reads the project with `glab api projects/:id` and switches auto-merge on with
+`glab mr merge <iid> --auto-merge --sha <commit> --yes`; this has only been tried against a
+stand-in. Older `glab` versions without `--auto-merge` refuse the flag.
+
+**What it costs.** The command says `auto-merge not switched on: the forge refused: …` and the merge
+stays yours, or, if GitLab reads the answer differently, Jig may say auto-merge is not confirmed
+while it is on.
+
+**What to do instead.** Look at the merge request after the first promotion with `auto`, and keep
+`glab` up to date.
+
+{/* Closed by task merge-promotion-findings: removed once the merge step waits for the forge to report the pushed head. */}
+### A promotion may say auto-merge was not switched on right after a push
+
+**What you see.** When `jig task promote` has just pushed a merge of the main branch, the forge may
+still report the pull request at its old head, or not yet confirm auto-merge, and the last line is
+`auto-merge not switched on: the pull request is at …` or `… the forge did not confirm it`.
+
+**What it costs.** A merge left to you that `auto` should have handed to the forge.
+
+**What to do instead.** Run `jig task promote` again a moment later; it finds auto-merge on, or
+switches it on.
+
 {/* Closed by task prepare-for-prod (F4): removed once a run against a real GitLab project confirms the path. */}
 ### "Prepare for prod" has not been tried against a real GitLab project
 

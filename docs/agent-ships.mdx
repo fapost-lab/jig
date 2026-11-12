@@ -249,7 +249,7 @@ the files: the agent merges the main branch into the task's branch, resolves, ve
 runs it again, which pushes that merge and opens the pull request. Run on a task already promoted,
 it prints the same link. Where your queue says the task depends on another one that is on staging
 but not in the main branch, it warns you, and the pull request says so too. The merge into the main
-branch stays yours.
+branch stays yours, unless your team chose `git.promote_merge: auto` (below).
 
 ```text
 task promote: tested commit 3f2a91c of staging
@@ -295,6 +295,37 @@ picked again by every run ([known issues](/known-issues)). Do not run `--all` wh
 runner cannot tell the epic's tasks from the others and would promote each on its own. A task
 reverted on the staging branch still reads as tested, and `--all` would promote it; name the tasks
 instead when you have reverted one.
+
+With `git.promote_merge: auto` the pull request merges itself: the command switches on your forge's
+auto-merge (a merge commit, at the promoted commit), and the forge merges once the main branch's
+required checks pass. In your own checkout that needs `agent.git: merge`; on a CI runner the flow
+alone decides. It is switched on only where CI actually gates the merge: on GitHub the repository
+allows auto-merge and merge commits and the main branch requires a status check (a ruleset or
+branch protection); on GitLab the project requires a successful pipeline to merge and merges with a
+merge commit. Without that, the forge would merge at once, so Jig says why and leaves the merge to
+you. A promotion that raises the version is a release and never merges itself; a major one opens as
+a draft that starts with `Needs a human: major release?`. The last line says what happened, and
+the exit code stays 0 either way:
+
+```text
+auto-merge on https://github.com/acme/app/pull/57: it merges with a merge commit once main's required checks pass
+auto-merge on https://github.com/acme/app/pull/57 (already on)
+merged https://github.com/acme/app/pull/57
+auto-merge not switched on: main requires no status check, so auto-merge would merge at once and CI would gate nothing; the merge is the person's
+auto-merge switched off on https://github.com/acme/app/pull/57: this promotion is a release (VERSION 1.4.0 -> 2.0.0)
+```
+
+When the task's branch on origin is no longer what was tested — a fix after the test, staging
+merged into it, a branch that diverged — the next promote refuses as before and, if the open
+promotion has auto-merge on, switches it off first and says so: otherwise that untested work would
+merge on green CI. A fix pushed to the task's branch by hand while auto-merge is on reaches the
+main branch on green CI until then, so ship fixes to staging only after closing the promotion, as
+the refusal says. On GitLab the project must also not count a skipped pipeline as a success.
+
+On GitHub Actions, give the job a personal access token or a GitHub App token, not `GITHUB_TOKEN`:
+a pull request opened with `GITHUB_TOKEN` starts no workflow, so its required checks never report
+and auto-merge waits for ever, and a merge it makes starts no workflow on the main branch, so
+nothing deploys.
 </Accordion>
 
 <span id="specs-and-epics" />

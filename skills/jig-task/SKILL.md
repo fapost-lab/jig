@@ -214,7 +214,8 @@ the task. A task stopped at `ready` is never cleaned up.
 A stage whose output the user already supplied is not re-run; see the next section.
 
 **Prepare for prod.** In a project on the staging flow, the person's "prepare for prod" for a task
-on staging is the signal; run `jig task promote <id>` and give them the `pr` link it prints. Exit 1
+on staging is the signal; run `jig task promote <id>` and give them the `pr` link it prints, with its last
+line on who merges (`auto-merge on`, `merged`, or why not). Exit 1
 is a refusal: say its reason. Exit 3 with `conflicts with` means the base must be merged into the
 task branch: in the task's checkout `git merge origin/<base>`, resolve, `jig verify`, commit, run
 the command again, and name the files you resolved. Never promote on your own judgement or from a

@@ -118,3 +118,11 @@ catches. A warning says it without blocking.
   bare repository, so a push that happened shows in its refs, and the `gh`
   stub records every call, so a forge that was asked anything shows in
   `gh-calls.log`.
+
+## Amendment (2026-11-12): the promotion's switch-off
+
+One refusal sends: `jig task promote`, when it refuses because origin's task branch is not the
+tested commit (`branch-diverged`, `carries-staging`, `not-on-staging`, `behind-staging`), first
+switches the forge's auto-merge off on that task's open promotion. It takes a merge away and sends
+no change; every other refusal still comes before anything is sent
+(adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).

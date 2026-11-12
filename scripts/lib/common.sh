@@ -2803,7 +2803,10 @@ jig_glab_fields() {
 # `agent.git: merge`, is jig_ship_merge below, and it merges only a pull
 # request whose checks all passed, at the commit that was shipped, through the
 # forge's own rules — never --admin, never --auto
-# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci).
+# (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci). The one
+# exception is not a ship's: `jig task promote` with git.promote_merge: auto
+# switches the forge's auto-merge on where CI gates the base (promote.sh,
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).
 
 # Referenced from the EXIT trap jig_ship_pr sets for the pull request body it
 # cuts from a commit message, so it is script-global rather than `local`
@@ -3160,7 +3163,9 @@ _JIG_CI_GRACE=120
 #      `--sha`) and agrees to: a refusal — branch protection, a required
 #      review — leaves it open.
 # Never `--admin`, never `--auto`: nothing here overrides the forge or asks it
-# to merge later, when nobody is watching the conditions. Leaves the answer in
+# to merge later, when nobody is watching the conditions. The one `--auto` is
+# the promotion's, only where CI gates the base (promote.sh,
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it). Leaves the answer in
 # JIG_SHIP_MERGED, so it is called directly, never in `$()`.
 jig_ship_merge() {
   local who="$1" url="$2" sha="$3" policy="$4" kind timeout
