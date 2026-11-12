@@ -694,7 +694,8 @@ and an id outside the grammar; `not-found` for no such task; `already-paused`, `
 `stale-revision` as in the table above; `not-initialised` and `not-a-repository` as everywhere. Each
 of them happens before anything is written. A failure after the claim reads `failed` and leaves the task not
 paused: a pending request that could not be taken out of the queue stays, and the revision is raised
-by one; a `git stash push` that fails comes after the request went, which then stays out.
+by one; a `git stash push` that fails comes after the request went, and puts it back in the queue
+with its reason and the time it went back (a warning says when it could not).
 
 ## `jig task resume --json`
 

@@ -2825,6 +2825,21 @@ _task_pause_take_request() {
   return 1
 }
 
+# _task_pause_put_request_back <id> <reason> — a pause that failed after it
+# took the task's pause request out of the queue puts the request back through
+# `jig queue request`, the queue's one writer, with the reason it carried; its
+# time is the time it went back. A request that cannot be put back is named in
+# a warning, so the person can ask again.
+_task_pause_put_request_back() {
+  local id="$1" reason="$2" args=()
+  [ -z "$reason" ] || args=(--reason "$reason")
+  if "$JIG_SELF" queue request "task:$id" pause ${args[@]+"${args[@]}"} >/dev/null 2>&1; then
+    jig_warn "task pause: the pause request of $id is back in the queue"
+  else
+    jig_warn "task pause: the pause request of $id could not be put back in the queue; request it again with jig queue request task:$id pause"
+  fi
+}
+
 # _task_pause_cancel_words <stderr file> <stdout> <exit status> — one line
 # saying how a child `jig queue cancel` failed: its exit status and what it
 # said on stderr, or, when it said nothing there, the envelope's message.
@@ -4793,6 +4808,8 @@ _task_pause_body() {
 
   # The new state, whole, before the claim: a refused claim leaves nothing.
   local tmp="$dir/state.tmp.$$" tmp2="$dir/state.tmp2.$$" rc=0
+  jig_cleanup_add "$tmp"
+  jig_cleanup_add "$tmp2"
   _task_state_set_into "$dir/state" "$tmp2" paused true
   _task_state_set_into "$tmp2" "$tmp" paused_at "$(jig_today)"
   if [ -n "$reason" ]; then
@@ -4815,7 +4832,8 @@ _task_pause_body() {
   # A pause made by hand honours a pending request too: it goes with it,
   # before the pause is set (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary)
   # and before the stash: a cancel that fails must not leave a stash no state
-  # records.
+  # records. A stash that fails instead puts the request back, so the person's
+  # request outlives a pause that did not happen.
   local took=0 took_at="" took_reason=""
   if _task_pause_take_request "$id" "task pause"; then
     took=1
@@ -4829,8 +4847,11 @@ _task_pause_body() {
     changed=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null)
     count=$(_task_count_lines "$changed")
     if [ "$count" -gt 0 ]; then
-      git -C "$JIG_PROJECT" stash push -u -m "jig: $id" >/dev/null \
-        || { rm -f "$tmp"; jig_die "task pause: git stash push failed"; }
+      if ! git -C "$JIG_PROJECT" stash push -u -m "jig: $id" >/dev/null; then
+        rm -f "$tmp"
+        [ "$took" -eq 0 ] || _task_pause_put_request_back "$id" "$took_reason"
+        jig_die "task pause: git stash push failed"
+      fi
       stash_sha=$(git -C "$JIG_PROJECT" rev-parse "stash@{0}")
       stash_line="stashed $count file(s): $stash_sha"
     else
@@ -4984,6 +5005,7 @@ _task_resume_body() {
   fi
 
   local days tmp="$dir/state.tmp.$$" rc=0
+  jig_cleanup_add "$tmp"
   days=$(_task_days_since "$(task_state_get "$id" paused_at)")
   _task_state_without "$dir" "$tmp" paused paused_at paused_reason paused_stash_applied
 

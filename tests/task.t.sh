@@ -12250,3 +12250,91 @@ test_task_pause_json_refusals_have_codes() {
   assert_eq already-paused "$(_tr_code)" "$OUT"
   assert_contains "$OUT" "already paused: fresh"
 }
+
+# --stash in the JSON form: the answer names the stash it made, and a task
+# checked out in another worktree is refused with its own code.
+test_task_pause_json_with_stash_names_the_stash() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  printf 'dirty change\n' >> README.md
+  _tp_json fresh --stash
+  assert_eq 0 "$RC" "$ERR"
+  local sha
+  sha=$(git rev-parse 'stash@{0}')
+  assert_contains "$OUT" ",\"pause\":{\"stash\":\"$sha\",\"request\":null}}}"
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused_stash: $sha"
+}
+
+test_task_pause_json_with_stash_refuses_a_task_checked_out_elsewhere() {
+  task_setup_nested
+  jig task new T-1 >/dev/null
+  jig task start T-1 --worktree >/dev/null 2>&1
+  printf 'unrelated\n' >> README.md
+  _tp_json T-1 --stash
+  assert_eq 1 "$RC"
+  assert_eq wrong-checkout "$(_tr_code)" "$OUT"
+  assert_eq "" "$(git stash list)"
+}
+
+test_task_pause_json_refuses_a_reason_with_a_line_break() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tp_json fresh --reason "one
+two"
+  assert_eq 1 "$RC"
+  assert_eq usage "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "--reason must be a single line"
+  if grep -q '^paused:' .ai/workspace/tasks/fresh/state; then
+    fail "a refused pause marked the task paused"
+  fi
+}
+
+# Taking a pending request out is a write of its own: two more on top of the
+# pause's claim and write (schemas/json.md).
+test_task_pause_json_that_takes_a_request_raises_the_revision_by_four() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  jig queue request fresh pause >/dev/null
+  _tr_rev
+  local before=$REV
+  _tp_json fresh
+  assert_eq 0 "$RC" "$ERR"
+  _tr_rev
+  assert_eq $((before + 4)) "$REV" "a pause that took a request out"
+}
+
+# _tp_stash_fails <dir> — a PATH directory whose `git stash` fails; every
+# other git call is the real one.
+_tp_stash_fails() {
+  local real
+  real=$(command -v git)
+  mkdir -p "$1"
+  cat > "$1/git" <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in stash) echo "stash refused" >&2; exit 1 ;; esac
+done
+exec "$real" "\$@"
+SHIM
+  chmod +x "$1/git"
+}
+
+# A stash that fails after the pending request was taken out puts the request
+# back, with its reason: the pause did not happen, and the person's request
+# stands. Nothing of the new state is left in the task.
+test_task_pause_stash_that_fails_puts_the_request_back() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  jig queue request fresh pause --reason "need the laptop" >/dev/null
+  printf 'dirty change\n' >> README.md
+  _tp_stash_fails "$PWD/shim"
+  run_split env PATH="$PWD/shim:$PATH" "$JIG_BIN" task pause fresh --stash
+  assert_eq 1 "$RC" "$OUT $ERR"
+  assert_contains "$ERR" "git stash push failed"
+  assert_contains "$ERR" "the pause request of fresh is back in the queue"
+  assert_eq "need the laptop" "$(awk -F '\t' '$1 == "request" { print $5 }' .ai/runtime/queue)"
+  if grep -q '^paused:' .ai/workspace/tasks/fresh/state; then
+    fail "a failed stash left the task paused"
+  fi
+  assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a failed pause left its new state behind"
+}
