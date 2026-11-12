@@ -402,6 +402,50 @@ test_pr_draft_refuses_a_malformed_draft() {
   assert_contains "$OUT" "the header has no head"
 }
 
+_pr_levels_block() {
+  printf '%s\n' '=== levels' 'P0 Blocker — before the merge' 'P1 Critical — in this pull request' \
+    'P2 Minor — worth doing' 'P3 Nit — the author decides'
+}
+
+test_pr_draft_refuses_levels_that_do_not_hold() {
+  _pr_repo
+  run jig pr fetch "$_pr_url"
+  local levels bad
+  levels=$(_pr_levels_block)
+  _pr_draft_file '=== comment P2 R1 feature.txt' 'text'
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "level P2 needs a '=== levels' block"
+  _pr_draft_file "$levels" '=== comment R1 feature.txt' 'text'
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "every comment names its level"
+  _pr_draft_file "$levels" '=== comment P4 R1 feature.txt' 'text'
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a level is P0, P1, P2 or P3: P4"
+  for bad in '' '```suggestion' '# Heading' '> quote' '---' '    code'; do
+    _pr_draft_file "$levels" '=== comment P1 R1 feature.txt' "$bad" 'text'
+    run jig pr draft 7 --from ../draft.md
+    assert_eq 1 "$RC" "[$bad]"
+    assert_contains "$OUT" "starts with a one-line title in plain text"
+  done
+  for bad in 'P0 Blocker|P1 Critical|P3 Nit|P2 Minor' 'P0 Blocker|P1 Critical|P2 Minor' 'P0|P1 a|P2 b|P3 c' \
+    'P0  |P1 a|P2 b|P3 c'; do
+    printf '%s\n' '=== levels' > ../levels.md
+    printf '%s\n' "$bad" | tr '|' '\n' >> ../levels.md
+    _pr_draft_file "$(cat ../levels.md)" '=== comment P0 R1 feature.txt' 'text'
+    run jig pr draft 7 --from ../draft.md
+    assert_eq 1 "$RC" "$bad"
+    assert_contains "$OUT" "names P0, P1, P2 and P3"
+  done
+  _pr_draft_file '=== comment R1 feature.txt' 'text' "$levels"
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "comes right after the summary"
+  assert_no_file .git/jig/pr/7/draft.md
+}
+
 test_pr_draft_needs_a_fetch_first() {
   _pr_repo
   printf 'x\n' > ../draft.md
@@ -481,6 +525,45 @@ Say \"why\""
   if grep -q 'POST' ../bin/calls; then fail "check posted"; fi
   if grep -q 'tok-' ../bin/calls; then fail "a token was an argument"; fi
   if grep -q 'auth switch' ../bin/calls; then fail "the active account was switched"; fi
+}
+
+test_pr_comments_check_marks_and_numbers_findings_by_level() {
+  _pr_repo
+  _pr_checked "$(_pr_levels_block)" \
+    '=== comment P3 R1 feature.txt' 'A nit first in the draft.' 'Detail of the nit.' '' \
+    '=== comment P0 L1 old.txt' 'A blocker.' '' \
+    '=== comment P1 R5 feature.txt' 'Outside the diff.' '' \
+    '=== personal P2 R1 feature.txt' 'My own rule.'
+  assert_contains "$OUT" "=== summary
+Reads well.
+
+🔴 Blocker — before the merge · 🟠 Critical — in this pull request · 🟡 Minor — worth doing · 🟢 Nit — the author decides
+
+**🔴 Blocker**
+
+1. A blocker.
+
+**🟠 Critical**
+
+2. Outside the diff.
+
+**🟢 Nit**
+
+3. A nit first in the draft.
+
+---
+
+**R5 \`feature.txt\`**
+
+🟠 **2.** Outside the diff."
+  assert_contains "$OUT" "=== comment R1 feature.txt
+🟢 **3.** A nit first in the draft.
+Detail of the nit."
+  assert_contains "$OUT" "=== comment L1 old.txt
+🔴 **1.** A blocker."
+  assert_not_contains "$OUT" "My own rule"
+  assert_not_contains "$OUT" "=== levels"
+  _pr_valid_json .git/jig/pr/7/payload.json
 }
 
 test_pr_comments_check_maps_renames_and_ranges_from_githubs_diff() {
@@ -1428,6 +1511,23 @@ Reads well."
   assert_file_contains "$state/payload.json" '"old_path":"old.txt","new_path":"old.txt","old_line":1}'
   assert_contains "$(cat "$state/payload.json")" 'Say \"why\" — почему?'
   if grep -q 'POST' ../bin/calls; then fail "check posted"; fi
+}
+
+test_pr_gitlab_check_marks_findings_by_level_too() {
+  _pr_gl_repo
+  _pr_gl_checked "$(_pr_levels_block)" '=== comment P2 R1 feature.txt' 'A minor point.' '' \
+    '=== comment P0 L1 old.txt' 'A blocker.'
+  assert_contains "$OUT" "**🔴 Blocker**
+
+1. A blocker.
+
+**🟡 Minor**
+
+2. A minor point."
+  assert_contains "$OUT" "=== comment R1 feature.txt
+🟡 **2.** A minor point."
+  assert_contains "$(cat .git/jig/pr/7/payload.json)" '🔴 **1.** A blocker.'
+  _pr_valid_json .git/jig/pr/7/payload.json
 }
 
 test_pr_gitlab_check_maps_context_lines_renames_and_ranges() {
