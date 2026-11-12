@@ -8,7 +8,7 @@ Jig's commands print text for a person. A program — a CI step, a chat bot, a d
 `--json`. Today `jig task list`, `jig task artifacts`, `jig task artifact read`, `jig spec list`, `jig status`,
 `jig queue list`, `jig queue next`, `jig config keys`, `jig knowledge proposed`, `jig knowledge sources`, `jig knowledge read` and
 `jig writes` offer it, and `jig queue`, `jig task new`, `jig upgrade`, `jig config set|unset`, `jig spec item`
-and `jig knowledge accept|reject|reviewed` answer in it when they write; more commands will, in the
+and `jig knowledge decide|accept|reject|reviewed` answer in it when they write; more commands will, in the
 same form.
 
 ```bash
@@ -462,6 +462,16 @@ jig knowledge reviewed convention-stub --revision 1793825295 --json
 
 Without `--revision` and `--json` these commands do what they always did: they change the file in your
 working tree, for a person deciding with an agent.
+
+To send several decisions of different kinds at once — what a person decided on a page before pressing
+one button — use `decide`. It is one write at one revision: one fetch, one commit and one push for the
+lot, and if any decision is refused, none is made.
+
+```bash
+jig knowledge decide --accept feature-alpha --reject feature-beta --reviewed convention-stub --revision 1793825286 --json
+```
+
+The answer is the same object, with a decision per flag in the order given. Name each document once.
 
 `reject` also drops the link of an accepted stub whose file changed, has no approved text recorded, or
 is gone (`changed`, `unrecorded`, `missing` in `sources --json`): the stub becomes `rejected`, stays at

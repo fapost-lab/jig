@@ -5230,3 +5230,119 @@ test_knowledge_an_id_changed_only_here_at_a_path_the_tree_has_is_not_found() {
   assert_contains "$OUT" '"code":"not-found"'
   own_tree_gone
 }
+
+# --- jig knowledge decide: several kinds of decision as one write -------------------
+#
+# A page queues what a person decided on several documents and sends it at the revision
+# they read (task knowledge-decide-batch): one fetch, one claim, one commit, one push.
+
+test_knowledge_decide_mixed_kinds_are_one_commit_in_the_order_given() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed"
+  git push -q origin main
+  local before
+  before=$(own_tree_snapshot)
+  run jig knowledge decide --reject feature-beta --accept feature-alpha --reviewed convention-stub \
+    --revision "$(_kd_rev)" --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"data":{"decisions":[{"id":"feature-beta","decision":"rejected","path":".ai/knowledge/features/beta.md"},{"id":"feature-alpha","decision":"accepted","path":".ai/knowledge/features/alpha.md"},{"id":"convention-stub","decision":"reviewed","path":".ai/knowledge/sources/stub.md"}],"write":{"target":"knowledge","branch":"knowledge/decisions"'
+  assert_contains "$OUT" '"commits":1'
+  assert_eq "$before" "$(own_tree_snapshot)"
+  assert_eq active "$(_kd_status alpha)"
+  assert_eq rejected "$(_kd_status beta)"
+  assert_contains "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md)" "reviewed_at: "
+  assert_eq "1" "$(git rev-list --count main..knowledge/decisions)"
+  assert_eq "Decide knowledge: 3 decisions" "$(git log -1 --format=%s knowledge/decisions)"
+  assert_eq "$(printf 'accept: feature-alpha\nreject: feature-beta\nreviewed: convention-stub')" \
+    "$(git log -1 --format=%b knowledge/decisions | sed '/^$/d')"
+  own_tree_gone
+}
+
+test_knowledge_decide_of_one_kind_keeps_that_kinds_subject() {
+  _kd_repo commit
+  run jig knowledge decide --accept feature-alpha --accept feature-beta --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Accept knowledge: feature-alpha, feature-beta" "$(git log -1 --format=%s knowledge/decisions)"
+  own_tree_gone
+}
+
+test_knowledge_decide_with_a_reject_of_a_changed_stub_judges_its_own_row() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed, not pushed"
+  # The stub's change is only here: its drop is refused, and the accept with it.
+  run jig knowledge decide --accept feature-alpha --reject convention-stub --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-on-base"'
+  assert_contains "$OUT" 'convention-stub, as this checkout has it'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  git push -q origin main
+  run jig knowledge decide --accept feature-alpha --reject convention-stub --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq active "$(_kd_status alpha)"
+  assert_eq rejected "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md | sed -n 's/^status: //p')"
+  own_tree_gone
+}
+
+test_knowledge_decide_one_refusal_refuses_the_whole_call_and_claims_nothing() {
+  _kd_repo commit
+  local rev
+  rev=$(_kd_rev)
+  run jig knowledge decide --accept feature-alpha --reject nope --revision "$rev" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  # The revision was not claimed: the same one still writes.
+  run jig knowledge decide --accept feature-alpha --revision "$rev" --json
+  assert_eq 0 "$RC" "$OUT"
+  # Decided already on the branch: refused, and the other decision with it.
+  run jig knowledge decide --reject feature-beta --accept feature-alpha --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-proposed"'
+  assert_eq proposed "$(_kd_status beta)"
+  own_tree_gone
+}
+
+test_knowledge_decide_usage_refusals() {
+  _kd_repo commit
+  run jig knowledge decide --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide --accept feature-alpha --reject feature-alpha --json
+  assert_contains "$OUT" '"code":"usage"'
+  assert_contains "$OUT" 'feature-alpha is given twice'
+  run jig knowledge decide --accept feature-alpha --accept feature-alpha --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide feature-alpha --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide --accept --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide --accept feature-alpha --date 2026-01-01 --json
+  assert_contains "$OUT" '"code":"usage"'
+  assert_contains "$OUT" '--date dates a --reviewed decision'
+  run jig knowledge decide --accept feature-alpha --revision 1 --json
+  assert_contains "$OUT" '"code":"stale-revision"'
+  run jig knowledge accept feature-alpha --reject feature-beta --json
+  assert_contains "$OUT" '"code":"usage"'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  own_tree_gone
+}
+
+test_knowledge_decide_text_form_writes_in_the_tree_and_names_each_kind() {
+  _kd_repo commit
+  run jig knowledge decide --accept feature-alpha --reject feature-beta
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "knowledge decide: accept feature-alpha; reject feature-beta"
+  assert_eq proposed "$(sed -n 's/^status: //p' .ai/knowledge/features/alpha.md)"
+  assert_eq active "$(_kd_status alpha)"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  own_tree_gone
+}

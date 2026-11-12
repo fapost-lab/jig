@@ -326,13 +326,21 @@ already, whichever id was given; `not-linkable` for a task `file` cannot link: f
 started, linked to another spec, or an item already checked, or a checkout that does not keep the clone's task workspaces for `--new`; `epic-missing` for an open epic neither
 here nor on origin; and the refusals of every write, below.
 
-## `jig knowledge accept|reject|reviewed` writes
+## `jig knowledge decide|accept|reject|reviewed` writes
 
 With `--json` or `--revision <n>`, a decision is committed on `knowledge/decisions`, in Jig's own tree
 (adr-20261104-a-write-goes-in-jigs-own-tree). Without either, the text form changes the working tree,
 as it always did. With `--json` alone the write checks against the revision it reads once its tree
 stands, before it reads the knowledge there, as the spec item writes do. `reviewed` also takes `--date`. Several ids are one decision: a refusal refuses them
 all.
+
+`jig knowledge decide [--accept <id>]... [--reject <id>]... [--reviewed <id>]... [--date <d>] [--revision <n>] [--json]`
+decides several documents several ways in one write — one fetch, one claim, one commit, one push — so a
+page can send what a person decided at the revision they read. It is always a write in the tree; it has no
+working-tree form. `decisions` lists them in the order of the flags. An id given twice, no decision at all,
+or `--date` with no `--reviewed` is `usage`; any other refusal refuses the whole call, as above. A call of one
+kind commits under that kind's subject (`Accept knowledge: …`); one of several kinds under
+`Decide knowledge: <n> decisions`, a line per kind in the body.
 
 ```json
 {"decisions": [{"id": "feature-alpha", "decision": "accepted", "path": ".ai/knowledge/features/alpha.md"}], "write": <write>}
