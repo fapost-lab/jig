@@ -44,10 +44,11 @@ need to tell it apart (`already-filed`, out of `already-exists`); the release no
 | `usage` | the command was given an argument it does not take, an option without its value, or a value outside the ones it accepts (`--status bogus`); `--json` beside an option it cannot be combined with too |
 | `not-a-repository` | it ran outside a git repository |
 | `not-initialised` | the repository has no Jig: no `.ai/config.yaml`; `jig init` installs it |
-| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
+| `stale-revision` | a write was sent with a revision that is no longer the clone's: Jig wrote something after the caller read it (`jig queue … --revision <n>`, `jig task resume … --revision <n>`, `jig task pause … --revision <n>`, `jig task set … status consolidated --revision <n>`, `jig spec item … --revision <n>`, `jig knowledge accept … --revision <n>`). Read again and decide again; nothing was written |
 | `not-found` | a reference names no task or epic of this clone, an item, dependency or request that is not in the queue where the command needs it, a task document the task does not have (`jig task artifact read`), a knowledge document that does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`), or a spec, phase or item a roadmap write names that the roadmap on the write branch does not have, or a task it would file. Also `jig writes ship` with nothing waiting |
 | `not-paused` | `jig task resume` was asked for a task that is not paused: somebody resumed it first. Nothing was written |
-| `wrong-checkout` | `jig task resume` has a stash to apply and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
+| `already-paused` | `jig task pause` was asked for a task that is paused already: somebody paused it first. Nothing was written |
+| `wrong-checkout` | `jig task resume` has a stash to apply, or `jig task pause --stash` has one to make, and this checkout is not on the task's branch; `message` names the worktree that has it checked out, or says to switch to it. Nothing was written |
 | `stash-conflict` | `jig task resume` could not apply the task's stash: `git stash apply` refused and applied nothing, it merged the stash with conflicts or stopped part way, or a stash it merged earlier still has unresolved conflicts, or the checkout has unresolved conflicts of its own. The task stays paused and the stash entry is kept |
 | `not-closable` | `jig task set <id> status consolidated` was asked for a task Jig does not offer to close: its knowledge decision is not recorded, or its pull request is not merged (the forge says so, or cannot be asked). `message` is the reason word for word, the one the task's `close` action carries. Nothing was written |
 | `already-exists` | a write would create what the clone already has: `jig task new` with an id another task holds, `jig queue request` for a request already pending, `jig spec item add` with the text of an item the roadmap has, `jig spec item file` with a `--new` id another task holds. Another id is the remedy. Nothing was written |
@@ -178,7 +179,7 @@ What a person may do next with a task, as Jig decides it from the task's state
 | `start` | `jig task start <id>` | the task has not been started |
 | `pause` | `jig task pause <id>` | it is not paused |
 | `resume` | `jig task resume <id>` | it is paused |
-| `request-pause` | `jig queue request task:<id> pause` | it is not paused and no pause of it is requested |
+| `request-pause` | `jig queue request task:<id> pause` | it is not paused, no pause of it is requested, and it has been started: a task nobody started enters no stage, so no stage would take the request, and the reason sends the person to `pause` (the command still takes it) |
 | `cancel-pause-request` | `jig queue cancel task:<id> pause` | a pause of it is requested |
 | `approve-gate` | `jig task gate <id> approved` | a T3/T4 design waits at its gate (`waiting` or `changed`), and the gate is a person's: not in a clone or a run where nobody answers (`autopilot.unattended`) |
 | `answer-stop` | `jig task autopilot <id> resume --answer <text>`, with ` --by human` for an unattended run | its autopilot run is `stopped`, and an unattended one has repairs left |
@@ -630,6 +631,37 @@ domains it does not accept, and a `--goal` that is empty, holds a line break, st
 stands beside `--from`; `not-initialised` and `not-a-repository` as everywhere. Any other refusal —
 a worktree that keeps a task directory of its own, a `--from` file that cannot be read — reads
 `failed`. Nothing is written on a refusal.
+
+## `jig task pause --json`
+
+`jig task pause <id> [--reason <text>] [--stash] [--revision <n>] --json` pauses a task at once and
+answers with the task. It is what a board calls for a task whose `request-pause` action is withheld
+because nobody started it: a request would wait for a stage that never begins. The write is checked
+against a revision as `jig task resume`'s is: with `--revision <n>`, the `revision` of the read the
+caller decided on; without it, the revision the command reads as it starts. When anything was
+written in the clone since, the pause is refused with `stale-revision` and changes nothing. A landed
+pause raises the revision by two (the claim and the write), and by two more when it took a pending
+pause request out of the queue with it (`jig queue cancel`). `--json` may stand anywhere among the
+arguments; without it the command prints its report, as it always has.
+`jig task pause <id> --if-requested --stage <name>`, the stage's form, takes neither.
+
+```json
+{"task": <task>, "pause": {"stash": null, "request": {"requested_at": "2026-11-12T09:30:00Z", "reason": "standup"}}}
+```
+
+| Field | Type | Value |
+|---|---|---|
+| `task` | object | the task as `jig task list --json` lists it, read after the write: `paused` is `true`, `pause_request` is `null` |
+| `pause.stash` | string or null | the stash `--stash` made of this checkout's changes; `null` without `--stash`, or when there was nothing to stash |
+| `pause.request` | object or null | the pause request that was pending and went with the pause, `{"requested_at", "reason"}` as `pause_request` carried it; `null` when none was pending |
+
+Refusals: `usage` for an argument the command does not take, a `--revision` without a value or that
+is not a revision, a `--reason` with a line break, `--if-requested` beside `--json` or `--revision`,
+and an id outside the grammar; `not-found` for no such task; `already-paused`, `wrong-checkout` and
+`stale-revision` as in the table above; `not-initialised` and `not-a-repository` as everywhere. Each
+of them happens before anything is written. A failure after the claim reads `failed` and leaves the task not
+paused: a pending request that could not be taken out of the queue stays, and the revision is raised
+by one; a `git stash push` that fails comes after the request went, which then stays out.
 
 ## `jig task resume --json`
 
