@@ -2143,6 +2143,9 @@ test_spec_close_succeeds_on_an_empty_spec_directory() {
 
 epic_setup() {
   fixture_jig_repo
+  # EPIC_BASE_VERSION: the project declares this version on main, so a later
+  # change of it is a raise (a VERSION file new in a branch is not one).
+  [ -z "${EPIC_BASE_VERSION:-}" ] || printf '%s\n' "$EPIC_BASE_VERSION" > VERSION
   git add -A
   git commit -q -m "jig init snapshot"
 }
@@ -2470,7 +2473,7 @@ test_spec_epic_finish_with_leftovers_handled_removes_the_spec_directory() {
   run jig spec epic idea-x --finish --leftovers-handled
   assert_eq 0 "$RC"
   assert_contains "$OUT" "removed: .ai/specs/idea-x -> $dest"
-  assert_contains "$OUT" "commit the removal with the version bump, then open the pull request from epic/idea-x into main"
+  assert_contains "$OUT" "commit the removal, then open the pull request from epic/idea-x into main"
   assert_no_file .ai/specs/idea-x
   assert_dir "$dest"
   assert_file "$dest/roadmap.md"
@@ -3468,9 +3471,8 @@ sship_finished() {
   epic_ready_to_finish "$1"
   sship_origin
   jig spec epic "$1" --finish --leftovers-handled >/dev/null 2>&1
-  printf '1.0.0\n' > VERSION
-  git add -A ".ai/specs/$1" VERSION
-  printf 'Release %s\n\nThe epic, finished.\n' "$1" > msg.txt
+  git add -A ".ai/specs/$1"
+  printf 'Finish %s\n\nThe epic, finished.\n' "$1" > msg.txt
 }
 
 # sship_closed <id> — a spec without an epic, closed on main: its directory is
@@ -3863,7 +3865,7 @@ test_spec_ship_final_at_pr_commits_pushes_and_opens_the_pr_into_main() {
   argv=$(cat gh-create.argv)
   assert_contains "$argv" "$(printf -- '--base\nmain')"
   assert_contains "$argv" "$(printf -- '--head\nfinish/idea-x')"
-  assert_contains "$argv" "$(printf -- '--title\nRelease idea-x')"
+  assert_contains "$argv" "$(printf -- '--title\nFinish idea-x')"
 }
 
 # A release branch the person cut from the epic still ships on finish/<id>,
@@ -3873,9 +3875,8 @@ test_spec_ship_final_from_a_branch_cut_from_the_epic_ships_on_finish() {
   sship_origin
   git checkout -q -b release/1.0.0
   jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
-  printf '1.0.0\n' > VERSION
-  git add -A .ai/specs/idea-x VERSION
-  printf 'Release idea-x\n\nThe epic, finished.\n' > msg.txt
+  git add -A .ai/specs/idea-x
+  printf 'Finish idea-x\n\nThe epic, finished.\n' > msg.txt
   sship_stub_gh ""
   sship_cfg_local agent.git pr
   local before
@@ -3992,8 +3993,12 @@ STUB
 
 # mfin_finished <id> [<release>] [<roadmap-item>] — sship_finished with a
 # roadmap whose only work item is checked (or <roadmap-item> added unchecked)
-# and one unchecked fog item, declared with <release> when given; agent.git
-# merge, the unattended opt-in, CI given no time to wait, gh stubbed.
+# and one unchecked fog item, declared with <release> when given (a release
+# epic: it stages the version bump, and carries a notes commit naming main's
+# tip in its Release-Notes-Through: trailer, unless MFIN_NO_NOTES is set;
+# MFIN_MAIN_AFTER_NOTES puts one more commit on main after it and merges main
+# into the epic); agent.git merge, the unattended opt-in, CI given no time to
+# wait, gh stubbed.
 mfin_finished() {
   local id="$1" release="${2:-}" extra="${3:-}"
   epic_setup
@@ -4016,10 +4021,25 @@ mfin_finished() {
   git commit -q -m "declare epic"
   jig spec epic "$id" >/dev/null 2>&1
   git checkout -q "epic/$id"
+  if [ -n "$release" ] && [ -z "${MFIN_NO_NOTES:-}" ]; then
+    git commit --allow-empty -q -m "Release notes" -m "Release-Notes-Through: $(git rev-parse main)"
+    if [ -n "${MFIN_MAIN_AFTER_NOTES:-}" ]; then
+      git checkout -q main
+      printf 'later\n' > later.txt
+      git add later.txt
+      git commit -q -m "work merged after the notes"
+      git checkout -q "epic/$id"
+      git merge -q --no-edit main
+    fi
+  fi
   sship_origin
   jig spec epic "$id" --finish --leftovers-handled >/dev/null 2>&1
-  printf '1.1.0\n' > VERSION
-  git add -A ".ai/specs/$id" VERSION
+  if [ -n "$release" ]; then
+    printf '1.1.0\n' > VERSION
+    git add -A ".ai/specs/$id" VERSION
+  else
+    git add -A ".ai/specs/$id"
+  fi
   printf 'Release %s\n\nThe epic, finished.\n' "$id" > msg.txt
   mfin_stub_gh
   sship_cfg_local agent.git merge
@@ -4033,7 +4053,7 @@ test_spec_ship_final_merges_in_an_unattended_run_with_a_merge_commit_only() {
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 0 "$RC"
   assert_contains "$OUT" "mode: final"
-  assert_contains "$OUT" "release: minor (no Release: line; the unattended default)"
+  assert_not_contains "$OUT" "release: "
   assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
   local argv
   argv=$(cat gh-merge.argv)
@@ -4062,6 +4082,94 @@ test_spec_ship_final_prints_the_recorded_release_level() {
   assert_contains "$OUT" "merged "
 }
 
+# A feature epic raises no version: release.merge is about releases, so it does
+# not hold the merge of one.
+test_spec_ship_final_feature_epic_merge_ignores_release_merge() {
+  mfin_finished idea-x
+  sship_cfg_local release.merge human
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+  assert_not_contains "$OUT" "release.merge"
+}
+
+test_spec_ship_final_release_epic_ships_when_the_notes_name_the_tip_of_main() {
+  mfin_finished idea-x minor
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "release: minor"
+  assert_contains "$OUT" "pushed finish/idea-x"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/42"
+}
+
+test_spec_ship_final_release_epic_without_a_notes_trailer_is_not_sent() {
+  MFIN_NO_NOTES=1 mfin_finished idea-x minor
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: not sent: the epic raises the version, and none of its commits names the commit its release notes describe"
+  assert_eq "" "$(git --git-dir=origin.git for-each-ref refs/heads/finish)"
+  assert_eq "epic/idea-x" "$(git symbolic-ref --short HEAD)"
+  assert_no_file gh-create.argv
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_release_epic_is_not_sent_when_main_moved_past_the_notes() {
+  MFIN_MAIN_AFTER_NOTES=1 mfin_finished idea-x minor
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: not sent: the epic raises the version, and 1 commit(s) reached the base after the commit the release notes describe"
+  assert_contains "$OUT" "work merged after the notes"
+  assert_eq "" "$(git --git-dir=origin.git for-each-ref refs/heads/finish)"
+  assert_no_file gh-create.argv
+}
+
+# A feature epic that raises the version is refused before anything is sent.
+test_spec_ship_final_refuses_a_feature_epic_that_raises_the_version() {
+  EPIC_BASE_VERSION=1.0.0 sship_finished idea-x
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+  printf '1.1.0\n' > VERSION
+  git add VERSION
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "spec ship: a feature epic does not raise the version; the release is made apart from it (jig-release). Take the version raise out of epic/idea-x, or declare the epic a release with a Release: line"
+  assert_eq "" "$(git --git-dir=origin.git for-each-ref refs/heads/finish)"
+  assert_eq "epic/idea-x" "$(git symbolic-ref --short HEAD)"
+  assert_no_file gh-create.argv
+}
+
+test_spec_ship_final_refuses_a_feature_epic_whose_commits_already_raise_the_version() {
+  EPIC_BASE_VERSION=1.0.0 epic_ready_to_finish idea-x
+  printf '1.0.1\n' > VERSION
+  git commit -q -am "bump on the epic"
+  sship_origin
+  jig spec epic idea-x --finish --leftovers-handled >/dev/null 2>&1
+  git add -A .ai/specs/idea-x
+  printf 'Finish idea-x\n\nThe epic, finished.\n' > msg.txt
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "a feature epic does not raise the version"
+  assert_no_file gh-create.argv
+}
+
+test_spec_ship_final_ships_a_feature_epic_that_leaves_the_version_alone() {
+  EPIC_BASE_VERSION=1.0.0 sship_finished idea-x
+  sship_stub_gh ""
+  sship_cfg_local agent.git pr
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+}
+
 test_spec_ship_final_at_merge_is_the_humans_outside_an_unattended_run() {
   mfin_finished idea-x
   sship_cfg_local autopilot.unattended false
@@ -4069,12 +4177,22 @@ test_spec_ship_final_at_merge_is_the_humans_outside_an_unattended_run() {
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 0 "$RC"
   assert_contains "$OUT" "pr https://github.com/example/example/pull/42"
+  assert_contains "$OUT" "not merged: the epic's final merge is the human's outside an unattended run"
+  assert_no_file gh-merge.argv
+}
+
+test_spec_ship_final_release_epic_merge_is_the_humans_outside_an_unattended_run() {
+  mfin_finished idea-x patch
+  sship_cfg_local autopilot.unattended false
+
+  run jig spec ship idea-x --message-file msg.txt
+  assert_eq 0 "$RC"
   assert_contains "$OUT" "not merged: the epic's final merge is the release, and outside an unattended run it is the human's"
   assert_no_file gh-merge.argv
 }
 
 test_spec_ship_final_unattended_leaves_the_merge_to_the_person_when_release_merge_is_human() {
-  mfin_finished idea-x
+  mfin_finished idea-x patch
   sship_cfg_local release.merge human
 
   run jig spec ship idea-x --message-file msg.txt
@@ -4130,7 +4248,7 @@ test_spec_ship_final_unattended_in_the_project_config_does_not_merge() {
 
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "not merged: the epic's final merge is the release"
+  assert_contains "$OUT" "not merged: the epic's final merge is the human's outside an unattended run"
   assert_no_file gh-merge.argv
 }
 
@@ -4391,7 +4509,25 @@ test_spec_epic_finish_without_a_release_line_says_so() {
 
   run jig spec epic idea-x --finish --leftovers-handled
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "release: not recorded"
+  assert_contains "$OUT" "release: none — a feature epic; the release is made apart by jig-release"
+  assert_not_contains "$OUT" "version bump"
+  assert_contains "$OUT" "commit the removal, then open the pull request"
+}
+
+test_spec_epic_finish_of_a_release_epic_names_the_version_bump() {
+  epic_setup
+  jig spec new idea-x >/dev/null
+  git checkout -q main
+  jig spec epic idea-x --release minor >/dev/null
+  git add -A
+  git commit -q -m "declare epic"
+  jig spec epic idea-x >/dev/null 2>&1
+  git checkout -q epic/idea-x
+  sship_cfg_local agent.git pr
+
+  run jig spec epic idea-x --finish --leftovers-handled
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stage the removal with the version bump and run"
 }
 
 test_spec_ship_refuses_an_invalid_release_line() {

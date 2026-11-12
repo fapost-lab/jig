@@ -1139,6 +1139,79 @@ jig_release_raise() {
   return 0
 }
 
+# jig_release_notes_through <from> — the commit this branch's release notes say
+# they describe: the newest `Release-Notes-Through: <sha>` trailer among the
+# commits <from>..HEAD, resolved to a full sha, or as written when it does not
+# resolve; nothing when no commit carries one. The newest wins: notes brought up
+# to date after the base moved are a later commit with a later trailer
+# (adr-20261112-release-notes-name-the-commit-they-describe).
+jig_release_notes_through() {
+  local v full
+  v=$(git -C "$JIG_PROJECT" log --format=%B "$1..HEAD" 2>/dev/null \
+    | awk 'found == "" && /^Release-Notes-Through:[[:space:]]*[0-9a-fA-F]+[[:space:]]*$/ {
+        sub(/^Release-Notes-Through:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); found = $0
+      }
+      END { if (found != "") print found }')
+  [ -n "$v" ] || return 0
+  if full=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$v^{commit}" 2>/dev/null); then
+    printf '%s\n' "$full"
+  else
+    printf '%s\n' "$v"
+  fi
+}
+
+# jig_release_notes_gap <tip> — why the release notes on HEAD do not describe
+# everything up to <tip> (the base's freshest commit), or nothing when they do.
+# Reads git only, no network: the callers fetch, each its own way (a ship as
+# the clone's account, CI with its checkout's token). The answer is the same
+# question everywhere — every commit the release will carry into the base was
+# seen by whoever wrote the notes — so `task ship`, `spec ship` and CI's
+# changelog check can never disagree about it.
+jig_release_notes_gap() {
+  local tip="$1" through n list
+  through=$(jig_release_notes_through "$tip")
+  if [ -z "$through" ]; then
+    printf 'none of its commits names the commit its release notes describe; once the notes cover %s, record that commit in a Release-Notes-Through: trailer (jig task set <task> notes_through <sha> adds it to the next ship)\n' \
+      "$(git -C "$JIG_PROJECT" rev-parse --short "$tip" 2>/dev/null || printf '%s' "$tip")"
+    return 0
+  fi
+  if ! git -C "$JIG_PROJECT" cat-file -e "$through^{commit}" 2>/dev/null; then
+    printf 'Release-Notes-Through names %s, which is not a commit here\n' "$through"
+    return 0
+  fi
+  if ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$through" "$tip" 2>/dev/null; then
+    printf 'Release-Notes-Through names %s, which is not on the base (%s)\n' \
+      "$(git -C "$JIG_PROJECT" rev-parse --short "$through")" "$tip"
+    return 0
+  fi
+  n=$(git -C "$JIG_PROJECT" rev-list --count "$through..$tip" 2>/dev/null) || n=0
+  [ "$n" -gt 0 ] || return 0
+  list=$(git -C "$JIG_PROJECT" log --first-parent --format='  %h %s' "$through..$tip" 2>/dev/null | awk 'NR <= 5')
+  printf '%s commit(s) reached the base after the commit the release notes describe (%s):\n%s\ndescribe them in the notes, record the new tip of the base as Release-Notes-Through, and run again\n' \
+    "$n" "$(git -C "$JIG_PROJECT" rev-parse --short "$through")" "$list"
+}
+
+# jig_release_notes_refusal <who> <base> — jig_release_notes_gap against the
+# freshest <base>: origin's, fetched now as the clone's account, or the local
+# branch where there is no origin. A fetch that fails is itself the refusal:
+# a release whose notes cannot be checked against the base does not go out.
+jig_release_notes_refusal() {
+  local who="$1" base="$2" tip
+  if git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    jig_git_origin_account "$who" read
+    if ! jig_net jig_git_origin fetch --quiet origin \
+         "+refs/heads/$base:refs/remotes/origin/$base" >/dev/null 2>&1; then
+      printf 'could not fetch %s from origin, so whether the release notes still describe it cannot be told; run again when origin answers\n' "$base"
+      return 0
+    fi
+    tip="refs/remotes/origin/$base"
+  else
+    tip="refs/heads/$base"
+  fi
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip" >/dev/null 2>&1 || return 0
+  jig_release_notes_gap "$tip"
+}
+
 # jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
 # refs/heads/<name> and refs/remotes/origin/<name>, or HEAD when neither exists.
 #
@@ -2353,6 +2426,21 @@ JIG_SHIP_MERGED=0
 _JIG_CI_POLL=15
 _JIG_CI_GRACE=120
 
+# JIG_SHIP_LAST_CHECK — the name of a function the caller wants asked once
+# more after CI is green, right before the merge command: what it prints is why
+# the merge must not happen now, nothing when it may. Waiting for CI can take
+# many minutes, and a fact the caller checked before the wait (a release's
+# notes reaching the base's tip) may have stopped being true during it.
+JIG_SHIP_LAST_CHECK=""
+_jig_ship_last_check() {
+  local why
+  [ -n "$JIG_SHIP_LAST_CHECK" ] || return 0
+  why=$("$JIG_SHIP_LAST_CHECK") || why="the last check before the merge failed"
+  [ -n "$why" ] || return 0
+  printf 'not merged: %s\n' "$why"
+  return 1
+}
+
 # jig_ship_merge <who> <url> <sha> <any|merge-commit> — merge the pull request
 # at <url>, only as the commit <sha> that was shipped. Prints `merged <url>` or
 # `not merged: <reason>` and returns 0 either way; dies (exit 1) only on an
@@ -2509,6 +2597,7 @@ EOF
     printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
     return 0
   fi
+  _jig_ship_last_check || return 0
   if ! out=$(jig_gh pr merge "$url" --match-head-commit "$sha" "--$method" 2>&1); then
     printf 'not merged: the forge refused: %s\n' "$(_jig_ship_first_line "$out")"
     return 0
@@ -2605,6 +2694,7 @@ _jig_ship_merge_gitlab() {
     printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
     return 0
   fi
+  _jig_ship_last_check || return 0
   # --auto-merge=false: merge now or not at all, never "once the pipeline
   # succeeds", later, when nobody checks the conditions again.
   # shellcheck disable=SC2086 # $squash is one flag or nothing

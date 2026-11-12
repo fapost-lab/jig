@@ -294,8 +294,10 @@ epic branch (`jig spec epic`): its tasks are cut from the epic and their pull re
 into it.
 
 `jig-release` plans a release with a person: which filed tasks go in, in what order and at what
-version level. A release is a spec with an epic, so the same commands build it; `jig spec link`
-links a task filed earlier, and a started task stays out of the epic.
+version level. The release is its notes task, the last pull request, cut from the freshest default
+branch: it records the commit its notes describe (`jig task set <id> notes_through <sha>`), and
+`jig task ship` refuses the release while the default branch has moved past it. A release epic is
+built only when tasks must ship together; feature work never raises the version.
 
 `jig-autopilot` runs one task's route without waiting between stages and stops only where a
 human is needed; the route, the gates and `agent.git` stay what they are.

@@ -5308,6 +5308,8 @@ case "\$1 \$2" in
   "auth status") exit 0 ;;
   "pr list") val gh-existing null ;;
   "pr create")
+    # gh-hook.sh, when present, runs once: the base moving between the ship-time check and the merge.
+    if [ -f "\$d/gh-hook.sh" ]; then mv "\$d/gh-hook.sh" "\$d/gh-hook.ran"; (cd "\$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE sh "\$d/gh-hook.ran") > "\$d/gh-hook.out" 2>&1; fi
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-create.argv"
     while [ \$# -gt 0 ]; do
@@ -5315,9 +5317,13 @@ case "\$1 \$2" in
       shift
     done
     printf 'https://github.com/example/example/pull/99\n' ;;
-  "pr view") printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
+  "pr view")
+    printf '%s %s\n' "\$(val gh-draft false)" "\$(val gh-head "\$(git rev-parse HEAD)")" ;;
   "repo view") val gh-repo "true true true" ;;
-  "pr checks") val gh-checks pass ;;
+  "pr checks")
+    # gh-hook-checks.sh runs once, during the CI poll.
+    if [ -f "\$d/gh-hook-checks.sh" ]; then mv "\$d/gh-hook-checks.sh" "\$d/gh-hook-checks.ran"; (cd "\$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE sh "\$d/gh-hook-checks.ran") > "\$d/gh-hook-checks.out" 2>&1; fi
+    val gh-checks pass ;;
   "pr merge")
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-merge.argv"
@@ -5968,6 +5974,8 @@ rship_setup() {
   ship_cfg_local autopilot.unattended true
   task_route_done T-1
   jig task set T-1 knowledge_consolidated true >/dev/null
+  # The release's notes describe the base as it is now (the notes guard).
+  jig task set T-1 notes_through "$(git rev-parse origin/main)" >/dev/null
   rship_write "$file" "$new"
   git add "${file%+*}"
 }
@@ -6273,6 +6281,191 @@ test_task_ship_release_is_still_held_when_the_pr_is_already_open() {
   assert_contains "$OUT" "pr https://github.com/example/example/pull/99 (already open)"
   assert_contains "$OUT" "not merged: release.merge is human"
   assert_no_file gh-merge.argv
+}
+
+# --- a release's notes name the commit they describe
+# (adr-20261112-release-notes-name-the-commit-they-describe)
+
+# rship_advance_origin <subject> — a commit lands on origin's main after the
+# release's notes were written.
+rship_advance_origin() {
+  rm -rf adv-clone
+  git clone -q origin.git adv-clone
+  git -C adv-clone -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "$1"
+  git -C adv-clone push -q origin HEAD:main
+  rm -rf adv-clone
+}
+
+# rship_drop_notes_through — the task never recorded where its notes end.
+rship_drop_notes_through() {
+  sed '/^notes_through:/d' .ai/workspace/tasks/T-1/state > state.tmp
+  mv state.tmp .ai/workspace/tasks/T-1/state
+}
+
+test_task_set_notes_through_stores_the_full_sha() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  local full
+  full=$(git rev-parse origin/main)
+
+  run jig task set T-1 notes_through "$(git rev-parse --short origin/main)"
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/workspace/tasks/T-1/state)" "notes_through: $full"
+}
+
+test_task_set_notes_through_refuses_a_value_that_is_not_a_commit() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  local before
+  before=$(cat .ai/workspace/tasks/T-1/state)
+
+  run jig task set T-1 notes_through not-a-commit
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "notes_through is not a commit here: not-a-commit"
+  assert_eq "$before" "$(cat .ai/workspace/tasks/T-1/state)"
+}
+
+test_task_ship_appends_the_release_notes_through_trailer() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "release notes describe the base through"
+  assert_contains "$(git log -1 --format=%B)" "Release-Notes-Through: $(git rev-parse origin/main)"
+}
+
+test_task_ship_does_not_duplicate_the_release_notes_through_trailer() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local release.merge human
+  printf '\nRelease-Notes-Through: %s\n' "$(git rev-parse origin/main)" >> msg.txt
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_eq 1 "$(git log -1 --format=%B | grep -c '^Release-Notes-Through: ')"
+}
+
+test_task_ship_release_without_notes_through_is_refused_before_the_push() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  rship_drop_notes_through
+  ship_cfg_local agent.git pr
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not sent: this change raises the version"
+  assert_contains "$OUT" "Release-Notes-Through"
+  assert_eq "" "$(git --git-dir=origin.git branch --list "$(git branch --show-current)")"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_release_with_notes_behind_the_base_is_refused_before_the_push() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local agent.git pr
+  rship_advance_origin "Late feature on main"
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not sent: this change raises the version"
+  assert_contains "$OUT" "1 commit(s) reached the base after"
+  assert_contains "$OUT" "Late feature on main"
+  assert_eq "" "$(git --git-dir=origin.git branch --list "$(git branch --show-current)")"
+  assert_no_file gh-create.argv
+}
+
+test_task_ship_release_with_notes_through_the_base_tip_opens_the_pr() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local agent.git pr
+  rship_advance_origin "Feature on main"
+  git fetch -q origin
+  jig task set T-1 notes_through "$(git rev-parse origin/main)" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_not_contains "$OUT" "not sent"
+}
+
+test_task_ship_release_is_not_merged_when_the_base_moves_before_the_merge() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.1
+  ship_cfg_local release.merge agent
+  # Runs inside the stub gh at `pr create`: after the push, before the merge.
+  cat > gh-hook.sh <<'HOOK'
+rm -rf adv-clone
+git clone -q origin.git adv-clone
+git -C adv-clone -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "Raced onto main"
+git -C adv-clone push -q origin HEAD:main
+rm -rf adv-clone
+HOOK
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$OUT" "not merged: 1 commit(s) reached the base after"
+  assert_contains "$OUT" "Raced onto main"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_release_is_not_merged_when_the_base_moves_during_the_ci_wait() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.1
+  ship_cfg_local release.merge agent
+  # Runs inside the stub gh at `pr checks`: after the ship-time checks, before the merge.
+  cat > gh-hook-checks.sh <<'HOOK'
+rm -rf adv-clone
+git clone -q origin.git adv-clone
+git -C adv-clone -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "Landed during CI"
+git -C adv-clone push -q origin HEAD:main
+rm -rf adv-clone
+HOOK
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not merged: 1 commit(s) reached the base after"
+  assert_contains "$OUT" "Landed during CI"
+  assert_no_file gh-merge.argv
+}
+
+test_task_ship_release_again_with_only_newer_notes_makes_an_empty_notes_commit() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  ship_cfg_local agent.git pr
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  rship_advance_origin "Landed after the first ship"
+  git fetch -q origin
+  local tip first
+  tip=$(git rev-parse origin/main)
+  first=$(git rev-parse HEAD)
+  jig task set T-1 notes_through "$tip" >/dev/null
+  printf 'https://github.com/example/example/pull/99\n' > gh-existing
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "no change but the release notes reaching $(git rev-parse --short "$tip")"
+  assert_not_contains "$OUT" "not sent"
+  [ "$first" != "$(git rev-parse HEAD)" ] || fail "no new commit was made"
+  assert_contains "$(git log -1 --format=%B)" "Release-Notes-Through: $tip"
+}
+
+# Below `pr` a person opens the pull request, and CI asks the question there.
+test_task_ship_release_at_push_is_not_checked_for_notes() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.34.0
+  rship_drop_notes_through
+  ship_cfg_local agent.git push
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "stopped at push"
+  assert_not_contains "$OUT" "not sent"
+}
+
+test_task_ship_without_a_version_raise_ignores_missing_notes_through() {
+  rship_setup scripts/lib/version.sh 0.33.0 0.33.0
+  rship_drop_notes_through
+  ship_cfg_local release.merge human
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "not sent"
+  assert_not_contains "$OUT" "Release-Notes-Through"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
 }
 
 test_task_ship_merge_level_invalid_ci_timeout_dies() {
