@@ -4625,6 +4625,42 @@ jig_file_mtime() {
   printf '%s\n' "$out"
 }
 
+# jig_origin_fetched_at — when this clone last fetched, as UTC `YYYY-MM-DDTHH:MM:SSZ`,
+# or non-zero when no fetch shows. Every worktree has a FETCH_HEAD of its own (Jig's
+# own trees under the git directory included), so the newest of them answers; an empty
+# one is passed over, since a fetch that failed empties it, which also loses the fetch
+# it replaced. Any fetch writes it, of any branch or remote, so this says when the clone
+# last reached out, not that origin's base was among what came back
+# (adr-20261112-refresh-brings-the-clone-up-to-origin). No network.
+jig_origin_fetched_at() {
+  local d common f m best=""
+  d=$(git -C "$JIG_PROJECT" rev-parse --git-common-dir 2>/dev/null) || return 1
+  # Resolved by cd, as _ot_tree_path does: Git for Windows prints `C:/...`, which
+  # matches no `/*` and would be taken for a relative path.
+  common=$(cd "$JIG_PROJECT" 2>/dev/null && cd "$d" 2>/dev/null && pwd -P) || return 1
+  for f in "$common/FETCH_HEAD" "$common"/worktrees/*/FETCH_HEAD; do
+    [ -s "$f" ] || continue
+    m=$(jig_file_mtime "$f") || continue
+    if [ -z "$best" ] || [ "$m" -gt "$best" ]; then best=$m; fi
+  done
+  [ -n "$best" ] || return 1
+  jig_utc_from_epoch "$best"
+}
+
+# jig_origin_counts <base> — "<behind> <ahead>": the commits origin/<base> has that
+# <base> here does not, and the other way, as of the last fetch; non-zero when either
+# branch is missing. No network.
+jig_origin_counts() {
+  local out
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$1^{commit}" >/dev/null 2>&1 || return 1
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$1^{commit}" >/dev/null 2>&1 || return 1
+  out=$(git -C "$JIG_PROJECT" rev-list --left-right --count "refs/remotes/origin/$1...refs/heads/$1" 2>/dev/null) || return 1
+  case "$out" in
+    *[!0-9[:space:]]* | '') return 1 ;;
+  esac
+  printf '%s %s\n' "${out%%[[:space:]]*}" "${out##*[[:space:]]}"
+}
+
 # jig_utc_from_epoch <seconds> — the time as UTC `YYYY-MM-DDTHH:MM:SSZ`, or
 # nothing (status 1). GNU `date -d @<n>` first: GNU's `-r` takes a file, so
 # the BSD form tried first would read a file that happens to be named <n>.

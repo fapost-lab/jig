@@ -58,6 +58,10 @@ evidence it inferred itself.
   of 2), so a run makes two calls whatever the number of tasks. Written atomically after a list the
   forge answered, never on a dry run, never by a worktree that borrows the owner's task directory;
   a run without an answer leaves the last cache, whose entries keep their `fetched_at`.
+- **`jig refresh`**, outside housekeeping and on demand: the same fetch (`_hk_fetch`'s form), then
+  a fast-forward of the base only, never moving the checkout or touching its changes; the button a
+  program shows while `jig status --json` reports `base-behind-origin`
+  (adr-20261112-refresh-brings-the-clone-up-to-origin).
 - The **Session Hook** and the scheduler examples — triggers, both optional, neither
   installed automatically (ADR-0024).
 - The daily **latest-release check**: right after its own fetch, when `housekeeping.fetch`
