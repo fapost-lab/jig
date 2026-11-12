@@ -230,6 +230,7 @@ _status_report() {
   fi
   _status_new_release_hint
   _status_share_hint
+  _status_global_skill
 
   # Drift: one pass over the manifest, then one git process for every file
   # still on disk (jig_hash_list). A manifest_hash_of and a jig_hash per path
@@ -3079,6 +3080,27 @@ _status_share_hint() {
   done <<EOF
 $(jig_share_candidates "$JIG_PROJECT")
 EOF
+}
+
+# _status_global_skill — one line when Jig placed jig-pr-review for this
+# person in Claude Code and it is not what this project installs. Claude Code
+# lets a person's skill win over a project's of the same name, so the
+# project's copy is not the one that runs; while that skill is being changed
+# here, this line is how anyone learns it
+# (adr-20261112-the-pr-review-skill-is-installed-per-user). Read-only: the
+# version is declared, never run (jig_declared_version).
+_status_global_skill() {
+  local source path mine ver
+  mine="$JIG_PROJECT/.claude/skills/jig-pr-review"
+  [ -d "$mine" ] || return 0
+  [ -f "$JIG_LIB/globalskill.sh" ] || return 0
+  source=$(jig_global_source) || return 0
+  # shellcheck source=globalskill.sh
+  . "$JIG_LIB/globalskill.sh"
+  path=$(jig_global_skill_installed "$source") || return 0
+  diff -rq -x "$JIG_GLOBAL_SKILL_MARKER" "$path/" "$mine/" >/dev/null 2>&1 && return 0
+  ver=$(jig_declared_version "$source" 2>/dev/null) || ver=unknown
+  printf '%s\n' "pr-review skill: personal $ver shadows this project's ($path)"
 }
 
 # _status_new_release_hint — the one line the plain-text report shows when

@@ -641,6 +641,22 @@ fetched_at: $now
   fi
   printf 'diff: git -C %s diff %s %s\n' "$JIG_PROJECT" "$mb" "$head"
   printf 'rules: git -C %s show %s:<path>   (the base, never the head)\n' "$JIG_PROJECT" "$base_sha"
+  _pr_method_lines
+}
+
+# _pr_method_lines — where the review method and the showing rule are, in the
+# framework that is running. jig-pr-review is installed per user as well as
+# per project (adr-20261112-the-pr-review-skill-is-installed-per-user), so it
+# cannot reach them by a relative link; these lines are how it finds them, at
+# the version of the mechanics it drives. Nothing when the running jig is not
+# a framework checkout (a project's copy: its skills are beside it).
+_pr_method_lines() {
+  local root
+  root=$(cd -P "$JIG_LIB/../.." 2>/dev/null && pwd -P) || return 0
+  [ -f "$root/skills/jig-review/SKILL.md" ] || return 0
+  printf 'method: %s/skills/jig-review/SKILL.md   (section 2)\n' "$root"
+  [ -f "$root/skills/jig-task/references/show-the-document.md" ] || return 0
+  printf 'show: %s/skills/jig-task/references/show-the-document.md\n' "$root"
 }
 
 # --- draft ------------------------------------------------------------------------------------
@@ -2176,6 +2192,7 @@ ${threads}read_at: $now
     printf 'diff: git -C %s diff %s %s\n' "$JIG_PROJECT" "$_PR_MB" "$_PR_HEAD"
   fi
   printf 'state: %s\n' "$fu"
+  _pr_method_lines
   printf 'threads: %s to answer' "$_PR_NT"
   if [ "$_PR_FU_CLOSED" -gt 0 ]; then printf ' (%s answered fixed before)' "$_PR_FU_CLOSED"; fi
   printf '\n'

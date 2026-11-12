@@ -4167,3 +4167,34 @@ test_status_in_a_worktree_counts_the_main_checkouts_drafts() {
   assert_eq 0 "$RC"
   assert_contains "$OUT" "drafts: 1 (jig spec draft list)"
 }
+
+# --- the per-user pr-review skill ---------------------------------------------
+# (adr-20261112-the-pr-review-skill-is-installed-per-user)
+
+test_status_names_a_personal_pr_review_skill_that_shadows_the_projects() {
+  skip_unless_symlinks
+  fixture_jig_repo
+  # The project lives in $HOME here; the person's own skills get a home of
+  # their own, so the two .claude directories are not one.
+  local stub_root stub_bin path_dir me="$JIG_TEST_TMP.me"
+  stub_root=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stub.XXXXXX")
+  stub_bin=$(mktemp -d "${TMPDIR:-/tmp}/jig-status-stubbin.XXXXXX")
+  path_dir=$(_status_make_stub_global "$stub_root" "$stub_bin" 'JIG_VERSION="9.0.0"')
+  mkdir -p .claude/skills/jig-pr-review "$stub_root/skills/jig-pr-review" "$me/.claude/skills"
+  printf 'project\n' > .claude/skills/jig-pr-review/SKILL.md
+  printf 'released\n' > "$stub_root/skills/jig-pr-review/SKILL.md"
+  ln -s "$stub_root/skills/jig-pr-review" "$me/.claude/skills/jig-pr-review"
+
+  run env HOME="$me" PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "pr-review skill: personal 9.0.0 shadows this project's ($me/.claude/skills/jig-pr-review)"
+
+  # The same skill on both sides says nothing.
+  rm -rf .claude/skills/jig-pr-review
+  cp -R "$stub_root/skills/jig-pr-review" .claude/skills/jig-pr-review
+  run env HOME="$me" PATH="$(_status_path_without_jig "$path_dir")" "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "pr-review skill"
+
+  rm -rf "$stub_root" "$stub_bin" "$me"
+}

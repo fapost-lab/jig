@@ -40,7 +40,7 @@ P3 <word> — <…>
   takes a thread number of `jig pr followup` and a verdict, `fixed` or `open`: every thread it
   lists gets exactly one.
 - **Levels** are optional and all or nothing. A `=== levels` block, right after the summary, names
-  the four severities of [jig-review](../../jig-review/SKILL.md) in order, one a line:
+  the four severities of the review method (the fetch's `method:` file) in order, one a line:
   `P<n> <word>[ — <meaning>]`, in the review's language (`P0 Blocker — before the merge`). With it,
   every `comment` and `personal` names its level before the position (`=== comment P2 R42 …`);
   without it, none does. The first line of such a comment is its title: one line of plain text, not
