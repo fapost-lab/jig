@@ -494,18 +494,13 @@ test_promote_refuses_a_task_on_autopilot() {
   assert_no_file gh-create.argv
 }
 
-test_promote_takes_one_task_until_several_are_built() {
+test_promote_refuses_a_call_with_no_task() {
   promote_setup
 
-  run jig task promote T-1 T-2
-  assert_eq 1 "$RC" "$OUT"
-  assert_contains "$OUT" "task promote: promoting several tasks (several ids, --all) is not built yet; promote one task at a time"
-  run jig task promote --all
-  assert_eq 1 "$RC" "$OUT"
-  assert_contains "$OUT" "is not built yet"
   run jig task promote
   assert_eq 1 "$RC" "$OUT"
   assert_contains "$OUT" "usage: jig task promote <id>"
+  assert_contains "$OUT" "jig task promote --commit <sha> --all"
   assert_no_file gh-create.argv
 }
 
@@ -804,4 +799,260 @@ test_promote_names_every_task_in_a_chain_of_dependencies() {
   assert_contains "$OUT" "task promote: warning: T-1 carries task/T-7 (merged at $m); it reaches main with this task"
   assert_contains "$OUT" "task promote: warning: T-1 carries task/T-6 (merged at $m); it reaches main with this task"
   assert_contains "$(cat gh-create.body)" "- T-1 carries task/T-6"
+}
+
+# --- several tasks, "Promote from CI" -------------------------------------------
+# (.ai/specs/staging-branch/, "A CI run promotes the tasks it names, or all of
+# them only when told")
+
+# promote_created <branch> — whether the stub forge was asked to open a pull
+# request from <branch> into main.
+promote_created() {
+  local line
+  [ -f gh.log ] || return 1
+  while IFS= read -r line; do
+    case "$line" in "pr create --base main --head $1 "*) return 0 ;; esac
+  done < gh.log
+  return 1
+}
+
+test_promote_several_ids_each_opens_its_pull_request() {
+  promote_setup
+  promote_task T-2 two.txt "work of T-2"
+  promote_land T-2
+  local tested
+  tested=$(git rev-parse origin/staging)
+
+  run jig task promote --commit "$tested" T-1 T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: promoting T-1"
+  assert_contains "$OUT" "task promote: T-1: promoted"
+  assert_contains "$OUT" "task promote: T-2: promoted"
+  assert_contains "$OUT" "task promote: 2 promoted, 0 refused, 0 need a person (tested commit $(git rev-parse --short "$tested") of staging)"
+  promote_created task/T-1 || fail "no pull request for task/T-1: $(cat gh.log)"
+  promote_created task/T-2 || fail "no pull request for task/T-2: $(cat gh.log)"
+  assert_file_contains .ai/workspace/tasks/T-2/state "promote_url: https://github.com/example/example/pull/7"
+}
+
+# One task's refusal is that task's result: the next one is still promoted,
+# and the run exits 1. Without --commit, every task is judged against the one
+# tip of origin/staging the run fetched.
+test_promote_a_refused_task_does_not_stop_the_others() {
+  promote_setup
+  promote_task T-2 two.txt "work of T-2"
+
+  run jig task promote T-2 T-1
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: task/T-2 is not in the tested commit"
+  assert_contains "$OUT" "task promote: T-2: refused"
+  assert_contains "$OUT" "task promote: T-1: promoted"
+  assert_contains "$OUT" "task promote: 1 promoted, 1 refused, 0 need a person"
+  promote_created task/T-1 || fail "T-1 must still be promoted: $(cat gh.log)"
+  if promote_created task/T-2; then fail "T-2 must not be promoted"; fi
+}
+
+# A conflict needs a person: the run exits 3 when nothing was refused, and
+# the trial merge's worktree is gone with the task's subshell.
+test_promote_a_task_that_needs_a_person_exits_3() {
+  promote_setup
+  promote_task T-2 two.txt "work of T-2"
+  promote_land T-2
+  promote_conflict
+  local worktrees
+  worktrees=$(git worktree list | wc -l)
+
+  run jig task promote T-1 T-2
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: task/T-1 conflicts with main in:"
+  assert_contains "$OUT" "task promote: T-1: needs a person"
+  assert_contains "$OUT" "task promote: T-2: promoted"
+  assert_contains "$OUT" "task promote: 1 promoted, 0 refused, 1 need a person"
+  assert_eq "$worktrees" "$(git worktree list | wc -l)" "the trial merge's worktree must be gone"
+}
+
+# A refusal outweighs a person needed: the run exits 1.
+test_promote_a_refusal_outweighs_a_person_needed() {
+  promote_setup
+  promote_conflict
+  promote_task T-2 two.txt "work of T-2"
+
+  run jig task promote T-1 T-2
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: T-1: needs a person"
+  assert_contains "$OUT" "task promote: T-2: refused"
+}
+
+# What would refuse every task refuses the run before the first one.
+test_promote_several_refuses_a_tested_commit_off_staging_once() {
+  promote_setup
+  promote_task T-2 two.txt "work of T-2"
+  promote_land T-2
+  local off
+  git checkout -q main
+  printf 'off\n' > off.txt
+  git add off.txt
+  git commit -q -m "Not on staging"
+  off=$(git rev-parse HEAD)
+
+  run jig task promote --commit "$off" T-1 T-2
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "is not a commit of origin/staging"
+  assert_not_contains "$OUT" "promoting"
+  assert_no_file gh-create.argv
+}
+
+test_promote_refuses_mixed_or_incomplete_several() {
+  promote_setup
+  printf 'body\n' > body.md
+
+  run jig task promote --all
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: --all needs --commit <sha>, the staging commit that was tested"
+  run jig task promote --commit "$(git rev-parse origin/staging)" --all T-1
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "give ids or --all, not both"
+  run jig task promote --title "One title" T-1 T-2
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: --title and --body-file are for one task"
+  run jig task promote --commit "$(git rev-parse origin/staging)" --all --body-file body.md
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: --title and --body-file are for one task"
+  assert_no_file gh-create.argv
+}
+
+# --all on a CI runner with no workspace: ids come from the branch names on
+# origin, and only a branch whose tip the tested commit holds and the base
+# does not is promoted. One tested and fixed after the test is named as
+# skipped; one never tested is not mentioned.
+test_promote_all_takes_only_tested_branches_not_in_the_base() {
+  promote_setup
+  # T-2: tested and already merged into main.
+  promote_task T-2 two.txt "work of T-2"
+  promote_land T-2
+  git checkout -q main
+  git merge -q --no-ff -m "Merge T-2" task/T-2
+  git push -q origin main
+  # T-3: pushed, never landed.
+  promote_task T-3 three.txt "work of T-3"
+  # T-4: landed, then a fix pushed after the tested commit.
+  promote_task T-4 four.txt "work of T-4"
+  promote_land T-4
+  local tested
+  tested=$(git rev-parse origin/staging)
+  git checkout -q task/T-4
+  printf 'fix\n' >> four.txt
+  git commit -q -am "Fix of T-4 after the test"
+  git push -q origin task/T-4
+  # feature/x: on staging, not a task branch.
+  git checkout -q -b feature/x main
+  printf 'x\n' > x.txt
+  git add x.txt
+  git commit -q -m "Feature x"
+  git push -q origin feature/x
+  git clone -q origin.git runner
+  cd runner || return 1
+
+  run env CI=true "$JIG_BIN" task promote --commit "$tested" --all
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: promoting T-1"
+  assert_not_contains "$OUT" "promoting T-2"
+  assert_not_contains "$OUT" "promoting T-3"
+  assert_not_contains "$OUT" "promoting T-4"
+  assert_not_contains "$OUT" "promoting feature"
+  # T-4 was tested, then fixed: said, not promoted, and no failure.
+  assert_contains "$OUT" "task promote: skipped T-4: it has commits the tested commit $(git rev-parse --short "$tested") does not have; promote it after they are tested"
+  assert_not_contains "$OUT" "skipped T-3"
+  assert_not_contains "$OUT" "skipped T-2"
+  assert_contains "$OUT" "task promote: 1 promoted, 0 refused, 0 need a person"
+  cd .. || return 1
+  promote_created task/T-1 || fail "no pull request for task/T-1: $(cat gh.log)"
+  [ ! -d runner/.ai/workspace/tasks/T-1 ] || fail "a runner must not get a workspace"
+}
+
+test_promote_all_with_nothing_tested_is_nothing_to_do() {
+  promote_setup
+  git checkout -q main
+  git merge -q --no-ff -m "Merge T-1" task/T-1
+  git push -q origin main
+
+  run jig task promote --commit "$(git rev-parse origin/staging)" --all
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: no task branch on origin is in the tested commit $(git rev-parse --short origin/staging) of staging and not yet in main; nothing to promote"
+  assert_no_file gh-create.argv
+}
+
+# The ids --all reads follow git.branch_template.
+test_promote_all_follows_the_branch_template() {
+  promote_setup
+  sed 's|^git.branch_template:.*|git.branch_template: work/{id}-x|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  git add .ai/config.yaml
+  git commit -q -m "fixture: another branch template"
+  git push -q origin HEAD
+  git checkout -q main
+  git merge -q task/T-1 >/dev/null
+  git push -q origin main
+  git checkout -q -b work/T-5-x
+  printf 'five\n' > five.txt
+  git add five.txt
+  git commit -q -m "Work of T-5"
+  git push -q origin work/T-5-x
+  git checkout -q staging
+  git merge -q --no-ff -m "Land T-5 on staging" work/T-5-x
+  git push -q origin staging
+
+  run jig task promote --commit "$(git rev-parse origin/staging)" --all
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: promoting T-5"
+  assert_contains "$OUT" "task promote: 1 promoted, 0 refused, 0 need a person"
+  promote_created work/T-5-x || fail "no pull request for work/T-5-x: $(cat gh.log)"
+}
+
+# A template with nothing before {id} would make every branch whose name is a
+# valid id a task's, staging and main included: --all refuses it.
+test_promote_all_refuses_a_template_with_no_prefix() {
+  promote_setup
+  sed 's|^git.branch_template:.*|git.branch_template: {id}|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+
+  run jig task promote --commit "$(git rev-parse origin/staging)" --all
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: --all cannot tell a task branch by git.branch_template {id}"
+  assert_not_contains "$OUT" "promoting"
+  assert_no_file gh-create.argv
+}
+
+# The same id twice is one task: the one-task path, --title included.
+test_promote_a_repeated_id_is_one_task() {
+  promote_setup
+
+  run jig task promote T-1 T-1 --title "The title"
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "promoting T-1"
+  assert_contains "$(cat gh-create.argv)" "The title"
+  assert_eq 1 "$(grep -c '^pr create' gh.log)"
+}
+
+# Origin's branches that cannot be listed refuse the run: --all cannot tell
+# what the tested commit holds.
+test_promote_all_refuses_when_origin_cannot_be_listed() {
+  promote_setup
+  local real
+  real=$(command -v git)
+  mkdir -p nolist-bin
+  cat > nolist-bin/git <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = ls-remote ]; then printf 'fatal: could not read from remote repository\n' >&2; exit 128; fi
+done
+exec "$real" "\$@"
+STUB
+  chmod +x nolist-bin/git
+
+  run env PATH="$PWD/nolist-bin:$PATH" "$JIG_BIN" task promote --commit "$(git rev-parse origin/staging)" --all
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: could not list the branches on origin, so --all cannot tell which tasks the tested commit holds."
+  assert_contains "$OUT" "could not read from remote repository"
+  assert_not_contains "$OUT" "promoting"
+  assert_no_file gh-create.argv
 }

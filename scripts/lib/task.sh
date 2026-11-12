@@ -102,7 +102,7 @@ _task_usage() {
       printf '       jig task land <id> --resolved --note-file <file> [--without-review]\n'
       printf '       jig task land <id> --abort\n'
       ;;
-    promote) printf 'usage: jig task promote <id> [--commit <sha>] [--title <t>] [--body-file <file>]\n' ;;
+    promote) printf 'usage: jig task promote <id> [--commit <sha>] [--title <t>] [--body-file <file>]\n       jig task promote [--commit <sha>] <id> <id>...\n       jig task promote --commit <sha> --all\n' ;;
     autopilot)
       printf 'usage: jig task autopilot <id> start [--phase <spec-id>/<n>]\n'
       printf '       jig task autopilot <id> stage <name>\n'
@@ -6498,11 +6498,12 @@ In the staging flow its pull request goes into $staging. Close that pull request
 # task_promote — `jig task promote <id> [--commit <sha>] [--title <t>]
 # [--body-file <file>]`: "prepare for prod" for a task tested on the staging
 # branch (scripts/lib/promote.sh;
-# adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). Ids are
-# collected into a list and `--all` is read, so promoting several tasks
-# ("Promote from CI") keeps this syntax; until it is built, one task only.
-# Exit 0 when the pull request is open or the task is in the base already, 1
-# on a refusal, 3 when a person is needed.
+# adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). One task
+# exits 0 when the pull request is open or the task is in the base already, 1
+# on a refusal, 3 when a person is needed. Several ids, or `--all` with
+# `--commit` (every task branch the tested commit holds and the base does not),
+# promote each task on its own against one tested commit (_promote_many): the
+# exit is 1 when any was refused, else 3 when any needs a person, else 0.
 task_promote() {
   jig_require_init
   local commit="" title="" body_file="" all=0 rc=0
@@ -6530,14 +6531,37 @@ task_promote() {
         shift ;;
     esac
   done
-  if [ "$all" = 1 ] || [ ${#ids[@]} -gt 1 ]; then
-    jig_fail usage "task promote: promoting several tasks (several ids, --all) is not built yet; promote one task at a time"
+  # The same id twice is one task, so the mode is chosen after duplicates go.
+  if [ ${#ids[@]} -gt 1 ]; then
+    local -a uniq=()
+    local seen="" one
+    for one in "${ids[@]}"; do
+      jig_has_line "$one" "$seen" && continue
+      seen="$seen$one"$'\n'
+      uniq+=("$one")
+    done
+    ids=("${uniq[@]}")
   fi
-  [ ${#ids[@]} -eq 1 ] || jig_fail usage "$(_task_usage promote)"
+  if [ "$all" = 1 ]; then
+    [ ${#ids[@]} -eq 0 ] || jig_fail usage "task promote: --all names its tasks from the tested commit; give ids or --all, not both"
+    # A green build that happened to run is not a decision to ship everything
+    # on staging: the commit the pipeline tested says what goes.
+    [ -n "$commit" ] || jig_fail usage "task promote: --all needs --commit <sha>, the staging commit that was tested"
+  fi
+  [ "$all" = 1 ] || [ ${#ids[@]} -ge 1 ] || jig_fail usage "$(_task_usage promote)"
+  if [ "$all" = 1 ] || [ ${#ids[@]} -gt 1 ]; then
+    if [ -n "$title" ] || [ -n "$body_file" ]; then
+      jig_fail usage "task promote: --title and --body-file are for one task; each of several pull requests gets its own"
+    fi
+  fi
   [ -z "$body_file" ] || [ -f "$body_file" ] || jig_fail usage "task promote: --body-file: no such file: $body_file"
   # shellcheck source=lib/promote.sh
   . "$JIG_LIB/promote.sh"
-  _promote_one "${ids[0]}" "$commit" "$title" "$body_file" || rc=$?
+  if [ "$all" = 1 ] || [ ${#ids[@]} -gt 1 ]; then
+    _promote_many "$commit" "$all" "${ids[@]+"${ids[@]}"}" || rc=$?
+  else
+    _promote_one "${ids[0]}" "$commit" "$title" "$body_file" || rc=$?
+  fi
   if [ "$rc" -ne 0 ]; then
     jig_status_page_flush
     exit "$rc"
