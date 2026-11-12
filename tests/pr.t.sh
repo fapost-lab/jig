@@ -165,6 +165,91 @@ _pr_draft_file() {
 
 # --- fetch --------------------------------------------------------------------
 
+# _pr_base_took_part — pull request 7 becomes two commits, x.txt then h.txt, on
+# main as it was (main0), and origin's main then takes the first of them: a
+# branch cut from main into a base main is merged into. GitHub's diff still
+# starts at main0, the pull request's own base commit, until the author
+# pushes. Sets _PR_MAIN0, _PR_X and _PR_H.
+_PR_MAIN0="" _PR_X="" _PR_H=""
+_pr_base_took_part() {
+  local top
+  top=$(cd .. && pwd)
+  _PR_MAIN0=$(git rev-parse main)
+  git checkout -q -b two
+  printf 'x\n' > x.txt
+  git add x.txt
+  git commit -q -m x
+  _PR_X=$(git rev-parse HEAD)
+  printf 'h\n' > h.txt
+  git add h.txt
+  git commit -q -m h
+  _PR_H=$(git rev-parse HEAD)
+  git push -q -f "$top/origin.git" two:refs/pull/7/head
+  git push -q "$top/origin.git" "$_PR_X:refs/heads/main"
+  git checkout -q main
+  git branch -q -D two
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' "$_PR_H" "$_PR_MAIN0" > ../bin/api
+  printf '%s\n' "$_PR_MAIN0" > ../bin/compare
+}
+
+test_pr_fetch_reads_from_githubs_base_when_the_base_took_part_of_the_pull_request() {
+  _pr_repo
+  _pr_base_took_part
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "merge base: $_PR_MAIN0"
+  assert_contains "$OUT" "diff $_PR_MAIN0 $_PR_H"
+  # The author's own change against today's main is shown beside it.
+  assert_contains "$OUT" "own change: git -C"
+  assert_contains "$OUT" "diff $_PR_X $_PR_H"
+  assert_file_contains .git/jig/pr/7/record "merge_base: $_PR_MAIN0"
+  assert_file_contains .git/jig/pr/7/record "pr_base_sha: $_PR_MAIN0"
+  # The check asks GitHub where its diff starts, and the review agrees.
+  _pr_draft_file
+  run jig pr draft 7 --from ../draft.md
+  assert_eq 0 "$RC" "$OUT"
+  run jig pr comments check 7
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_pr_fetch_prints_no_own_change_when_the_base_holds_none_of_the_pull_request() {
+  _pr_repo
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "own change:"
+}
+
+# GitHub's base commit is not in this clone: it is fetched by its id and kept
+# at refs/jig/pr/<n>/pr-base until cleanup.
+test_pr_fetch_brings_githubs_base_commit_it_does_not_hold() {
+  _pr_repo
+  local top other
+  top=$(cd .. && pwd)
+  git clone -q -b main "$top/origin.git" ../other
+  printf 'elsewhere\n' > ../other/elsewhere.txt
+  git -C ../other add elsewhere.txt
+  git -C ../other -c user.name=t -c user.email=t@t commit -q -m elsewhere
+  other=$(git -C ../other rev-parse HEAD)
+  git -C ../other push -q origin HEAD:refs/heads/kept
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' "$(git --git-dir="$top/origin.git" rev-parse refs/pull/7/head)" "$other" > ../bin/api
+  if git cat-file -e "$other^{commit}" 2>/dev/null; then fail "the clone already holds $other"; fi
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$other" "$(git rev-parse refs/jig/pr/7/pr-base)"
+  run jig pr cleanup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "deleted ref refs/jig/pr/7/pr-base"
+}
+
+test_pr_fetch_refuses_a_base_commit_nobody_gives() {
+  _pr_repo
+  printf 'main\t%s\topen\t%s\tfalse\t2\n' "$(git --git-dir=../origin.git rev-parse refs/pull/7/head)" 0123456789012345678901234567890123456789 > ../bin/api
+  run jig pr fetch "$_pr_url"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "starts below 0123456789012345678901234567890123456789"
+  assert_no_file .git/jig/pr/7/record
+}
+
 test_pr_fetch_makes_refs_and_a_detached_worktree_and_leaves_the_checkout_alone() {
   _pr_repo
   # The person's own work in progress, on another branch.
@@ -225,7 +310,7 @@ test_pr_fetch_runs_no_hook_of_the_head() {
   git push -q ../origin.git hook:refs/pull/7/head --force
   git -c core.hooksPath=/dev/null checkout -q main
   rm -f "$top/hook-ran"
-  printf 'main\t%s\topen\n' "$(git rev-parse hook)" > ../bin/api
+  printf 'main\t%s\topen\t%s\n' "$(git rev-parse hook)" "$(git rev-parse main)" > ../bin/api
   run jig pr fetch "$_pr_url"
   assert_eq 0 "$RC" "$OUT"
   assert_file "$top/clone.worktrees/.pr-7/.githooks/post-checkout"
@@ -268,7 +353,7 @@ test_pr_fetch_finds_the_remote_by_ssh_and_case() {
 
 test_pr_fetch_refuses_a_head_that_moved_while_it_fetched() {
   _pr_repo
-  printf 'main\t%s\topen\n' "0123456789012345678901234567890123456789" > ../bin/api
+  printf 'main\t%s\topen\t%s\n' "0123456789012345678901234567890123456789" "$(git rev-parse main)" > ../bin/api
   run jig pr fetch "$_pr_url"
   assert_eq 1 "$RC"
   assert_contains "$OUT" "moved while it was fetched"
@@ -285,7 +370,7 @@ test_pr_fetch_again_moves_the_worktree_to_the_new_head() {
   git commit -q -m "more"
   git push -q ../origin.git more:refs/pull/7/head --force
   git checkout -q main
-  printf 'main\t%s\topen\n' "$(git rev-parse more)" > ../bin/api
+  printf 'main\t%s\topen\t%s\n' "$(git rev-parse more)" "$(git rev-parse main)" > ../bin/api
   run jig pr fetch "$_pr_url"
   assert_eq 0 "$RC" "$OUT"
   assert_eq "$(git rev-parse more)" "$(git -C ../clone.worktrees/.pr-7 rev-parse HEAD)"
@@ -1085,6 +1170,43 @@ Fixed: the line says why now.
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "deleted ref refs/jig/pr/7/reviewed"
   assert_no_file "$state"
+}
+
+# The author fixed, then the base took part of the pull request on its own:
+# GitHub's diff still starts at the pull request's base commit, and the earlier
+# head's merge base is measured from the same commit — no rebase to show.
+test_pr_followup_sees_no_rebase_when_the_base_moved_alone() {
+  _pr_repo
+  _pr_base_took_part
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  _pr_earlier "$_PR_H"
+  _pr_fix fixed
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "merge base: $_PR_MAIN0"
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "range-diff:"
+  assert_file_contains .git/jig/pr/7/followup "old_merge_base: $_PR_MAIN0"
+}
+
+# A record fetched before pr_base_sha existed measures the earlier head from
+# the base branch's tip, as it did then.
+test_pr_followup_of_a_record_without_the_pr_base_reads_from_the_base_tip() {
+  _pr_repo
+  _pr_base_took_part
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  _pr_earlier "$_PR_H"
+  _pr_fix fixed
+  run jig pr fetch "$_pr_url"
+  assert_eq 0 "$RC" "$OUT"
+  grep -v '^pr_base_sha:' .git/jig/pr/7/record > ../record.old
+  cp ../record.old .git/jig/pr/7/record
+  run jig pr followup 7
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .git/jig/pr/7/followup "old_merge_base: $_PR_X"
 }
 
 test_pr_followup_refuses_what_it_cannot_follow() {

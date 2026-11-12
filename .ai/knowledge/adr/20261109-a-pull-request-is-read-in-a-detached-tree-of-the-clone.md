@@ -10,7 +10,7 @@ paths:
   - tests/pr.t.sh
   - scripts/lib/prgitlab.sh
 summary: Why jig pr reads a pull request in refs/jig/pr/<n>/ and a detached .pr-<n> worktree of the person's clone with hooks off, where the review state lives, and what cleanup may delete.
-reviewed_at: 2026-11-11
+reviewed_at: 2026-11-12
 ---
 # A pull request is read in a detached tree of the person's clone, and nothing of its head runs
 
@@ -59,6 +59,16 @@ end. Three forces shape the mechanics:
   `jig` from the head and starts no session in its tree.
 - **Rules from the base.** The fetch records the base branch's tip and the merge base apart; the
   skill reads `AGENTS.md`, `.ai/knowledge/` and the like at the base commit with `git show`.
+- **GitHub's diff sets the merge base** (amended 2026-11-12, fapost-lab/jig#491). The merge base is
+  measured from the pull request's own base commit (`.base.sha`, recorded as `pr_base_sha`), not
+  from today's tip of the base branch: that is the diff GitHub shows and `comments check` asks the
+  compare API for, and a base that took part of the pull request since (a branch cut from `main`
+  into a `staging` that `main` is merged into) would otherwise move it, and every check would refuse
+  until the author pushed. A commit the clone does not hold is fetched by its id into
+  `refs/jig/pr/<n>/pr-base`, which cleanup takes back; a fetch that cannot get it refuses. When
+  today's base gives a narrower diff, the fetch prints it beside, as `own change:`, for reading
+  only: comments are placed on GitHub's diff. GitLab's merge base already came from its diff
+  (adr-20261110-a-merge-request-review-is-posted-as-discussions).
 - **State in the clone.** The record (what was fetched, the reviewed head, the candidate login)
   and the draft go to `.ai/workspace/pr/<n>/` when Jig is installed and git ignores that path, and
   otherwise to `<git-common-dir>/jig/pr/<n>/` — inside the clone, out of its working tree. Never
