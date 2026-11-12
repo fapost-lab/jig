@@ -591,11 +591,13 @@ The answer is the task as `jig task list --json` lists it, now with `"paused":fa
 resume found:
 
 ```json
-{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"task":{"id":"booking-message","paused":false,"…":"…"},"resume":{"paused_days":2,"stash":null,"uncommitted":0,"overlap":["src/booking/message.ts"]}}}
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"task":{"id":"booking-message","paused":false,"…":"…"},"resume":{"paused_days":2,"stash":null,"uncommitted":0,"overlap":["src/booking/message.ts"],"parked":null}}}
 ```
 
 `overlap` lists the files the task changed that also changed on its base while it was paused — worth
-showing before the person continues. A resume somebody else made first is refused with
+showing before the person continues. `parked` is `null` for a resume that ended a pause; when the
+resume took a task back from the staging branch instead, it holds the reason it was parked, `review`
+or `signal`. A resume somebody else made first is refused with
 `not-paused`; any other write in the clone since your read, with `stale-revision`.
 
 ## Closing a task

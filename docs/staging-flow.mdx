@@ -1,0 +1,308 @@
+---
+title: "Test on staging first"
+description: "The staging flow: each task lands on a shared staging branch, waits there while it is tested, and reaches your main branch only when you say prepare for prod."
+---
+
+By default a finished task goes straight into your main branch: one pull request, one merge. That is
+the **direct flow**, and most projects never need anything else.
+
+Some teams test on a shared environment before anything reaches production: several tasks are
+deployed to a staging server together, someone checks them, and only the ones that passed go on.
+The **staging flow** (from Jig 0.45.0) is for them. Each task travels on its own:
+
+1. **Ship.** The task's pull request goes into the staging branch, not the main branch.
+2. **Land.** It is merged there — on your forge (GitHub or GitLab) after review, or by your CI.
+3. **Parked.** It waits on the staging branch while it is tested. Fixes go the same way: resume the
+   task, fix, ship again.
+4. **Prepare for prod.** When the test passed, you tell your agent "prepare for prod". Jig opens a
+   second pull request, from the task's own branch into the main branch, for exactly the commits
+   that were tested.
+5. **Merged into main** — by you, or by the forge once CI passes, if your team chose that.
+
+The staging branch itself is never merged into the main branch. A task that failed its test, or is
+still being tested, stays behind without holding up the others.
+
+## Direct or staging?
+
+Stay on the direct flow unless your team really tests on a staging environment. The staging flow
+costs something:
+
+- **Two pull requests per task** — one into staging, one into the main branch.
+- **Task branches must stay clean.** Only the main branch and other clean task branches may be
+  merged into a task's branch. Merging the staging branch into it — "Update branch" on its pull
+  request included — would carry other people's untested work to production, so Jig refuses it.
+- **Merge commits, not squash.** Jig recognises a task on staging, and a promoted task in the main
+  branch, by git history. A squash or rebase merge hides that ([known issues](/known-issues)).
+
+The flow is a decision of the whole team, so it lives in the committed `.ai/config.yaml`, not in
+anyone's personal settings.
+
+## Turn it on
+
+1. **Create the staging branch on origin**, for example `staging`, from your main branch.
+2. **Ask your agent to set up Jig** (`jig-setup`). When origin has a branch named `stage` or
+   `staging`, it asks which flow the team uses and writes the answer through a task and a pull
+   request, like any other change to the project. For a branch with another name, or by hand, the
+   same keys go in `.ai/config.yaml`:
+
+   ```yaml
+   git.flow: staging
+   git.staging_branch: staging
+   ```
+
+3. **Check it** with `jig doctor`:
+
+   ```text
+   ok    git flow: staging, through staging (land: pr, review: ask, promote: human)
+   ```
+
+   A wrong value — the main branch itself as the staging branch, or a name git rejects — fails here,
+   and `jig task ship` refuses it before committing anything.
+4. **On your forge**, allow merge commits, and let whoever resolves conflicts push to the staging
+   branch (see [Landing](#landing)).
+
+A project on the direct flow sees no change. `jig init` and `jig doctor` only mention the flow when
+origin already has a branch named `stage` or `staging`, which the staging flow could use.
+
+### The settings
+
+| Key | Default | What it decides |
+|---|---|---|
+| `git.flow` | `direct` | `direct` or `staging`. |
+| `git.staging_branch` | — | The staging branch. Required with `staging`; not the main branch, not a ref. |
+| `git.staging_review` | `ask` | Before landing: `ask` — an unapproved pull request stops and your agent asks you; `require` — always wait for an approval; `none` — land without asking. |
+| `git.staging_land` | `pr` | `pr` — Jig lands the pull request; `external` — your CI merges task branches into staging and Jig opens no pull request. |
+| `git.promote_merge` | `human` | `human` — the merge into the main branch is a person's; `auto` — the forge merges the promotion once the main branch's required checks pass. |
+| `git.staging_stale_after` | `14d` | When a task waiting on staging counts as stale in the drift report (`d`, `h`, `m`, `s`). |
+
+See [Configuration](/configuration) for every other key.
+
+### Switching a project that already has work in progress
+
+- **A task branch with an open pull request into the main branch** is refused by `jig task ship`:
+  in the staging flow its pull request goes into staging. Close that pull request, or retarget it to
+  the staging branch, and ship again.
+- **A branch cut before the switch** still carries the old `.ai/config.yaml`. `jig task ship` refuses
+  it, showing both flows (`the git flow here is not the one main has`): merge the main branch into
+  the task branch and ship again.
+- **A task of an epic** keeps going into its epic branch, as before.
+
+## Ship and land
+
+Your agent ships the task as usual ([Let your agent ship](/agent-ships)). In the staging flow the
+pull request goes into the staging branch:
+
+```text
+task ship: git flow staging: the pull request goes into staging, not main
+pr https://github.com/acme/app/pull/42
+landed https://github.com/acme/app/pull/42 on staging (merged on the forge)
+```
+
+How far that goes depends on `agent.git`, your own setting for what the agent may do with git. At
+`merge` the ship also lands the task; below it, the ship stops at the pull request, and you (or your
+agent, when you ask) land it later with `jig task land <id>`.
+
+### Landing
+
+- **Review first**, as `git.staging_review` says. With `ask`, a pull request nobody approved stops
+  (exit 3) and your agent asks you: land without review — `jig task land <id> --without-review`,
+  which also says so on the pull request — or wait. An autopilot run always waits.
+- **Merged on the forge** when it merges cleanly: with a merge commit, and only on green CI. A red
+  check or a refusal from the forge leaves it open: `not landed: <why>`.
+- **Merged directly only when it conflicts.** Jig merges the task into a temporary copy of the
+  staging branch beside your project (`<project>.worktrees/.land-<id>`), never in your checkout, and
+  stops (exit 5) with the files in conflict. The agent resolves them there, runs the tests that
+  matter, and continues with `jig task land <id> --resolved --note-file <file>`, the note saying how
+  each conflict was resolved. Jig commits the merge with that note, pushes the staging branch
+  without ever forcing it, and comments on the pull request; when someone pushed to staging in the
+  meantime it fetches again, merges again with the same resolution and pushes again.
+  `jig task land <id> --abort` gives it up.
+- **A push the staging branch refuses** — a protected branch, a hook — stops (exit 3) and keeps the
+  merge in that temporary copy, for you to push with your own rights or land on the forge.
+
+The resolution lives on the staging branch only: the task's own branch stays as it was, ready to
+go to production without anyone else's work.
+
+### Landing by your CI
+
+With `git.staging_land: external` your pipeline merges task branches into staging. `jig task ship`
+pushes the branch and stops there: `stopped at push: git.staging_land is external…`. It opens no
+pull request and merges nothing. Once your CI has merged the branch (with a merge commit), the
+task shows as parked for `signal` in `jig status` after a `git fetch`. How your pipeline picks the branches
+to merge is yours; Jig names task branches by `git.branch_template`.
+
+## Parked: tested on staging
+
+A landed task is **parked**: finished for now, waiting for the test. `jig status` shows it, and
+housekeeping keeps it instead of archiving it:
+
+```text
+flow: staging via staging; on staging: 1, behind staging: 1
+task booking-message class=T2 status=active staging=behind
+parked: booking-form (signal), booking-report (review, landing)
+```
+
+- `review` — its pull request into staging still waits for a review (`landing` when you land it
+  yourself).
+- `signal` — it is on staging, waiting for someone to say "prepare for prod".
+- `staging=behind` — a task you took back for a fix: its branch has commits the staging branch does
+  not have yet.
+
+A parked task is not your current task, and `jig queue next` does not offer it, so you and your
+agent go on with other work while it is tested. The full description of these lines is in
+[Manual control](/manual-control#the-staging-drift-report).
+
+A task that failed its test is fixed the usual way: `jig task resume <id>` (or just ask your agent to
+continue it), fix, verify, and ship again. The fix lands on staging like the first change.
+
+## Prepare for prod
+
+When QA says the task is ready, tell your agent **"prepare for prod"**. It runs
+`jig task promote <id>`, which opens the pull request from the task's branch into the main branch:
+
+```text
+task promote: tested commit 3f2a91c of staging
+pr https://github.com/acme/app/pull/57
+task promote: the merge is the person's (git.promote_merge: human)
+```
+
+**What counts as tested.** Without `--commit`, the tested commit is the staging branch's tip on
+origin as it is now: whatever is on staging when you say "prepare for prod" is taken as tested. When
+the test ran on an earlier commit, name it: `jig task promote <id> --commit <sha>`.
+
+It refuses, and sends nothing, when:
+
+- the task is not on the staging branch (`not-on-staging`);
+- the task's branch has commits the tested commit does not have — a fix made after the test
+  (`behind-staging`): ship the fix, test it, then prepare for prod again;
+- the staging branch was merged into the task's branch (`carries-staging`);
+- the clone is shallow (`shallow-clone`);
+- the task runs on autopilot: autopilot never promotes, only a person says "prepare for prod".
+
+When the task conflicts with the main branch it stops (exit 3) and names the files: the agent merges
+the main branch into the task's branch, resolves, verifies, commits and runs it again, which pushes
+that merge and opens the pull request. Run on a task already promoted, it prints the same link.
+Where your queue says the task depends on another one that is on staging but not in the main branch
+yet, it warns you, and the pull request says so too.
+
+In your own checkout `jig task promote` needs `agent.git` at `pr` or above; below that it stops
+(exit 3) and leaves the pull request to you. Exit 0 means the pull request is open, or the task is in
+the main branch already; 1 a refusal; 3 that a person is needed.
+
+After the promotion merges into the main branch, the task is finished like any other: housekeeping
+counts it under `needs consolidation`, and your agent closes it. Landing on staging does not close a
+task.
+
+## Prepare for prod from CI
+
+A pipeline can run the same command, with the staging commit it tested:
+
+```bash
+.ai/scripts/jig task promote T-12 --commit "$TESTED_SHA"
+```
+
+On a CI runner — the `CI` variable set, and no workspace for the task, as on any real runner — it
+needs no `agent.git`, only:
+
+- **the full history**: `fetch-depth: 0` on GitHub Actions, `GIT_DEPTH: 0` on GitLab;
+- **a forge token** for `gh` or `glab`. On GitHub Actions use a personal access token or a GitHub
+  App token, not `GITHUB_TOKEN`: a pull request opened with `GITHUB_TOKEN` starts no workflow, so its
+  required checks never report, and a merge it makes starts no workflow on the main branch, so
+  nothing deploys.
+
+A runner has no queue, so it cannot warn about dependencies: promote tasks that belong together in
+one run.
+
+**Several tasks at once.** `jig task promote --commit <sha> <id> <id>…` promotes each one named;
+`jig task promote --commit <sha> --all` promotes every task branch on origin whose tip the tested
+commit contains and the main branch does not have yet. `--all` is for a team whose green CI *is* the
+test, and always needs `--commit`, so a build that merely ran never sends the whole staging branch
+to production. Each task is judged on its own against the same commit, and gets its own line — here
+a run with two task ids named:
+
+```text
+task promote: promoting T-12
+…
+task promote: T-12: promoted
+task promote: promoting T-14
+jig: error: task promote: task/T-14 has commit(s) of its own that the tested commit 3f2a91c does not have: …
+task promote: T-14: refused
+task promote: 1 promoted, 1 refused, 0 need a person (tested commit 3f2a91c of staging)
+```
+
+The run exits 1 when any task was refused, else 3 when any needs a person, else 0. What would refuse
+every task — not the staging flow, a shallow clone, a tested commit that is not on staging — stops
+the run before the first one. Under `--all`, a task given a fix after the test is skipped and named
+(`skipped <id>`) without failing the run; named explicitly, as T-14 above, it is refused.
+`--title` and `--body-file` are for one task only.
+
+Keep in mind with `--all`:
+
+- it reads "not yet in the main branch" from git history alone, so merge promotions with a merge
+  commit, or have the forge delete the task branch on merge;
+- do not run it while an epic branch is on the staging branch: a runner cannot tell the epic's tasks
+  from the others;
+- a task reverted on the staging branch still reads as tested: name the tasks instead.
+
+A minimal GitHub Actions job, as a starting point — Jig ships no workflow of its own, so adapt it to
+how your pipeline tests staging:
+
+```yaml
+promote:
+  if: github.ref == 'refs/heads/staging'
+  needs: [test]
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - run: .ai/scripts/jig task promote --commit "$GITHUB_SHA" --all
+      env:
+        GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+```
+
+## Let the forge merge promotions
+
+With `git.promote_merge: auto` a promotion merges itself: `jig task promote` switches on your
+forge's auto-merge (a merge commit, at the promoted commit), and the forge merges once the main
+branch's required checks pass. In your own checkout that needs `agent.git: merge`; on a CI runner
+the team's setting alone decides.
+
+It is switched on only where CI really gates the merge — otherwise the forge would merge at once:
+
+- **GitHub:** the repository allows auto-merge and merge commits, and the main branch requires a
+  status check (a ruleset or branch protection).
+- **GitLab:** the project requires a successful pipeline to merge, merges with a merge commit, and
+  does not count a skipped pipeline as a success.
+
+A promotion that raises the version is a release and never merges itself; a major one opens as a
+draft. It says what happened, and the exit code stays 0 either way:
+
+```text
+auto-merge on https://github.com/acme/app/pull/57: it merges with a merge commit once main's required checks pass
+auto-merge not switched on: main requires no status check, so auto-merge would merge at once and CI would gate nothing; the merge is the person's
+auto-merge switched off on https://github.com/acme/app/pull/57: this promotion is a release (VERSION 1.4.0 -> 2.0.0)
+```
+
+When the task's branch is no longer what was tested — a fix after the test, staging merged into it —
+the next promote refuses and, if the open promotion has auto-merge on, switches it off first.
+A fix pushed to the task's branch by hand while auto-merge is on still reaches the main branch on
+green CI, so close the promotion before shipping a fix to staging, as the refusal says.
+
+## Watch the staging branch
+
+`jig status` reports how staging and the main branch drift apart:
+
+- tasks on staging that nobody promoted for longer than `git.staging_stale_after`;
+- tasks whose promotion conflicts with the main branch;
+- commits on staging that belong to no task — merged by hand, or a squash.
+
+The same appears in the status page and in `jig status --json`
+([Reading Jig as data](/reading-jig-as-data)); the lines are described in
+[Manual control](/manual-control).
+
+## Limits
+
+The staging flow is new in 0.45.0. Its tests run against stand-in remotes; it has not yet been run
+on a real team's project, nor on GitLab. What is known not to work yet — squash merges, epics on
+staging, `--all` after a revert — is on [Known issues](/known-issues).

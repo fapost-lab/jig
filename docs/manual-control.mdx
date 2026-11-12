@@ -282,7 +282,10 @@ next: task:booking-message — 2 of 3 on the top level, priority 2, not started
 
 When that leaves nothing, the answer is `next: none — every queued task left is taken by another
 session`. `jig queue list` prints the same line under the task. Your own session's tasks are advised
-as before, and reading, filing or ordering a task does not take it. A note lapses after
+as before, and reading, filing or ordering a task does not take it: that covers reading a task's
+documents, and writing the `task` document of a task that has no branch yet, which is how a task's
+goal is filed. Any other document before `jig task start`, and the `task` document of a task already
+started, still take it. A note lapses after
 `checkout.busy_ttl` (12 hours unless you set it); to take over the task of a session that is gone,
 just work on it — the newest note holds the task. This needs a runtime that names its sessions
 (Claude Code does); a session without a name leaves no note and treats every note as another's.
@@ -312,6 +315,14 @@ lines under it. `jig status` only reads that answer, it does not work it out aga
 
 `jig context --task <id>` gives the agent working on the task the same facts as `queue:` lines.
 Without a queue, none of this appears and the output looks as it always has.
+
+`jig status` reads, and never fetches, so what it says about origin is as of your last fetch. To bring
+the clone up, run `jig refresh`: it fetches origin and fast-forwards the base branch to origin's, and
+nothing else moves. On a task branch your branch and files stay as they are; if you are on the base
+branch itself, it fast-forwards there and stops where the change would overwrite your edits. It never
+stashes or forces, says in a line why the base could not move, and closes the writes in Jig's own tree
+that are over. How a program uses it is in
+[Reading Jig as data](/reading-jig-as-data#keeping-the-view-current).
 
 In a project on the staging flow (`git.flow: staging`), `jig status` names the flow before the task
 lines and says, on each task line, whether the task's work is on the staging branch:
@@ -456,6 +467,15 @@ document in the Jig that ran it: the skill reads them there, not beside itself. 
 file with `--from` to keep a new one. `comments check` places the draft on the forge's own diff and
 prints the review as it would be posted, with a hash. `comments post` posts only that version: it is
 refused unless `--shown` carries the hash `check` printed, so what you read is what goes out.
+
+A draft may rank its findings (from 0.44.0). A `=== levels` block right after the summary names the
+four severities, `P0` to `P3`, one to a line and in the review's language; each `=== comment P<n>
+<position> <path>` then names its level and starts with a one-line title. `comments check` puts the
+level's colour (🔴 🟠 🟡 🟢) and a number before each comment, numbered by level with P0 first, and adds
+to the summary a legend and the findings by level. A comment that cannot be placed on the diff moves
+into the summary and keeps its number. All of it is part of the version you approve and the hash
+covers it. A draft without a `levels` block is posted as before. Posting a ranked review has not yet
+been checked on a live pull or merge request.
 
 After the author pushes fixes:
 

@@ -23,6 +23,18 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
+{/* Closed by task pr-review-skill-opt-out: removed once a person can turn the personal review skill off. */}
+### The personal review skill cannot be turned off
+
+**What you see.** The installer and `jig self-update` place `jig-pr-review` in your own skills folder
+(`~/.claude/skills`, `~/.agents/skills`). A link or copy you delete comes back at the next
+`jig self-update`.
+
+**What it costs.** A skill you did not want stays in every session's list of skills.
+
+**What to do instead.** Put a folder of your own under that name: Jig leaves a skill it did not
+place alone.
+
 {/* Closed by task staging-drift-report-findings: removed once a squash promotion is told from drift. */}
 ### A task promoted by a squash merge reads as staging work nobody owns
 
@@ -56,7 +68,8 @@ and have your CI do the same.
 
 **What you see.** In a project on the staging flow, a task of an epic ships into its epic, as in
 any project, and `jig task ship` says the staging flow does not apply to it. `jig task promote`
-refuses such a task. The epic's final pull request goes into the main branch; nothing on Jig's path
+refuses such a task where its workspace is — on a CI runner, which has none, nothing tells it
+apart from any other task. The epic's final pull request goes into the main branch; nothing on Jig's path
 takes the epic's work to the staging branch first.
 
 **What it costs.** An epic reaches the main branch without the testing on staging its tasks would

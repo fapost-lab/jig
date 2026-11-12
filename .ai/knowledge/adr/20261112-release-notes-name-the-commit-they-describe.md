@@ -116,3 +116,6 @@ notes were written goes out in the tag undescribed.
   it again; merge into a release epic with a merge commit.
 - The trailer is an attestation by whoever wrote the notes, not a proof that they read every
   commit; it makes the moment of reading explicit and refuses a release once that moment is stale.
+- It amends ADR-0040 (an epic's final pull request no longer raises the version) and
+  adr-20261002-a-release-is-a-spec-with-an-epic (a release needs no epic): each carries an amendment
+  of 2026-11-12 saying so, and where they disagree with this decision, this one holds.

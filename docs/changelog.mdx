@@ -8,6 +8,50 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.45.0 — 2026-11-13
+
+A team that tests on a staging server can now have each task land on a staging branch, wait there
+while it is tested, and reach the main branch only when someone says "prepare for prod" — the task's
+own tested commits, nobody else's. Releases are made apart from feature work, and a release cannot
+go out with notes that miss what reached the main branch. `jig refresh` brings a clone up to origin
+without touching your checkout.
+
+- **The staging flow.** With `git.flow: staging`, a task's pull request goes into the staging
+  branch, lands there after review (`jig task land`) and waits **parked** while it is tested.
+  "Prepare for prod" (`jig task promote`, from your agent or from CI) then opens a pull request from
+  the task's own branch into the main branch, for exactly the commits that were tested. `jig status`
+  shows what is parked and where staging drifts from the main branch. The default stays `direct`.
+  Proven with stand-in remotes, not yet on a real team's project or on GitLab
+  ([known issues](/known-issues)). See [Test on staging first](/staging-flow).
+- **A release is made apart from feature work.** An epic's final pull request now merges the
+  feature without touching the version. The release is its own last pull request, cut from the
+  freshest main branch, and records the commit its notes describe
+  (`jig task set <id> notes_through <sha>`). From `agent.git: pr`, `jig task ship` refuses a change
+  that raises the version until it does, and while the main branch has commits after that one;
+  `jig spec ship` refuses a feature epic (no `Release:` line) whose final pull request raises the
+  version. This release is the first one made this way. See
+  [Specs and epics](/agent-ships#specs-and-epics) and [Upgrading](/upgrading#from-0440-to-0450).
+- **`jig refresh` brings the clone up to origin.** It fetches, then fast-forwards the main branch
+  only: it never switches your branch, stashes or forces, and stops before overwriting your changes;
+  a main branch that cannot move is an answer, not an error, and the reply says why. It also closes Jig's own writes whose pull request
+  merged, squashed included, or closed. Knowledge that origin already decided reads as `landed`
+  and no longer counts as waiting for you. `jig status --json` now says when the clone last fetched and
+  how far it is behind and ahead, and the status page asks for a refresh while it is behind. See
+  [Keeping the view current](/reading-jig-as-data#keeping-the-view-current).
+- **A task nobody started is paused directly.** A pause request is no longer offered for a task
+  that was never started, since no stage would take it; `jig task pause <id>` does it, and now takes
+  `--revision` and `--json`. A pause whose stash fails puts the request back in the queue.
+- **Your agent offers the task the queue names.** Wherever it suggests what to take next, it asks
+  `jig queue next` first, and puts another task ahead only by saying why.
+- **A GitHub pull request is reviewed on the diff GitHub shows.** `jig pr fetch` reads from the merge
+  base GitHub's "Files changed" starts at, so comments land on it even after the base branch took
+  part of the pull request; when the two differ it also shows the author's own change. Proven by
+  tests, not yet on a live pull request. See
+  [Review a colleague's pull request](/manual-control#review-a-colleagues-pull-request).
+- **Filing a task's goal no longer takes the task.** Reading a task's documents, or writing the goal
+  of a task nobody started, no longer marks it as another session's, so `jig queue next` still
+  offers it to others.
+
 ## 0.44.0 — 2026-11-12
 
 A review of a colleague's pull request now reads like one: each finding carries its severity's
@@ -24,17 +68,22 @@ and a refused pull request names the GitHub account that asked.
   See [Review a colleague's pull request](/manual-control#review-a-colleagues-pull-request).
 - **The review skill works in any folder.** The installer and `jig self-update` place
   `jig-pr-review` for you: a link in `~/.claude/skills` when you have Claude Code and in
-  `~/.agents/skills` when you have Codex, a copy on Windows. A skill of your own under that name is
-  left alone; `install.ps1 -Uninstall` removes Jig's copy, and on macOS and Linux you delete the link.
+  `~/.agents/skills` when you have Codex — a link, or a marked copy where links cannot be made
+  (Windows without Developer Mode). A skill of your own under that name is left alone;
+  `install.ps1 -Uninstall` removes Jig's copy. There is no switch to turn it off yet: a link you
+  delete comes back at the next `jig self-update`. Coming from 0.43.0 or older, the first
+  `jig self-update` runs the old updater, which does not place it: run `jig self-update` once more.
   In Claude Code your copy wins over a project's, so `jig status` says when the two differ.
-  `jig pr fetch` now prints `method:` and `show:`, where the skill finds the review method.
-  See [Install](/install).
+  `jig pr fetch` and `jig pr followup` now print `method:` and `show:`, where the skill finds the
+  review method. See [Install](/install).
 - **Decide several knowledge documents in one write.** `jig knowledge decide --accept <id>
-  --reject <id> --reviewed <id> …` decides them all at one revision, as one commit and one push;
-  any refusal refuses the whole call before anything is written.
+  --reject <id> --reviewed <id> …` decides them all at one revision, as one commit and one push on
+  `knowledge/decisions`, never in your working tree; any refusal refuses the whole call before
+  anything is written. See [Deciding knowledge](/reading-jig-as-data#deciding-knowledge).
 - **A refused pull request names the account that asked.** When `gh pr create` fails during a ship,
   the error now ends with the GitHub account Jig asked as and where it came from — including a
-  `GH_TOKEN` in the environment, with the variable to remove.
+  `GH_TOKEN` or `GITHUB_TOKEN` in the environment, with the variable to remove. See
+  [Two GitHub accounts](/agent-ships#two-github-accounts).
 
 ## 0.43.0 — 2026-11-11
 
