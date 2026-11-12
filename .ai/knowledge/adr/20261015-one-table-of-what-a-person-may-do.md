@@ -63,6 +63,12 @@ merged, and a `--json` read never touches the network (adr-20261015-a-read-is-on
 - **Pause and resume requests are the seam for `contract-queue`.** They join as rows of the same
   table, with a guard of their own that reads the queue file. A new action id is a compatible change:
   `schema` stays, and a consumer ignores ids it does not know.
+  (Amended 2026-11-12, task `pause-not-started-directly`.) `request-pause` is withheld, in the
+  table's own words, from a task nobody started (no `branch` and `base_commit`, the test
+  `_task_started` that `start` asks too): a request is honoured where a stage begins, and such a task
+  enters none, so a board that wrote one showed "requested" for good. The reason names
+  `jig task pause <id>`, which the table offers; `jig queue request` itself still takes the request,
+  honoured at the first stage after the task is started.
 
 ## Alternatives
 

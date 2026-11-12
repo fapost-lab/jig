@@ -2704,7 +2704,7 @@ test_task_start_worktree_refuses_a_t4_task_with_no_goal() {
 test_task_actions_withhold_start_from_a_t3_task_with_no_goal() {
   task_setup_clean
   jig task new big --class T3 >/dev/null
-  _tl_agree big "pause request-pause set-class abandon archive"
+  _tl_agree big "pause set-class abandon archive"
   _tl_json
   assert_contains "$OUT" "is T3 and has no goal"
 }
@@ -10245,7 +10245,7 @@ EOF
 test_task_actions_of_a_task_not_started_agree_with_their_commands() {
   task_setup_clean
   jig task new fresh >/dev/null
-  _tl_agree fresh "start pause request-pause set-class abandon archive"
+  _tl_agree fresh "start pause set-class abandon archive"
 }
 
 # An attended run stopped at a T3 gate, on a paused task started here: the
@@ -10457,7 +10457,7 @@ test_task_actions_of_an_invalid_git_level_agree_with_their_commands() {
   task_setup_clean
   ship_cfg_local agent.git bogus
   jig task new lvl >/dev/null
-  _tl_agree lvl "start pause request-pause set-class abandon archive"
+  _tl_agree lvl "start pause set-class abandon archive"
   _tl_json
   assert_contains "$OUT" '"reason":"task ship: invalid agent.git: bogus (expected none|commit|push|pr|merge)"}'
 }
@@ -11948,4 +11948,112 @@ test_handover_needs_a_person_and_their_words() {
   run jig task set T-1 autopilot_handover now
   assert_eq 1 "$RC"
   assert_contains "$OUT" "key is not writable: autopilot_handover"
+}
+
+# --- a task nobody started is paused directly (pause-not-started-directly)
+
+# A pause request is honoured where a stage begins, and a task nobody started
+# enters none: the table withholds request-pause in its own words, sends the
+# person to the direct pause it offers, and offers the request again once the
+# task is started.
+test_task_actions_withhold_request_pause_from_a_task_not_started() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tl_json
+  assert_contains "$OUT" '{"id":"request-pause","command":"jig queue request task:fresh pause","offered":false,"reason":"task fresh is not started: no stage will take a pause request; pause it directly: jig task pause fresh"}'
+  assert_contains "$OUT" '{"id":"pause","command":"jig task pause fresh","offered":true,"reason":null}'
+  # The command still takes the request: the table withholds, it refuses not.
+  run jig queue request fresh pause
+  assert_eq 0 "$RC" "$OUT"
+  jig queue cancel fresh pause >/dev/null
+  jig task start fresh >/dev/null
+  _tl_json
+  assert_contains "$OUT" '{"id":"request-pause","command":"jig queue request task:fresh pause","offered":true,"reason":null}'
+}
+
+# _tp_json <args...> — `jig task pause <args> --json`; stdout in OUT, stderr
+# in ERR, status in RC.
+_tp_json() {
+  run_split jig task pause "$@" --json
+}
+
+test_task_pause_json_pauses_a_task_not_started_and_answers_with_it() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tr_rev
+  local before=$REV
+  _tp_json fresh --reason "lunch"
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"data":{"task":{"id":"fresh",'
+  assert_contains "$OUT" '"paused":true,'
+  assert_contains "$OUT" ',"pause":{"stash":null,"request":null}}}'
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused: true"
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused_reason: lunch"
+  _tr_rev
+  assert_eq $((before + 2)) "$REV" "a pause raises the revision by the claim and the write"
+  assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a pause left its new state behind"
+}
+
+# A request a board wrote before it knew better goes with the pause, and the
+# answer names it.
+test_task_pause_json_takes_a_pending_request_with_it() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  jig queue request fresh pause --reason "standup" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  _tp_json fresh
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" ",\"pause\":{\"stash\":null,\"request\":{\"requested_at\":\"$at\",\"reason\":\"standup\"}}}}"
+  assert_contains "$OUT" '"pause_request":null'
+  assert_not_contains "$(cat .ai/runtime/queue)" "request"
+}
+
+test_task_pause_json_with_a_stale_revision_changes_nothing() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tr_rev
+  local old=$((REV + 7)) state_before now=$REV
+  state_before=$(cat .ai/workspace/tasks/fresh/state)
+  _tp_json fresh --revision "$old"
+  assert_eq 1 "$RC"
+  assert_eq stale-revision "$(_tr_code)"
+  assert_contains "$OUT" "the clone changed since revision $old"
+  assert_eq "$state_before" "$(cat .ai/workspace/tasks/fresh/state)" "a refused pause changed the state"
+  _tr_rev
+  assert_eq "$now" "$REV" "a refused pause moved the revision"
+  assert_eq "" "$( (cd .ai/workspace/tasks/fresh && ls -a) | grep '^state\.tmp' || true)" "a refused pause left its new state behind"
+  # The text form refuses the same way.
+  run jig task pause fresh --revision "$old"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "the clone changed since revision $old"
+}
+
+test_task_pause_json_with_the_current_revision_lands() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tr_rev
+  _tp_json fresh --revision "$REV"
+  assert_eq 0 "$RC" "$ERR"
+  assert_file_contains .ai/workspace/tasks/fresh/state "paused: true"
+}
+
+test_task_pause_json_refusals_have_codes() {
+  task_setup_clean
+  jig task new fresh >/dev/null
+  _tp_json NOPE
+  assert_eq not-found "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "unknown task: NOPE"
+  _tp_json fresh --revision 08
+  assert_eq usage "$(_tr_code)" "08: $OUT"
+  _tp_json fresh --revision
+  assert_eq usage "$(_tr_code)" "empty: $OUT"
+  _tp_json fresh --bogus
+  assert_eq usage "$(_tr_code)" "bogus: $OUT"
+  _tp_json fresh --if-requested --stage implement
+  assert_eq usage "$(_tr_code)" "if-requested: $OUT"
+  jig task pause fresh >/dev/null
+  _tp_json fresh
+  assert_eq already-paused "$(_tr_code)" "$OUT"
+  assert_contains "$OUT" "already paused: fresh"
 }

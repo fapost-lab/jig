@@ -71,7 +71,7 @@ _task_usage() {
     archive) printf 'usage: jig task archive <id>\n' ;;
     unarchive) printf 'usage: jig task unarchive <id>\n' ;;
     merge) printf 'usage: jig task merge <from> --into <to> [--partial]\n' ;;
-    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
+    pause) printf 'usage: jig task pause <id> [--reason <text>] [--stash] [--revision <n>] [--json]\n       jig task pause <id> --if-requested --stage <name>\n' ;;
     resume) printf 'usage: jig task resume <id> [--revision <n>] [--json]\n' ;;
     list) printf 'usage: jig task list [--all] [--status <status>] [--goals] [--json]\n' ;;
     show) printf 'usage: jig task show <id>\n' ;;
@@ -1290,12 +1290,34 @@ task_start() {
 # both ask; what a start refuses by the checkout instead — a dirty tree, an
 # occupied HEAD, a base that cannot be found — is the command's alone.
 _task_start_refusal() {
-  local id="$1" branch base_commit
+  local id="$1"
+  _task_started "$id" || return 0
+  local branch
   task_state_var branch "$id" branch
-  task_state_var base_commit "$id" base_commit
-  [ -n "$branch" ] && [ -n "$base_commit" ] || return 0
   # shellcheck disable=SC2016 # the backticks quote a command for the reader
   printf 'task start: already started on %s; to give it a worktree of its own: `jig task start %s --worktree`\n' "$branch" "$id"
+}
+
+# _task_started <id> — exit 0 when the task has been started: `task start`
+# recorded its branch and the commit it forked from. One test, asked by the
+# start's refusal and by the actions table's request-pause row.
+_task_started() {
+  local branch base_commit
+  task_state_var branch "$1" branch
+  task_state_var base_commit "$1" base_commit
+  [ -n "$branch" ] && [ -n "$base_commit" ]
+}
+
+# _task_request_pause_unstarted_refusal <id> — why the actions table does not
+# offer `request-pause` for a task nobody started, or nothing. A request is
+# honoured where a stage begins, and a task not started enters none, so a
+# board that wrote one would show "requested" until someone started the task
+# (pause-not-started-directly). The command still takes it — the table
+# withholds more than it refuses (adr-20261015-one-table-of-what-a-person-may-do) —
+# and the reason sends the person to the direct pause, which the table offers.
+_task_request_pause_unstarted_refusal() {
+  _task_started "$1" && return 0
+  printf 'task %s is not started: no stage will take a pause request; pause it directly: jig task pause %s\n' "$1" "$1"
 }
 
 # _task_start_goal_refusal <id> — why `jig task start <id>` refuses a T3/T4
@@ -4642,36 +4664,74 @@ _task_resume_refusal() {
 # and never the default (an unwanted default that loses work cannot be
 # undone; the reverse costs one flag) and records the stash's SHA, not its
 # index, because `stash@{0}` shifts as other entries are pushed.
+#
+# The write is checked against a revision as `task resume`'s is: the caller's
+# (`--revision`), or the one read here before the task is. The new state is
+# built whole, the revision claimed, and only then are the pending pause
+# request taken out (`jig queue cancel`, as a process), the stash made and the
+# state moved into place — a stale caller gets a refusal with nothing done.
+# `--json` anywhere runs the whole command as the producer of json_run, so a
+# board that drops a card on its paused column can pause a task no stage
+# will ever honour a request of (pause-not-started-directly).
 task_pause() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = --json ]; then
+      # shellcheck source=lib/json.sh
+      . "$JIG_LIB/json.sh"
+      json_run _task_pause_body 1 "$@"
+      return
+    fi
+  done
+  _task_pause_body 0 "$@"
+}
+
+# _task_pause_body <as_json> <id> [options] — the body of `task pause`; with
+# <as_json> 1 it runs inside json_run and prints the paused task as data, not
+# the report.
+_task_pause_body() {
+  local as_json="$1" arg args=()
+  shift
+  for arg in "$@"; do
+    [ "$arg" = --json ] || args+=("$arg")
+  done
+  set -- ${args[@]+"${args[@]}"}
   jig_require_init
-  [ $# -ge 1 ] || jig_die "$(_task_usage pause)"
+  [ $# -ge 1 ] || jig_fail usage "$(_task_usage pause)"
+  case "$1" in
+    -*) jig_fail usage "$(_task_usage pause)" ;;
+  esac
   local id="$1"
   shift
-  local reason="" stash=0 refusal if_requested=0 stage="" has_reason=0
+  local reason="" stash=0 refusal if_requested=0 stage="" has_reason=0 rev="" rev_given=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --reason) [ $# -ge 2 ] || jig_die "task pause: --reason requires a value"; reason="$2"; has_reason=1; shift 2 ;;
+      --reason) [ $# -ge 2 ] || jig_fail usage "task pause: --reason requires a value"; reason="$2"; has_reason=1; shift 2 ;;
       --stash) stash=1; shift ;;
       --if-requested) if_requested=1; shift ;;
-      --stage) [ $# -ge 2 ] || jig_die "task pause: --stage requires a value"; stage="$2"; shift 2 ;;
-      *) jig_die "task pause: unknown argument: $1" ;;
+      --stage) [ $# -ge 2 ] || jig_fail usage "task pause: --stage requires a value"; stage="$2"; shift 2 ;;
+      --revision) [ $# -ge 2 ] || jig_fail usage "task pause: --revision requires a value"; rev="$2"; rev_given=1; shift 2 ;;
+      *) jig_fail usage "task pause: unknown argument: $1" ;;
     esac
   done
-
-  local dir
-  dir=$(task_dir "$id")
-  _task_guard_write "$id" "task pause"
+  [ "$rev_given" -eq 0 ] || [ -n "$rev" ] || jig_fail usage "task pause: --revision is empty"
+  [ -z "$rev" ] || jig_revision_valid "$rev" || jig_fail usage "task pause: --revision is not a revision: $rev"
+  _task_valid_id "$id" || jig_fail usage "invalid task id: $id"
 
   # --if-requested: a stage is about to begin, and only a person's pending
   # request may pause the task there. The reason is the request's, and a
   # stash is the person's call, never the agent's; nothing pending, or a task
   # already paused, is nothing to do. Exit 4 when it paused, as `task
-  # autopilot stage` does.
+  # autopilot stage` does. It is the stage's, never a board's: no revision,
+  # no JSON.
   if [ "$if_requested" -eq 1 ]; then
-    [ "$has_reason" -eq 0 ] || jig_die "task pause: --if-requested takes the reason from the request; drop --reason"
-    [ "$stash" -eq 0 ] || jig_die "task pause: --if-requested does not stash; drop --stash"
-    [ -n "$stage" ] || jig_die "task pause: --if-requested requires --stage <name>"
-    _task_autopilot_valid_stage "$stage" || jig_die "task pause: invalid stage: $stage (expected [a-z0-9-]+)"
+    [ "$has_reason" -eq 0 ] || jig_fail usage "task pause: --if-requested takes the reason from the request; drop --reason"
+    [ "$stash" -eq 0 ] || jig_fail usage "task pause: --if-requested does not stash; drop --stash"
+    [ "$rev_given" -eq 0 ] || jig_fail usage "task pause: --if-requested takes no --revision"
+    [ "$as_json" = 0 ] || jig_fail usage "task pause: --if-requested takes no --json"
+    [ -n "$stage" ] || jig_fail usage "task pause: --if-requested requires --stage <name>"
+    _task_autopilot_valid_stage "$stage" || jig_fail usage "task pause: invalid stage: $stage (expected [a-z0-9-]+)"
+    _task_guard_write "$id" "task pause"
     [ "$(task_state_get "$id" paused)" != "true" ] || return 0
     if _task_pause_take_request "$id" "task pause"; then
       _task_honour_pause_request "$id" "$stage"
@@ -4681,9 +4741,7 @@ task_pause() {
     fi
     return 0
   fi
-  [ -z "$stage" ] || jig_die "task pause: --stage needs --if-requested"
-  refusal=$(_task_pause_refusal "$id") || exit 1
-  [ -z "$refusal" ] || jig_die "$refusal"
+  [ -z "$stage" ] || jig_fail usage "task pause: --stage needs --if-requested"
 
   # paused_reason is one flat `key: value` line (schemas/state.md); an
   # embedded newline would corrupt the state file, so it is refused up front
@@ -4692,42 +4750,115 @@ task_pause() {
   # would leave nl empty and turn the pattern below into a bare `*`.
   local nl=$'\n'
   case "$reason" in
-    *"$nl"*) jig_die "task pause: --reason must be a single line" ;;
+    *"$nl"*) jig_fail usage "task pause: --reason must be a single line" ;;
   esac
 
-  local stash_sha=""
+  # The revision this write is checked against: the caller's, or the one read
+  # here before the task is, so the state read below is never newer than it.
+  local expected
+  if [ -n "$rev" ]; then
+    expected=$rev
+  else
+    expected=$(jig_revision_read)
+  fi
+
+  local dir
+  dir=$(task_dir "$id")
+  [ -f "$dir/state" ] || jig_fail not-found "task pause: unknown task: $id"
+  _task_guard_write "$id" "task pause"
+  refusal=$(_task_pause_refusal "$id") || exit 1
+  [ -z "$refusal" ] || jig_fail already-paused "$refusal"
+
+  # --stash sets aside *this checkout's* changes and records them as the
+  # task's. When the task's branch is checked out somewhere else — its own
+  # worktree, most often (ADR-0029) — those changes are not the task's, and
+  # its real work would stay where it is while the record said otherwise.
+  local state_branch
   if [ "$stash" -eq 1 ]; then
-    # --stash sets aside *this checkout's* changes and records them as the
-    # task's. When the task's branch is checked out somewhere else — its own
-    # worktree, most often (ADR-0029) — those changes are not the task's, and
-    # its real work would stay where it is while the record said otherwise.
-    local state_branch
     state_branch=$(task_state_get "$id" branch)
     if [ -n "$state_branch" ] && [ "$state_branch" != "$(_task_current_branch)" ]; then
-      jig_die "task pause: --stash stashes this checkout, but $id is on $state_branch; run it where $state_branch is checked out"
+      jig_fail wrong-checkout "task pause: --stash stashes this checkout, but $id is on $state_branch; run it where $state_branch is checked out"
     fi
+  fi
+
+  # The new state, whole, before the claim: a refused claim leaves nothing.
+  local tmp="$dir/state.tmp.$$" tmp2="$dir/state.tmp2.$$" rc=0
+  _task_state_set_into "$dir/state" "$tmp2" paused true
+  _task_state_set_into "$tmp2" "$tmp" paused_at "$(jig_today)"
+  if [ -n "$reason" ]; then
+    _task_state_set_into "$tmp" "$tmp2" paused_reason "$reason"
+    mv "$tmp2" "$tmp"
+  fi
+  rm -f "$tmp2"
+
+  jig_revision_claim "$expected" || rc=$?
+  case "$rc" in
+    0) ;;
+    1)
+      rm -f "$tmp"
+      jig_fail stale-revision "task pause: the clone changed since revision $expected; read again and retry" ;;
+    *)
+      rm -f "$tmp"
+      jig_die "task pause: cannot claim the clone revision in $(jig_revision_dir)" ;;
+  esac
+
+  # A pause made by hand honours a pending request too: it goes with it,
+  # before the pause is set (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary)
+  # and before the stash: a cancel that fails must not leave a stash no state
+  # records.
+  local took=0 took_at="" took_reason=""
+  if _task_pause_take_request "$id" "task pause"; then
+    took=1
+    took_at=$_JIG_PAUSE_AT
+    took_reason=$_JIG_PAUSE_REASON
+  fi
+
+  local stash_sha="" stash_line=""
+  if [ "$stash" -eq 1 ]; then
     local changed count
     changed=$(git -C "$JIG_PROJECT" status --porcelain 2>/dev/null)
     count=$(_task_count_lines "$changed")
     if [ "$count" -gt 0 ]; then
       git -C "$JIG_PROJECT" stash push -u -m "jig: $id" >/dev/null \
-        || jig_die "task pause: git stash push failed"
+        || { rm -f "$tmp"; jig_die "task pause: git stash push failed"; }
       stash_sha=$(git -C "$JIG_PROJECT" rev-parse "stash@{0}")
-      printf 'stashed %s file(s): %s\n' "$count" "$stash_sha"
+      stash_line="stashed $count file(s): $stash_sha"
     else
-      printf 'working tree is clean; nothing to stash\n'
+      stash_line="working tree is clean; nothing to stash"
     fi
   fi
 
-  # A pause made by hand honours a pending request too: it goes with it.
-  _task_pause_take_request "$id" "task pause" || true
+  if [ -n "$stash_sha" ]; then
+    _task_state_set_into "$tmp" "$tmp2" paused_stash "$stash_sha"
+    mv "$tmp2" "$tmp"
+  fi
+  mv "$tmp" "$dir/state"
+  jig_task_state_forget
+  jig_record_changed
 
-  _task_rewrite_state "$dir" paused true
-  _task_rewrite_state "$dir" paused_at "$(jig_today)"
-  [ -z "$reason" ] || _task_rewrite_state "$dir" paused_reason "$reason"
-  [ -z "$stash_sha" ] || _task_rewrite_state "$dir" paused_stash "$stash_sha"
-
+  if [ "$as_json" = 1 ]; then
+    _task_pause_json "$id" "$stash_sha" "$took" "$took_at" "$took_reason"
+    return 0
+  fi
+  [ -z "$stash_line" ] || printf '%s\n' "$stash_line"
   printf 'paused %s\n' "$id"
+}
+
+# _task_pause_json <id> <stash-sha> <took> <requested-at> <reason> — the
+# `data` of `task pause --json` (schemas/json.md): the task as `task list
+# --json` lists it, after the write, the stash the pause made and the pause
+# request it took out of the queue with it (<took> 1), or null for either.
+_task_pause_json() {
+  local id="$1" sha="$2" took="$3" at="$4" why="$5" r task
+  json_str_or_null "$sha"; r="{\"stash\":$_JSON"
+  if [ "$took" = 1 ]; then
+    json_quote "$at"; r="$r,\"request\":{\"requested_at\":$_JSON"
+    json_str_or_null "$why"; r="$r,\"reason\":$_JSON}}"
+  else
+    r="$r,\"request\":null}"
+  fi
+  task=$(_task_json_one "$id")
+  printf '{"task":%s,"pause":%s}\n' "$task" "$r"
 }
 
 # resume refuses when the task is not paused, and, when a stash is recorded,
@@ -5444,7 +5575,9 @@ _task_actions_v() {
         [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_start_goal_refusal "$id" ;;
       *:pause) _task_actions_ask_v reason "$id" "$action" _task_pause_refusal "$id" ;;
       *:resume) _task_actions_ask_v reason "$id" "$action" _task_resume_refusal "$id" ;;
-      *:request-pause) _task_actions_ask_v reason "$id" "$action" jig_pause_request_refusal "$id" ;;
+      *:request-pause)
+        _task_actions_ask_v reason "$id" "$action" jig_pause_request_refusal "$id"
+        [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_request_pause_unstarted_refusal "$id" ;;
       *:cancel-pause-request) _task_actions_ask_v reason "$id" "$action" jig_pause_cancel_refusal "$id" ;;
       *:approve-gate)
         _task_actions_ask_v reason "$id" "$action" _task_gate_refusal "$id" human

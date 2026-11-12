@@ -95,6 +95,7 @@ be reworded.
 | `source-missing` | the file a knowledge stub links is missing or not tracked. Nothing was written |
 | `not-closable` | the task you asked to close is not one Jig offers to close: its knowledge decision is not recorded, or its pull request is not merged. Nothing was written — show the person the message, which is the reason |
 | `not-paused` | the task you asked to resume is not paused: somebody resumed it first. Nothing was written — read again |
+| `already-paused` | the task you asked to pause is paused already: somebody paused it first. Nothing was written — read again |
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
 | `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
@@ -179,7 +180,7 @@ buttons without knowing Jig's rules. Every task carries the same fifteen actions
 |---|---|
 | `start` | Start a task that was filed for later; refused for a T3 or T4 task whose `task.md` has no goal |
 | `pause`, `resume` | Set the task aside, and pick it up again |
-| `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back |
+| `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back; a task nobody started is not offered a request, since no stage of it would take one — pause it with `pause` |
 | `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
 | `answer-stop` | Answer an autopilot run that stopped to ask you something |
 | `handover` | Take a stopped autopilot run over and finish the task without autopilot; its `command` asks for your words as `<text>` |
@@ -508,6 +509,22 @@ While it waits, `jig task list --json` shows it on the task as `pause_request`, 
 `requested_at` for the age you show beside it, and offers `cancel-pause-request` instead of
 `request-pause`. Asking twice is refused with `already-exists`, and the first request keeps its time.
 Asking a task that is already paused, or finished, is refused.
+
+A task nobody started has no stage for a request to wait for, so it is not offered `request-pause`:
+the action's `reason` sends you to `pause`, which pauses it at once. Send that with the revision you
+read too:
+
+```bash
+jig task pause booking-message --revision 1792079790 --json
+```
+
+The answer is the task, now with `"paused":true`, and what the pause did: the stash it made (only
+with `--stash`), and the request it took with it, if one was waiting. A task paused already is
+refused with `already-paused`.
+
+```json
+{"schema":1,"revision":1792079790,"generated_at":"2026-10-19T12:00:00Z","data":{"task":{"id":"booking-message","paused":true,"…":"…"},"pause":{"stash":null,"request":null}}}
+```
 
 ## Resuming a paused task
 
