@@ -14,7 +14,7 @@
 # it lives in these run-scoped globals and in the log.
 _HK_VIA=""          # tier that decided the last remote state: forge|ancestry|none
 _HK_FORGE_KIND=""   # github|gitlab|none — resolved once per run
-_HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state><TAB><head-commit><TAB><url>" lines, fetched once per run (C1)
+_HK_FORGE_PRS=""    # "<head><TAB><base><TAB><state><TAB><head-commit><TAB><url>[<TAB><merge-status>]" lines, fetched once per run (C1); the sixth on GitLab only
 _HK_STALE_REMOTE=0  # 1 when the fetch or the forge tier could not answer
 _HK_FORGE_TOKEN=""  # github|gitlab|none|failed — the run marker's forge= field
 _HK_VERBOSE=0       # 1 with --verbose: also print one decision line per task
@@ -27,6 +27,7 @@ _HK_DEFAULT_BASE="" # git.base_branch, read once per run
 _HK_STAGING_BRANCH="" # git.staging_branch on a sound staging flow, empty otherwise; read once per run
 _HK_STAGING=""      # "<task><TAB>on|behind" for the tasks on the staging branch (jig_staging_states), once per run
 _HK_STAGING_STATE="" # the last task's staging state: on, behind or empty
+_HK_DRIFT_ROWS=""   # "<task><TAB><branch><TAB><base><TAB><promote_url>" for the staging drift report, once per run
 _HK_LOCK_DIR=""      # the run's own lock directory, once claimed (_hk_lock_acquire); empty otherwise
 
 cmd_housekeeping() {
@@ -322,6 +323,10 @@ $task_base
   _hk_print_report "$dry" "$trash_ttl_days" \
     || jig_warn "housekeeping: could not print the report; the decisions are in .ai/runtime/housekeeping.log"
   [ "$found" = 1 ] || printf 'no task workspaces\n'
+  # The staging drift report is a fact for the person, like the report: a
+  # failure to work it out must not stop the rest of the run either.
+  _hk_staging_drift \
+    || jig_warn "housekeeping: the staging drift report failed; the rest goes on"
 
   _hk_branch_sweep "$dry" "$keep_branches"
 
@@ -747,7 +752,7 @@ _hk_forge_init() {
       # glab's compact array and drops objects without a source branch. The
       # merge request's own web_url, not its author's, which comes first.
       _HK_FORGE_PRS=$(glab mr list --all --output json 2>/dev/null \
-        | jig_glab_fields source_branch target_branch state sha web_url@/merge_requests/ \
+        | jig_glab_fields source_branch target_branch state sha web_url@/merge_requests/ detailed_merge_status \
         | awk -F '\t' '$3 != ""' \
         || printf '__failed__')
       ;;
@@ -766,8 +771,11 @@ _hk_forge_init() {
   return 0
 }
 
-# _hk_forge_ci — `<head>\t<base>\t<ci>` for every open pull request on GitHub,
-# for the forge cache; nothing on another forge or when gh does not answer.
+# _hk_forge_ci — `<head>\t<base>\t<ci>\t<mergeable>` for every open pull
+# request on GitHub, for the forge cache; nothing on another forge or when gh
+# does not answer. <mergeable> is gh's word (MERGEABLE, CONFLICTING, UNKNOWN),
+# asked in the same call: the staging drift report names a promotion the forge
+# calls conflicting (jig_staging_drift).
 #
 # A second list call, asked only when the cache is written. Asked in the first
 # call for all 200, the check rollup made it about six times slower (13 s and
@@ -786,7 +794,7 @@ _hk_forge_ci() {
   [ "$_HK_FORGE_KIND" = github ] || return 0
   # shellcheck disable=SC2016 # $c is the --jq expression's variable, not the shell's
   jig_gh pr list --state open --limit 200 \
-    --json headRefName,baseRefName,statusCheckRollup \
+    --json headRefName,baseRefName,statusCheckRollup,mergeable \
     --jq '.[] | [.statusCheckRollup // []
           | group_by((.workflowName // "") + "/" + (.name // .context // ""))[]
           | max_by(.startedAt // .completedAt // "")
@@ -804,7 +812,7 @@ _hk_forge_ci() {
             if any($c[]; . == "fail") then "red"
             elif any($c[]; . == "pending") then "pending"
             elif any($c[]; . == "pass") then "green"
-            else "none" end)"' 2>/dev/null || true
+            else "none" end)\t\(.mergeable // "")"' 2>/dev/null || true
 }
 
 # _HK_PR_STATE_AWK — the awk function that reads a forge's word for a pull
@@ -821,7 +829,7 @@ _HK_PR_STATE_AWK='
 
 # _hk_forge_cache_write — keep what this run heard from the forge in the forge
 # cache (lib/forgecache.sh) for the reads that never ask it: one line per pull
-# request, `<head>\t<base>\t<state>\t<ci>\t<fetched_at>\t<head-commit>\t<url>`,
+# request, `<head>\t<base>\t<state>\t<ci>\t<fetched_at>\t<head-commit>\t<url>\t<mergeable>`,
 # the state normalised
 # as _hk_forge_state normalises it. Only after a list the forge answered: a run
 # without a forge or with a failed one leaves the last cache as it is, every
@@ -841,7 +849,10 @@ _hk_forge_cache_write() {
     printf '%s\n' "$ci" | awk '$0 != "" { print "C\t" $0 }'
     printf '%s\n' "$_HK_FORGE_PRS" | awk '$0 != "" { print "P\t" $0 }'
   } | awk -F '\t' -v at="$at" "$_HK_PR_STATE_AWK"'
-    $1 == "C" { if (NF >= 4 && !(($2 FS $3) in ci)) ci[$2 FS $3] = $4; next }
+    $1 == "C" {
+      if (NF >= 4 && !(($2 FS $3) in ci)) { ci[$2 FS $3] = $4; mg[$2 FS $3] = $5 }
+      next
+    }
     $1 == "P" && NF >= 4 && $2 != "" && $3 != "" {
       s = prstate($4)
       if (s == "") next
@@ -851,7 +862,16 @@ _hk_forge_cache_write() {
       h = $5; u = $6
       if (h !~ /^[0-9a-f]+$/) h = "-"
       if (u == "" || u ~ /[[:space:]]/ || u == "null") u = "-"
-      print $2 "\t" $3 "\t" s "\t" c "\t" at "\t" h "\t" u
+      # Whether the forge can merge it: GitHub'"'"'s word from the checks
+      # call, GitLab'"'"'s detailed_merge_status from the list; `-` for a pull
+      # request that is not open and a word that says neither.
+      m = "-"
+      if (s == "open") {
+        w = tolower(($2 FS $3) in mg ? mg[$2 FS $3] : $7)
+        if (w == "conflicting" || w == "conflict") m = "conflicting"
+        else if (w == "mergeable") m = "mergeable"
+      }
+      print $2 "\t" $3 "\t" s "\t" c "\t" at "\t" h "\t" u "\t" m
     }') || return 0
   forgecache_write "$rows"
 }
@@ -1771,8 +1791,9 @@ _hk_staging_init() {
   # `task list --json` reads them, with no process per task. Found as the run
   # finds them — `find` with no trailing slash, so a worktree that borrows the
   # owner's tasks sees none — and a directory that is not a task id is skipped.
-  local state_file tid branch base t=$'\t'
+  local state_file tid branch base purl t=$'\t'
   rows=""
+  _HK_DRIFT_ROWS=""
   while IFS= read -r state_file; do
     [ -n "$state_file" ] || continue
     tid=${state_file%/state}
@@ -1783,8 +1804,26 @@ _hk_staging_init() {
     jig_task_base_v base "$tid"
     rows="$rows$tid$t$branch$t$base
 "
+    # The drift report's rows add the promotion this checkout opened.
+    task_state_var purl "$tid" promote_url
+    _HK_DRIFT_ROWS="$_HK_DRIFT_ROWS$tid$t$branch$t$base$t$purl
+"
   done < <(find "$tasks_dir" -mindepth 2 -maxdepth 2 -name state -type f 2>/dev/null | LC_ALL=C sort)
   _HK_STAGING=$(jig_staging_states "$_HK_STAGING_BRANCH" "$rows")
+}
+
+# _hk_staging_drift — the staging drift report (jig_staging_drift), a
+# `staging: ` line each as `jig status` prints them, after the run's report:
+# read from git by branch name after this run's fetch, and from the forge cache
+# this run wrote (on a dry run, the last one). Nothing off a sound staging
+# flow. A fact for the person, never a decision about a workspace.
+_hk_staging_drift() {
+  local stale records
+  [ -n "$_HK_STAGING_BRANCH" ] || return 0
+  stale=$(jig_staging_stale_after) || stale=""
+  records=$(jig_staging_drift "$_HK_STAGING_BRANCH" "$stale" "$_HK_DRIFT_ROWS" "$(forgecache_read)")
+  [ -n "$records" ] || return 0
+  jig_staging_drift_lines "$_HK_STAGING_BRANCH" "$records"
 }
 
 # _hk_staging_state_of <task> — that task's staging state into

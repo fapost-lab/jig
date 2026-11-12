@@ -40,7 +40,7 @@ from a CI job. Done when: run on a runner with no Jig workspace and given a test
 it opens the pull request into the base branch and prints its link, and it refuses a task whose tip is not
 in that commit; a task waiting on staging is listed as parked and holds no slot.
 
-- [ ] Park at the staging branch — one state, *parked*, with its reason derived from git and the forge
+- [ ] `park-at-staging` — Park at the staging branch — one state, *parked*, with its reason derived from git and the forge
   (`review` while the staging pull request is open, `signal` once the task is on the staging branch; the owner's checkout adds `landing`);
   it frees the current-task slot and the queue; `jig task resume` brings the task back; autopilot
   stops there, never approves and never promotes. (after: Land a task on staging — parking starts
@@ -51,7 +51,7 @@ in that commit; a task waiting on staging is listed as parked and holds no slot.
   link instead of opening a second one; needs only git and the forge, and where the checkout has a queue it warns — in the output
   and the pull request body — of a dependency on the staging branch but not in the base branch. (after: See a task's
   staging state — the refusal is that check)
-- [ ] Merge the promotion by the flow — `promote_merge: human` stops at the link, `auto` switches
+- [ ] `merge-promotion` — Merge the promotion by the flow — `promote_merge: human` stops at the link, `auto` switches
   on the forge's auto-merge so the pull request merges on green CI — in a checkout only at
   `agent.git: merge`, on a CI runner by the flow alone, and never for a promotion that raises the
   version, which stays a person's merge (a `major` one a draft). (after: Prepare a task for prod — it merges the pull request that item opens)
@@ -62,7 +62,7 @@ Goal: staging stays explainable as tasks come and go, and a fully automated team
 Done when: `jig status` names tasks on staging nobody promoted for long and staging work no task
 branch owns.
 
-- [ ] Staging drift report — tasks on staging long unpromoted, staging commits that are not in
+- [x] `staging-drift-report` — Staging drift report — tasks on staging long unpromoted, staging commits that are not in
   the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
   the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it; after: Prepare a task for prod —
   it reports the pull requests that item opens)
@@ -70,7 +70,7 @@ branch owns.
   merges nothing there, and reads from git which tasks CI merged in. (after: See a task's staging
   state — it is the only thing Jig does on the staging branch then). The key exists from Choose a flow;
   `external` works only from here, harmless in an epic released once.
-- [ ] Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
+- [x] `promote-from-ci` — Promote from CI — "prepare for prod" given the tested staging commit promotes the task ids it
   names, or with `--all` every `task/*` branch contained in that commit and not yet in the base branch.
   (after: Prepare a task for prod — it runs that item's command once per task)
 
