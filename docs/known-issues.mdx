@@ -23,6 +23,22 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
+{/* Closed by task promote-from-ci-findings: removed once `--all` tells a promotion merged without a merge commit, and an epic on the staging branch, from a task still to promote. */}
+### `jig task promote --all` judges "not yet in the main branch" by ancestry alone
+
+**What you see.** A promotion merged into the main branch by squash or rebase leaves the task
+branch's own commits out of the main branch's history, so every later `--all` run takes that task
+again and opens a pull request with nothing new in it. And a task that reached the staging branch
+inside an `epic/*` branch is a task branch the tested commit holds: on a CI runner, with no
+workspace to say it belongs to the epic, `--all` promotes it on its own.
+
+**What it costs.** Empty pull requests into the main branch after each run, and work of an epic
+sent to the main branch piece by piece instead of once.
+
+**What to do instead.** Merge promotions with a merge commit, or have the forge delete the task
+branch when the promotion is merged. Do not run `--all` while an epic branch is on the staging
+branch; name the tasks instead.
+
 {/* Closed by task prepare-for-prod (F4): removed once a run against a real GitLab project confirms the path. */}
 ### "Prepare for prod" has not been tried against a real GitLab project
 
