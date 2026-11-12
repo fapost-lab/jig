@@ -505,9 +505,26 @@ _pr_gh_refuse_a_lost_reply() {
 
 # --- fetch --------------------------------------------------------------------------------
 
+# _pr_keep_pr_base <sha> <remote> — make GitHub's base commit of the pull
+# request available here: nothing to do when the clone holds it (the base
+# branch's history usually does), else fetched by its id into
+# refs/jig/pr/<n>/pr-base, which pins it until cleanup. Dies when neither
+# works: without it the review's diff would not be GitHub's.
+_pr_keep_pr_base() {
+  local sha="$1" remote="$2" ref="refs/jig/pr/$_PR_N/pr-base" opts got
+  _pr_git "$JIG_PROJECT" cat-file -e "$sha^{commit}" 2>/dev/null && return 0
+  opts=$(_pr_fetch_opts)
+  # shellcheck disable=SC2086 # opts is a list of fixed flags
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$(jig_git_batch_ssh)" \
+    jig_net _pr_git "$JIG_PROJECT" fetch -q $opts "$remote" "+$sha:$ref" >/dev/null 2>&1 || true
+  got=$(_pr_git "$JIG_PROJECT" rev-parse --verify --quiet "$ref^{commit}") || got=""
+  [ "$got" = "$sha" ] \
+    || jig_die "pr fetch: GitHub's diff of pull request $_PR_N starts below $sha, which this clone does not hold and $remote did not give; fetch it again in a moment"
+}
+
 _pr_fetch() {
   local rc=0 remote info base api_head state slug dir rec wt kind recorded head base_sha mb accounts active tok login why now t
-  local head_ref extra=""
+  local head_ref extra="" pr_base="" own_mb=""
   [ $# -eq 1 ] || jig_fail usage "pr fetch: one pull request URL is required; $PR_USAGE"
   _pr_parse_url "$1" || rc=$?
   [ "$rc" = 0 ] \
@@ -546,9 +563,12 @@ _pr_fetch() {
     _pr_propose_login "$slug"
     info=$(_pr_pull_info "$slug") \
       || jig_die "pr fetch: GitHub did not answer for $_PR_URL (gh auth status --hostname $_PR_HOST)"
-    IFS="$t" read -r base api_head state _ <<EOF
+    IFS="$t" read -r base api_head state pr_base _ <<EOF
 $info
 EOF
+    case "$pr_base" in
+      '' | *[!0-9a-f]*) jig_die "pr fetch: GitHub named no base commit for $_PR_URL" ;;
+    esac
     head_ref="refs/pull/$_PR_N/head"
   fi
   git check-ref-format --branch "$base" >/dev/null 2>&1 \
@@ -591,8 +611,20 @@ EOF
     extra="project_id: $_PR_GL_PID
 "
   else
-    mb=$(_pr_git "$JIG_PROJECT" merge-base "$base_sha" "$head" 2>/dev/null) \
-      || jig_die "pr fetch: $base and the head of pull request $_PR_N share no commit here; a shallow clone needs git fetch --unshallow $remote"
+    # GitHub's diff — "Files changed", and what `comments check` asks the compare
+    # API for — starts at the merge base of the pull request's own base commit
+    # (.base.sha), not of today's tip of the base branch: a base that merged
+    # part of the pull request since (a branch cut from main, into a staging
+    # branch main is merged into) moves today's merge base, and GitHub's stays
+    # until the author pushes. The review reads from GitHub's, as GitLab's does.
+    _pr_keep_pr_base "$pr_base" "$remote"
+    mb=$(_pr_git "$JIG_PROJECT" merge-base "$pr_base" "$head" 2>/dev/null) \
+      || jig_die "pr fetch: GitHub's base commit $pr_base and the head of pull request $_PR_N share no commit here; a shallow clone needs git fetch --unshallow $remote"
+    # What the author changed against today's base: narrower when the base
+    # holds part of the pull request already. Shown beside, never positioned on.
+    own_mb=$(_pr_git "$JIG_PROJECT" merge-base "$base_sha" "$head" 2>/dev/null) || own_mb=""
+    extra="pr_base_sha: $pr_base
+"
   fi
 
   if [ "$kind" = detached ]; then
@@ -640,6 +672,10 @@ fetched_at: $now
     printf 'login: %s\n' "$login"
   fi
   printf 'diff: git -C %s diff %s %s\n' "$JIG_PROJECT" "$mb" "$head"
+  if [ -n "$own_mb" ] && [ "$own_mb" != "$mb" ]; then
+    printf "own change: git -C %s diff %s %s   (against today's %s, which holds part of the pull request; comments go on the diff above)\n" \
+      "$JIG_PROJECT" "$own_mb" "$head" "$base"
+  fi
   printf 'rules: git -C %s show %s:<path>   (the base, never the head)\n' "$JIG_PROJECT" "$base_sha"
   _pr_method_lines
 }
@@ -2099,7 +2135,7 @@ _pr_fu_keep() {
 }
 
 _pr_followup() {
-  local arg="" login="" rec remote base_sha old_mb="" k threads="" fu now reviewed
+  local arg="" login="" rec remote base_sha pr_base old_mb="" k threads="" fu now reviewed
   while [ $# -gt 0 ]; do
     case "$1" in
       --login)
@@ -2128,6 +2164,12 @@ _pr_followup() {
   _PR_FORGE=$(_pr_record_get "$rec" forge)
   remote=$(_pr_record_get "$rec" remote)
   base_sha=$(_pr_record_get "$rec" base_sha)
+  # The merge base the fetch read from is GitHub's, below the pull request's
+  # own base commit; the earlier head's is measured from the same commit, or a
+  # base that moved alone would read as a rebase. A record from before the
+  # field measured both from the base branch's tip.
+  pr_base=$(_pr_record_get "$rec" pr_base_sha)
+  [ -n "$pr_base" ] || pr_base=$base_sha
   [ -n "$login" ] || login=$(_pr_record_get "$rec" login)
   if [ -z "$login" ] || [ "$login" = ask ]; then
     jig_die "pr followup: the fetch could not tell which account to read the earlier review of; name it: jig pr followup $_PR_N --login <login>"
@@ -2156,7 +2198,7 @@ _pr_followup() {
     reviewed=unreachable
   else
     reviewed=available
-    old_mb=$(_pr_git "$JIG_PROJECT" merge-base "$base_sha" "$_PR_FU_HEAD" 2>/dev/null) || old_mb=""
+    old_mb=$(_pr_git "$JIG_PROJECT" merge-base "$pr_base" "$_PR_FU_HEAD" 2>/dev/null) || old_mb=""
   fi
 
   k=1
@@ -2261,7 +2303,8 @@ _pr_list() {
 #   it there detached and unlocked; git refuses one with changes, and then
 #   nothing else goes either. What git leaves behind (Windows) is cleared by
 #   jig_worktree_leftover: links and empty directories only.
-# - the refs refs/jig/pr/<n>/head, /base and /reviewed (a follow-up's), each
+# - the refs refs/jig/pr/<n>/head, /base, /pr-base (GitHub's base commit, when
+#   the fetch had to bring it) and /reviewed (a follow-up's), each
 #   by `update-ref -d` at the commit it holds when read.
 # - the record, the draft and the rest jig writes there, by name, then `rmdir` of their directory, which
 #   refuses anything else in it.
@@ -2291,7 +2334,7 @@ _pr_cleanup() {
     locked) jig_die "pr cleanup: the worktree $wt is locked; git worktree unlock it first, then run cleanup again" ;;
     *) jig_die "pr cleanup: $wt has a branch checked out; it is not a pull request jig fetched, so it stays" ;;
   esac
-  for r in head base reviewed; do
+  for r in head base pr-base reviewed; do
     sha=$(_pr_git "$JIG_PROJECT" rev-parse --verify --quiet "refs/jig/pr/$n/$r") || continue
     _pr_git "$JIG_PROJECT" update-ref -d "refs/jig/pr/$n/$r" "$sha" \
       || jig_die "pr cleanup: could not delete refs/jig/pr/$n/$r"
