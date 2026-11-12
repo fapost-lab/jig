@@ -264,6 +264,37 @@ and a forge token. A runner has no queue, so it cannot warn about dependencies: 
 belong together in one go. In your own checkout the command needs `agent.git` at `pr` or above.
 Exit 0 means the pull request is open (or the task is in the main branch already), 1 a refusal,
 3 that a person is needed.
+
+Several tasks go in one run: `jig task promote --commit <sha> <id> <id>…` promotes each one named,
+and `jig task promote --commit <sha> --all` every task branch on origin (named by
+`git.branch_template`) whose tip that commit contains and the main branch does not yet. `--all` is
+for a team whose green CI is the test, written into its pipeline on purpose; it always needs
+`--commit`, so a build that merely ran never sends the whole staging branch to production. Each
+task is judged on its own against the same tested commit: one refusal does not stop the others,
+and each gets its own line.
+
+```text
+task promote: promoting T-12
+…
+task promote: T-12: promoted
+task promote: promoting T-14
+jig: error: task promote: task/T-14 has commit(s) of its own that the tested commit 3f2a91c does not have: …
+task promote: T-14: refused
+task promote: 1 promoted, 1 refused, 0 need a person (tested commit 3f2a91c of staging)
+```
+
+The run exits 1 when any task was refused, else 3 when any needs a person, else 0. What would refuse
+every task — not the staging flow, a shallow clone, a tested commit that is not on staging — stops
+the run before the first one. `--title` and `--body-file` are for one task. A task tested and then
+given a fix is skipped and named (`skipped <id>`) without failing the run; promote it after the fix
+is tested.
+
+`--all` reads "not yet in the main branch" from git history alone, so merge promotions with a merge
+commit (or have the forge delete the task branch on merge): a squashed or rebased promotion would be
+picked again by every run ([known issues](/known-issues)). Do not run `--all` while an epic branch is on the staging branch: a
+runner cannot tell the epic's tasks from the others and would promote each on its own. A task
+reverted on the staging branch still reads as tested, and `--all` would promote it; name the tasks
+instead when you have reverted one.
 </Accordion>
 
 <span id="specs-and-epics" />

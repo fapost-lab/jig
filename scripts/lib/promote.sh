@@ -15,9 +15,9 @@
 # branch, and the pull request.
 
 # _promote_refuse <code> <message> — refuse this task's promotion: nothing was
-# pushed and no pull request opened. One seam for every refusal, so that
-# promoting several tasks ("Promote from CI") can turn a refusal of one task
-# into that task's result rather than the end of the run.
+# pushed and no pull request opened. It exits, as the functions of common.sh
+# and task.sh the steps call do; a run over several tasks runs each in a
+# subshell of its own (_promote_task), so a refusal ends that task alone.
 _promote_refuse() {
   jig_fail "$@"
 }
@@ -106,25 +106,66 @@ _promote_open_url() {
   return 0
 }
 
+# _promote_flow <who> — the project's flow, which must be staging, into
+# _PROMOTE_FLOW, _PROMOTE_BASE and _PROMOTE_STAGING; refused otherwise.
+_promote_flow() {
+  local who="$1" problems
+  problems=$(jig_git_flow_problems)
+  [ -z "$problems" ] || _promote_refuse failed "$who: the project's git flow cannot be read:
+$problems
+Fix it in .ai/config.yaml (jig doctor names the same) and run again."
+  _PROMOTE_FLOW=$(jig_git_flow) || _PROMOTE_FLOW=""
+  _PROMOTE_BASE=$(cfg git.base_branch main)
+  [ "$_PROMOTE_FLOW" = staging ] \
+    || _promote_refuse failed "$who: the git flow is ${_PROMOTE_FLOW:-direct}, not staging; a task reaches $_PROMOTE_BASE by jig task ship"
+  _PROMOTE_STAGING=$(jig_staging_branch)
+}
+
+# _promote_full_history <who> — refuse a shallow clone, where what a commit
+# contains cannot be told.
+_promote_full_history() {
+  if [ "$(git -C "$JIG_PROJECT" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+    _promote_refuse shallow-clone "$1: this clone is shallow, so what the tested commit contains cannot be told. Fetch the full history (actions/checkout fetch-depth: 0; GitLab GIT_DEPTH: 0) and run again."
+  fi
+  return 0
+}
+
+# _promote_tested_commit <who> <commit-arg> <base> <staging> — after the
+# fetch, the tested commit into _PROMOTE_CSHA (<commit-arg>, which must be on
+# origin/<staging>, else that branch's tip) and the base's commit into
+# _PROMOTE_BASE_SHA; refused when either cannot be had.
+_promote_tested_commit() {
+  local who="$1" commit_arg="$2" base="$3" staging="$4" stip csha base_ref
+  stip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || stip=""
+  [ -n "$stip" ] || _promote_refuse failed "$who: origin has no $staging branch, so nothing was tested on it"
+  if [ -n "$commit_arg" ]; then
+    csha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$commit_arg^{commit}" 2>/dev/null) || csha=""
+    [ -n "$csha" ] || _promote_refuse not-found "$who: --commit $commit_arg names no commit here; fetch it and run again"
+    git -C "$JIG_PROJECT" merge-base --is-ancestor "$csha" "$stip" 2>/dev/null \
+      || _promote_refuse failed "$who: $commit_arg is not a commit of origin/$staging; the tested commit is one the staging branch has"
+  else
+    csha=$stip
+  fi
+  base_ref=$(jig_base_ref "$base")
+  [ -n "$base_ref" ] || _promote_refuse failed "$who: no branch $base here or on origin; fetch it and run again"
+  _PROMOTE_CSHA=$csha
+  _PROMOTE_BASE_SHA=$(git -C "$JIG_PROJECT" rev-parse "$base_ref^{commit}")
+}
+
 # _promote_one <id> <commit> <title> <body-file> — promote one task: the steps
 # of design §2 in order. Returns 0 (the pull request is open, or the task is
 # in the base already) or 3 (a person is needed); a refusal exits 1 through
 # _promote_refuse.
 _promote_one() {
   local id="$1" commit_arg="$2" title="$3" body_file="$4"
-  local who="task promote" t=$'\t' problems flow base staging dir have_ws=0 branch tbase run level
+  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level
   _task_valid_id "$id" || _promote_refuse usage "invalid task id: $id"
 
   # 1. The flow.
-  problems=$(jig_git_flow_problems)
-  [ -z "$problems" ] || _promote_refuse failed "$who: the project's git flow cannot be read:
-$problems
-Fix it in .ai/config.yaml (jig doctor names the same) and run again."
-  flow=$(jig_git_flow) || flow=""
-  base=$(cfg git.base_branch main)
-  [ "$flow" = staging ] \
-    || _promote_refuse failed "$who: the git flow is ${flow:-direct}, not staging; a task reaches $base by jig task ship"
-  staging=$(jig_staging_branch)
+  _promote_flow "$who"
+  flow=$_PROMOTE_FLOW
+  base=$_PROMOTE_BASE
+  staging=$_PROMOTE_STAGING
 
   # 2. The task: its branch, and its base where a workspace records one.
   task_dir_v dir "$id"
@@ -156,9 +197,7 @@ Fix it in .ai/config.yaml (jig doctor names the same) and run again."
   fi
 
   # 4. History deep enough to tell what a commit contains.
-  if [ "$(git -C "$JIG_PROJECT" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
-    _promote_refuse shallow-clone "$who: this clone is shallow, so what the tested commit contains cannot be told. Fetch the full history (actions/checkout fetch-depth: 0; GitLab GIT_DEPTH: 0) and run again."
-  fi
+  _promote_full_history "$who"
 
   # 5. Fresh refs, refused when one cannot be had, and the flow the base
   # branch names.
@@ -166,20 +205,10 @@ Fix it in .ai/config.yaml (jig doctor names the same) and run again."
   _task_ship_flow_agrees "$base" "$flow" "$staging" "$who"
 
   # 6. The tested commit.
-  local stip csha base_ref base_sha
-  stip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || stip=""
-  [ -n "$stip" ] || _promote_refuse failed "$who: origin has no $staging branch, so nothing was tested on it"
-  if [ -n "$commit_arg" ]; then
-    csha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$commit_arg^{commit}" 2>/dev/null) || csha=""
-    [ -n "$csha" ] || _promote_refuse not-found "$who: --commit $commit_arg names no commit here; fetch it and run again"
-    git -C "$JIG_PROJECT" merge-base --is-ancestor "$csha" "$stip" 2>/dev/null \
-      || _promote_refuse failed "$who: $commit_arg is not a commit of origin/$staging; the tested commit is one the staging branch has"
-  else
-    csha=$stip
-  fi
-  base_ref=$(jig_base_ref "$base")
-  [ -n "$base_ref" ] || _promote_refuse failed "$who: no branch $base here or on origin; fetch it and run again"
-  base_sha=$(git -C "$JIG_PROJECT" rev-parse "$base_ref^{commit}")
+  local csha base_sha
+  _promote_tested_commit "$who" "$commit_arg" "$base" "$staging"
+  csha=$_PROMOTE_CSHA
+  base_sha=$_PROMOTE_BASE_SHA
   printf '%s: tested commit %s of %s\n' "$who" "$(git -C "$JIG_PROJECT" rev-parse --short "$csha")" "$staging"
 
   # 7. The tip: what the pull request will carry once pushed.
@@ -418,6 +447,142 @@ EOF
     printf "%s: git.promote_merge is auto, which is not built yet; the merge is the person's\n" "$who"
   else
     printf "%s: the merge is the person's (git.promote_merge: %s)\n" "$who" "$pm"
+  fi
+  return 0
+}
+
+# _promote_task <id> <commit> <title> <body-file> — the per-task step of a run
+# over several tasks: _promote_one in a subshell of its own, so that a
+# refusal, which exits, ends this task alone. Returns what the task came to:
+# 0 open or in the base already, 1 refused, 3 a person is needed. The explicit
+# `exit` runs the subshell's own exit cleanup (jig_cleanup_add), which a
+# subshell running off its end may skip in bash 3.2.
+_promote_task() {
+  local rc=0
+  (
+    _prc=0
+    _promote_one "$@" || _prc=$?
+    # The state this subshell wrote (promote_url) reaches the status page
+    # here: the parent never sees the subshell's dirty flag.
+    jig_status_page_flush
+    exit "$_prc"
+  ) || rc=$?
+  return "$rc"
+}
+
+# _promote_branch_ids <who> <tested-commit> <base-sha> — the ids of `--all`
+# into _PROMOTE_IDS (called directly, never in `$()`, so that its refusal
+# ends the run):
+# every branch on origin that git.branch_template names a task branch (the id
+# in place of `{id}`, a valid task id; a template with nothing before `{id}`
+# is refused), whose tip the tested commit contains and the base does not. One per line, in origin's order. Read from the
+# branch names alone, so a CI runner with no workspace has them too.
+_promote_branch_ids() {
+  local who="$1" csha="$2" base_sha="$3" template pre suf heads sha ref name id own untested
+  _PROMOTE_IDS=""
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    *'{id}'*) pre=${template%%'{id}'*} suf=${template#*'{id}'} ;;
+    *) pre="task/" suf="" ;;
+  esac
+  # As jig_branch_is_jigs: with nothing before {id}, every branch whose name
+  # is a valid id would be a task's, the staging branch included.
+  [ -n "$pre" ] || _promote_refuse usage "$who: --all cannot tell a task branch by git.branch_template $template, which has nothing before {id}; name the tasks instead"
+  heads=$(jig_net jig_git_origin ls-remote --heads origin 2>&1) \
+    || _promote_refuse failed "$who: could not list the branches on origin, so --all cannot tell which tasks the tested commit holds.
+$heads"
+  while IFS=$'\t' read -r sha ref; do
+    case "$ref" in refs/heads/*) ;; *) continue ;; esac
+    name=${ref#refs/heads/}
+    case "$name" in "$pre"*"$suf") ;; *) continue ;; esac
+    id=${name#"$pre"}
+    id=${id%"$suf"}
+    [ -n "$id" ] || continue
+    jig_valid_id "$id" || continue
+    # A tip this clone does not have is no commit of the tested one.
+    git -C "$JIG_PROJECT" cat-file -e "$sha^{commit}" 2>/dev/null || continue
+    if git -C "$JIG_PROJECT" merge-base --is-ancestor "$sha" "$base_sha" 2>/dev/null; then
+      continue
+    fi
+    if ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$sha" "$csha" 2>/dev/null; then
+      # Tested once, then given commits the test never saw — a fix pushed
+      # onto it, perhaps onto an open promotion: said, never promoted, and
+      # not a failure of the run, or every untested fix would turn a pipeline
+      # red. A branch with nothing in the tested commit stays unmentioned.
+      own=$(git -C "$JIG_PROJECT" rev-list --count "$sha" "^$base_sha" 2>/dev/null) || own=0
+      untested=$(git -C "$JIG_PROJECT" rev-list --count "$sha" "^$base_sha" "^$csha" 2>/dev/null) || untested=$own
+      if [ "$untested" -lt "$own" ]; then
+        printf '%s: skipped %s: it has commits the tested commit %s does not have; promote it after they are tested\n' \
+          "$who" "$id" "$(git -C "$JIG_PROJECT" rev-parse --short "$csha")"
+      fi
+      continue
+    fi
+    _PROMOTE_IDS="$_PROMOTE_IDS$id"$'\n'
+  done <<HEADS
+$heads
+HEADS
+  return 0
+}
+
+# _promote_many <commit> <all> <id>... — promote several tasks, or with <all>
+# = 1 every task branch the tested commit holds and the base does not
+# (.ai/specs/staging-branch/, "A CI run promotes the tasks it names, or all of
+# them only when told"). What would refuse every task — the flow, a shallow
+# clone, a base or staging branch that cannot be fetched, a tested commit not
+# on staging — refuses the run before the first task. The tested commit is
+# resolved once, so every task is judged against the same one. Each task then
+# runs on its own (_promote_task): a line before it, its own output, a line
+# with what it came to, and a summary last. Returns 1 when any task was
+# refused, else 3 when any needs a person, else 0; an interrupted task (130,
+# 143) ends the run with its code.
+_promote_many() {
+  local commit="$1" all="$2" who="task promote" ids="" id short rc
+  local promoted=0 refused=0 person=0
+  shift 2
+  _promote_flow "$who"
+  _promote_full_history "$who"
+  _promote_fetch "$who" "$_PROMOTE_BASE" "$_PROMOTE_STAGING"
+  _promote_tested_commit "$who" "$commit" "$_PROMOTE_BASE" "$_PROMOTE_STAGING"
+  short=$(git -C "$JIG_PROJECT" rev-parse --short "$_PROMOTE_CSHA")
+  if [ "$all" = 1 ]; then
+    _promote_branch_ids "$who" "$_PROMOTE_CSHA" "$_PROMOTE_BASE_SHA"
+    ids=$_PROMOTE_IDS
+    if [ -z "$ids" ]; then
+      printf '%s: no task branch on origin is in the tested commit %s of %s and not yet in %s; nothing to promote\n' \
+        "$who" "$short" "$_PROMOTE_STAGING" "$_PROMOTE_BASE"
+      return 0
+    fi
+  else
+    for id in "$@"; do
+      jig_has_line "$id" "$ids" || ids="$ids$id"$'\n'
+    done
+  fi
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    printf '%s: promoting %s\n' "$who" "$id"
+    rc=0
+    _promote_task "$id" "$_PROMOTE_CSHA" "" "" || rc=$?
+    case "$rc" in
+      0)
+        promoted=$((promoted + 1))
+        printf '%s: %s: promoted\n' "$who" "$id" ;;
+      3)
+        person=$((person + 1))
+        printf '%s: %s: needs a person\n' "$who" "$id" ;;
+      130 | 143) return "$rc" ;;
+      *)
+        refused=$((refused + 1))
+        printf '%s: %s: refused\n' "$who" "$id" ;;
+    esac
+  done <<IDS
+$ids
+IDS
+  printf '%s: %s promoted, %s refused, %s need a person (tested commit %s of %s)\n' \
+    "$who" "$promoted" "$refused" "$person" "$short" "$_PROMOTE_STAGING"
+  if [ "$refused" -gt 0 ]; then
+    return 1
+  elif [ "$person" -gt 0 ]; then
+    return 3
   fi
   return 0
 }
