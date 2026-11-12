@@ -405,11 +405,15 @@ shows current (adr-20261112-refresh-brings-the-clone-up-to-origin): it fetches o
 clone's own account and without a prompt, then fast-forwards the base branch (`git.base_branch`)
 to `origin/<base>`. It never moves the person's checkout, never stashes, resets or forces, and never
 touches their changes. A base that cannot move is an answer, not a failure: `outcome` says why and
-the command exits 0. It raises no revision.
+the command exits 0. After a fetch that reached origin it also closes the writes in Jig's own tree
+that are over, as `jig writes ship` would find them: their pull request merged (by squash too, with
+the base changed again since), was closed unmerged, or origin dropped their branch. It raises the
+revision only when it closes one.
 
 ```json
 {"fetch": {"outcome": "done", "message": null, "fetched_at": "2026-11-12T15:24:39Z"},
- "base": {"name": "main", "outcome": "fast-forwarded", "from": "<sha>", "to": "<sha>", "checked_out_in": null, "message": null}}
+ "base": {"name": "main", "outcome": "fast-forwarded", "from": "<sha>", "to": "<sha>", "checked_out_in": null, "message": null},
+ "writes": [{"target": "knowledge", "branch": "knowledge/decisions", "reason": "merged"}]}
 ```
 
 | Field | Type | Value |
@@ -422,6 +426,7 @@ the command exits 0. It raises no revision.
 | `base.from`, `base.to` | string or null | the base's commit before and after; equal unless `fast-forwarded`. `from` is what takes it back |
 | `base.checked_out_in` | string or null | the worktree the base is checked out in, for `checked-out-elsewhere` |
 | `base.message` | string or null | for a person, why the base did not move (for `blocked-by-changes`, git's message, which names the files); `null` otherwise |
+| `writes` | array | the writes this run closed, each `{"target", "branch", "reason"}`: `target` as `jig writes` names it, `branch` the write's branch, `reason` `merged`, `landed` (the base holds its work), `closed` (its pull request closed unmerged) or `dropped` (origin deleted the branch it held). Empty when none was over, when the fetch did not reach origin, or when another write held the lock: one that still waits is `jig writes`'s to show |
 
 Where the base is checked out here, it moves by `git merge --ff-only` (`merge.autoStash` off);
 where it is checked out nowhere — the person is on another branch — by `git branch -f`, so their
@@ -708,7 +713,8 @@ and an id outside the grammar; `not-found` for no such task; `already-paused`, `
 `stale-revision` as in the table above; `not-initialised` and `not-a-repository` as everywhere. Each
 of them happens before anything is written. A failure after the claim reads `failed` and leaves the task not
 paused: a pending request that could not be taken out of the queue stays, and the revision is raised
-by one; a `git stash push` that fails comes after the request went, which then stays out.
+by one; a `git stash push` that fails comes after the request went, and puts it back in the queue
+with its reason and the time it went back (a warning says when it could not).
 
 ## `jig task resume --json`
 

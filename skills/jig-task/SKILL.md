@@ -67,6 +67,9 @@ When the person asks what to take next ("what next", "take the next one"), run
 `.ai/scripts/jig queue next` instead of choosing. Name the task and its place, then start it
 through this skill (§3). On `next: none`, report its reason and the lines under it and stop:
 do not pick a task yourself.
+The same holds wherever a next task is offered — a suggested next step, a choice of buttons, after a
+ship, on leaving an autopilot run: ask `queue next` again and offer first what it names. Another task
+goes ahead of it only when you say so in words: its priority against the named one's, and why.
 
 When the person asks to set priorities or to order the tasks, follow
 [task priority](references/priority.md): the answer is written to the queue, not listed in the chat.

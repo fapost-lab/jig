@@ -69,7 +69,7 @@ Whatever the mechanism, it has to hold in a project that is not this one: no for
 - A filed item is not on the default branch until its pull request lands, so `jig spec done` for a task built before that finds no item in the checkout.
 - A pre-commit hook that needs the project's dependencies fails in the tree, which has none: `commit-refused`, with what it said, leaving a branch just cut at the base with nothing on it. Such a project gets no writes until its hook tolerates a bare checkout.
 - A full checkout per write costs seconds on a large repository, and `post-checkout` hooks and LFS run for it.
-- A squash-merged branch whose file changed again on the base since reads as waiting until its recorded pull request says merged; with no forge there is nothing to ask, the next commit goes on top, and the conflict shows in the person's merge.
+- A squash-merged branch whose file changed again on the base since reads as waiting until its recorded pull request says merged — asked by `jig writes ship`, or by `jig refresh` (adr-20261112-refresh-brings-the-clone-up-to-origin); with no forge there is nothing to ask, the next commit goes on top, and the conflict shows in the person's merge.
 - `reviewed` records the source as it is on the base, which may differ from what `sources --diff` showed from a checkout on another branch.
 - Two items with one text swap handles when one of them moves.
 - Branches a write left behind stay; nothing here deletes them (`jig_branch_is_jigs` does not name them either).
