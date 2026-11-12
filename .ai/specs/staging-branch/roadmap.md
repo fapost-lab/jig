@@ -62,7 +62,7 @@ Goal: staging stays explainable as tasks come and go, and a fully automated team
 Done when: `jig status` names tasks on staging nobody promoted for long and staging work no task
 branch owns.
 
-- [ ] Staging drift report — tasks on staging long unpromoted, staging commits that are not in
+- [ ] `staging-drift-report` — Staging drift report — tasks on staging long unpromoted, staging commits that are not in
   the base branch and come from no live `task/*` branch, and the checkout's open promotion pull requests
   the forge reports as conflicting with the base branch, with "run prepare for prod again". (after: See a task's staging state — the report is built on it; after: Prepare a task for prod —
   it reports the pull requests that item opens)
