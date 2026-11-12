@@ -51,7 +51,7 @@ in that commit; a task waiting on staging is listed as parked and holds no slot.
   link instead of opening a second one; needs only git and the forge, and where the checkout has a queue it warns — in the output
   and the pull request body — of a dependency on the staging branch but not in the base branch. (after: See a task's
   staging state — the refusal is that check)
-- [ ] Merge the promotion by the flow — `promote_merge: human` stops at the link, `auto` switches
+- [ ] `merge-promotion` — Merge the promotion by the flow — `promote_merge: human` stops at the link, `auto` switches
   on the forge's auto-merge so the pull request merges on green CI — in a checkout only at
   `agent.git: merge`, on a CI runner by the flow alone, and never for a promotion that raises the
   version, which stays a person's merge (a `major` one a draft). (after: Prepare a task for prod — it merges the pull request that item opens)
