@@ -9,14 +9,15 @@ paths:
   - scripts/lib/promote.sh
   - scripts/lib/common.sh
 summary: Why jig task promote runs from git and the forge alone, tells a CI runner by CI, refuses against the tested staging commit, finds its pull request by head and base, and hands a conflict with the base to a person.
+reviewed_at: 2026-11-12
 ---
 # "Prepare for prod" opens the promotion from git alone, and hands a conflict with the base to a person
 
 ## Context
 
-In the staging flow (`.ai/specs/staging-branch/`) a task lands on `git.staging_branch`, is tested
+In the staging flow (adr-20261109-the-team-names-its-git-flow-and-the-agent-writes-it-after-a-yes) a task lands on `git.staging_branch`, is tested
 there, and reaches the base branch only when somebody says "prepare for prod" — a person, or a CI
-job given the staging commit it tested. The spec asks for one command that refuses a task whose tip
+job given the staging commit it tested. The staging-branch specification asked for one command that refuses a task whose tip
 is not in that tested commit, merges the base into the task branch when the two conflict, opens the
 pull request into the base and prints its link, and runs on a CI runner, which has the repository
 and a forge token but no workspace, no queue and no `agent.git`.
@@ -115,10 +116,10 @@ person's checkout.
   surprise; the refusal says how to fetch it.
 - **An escape flag for `carries-staging`.** The person who owns the flow decided the task branch is
   never merged with staging; `task ship` and `task land` check the same earlier, through
-  `jig_branch_carries_staging`. Until the two walks are one (finding F15 of this task), they differ
+  `jig_branch_carries_staging`. Until the two walks are one (task unify-clean-branch-walks), they differ
   at the edges: land follows merged dependencies four deep and names task branches `task/<id>`,
   promote five deep and by `git.branch_template`. Land is the stricter in both, so promote never
-  accepts a branch that could not have reached staging; F15 unifies depth and naming with the walk.
+  accepts a branch that could not have reached staging; one walk would unify depth and naming.
 
 ## Consequences
 
@@ -127,11 +128,15 @@ person's checkout.
 - A conflict with the base always needs an agent or a person; the spec's "merges the base in" is
   carried out by whoever resolves, and the command only pushes the result.
 - The resolution of that conflict is a combination nobody tested on staging; the pull request's CI
-  is its one check (the spec's failure mode 1, accepted).
+  is its one check. Tested is not shipped: conflicts resolved on staging never reach the task branch,
+  and the merge of the base at promotion is a new resolution. Accepted: it is the staging model's,
+  not Jig's, and Jig only narrows it.
 - RULES.md gains one deletion: the trial merge's worktree, removed by git without `--force`.
 - **Known limitation: "cut from the base" is judged by what can be seen, not by the cut point.** A
-  top-level task cut from a feature branch, or a dependency cut from a branch whose tip moved on
-  after the cut, was deleted on origin or was never pushed, passes as clean. Its content is still
+  top-level task cut from a feature branch, or a task or dependency cut from a branch whose tip
+  moved on after the cut, was deleted on origin or was never pushed, passes as clean. (A task cut
+  from another task's branch whose tip is still on its line is named, at every depth: amendment of
+  2026-11-12 below.) Its content is still
   only what the tested commit holds, so nothing untested reaches the base; what is lost is the
   label — the work of that other branch reaches the base under this task's name, with no warning.
   Judging the cut point itself (the oldest commit of the first-parent line must have its first
@@ -182,8 +187,10 @@ code: a pipeline must not turn red on every untested fix. A branch with nothing 
 is not mentioned. "Not yet in the base" is ancestry alone, so a promotion merged by squash or rebase
 is taken again; teams using `--all` merge promotions with a merge commit (known issue, closed by a
 later task). `--all` must not run while an epic branch is on the staging branch: a runner has no
-workspace to tell an epic's tasks from the others, and the spec leaves epic-meets-staging open. A
-task reverted on staging still reads as tested (the spec's failure mode 7), and `--all` promotes it.
+workspace to tell an epic's tasks from the others, and an epic meeting a staging branch is still
+open (the task `epic-in-staging-flow`). A task reverted on staging still reads as tested — "on
+staging" is ancestry, and a revert keeps it — and `--all` promotes it; the team does not revert on
+staging.
 
 Rejected: turning `_promote_refuse` into a `return` — the steps also exit through functions of
 common.sh and task.sh shared with `task ship` and `task land`; only a subshell isolates them all.
@@ -198,3 +205,26 @@ starts with `Needs a human: major release?`. The last line says who merges. A re
 origin's task branch is not the tested commit (`branch-diverged`, `carries-staging`,
 `not-on-staging`, `behind-staging`) switches auto-merge off first on an open promotion that has it
 on, and says so — the one thing a refusal sends (adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).
+
+## Amendment (2026-11-12): release review
+
+Four answers to the review of the release pull request:
+
+- **`--all` judges a merge of the base as one task's promotion does.** A branch whose tip is not in
+  the tested commit is left out only when, of its commits neither the base nor the tested commit
+  has, one is not a merge of the base on its first-parent line (`_promote_untested_count`). After a
+  conflict with the base is resolved on the task branch, `--all` promotes it rather than calling the
+  merge untested, and `_promote_one` judges it whole.
+- **A task cut from another task's branch is named at depth 0 too.** `jig_staging_branch_problems`
+  collects the tips of other task branches at every depth, so a top-level task cut straight from
+  another task's branch, with no merge, prints `<id> carries <branch> (cut from it at <sha>)` and
+  says so in the pull request body, as a merged dependency does (`merged at`).
+- **A CI runner is a process with `CI` set and no workspace for the task.** `CI=1` exported by some
+  tool in a person's checkout no longer skips `agent.git` where that checkout has the task's
+  workspace: a real runner has none (workspaces are gitignored). The rejected "a runner is a clone
+  with no workspace or local config" stays rejected — `CI` is still required — and a person's fresh
+  clone with `CI` set and no workspace still reads as a runner; that is the trade-off kept.
+- **GitLab merges a promotion only as `merge`.** Auto-merge is switched on only where the project's
+  `merge_method` is `merge`, not semi-linear `rebase_merge`, which merges only a branch level with the
+  target (a promoted branch usually is not) and whose "Rebase" rewrites the tested commits. The same
+  holds for landing on staging (common.sh, `merge-commit`).

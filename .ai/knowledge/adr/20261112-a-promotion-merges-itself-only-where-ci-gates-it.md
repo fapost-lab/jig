@@ -8,6 +8,7 @@ domains:
 paths:
   - scripts/lib/promote.sh
 summary: Why git.promote_merge auto switches the forge's auto-merge on only in a checkout at agent.git merge or on a CI runner, only where the base requires a check and with a merge commit, never for a release (a major one a draft), and why a behind-staging refusal switches it off.
+reviewed_at: 2026-11-12
 ---
 # A promotion merges itself only where CI gates the base, with a merge commit, and never as a release
 
@@ -15,7 +16,7 @@ summary: Why git.promote_merge auto switches the forge's auto-merge on only in a
 
 In the staging flow `jig task promote` opens the pull request from a tested task branch into the
 base (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). `git.promote_merge` says
-who merges it: `human` stops at the link; the spec (`.ai/specs/staging-branch/`, "`promote_merge:
+who merges it: `human` stops at the link; the staging-branch specification ("`promote_merge:
 auto` is a merge, deferred") decided `auto` switches on the forge's auto-merge instead of Jig
 merging, since the command runs from a CI job or a UI that should not wait for the promotion's CI.
 

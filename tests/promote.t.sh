@@ -1,6 +1,5 @@
 # Tests for `jig task promote`, "prepare for prod" (scripts/lib/promote.sh;
-# adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone;
-# .ai/specs/staging-branch/): the refusals against the tested staging commit,
+# adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone): the refusals against the tested staging commit,
 # the conflict with the base handed to a person, the pull request into the
 # base found by head and base, and a run on a CI runner with no workspace.
 # shellcheck shell=bash
@@ -736,6 +735,25 @@ test_promote_hands_a_conflict_with_the_base_to_a_person() {
   assert_eq "" "$(git status --porcelain --untracked-files=no)"
 }
 
+# The person's rerere, with a resolution recorded and autoupdate on, would
+# stage the conflicting path in the trial merge: the conflict is still named.
+test_promote_names_a_conflict_rerere_has_a_resolution_for() {
+  promote_setup
+  promote_conflict
+  git config rerere.enabled true
+  git config rerere.autoupdate true
+  git merge -q origin/main >/dev/null 2>&1 || true
+  printf 'resolved\n' > shared.txt
+  git add shared.txt
+  git commit -q --no-edit
+  git reset -q --hard HEAD~1
+
+  run jig task promote T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: task/T-1 conflicts with main in:"
+  assert_contains "$OUT" "  shared.txt"
+}
+
 # Run again with a promotion open, the conflict still prints its link.
 test_promote_a_conflict_on_an_open_promotion_keeps_its_link() {
   promote_setup
@@ -826,6 +844,19 @@ test_promote_in_a_checkout_needs_agent_git_pr() {
   assert_eq 3 "$RC" "$OUT"
 }
 
+# CI set in a person's checkout (some tools export it) is no runner where the
+# task's workspace is: the person's agent.git still decides.
+test_promote_with_ci_set_in_a_checkout_with_the_workspace_needs_agent_git() {
+  promote_setup
+  sed 's/^agent.git: .*/agent.git: none/' .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+
+  run env CI=1 "$JIG_BIN" task promote T-1
+  assert_eq 3 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: agent.git is none in this clone; opening the pull request into main is the person's. Nothing was pushed."
+  assert_no_file gh-create.argv
+}
+
 test_promote_refuses_a_shallow_clone() {
   promote_setup
   git clone -q --depth 1 --no-single-branch "file://$PWD/origin.git" runner
@@ -884,6 +915,28 @@ test_promote_refuses_a_task_with_no_branch() {
   promote_setup
 
   run jig task promote T-9
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: origin has no branch task/T-9; what was not pushed was not tested"
+}
+
+# git translates its messages: a missing branch is told in any language. The
+# git here speaks German unless LC_ALL is C, as a git with translations does.
+test_promote_refuses_a_task_with_no_branch_in_another_language() {
+  promote_setup
+  local real_git
+  real_git=$(command -v git)
+  mkdir -p git-de
+  cat > git-de/git <<STUB
+#!/usr/bin/env bash
+[ "\${LC_ALL:-}" != C ] || exec "$real_git" "\$@"
+out=\$("$real_git" "\$@" 2>&1); rc=\$?
+printf '%s\n' "\$out" | sed "s/couldn't find remote ref/Konnte Remote-Referenz nicht finden/"
+exit \$rc
+STUB
+  chmod +x git-de/git
+  printf 'git-de\n' >> .git/info/exclude
+
+  run env PATH="$PWD/git-de:$PATH" LC_ALL=de_DE.UTF-8 "$JIG_BIN" task promote T-9
   assert_eq 1 "$RC" "$OUT"
   assert_contains "$OUT" "task promote: origin has no branch task/T-9; what was not pushed was not tested"
 }
@@ -965,6 +1018,24 @@ test_promote_takes_a_merged_clean_task_branch_with_a_warning() {
   assert_contains "$OUT" "pr https://github.com/example/example/pull/7"
 }
 
+# A task branch cut straight from another task's branch, with no merge: that
+# task's work reaches main with it, and is named.
+test_promote_names_a_task_branch_it_is_cut_from() {
+  promote_setup
+  git checkout -q -b task/T-2 task/T-1
+  printf 'two\n' > two.txt
+  git add two.txt
+  git commit -q -m "Work of T-2"
+  promote_land T-2
+  local m
+  m=$(git rev-parse --short task/T-1)
+
+  run jig task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: warning: T-2 carries task/T-1 (cut from it at $m); it reaches main with this task"
+  assert_contains "$(cat gh-create.body)" "- T-2 carries task/T-1 (cut from it at $m)"
+}
+
 # Its commits go to main with the task, so each must be in the tested commit.
 test_promote_judges_a_merged_task_branch_as_its_own_commits() {
   promote_setup
@@ -1035,7 +1106,7 @@ test_promote_refuses_a_task_on_autopilot_on_a_ci_runner() {
   assert_no_file gh-create.argv
 }
 
-# --- where a branch was cut (second architecture review, F7 and F8) ----------
+# --- where a branch was cut --------------------------------------------------------
 
 # promote_task_from <id> <ref> <file> — task <id> filed and started, its branch
 # then moved to <ref> (cut from it instead of main), a commit on top, pushed.
@@ -1121,7 +1192,7 @@ test_promote_names_a_newer_staging_merged_in() {
   assert_no_file gh-create.argv
 }
 
-# --- third architecture review (F11, F13) ------------------------------------
+# --- merges of a dependency made after the test --------------------------------
 
 # A merge of a clean dependency made after the tested commit is the task's own
 # work: whatever the merge itself changed was never tested.
@@ -1178,8 +1249,7 @@ test_promote_names_every_task_in_a_chain_of_dependencies() {
 }
 
 # --- several tasks, "Promote from CI" -------------------------------------------
-# (.ai/specs/staging-branch/, "A CI run promotes the tasks it names, or all of
-# them only when told")
+# (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone: a CI run promotes the tasks it names, or all of them only when told)
 
 # promote_created <branch> — whether the stub forge was asked to open a pull
 # request from <branch> into main.
@@ -1345,6 +1415,51 @@ test_promote_all_takes_only_tested_branches_not_in_the_base() {
   [ ! -d runner/.ai/workspace/tasks/T-1 ] || fail "a runner must not get a workspace"
 }
 
+# --all judges a resolved merge of the base as one task's promotion does: not
+# untested work, so the task is promoted rather than skipped.
+test_promote_all_takes_a_branch_with_a_resolved_merge_of_the_base() {
+  promote_setup
+  promote_conflict
+  local tested
+  tested=$(git rev-parse origin/staging)
+  git merge -q origin/main >/dev/null 2>&1 || true
+  printf 'resolved\n' > shared.txt
+  git add shared.txt
+  git commit -q --no-edit
+  git push -q origin task/T-1
+  git clone -q origin.git runner
+  cd runner || return 1
+
+  run env CI=true "$JIG_BIN" task promote --commit "$tested" --all
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: promoting T-1"
+  assert_not_contains "$OUT" "skipped T-1"
+  assert_contains "$OUT" "task promote: 1 promoted, 0 refused, 0 need a person"
+}
+
+# A branch never landed stays unmentioned by --all, a merge of the base on it
+# included: it has nothing in the tested commit.
+test_promote_all_says_nothing_of_a_never_landed_branch_with_a_merge_of_the_base() {
+  promote_setup
+  local tested
+  tested=$(git rev-parse origin/staging)
+  promote_task T-3 three.txt "work of T-3"
+  git checkout -q main
+  printf 'main moves\n' > main.txt
+  git add main.txt
+  git commit -q -m "Main moves"
+  git push -q origin main
+  git checkout -q task/T-3
+  git merge -q --no-edit main
+  git push -q origin task/T-3
+  git clone -q origin.git runner
+  cd runner || return 1
+
+  run env CI=true "$JIG_BIN" task promote --commit "$tested" --all
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" "T-3"
+}
+
 test_promote_all_with_nothing_tested_is_nothing_to_do() {
   promote_setup
   git checkout -q main
@@ -1496,6 +1611,37 @@ test_promote_auto_on_gitlab_needs_skipped_pipelines_not_to_count() {
   run jig task promote T-1
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "auto-merge not switched on: the project lets a skipped pipeline count as a success, so auto-merge could merge with nothing checked"
+  assert_no_file glab-merge.argv
+}
+
+test_promote_auto_on_gitlab_needs_merge_commits_not_semi_linear_history() {
+  promote_setup
+  promote_stub_glab
+  promote_auto merge
+  printf '{"merge_method":"rebase_merge","squash_option":"default_off","only_allow_merge_if_pipeline_succeeds":true,"allow_merge_on_skipped_pipeline":false}\n' > glab-project
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the repository does not allow merge commits, and a promotion keeps its ancestry only with one"
+  assert_no_file glab-merge.argv
+}
+
+# On GitLab too: the open merge request at another head than the promoted
+# one, auto-merge on, is switched off, never reported as already on.
+test_promote_auto_on_gitlab_at_another_head_switches_it_off() {
+  promote_setup
+  promote_stub_glab
+  promote_auto merge
+  local other
+  other=$(git rev-parse origin/staging)
+  printf '[{"iid":98,"web_url":"https://gitlab.example/example/example/-/merge_requests/98","title":"T-1"}]\n' > glab-list
+  printf '{"iid":98,"state":"opened","draft":false,"merge_when_pipeline_succeeds":true,"sha":"%s","head_pipeline":{"sha":"0000000"}}\n' "$other" > glab-mr
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge switched off on https://gitlab.example/example/example/-/merge_requests/98: the pull request is at $other, not at the promoted $(git rev-parse origin/task/T-1)"
+  assert_not_contains "$OUT" "(already on)"
+  assert_contains "$(cat glab-api.argv)" "projects/:id/merge_requests/98/cancel_merge_when_pipeline_succeeds"
   assert_no_file glab-merge.argv
 }
 

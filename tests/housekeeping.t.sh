@@ -4215,7 +4215,7 @@ test_status_still_reads_the_newest_run_after_a_trim() {
   assert_contains "$OUT" "needs consolidation: 1 task(s)"
 }
 
-# --- the staging flow (.ai/specs/staging-branch) ---------------------------------
+# --- the staging flow ------------------------------------------------------------
 
 hk_staging_setup() {
   fixture_staging_repo
@@ -4242,7 +4242,8 @@ test_housekeeping_reports_each_tasks_staging_state() {
 }
 
 # A task waiting on the staging branch for its promotion is not a task nobody
-# touches: it is kept and named stale, never archived (failure mode 10).
+# touches: it is kept and named stale, never archived
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
 test_housekeeping_does_not_archive_a_task_on_staging_as_stale() {
   hk_staging_setup
   local old
@@ -4319,6 +4320,20 @@ test_housekeeping_reads_what_ci_landed_on_staging() {
   assert_not_contains "$OUT" "wrong-base"
   assert_not_contains "$OUT" "action=archive"
   assert_contains "$(cat .ai/workspace/tasks/never/state)" "status: active"
+}
+
+# A pull request into staging closed unmerged, while git shows the work on
+# staging (a landing pushed directly, its pull request closed by hand), is no
+# abandoned work: no `abandoned?` and no advice to abandon the task.
+test_housekeeping_a_closed_pull_request_into_staging_is_not_abandoned_when_on_staging() {
+  hk_staging_setup
+  hk_cfg forge github
+  hk_stub_gh "task/on$(printf '\t')staging$(printf '\t')CLOSED"
+  run jig housekeeping --verbose
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "on status=active remote=closed via=forge action=preserve staging=on"
+  assert_not_contains "$OUT" "abandoned?"
+  assert_not_contains "$OUT" "jig task abandon"
 }
 
 # The pull request a staging `task ship` leaves is into the staging branch: while

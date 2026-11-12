@@ -6690,9 +6690,15 @@ _task_ship_branch_refusal() {
 # fails on) and, at `pr` and above, a staging branch that exists neither here
 # nor on origin, where the forge would refuse only after the push.
 #
+# A task that changes the flow itself — turns it on or off, renames the
+# staging branch (_task_ship_flow_agrees) — ships into <base> as on the
+# direct flow: both variables stay empty, and _TASK_SHIP_OWN_FLOW is 1.
+#
 # The staging flow applies to a task cut from the base branch only. A task of
 # an epic ships into its epic, as before: whether an epic's tasks go through
-# the staging branch is an open question of .ai/specs/staging-branch/.
+# the staging branch is not decided yet, and the task epic-in-staging-flow
+# holds the question (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).
+_TASK_SHIP_OWN_FLOW=""
 _task_ship_flow_v() {
   local __tsf_id="$3" __tsf_level="$4" __tsf_base="$5" __tsf_problems __tsf_flow __tsf_branch __tsf_land=""
   printf -v "$1" '%s' ""
@@ -6707,21 +6713,33 @@ Nothing was committed. Fix it in .ai/config.yaml (jig doctor names the same) and
   # The base as origin has it now, not as this checkout last fetched it: a
   # teammate's `git.flow: staging` pushed since must be seen. A fetch that
   # fails only warns (jig_fetch_branches), as for `task start` and `upgrade`,
-  # and the comparison goes on with the refs this checkout has. Only where
-  # this ship opens a pull request: below that the flow decides nothing, and
-  # a commit or a push asks GitHub nothing about accounts
-  # (adr-20260925-a-ship-refuses-before-it-sends).
+  # and the comparison goes on with the refs this checkout has. The base is
+  # fetched only where this ship opens a pull request, so that a commit or a
+  # push asks GitHub nothing about accounts for it
+  # (adr-20260925-a-ship-refuses-before-it-sends); the comparison itself runs
+  # at every level, on the refs this checkout has below `pr`. On the staging
+  # flow the ship fetches the staging branch at every level all the same, and
+  # strictly (task_ship, the clean-branch rule): there even a commit needs
+  # origin.
   case "$__tsf_level" in
     pr | merge) jig_fetch_branches "task ship" "$__tsf_base" ;;
   esac
-  _task_ship_flow_agrees "$__tsf_base" "$__tsf_flow" "$(jig_staging_branch)"
+  __tsf_branch=$(jig_staging_branch)
+  _TASK_SHIP_OWN_FLOW=""
+  _task_ship_flow_agrees "$__tsf_base" "$__tsf_flow" "$__tsf_branch" "task ship" own
+  # A task that changes the flow itself goes into its base, as on the direct
+  # flow: neither the flow it leaves nor the one it brings decides its way.
+  if [ -n "$_TASK_SHIP_OWN_FLOW" ]; then
+    printf 'task ship: %s changes the git flow; its pull request goes into %s, as on the direct flow\n' \
+      "$__tsf_id" "$__tsf_base"
+    return 0
+  fi
   [ "$__tsf_flow" = staging ] || return 0
   if [ "$__tsf_base" != "$(cfg git.base_branch main)" ]; then
     printf 'task ship: %s is cut from %s, not the base branch; the staging flow does not apply to it, so it ships into %s\n' \
       "$__tsf_id" "$__tsf_base" "$__tsf_base"
     return 0
   fi
-  __tsf_branch=$(jig_staging_branch)
   __tsf_land=$(jig_staging_land) || __tsf_land=""
   case "$__tsf_level" in
     pr | merge)
@@ -6736,34 +6754,63 @@ Nothing was committed. Fetch it, or create it on origin, and run again."
   printf -v "$2" '%s' "$__tsf_land"
 }
 
-# _task_ship_flow_agrees <base> <flow> <staging-branch> [<who>] — refuse, before the
-# commit, when the tip of <base> (jig_base_ref: origin's, else the local
-# branch) names another flow or staging branch than this checkout does. The
-# flow is the team's and lives on the base branch: a task branch cut before
+# _task_ship_flow_at <ref> <file> — the config committed at <ref> into <file>;
+# non-zero when <ref> has none. Then _TSF_FLOW and _TSF_STAGING hold its
+# git.flow (`direct` when unset) and its staging branch (empty outside the
+# staging flow).
+_task_ship_flow_at() {
+  _TSF_FLOW="" _TSF_STAGING=""
+  jig_git_show_path "$1" "$JIG_AI_DIR/config.yaml" > "$2" 2>/dev/null || return 1
+  _cfg_read_v _TSF_FLOW "$2" git.flow || true
+  _cfg_read_v _TSF_STAGING "$2" git.staging_branch || true
+  _TSF_FLOW=${_TSF_FLOW:-direct}
+  [ "$_TSF_FLOW" = staging ] || _TSF_STAGING=""
+  return 0
+}
+
+# _task_ship_flow_agrees <base> <flow> <staging-branch> [<who>] [own] — refuse,
+# before the commit, when the tip of <base> (jig_base_ref: origin's, else the
+# local branch) names another flow or staging branch than this checkout does.
+# The flow is the team's and lives on the base branch: a task branch cut before
 # the team committed `git.flow: staging` — or one that dropped the key —
 # would otherwise ship, and at `merge` merge, straight into the base branch.
 # The base's config is read with the checkout's own parser (_cfg_read_v), on
 # a copy in a temporary file. A base that is unknown here, or that has no
 # config, cannot disagree: the checkout decides, as before.
+#
+# With `own` (task ship, where HEAD is the task branch), a difference the task
+# made itself is not refused: when the config at merge-base(HEAD, <base>) is
+# the base tip's, the base has not changed the flow since the branch was cut,
+# so the difference is the task's own change — the task turning the flow on
+# or off, or renaming the staging branch. Then _TASK_SHIP_OWN_FLOW is 1, and
+# the caller ships the task into <base> as on the direct flow. Only a base
+# that changed the flow after the branch was cut refuses.
 _task_ship_flow_agrees() {
-  local base="$1" flow="$2" staging="$3" who="${4:-task ship}" ref tmp base_flow="" base_staging=""
+  local base="$1" flow="$2" staging="$3" who="${4:-task ship}" own="${5:-}" ref tmp base_flow base_staging mb
   ref=$(jig_base_ref "$base")
   [ -n "$ref" ] || return 0
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-flow.XXXXXX")
   jig_cleanup_add "$tmp"
-  jig_git_show_path "$ref" "$JIG_AI_DIR/config.yaml" > "$tmp" 2>/dev/null || return 0
-  _cfg_read_v base_flow "$tmp" git.flow || true
-  _cfg_read_v base_staging "$tmp" git.staging_branch || true
-  base_flow=${base_flow:-direct}
-  [ "$base_flow" = staging ] || base_staging=""
+  _task_ship_flow_at "$ref" "$tmp" || return 0
+  base_flow=$_TSF_FLOW base_staging=$_TSF_STAGING
   [ "$flow" = staging ] || staging=""
-  if [ "$base_flow" != "$flow" ] || [ "$base_staging" != "$staging" ]; then
-    jig_die "$who: the git flow here is not the one $base has:
+  [ "$base_flow" != "$flow" ] || [ "$base_staging" != "$staging" ] || return 0
+  if [ -n "$own" ]; then
+    mb=$(git -C "$JIG_PROJECT" merge-base HEAD "$ref" 2>/dev/null) || mb=""
+    if [ -n "$mb" ]; then
+      tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-flow.XXXXXX")
+      jig_cleanup_add "$tmp"
+      _task_ship_flow_at "$mb" "$tmp" || _TSF_FLOW=direct
+      if [ "$_TSF_FLOW" = "$base_flow" ] && [ "$_TSF_STAGING" = "$base_staging" ]; then
+        _TASK_SHIP_OWN_FLOW=1
+        return 0
+      fi
+    fi
+  fi
+  jig_die "$who: the git flow here is not the one $base has:
   here: git.flow: $flow${staging:+, git.staging_branch: $staging}
   $base: git.flow: $base_flow${base_staging:+, git.staging_branch: $base_staging}
 Nothing was committed. Merge $base into the task branch first (git merge ${ref#refs/remotes/}), then run again."
-  fi
-  return 0
 }
 
 # _task_ship_foreign_pr <branch> <staging> — refuse when <branch> already has
@@ -6779,7 +6826,11 @@ _task_ship_foreign_pr() {
   kind=$(jig_forge_kind) || return 0
   case "$kind" in
     github)
-      rows=$(jig_net gh pr list --head "$branch" --state open --json url,baseRefName \
+      # As this clone's account, resolved here in this shell: a clone that
+      # cannot name one cannot answer, and jig_ship_account refuses it later,
+      # before anything is sent.
+      jig_gh_resolve || return 0
+      rows=$(jig_net jig_gh pr list --head "$branch" --state open --json url,baseRefName \
         --jq '.[] | .baseRefName + "\t" + .url' 2>/dev/null) || rows="" ;;
     gitlab)
       rows=$(jig_net glab mr list --source-branch "$branch" --output json 2>/dev/null \
@@ -7127,8 +7178,13 @@ EOF
 
   if [ "$level" = none ]; then
     # The fix is handed to the person to commit and push: shipped, as far as
-    # parking goes (_task_ship_resumed_done).
-    _task_ship_resumed_done "$id" "$dir" "$draft" ""
+    # parking goes (_task_ship_resumed_done) — once the completion gates pass,
+    # as every other level asks them before it ships: a task with an open
+    # blocking finding or no receipt is not a fix ready to hand over, and
+    # dropping the record would read it as parked again.
+    local none_refusal
+    none_refusal=$(_task_ship_refusal "$id" "$draft") || exit 1
+    [ -n "$none_refusal" ] || _task_ship_resumed_done "$id" "$dir" "$draft" ""
     # To stderr and exit 3, not `jig_die` (exit 1): a skill reads 3 as "hand
     # this over to the human", not as a command that failed.
     printf '%s\n' "$refusal" >&2
@@ -7166,6 +7222,9 @@ EOF
   # (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
   # The staging branch as origin has it now, at every level and whoever lands:
   # without it the rule cannot be judged, and a ship that cannot judge refuses.
+  # So on the staging flow even a ship at `commit` needs origin: offline it
+  # refuses, with nothing committed, where the direct flow commits
+  # (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).
   if [ -n "$staging" ]; then
     local failed
     jig_git_origin_account "task ship" read
