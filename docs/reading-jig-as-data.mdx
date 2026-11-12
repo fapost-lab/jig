@@ -285,7 +285,10 @@ person, and may be reworded. The kinds cover a stopped autopilot run (`autopilot
 `phase-stopped` for a phase run, whose `tasks` lists every stopped task), a design at its gate
 (`gate-waiting`, `gate-changed`), a finished task waiting for your git step (`git-step`), pull
 requests to review, merge or close (`pull-request-waiting`, `pull-request-was-open`,
-`pull-request-of-abandoned-task`), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
+`pull-request-of-abandoned-task`), on the staging flow the staging branch drifting from the base
+branch (`staging-unpromoted`, with `"staging": {"branch", "days"}`; `staging-unowned`, with
+`"staging": {"commits"}`; `promotion-conflicting`, with the same `pull_request` as an upgrade's —
+[the staging drift report](/manual-control#the-staging-drift-report)), what housekeeping flagged (`needs-consolidation`, `wrong-base`,
 `closed-unmerged`, `worktree-kept`), knowledge to decide (`knowledge-proposed`, `sources-changed`)
 a newer jig (`release-available`), and a project whose own Jig is older than the one on your machine
 (`upgrade-available` — the item a program lists to show which projects need `jig upgrade`; it alone

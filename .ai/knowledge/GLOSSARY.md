@@ -234,6 +234,15 @@ in the base or the Staging Branch is not own work. Derived from git by branch na
 A task in the `staging` Git Flow that is On Staging except for commits of its own the Staging Branch
 does not have yet — a fix QA asked for, pushed or not.
 
+## Staging Drift
+
+How origin's Staging Branch has moved away from the base branch, as `jig status` and housekeeping
+name it on `staging: ` lines: a task On Staging or Behind Staging for `git.staging_stale_after` with
+no promotion open, commits on the Staging Branch the base lacks that no live task branch holds, and
+an open promotion the forge calls conflicting with the base. Read from git by branch name and from
+the forge cache, never stored (adr-20261112-the-staging-drift-report-is-read-from-git-by-branch-name).
+Not the drift of an install (`jig status`'s `drift:` line).
+
 ## Epic Branch
 
 `epic/<spec-id>`: the branch a Specification released once, at the end, is built on. Its phases'

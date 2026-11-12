@@ -4159,6 +4159,203 @@ test_status_a_terminal_shows_the_staging_flow_with_the_tasks() {
   assert_contains "$OUT" "  .   flow: staging via staging; on staging: 2, behind staging: 1"
 }
 
+# --- the staging drift report (.ai/specs/staging-branch, "Drift report") ------
+
+# st_backdate_staging <days> — origin's staging branch rebuilt with the commits
+# of its first-parent line <days> old: the same trees and other parents.
+st_backdate_staging() {
+  local when root new c rest p
+  when="$(( $(date +%s) - $1 * 86400 )) +0000"
+  root=$(git merge-base origin/staging main)
+  new=$root
+  for c in $(git rev-list --first-parent --reverse origin/staging "^$root"); do
+    rest=$(git rev-list --parents -n 1 "$c")
+    set -- -p "$new"
+    for p in $(printf '%s\n' "$rest" | cut -d ' ' -f 3-); do
+      set -- "$@" -p "$p"
+    done
+    new=$(GIT_COMMITTER_DATE="$when" git commit-tree "$c^{tree}" "$@" -m "$(git log -1 --format=%s "$c")")
+  done
+  git push -q -f origin "$new:refs/heads/staging"
+  git fetch -q origin
+}
+
+# A task whose work has waited on staging longer than git.staging_stale_after
+# with no promotion open is named, with how long; a fresh one is not, and
+# neither is one this checkout promoted.
+test_status_names_a_task_waiting_on_staging_with_no_promotion() {
+  fixture_staging_repo
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "with no promotion"
+  st_backdate_staging 20
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "staging: on has waited on staging 20 day(s) with no promotion (jig task promote on)"
+  assert_contains "$OUT" "staging: behind has waited on staging 20 day(s) with no promotion (jig task promote behind)"
+  assert_not_contains "$OUT" "staging: never "
+  # A promotion this checkout opened, which no forge cache contradicts.
+  printf 'promote_url: https://example.test/pull/9\n' >> .ai/workspace/tasks/on/state
+  run jig status
+  assert_not_contains "$OUT" "staging: on has waited"
+  # The threshold is the project's; a number with a leading zero is still decimal.
+  printf 'git.staging_stale_after: 30d\n' >> .ai/config.yaml
+  run jig status
+  assert_not_contains "$OUT" "with no promotion"
+  sed 's|^git.staging_stale_after:.*|git.staging_stale_after: 08d|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "staging: behind has waited on staging 20 day(s) with no promotion"
+  sed 's|^git.staging_stale_after:.*|git.staging_stale_after: 30d|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  sed 's|^git.staging_stale_after:.*|git.staging_stale_after: soon|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  run jig status
+  assert_contains "$OUT" "staging: git.staging_stale_after: 'soon' is not a duration (e.g. 14d); tasks waiting on staging are not named"
+}
+
+# A promotion the forge merged is not one the task waits for, even when a
+# squash left the task's own commits on staging outside the base.
+test_status_a_merged_promotion_is_not_waiting_on_staging() {
+  local t
+  t=$(printf '\t')
+  fixture_staging_repo
+  st_backdate_staging 20
+  mkdir -p .ai/runtime
+  printf '%s\n' "task/on${t}main${t}merged${t}-${t}2026-11-12T09:00:00Z${t}-${t}-${t}-" \
+    "task/behind${t}main${t}closed${t}-${t}2026-11-12T09:00:00Z${t}-${t}-${t}-" > .ai/runtime/forge-cache
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "staging: on has waited"
+  # One closed unmerged is no promotion.
+  assert_contains "$OUT" "staging: behind has waited on staging 20 day(s) with no promotion (jig task promote behind)"
+}
+
+# Read from git by branch name: a task branch on origin that no workspace here
+# knows is named as well (failure mode 3).
+test_status_names_a_colleagues_task_waiting_on_staging() {
+  fixture_staging_repo
+  git checkout -q -b task/theirs main
+  printf 'theirs\n' > theirs.txt
+  git add theirs.txt
+  git commit -q -m theirs
+  git push -q origin task/theirs
+  git checkout -q -B staging origin/staging
+  git merge -q --no-ff -m "ship theirs" task/theirs
+  git push -q origin staging
+  git checkout -q main
+  git branch -D -q staging task/theirs
+  git fetch -q origin
+  printf 'git.staging_stale_after: 0d\n' >> .ai/config.yaml
+  run jig status
+  assert_eq 0 "$RC"
+  # Known here only by its branch: its owner promotes it, not this checkout.
+  assert_contains "$OUT" "staging: theirs has waited on staging 0 day(s) with no promotion (its owner runs jig task promote theirs)"
+  run jig status --json
+  assert_contains "$OUT" "its owner runs jig task promote theirs"
+}
+
+# Commits on staging that the base lacks and no live task branch holds are
+# counted; a promoted task whose branch is gone is not, since its work is in
+# the base.
+test_status_counts_staging_work_no_live_task_owns() {
+  fixture_staging_repo
+  run jig status
+  assert_not_contains "$OUT" "no live task branch holds"
+  git checkout -q -B staging origin/staging
+  printf 'direct\n' > direct.txt
+  git add direct.txt
+  git commit -q -m "straight onto staging"
+  git push -q origin staging
+  git checkout -q main
+  git branch -D -q staging
+  git fetch -q origin
+  run jig status
+  assert_contains "$OUT" "staging: 1 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*')"
+  # A task branch deleted while its work is not in the base: orphaned.
+  git branch -D -q task/on
+  run jig status
+  assert_contains "$OUT" "staging: 2 commit(s) on staging that no live task branch holds"
+  # A promoted task's branch deleted once its work reached the base: its
+  # commits are in the base, so they count for nobody.
+  git push -q origin "$(git rev-parse task/promoted):refs/heads/main"
+  git branch -D -q task/promoted
+  git fetch -q origin
+  run jig status
+  assert_contains "$OUT" "staging: 2 commit(s) on staging"
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_contains "$OUT" "staging: 2 commit(s) on staging that no live task branch holds"
+  # A task branch the template does not name holds its commits too, and the
+  # command printed lists exactly what was counted.
+  git checkout -q -b feature/odd main
+  printf 'odd\n' > odd.txt
+  git add odd.txt
+  git commit -q -m odd
+  git checkout -q -B staging origin/staging
+  git merge -q --no-ff -m "ship odd" feature/odd
+  git push -q origin staging
+  git checkout -q main
+  git branch -D -q staging
+  git fetch -q origin
+  fixture_task odd feature/odd active "class:T2"
+  run jig status
+  assert_contains "$OUT" "staging: 2 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*' refs/heads/feature/odd)"
+  local cmd
+  cmd=${OUT#*no live task branch holds (}
+  cmd=${cmd%%)*}
+  assert_eq 2 "$(eval "$cmd --format=%h" | wc -l | tr -d ' ')"
+}
+
+# This checkout's open promotion that the forge cache calls conflicting with
+# the base is named, with the command that refreshes it.
+test_status_names_a_promotion_that_conflicts_with_the_base() {
+  local t
+  t=$(printf '\t')
+  fixture_staging_repo
+  printf 'promote_url: https://example.test/pull/7\n' >> .ai/workspace/tasks/on/state
+  mkdir -p .ai/runtime
+  printf '%s\n' "task/on${t}main${t}open${t}-${t}2026-11-12T09:00:00Z${t}-${t}https://example.test/pull/7${t}conflicting" > .ai/runtime/forge-cache
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "staging: the promotion of on conflicts with main as of 2026-11-12T09:00:00Z (run jig task promote on again)"
+  run jig status --json
+  assert_contains "$OUT" '"kind":"promotion-conflicting","subject":{"type":"task","id":"on"}'
+  assert_contains "$OUT" '"url":"https://example.test/pull/7"'
+  # One the forge calls mergeable, or a cache that predates the column, says nothing.
+  printf '%s\n' "task/on${t}main${t}open${t}-${t}2026-11-12T09:00:00Z${t}-${t}https://example.test/pull/7" > .ai/runtime/forge-cache
+  run jig status
+  assert_not_contains "$OUT" "conflicts with"
+  # Off the staging flow: nothing.
+  printf '%s\n' "task/on${t}main${t}open${t}-${t}2026-11-12T09:00:00Z${t}-${t}-${t}conflicting" > .ai/runtime/forge-cache
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  run jig status
+  assert_not_contains "$OUT" "staging:"
+}
+
+# The page and `jig status --json` carry the drift as items.
+test_status_json_carries_the_staging_drift() {
+  fixture_staging_repo
+  printf 'git.staging_stale_after: 0d\n' >> .ai/config.yaml
+  git checkout -q -B staging origin/staging
+  printf 'direct\n' > direct.txt
+  git add direct.txt
+  git commit -q -m "straight onto staging"
+  git push -q origin staging
+  git checkout -q main
+  git branch -D -q staging
+  git fetch -q origin
+  run jig status --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"kind":"staging-unpromoted","subject":{"type":"task","id":"on"},"tasks":["on"]'
+  assert_contains "$OUT" '"staging":{"branch":"task/on","days":0}'
+  assert_contains "$OUT" '"kind":"staging-unowned","subject":{"type":"project","id":null},"tasks":[]'
+  assert_contains "$OUT" '"staging":{"commits":1}'
+  run jig status --html
+  assert_file_contains .ai/runtime/status.html "Work on staging that no live task branch holds"
+}
+
 # --- drafts: jig-idea conversations kept before there is a spec ---------------
 
 test_status_says_nothing_of_drafts_when_there_are_none() {

@@ -348,6 +348,9 @@ $rel"
   # The project's git flow and where its tasks stand on the staging branch:
   # nothing on the default `direct` flow, whose report stays what it was.
   _status_flow
+  # The staging drift report, a `staging: ` line each (jig_staging_drift).
+  _status_drift
+  [ -z "$_STATUS_DRIFT" ] || jig_staging_drift_lines "$_STATUS_DRIFT_STAGING" "$_STATUS_DRIFT"
   local staging_state sid sst
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
@@ -488,9 +491,13 @@ EOF
 # Fills _STATUS_STAGING with jig_staging_states' answer for the live tasks
 # ("<id><TAB>on|behind"), asked once for all of them; empty otherwise.
 _STATUS_STAGING=""
+_STATUS_FLOW_STAGING="" # the staging branch, once _status_flow found the flow sound and origin has it
+_STATUS_FLOW_RAN=""     # 1 once _status_flow judged the flow in this process
 _status_flow() {
   local flow problems staging rows="" rec on=0 behind=0 id st t=$'\t'
   _STATUS_STAGING=""
+  _STATUS_FLOW_STAGING=""
+  _STATUS_FLOW_RAN=1
   cfg_v flow git.flow direct
   [ "$flow" != direct ] || return 0
   problems=$(jig_git_flow_problems)
@@ -513,6 +520,7 @@ _status_flow() {
 $_STATUS_LIVE
 EOF
   _STATUS_STAGING=$(jig_staging_states "$staging" "$rows")
+  _STATUS_FLOW_STAGING=$staging
   while IFS="$t" read -r id st; do
     case "$st" in
       on) on=$((on + 1)) ;;
@@ -522,6 +530,45 @@ EOF
 $_STATUS_STAGING
 EOF
   printf 'flow: staging via %s; on staging: %d, behind staging: %d\n' "$staging" "$on" "$behind"
+}
+
+# _status_drift — the staging drift report's records (jig_staging_drift) for
+# this checkout's live tasks into _STATUS_DRIFT, asked once per process: the
+# plain report and the page's items read the same answer. Empty off a sound
+# staging flow. The forge's answers come from the forge cache, never the forge
+# (adr-20261015-a-read-is-one-json-envelope).
+_STATUS_DRIFT=""
+_STATUS_DRIFT_READY=""
+_STATUS_DRIFT_STAGING="" # the staging branch the records are about
+_status_drift() {
+  local flow staging stale rows="" rec purl t=$'\t'
+  [ -z "$_STATUS_DRIFT_READY" ] || return 0
+  _STATUS_DRIFT_READY=1
+  _STATUS_DRIFT=""
+  # The direct flow asks nothing more, in this shell, as _status_flow does;
+  # after _status_flow the staging branch it judged sound is taken as it is.
+  cfg_v flow git.flow direct
+  [ "$flow" = staging ] || return 0
+  if [ -n "$_STATUS_FLOW_RAN" ]; then
+    staging=$_STATUS_FLOW_STAGING
+    [ -n "$staging" ] || return 0
+  else
+    staging=$(jig_staging_in_use) || return 0
+  fi
+  _STATUS_DRIFT_STAGING=$staging
+  stale=$(jig_staging_stale_after) || stale=""
+  [ -n "$_STATUS_LIVE_READY" ] || _status_live_collect
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    _status_rec "$rec"
+    [ -n "$_ST_BRANCH" ] || continue
+    task_state_var purl "$_ST_ID" promote_url
+    rows="$rows$_ST_ID$t$_ST_BRANCH$t${_ST_BASE:-$_STATUS_DEFAULT_BASE}$t$purl
+"
+  done <<EOF
+$_STATUS_LIVE
+EOF
+  _STATUS_DRIFT=$(jig_staging_drift "$staging" "$stale" "$rows" "$(forgecache_read)")
 }
 
 # --- the terminal form (adr-20261005-output-is-decorated-only-on-a-terminal) ----
@@ -758,6 +805,8 @@ _status_terminal() {
         _status_need warn "$l"
         ;;
       "flow: "*) _STT_FLOW=${l#flow: } ;;
+      # The staging drift report: each line asks the reader for something.
+      "staging: "*) _status_need warn "$l" ;;
       "working here: "*" (jig "*", "*" ago)")
         t=${l#working here: }
         v=${t%% (jig *}
@@ -2292,6 +2341,40 @@ OPEN
 $pr_ids
 PRS
 
+  # 4b. The staging drift report (jig_staging_drift, read once in
+  # _status_drift): read from git and the forge cache by branch name, so a
+  # colleague's task waiting on staging is named here too. Nothing off a sound
+  # staging flow.
+  _status_drift
+  if [ -n "$_STATUS_DRIFT" ]; then
+    local dk da db dc dd de staging_name todo_promote
+    staging_name=$_STATUS_DRIFT_STAGING
+    while IFS=$'\t' read -r dk da db dc dd de; do
+      case "$dk" in
+        conflicting)
+          _status_attn promotion-conflicting task "$da" "$da" \
+            "The promotion conflicts with $dc" "open and conflicting as of $dd, as the forge last said" \
+            "Run jig task promote $da again: it pushes a merge of $dc into the task branch once that merge is resolved, and names the files that conflict." \
+            "$de" "$db	$dc	open	$dd" ;;
+        unpromoted)
+          # A task known here only by its branch is its owner's to promote.
+          todo_promote="run jig task promote $da"
+          [ "$de" = here ] || todo_promote="its owner runs jig task promote $da"
+          _status_attn staging-unpromoted task "$da" "$da" \
+            "Waiting on $staging_name with no promotion" "$db has been on $staging_name for $dd day(s)" \
+            "Once it passed its test on $staging_name, $todo_promote. Jig takes nothing off $staging_name." \
+            "" "$db	$dd" ;;
+        unowned)
+          _status_attn staging-unowned project "" "" \
+            "Work on $staging_name that no live task branch holds" "$da commit(s) on $staging_name that the base does not have" \
+            "Find out whose they are ($db), and bring them to the base through a task. Jig takes nothing off $staging_name." \
+            "" "$da" ;;
+      esac
+    done <<DRIFT
+$_STATUS_DRIFT
+DRIFT
+  fi
+
   # 5. Merged and ready to close (needs-consolidation, ADR-0030). 6. Work that
   # landed elsewhere, a pull request closed unmerged, a worktree left behind:
   # kept, and only a person can say what happens next.
@@ -2469,6 +2552,23 @@ X
         json_str_or_null "$xat"; o="$o,\"fetched_at\":$_JSON}"
         json_str_or_null "$xto"; o="$o,\"versions\":{\"to\":$_JSON}"
         ;;
+      # The staging drift report's data (schemas/json.md).
+      promotion-conflicting)
+        IFS="$(printf '\t')" read -r xb xbase xst xat <<X
+$extra
+X
+        json_quote "$xb"; o="$o,\"pull_request\":{\"branch\":$_JSON"
+        json_quote "$xbase"; o="$o,\"base\":$_JSON"
+        json_quote "$xst"; o="$o,\"state\":$_JSON"
+        json_str_or_null "$xat"; o="$o,\"fetched_at\":$_JSON}"
+        ;;
+      staging-unpromoted)
+        IFS="$(printf '\t')" read -r xb xat <<X
+$extra
+X
+        json_quote "$xb"; o="$o,\"staging\":{\"branch\":$_JSON,\"days\":$xat}"
+        ;;
+      staging-unowned) o="$o,\"staging\":{\"commits\":$extra}" ;;
     esac
     o="$o}"
     objs="$objs${objs:+,}$o"
