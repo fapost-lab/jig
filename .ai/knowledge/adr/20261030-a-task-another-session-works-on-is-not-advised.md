@@ -11,6 +11,7 @@ paths:
   - scripts/lib/queue.sh
   - schemas/json.md
 summary: Why a session that works a task records it per clone under runtime/taken, and why jig queue next names such a task as taken instead of advising it.
+reviewed_at: 2026-11-12
 ---
 # A task another session works on is not advised: the session that works a task records it for the clone, and `jig queue next` names it as taken
 
@@ -45,7 +46,12 @@ What jig already recorded could not answer the question:
 - **Working a task is how a session takes it** — not a claim in the sense of adr-20261023-a-claim-is-an-exclusive-create: two sessions may both hold a record, and the newest holds the task. The dispatcher's recorder (`jig_checkout_record`) writes it before
   the command runs, for `jig task start|bootstrap|set|artifact|finding|autopilot|gate|receipt <id>`
   and `jig context … --task <id>`; the task is the first argument that is a valid id with a
-  workspace. Reading, filing, ordering, shipping and closing a task are not taking it. **No record
+  workspace. Reading, filing, ordering, shipping and closing a task are not taking it. Amended
+  2026-11-12: `task artifact read` is reading, and `task artifact write|append <id> task` on a task
+  with no `branch:` in its state is filing — the goal goes in with the task, often from a session
+  busy elsewhere, and on that day held `pr-github-merge-base` for hours that nobody worked on it.
+  Any other document before `task start` (the discovery this decision was made for), and the goal
+  of a started task, still take it. **No record
   without a session id**: a record that cannot say whose it is could not tell the caller's own task
   from another's (Codex today, the boundary the working record names too).
 - **The newest live record holds the task**, live meaning younger than `checkout.busy_ttl` (12 h by

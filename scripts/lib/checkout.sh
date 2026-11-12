@@ -483,8 +483,15 @@ _jig_checkout_record_inner() {
 # task: were it taken, the record's write would raise the clone's revision
 # before the command's own claim of `--revision <n>`, and a close from a
 # session would always be refused as stale-revision.
+#
+# `task artifact read` is reading. `task artifact write|append <id> task` on a
+# task nobody started (no `branch:` in its state) is filing it: the goal goes
+# in with the task, by whoever found the work — often a session busy with
+# something else — and it would hold the task for checkout.busy_ttl against
+# everyone. Any other document, or the goal of a started task, is working it:
+# discovery before `task start` is how a T3 is worked first.
 _jig_checkout_works() {
-  local a
+  local a filing=0
   case "${1:-}" in
     task)
       case "${2:-}" in
@@ -494,6 +501,12 @@ _jig_checkout_works() {
       case "$*" in
         "task set "*" status consolidated" | "task set "*" status consolidated "*) return 1 ;;
       esac
+      if [ "$2" = artifact ]; then
+        case "${3:-}" in
+          read) return 1 ;;
+          write | append) [ "${5:-}" != task ] || filing=1 ;;
+        esac
+      fi
       shift 2
       ;;
     context) shift ;;
@@ -503,6 +516,10 @@ _jig_checkout_works() {
     case "$a" in -*) continue ;; esac
     jig_valid_id "$a" || continue
     [ -f "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$a/state" ] || continue
+    if [ "$filing" = 1 ] \
+      && ! grep -q '^branch: *[^ ]' "$JIG_PROJECT/$JIG_AI_DIR/workspace/tasks/$a/state" 2>/dev/null; then
+      return 1
+    fi
     printf '%s\n' "$a"
     return 0
   done
