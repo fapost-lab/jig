@@ -188,3 +188,13 @@ task reverted on staging still reads as tested (the spec's failure mode 7), and 
 Rejected: turning `_promote_refuse` into a `return` — the steps also exit through functions of
 common.sh and task.sh shared with `task ship` and `task land`; only a subshell isolates them all.
 Exit 3 outweighing 1 — a pipeline would read a run with a refused task as one waiting on a person.
+
+## Amendment (2026-11-12): the merge by the flow
+
+The bullet "A version raise is said, not acted on" is superseded: `git.promote_merge: auto` now
+switches the forge's auto-merge on where the person or the runner may and CI gates the base, a
+release never, and a `major` one where auto-merge would otherwise apply opens as a draft whose body
+starts with `Needs a human: major release?`. The last line says who merges. A refusal that means
+origin's task branch is not the tested commit (`branch-diverged`, `carries-staging`,
+`not-on-staging`, `behind-staging`) switches auto-merge off first on an open promotion that has it
+on, and says so — the one thing a refusal sends (adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).

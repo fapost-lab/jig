@@ -12,7 +12,13 @@
 # Every refusal comes before the first step that leaves the machine
 # (adr-20260925-a-ship-refuses-before-it-sends): the only things sent are a
 # push of merges of the base the person or agent already made on the task
-# branch, and the pull request.
+# branch, the pull request, and with git.promote_merge: auto its auto-merge
+# switched on, or off for a release and a major release made a draft. One
+# exception sends on a refusal and only takes a merge away: when origin's
+# branch is not the tested one (branch-diverged, carries-staging,
+# not-on-staging, behind-staging), auto-merge on the open promotion is
+# switched off first (_promote_refuse_untested;
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).
 
 # _promote_refuse <code> <message> — refuse this task's promotion: nothing was
 # pushed and no pull request opened. It exits, as the functions of common.sh
@@ -20,6 +26,21 @@
 # subshell of its own (_promote_task), so a refusal ends that task alone.
 _promote_refuse() {
   jig_fail "$@"
+}
+
+# _promote_refuse_untested <code> <message> <branch> <base> — refuse as
+# _promote_refuse does, when origin's <branch> is not the commit that was
+# tested: an open promotion into <base> with auto-merge on would merge that
+# untested work on green CI, so it is switched off first and the refusal says
+# so. The one step a refusal sends, and it only takes a merge away.
+_promote_refuse_untested() {
+  local code="$1" msg="$2" branch="$3" base="$4" url
+  _PROMOTE_SWITCHED_OFF=""
+  url=$(_promote_open_url "$branch" "$base")
+  [ -z "$url" ] || _promote_auto_off "$url" "$branch is not the commit that was tested"
+  [ -z "$_PROMOTE_SWITCHED_OFF" ] || msg="$msg
+Auto-merge on $_PROMOTE_SWITCHED_OFF was switched off: it would have merged this into $base on green CI."
+  _promote_refuse "$code" "$msg"
 }
 
 # _promote_needs_person <message> — a promotion only a person (or their
@@ -158,7 +179,7 @@ _promote_tested_commit() {
 # _promote_refuse.
 _promote_one() {
   local id="$1" commit_arg="$2" title="$3" body_file="$4"
-  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level
+  local who="task promote" t=$'\t' flow base staging dir have_ws=0 branch tbase run level=""
   _task_valid_id "$id" || _promote_refuse usage "invalid task id: $id"
 
   # 1. The flow.
@@ -228,7 +249,7 @@ _promote_one() {
     tip=$lsha
     push=1
   else
-    _promote_refuse branch-diverged "$who: $branch here and on origin have diverged; nothing is forced. Bring them together and run again."
+    _promote_refuse_untested branch-diverged "$who: $branch here and on origin have diverged; nothing is forced. Bring them together and run again." "$branch" "$base"
   fi
   if git -C "$JIG_PROJECT" merge-base --is-ancestor "$tip" "$base_sha" 2>/dev/null; then
     printf '%s: %s is already in %s; nothing to promote\n' "$who" "$branch" "$base"
@@ -266,12 +287,12 @@ EOF
 $problems_line
 EOF
   if [ -n "$bad" ]; then
-    _promote_refuse carries-staging "$who: $branch is not a clean task branch: it carries work that $base does not have and that is not its own:$bad
-its pull request would take it to $base. Rebuild the branch from $base with its own commits only (a clean branch of another task may be merged in), ship it to $staging again, and run again after the test."
+    _promote_refuse_untested carries-staging "$who: $branch is not a clean task branch: it carries work that $base does not have and that is not its own:$bad
+its pull request would take it to $base. Rebuild the branch from $base with its own commits only (a clean branch of another task may be merged in), ship it to $staging again, and run again after the test." "$branch" "$base"
   fi
   if [ -z "$state" ]; then
-    _promote_refuse not-on-staging "$who: $branch is not in the tested commit $short of $staging: none of its own commits is there.
-It reaches $base only after it was tested on $staging: land it there (jig task ship) and run again after the test."
+    _promote_refuse_untested not-on-staging "$who: $branch is not in the tested commit $short of $staging: none of its own commits is there.
+It reaches $base only after it was tested on $staging: land it there (jig task ship) and run again after the test." "$branch" "$base"
   fi
   # On the task's first-parent line every commit but a merge of the base is
   # its own work and must be in the tested commit, a merge of a clean
@@ -316,10 +337,10 @@ It reaches $base only after it was tested on $staging: land it there (jig task s
 $own
 EOF
     open_url=$(_promote_open_url "$branch" "$base")
-    _promote_refuse behind-staging "$who: $branch has commit(s) of its own that the tested commit $short does not have:$list
+    _promote_refuse_untested behind-staging "$who: $branch has commit(s) of its own that the tested commit $short does not have:$list
 A fix made after the test must be tested before it reaches $base: ship it to $staging and run again after the test.${open_url:+
 The open pull request $open_url already carries them: it must not be merged before they are tested.
-Close it first: it comes from this same branch, so jig task ship refuses while it is open, and every push reaches it. Then ship the fix to $staging, and run jig task promote again after the test.}"
+Close it first: it comes from this same branch, so jig task ship refuses while it is open, and every push reaches it. Then ship the fix to $staging, and run jig task promote again after the test.}" "$branch" "$base"
   fi
 
   # 9. A conflict with the base is found here and resolved by whoever merges
@@ -379,16 +400,29 @@ EOF
 
   # 11. A raised version makes the promotion a release; its merge is a
   # person's (adr-20261026-a-task-that-raises-the-version-is-a-release).
-  local raise r_file r_old r_new r_level release_line=""
+  local raise r_file="" r_old="" r_new="" r_level="" release_line=""
   raise=$(jig_release_raise "$base" "$tip")
   if [ -n "$raise" ]; then
-    # shellcheck disable=SC2034 # the level is part of the row, not shown here
     IFS="$t" read -r r_file r_old r_new r_level <<EOF
 $raise
 EOF
     printf "%s: this promotion raises the version in %s: %s -> %s; it is a release, and its merge is a person's\n" \
       "$who" "$r_file" "$r_old" "$r_new"
     release_line="Release: this promotion raises the version in $r_file: $r_old -> $r_new"
+  fi
+
+  # Who merges (git.promote_merge), decided before the pull request opens: a
+  # major release where Jig would otherwise switch auto-merge on opens as a
+  # draft for a person, as task ship's does at `merge`
+  # (adr-20261026-a-task-that-raises-the-version-is-a-release).
+  local pm may=0 draft=0
+  pm=$(jig_promote_merge) || pm=human
+  if jig_on_ci_runner || [ "$level" = merge ]; then
+    may=1
+  fi
+  if [ "$pm" = auto ] && [ "$may" = 1 ] && [ "$r_level" = major ]; then
+    draft=1
+    printf '%s: a major release needs a human; the pull request is a draft\n' "$who"
   fi
 
   # 12. Send: the base merges already made on the task branch, then the pull
@@ -413,6 +447,7 @@ EOF
   body=$(mktemp "${TMPDIR:-/tmp}/jig-promote-body.XXXXXX")
   jig_cleanup_add "$body"
   {
+    [ "$draft" = 0 ] || printf 'Needs a human: major release?\n\n'
     if [ -n "$body_file" ]; then
       cat "$body_file"
     else
@@ -427,7 +462,7 @@ EOF
       printf '\n%s\n' "$release_line"
     fi
   } > "$body"
-  jig_ship_pr "$who" "$branch" "$base" "$body" "$title" "$body" 0 1
+  jig_ship_pr "$who" "$branch" "$base" "$body" "$title" "$body" "$draft" 1
   url=$JIG_SHIP_URL
   case "$url" in
     https://*) ;;
@@ -439,16 +474,324 @@ EOF
     _task_rewrite_state "$dir" promote_url "$url"
   fi
 
-  # The merge: who does it is git.promote_merge, a later step
-  # (.ai/specs/staging-branch/, "Merge the promotion by the flow").
-  local pm
-  pm=$(jig_promote_merge) || pm=human
-  if [ "$pm" = auto ]; then
-    printf "%s: git.promote_merge is auto, which is not built yet; the merge is the person's\n" "$who"
-  else
+  # 13. The merge, by git.promote_merge.
+  _promote_merge "$who" "$url" "$tip" "$base" "$pm" "$may" "$level" "$draft" \
+    "$r_file" "$r_old" "$r_new"
+  return 0
+}
+
+# --- the merge of the promotion ------------------------------------------------
+#
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it. With
+# `git.promote_merge: auto` Jig does not merge: it switches the forge's
+# auto-merge on, and the pull request merges itself, with a merge commit, once
+# the base's required checks pass. Only where the base requires checks at
+# all — without them the forge merges at once and CI gates nothing (the
+# reason adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci
+# rejected `--auto`) — and never for a release. Every outcome returns 0: the
+# pull request is open, and the last line says who merges it. Nothing here
+# dies, so a run over several tasks gets each task's own result.
+
+# _promote_merge <who> <url> <tip> <base> <pm> <may> <level> <draft> <file>
+# <old> <new> — decide and print the merge of the promotion at <url>. <may> is
+# 1 on a CI runner or at `agent.git: merge`; <file> is non-empty for a
+# release, whose version went from <old> to <new>.
+_promote_merge() {
+  local who="$1" url="$2" tip="$3" base="$4" pm="$5" may="$6" level="$7" draft="$8"
+  local r_file="$9" r_old="${10}" r_new="${11}" why kind
+  if [ "$pm" != auto ]; then
     printf "%s: the merge is the person's (git.promote_merge: %s)\n" "$who" "$pm"
+    return 0
+  fi
+  _promote_kind_once
+  kind=$_PROMOTE_KIND
+  if [ -n "$r_file" ]; then
+    why="this promotion is a release ($r_file $r_old -> $r_new)"
+    _promote_auto_off "$url" "$why"
+    [ "$draft" = 0 ] || _promote_make_draft "$url"
+    _promote_not_on "$why"
+    return 0
+  fi
+  if [ "$may" != 1 ]; then
+    _promote_not_on "agent.git is $level in this clone; switching it on needs merge"
+    return 0
+  fi
+  case "$kind" in
+    github) _promote_auto_github "$url" "$tip" "$base" ;;
+    gitlab) _promote_auto_gitlab "$url" "$tip" ;;
+    *) _promote_not_on "no forge available" ;;
+  esac
+  return 0
+}
+
+# _promote_kind_once — the forge this checkout uses (jig_forge_kind), asked
+# once per task into _PROMOTE_KIND, in the caller's shell: every forge step
+# below reads it through _promote_kind instead of asking `gh auth status`
+# again.
+_PROMOTE_KIND=""
+# The pull request _promote_auto_off last switched auto-merge off on.
+_PROMOTE_SWITCHED_OFF=""
+_promote_kind_once() {
+  [ -n "$_PROMOTE_KIND" ] || _PROMOTE_KIND=$(jig_forge_kind 2>/dev/null) || _PROMOTE_KIND=none
+  [ -n "$_PROMOTE_KIND" ] || _PROMOTE_KIND=none
+}
+
+# _promote_kind — print _PROMOTE_KIND (_promote_kind_once runs first).
+_promote_kind() {
+  printf '%s\n' "${_PROMOTE_KIND:-none}"
+}
+
+# _promote_not_on <why> — the last line when auto-merge stays off.
+_promote_not_on() {
+  printf "auto-merge not switched on: %s; the merge is the person's\n" "$1"
+}
+
+# _promote_auto_state <url> — what the forge says of the pull request at
+# <url>, into _PROMOTE_PR_STATE (open|merged|closed|unknown), _PROMOTE_PR_DRAFT
+# (true|false), _PROMOTE_PR_HEAD (its head commit, GitHub only) and
+# _PROMOTE_PR_AUTO (on|off). Called directly, never in `$()`. Anything it
+# cannot read leaves `unknown`.
+_promote_auto_state() {
+  local url="$1" view s d h a json iid flat
+  _PROMOTE_PR_STATE=unknown
+  _PROMOTE_PR_DRAFT=false
+  _PROMOTE_PR_HEAD=""
+  _PROMOTE_PR_AUTO=off
+  case "$(_promote_kind)" in
+    github)
+      view=$(jig_net jig_gh pr view "$url" --json state,isDraft,headRefOid,autoMergeRequest \
+        --jq '"\(.state) \(.isDraft) \(.headRefOid) \(if .autoMergeRequest then "on" else "off" end)"' 2>/dev/null) \
+        || return 0
+      read -r s d h a <<EOF
+$view
+EOF
+      case "$s" in
+        OPEN) _PROMOTE_PR_STATE=open ;;
+        MERGED) _PROMOTE_PR_STATE=merged ;;
+        CLOSED) _PROMOTE_PR_STATE=closed ;;
+        *) return 0 ;;
+      esac
+      _PROMOTE_PR_DRAFT=${d:-false}
+      _PROMOTE_PR_HEAD=$h
+      [ "$a" != on ] || _PROMOTE_PR_AUTO=on
+      ;;
+    gitlab)
+      iid=$(_jig_ship_glab_mr "$url")
+      [ -n "$iid" ] || return 0
+      json=$(jig_net glab mr view "$iid" --output json 2>/dev/null) || return 0
+      s=$(printf '%s' "$json" | jig_glab_fields state)
+      case "$s" in
+        opened) _PROMOTE_PR_STATE=open ;;
+        merged) _PROMOTE_PR_STATE=merged ;;
+        closed | locked) _PROMOTE_PR_STATE=closed ;;
+        *) return 0 ;;
+      esac
+      flat=$(printf '%s' "$json" | tr -d ' \n')
+      case "$flat" in
+        *'"draft":true'* | *'"work_in_progress":true'*) _PROMOTE_PR_DRAFT=true ;;
+      esac
+      case "$flat" in
+        *'"merge_when_pipeline_succeeds":true'* | *'"auto_merge_enabled":true'*) _PROMOTE_PR_AUTO=on ;;
+      esac
+      ;;
+  esac
+  return 0
+}
+
+# _promote_base_gated_github <base> — yes when <base> requires a status
+# check, by a ruleset or by classic branch protection; no when GitHub answered
+# and neither does; unknown when it could not be asked.
+_promote_base_gated_github() {
+  local base="$1" rules classic
+  rules=$(jig_net jig_gh api "repos/{owner}/{repo}/rules/branches/$base" \
+    --jq '[.[] | select(.type == "required_status_checks")] | length' 2>/dev/null) || rules=""
+  # shellcheck disable=SC2016 # $r is jq's, not the shell's
+  classic=$(jig_net jig_gh api "repos/{owner}/{repo}/branches/$base" \
+    --jq '(.protection.required_status_checks // {}) as $r | if ($r.enforcement_level // "everyone") == "off" then 0 else ((($r.contexts // []) + ($r.checks // [])) | length) end' \
+    2>/dev/null) || classic=""
+  case "$rules" in '' | *[!0-9]*) rules="" ;; esac
+  case "$classic" in '' | *[!0-9]*) classic="" ;; esac
+  if [ "${rules:-0}" -gt 0 ] || [ "${classic:-0}" -gt 0 ]; then
+    printf 'yes\n'
+  elif [ -n "$rules" ] || [ -n "$classic" ]; then
+    printf 'no\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+# _promote_auto_settled <url> <base> — after the forge was asked: merged at
+# once (its checks had already passed), on, or not confirmed.
+_promote_auto_settled() {
+  _promote_auto_state "$1"
+  if [ "$_PROMOTE_PR_STATE" = merged ]; then
+    printf 'merged %s\n' "$1"
+  elif [ "$_PROMOTE_PR_AUTO" = on ]; then
+    printf "auto-merge on %s: it merges with a merge commit once %s's required checks pass\n" "$1" "$2"
+  else
+    _promote_not_on "the forge did not confirm it"
+  fi
+}
+
+# _promote_auto_known <url> <tip> — the checks every forge shares, on the
+# state just read: 0 when auto-merge may be switched on now; 1 when a line was
+# printed and nothing is to be done.
+_promote_auto_known() {
+  local url="$1" tip="$2"
+  case "$_PROMOTE_PR_STATE" in
+    merged)
+      printf 'merged %s\n' "$url"
+      return 1 ;;
+    open) ;;
+    *)
+      _promote_not_on "could not read the pull request"
+      return 1 ;;
+  esac
+  if [ "$_PROMOTE_PR_DRAFT" = true ]; then
+    _promote_not_on "the pull request is a draft"
+    return 1
+  fi
+  if [ -n "$_PROMOTE_PR_HEAD" ] && [ "$_PROMOTE_PR_HEAD" != "$tip" ]; then
+    # Auto-merge already on would merge that other head: switched off.
+    [ "$_PROMOTE_PR_AUTO" != on ] \
+      || _promote_auto_off "$url" "the pull request is at $_PROMOTE_PR_HEAD, not at the promoted $tip"
+    _promote_not_on "the pull request is at $_PROMOTE_PR_HEAD, not at the promoted $tip"
+    return 1
+  fi
+  if [ "$_PROMOTE_PR_AUTO" = on ]; then
+    printf 'auto-merge on %s (already on)\n' "$url"
+    return 1
   fi
   return 0
+}
+
+# _promote_auto_github <url> <tip> <base> — switch auto-merge on through gh,
+# with a merge commit and at <tip> (`--match-head-commit`), only where the
+# repository allows auto-merge and merge commits and <base> requires a check.
+_promote_auto_github() {
+  local url="$1" tip="$2" base="$3" allowed am mc gated out
+  _promote_auto_state "$url"
+  _promote_auto_known "$url" "$tip" || return 0
+  allowed=$(jig_net jig_gh repo view --json autoMergeAllowed,mergeCommitAllowed \
+    --jq '"\(.autoMergeAllowed) \(.mergeCommitAllowed)"' 2>/dev/null) || allowed=""
+  read -r am mc <<EOF
+$allowed
+EOF
+  if [ -z "$allowed" ]; then
+    _promote_not_on "could not read the repository's merge settings"
+    return 0
+  fi
+  if [ "$am" != true ]; then
+    _promote_not_on "the repository does not allow auto-merge (Settings, General, Allow auto-merge)"
+    return 0
+  fi
+  if [ "$mc" != true ]; then
+    _promote_not_on "the repository does not allow merge commits, and a promotion keeps its ancestry only with one"
+    return 0
+  fi
+  gated=$(_promote_base_gated_github "$base")
+  case "$gated" in
+    yes) ;;
+    no)
+      _promote_not_on "$base requires no status check, so auto-merge would merge at once and CI would gate nothing"
+      return 0 ;;
+    *)
+      _promote_not_on "could not tell whether $base requires status checks"
+      return 0 ;;
+  esac
+  _jig_ship_outward "task promote"
+  if ! out=$(jig_net jig_gh pr merge "$url" --auto --merge --match-head-commit "$tip" 2>&1); then
+    _promote_not_on "the forge refused: $(_jig_ship_first_line "$out")"
+    return 0
+  fi
+  _promote_auto_settled "$url" "$base"
+}
+
+# _promote_auto_gitlab <url> <tip> — the same through glab: only in a project
+# that requires a successful pipeline to merge, merging with a merge commit
+# and no squash; `--sha` holds the merge request at <tip>.
+_promote_auto_gitlab() {
+  local url="$1" tip="$2" iid project mm so out
+  _promote_auto_state "$url"
+  _promote_auto_known "$url" "$tip" || return 0
+  iid=$(_jig_ship_glab_mr "$url")
+  project=$(jig_net glab api "projects/:id" 2>/dev/null | tr -d ' \n') || project=""
+  if [ -z "$project" ]; then
+    _promote_not_on "could not read the project's merge settings"
+    return 0
+  fi
+  case "$project" in
+    *'"only_allow_merge_if_pipeline_succeeds":true'*) ;;
+    *)
+      _promote_not_on "the project does not require a successful pipeline to merge, so auto-merge would merge at once"
+      return 0 ;;
+  esac
+  # A skipped pipeline counts as a success there: nothing would be checked.
+  case "$project" in
+    *'"allow_merge_on_skipped_pipeline":false'*) ;;
+    *)
+      _promote_not_on "the project lets a skipped pipeline count as a success, so auto-merge could merge with nothing checked"
+      return 0 ;;
+  esac
+  mm=$(printf '%s' "$project" | sed -n 's/.*"merge_method":"\([^"]*\)".*/\1/p')
+  so=$(printf '%s' "$project" | sed -n 's/.*"squash_option":"\([^"]*\)".*/\1/p')
+  case "$mm:$so" in
+    merge:never | merge:default_off | rebase_merge:never | rebase_merge:default_off) ;;
+    *)
+      _promote_not_on "the repository does not allow merge commits, and a promotion keeps its ancestry only with one"
+      return 0 ;;
+  esac
+  _jig_ship_outward "task promote"
+  if ! out=$(jig_net glab mr merge "$iid" --auto-merge --sha "$tip" --yes 2>&1); then
+    _promote_not_on "the forge refused: $(_jig_ship_first_line "$out")"
+    return 0
+  fi
+  _promote_auto_settled "$url" "the target branch"
+}
+
+# _promote_auto_off <url> <why> — switch auto-merge off on the pull request
+# at <url> when the forge says it is on, and say so. A failure is a warning:
+# the person is told to switch it off by hand.
+_promote_auto_off() {
+  local url="$1" why="$2" iid out rc=0
+  _promote_kind_once
+  _promote_auto_state "$url"
+  [ "$_PROMOTE_PR_STATE" = open ] && [ "$_PROMOTE_PR_AUTO" = on ] || return 0
+  case "$(_promote_kind)" in
+    github) out=$(jig_net jig_gh pr merge "$url" --disable-auto 2>&1) || rc=$? ;;
+    gitlab)
+      iid=$(_jig_ship_glab_mr "$url")
+      out=$(jig_net glab api -X POST "projects/:id/merge_requests/$iid/cancel_merge_when_pipeline_succeeds" 2>&1) || rc=$? ;;
+    *) return 0 ;;
+  esac
+  if [ "$rc" -ne 0 ]; then
+    jig_warn "task promote: could not switch auto-merge off on $url ($why): $(_jig_ship_first_line "$out"); switch it off by hand"
+    return 0
+  fi
+  _PROMOTE_SWITCHED_OFF=$url
+  printf 'auto-merge switched off on %s: %s\n' "$url" "$why"
+}
+
+# _promote_make_draft <url> — turn the open pull request at <url> into a
+# draft when it is not one: a major release found on a promotion opened before.
+_promote_make_draft() {
+  local url="$1" iid out rc=0
+  _promote_kind_once
+  _promote_auto_state "$url"
+  [ "$_PROMOTE_PR_STATE" = open ] && [ "$_PROMOTE_PR_DRAFT" != true ] || return 0
+  _jig_ship_outward "task promote"
+  case "$(_promote_kind)" in
+    github) out=$(jig_net jig_gh pr ready "$url" --undo 2>&1) || rc=$? ;;
+    gitlab)
+      iid=$(_jig_ship_glab_mr "$url")
+      out=$(jig_net glab mr update "$iid" --draft 2>&1) || rc=$? ;;
+    *) return 0 ;;
+  esac
+  if [ "$rc" -ne 0 ]; then
+    jig_warn "task promote: could not make $url a draft: $(_jig_ship_first_line "$out"); a major release needs a human"
+    return 0
+  fi
+  printf 'task promote: %s is now a draft: a major release needs a human\n' "$url"
 }
 
 # _promote_task <id> <commit> <title> <body-file> — the per-task step of a run

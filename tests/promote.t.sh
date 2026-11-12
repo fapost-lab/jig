@@ -39,11 +39,70 @@ case "\$1 \$2" in
   "pr create")
     shift 2
     printf '%s\n' "\$@" > "\$d/gh-create.argv"
+    # A new pull request: its head is the branch it was opened from, and
+    # its state the default.
+    rm -f "\$d/gh-pr"
     while [ \$# -gt 0 ]; do
       if [ "\$1" = --body-file ]; then cat "\$2" > "\$d/gh-create.body"; fi
+      if [ "\$1" = --head ]; then printf '%s\n' "\$2" > "\$d/gh-pr-branch"; fi
+      if [ "\$1" = --draft ]; then printf 'OPEN true off\n' > "\$d/gh-pr"; fi
       shift
     done
     printf 'https://github.com/example/example/pull/7\n' ;;
+  # The promotion's merge (adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it):
+  #   gh-pr          "<STATE> <draft> <auto>" of the pull request (default
+  #                  "OPEN false off"); its head is origin's gh-pr-branch
+  #                  (default task/T-1)
+  #   gh-repo        "<autoMergeAllowed> <mergeCommitAllowed>" (default "true true")
+  #   gh-rules       required_status_checks rules of the base (default 1);
+  #                  gh-rules-fail makes the call fail
+  #   gh-protection  required checks of classic protection; absent, the call fails
+  #   gh-merge-fail  what a refused \`pr merge\` prints; gh-merge-now: the forge
+  #                  merges at once; gh-disable-fail: what a refused
+  #                  \`--disable-auto\` prints
+  # \`pr merge\` appends its arguments to gh-merge.argv, \`pr ready\` to gh-ready.argv.
+  "pr view")
+    pr=\$(val gh-pr)
+    set -- \${pr:-OPEN false off}
+    b=\$(val gh-pr-branch)
+    h=\$(git --git-dir="\$d/origin.git" rev-parse "refs/heads/\${b:-task/T-1}" 2>/dev/null)
+    printf '%s %s %s %s\n' "\$1" "\$2" "\${h:--}" "\$3" ;;
+  "repo view")
+    r=\$(val gh-repo)
+    printf '%s\n' "\${r:-true true}" ;;
+  "api "*)
+    case "\$2" in
+      */rules/branches/*)
+        [ ! -f "\$d/gh-rules-fail" ] || exit 1
+        r=\$(val gh-rules)
+        printf '%s\n' "\${r:-1}" ;;
+      */branches/*)
+        [ -f "\$d/gh-protection" ] || exit 1
+        val gh-protection ;;
+    esac ;;
+  "pr merge")
+    shift 2
+    printf '%s\n' "\$*" >> "\$d/gh-merge.argv"
+    pr=\$(val gh-pr)
+    set -- \$* \${pr:-OPEN false off}
+    case "\$*" in
+      *--disable-auto*)
+        if [ -f "\$d/gh-disable-fail" ]; then cat "\$d/gh-disable-fail" >&2; exit 1; fi
+        printf '%s %s off\n' "\${@: -3:1}" "\${@: -2:1}" > "\$d/gh-pr" ;;
+      *)
+        if [ -f "\$d/gh-merge-fail" ]; then cat "\$d/gh-merge-fail" >&2; exit 1; fi
+        if [ -f "\$d/gh-merge-now" ]; then
+          printf 'MERGED false off\n' > "\$d/gh-pr"
+        else
+          printf '%s %s on\n' "\${@: -3:1}" "\${@: -2:1}" > "\$d/gh-pr"
+        fi ;;
+    esac ;;
+  "pr ready")
+    shift 2
+    printf '%s\n' "\$*" >> "\$d/gh-ready.argv"
+    pr=\$(val gh-pr)
+    set -- \${pr:-OPEN false off}
+    printf '%s true %s\n' "\$1" "\$3" > "\$d/gh-pr" ;;
 esac
 STUB
   chmod +x stub-bin/gh
@@ -182,13 +241,330 @@ test_promote_a_task_already_in_the_base_is_nothing_to_do() {
   assert_no_file gh-create.argv
 }
 
-test_promote_says_promote_merge_auto_is_not_built() {
-  promote_setup
+# --- the merge of the promotion ---------------------------------------------
+# adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it
+
+# promote_auto <agent.git> — git.promote_merge: auto, and agent.git set to
+# <agent.git> in this clone.
+promote_auto() {
   printf 'git.promote_merge: auto\n' >> .ai/config.yaml
+  sed "s|^agent.git:.*|agent.git: $1|" .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
+}
+
+# assert_auto_untouched — no `gh pr merge` was run.
+assert_auto_untouched() {
+  assert_no_file gh-merge.argv
+}
+
+test_promote_human_leaves_the_merge_to_the_person() {
+  promote_setup
+  sed "s|^agent.git:.*|agent.git: merge|" .ai/config.local.yaml > .ai/config.local.yaml.tmp
+  mv .ai/config.local.yaml.tmp .ai/config.local.yaml
 
   run jig task promote T-1
   assert_eq 0 "$RC" "$OUT"
-  assert_contains "$OUT" "task promote: git.promote_merge is auto, which is not built yet; the merge is the person's"
+  assert_contains "$OUT" "task promote: the merge is the person's (git.promote_merge: human)"
+  assert_auto_untouched
+}
+
+test_promote_auto_at_merge_switches_auto_merge_on() {
+  promote_setup
+  promote_auto merge
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge on https://github.com/example/example/pull/7: it merges with a merge commit once main's required checks pass"
+  assert_eq "https://github.com/example/example/pull/7 --auto --merge --match-head-commit $(git rev-parse origin/task/T-1)" \
+    "$(cat gh-merge.argv)"
+}
+
+test_promote_auto_on_a_ci_runner_needs_no_agent_git() {
+  promote_setup
+  git clone -q origin.git runner
+  cd runner || return 1
+  printf 'git.promote_merge: auto\n' >> .ai/config.yaml
+
+  run env CI=true "$JIG_BIN" task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge on https://github.com/example/example/pull/7"
+  assert_contains "$(cat ../gh-merge.argv)" "--auto --merge --match-head-commit"
+}
+
+test_promote_auto_below_merge_is_not_switched_on() {
+  promote_setup
+  promote_auto pr
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/7"
+  assert_contains "$OUT" "auto-merge not switched on: agent.git is pr in this clone; switching it on needs merge; the merge is the person's"
+  assert_auto_untouched
+}
+
+test_promote_auto_never_merges_a_release() {
+  promote_setup
+  promote_task T-2 VERSION 1.1.0
+  promote_land T-2
+  promote_auto merge
+  printf 'task/T-2\n' > gh-pr-branch
+
+  run jig task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: this promotion is a release (VERSION 1.0.0 -> 1.1.0); the merge is the person's"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+  assert_auto_untouched
+}
+
+test_promote_auto_opens_a_major_release_as_a_draft() {
+  promote_setup
+  promote_task T-2 VERSION 2.0.0
+  promote_land T-2
+  git clone -q origin.git runner
+  cd runner || return 1
+  printf 'git.promote_merge: auto\n' >> .ai/config.yaml
+  printf 'task/T-2\n' > ../gh-pr-branch
+  printf 'OPEN true off\n' > ../gh-pr
+
+  run env CI=true "$JIG_BIN" task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task promote: a major release needs a human; the pull request is a draft"
+  assert_contains "$(cat ../gh-create.argv)" "--draft"
+  assert_eq "Needs a human: major release?" "$(sed -n 1p ../gh-create.body)"
+  assert_contains "$OUT" "auto-merge not switched on: this promotion is a release (VERSION 1.0.0 -> 2.0.0)"
+  assert_no_file ../gh-merge.argv
+  assert_no_file ../gh-ready.argv
+}
+
+test_promote_human_opens_a_major_release_as_it_is() {
+  promote_setup
+  promote_task T-2 VERSION 2.0.0
+  promote_land T-2
+
+  run jig task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$(cat gh-create.argv)" "--draft"
+  assert_not_contains "$(cat gh-create.body)" "Needs a human"
+}
+
+test_promote_auto_makes_an_open_major_release_a_draft_and_switches_it_off() {
+  promote_setup
+  promote_task T-2 VERSION 2.0.0
+  promote_land T-2
+  promote_auto merge
+  printf 'task/T-2\n' > gh-pr-branch
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN false on\n' > gh-pr
+
+  run jig task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge switched off on https://github.com/example/example/pull/5: this promotion is a release (VERSION 1.0.0 -> 2.0.0)"
+  assert_contains "$OUT" "task promote: https://github.com/example/example/pull/5 is now a draft: a major release needs a human"
+  assert_contains "$(cat gh-merge.argv)" "--disable-auto"
+  assert_contains "$(cat gh-ready.argv)" "--undo"
+}
+
+test_promote_auto_needs_auto_merge_allowed_in_the_repository() {
+  promote_setup
+  promote_auto merge
+  printf 'false true\n' > gh-repo
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the repository does not allow auto-merge (Settings, General, Allow auto-merge)"
+  assert_auto_untouched
+}
+
+test_promote_auto_needs_merge_commits() {
+  promote_setup
+  promote_auto merge
+  printf 'true false\n' > gh-repo
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the repository does not allow merge commits, and a promotion keeps its ancestry only with one"
+  assert_auto_untouched
+}
+
+# Without a required check the forge would merge at once: CI would gate nothing.
+test_promote_auto_needs_a_required_check_on_the_base() {
+  promote_setup
+  promote_auto merge
+  printf '0\n' > gh-rules
+  printf '0\n' > gh-protection
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: main requires no status check, so auto-merge would merge at once and CI would gate nothing"
+  assert_auto_untouched
+}
+
+test_promote_auto_takes_a_check_classic_protection_requires() {
+  promote_setup
+  promote_auto merge
+  printf '0\n' > gh-rules
+  printf '2\n' > gh-protection
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge on https://github.com/example/example/pull/7"
+}
+
+test_promote_auto_is_not_switched_on_when_the_checks_cannot_be_read() {
+  promote_setup
+  promote_auto merge
+  : > gh-rules-fail
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: could not tell whether main requires status checks"
+  assert_auto_untouched
+}
+
+test_promote_auto_a_second_run_finds_it_on() {
+  promote_setup
+  promote_auto merge
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN false on\n' > gh-pr
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/5 (already open)"
+  assert_contains "$OUT" "auto-merge on https://github.com/example/example/pull/5 (already on)"
+  assert_auto_untouched
+}
+
+test_promote_auto_says_what_the_forge_refused() {
+  promote_setup
+  promote_auto merge
+  printf 'GraphQL: Resource not accessible by integration\n' > gh-merge-fail
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the forge refused: GraphQL: Resource not accessible by integration; the merge is the person's"
+}
+
+test_promote_auto_merged_at_once_says_merged() {
+  promote_setup
+  promote_auto merge
+  : > gh-merge-now
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/7"
+}
+
+test_promote_auto_leaves_a_draft_alone() {
+  promote_setup
+  promote_auto merge
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN true off\n' > gh-pr
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the pull request is a draft"
+  assert_auto_untouched
+}
+
+# A fix pushed after the test onto a promotion whose auto-merge is on would
+# reach the base on green CI: the refusal switches it off first.
+test_promote_behind_staging_switches_auto_merge_off() {
+  promote_setup
+  local tested
+  tested=$(git rev-parse origin/staging)
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN false on\n' > gh-pr
+  printf 'fix\n' >> one.txt
+  git commit -q -am "Fix of T-1"
+  promote_land T-1
+
+  run jig task promote T-1 --commit "$tested"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge switched off on https://github.com/example/example/pull/5: task/T-1 is not the commit that was tested"
+  assert_contains "$OUT" "Auto-merge on https://github.com/example/example/pull/5 was switched off"
+  assert_contains "$OUT" "Close it first"
+  assert_eq "https://github.com/example/example/pull/5 --disable-auto" "$(cat gh-merge.argv)"
+}
+
+# Several tasks in one run: each one's auto-merge is its own.
+test_promote_auto_several_tasks_each_get_their_own() {
+  promote_setup
+  promote_task T-2 two.txt "work of T-2"
+  promote_land T-2
+  git clone -q origin.git runner
+  cd runner || return 1
+  printf 'git.promote_merge: auto\n' >> .ai/config.yaml
+
+  run env CI=true "$JIG_BIN" task promote --commit "$(git rev-parse origin/staging)" T-1 T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(cat ../gh-merge.argv)" "--match-head-commit $(git rev-parse origin/task/T-1)"
+  assert_eq 2 "$(grep -c -- '--auto --merge' ../gh-merge.argv)"
+}
+
+# promote_stub_glab — a fake `glab` for GitLab: no merge request open, `mr
+# create` answers merge request 99. glab-mr is `mr view`'s JSON (default an
+# open one, auto-merge off), glab-project the project's (default: a pipeline
+# must succeed, a skipped one does not count, merge commits). glab-list is the
+# open merge request into main (default none). `mr merge` appends its
+# arguments to glab-merge.argv and switches auto-merge on; `mr update` appends
+# to glab-update.argv, `api -X POST` (the switch-off) to glab-api.argv.
+promote_stub_glab() {
+  local dir="$PWD"
+  sed "s|^forge:.*|forge: gitlab|" .ai/config.yaml > .ai/config.yaml.tmp
+  mv .ai/config.yaml.tmp .ai/config.yaml
+  cat > stub-bin/glab <<STUB
+#!/usr/bin/env bash
+d="$dir"
+printf '%s\n' "\$*" >> "\$d/glab.log"
+val() { if [ -f "\$d/\$1" ]; then cat "\$d/\$1"; fi; }
+case "\$1 \$2" in
+  "auth status") exit 0 ;;
+  "mr list")
+    case "\$*" in
+      *"--target-branch main"*) l=\$(val glab-list); printf '%s\n' "\${l:-[]}" ;;
+      *) printf '[]\n' ;;
+    esac ;;
+  "mr update") shift 2; printf '%s\n' "\$*" >> "\$d/glab-update.argv" ;;
+  "api -X")
+    printf '%s\n' "\$*" >> "\$d/glab-api.argv"
+    printf '{"iid":99,"state":"opened","draft":false,"merge_when_pipeline_succeeds":false}\n' > "\$d/glab-mr" ;;
+  "mr create") printf 'https://gitlab.example/example/example/-/merge_requests/99\n' ;;
+  "mr view")
+    m=\$(val glab-mr)
+    printf '%s\n' "\${m:-{\"iid\":99,\"state\":\"opened\",\"draft\":false,\"merge_when_pipeline_succeeds\":false}}" ;;
+  "api projects/:id")
+    p=\$(val glab-project)
+    printf '%s\n' "\${p:-{\"merge_method\":\"merge\",\"squash_option\":\"default_off\",\"only_allow_merge_if_pipeline_succeeds\":true,\"allow_merge_on_skipped_pipeline\":false}}" ;;
+  "mr merge")
+    shift 2
+    printf '%s\n' "\$*" >> "\$d/glab-merge.argv"
+    printf '{"iid":99,"state":"opened","draft":false,"merge_when_pipeline_succeeds":true}\n' > "\$d/glab-mr" ;;
+esac
+STUB
+  chmod +x stub-bin/glab
+}
+
+test_promote_auto_on_gitlab_sets_auto_merge_at_the_tip() {
+  promote_setup
+  promote_stub_glab
+  promote_auto merge
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge on https://gitlab.example/example/example/-/merge_requests/99"
+  assert_eq "99 --auto-merge --sha $(git rev-parse origin/task/T-1) --yes" "$(cat glab-merge.argv)"
+}
+
+test_promote_auto_on_gitlab_needs_a_pipeline_to_succeed() {
+  promote_setup
+  promote_stub_glab
+  promote_auto merge
+  printf '{"merge_method":"merge","squash_option":"default_off","only_allow_merge_if_pipeline_succeeds":false}\n' > glab-project
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the project does not require a successful pipeline to merge, so auto-merge would merge at once"
+  assert_no_file glab-merge.argv
 }
 
 # --- against the tested commit ----------------------------------------------
@@ -1055,4 +1431,89 @@ STUB
   assert_contains "$OUT" "could not read from remote repository"
   assert_not_contains "$OUT" "promoting"
   assert_no_file gh-create.argv
+}
+
+# --- the switch-off, and GitLab's other paths ----------------------------------
+
+# Staging merged into the task branch after the promotion opened: the refusal
+# switches its auto-merge off and says so.
+test_promote_carries_staging_switches_auto_merge_off() {
+  promote_setup
+  promote_task T-2 two.txt "work of T-2"
+  promote_land T-2
+  git checkout -q task/T-1
+  git merge -q --no-ff -m "Merge staging into task/T-1" origin/staging
+  git push -q origin task/T-1
+  promote_land T-1
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN false on\n' > gh-pr
+
+  run jig task promote T-1
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge switched off on https://github.com/example/example/pull/5: task/T-1 is not the commit that was tested"
+  assert_contains "$OUT" "Auto-merge on https://github.com/example/example/pull/5 was switched off: it would have merged this into main on green CI."
+  assert_eq "https://github.com/example/example/pull/5 --disable-auto" "$(cat gh-merge.argv)"
+}
+
+# The open pull request at another head than the promoted one, auto-merge on:
+# switched off, not left to merge that head.
+test_promote_auto_at_another_head_switches_it_off() {
+  promote_setup
+  promote_auto merge
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN false on\n' > gh-pr
+  printf 'staging\n' > gh-pr-branch
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge switched off on https://github.com/example/example/pull/5: the pull request is at $(git rev-parse origin/staging), not at the promoted $(git rev-parse origin/task/T-1)"
+  assert_contains "$OUT" "auto-merge not switched on: the pull request is at $(git rev-parse origin/staging)"
+  assert_eq "https://github.com/example/example/pull/5 --disable-auto" "$(cat gh-merge.argv)"
+}
+
+test_promote_a_failed_switch_off_is_a_warning() {
+  promote_setup
+  promote_task T-2 VERSION 1.1.0
+  promote_land T-2
+  promote_auto merge
+  printf 'task/T-2\n' > gh-pr-branch
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'OPEN false on\n' > gh-pr
+  printf 'HTTP 403: forbidden\n' > gh-disable-fail
+
+  run jig task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "could not switch auto-merge off on https://github.com/example/example/pull/5 (this promotion is a release (VERSION 1.0.0 -> 1.1.0)): HTTP 403: forbidden; switch it off by hand"
+  assert_contains "$OUT" "auto-merge not switched on: this promotion is a release (VERSION 1.0.0 -> 1.1.0)"
+}
+
+test_promote_auto_on_gitlab_needs_skipped_pipelines_not_to_count() {
+  promote_setup
+  promote_stub_glab
+  promote_auto merge
+  printf '{"merge_method":"merge","squash_option":"default_off","only_allow_merge_if_pipeline_succeeds":true,"allow_merge_on_skipped_pipeline":true}\n' > glab-project
+
+  run jig task promote T-1
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge not switched on: the project lets a skipped pipeline count as a success, so auto-merge could merge with nothing checked"
+  assert_no_file glab-merge.argv
+}
+
+# A major release found on an open merge request with auto-merge on: switched
+# off and made a draft, through glab.
+test_promote_auto_on_gitlab_switches_a_major_release_off_and_drafts_it() {
+  promote_setup
+  promote_task T-2 VERSION 2.0.0
+  promote_land T-2
+  promote_stub_glab
+  promote_auto merge
+  printf '[{"iid":98,"web_url":"https://gitlab.example/example/example/-/merge_requests/98","title":"T-2"}]\n' > glab-list
+  printf '{"iid":98,"state":"opened","draft":false,"merge_when_pipeline_succeeds":true}\n' > glab-mr
+
+  run jig task promote T-2
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "auto-merge switched off on https://gitlab.example/example/example/-/merge_requests/98: this promotion is a release (VERSION 1.0.0 -> 2.0.0)"
+  assert_contains "$(cat glab-api.argv)" "projects/:id/merge_requests/98/cancel_merge_when_pipeline_succeeds"
+  assert_eq "98 --draft" "$(cat glab-update.argv)"
+  assert_no_file glab-merge.argv
 }

@@ -126,3 +126,12 @@ with no CI, since a conflicting pull request runs none. The agent resolves and Q
 the spec accepts that risk (failure mode 2). It happens only on a conflict, only into the staging
 branch, never past a refusal of branch protection, and the push is never forced
 (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
+
+## Amendment (2026-11-12): the promotion's auto-merge
+
+`--auto` stays out of every merge Jig makes, with one exception: `jig task promote` with
+`git.promote_merge: auto` switches the forge's auto-merge on for the promotion's pull request into
+the base. It does so only where the objection above does not hold — the base requires a status check
+(GitHub) or a successful pipeline (GitLab), so CI gates the merge — with a merge commit, at the
+promoted commit, and never for a release
+(adr-20261112-a-promotion-merges-itself-only-where-ci-gates-it).
