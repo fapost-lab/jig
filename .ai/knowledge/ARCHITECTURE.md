@@ -65,7 +65,12 @@ it; it sources nothing and calls the `jig_ship_*` steps every ship takes.
 A helper that two commands must never disagree about lives in `lib/common.sh` instead —
 `jig_git_touched_files` ("what did this task touch"), `jig_staging_in_use` and `jig_staging_states`
 ("is this project on a sound staging flow, and which tasks' work is on its staging branch" —
-`task list --json`, `status` and housekeeping all show it), `jig_branch_carries_staging` ("what does this task
+`task list --json`, `status` and housekeeping all show it), `jig_parked_states` ("which of these
+task branches wait at the staging branch, and why" — from git and the forge cache, laid over by
+task.sh's `_task_parked_read` with what only the owner knows, which `task current`, `task list`,
+`task resume` and `status` all ask, and whose ids `task start` and `status` hand to
+`jig_checkout_occupants`, which sources no command library;
+adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status), `jig_branch_carries_staging` ("what does this task
 branch carry that was merged into it from anything but the base and clean task branches" — `task
 ship` and `task land` refuse on it), `jig_task_base` and `jig_base_ref`
 ("which branch is this task judged against, and by which ref"), `jig_spec_link` and `jig_spec_epic`

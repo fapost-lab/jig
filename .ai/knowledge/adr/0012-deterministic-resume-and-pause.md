@@ -10,7 +10,7 @@ paths:
   - "scripts/lib/status.sh"
   - "schemas/state.md"
 summary: Why pause is a field, ambiguity exits 2, and resume reports overlap rather than distance.
-reviewed_at: 2026-10-28
+reviewed_at: 2026-11-12
 ---
 # ADR-0012: Resume is ambiguous or exact, never a guess; pause is a field
 
@@ -107,3 +107,11 @@ session, and nothing stopped a new task from starting on another task's dirty tr
 > conflicts (an untracked file of the stash that now exists) but changed the tree is recorded the same way, so a refusal git would make anyway is
 > never mistaken for a merged stash. The record is the only witness: once the resolution is
 > committed the tree is clean, and nothing in git says the stash was ever applied.
+
+> **Amendment (2026-11-12, task `park-at-staging`).** `jig task resume` has a second meaning in a
+> project on the staging flow: a task parked at the staging branch and not paused is taken back for a
+> fix, its `status` going from `ready` to `active` and `park_resumed_at` recorded in one write under
+> the same revision check (the record holds until the next `jig task ship` into the staging branch, at any `agent.git` level); a paused task keeps
+> every rule above and returns to `ready`, so one paused while parked is parked again and needs a
+> second resume. A `ready` task that is parked is not a `jig task current` candidate
+> (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).

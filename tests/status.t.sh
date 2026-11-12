@@ -4356,6 +4356,80 @@ test_status_json_carries_the_staging_drift() {
   assert_file_contains .ai/runtime/status.html "Work on staging that no live task branch holds"
 }
 
+# --- parked at the staging branch
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status)
+
+# _st_park <id>... — fixture_staging_repo with the given tasks `ready`, as a
+# ship leaves them.
+_st_park() {
+  local id
+  fixture_staging_repo
+  for id in "$@"; do
+    sed 's/^status: active$/status: ready/' ".ai/workspace/tasks/$id/state" > s.tmp
+    mv s.tmp ".ai/workspace/tasks/$id/state"
+  done
+}
+
+# A parked task leaves the lines of the work going on and is named, with its
+# reason, on a line of its own; a resumed one is back among them.
+test_status_lists_parked_tasks_on_their_own_line() {
+  _st_park on promoted never
+  printf 'pr_url: https://forge.test/pr/3\n' >> .ai/workspace/tasks/never/state
+  run jig status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "parked: never (review, landing), on (signal), promoted (signal)"
+  assert_not_contains "$OUT" "task on class"
+  assert_not_contains "$OUT" "task promoted class"
+  assert_contains "$OUT" "task behind class=T2 status=active staging=behind"
+  assert_contains "$OUT" "flow: staging via staging; on staging: 2, behind staging: 1"
+  run env LC_ALL=C JIG_TERMINAL=1 NO_COLOR=1 "$JIG_BIN" status
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "  .   parked: never (review, landing), on (signal), promoted (signal)"
+  run jig status --html
+  assert_eq 0 "$RC"
+  assert_contains "$(cat .ai/runtime/status.html)" '<details id="parked"><summary>Parked at the staging branch</summary>'
+  assert_contains "$(cat .ai/runtime/status.html)" '<span class="badge">parked: signal</span>'
+  jig task resume on >/dev/null
+  run jig status
+  assert_contains "$OUT" "parked: never (review, landing), promoted (signal)"
+  assert_contains "$OUT" "task on class=T2 status=active staging=on"
+}
+
+# With every live task parked, the report does not also say there is none.
+test_status_with_only_parked_tasks_does_not_say_there_are_none() {
+  _st_park on promoted
+  rm -rf .ai/workspace/tasks/behind .ai/workspace/tasks/never .ai/workspace/tasks/fresh
+  run jig status
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" "no active tasks"
+  assert_contains "$OUT" "parked: on (signal), promoted (signal)"
+}
+
+# What needs the reader: a task waiting for the signal asks nothing of them —
+# not a git step, not its staging pull request — and one whose staging pull
+# request they land says so.
+test_status_json_asks_nothing_of_a_task_parked_for_the_signal() {
+  _st_park on never
+  sed 's/^knowledge_consolidated: false$/knowledge_consolidated: true/' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  # `external`: CI landed it, so it has no pull request, and agent.git below
+  # `pr` would otherwise make "open a pull request" the reader's step.
+  printf 'agent.git: push\n' > .ai/config.local.yaml
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" '"kind":"git-step","subject":{"type":"task","id":"on"}'
+  rm -f .ai/config.local.yaml
+  sed '/^git.staging_land:/d' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  printf 'pr_url: https://forge.test/pr/4\n' >> .ai/workspace/tasks/on/state
+  printf 'pr_url: https://forge.test/pr/5\n' >> .ai/workspace/tasks/never/state
+  run jig status --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_not_contains "$OUT" '"subject":{"type":"task","id":"on"},"tasks":["on"],"title":"A pull request'
+  assert_contains "$OUT" '"kind":"pull-request-waiting","subject":{"type":"task","id":"never"},"tasks":["never"],"title":"A pull request is waiting for review and for you to land it"'
+}
+
 # --- drafts: jig-idea conversations kept before there is a spec ---------------
 
 test_status_says_nothing_of_drafts_when_there_are_none() {

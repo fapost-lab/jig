@@ -10,6 +10,7 @@ paths:
   - scripts/lib/task.sh
   - scripts/lib/common.sh
 summary: Why jig task land and ship at merge land a staging pull request on the forge when clean and directly only on conflict, in a temporary worktree with rerere and an unforced push retried from a fresh fetch, why review follows git.staging_review, and why a task branch stays clean of staging.
+reviewed_at: 2026-11-12
 ---
 # A task lands on staging through its pull request, and directly only when it conflicts
 
@@ -96,7 +97,9 @@ base.
   the resolution, and a pull request the forge still reads open (GitLab may not mark it merged) is
   warned about, never closed. A failed comment only warns: the merge commit says the same.
 - **Nothing is left behind the task**: the checkout stays on the task branch, the branch stays (it
-  is promoted later), the task's status does not change. Parking is the next phase's.
+  is promoted later), the task's status does not change. Parking is the next phase's, built by
+  adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status: a landed task is
+  read as parked, and why it waits is never written.
 - `jig task land` is the `land` row of the actions table (`_task_land_refusal`).
 - **The temporary tree is the second `--force` removal in Jig** (RULES.md): `git worktree remove
   --force` of `<worktree root>/.land-<id>` only, by `_land_tree_remove`, whose path one function

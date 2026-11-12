@@ -332,6 +332,30 @@ as stale. With `git.staging_land: external`, where your CI merges tasks into the
 no pull request goes there, this is how you see what CI landed: the same words, read the same way. On
 the default `direct` flow none of this appears.
 
+A shipped task that waits at the staging branch is **parked**, and it leaves the task lines for one
+line of its own:
+
+```text
+parked: booking-form (signal), booking-report (review, landing)
+```
+
+`review` waits for a review of its pull request into the staging branch — `landing` when you land it
+yourself (`agent.git` below `merge`) — and `signal` waits on the staging branch for "prepare for
+prod". `jig task list` marks it `parked=signal`. A parked task is not the current task, `jig queue
+next` does not offer it, and another task may start in the checkout it was landed from.
+`jig task resume <id>` takes it back for a fix: it becomes `active` and appears among the tasks
+again until its next `jig task ship` into the staging branch, verify included — at any
+`agent.git`, also when that ship leaves the commit or the push to you.
+
+`signal` is read from the staging branch as your checkout last fetched it. With
+`git.staging_land: external`, a task you shipped is listed as an ordinary task — and stays your
+current task — until a fetch (`jig housekeeping`, or `git fetch`) shows that CI merged it; with
+pull requests there is no such gap, since the open pull request keeps it parked for `review` until
+the housekeeping run that hears of the merge also fetches.
+
+A task parked for the signal stays on that line however long it waits; once it has waited
+`git.staging_stale_after`, the drift report below names it as well, since nobody promoted it.
+
 ### The staging drift report
 
 On the staging flow `jig status` and `jig housekeeping` also say where the staging branch drifts

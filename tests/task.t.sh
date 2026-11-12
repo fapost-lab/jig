@@ -1343,7 +1343,7 @@ test_task_resume_json_success_has_the_task_and_what_resume_found() {
   assert_contains "$OUT" '"data":{"task":{"id":"T-1"'
   assert_contains "$OUT" '"paused":false'
   # No stash, a clean tree on the task's branch, overlap checked and empty.
-  assert_contains "$OUT" ',"resume":{"paused_days":0,"stash":null,"uncommitted":0,"overlap":[]}}'
+  assert_contains "$OUT" ',"resume":{"paused_days":0,"stash":null,"uncommitted":0,"overlap":[],"parked":null}}'
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "paused: true"
   # The task in the data is the one a listing prints after the resume.
   local in_data
@@ -1418,7 +1418,7 @@ test_task_resume_json_not_paused_is_refused() {
   _tr_json T-1
   assert_eq 1 "$RC"
   assert_eq not-paused "$(_tr_code)"
-  assert_contains "$OUT" "not paused: T-1"
+  assert_contains "$OUT" "not paused or parked: T-1"
 }
 
 test_task_resume_json_bad_arguments_are_usage() {
@@ -11187,7 +11187,7 @@ test_task_list_json_says_whether_a_task_is_on_staging() {
   assert_eq null "$(_tl_staging_of fresh)"
   assert_eq null "$(_tl_staging_of unstarted)"
   # Right after the base, as schemas/json.md places it.
-  assert_contains "$OUT" '"branch":"task/on","base_branch":"main","staging":"on","worktree":null'
+  assert_contains "$OUT" '"branch":"task/on","base_branch":"main","staging":"on","parked":null,"worktree":null'
   # The fix pushed and merged into staging: on staging again.
   git checkout -q -b staging origin/staging
   git merge -q --no-ff -m "ship the fix" task/behind
@@ -11244,6 +11244,284 @@ test_task_list_json_has_no_staging_field_off_the_staging_flow() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   assert_not_contains "$OUT" '"staging"'
+}
+
+# --- parked at the staging branch
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status)
+
+# _park_repo — fixture_staging_repo with every shipped task `ready`, as a ship
+# leaves it, and an empty forge cache.
+_park_repo() {
+  local id
+  fixture_staging_repo
+  for id in on behind promoted never fresh; do
+    sed 's/^status: active$/status: ready/' ".ai/workspace/tasks/$id/state" > s.tmp
+    mv s.tmp ".ai/workspace/tasks/$id/state"
+  done
+  mkdir -p .ai/runtime
+  : > .ai/runtime/forge-cache
+}
+
+# _park_cache <head> <base> <state> [<url>] — one forge cache line, all eight
+# columns, newest first as housekeeping writes them.
+_park_cache() {
+  local f=.ai/runtime/forge-cache
+  { printf '%s\t%s\t%s\t-\t2026-11-12T10:00:00Z\t-\t%s\tmergeable\n' "$1" "$2" "$3" "${4:--}"; cat "$f"; } > "$f.tmp"
+  mv "$f.tmp" "$f"
+}
+
+# _tl_parked_of <id> — the `parked` value of one task in a `task list --json`.
+_tl_parked_of() {
+  printf '%s\n' "$OUT" | sed -E -n "s/.*\\{\"id\":\"$1\",[^{]*\"parked\":(null|\\{[^}]*\\}).*/\\1/p"
+}
+
+# Parked is derived from git and the forge cache: on staging waits for the
+# signal, an open pull request into staging for review; a pull request into
+# the base, work after staging with none open, or nothing on staging is not
+# parked; only a `ready` task is; and the owner's link to a pull request the
+# cache has not heard of yet counts.
+test_task_list_says_which_tasks_are_parked_at_staging() {
+  _park_repo
+  fixture_task unstarted "" ready
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of on)"
+  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of promoted)"
+  assert_eq null "$(_tl_parked_of behind)"
+  assert_eq null "$(_tl_parked_of never)"
+  assert_eq null "$(_tl_parked_of fresh)"
+  assert_eq null "$(_tl_parked_of unstarted)"
+  assert_contains "$OUT" '"staging":"on","parked":{"reason":"signal","hint":null},"worktree":null'
+
+  # A fix with a pull request into staging open waits for review; agent.git
+  # below `merge` (none by default) lands it by hand.
+  _park_cache task/behind staging open
+  _park_cache task/promoted main open
+  _tl_json
+  assert_eq '{"reason":"review","hint":"landing"}' "$(_tl_parked_of behind)"
+  assert_eq null "$(_tl_parked_of promoted)"
+  printf 'agent.git: merge\n' > .ai/config.local.yaml
+  _tl_json
+  assert_eq '{"reason":"review","hint":null}' "$(_tl_parked_of behind)"
+
+  # The owner's link: a pull request ship just opened, before housekeeping
+  # heard of it, is open; one the cache says closed is not.
+  printf 'pr_url: https://forge.test/pr/7\n' >> .ai/workspace/tasks/never/state
+  _tl_json
+  assert_eq '{"reason":"review","hint":null}' "$(_tl_parked_of never)"
+  _park_cache task/never staging closed https://forge.test/pr/7
+  _tl_json
+  assert_eq null "$(_tl_parked_of never)"
+  # A promotion the owner opened ends parking before the cache knows it.
+  printf 'promote_url: https://forge.test/pr/8\n' >> .ai/workspace/tasks/on/state
+  _tl_json
+  assert_eq null "$(_tl_parked_of on)"
+
+  # An `active` task is one resumed for a fix: not parked.
+  sed 's/^status: ready$/status: active/' .ai/workspace/tasks/promoted/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/promoted/state
+  rm -f .ai/runtime/forge-cache
+  _tl_json
+  assert_eq null "$(_tl_parked_of promoted)"
+
+  # The text listing says it on the task's line.
+  _park_cache task/behind staging open
+  run jig task list
+  assert_contains "$OUT" "behind class=T2 status=ready branch=task/behind parked=review"
+  printf 'agent.git: pr\n' > .ai/config.local.yaml
+  run jig task list
+  assert_contains "$OUT" "parked=review,landing"
+}
+
+# Off the staging flow nothing is parked and nothing new is printed.
+test_task_list_has_no_parked_off_the_staging_flow() {
+  _park_repo
+  sed 's|^git.flow:.*|git.flow: direct|' .ai/config.yaml > c.tmp
+  mv c.tmp .ai/config.yaml
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_not_contains "$OUT" '"parked"'
+  run jig task list
+  assert_not_contains "$OUT" "parked"
+}
+
+# A parked task holds no current-task slot: the checkout stays on its branch
+# after the landing, and `task current` names nobody until it is resumed.
+test_task_current_skips_a_parked_task_until_it_is_resumed() {
+  _park_repo
+  git checkout -q task/on
+  run jig task current
+  assert_eq 1 "$RC" "$OUT"
+  run jig task resume on
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "resumed on from parked (signal): fix it, jig verify, then jig task ship on"
+  assert_file_contains .ai/workspace/tasks/on/state "status: active"
+  run jig task current
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq on "$OUT"
+  # Resumed, it is neither paused nor parked any more.
+  run jig task resume on
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task resume: not paused or parked: on"
+}
+
+# `task resume --json` says which parking it took the task back from; a resume
+# that ends a pause takes none, and a task paused while parked is parked again
+# after it (ADR-0012), so a second resume takes it back for a fix.
+test_task_resume_of_a_parked_task_as_json_and_after_a_pause() {
+  _park_repo
+  run_split jig task resume on --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"resume":{"paused_days":0,"stash":null,"uncommitted":null,"overlap":null,"parked":"signal"}'
+  assert_contains "$OUT" '"status":"active"'
+  assert_contains "$OUT" '"parked":null'
+
+  jig task pause promoted >/dev/null
+  run jig task resume promoted
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "resumed promoted (paused"
+  assert_contains "$OUT" "still parked (signal): jig task resume promoted again to fix it"
+  assert_file_contains .ai/workspace/tasks/promoted/state "status: ready"
+  run_split jig task resume promoted --json
+  assert_eq 0 "$RC" "$ERR"
+  assert_contains "$OUT" '"parked":"signal"}'
+  assert_file_contains .ai/workspace/tasks/promoted/state "status: active"
+}
+
+# The actions table offers `resume` to a parked task, and withholds it from
+# one neither paused nor parked with the command's own words.
+test_task_actions_offer_resume_to_a_parked_task() {
+  _park_repo
+  _tl_json
+  assert_contains "$OUT" '{"id":"resume","command":"jig task resume on","offered":true,"reason":null}'
+  assert_contains "$OUT" '{"id":"resume","command":"jig task resume behind","offered":false,"reason":"task resume: not paused or parked: behind"}'
+}
+
+# Autopilot stops at the staging branch: no run starts on a parked task and no
+# stage is entered, until a person resumes it.
+test_task_autopilot_refuses_a_parked_task() {
+  _park_repo
+  run jig task autopilot on start
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task autopilot start: on is parked (signal): it waits at the staging branch; a person resumes it for a fix with jig task resume on"
+  if grep -q '^autopilot:' .ai/workspace/tasks/on/state; then fail "a refused start wrote a run"; fi
+  printf 'autopilot: on\n' >> .ai/workspace/tasks/promoted/state
+  run jig task autopilot promoted stage implement
+  assert_eq 3 "$RC"
+  assert_contains "$OUT" "task autopilot stage: promoted is parked (signal)"
+  jig task resume on >/dev/null
+  run jig task autopilot on start
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# The checkout a parked task was landed from stays on its branch, and is free:
+# another task starts there. A task resumed for a fix occupies it again.
+test_task_start_is_not_refused_by_a_parked_task_working_here() {
+  _park_repo
+  git checkout -q task/on
+  mkdir -p .ai/runtime/working
+  printf 'command: task ship on\n' > .ai/runtime/working/on
+  jig task new next >/dev/null
+  jig task resume on >/dev/null
+  run jig task start next
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "this checkout is in use: task on"
+  # Verified again, and not shipped yet: still the fix being worked on here.
+  sed 's/^status: active$/status: ready/' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  run jig task start next
+  assert_eq 1 "$RC" "$OUT"
+  # Shipped (the ship drops the record): parked again, and the checkout is free.
+  sed '/^park_resumed_at:/d' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  run jig task start next
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq task/next "$(git symbolic-ref --short HEAD)"
+}
+
+# A person took the task back for a fix: `park_resumed_at` keeps it out of
+# parking through the fix's own verify (`ready` again), so neither a listing
+# nor an autopilot run reads it as waiting before the fix ships.
+test_task_resumed_from_park_stays_unparked_when_ready_again() {
+  _park_repo
+  jig task resume on >/dev/null
+  assert_file_contains .ai/workspace/tasks/on/state "park_resumed_at: 20"
+  sed 's/^status: active$/status: ready/' .ai/workspace/tasks/on/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/on/state
+  _tl_json
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq null "$(_tl_parked_of on)"
+  assert_eq '{"reason":"signal","hint":null}' "$(_tl_parked_of promoted)"
+  git checkout -q task/on
+  run_split jig task current
+  assert_eq 0 "$RC" "$ERR"
+  assert_eq on "$OUT"
+  run jig task autopilot on start
+  assert_eq 0 "$RC" "$OUT"
+  run jig task autopilot on stage verify
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# Only `jig task resume` writes the record and only a ship removes it.
+test_task_set_refuses_park_resumed_at() {
+  _park_repo
+  run jig task set on park_resumed_at 2026-11-12T10:00:00Z
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task set: key is not writable: park_resumed_at"
+}
+
+# The ship that sends the fix into the staging branch drops the record, and
+# the task is parked again — here for review, its new pull request open, which
+# the person lands (agent.git: pr).
+test_task_ship_staging_drops_park_resumed_at() {
+  sship_setup pr
+  printf 'park_resumed_at: 2026-11-12T10:00:00Z\n' >> .ai/workspace/tasks/T-1/state
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":null'
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  if grep -q '^park_resumed_at:' .ai/workspace/tasks/T-1/state; then fail "the ship kept park_resumed_at"; fi
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+}
+
+# _ship_resumed_hands_over <level> — below `push` the ship hands the commit or
+# the push to the person, who ships the fix by hand from what it said: the
+# record goes all the same, and the task, its pull request into staging still
+# open, is parked again.
+_ship_resumed_hands_over() {
+  sship_setup "$1"
+  printf 'pr_url: https://github.com/example/example/pull/7\npark_resumed_at: 2026-11-12T10:00:00Z\n' \
+    >> .ai/workspace/tasks/T-1/state
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":null'
+  run jig task ship T-1 --message-file msg.txt
+  case "$1" in
+    none) assert_eq 3 "$RC" "$OUT" ;;
+    commit)
+      assert_eq 0 "$RC" "$OUT"
+      assert_contains "$OUT" "stopped at commit: push is the human's" ;;
+  esac
+  if grep -q '^park_resumed_at:' .ai/workspace/tasks/T-1/state; then fail "a ship at $1 kept park_resumed_at"; fi
+  run_split jig task list --json
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
+}
+
+test_task_ship_staging_at_none_drops_park_resumed_at() {
+  _ship_resumed_hands_over none
+}
+
+test_task_ship_staging_at_commit_drops_park_resumed_at() {
+  _ship_resumed_hands_over commit
+}
+
+# A draft is not the fix shipped: it keeps the record.
+test_task_ship_staging_draft_keeps_park_resumed_at() {
+  sship_setup pr
+  printf 'park_resumed_at: 2026-11-12T10:00:00Z\n' >> .ai/workspace/tasks/T-1/state
+  run jig task ship T-1 --message-file msg.txt --draft
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "park_resumed_at: 2026-11-12T10:00:00Z"
 }
 
 test_task_list_json_with_no_tasks_is_an_empty_list() {
@@ -12694,6 +12972,65 @@ test_task_list_json_on_the_staging_flow_starts_no_process_per_task() {
   assert_contains "$OUT" '"id":"s-6"'
   assert_contains "$OUT" '"staging":"behind"'
   _tl_same_cost $((staged_two - direct_two)) $((staged_six - direct_six))
+}
+
+# Parking is read for `ready` tasks only, and once per listing
+# (_task_parked_read, jig_parked_states): for `task list --json`, `task list`
+# and `status`, four more ready tasks — parked or resumed — start no more
+# processes on the staging flow than the same tasks start on the direct one
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status).
+test_parked_tasks_start_no_process_per_ready_task() {
+  fixture_staging_repo
+  local i cmd s2 d2 s6 d6
+  _tl_park_flow() {
+    sed "s|^git.flow:.*|git.flow: $1|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+  }
+  rm -rf .ai/workspace/tasks/*
+  mkdir -p .ai/runtime
+  printf 'task/r-2\tstaging\topen\t-\t2026-11-12T10:00:00Z\t-\thttps://forge.test/pr/2\tmergeable\n' > .ai/runtime/forge-cache
+  for i in 1 2; do
+    git branch "task/r-$i" task/on
+    fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
+  done
+  for cmd in "task list --all --json" "task list" "status"; do
+    _tl_park_flow staging
+    # shellcheck disable=SC2086 # the command's words
+    _tl_forks $cmd >/dev/null || fail "$cmd failed under the probe"
+  done
+  for i in 3 4 5 6; do
+    git branch "task/r-$i" task/behind
+  done
+  for cmd in "task list --all --json" "task list" "status"; do
+    _tl_park_flow staging
+    # shellcheck disable=SC2086
+    s2=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    _tl_park_flow direct
+    # shellcheck disable=SC2086
+    d2=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    for i in 3 4 5 6; do
+      fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
+    done
+    fixture_task r-7 task/on ready "class:T2" "park_resumed_at:2026-11-12T10:00:00Z"
+    # shellcheck disable=SC2086
+    d6=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    _tl_park_flow staging
+    # shellcheck disable=SC2086
+    s6=$(_tl_forks $cmd) || fail "$cmd failed under the probe"
+    rm -rf .ai/workspace/tasks/r-3 .ai/workspace/tasks/r-4 .ai/workspace/tasks/r-5 .ai/workspace/tasks/r-6 .ai/workspace/tasks/r-7
+    # Four more ready tasks may cost what they cost on the direct flow, and
+    # not one process more: `status` lists a parked task on one line, so it
+    # may cost less.
+    [ $((s6 - s2)) -le $((d6 - d2 + 1)) ] \
+      || fail "$cmd: 4 more ready tasks started $((s6 - s2)) more processes on the staging flow, $((d6 - d2)) on direct"
+  done
+  for i in 3 4 5 6; do
+    fixture_task "r-$i" "task/r-$i" ready "class:T2" "pr_url:https://forge.test/pr/$i"
+  done
+  run_split jig task list --json
+  assert_contains "$OUT" '"id":"r-1"'
+  assert_contains "$OUT" '"parked":{"reason":"signal","hint":null}'
+  assert_contains "$OUT" '"parked":{"reason":"review","hint":"landing"}'
 }
 
 # `jig context` is what `task list --json` pays for a task with a review receipt
