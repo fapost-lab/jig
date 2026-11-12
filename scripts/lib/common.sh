@@ -1966,6 +1966,79 @@ jig_release_raise() {
   return 0
 }
 
+# jig_release_notes_through <from> — the commit this branch's release notes say
+# they describe: the newest `Release-Notes-Through: <sha>` trailer among the
+# commits <from>..HEAD, resolved to a full sha, or as written when it does not
+# resolve; nothing when no commit carries one. The newest wins: notes brought up
+# to date after the base moved are a later commit with a later trailer
+# (adr-20261112-release-notes-name-the-commit-they-describe).
+jig_release_notes_through() {
+  local v full
+  v=$(git -C "$JIG_PROJECT" log --format=%B "$1..HEAD" 2>/dev/null \
+    | awk 'found == "" && /^Release-Notes-Through:[[:space:]]*[0-9a-fA-F]+[[:space:]]*$/ {
+        sub(/^Release-Notes-Through:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); found = $0
+      }
+      END { if (found != "") print found }')
+  [ -n "$v" ] || return 0
+  if full=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$v^{commit}" 2>/dev/null); then
+    printf '%s\n' "$full"
+  else
+    printf '%s\n' "$v"
+  fi
+}
+
+# jig_release_notes_gap <tip> — why the release notes on HEAD do not describe
+# everything up to <tip> (the base's freshest commit), or nothing when they do.
+# Reads git only, no network: the callers fetch, each its own way (a ship as
+# the clone's account, CI with its checkout's token). The answer is the same
+# question everywhere — every commit the release will carry into the base was
+# seen by whoever wrote the notes — so `task ship`, `spec ship` and CI's
+# changelog check can never disagree about it.
+jig_release_notes_gap() {
+  local tip="$1" through n list
+  through=$(jig_release_notes_through "$tip")
+  if [ -z "$through" ]; then
+    printf 'none of its commits names the commit its release notes describe; once the notes cover %s, record that commit in a Release-Notes-Through: trailer (jig task set <task> notes_through <sha> adds it to the next ship)\n' \
+      "$(git -C "$JIG_PROJECT" rev-parse --short "$tip" 2>/dev/null || printf '%s' "$tip")"
+    return 0
+  fi
+  if ! git -C "$JIG_PROJECT" cat-file -e "$through^{commit}" 2>/dev/null; then
+    printf 'Release-Notes-Through names %s, which is not a commit here\n' "$through"
+    return 0
+  fi
+  if ! git -C "$JIG_PROJECT" merge-base --is-ancestor "$through" "$tip" 2>/dev/null; then
+    printf 'Release-Notes-Through names %s, which is not on the base (%s)\n' \
+      "$(git -C "$JIG_PROJECT" rev-parse --short "$through")" "$tip"
+    return 0
+  fi
+  n=$(git -C "$JIG_PROJECT" rev-list --count "$through..$tip" 2>/dev/null) || n=0
+  [ "$n" -gt 0 ] || return 0
+  list=$(git -C "$JIG_PROJECT" log --first-parent --format='  %h %s' "$through..$tip" 2>/dev/null | awk 'NR <= 5')
+  printf '%s commit(s) reached the base after the commit the release notes describe (%s):\n%s\ndescribe them in the notes, record the new tip of the base as Release-Notes-Through, and run again\n' \
+    "$n" "$(git -C "$JIG_PROJECT" rev-parse --short "$through")" "$list"
+}
+
+# jig_release_notes_refusal <who> <base> — jig_release_notes_gap against the
+# freshest <base>: origin's, fetched now as the clone's account, or the local
+# branch where there is no origin. A fetch that fails is itself the refusal:
+# a release whose notes cannot be checked against the base does not go out.
+jig_release_notes_refusal() {
+  local who="$1" base="$2" tip
+  if git -C "$JIG_PROJECT" remote get-url origin >/dev/null 2>&1; then
+    jig_git_origin_account "$who" read
+    if ! jig_net jig_git_origin fetch --quiet origin \
+         "+refs/heads/$base:refs/remotes/origin/$base" >/dev/null 2>&1; then
+      printf 'could not fetch %s from origin, so whether the release notes still describe it cannot be told; run again when origin answers\n' "$base"
+      return 0
+    fi
+    tip="refs/remotes/origin/$base"
+  else
+    tip="refs/heads/$base"
+  fi
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "$tip" >/dev/null 2>&1 || return 0
+  jig_release_notes_gap "$tip"
+}
+
 # jig_fresh_base_ref <name> <who> — the ref to cut from <name>: the fresher of
 # refs/heads/<name> and refs/remotes/origin/<name>, or HEAD when neither exists.
 #
@@ -2597,6 +2670,40 @@ jig_gh_require() {
   jig_gh_resolve || jig_die "$1: $_JIG_GH_WHY"
 }
 
+# jig_gh_asked_as — one sentence naming the account a GitHub call of this clone
+# went as and where Jig took it from, for the message of a call that failed: a
+# refusal such as "must be a collaborator" says nothing of who asked, and a
+# token inherited from the environment (a direnv .envrc, a service started from
+# one) wins over github.account without a word. Only on that path: the login
+# behind a token in the environment, or gh's active one, costs gh a call.
+jig_gh_asked_as() {
+  local vars var login="" accounts="" active="" tab
+  jig_gh_resolve || true
+  case "$_JIG_GH_HOW" in
+    config) printf 'It asked GitHub as %s (github.account).\n' "$_JIG_GH_LOGIN" ;;
+    detected)
+      printf 'It asked GitHub as %s (found: the gh account that may push here; jig config set --local github.account <login> names another).\n' "$_JIG_GH_LOGIN" ;;
+    only) printf 'It asked GitHub as %s (the only account gh holds).\n' "$_JIG_GH_LOGIN" ;;
+    env)
+      vars=$(jig_gh_token_env "$_JIG_GH_HOST")
+      var=${vars%% *}
+      login=$(jig_net jig_gh api --hostname "$_JIG_GH_HOST" user --jq .login 2>/dev/null | tr -d '\r' | head -n 1) || login=""
+      case "$login" in '' | -* | *[!A-Za-z0-9-]*) login="the account of that token" ;; esac
+      printf 'It asked GitHub as %s: %s is set in the environment Jig runs in, and a token there comes before github.account and the accounts gh holds. Remove %s from that environment (a shell, a direnv .envrc, a service started from one) to ask as this clone'"'"'s account.\n' \
+        "$login" "$var" "$var" ;;
+    *)
+      [ -n "$_JIG_GH_HOST" ] || return 0
+      tab=$(printf '\t')
+      IFS="$tab" read -r accounts active <<EOF
+$(jig_gh_accounts "$_JIG_GH_HOST")
+EOF
+      if [ -n "$active" ]; then
+        printf 'It asked GitHub as %s, gh'"'"'s active account: nothing names this clone'"'"'s (jig config set --local github.account <login>).\n' "$active"
+      fi
+      ;;
+  esac
+}
+
 # jig_ship_account <who> <level> — before a ship's push: when this ship will
 # open a pull request on GitHub (<level> pr or merge), name the account it is
 # opened as, or refuse with nothing sent
@@ -3174,7 +3281,8 @@ _jig_ship_pr_github() {
   # shellcheck disable=SC2086 # $extra is one flag or nothing
   out=$(jig_net jig_gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" $extra 2>&1) \
     || jig_die "$who: gh pr create failed:
-$out"
+$out
+$(jig_gh_asked_as)"
   url=$(printf '%s\n' "$out" | tail -n 1)
   JIG_SHIP_URL="$url"
   printf 'pr %s\n' "$url"
@@ -3224,6 +3332,21 @@ JIG_SHIP_MERGED=0
 # check at all may mean "not registered yet" rather than "CI checks nothing".
 _JIG_CI_POLL=15
 _JIG_CI_GRACE=120
+
+# JIG_SHIP_LAST_CHECK — the name of a function the caller wants asked once
+# more after CI is green, right before the merge command: what it prints is why
+# the merge must not happen now, nothing when it may. Waiting for CI can take
+# many minutes, and a fact the caller checked before the wait (a release's
+# notes reaching the base's tip) may have stopped being true during it.
+JIG_SHIP_LAST_CHECK=""
+_jig_ship_last_check() {
+  local why
+  [ -n "$JIG_SHIP_LAST_CHECK" ] || return 0
+  why=$("$JIG_SHIP_LAST_CHECK") || why="the last check before the merge failed"
+  [ -n "$why" ] || return 0
+  printf 'not merged: %s\n' "$why"
+  return 1
+}
 
 # jig_ship_merge <who> <url> <sha> <any|merge-commit> — merge the pull request
 # at <url>, only as the commit <sha> that was shipped. Prints `merged <url>` or
@@ -3384,6 +3507,7 @@ EOF
     printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
     return 0
   fi
+  _jig_ship_last_check || return 0
   if ! out=$(jig_gh pr merge "$url" --match-head-commit "$sha" "--$method" 2>&1); then
     printf 'not merged: the forge refused: %s\n' "$(_jig_ship_first_line "$out")"
     return 0
@@ -3482,6 +3606,7 @@ _jig_ship_merge_gitlab() {
     printf 'not merged: %s\n' "$(_jig_ship_ci_reason "$state" "$timeout")"
     return 0
   fi
+  _jig_ship_last_check || return 0
   # --auto-merge=false: merge now or not at all, never "once the pipeline
   # succeeds", later, when nobody checks the conditions again.
   # shellcheck disable=SC2086 # $squash is one flag or nothing
@@ -5629,6 +5754,42 @@ jig_file_mtime() {
     '' | *[!0-9]*) return 1 ;;
   esac
   printf '%s\n' "$out"
+}
+
+# jig_origin_fetched_at — when this clone last fetched, as UTC `YYYY-MM-DDTHH:MM:SSZ`,
+# or non-zero when no fetch shows. Every worktree has a FETCH_HEAD of its own (Jig's
+# own trees under the git directory included), so the newest of them answers; an empty
+# one is passed over, since a fetch that failed empties it, which also loses the fetch
+# it replaced. Any fetch writes it, of any branch or remote, so this says when the clone
+# last reached out, not that origin's base was among what came back
+# (adr-20261112-refresh-brings-the-clone-up-to-origin). No network.
+jig_origin_fetched_at() {
+  local d common f m best=""
+  d=$(git -C "$JIG_PROJECT" rev-parse --git-common-dir 2>/dev/null) || return 1
+  # Resolved by cd, as _ot_tree_path does: Git for Windows prints `C:/...`, which
+  # matches no `/*` and would be taken for a relative path.
+  common=$(cd "$JIG_PROJECT" 2>/dev/null && cd "$d" 2>/dev/null && pwd -P) || return 1
+  for f in "$common/FETCH_HEAD" "$common"/worktrees/*/FETCH_HEAD; do
+    [ -s "$f" ] || continue
+    m=$(jig_file_mtime "$f") || continue
+    if [ -z "$best" ] || [ "$m" -gt "$best" ]; then best=$m; fi
+  done
+  [ -n "$best" ] || return 1
+  jig_utc_from_epoch "$best"
+}
+
+# jig_origin_counts <base> — "<behind> <ahead>": the commits origin/<base> has that
+# <base> here does not, and the other way, as of the last fetch; non-zero when either
+# branch is missing. No network.
+jig_origin_counts() {
+  local out
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/heads/$1^{commit}" >/dev/null 2>&1 || return 1
+  git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$1^{commit}" >/dev/null 2>&1 || return 1
+  out=$(git -C "$JIG_PROJECT" rev-list --left-right --count "refs/remotes/origin/$1...refs/heads/$1" 2>/dev/null) || return 1
+  case "$out" in
+    *[!0-9[:space:]]* | '') return 1 ;;
+  esac
+  printf '%s %s\n' "${out%%[[:space:]]*}" "${out##*[[:space:]]}"
 }
 
 # jig_utc_from_epoch <seconds> — the time as UTC `YYYY-MM-DDTHH:MM:SSZ`, or

@@ -100,3 +100,11 @@ before the spec existed, and a rule for a task that was already started.
   on a pull request see all of it before `main` moves.
 - The mechanism is proven by tests of its commands; its acceptance is the next release, planned and
   made with it.
+
+> **Amendment (2026-11-12).** A release no longer needs a spec with an epic. By default the tasks
+> merge into the default branch one by one and the notes task, cut last from the freshest default
+> branch, is the release; a release epic is kept for tasks that must reach the default branch
+> together. The notes cover everything since the last tag up to `origin/<default>`, not up to the
+> epic, and record the commit they describe (`jig task set <id> notes_through`), which `task ship`,
+> `spec ship` and CI check against the base's tip
+> (adr-20261112-release-notes-name-the-commit-they-describe).

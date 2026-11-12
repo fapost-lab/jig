@@ -292,6 +292,11 @@ such a change raises minor). After the merge, CI runs the tests and tags `v<JIG_
 merge that leaves the version alone creates nothing, and a version lower than the latest release
 fails the job. Nobody tags by hand (ADR-0034).
 
+This repository installs Jig from itself (`.ai/manifest`: `jig.source: .`, link mode), so the same
+pull request runs `jig upgrade` after raising the version: `.ai/manifest` then records the release
+the moment it exists, and no pull request after it exists only to record it. The `changelog` job
+refuses a release whose manifest records another version.
+
 A release is planned with the `jig-release` skill: it proposes which live tasks go in and at what
 level, builds them on a release epic, and has a task of its own write the notes against the merged
 pull requests' diffs (adr-20261002-a-release-is-a-spec-with-an-epic).

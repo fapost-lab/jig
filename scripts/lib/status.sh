@@ -230,6 +230,7 @@ _status_report() {
   fi
   _status_new_release_hint
   _status_share_hint
+  _status_global_skill
 
   # Drift: one pass over the manifest, then one git process for every file
   # still on disk (jig_hash_list). A manifest_hash_of and a jig_hash per path
@@ -2470,6 +2471,20 @@ IDS
   _status_attention_per_task worktree-kept "$kept" "A worktree was kept because it still holds work" "$hk_note" \
     "Commit or discard what is left in the task's worktree; the next housekeeping removes it."
 
+  # 6b. The base here is behind origin's, as of the last fetch: what lands there
+  # (a decision, a merged task) is not in this checkout until it is brought up
+  # (adr-20261112-refresh-brings-the-clone-up-to-origin). Before the knowledge
+  # items, which may be asking for what origin already decided.
+  local obase ocounts ofetched
+  obase=$(cfg git.base_branch main)
+  if ocounts=$(jig_origin_counts "$obase") && [ "${ocounts%% *}" -gt 0 ]; then
+    ofetched=$(jig_origin_fetched_at) || ofetched=""
+    _status_attn base-behind-origin project "" "" \
+      "This checkout is behind origin" \
+      "$obase is ${ocounts%% *} commit(s) behind origin/$obase${ofetched:+, as of the fetch at $ofetched}" \
+      "jig refresh"
+  fi
+
   # 7. Knowledge nobody has agreed to yet reaches no agent (ADR-0016).
   if [ -n "$_SC_PROPOSALS" ] && [ "$_SC_PROPOSALS" -gt 0 ]; then
     _status_attn knowledge-proposed project "" "" "Knowledge is waiting for your decision" \
@@ -2637,7 +2652,27 @@ ATTN
   fi
   json_str_or_null "$_SC_AT"
   jig_read_snapshot_end
-  printf '{"attention":[%s],"housekeeping":%s,"knowledge_counts_at":%s}\n' "$objs" "$hk" "$_JSON"
+  local kc="$_JSON" origin
+  _status_origin_json
+  origin=$_JSON
+  printf '{"attention":[%s],"housekeeping":%s,"knowledge_counts_at":%s,"origin":%s}\n' "$objs" "$hk" "$kc" "$origin"
+}
+
+# _status_origin_json — _JSON <- how this clone stands against origin, as of the last
+# fetch: the base, when the clone last fetched, and how far the base is behind and
+# ahead of origin's (`null` each when it cannot be told). No network.
+_status_origin_json() {
+  local base fetched counts o
+  base=$(cfg git.base_branch main)
+  fetched=$(jig_origin_fetched_at) || fetched=""
+  json_quote "$base"; o="{\"base\":$_JSON"
+  json_str_or_null "$fetched"; o="$o,\"fetched_at\":$_JSON"
+  if counts=$(jig_origin_counts "$base"); then
+    o="$o,\"behind\":${counts%% *},\"ahead\":${counts#* }}"
+  else
+    o="$o,\"behind\":null,\"ahead\":null}"
+  fi
+  _JSON=$o
 }
 
 # _status_html_phase_run — "Phase run": the roadmap phases a coordinator is
@@ -3312,6 +3347,27 @@ _status_share_hint() {
   done <<EOF
 $(jig_share_candidates "$JIG_PROJECT")
 EOF
+}
+
+# _status_global_skill — one line when Jig placed jig-pr-review for this
+# person in Claude Code and it is not what this project installs. Claude Code
+# lets a person's skill win over a project's of the same name, so the
+# project's copy is not the one that runs; while that skill is being changed
+# here, this line is how anyone learns it
+# (adr-20261112-the-pr-review-skill-is-installed-per-user). Read-only: the
+# version is declared, never run (jig_declared_version).
+_status_global_skill() {
+  local source path mine ver
+  mine="$JIG_PROJECT/.claude/skills/jig-pr-review"
+  [ -d "$mine" ] || return 0
+  [ -f "$JIG_LIB/globalskill.sh" ] || return 0
+  source=$(jig_global_source) || return 0
+  # shellcheck source=globalskill.sh
+  . "$JIG_LIB/globalskill.sh"
+  path=$(jig_global_skill_installed "$source") || return 0
+  diff -rq -x "$JIG_GLOBAL_SKILL_MARKER" "$path/" "$mine/" >/dev/null 2>&1 && return 0
+  ver=$(jig_declared_version "$source" 2>/dev/null) || ver=unknown
+  printf '%s\n' "pr-review skill: personal $ver shadows this project's ($path)"
 }
 
 # _status_new_release_hint — the one line the plain-text report shows when

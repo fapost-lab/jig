@@ -21,7 +21,8 @@ paths:
   - templates/gitattributes
   - scripts/lib/section.sh
   - scripts/lib/output.sh
-reviewed_at: 2026-11-06
+  - scripts/lib/globalskill.sh
+reviewed_at: 2026-11-12
 ---
 # Install
 
@@ -250,6 +251,11 @@ put vendor-specific behaviour underneath vendor-neutral skills, which is the inv
 - `scripts/jig.cmd` — the PowerShell entry; `.github/WINDOWS_RELEASE_CHECKLIST.md` — what CI cannot
   check before a release that changes installation on Windows.
 - `scripts/lib/self-update.sh` — `cmd_self_update`.
+- `scripts/lib/globalskill.sh` — the one framework file outside a project: `jig-pr-review` linked
+  (or copied with a `.jig-global` marker) into `~/.claude/skills` and `~/.agents/skills` by
+  `install.sh` and `self-update`, never over the person's own
+  (adr-20261112-the-pr-review-skill-is-installed-per-user). Sourced by `install.sh` from the
+  checkout it installed, so it uses no other library.
 - `scripts/lib/common.sh` — `jig_release_version`, `jig_version_newer`, `jig_newest_release`,
   `jig_global_executable`, `jig_declared_version`, `jig_version_of`, and for released sources
   `jig_source_release`, `jig_source_version`, `jig_version_core`, `jig_source_where`,

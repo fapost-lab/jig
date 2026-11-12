@@ -77,7 +77,7 @@ MUST:     call jig_record_changed right after the mv that lands the write, or ca
 MUST NOT: raise the revision before the write lands — except a write checked against the
           caller's revision, which claims the next one first (jig_revision_claim), moves its
           file into place right after, and then calls jig_record_changed (`jig queue`,
-          `task resume`, `task set <id> status consolidated`;
+          `task resume`, `task pause`, `task set <id> status consolidated`;
           adr-20261019-the-queue-is-one-file-written-against-a-revision) — or once at the command's end
           instead of after each write — except a batch whose many writes are one
           change and that runs only as its own command, never inside $(...):

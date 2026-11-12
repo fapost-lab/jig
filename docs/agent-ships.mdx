@@ -359,8 +359,8 @@ jig config set agent.git pr autopilot.git merge --local
 
 With that, a task you ship yourself stops at an open pull request, and a run merges its own once CI
 passed. The other way round (`agent.git: merge`, `autopilot.git: pr`) a run stops at the pull
-request. `release.merge: human` still keeps every release's merge yours: an epic's final pull request,
-and a task whose change raises the version.
+request. `release.merge: human` still keeps every release's merge yours: any pull request whose change
+raises the version.
 
 You can see which one decides: `jig status` prints `autopilot.git: merge (from autopilot.git)` or
 `(from agent.git)`, `jig task route <id>` and `jig task autopilot <id> start` print
@@ -387,24 +387,32 @@ prints it (`mode: declare`, `mode: epic`, `mode: final` or `mode: remove`) and g
 |---|---|---|---|---|
 | The spec and its epic line reach the main branch | yours | committed on `spec/<id>` | and pushed | and a pull request into main |
 | The epic branch, after it is cut or after main was merged into it | yours | yours | pushed | pushed |
-| The finished epic: the spec's removal with the version bump | yours | committed on `finish/<id>`, cut from the epic | and pushed | and a pull request into main |
+| The finished epic: the spec's removal (and, on a release epic, the version bump) | yours | committed on `finish/<id>`, cut from the epic | and pushed | and a pull request into main |
 | A finished spec with no epic, removed by `jig spec close` | yours | committed on `close/<id>` | and pushed | and a pull request into main |
 
 What stays yours at every level:
 
 - **Finishing.** The agent finishes an epic only when you say every phase is in.
-- **The version.** You choose patch, minor or major when the epic is declared; at the finish the
-  agent raises the version by that choice, or proposes one and waits for your yes when none was
-  recorded.
-- **Merging.** Merging the epic's final pull request is the release. Only an unattended run at
-  `merge` (`autopilot.git`, or `agent.git` when that is not set) does it — with a merge commit, once CI passed and every roadmap item is done — and never
-  for a `major` release, which it opens as a draft for you. Set `release.merge: human` in
-  `.ai/config.local.yaml` and even that run leaves the merge to you.
-- **A release made as a task.** A task whose change raises the version into the default branch —
+- **The version.** A feature epic's final pull request merges the finished feature without
+  touching the version; `jig spec ship` refuses one that raises it. The release comes after, made
+  apart by the `jig-release` skill (below). An epic that `jig-release` declared as a release carries
+  a `Release:` line with the level you chose, and its final pull request raises the version by it.
+- **Merging.** Only an unattended run at `merge` (`autopilot.git`, or `agent.git` when that is not
+  set) merges an epic's final pull request — with a merge commit, once CI passed and every roadmap
+  item is done. On a release epic it never merges a `major` release, which it opens as a draft for
+  you, and `release.merge: human` in `.ai/config.local.yaml` leaves even that merge to you.
+- **A release.** A pull request whose change raises the version into the default branch —
   `VERSION`, or the `version` of `package.json`, `composer.json`, `pyproject.toml` or `Cargo.toml` at
-  the repository's root — is a release too, and `jig task ship` merges it by the same rule: only in
+  the repository's root — is a release, and `jig task ship` merges it by the same rule: only in
   an unattended run, only with `release.merge: agent`, never a `major` one, which it opens as a
   draft. It says so: `task ship: this change raises the version in package.json: 1.4.0 -> 1.5.0`.
+- **Release notes cover everything they release.** The task that writes a release's notes records
+  which commit of the default branch they describe (`jig task set <id> notes_through <sha>`), and
+  `jig task ship` writes it into the commit as `Release-Notes-Through: <sha>`. From level `pr`, a
+  release is refused before anything is sent while the default branch has commits after it — work
+  merged after the notes were written would otherwise reach the release undescribed — and checked
+  again right before a merge. When it is refused, describe what came in, record the new tip and
+  ship again.
 - **Protected epic branches.** The epic is never pushed to after it is cut: the finish goes on a
   branch cut from it, `finish/<id>`, and the pull request into main comes from there, so a
   repository that protects `epic/*` like main needs no bypass.
@@ -474,19 +482,26 @@ To ask GitHub something about the project yourself as that account, put `jig` in
 - Each `gh` call gets that account's stored token for the call only (`gh auth token --user`, gh
   2.40 or later). Nothing is written to gh's configuration.
 - A `GH_TOKEN` or `GITHUB_TOKEN` already in the environment wins over everything, as it does for
-  `gh` itself, so CI and a project `.envrc` keep working.
+  `gh` itself, so CI and a project `.envrc` keep working. It also wins when you did not mean it to:
+  a tool started from another project's directory inherits that directory's `GH_TOKEN`. When
+  GitHub refuses to open a pull request ("must be a collaborator"), the failure names the account
+  Jig asked as and where it came from — `github.account`, the one found, or a token in the
+  environment, with the variable to remove.
 - Pushing and fetching over HTTPS go as the same account — the one you named, the one Jig found
   among several, or the only one `gh` holds: for each of those `git` calls, Jig sets aside your
   credential helper for that host and has `git` ask `gh` for that account's token. Nothing is
   stored in your helper or in git's configuration. If your helper held another GitHub user's
   credentials, the push now goes as the `gh` account instead; a `GH_TOKEN` in the environment, or
   an SSH `origin`, leaves `git` as it was. Over SSH your key decides the account.
-- When several accounts may push and none is named, a ship stops before its push, at every
-  `agent.git` level, and says how to name one; nothing is sent.
+- When several accounts may push, the active one is not among them and none is named, a ship
+  stops before its push and says how to name one; nothing is sent. Over HTTPS that holds at every
+  `agent.git` level; over SSH only at `pr` and `merge`, where the pull request needs an account —
+  at `push` your key decides.
 - A push that changes a file under `.github/workflows` needs the `workflow` scope on that
   account's `gh` token. `gh auth refresh -s workflow` adds it to the active account only; for
   another one, make it active for that one command with `gh auth switch --user <login>`, then
-  switch back. Jig itself never switches.
+  switch back, while no other session is working — the active account is the whole machine's.
+  Jig itself never switches, and your agent never asks you to.
 - `jig pr fetch`, which reads a colleague's pull request, still fetches as your credential helper
   answers.
 - The choice is remembered in `.ai/runtime/gh-account`; delete the file to have Jig look again.

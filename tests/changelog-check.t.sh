@@ -48,6 +48,17 @@ cc_build_origin() {
   (cd "$work" && git remote add origin "$bare" && git push -q origin main --tags)
 }
 
+# cc_release_commit <dir> [through] — a commit on top of the checkout that
+# carries a Release-Notes-Through trailer naming <through> (default: origin/main,
+# the base as it is now), the way `jig task ship` writes it for a release.
+cc_release_commit() {
+  local dir="$1" through="${2:-origin/main}" sha
+  sha=$(git -C "$dir" rev-parse "$through")
+  git -C "$dir" commit -q --allow-empty -m "Release notes
+
+Release-Notes-Through: $sha"
+}
+
 # cc_tag <dir> <tag> <commit> <message> — an annotated tag directly on the
 # fixture repo, to seed a release that already exists before the script runs.
 cc_tag() {
@@ -74,6 +85,7 @@ test_changelog_check_entry_for_the_new_version_passes() {
 
 - The first release."
   cc_build_origin "$repo" "$bare"
+  cc_release_commit "$repo"
 
   run cc_check "$repo"
   assert_eq 0 "$RC" "changelog-check should pass when the version has a section: $OUT"
@@ -102,6 +114,7 @@ test_changelog_check_heading_with_title_passes() {
 
 - Autopilot."
   cc_build_origin "$repo" "$bare"
+  cc_release_commit "$repo"
 
   run cc_check "$repo"
   assert_eq 0 "$RC" "a dated heading is still the version's section: $OUT"
@@ -198,6 +211,7 @@ test_changelog_check_explicit_path_is_used() {
   local repo="$PWD/repo" bare="$PWD/origin.git"
   cc_new_repo "$repo" 0.3.0
   cc_build_origin "$repo" "$bare"
+  cc_release_commit "$repo"
   printf '## 0.3.0 — elsewhere\n' > "$PWD/elsewhere.mdx"
 
   run cc_check "$repo" --changelog "$PWD/elsewhere.mdx"
@@ -268,4 +282,144 @@ test_changelog_check_changelog_flag_without_a_value_fails() {
   run cc_check "$repo" --changelog
   [ "$RC" != 0 ] || fail "changelog-check must refuse --changelog without a path: $OUT"
   assert_contains "$OUT" "changelog-check: error: --changelog needs a path"
+}
+
+# --- a repository that installs Jig from itself records its own release ------
+
+# cc_write_manifest <dir> <source> <version> — an .ai/manifest header, committed.
+cc_write_manifest() {
+  local dir="$1" source="$2" version="$3"
+  (
+    cd "$dir" || exit 1
+    mkdir -p .ai
+    printf '# jig manifest\njig.version: %s\njig.source: %s\njig.mode: link\n' "$version" "$source" > .ai/manifest
+    git add .ai/manifest
+    git commit -q -m "manifest"
+  )
+}
+
+test_changelog_check_refuses_a_self_install_whose_manifest_lags_the_release() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_write_manifest "$repo" . 0.1.0
+  cc_build_origin "$repo" "$bare"
+
+  run cc_check "$repo"
+  assert_eq 1 "$RC" "a lagging manifest must fail: $OUT"
+  assert_contains "$OUT" ".ai/manifest records jig.version 0.1.0 while this branch releases 0.2.0; run jig upgrade"
+}
+
+test_changelog_check_passes_a_self_install_that_records_the_release() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_write_manifest "$repo" . 0.2.0
+  cc_build_origin "$repo" "$bare"
+  cc_release_commit "$repo"
+
+  run cc_check "$repo"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "describes 0.2.0"
+}
+
+test_changelog_check_ignores_the_manifest_of_a_project_installed_from_elsewhere() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_write_manifest "$repo" global 0.1.0
+  cc_build_origin "$repo" "$bare"
+  cc_release_commit "$repo"
+
+  run cc_check "$repo"
+  assert_eq 0 "$RC" "$OUT"
+}
+
+# --- a release's notes must describe all of the base -------------------------
+
+# cc_release_fixture <repo> <bare> — an unreleased 0.2.0 with its changelog
+# entry, origin built from it, and a release branch checked out on top.
+cc_release_fixture() {
+  local repo="$1" bare="$2"
+  cc_new_repo "$repo" 0.2.0
+  cc_write_changelog "$repo" "## 0.2.0 — 2026-11-12"
+  cc_build_origin "$repo" "$bare"
+  git -C "$repo" checkout -q -b release
+}
+
+test_changelog_check_release_without_a_notes_trailer_fails() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_release_fixture "$repo" "$bare"
+  git -C "$repo" commit -q --allow-empty -m "plain commit"
+
+  run cc_check "$repo"
+  assert_eq 1 "$RC" "a release naming no base commit must fail: $OUT"
+  assert_contains "$OUT" "the release notes do not describe all of origin/main: none of its commits names"
+}
+
+test_changelog_check_release_whose_trailer_is_the_base_tip_passes() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_release_fixture "$repo" "$bare"
+  cc_release_commit "$repo"
+
+  run cc_check "$repo"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "describes 0.2.0"
+}
+
+test_changelog_check_release_with_a_commit_on_the_base_after_the_trailer_fails() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_release_fixture "$repo" "$bare"
+  cc_release_commit "$repo"
+  # main moves on after the notes were written.
+  git -C "$repo" checkout -q main
+  git -C "$repo" commit -q --allow-empty -m "feature that landed late"
+  git -C "$repo" push -q origin main
+  git -C "$repo" checkout -q release
+
+  run cc_check "$repo"
+  assert_eq 1 "$RC" "a base that moved past the trailer must fail: $OUT"
+  assert_contains "$OUT" "the release notes do not describe all of origin/main: 1 commit(s) reached the base"
+  assert_contains "$OUT" "feature that landed late"
+}
+
+test_changelog_check_a_base_other_than_main_is_not_checked_for_notes() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_release_fixture "$repo" "$bare"
+  # A release epic: its own commits come after the main commit the notes name.
+  git -C "$repo" branch epic/x main
+  git -C "$repo" checkout -q epic/x
+  git -C "$repo" commit -q --allow-empty -m "a phase of the epic"
+  git -C "$repo" push -q origin epic/x
+  git -C "$repo" checkout -q release
+  cc_release_commit "$repo"
+
+  run cc_check "$repo" --base origin/epic/x
+  assert_eq 0 "$RC" "a pull request into an epic is checked against main later: $OUT"
+  assert_contains "$OUT" "the notes are checked against main when the release reaches it"
+}
+
+test_changelog_check_an_unresolvable_main_fails() {
+  local repo="$PWD/repo" bare="$PWD/origin.git"
+  cc_release_fixture "$repo" "$bare"
+  cc_release_commit "$repo"
+  git -C "$repo" update-ref -d refs/remotes/origin/main
+
+  run cc_check "$repo"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "cannot resolve the base 'origin/main'"
+}
+
+test_changelog_check_released_version_needs_no_notes_trailer() {
+  local repo="$PWD/repo" bare="$PWD/origin.git" head
+  cc_new_repo "$repo" 0.2.0
+  head=$(git -C "$repo" rev-parse HEAD)
+  cc_tag "$repo" v0.2.0 "$head" "Jig 0.2.0"
+  cc_build_origin "$repo" "$bare"
+  git -C "$repo" checkout -q -b feature
+  git -C "$repo" commit -q --allow-empty -m "plain commit"
+
+  run cc_check "$repo"
+  assert_eq 0 "$RC" "a version already tagged reads no trailer: $OUT"
+  assert_contains "$OUT" "already released"
 }

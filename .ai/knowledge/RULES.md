@@ -24,7 +24,14 @@
   whichever way the probe answers. (ADR-0033) Its Windows bootstrapper, `install.ps1`, removes only the
   Git installer it downloaded in that run; with `-Uninstall` it removes the `jig` link only
   when it points into the install directory, and that directory only when it is a jig source
-  tree whose `git status` is clean. (ADR-0033, ADR-0037) `jig spec new` is the third: when a template copy fails it
+  tree whose `git status` is clean. (ADR-0033, ADR-0037) The per-user `jig-pr-review`
+  (`scripts/lib/globalskill.sh`, run by `install.sh` and `jig self-update`) deletes nothing but its
+  own, under `~/.claude/skills/` and `~/.agents/skills/`: a `jig-pr-review` directory carrying Jig's
+  `.jig-global` marker, and only after it was moved aside and a fresh copy put in its place; and
+  the temporary paths it named with its own process id. It never deletes a link, and anything else
+  at that path is left alone; `install.ps1 -Uninstall` removes
+  that marked copy or a link into its install directory, nothing else.
+  (adr-20261112-the-pr-review-skill-is-installed-per-user) `jig spec new` is the third: when a template copy fails it
   removes only the two temporary files it named in `.ai/specs/<id>/` and then `rmdir`s the
   directory it created with a plain `mkdir` in that run; `rmdir` refuses anything that is
   not empty. (ADR-0035) `jig upgrade` is the fourth: in copy mode it deletes a file only when the
