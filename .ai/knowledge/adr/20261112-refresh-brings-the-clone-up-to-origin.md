@@ -59,6 +59,16 @@ to spare a person.
 - A base that cannot move is an answer, not a failure: the command exits 0 and `base.outcome` says
   why, so a program shows it in words. A fetch that fails is an answer too (`fetch.outcome:
   failed`); the base step then works on what the last fetch left.
+- A refresh that changed what the clone knows of origin raises the clone's revision once
+  (adr-20261016-the-clone-revision-is-a-claimed-name): when any `refs/remotes/origin/*` ref or the
+  base differs after it from before the fetch, since `origin.behind`, `landed` and a write's
+  `pushed` are read from those refs — whether or not the base itself could move. One that changed
+  neither (nothing new, a failed or skipped fetch) raises nothing: only `origin.fetched_at` moved,
+  a time, as `knowledge_counts_at` moving alone raises nothing; a person's own `git fetch` moves it
+  with no raise anyway; and a raise on every refresh would make a program that refreshes when its
+  page opens fail its own writes sent with the revision it read (`stale-revision`). A write the
+  refresh closed raises it on its own (`ot_record_write`), so a refresh that did both raises twice:
+  two changes, not a double count to fix.
 - `jig status --json` carries `origin`: `fetched_at` — the newest non-empty `FETCH_HEAD` of every
   worktree of the clone, Jig's own trees included, since each worktree keeps its own. Any fetch
   writes it, of any branch, so it says when the clone last reached origin, not that the base came
@@ -91,6 +101,9 @@ to spare a person.
   `git branch -f` refuses those, and the old value is checked just before it.
 - **Exit with a refusal code when the base cannot move**: a program would read an expected state
   (changes in the checkout) as a failure.
+- **Raise the revision on every refresh, or on every fetch that reached origin**: covers
+  `fetched_at`, but a program that refreshes as its page opens would see its own writes refused as
+  stale each time, for a change that is only a time.
 - **A stamp file Jig writes on each fetch**: misses every fetch Jig did not make (a person's `git
   pull`, an editor's background fetch); `FETCH_HEAD` sees them all.
 

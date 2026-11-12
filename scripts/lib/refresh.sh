@@ -43,9 +43,18 @@ _refresh_main() {
   done
   jig_require_init
   _REFRESH_BASE=$(cfg git.base_branch main)
+  local refs_before
+  refs_before=$(_refresh_refs)
   _refresh_fetch
   _refresh_base
   _refresh_writes
+  # A refresh that changed what the clone knows of origin, or moved the base, changed what
+  # reads report (origin.behind, landed knowledge, a write's `pushed`): raise the revision
+  # once, after the moves landed. A fetch that brought nothing new raises nothing; only
+  # origin.fetched_at moved, a time (adr-20261112-refresh-brings-the-clone-up-to-origin).
+  # A closed write raised it already (ot_record_write). jig_revision_bump, not
+  # jig_record_changed: the page is redrawn right below.
+  [ "$(_refresh_refs)" = "$refs_before" ] || jig_revision_bump
   # What the status page shows moved with the base (base-behind-origin, landed knowledge).
   jig_status_page_touch >/dev/null 2>&1 || true
   if [ -n "$_REFRESH_AS_JSON" ]; then
@@ -53,6 +62,13 @@ _refresh_main() {
   else
     _refresh_text
   fi
+}
+
+# _refresh_refs — what refresh can move, one ref per line: every origin/ ref the fetch
+# writes and the base; nothing when git cannot list them.
+_refresh_refs() {
+  git -C "$JIG_PROJECT" for-each-ref --format='%(refname) %(objectname)' \
+    refs/remotes/origin "refs/heads/$_REFRESH_BASE" 2>/dev/null || true
 }
 
 # _refresh_fetch — fetch origin as housekeeping does (_hk_fetch): the clone's own
