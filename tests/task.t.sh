@@ -5094,6 +5094,61 @@ test_task_ship_pr_level_refuses_before_pushing_when_github_account_is_not_held()
   assert_eq "0" "$(grep -c '^pr create' gh-token.log || true)"
 }
 
+# ship_stub_gh_refusing — ship_stub_gh_ambiguous's accounts, but `pr create`
+# fails as GitHub does for an account that is no collaborator, and `api user`
+# answers the login behind the token: carol for an environment token, the
+# account of a stored one otherwise.
+ship_stub_gh_refusing() {
+  ship_stub_gh_ambiguous
+  mv stub-bin/gh stub-bin/gh.ambiguous
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr create")
+    printf '%s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> gh-token.log
+    printf 'pull request create failed: GraphQL: must be a collaborator (createPullRequest)\n' >&2
+    exit 1 ;;
+esac
+if [ "$1" = api ] && [ "${4:-}" = user ]; then
+  case "${GH_TOKEN:-}" in
+    tok-*) printf '%s\n' "${GH_TOKEN#tok-}" ;;
+    *) printf 'carol\n' ;;
+  esac
+  exit 0
+fi
+exec "$(dirname "$0")/gh.ambiguous" "$@"
+STUB
+  chmod +x stub-bin/gh
+}
+
+# A pull request GitHub refuses names the account it was asked as. A token in
+# the environment wins over github.account, and the failure says so and how to
+# get rid of it: a service started from a directory whose .envrc sets GH_TOKEN
+# otherwise fails with nothing but "must be a collaborator".
+test_task_ship_pr_create_failure_names_an_environment_token_and_its_account() {
+  ship_ambiguous_setup pr
+  ship_stub_gh_refusing
+  ship_cfg_local github.account bob
+  run env GH_TOKEN=from-a-direnv-envrc "$JIG_BIN" task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "gh pr create failed"
+  assert_contains "$OUT" "must be a collaborator"
+  assert_contains "$OUT" "It asked GitHub as carol: GH_TOKEN is set in the environment Jig runs in"
+  assert_contains "$OUT" "Remove GH_TOKEN from that environment"
+  assert_not_contains "$OUT" "from-a-direnv-envrc"
+}
+
+test_task_ship_pr_create_failure_names_the_account_the_clone_names() {
+  ship_ambiguous_setup pr
+  ship_stub_gh_refusing
+  ship_cfg_local github.account bob
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "must be a collaborator"
+  assert_contains "$OUT" "It asked GitHub as bob (github.account)."
+  assert_not_contains "$OUT" "tok-"
+}
+
 # ship_level_ignores_accounts <level> — at a level below pr, accounts that
 # would be refused at pr do not stop the ship, and gh is not asked about them.
 ship_level_ignores_accounts() {
