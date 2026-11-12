@@ -10,7 +10,7 @@ paths:
   - tests/pr.t.sh
   - scripts/lib/prgitlab.sh
 summary: Why jig pr followup reads the earlier review's head and open threads back from the forge's markers, keeps or reports the reviewed commit after a force-push, takes new comments only from lines added since it, and replies fixed/open in each thread on GitHub and GitLab.
-reviewed_at: 2026-11-11
+reviewed_at: 2026-11-12
 ---
 # A follow-up reads its earlier review back from the forge and answers each of its own threads
 
@@ -63,7 +63,8 @@ earlier review back from the forge.
 - **What it prints.**
   - `interdiff:` (`git diff <follows> <head>`).
   - `range-diff:`, when the old head's merge base with the base branch differs from the
-    review's: a rebase.
+    review's: a rebase. Both are measured from the same commit — on GitHub the pull request's
+    own base commit the fetch recorded (`pr_base_sha`), so a base that moved alone is no rebase.
   - Each thread, `=== thread <k> <pos> <path>`, with its URL and the earlier comment's text.
   - The earlier summary. Findings the first review moved there have no thread, and the
     follow-up's own summary answers them.

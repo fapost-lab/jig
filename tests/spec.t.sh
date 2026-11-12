@@ -4110,6 +4110,10 @@ test_spec_ship_final_release_epic_without_a_notes_trailer_is_not_sent() {
   run jig spec ship idea-x --message-file msg.txt
   assert_eq 1 "$RC"
   assert_contains "$OUT" "spec ship: not sent: the epic raises the version, and none of its commits names the commit its release notes describe"
+  # Where the trailer goes: the check reads only the epic's commits, so a
+  # trailer in this ship's own --message-file would never count.
+  assert_contains "$OUT" "the trailer counts only on a commit the epic already has, never in spec ship's own --message-file"
+  assert_contains "$OUT" "jig task set <task> notes_through <sha>, ship that task into the epic, then run spec ship again"
   assert_eq "" "$(git --git-dir=origin.git for-each-ref refs/heads/finish)"
   assert_eq "epic/idea-x" "$(git symbolic-ref --short HEAD)"
   assert_no_file gh-create.argv
@@ -4123,6 +4127,7 @@ test_spec_ship_final_release_epic_is_not_sent_when_main_moved_past_the_notes() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" "spec ship: not sent: the epic raises the version, and 1 commit(s) reached the base after the commit the release notes describe"
   assert_contains "$OUT" "work merged after the notes"
+  assert_contains "$OUT" "ship that task into the epic, then run spec ship again"
   assert_eq "" "$(git --git-dir=origin.git for-each-ref refs/heads/finish)"
   assert_no_file gh-create.argv
 }

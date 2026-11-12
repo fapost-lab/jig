@@ -274,6 +274,98 @@ test_refresh_a_failed_fetch_is_an_answer_and_the_base_is_judged_on_what_is_known
   assert_contains "$OUT" 'main: up to date with origin/main'
 }
 
+# --- the clone's revision -------------------------------------------------------
+#
+# A refresh that changed what the clone knows of origin, or moved the base, raises the
+# revision; one that changed neither leaves it, though the fetch's time moved
+# (adr-20261112-refresh-brings-the-clone-up-to-origin). Read from the directory, as
+# tests/json.t.sh does, so that no read of ours raises it.
+
+# _rf_rev — the clone's revision: the highest numeric name in .ai/runtime/revision, or 0.
+_rf_rev() {
+  local n best=0 f
+  for f in .ai/runtime/revision/[0-9]*; do
+    [ -e "$f" ] || continue
+    n=${f##*/}
+    case "$n" in '' | *[!0-9]*) continue ;; esac
+    [ "$n" -le "$best" ] || best=$n
+  done
+  printf '%s\n' "$best"
+}
+
+test_refresh_that_fast_forwards_the_base_raises_the_revision() {
+  _rf_repo
+  _rf_advance
+  local before
+  before=$(_rf_rev)
+  run jig refresh --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"outcome":"fast-forwarded"'
+  [ "$(_rf_rev)" -gt "$before" ] || fail "revision stayed at $before after a fast-forward"
+}
+
+test_refresh_that_fetched_news_of_a_base_it_cannot_move_raises_the_revision() {
+  _rf_repo
+  printf 'local\n' > local.txt
+  git add local.txt
+  git commit -q -m "local only"
+  _rf_advance
+  local before
+  before=$(_rf_rev)
+  run jig refresh --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"outcome":"diverged"'
+  [ "$(_rf_rev)" -gt "$before" ] || fail "revision stayed at $before after origin/main moved"
+}
+
+test_refresh_moving_a_base_checked_out_elsewhere_raises_the_main_checkouts_revision() {
+  _rf_repo
+  git checkout -q -b work
+  git worktree add -q "$PWD/wt-main" main
+  printf 'wt-main/\n' >> .git/info/exclude
+  _rf_advance
+  git fetch -q origin
+  local before
+  before=$(_rf_rev)
+  ( cd wt-main && run jig refresh --json && assert_contains "$OUT" '"outcome":"fast-forwarded"' )
+  [ "$(_rf_rev)" -gt "$before" ] || fail "revision stayed at $before after the base moved in a worktree"
+}
+
+test_refresh_that_changed_nothing_leaves_the_revision() {
+  _rf_repo
+  run jig refresh
+  local before
+  before=$(_rf_rev)
+  run jig refresh --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"outcome":"up-to-date"'
+  assert_eq "$before" "$(_rf_rev)"
+}
+
+test_refresh_with_a_failed_fetch_leaves_the_revision() {
+  _rf_repo
+  git remote set-url origin "$PWD/nowhere.git"
+  run jig refresh
+  local before
+  before=$(_rf_rev)
+  run jig refresh --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"fetch":{"outcome":"failed"'
+  assert_eq "$before" "$(_rf_rev)"
+}
+
+test_refresh_without_an_origin_leaves_the_revision() {
+  _rf_repo
+  git remote remove origin
+  run jig refresh
+  local before
+  before=$(_rf_rev)
+  run jig refresh --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"fetch":{"outcome":"skipped"'
+  assert_eq "$before" "$(_rf_rev)"
+}
+
 # --- the forms ------------------------------------------------------------------
 
 test_refresh_json_is_an_envelope_with_the_fetch_and_the_base() {
