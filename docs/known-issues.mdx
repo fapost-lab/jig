@@ -23,6 +23,22 @@ them, see [What's next](/roadmap).
 
 {/* Each entry names the Jig task that closes it. The entry is removed by that task's own pull request, the one that merges the fix. Rule: .ai/knowledge/conventions/documentation.md */}
 
+{/* Closed by task prepare-for-prod (F4): removed once a run against a real GitLab project confirms the path. */}
+### "Prepare for prod" has not been tried against a real GitLab project
+
+**What you see.** Nothing different, as far as is known. On GitLab, `jig task promote` looks up the
+promotion and the staging merge request with `glab mr list --source-branch … --target-branch …`
+(and `--all` for the staging one). Only GitHub has been checked against real projects; on GitLab the
+answers are read the same way but have only been tried against a stand-in. Whether GitLab marks a
+staging merge request merged once its branch is in the staging branch is not checked either.
+
+**What it costs.** If `glab` answers differently, the command may not find a promotion that is
+already open and try to open a second one, which GitLab refuses, or the pull request may get the
+latest commit's subject as its title instead of the staging merge request's.
+
+**What to do instead.** Check the merge request list on GitLab after the first promotion, and give
+the title yourself with `--title` if it is not the one you want.
+
 {/* Closed by task knowledge-json-findings (F6). */}
 ### One rare character turns every non-ASCII letter of a knowledge answer into `?`
 

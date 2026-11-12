@@ -117,7 +117,11 @@
   through a validated id, and that is what holds the path inside `.ai/specs/`, a valid id having
   no separator in it to climb out with. Two of them then resolve the directory and refuse one
   that lands outside anyway: `spec remove`, and housekeeping's own purge of a workspace.
-  (ADR-0006, ADR-0035)
+  (ADR-0006, ADR-0035) The trial merge of `jig task promote` (`jig_merge_conflicts`, common.sh) adds
+  one git deletion of the same shape as a task worktree's: the detached worktree it made in that run
+  under a `mktemp -d` directory, after `git merge --abort`, by `git worktree remove` without
+  `--force`; the directory itself goes with the exit cleanup, as every `mktemp` path does
+  (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone).
   **Nothing computes the agreement between this paragraph and the code, and the paragraph
   lapses.** #95 corrected it four times, each time from the single phrase somebody had found,
   and the pass after that found three more places at once: two `rmdir`s and a link probe in
