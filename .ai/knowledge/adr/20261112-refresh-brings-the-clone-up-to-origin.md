@@ -11,6 +11,7 @@ paths:
   - scripts/lib/status.sh
   - scripts/lib/knowledge.sh
 summary: Why jig refresh fetches and fast-forwards the base without moving the checkout or refusing a dirty one, why reads say how old the clone's view of origin is, and why a decision origin's base already holds reads as landed.
+reviewed_at: 2026-11-12
 ---
 # ADR: `jig refresh` brings the clone up to origin, and reads say how far behind it is
 
@@ -31,7 +32,15 @@ to spare a person.
 
 - `jig refresh [--json]` is the one command a program runs to make what it shows current. It fetches
   origin as housekeeping does (`_hk_fetch`: the clone's account, no prompt, `--no-prune`), bounded by
-  `jig_net`, then fast-forwards `git.base_branch` to `origin/<base>`, and does nothing else.
+  `jig_net`, then fast-forwards `git.base_branch` to `origin/<base>`, then closes the writes in
+  Jig's own tree that are over, and does nothing else.
+- Closing a write: after a fetch that reached origin, each write `ot_waiting` still counts is judged
+  as `jig writes ship` judges it (`ot_judge`, asking the forge about its pull request), under the
+  writes' lock, and one that is `gone` gets its record marked (`ot_record_over`). It commits and
+  pushes nothing, so it runs at every `agent.git`. Anything `ot_judge` refuses, a lock another write
+  holds, or a forge that does not answer leaves the record as it was: the write goes on showing as
+  waiting, and `jig writes ship` says why. Without a fetch, nothing is judged: on an old view, an
+  open write could read as over.
 - The base moves only forward, and never by moving the person's checkout. Checked out here, by
   `git merge --ff-only` with `merge.autoStash` off (a `post-merge` hook of theirs still runs, as on
   any merge); checked out nowhere, by `git branch -f`, which git itself refuses for a branch any
@@ -91,6 +100,8 @@ to spare a person.
   `base-behind-origin` stands, and may run it when its page opens.
 - `landed` is a third reason beside `not-on-base` and `not-on-branch`; a decision sent anyway is
   refused by the checks the write makes in its own tree, as a decision already made.
-- A write that merged by squash and whose files the base changed again afterwards still reads as
-  waiting after a refresh; closing it through the forge is task `refresh-closes-landed-writes`.
+- A write that merged by squash and whose files the base changed again afterwards stops reading as
+  waiting at the next refresh; reads stay offline and go on judging by ancestry and content alone.
+- A refresh asks the forge once per waiting write, bounded by `jig_net`; writes are few (knowledge
+  and one per spec).
 - The counts `jig status` saved for the page are as old as that run; `knowledge_counts_at` says so.

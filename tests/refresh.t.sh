@@ -47,7 +47,7 @@ test_refresh_in_step_with_origin_is_up_to_date() {
   run jig refresh --json
   assert_eq 0 "$RC"
   assert_contains "$OUT" '"data":{"fetch":{"outcome":"done","message":null,"fetched_at":"'
-  assert_contains "$OUT" "\"base\":{\"name\":\"main\",\"outcome\":\"up-to-date\",\"from\":\"$sha\",\"to\":\"$sha\",\"checked_out_in\":null,\"message\":null}}"
+  assert_contains "$OUT" "\"base\":{\"name\":\"main\",\"outcome\":\"up-to-date\",\"from\":\"$sha\",\"to\":\"$sha\",\"checked_out_in\":null,\"message\":null},\"writes\":[]}}"
   assert_eq "$sha" "$(git rev-parse main)"
 }
 
@@ -59,7 +59,7 @@ test_refresh_fast_forwards_the_checked_out_base() {
   new=$(_rf_origin_sha)
   run jig refresh --json
   assert_eq 0 "$RC"
-  assert_contains "$OUT" "\"outcome\":\"fast-forwarded\",\"from\":\"$old\",\"to\":\"$new\",\"checked_out_in\":null,\"message\":null}}"
+  assert_contains "$OUT" "\"outcome\":\"fast-forwarded\",\"from\":\"$old\",\"to\":\"$new\",\"checked_out_in\":null,\"message\":null},\"writes\":[]}}"
   assert_eq "$new" "$(git rev-parse main)"
   assert_eq two "$(cat shared.txt)"
   assert_file fresh.txt
