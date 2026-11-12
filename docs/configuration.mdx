@@ -294,7 +294,10 @@ its recommendation: how far it may take a finished task, whether it may merge, h
 go on without asking you, how long to wait for CI, how much process your tasks get, which model its helpers use, how long to keep finished work, and where your project's checks run. It explains
 merging and running without questions before it asks about them, and never switches either on
 without your clear yes. Then it shows you the whole file it is about to write, and writes it only
-after you agree. `jig init` offers this at the end of its output.
+after you agree. `jig init` offers this at the end of its output. When origin has a `stage` or
+`staging` branch and the team has named no `git.flow`, it also asks which flow the team uses — the
+team's answer, not yours — and puts it in `.ai/config.yaml` after your yes, through a task and a
+pull request of its own, as any change to that file.
 
 ### Or set a value yourself
 

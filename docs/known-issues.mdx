@@ -35,7 +35,36 @@ own commits on the staging branch are not in the base branch.
 
 **What to do instead.** Merge promotions with a merge commit, not a squash: then the task's own
 commits reach the base branch and leave the count. A squash merge into the staging branch has the
-mirror fault, already known: the task reads as not on staging.
+mirror fault, [below](#a-task-squash-merged-into-the-staging-branch-reads-as-not-on-it).
+
+{/* Closed by task staging-state-findings: removed once a task squash-merged into the staging branch is told from one that is not there. */}
+### A task squash-merged into the staging branch reads as not on it
+
+**What you see.** Jig lands a task on the staging branch with a merge commit. When a person merges
+its pull request there with "squash and merge", or your CI squashes under
+`git.staging_land: external`, the task's own commits are not on the staging branch: `jig status`
+shows no `staging=on` for it, it is not parked, `jig task promote` refuses it as not on staging, and
+the drift report counts the squashed commit as staging work no task branch holds.
+
+**What it costs.** A task QA tested cannot be prepared for prod, and the drift count goes up.
+
+**What to do instead.** Merge into the staging branch with a merge commit — `jig task land` does —
+and have your CI do the same.
+
+{/* Closed by task epic-in-staging-flow: removed once an epic in a project on the staging flow passes through the staging branch, or the choice not to is written down. */}
+### An epic's work does not pass through the staging branch
+
+**What you see.** In a project on the staging flow, a task of an epic ships into its epic, as in
+any project, and `jig task ship` says the staging flow does not apply to it. `jig task promote`
+refuses such a task. The epic's final pull request goes into the main branch; nothing on Jig's path
+takes the epic's work to the staging branch first.
+
+**What it costs.** An epic reaches the main branch without the testing on staging its tasks would
+have had one by one.
+
+**What to do instead.** To test an epic on staging, merge its branch into the staging branch
+yourself before its final pull request is merged, and while it is there promote tasks by name, not
+with `--all` (next entry).
 
 {/* Closed by task promote-from-ci-findings: removed once `--all` tells a promotion merged without a merge commit, and an epic on the staging branch, from a task still to promote. */}
 ### `jig task promote --all` judges "not yet in the main branch" by ancestry alone
@@ -80,7 +109,7 @@ still report the pull request at its old head, or not yet confirm auto-merge, an
 **What to do instead.** Run `jig task promote` again a moment later; it finds auto-merge on, or
 switches it on.
 
-{/* Closed by task prepare-for-prod (F4): removed once a run against a real GitLab project confirms the path. */}
+{/* Closed by task staging-flow-field-check: removed once a run against a real GitLab project confirms the path. */}
 ### "Prepare for prod" has not been tried against a real GitLab project
 
 **What you see.** Nothing different, as far as is known. On GitLab, `jig task promote` looks up the
@@ -96,3 +125,19 @@ latest commit's subject as its title instead of the staging merge request's.
 **What to do instead.** Check the merge request list on GitLab after the first promotion, and give
 the title yourself with `--title` if it is not the one you want.
 
+{/* Closed by task staging-flow-field-check: removed once each assumption below is confirmed on a real project, or becomes an entry or a fix of its own. */}
+### The staging flow has not yet been run on a real project
+
+**What you see.** Nothing different, as far as is known. The staging flow is proven by tests with a
+stand-in forge, and rests on assumptions no real project has checked yet: that a push of a merge
+holding a pull request's head into its base marks the pull request merged (believed true of GitHub,
+not checked on GitLab); that a team's staging branch takes the direct push a conflicting landing
+makes; that a CI runner can run `jig task promote` with `git`, `gh` or `glab` and a forge token; and
+that the forge offers the auto-merge `git.promote_merge: auto` relies on.
+
+**What it costs.** If one does not hold, a step stops where it would go on: a pull request landed
+by a direct merge stays open and the task stays parked for `review`, a landing push is refused, or a
+CI job cannot promote.
+
+**What to do instead.** Watch the first tasks through the flow: the pull request on the forge after
+a conflicting landing, and the first promotion from your pipeline. Each stop says what to do by hand.
