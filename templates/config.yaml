@@ -33,6 +33,7 @@ git.branch_template: task/{id}        # {id} is the task id; validated by git it
 # git.staging_land: pr                # pr | external (CI merges into the staging branch)
 # git.staging_review: ask             # ask | require | none: an approval before landing on the staging branch
 # git.promote_merge: human            # human | auto: who merges the pull request into the base branch
+# git.staging_stale_after: 14d        # how long a task waits on the staging branch, no promotion, before status names it
 # git.worktree_root: ../<project>.worktrees   # where `jig task start --worktree` puts worktrees
 # git.delete_merged_branches: true    # Jig deletes a branch it made once its work has landed
 # worktree.carry: [.env.testing]        # extra paths copied into a new worktree, beyond profiles

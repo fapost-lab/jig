@@ -1082,7 +1082,10 @@ jig_staging_states() {
 #   carry<TAB><id><TAB><sha>       a merge on the task's branch that brings in
 #                                  commits of <staging-sha> the base does not
 #                                  have: staging merged into the task branch
-# `own` and `carry` lines are printed whether the task's work reached
+#   reach<TAB><id><TAB><sha>       a commit of <staging-sha> the walk of the
+#                                  task's own work stopped at: where its work
+#                                  is on staging (jig_staging_drift dates it)
+# `own`, `carry` and `reach` lines are printed whether the task's work reached
 # <staging-sha> or not.
 _jig_staging_walk() {
   local stip="$1" rows="$2" t=$'\t' resolved line base bsha tips
@@ -1157,7 +1160,7 @@ EOF
           seen[c] = 1
           key = b SUBSEP c
           # On staging, and so is everything it reaches.
-          if (key in on) { reached = 1; continue }
+          if (key in on) { reached = 1; print "reach\t" id[i] "\t" c; continue }
           # Own work unless it is a merge that only brings the base or the
           # staging branch in (GitHub'"'"'s "Update branch" on a pull request into
           # staging). Such a parent is not followed either: staging reached
@@ -1191,6 +1194,233 @@ EOF
         }
       }
     }'
+}
+
+# jig_staging_drift <staging-branch> <stale-after> <rows> <cache> — the staging
+# drift report (.ai/specs/staging-branch, "Drift report"), as tagged lines for
+# `jig status` and housekeeping to word (jig_staging_drift_lines).
+# <stale-after> is `git.staging_stale_after` as jig_staging_stale_after reads
+# it, empty when it is not a duration; <rows> this checkout's live tasks,
+# "<id><TAB><branch><TAB><base><TAB><promote_url>"; <cache> the forge cache's
+# lines (forgecache_read), empty when there is none. Prints, in this order:
+#   invalid<TAB><value>
+#       git.staging_stale_after is not a duration: no task is named unpromoted.
+#   unpromoted<TAB><id><TAB><branch><TAB><base><TAB><days><TAB><here>
+#       the task's work is on origin's staging branch (jig_staging_states: on
+#       or behind) and has been for <stale-after> or longer, with no promotion:
+#       the cache's newest pull request from <branch> into <base> is neither
+#       open nor merged (a promotion merged by a squash leaves the task's own
+#       commits outside the base, and it waits for no promotion), or, where the
+#       cache knows none, this checkout records no promote_url for it. <here>
+#       is `here` for a task of this checkout, empty for one known only by its
+#       branch, whose owner promotes it. The time counted from is that of the commit on
+#       staging's first-parent line that last brought the task's work in — its
+#       landing merge, or the commit itself when staging was fast-forwarded.
+#   conflicting<TAB><id><TAB><branch><TAB><base><TAB><fetched_at><TAB><url>
+#       a promotion this checkout opened (promote_url) that the forge cache
+#       has open and conflicting with <base>, as of <fetched_at>.
+#   unowned<TAB><count><TAB><command>
+#       <count> commits, merges left out, are on origin's staging branch and
+#       not in the base (git.base_branch, origin first), and no live task
+#       branch — here or on origin — holds them; <command> lists exactly
+#       those: the count is that command's.
+# Read from git by branch name: the tasks are every branch
+# `git.branch_template` names, here or on origin, and this checkout's own; a
+# branch no workspace knows is judged against git.base_branch. The workspace
+# adds a base and promote_url, never more (failure mode 3). Only what the
+# staging branch has and the base does not is counted, so a promoted task whose
+# branch was deleted after it landed is nobody's drift (decided in the spec).
+#
+# The processes it starts do not grow with the tasks or the commits
+# (conventions/shell.md): one for-each-ref, _jig_staging_walk's, one rev-list
+# of staging's own commits with their parents and times, one of those no task
+# branch holds, and one `date`.
+jig_staging_drift() {
+  local staging="$1" stale="$2" rows="$3" cache="$4" t=$'\t'
+  local stip dbase base_ref bsha template prefix="" suffix="" kind a b c d e
+  local all="" rows3="" stale_s=-1 now walk landing shown shown_cmd
+  local -a excl=()
+  stip=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "refs/remotes/origin/$staging^{commit}" 2>/dev/null) || return 0
+  [ -n "$stip" ] || return 0
+  cfg_v dbase git.base_branch main
+  base_ref=$(jig_base_ref "$dbase")
+  [ -n "$base_ref" ] || return 0
+  bsha=$(git -C "$JIG_PROJECT" rev-parse --verify --quiet "$base_ref^{commit}" 2>/dev/null) || return 0
+  if [ -n "$stale" ]; then
+    stale_s=$(jig_duration_seconds "$stale")
+  else
+    printf 'invalid\t%s\n' "$(cfg git.staging_stale_after 14d)"
+  fi
+  template=$(cfg git.branch_template "task/{id}")
+  case "$template" in
+    *'{id}'*)
+      prefix=${template%%'{id}'*}
+      suffix=${template#*'{id}'}
+      ;;
+  esac
+  # The task branches, from one listing of the refs: `X<TAB><ref>` for a
+  # branch of this checkout's tasks the template does not name, and
+  # `R<TAB><id><TAB><branch><TAB><base><TAB><here|-><TAB><promote_url>` for
+  # each task, this checkout's first (the possibly empty field last: read
+  # splits on a run of tabs as on one). A template with nothing before `{id}`
+  # names no branch by itself (jig_branch_is_jigs): then only this checkout's
+  # tasks are known.
+  if [ -n "$prefix" ]; then
+    excl+=("--branches=$prefix*$suffix" "--remotes=origin/$prefix*$suffix")
+  fi
+  while IFS="$t" read -r kind a b c d e; do
+    case "$kind" in
+      X) excl+=("$a") ;;
+      R)
+        [ "$d" = here ] || d=""
+        all="$all$a$t$b$t$c$t$e$t$d
+"
+        rows3="$rows3$a$t$b$t$c
+" ;;
+    esac
+  done < <(_jig_staging_drift_refs "$rows" "$prefix" "$suffix" "$staging" "$dbase")
+  now=$(date +%s)
+  walk=$(_jig_staging_walk "$stip" "$rows3")
+  landing=$(git -C "$JIG_PROJECT" rev-list --parents --timestamp "$stip" "^$bsha" 2>/dev/null) || landing=""
+  {
+    printf '%s\n' "$all" | awk -F '\t' 'NF >= 3 && $1 != "" { print "R\t" $0 }'
+    printf '%s\n' "$walk" | awk -F '\t' '$1 == "state" || $1 == "reach" { print "W\t" $0 }'
+    printf '%s\n' "$landing" | awk '$0 != "" { print "L\t" $0 }'
+    printf '%s\n' "$cache" | awk -F '\t' 'NF >= 3 && $1 != "" { print "C\t" $0 }'
+  } | awk -F '\t' -v stip="$stip" -v now="$now" -v stale="$stale_s" '
+    $1 == "R" { n++; id[n] = $2; br[n] = $3; bs[n] = $4; pu[n] = $5; hr[n] = $6; next }
+    $1 == "W" && $2 == "state" { st[$3] = $4; next }
+    $1 == "W" && $2 == "reach" { reach[$3] = reach[$3] " " $4; next }
+    $1 == "L" {
+      k = split($2, f, " ")
+      ts[f[2]] = f[1]; np[f[2]] = k - 2
+      for (j = 3; j <= k; j++) par[f[2], j - 2] = f[j]
+      next
+    }
+    $1 == "C" {
+      key = $2 SUBSEP $3
+      if (key in cst) next
+      cst[key] = $4; cat[key] = $6; cmg[key] = $9
+      next
+    }
+    END {
+      # Staging'"'"'s first-parent line, oldest first: each commit lands itself
+      # and whatever of staging its other parents bring in that nothing
+      # earlier on the line did.
+      m = 0; c = stip
+      while (c in ts) { fp[++m] = c; if (np[c] < 1) break; c = par[c, 1] }
+      for (k = m; k >= 1; k--) {
+        f0 = fp[k]; land[f0] = ts[f0]; sp = 0
+        for (j = 2; j <= np[f0]; j++) stack[++sp] = par[f0, j]
+        while (sp > 0) {
+          c = stack[sp--]
+          if (!(c in ts) || (c in land)) continue
+          land[c] = ts[f0]
+          for (j = 1; j <= np[c]; j++) stack[++sp] = par[c, j]
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        key = br[i] SUBSEP bs[i]
+        # A merged promotion waits for none: by a squash, its commits stay
+        # on staging outside the base until the task is closed.
+        if (key in cst) prom = (cst[key] == "open" || cst[key] == "merged"); else prom = (pu[i] != "")
+        if (stale >= 0 && (id[i] in st)) {
+          last = 0
+          k = split(reach[id[i]], r, " ")
+          for (j = 1; j <= k; j++) if ((r[j] in land) && land[r[j]] > last) last = land[r[j]]
+          if (last > 0 && now - last >= stale && !prom)
+            print "unpromoted\t" id[i] "\t" br[i] "\t" bs[i] "\t" int((now - last) / 86400) "\t" hr[i]
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        key = br[i] SUBSEP bs[i]
+        if (pu[i] != "" && (key in cst) && cst[key] == "open" && cmg[key] == "conflicting")
+          print "conflicting\t" id[i] "\t" br[i] "\t" bs[i] "\t" cat[key] "\t" pu[i]
+      }
+    }'
+  # Staging's own commits no live task branch holds: one rev-list, with the
+  # same exclusions as the `git log` printed for them, so the two agree — the
+  # template's branches by glob (git's `*` crosses `/`, as the template match
+  # in _jig_staging_drift_refs does), and this checkout's other branches by ref.
+  shown=$(git -C "$JIG_PROJECT" rev-list --count --no-merges "$stip" "^$bsha" --not ${excl[@]+"${excl[@]}"} 2>/dev/null) || shown=0
+  if [ "${shown:-0}" -gt 0 ]; then
+    case "$base_ref" in
+      refs/remotes/*) b=${base_ref#refs/remotes/} ;;
+      *) b=${base_ref#refs/heads/} ;;
+    esac
+    shown_cmd="git log --no-merges origin/$staging ^$b"
+    if [ ${#excl[@]} -gt 0 ]; then
+      shown_cmd="$shown_cmd --not"
+      for a in "${excl[@]}"; do
+        case "$a" in
+          --*=*) shown_cmd="$shown_cmd ${a%%=*}='${a#*=}'" ;;
+          *) shown_cmd="$shown_cmd $a" ;;
+        esac
+      done
+    fi
+    printf 'unowned\t%s\t%s\n' "$shown" "$shown_cmd"
+  fi
+}
+
+# _jig_staging_drift_refs <rows> <prefix> <suffix> <staging> <base> —
+# jig_staging_drift's listing of the task branches, from one for-each-ref.
+_jig_staging_drift_refs() {
+  {
+    git -C "$JIG_PROJECT" for-each-ref --format='F%09%(refname)%09%(objectname)' \
+      refs/heads refs/remotes/origin 2>/dev/null || true
+    printf '%s\n' "$1" | awk -F '\t' 'NF >= 3 && $1 != "" && $2 != "" { print "Q\t" $0 }'
+  } | awk -F '\t' -v pre="$2" -v suf="$3" -v st="$4" -v base="$5" '
+    $1 == "Q" {
+      own[$3] = 1; seen[$2] = 1
+      print "R\t" $2 "\t" $3 "\t" ($4 == "" ? base : $4) "\there\t" $5
+      next
+    }
+    $1 == "F" { ref[++n] = $2; sha[n] = $3; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        name = ref[i]
+        if (index(name, "refs/heads/") == 1) name = substr(name, 12)
+        else if (index(name, "refs/remotes/origin/") == 1) name = substr(name, 21)
+        else continue
+        if (name == st || name == base || name == "HEAD") continue
+        id = ""; tmpl = 0
+        if (pre != "" && index(name, pre) == 1 && length(name) > length(pre) + length(suf) \
+            && (suf == "" || substr(name, length(name) - length(suf) + 1) == suf)) {
+          tmpl = 1
+          id = substr(name, length(pre) + 1, length(name) - length(pre) - length(suf))
+          if (id !~ /^[A-Za-z0-9_][A-Za-z0-9._-]*$/) id = ""
+        }
+        # A branch the template does not name is excluded by its ref; the
+        # caller excludes those the template names by glob.
+        if (!tmpl && (name in own)) print "X\t" ref[i]
+        if (id != "" && !(id in seen)) { seen[id] = 1; print "R\t" id "\t" name "\t" base "\t-\t" }
+      }
+    }'
+}
+
+# jig_staging_drift_lines <staging-branch> <records> — jig_staging_drift's
+# records in words, one `staging: ` line each: what `jig status` and
+# housekeeping print.
+jig_staging_drift_lines() {
+  local staging="$1" kind a b c d e t=$'\t'
+  while IFS="$t" read -r kind a b c d e; do
+    case "$kind" in
+      invalid)
+        printf "staging: git.staging_stale_after: '%s' is not a duration (e.g. 14d); tasks waiting on %s are not named\n" "$a" "$staging" ;;
+      unpromoted)
+        if [ "$e" = here ]; then
+          printf 'staging: %s has waited on %s %s day(s) with no promotion (jig task promote %s)\n' "$a" "$staging" "$d" "$a"
+        else
+          printf 'staging: %s has waited on %s %s day(s) with no promotion (its owner runs jig task promote %s)\n' "$a" "$staging" "$d" "$a"
+        fi ;;
+      unowned)
+        printf 'staging: %s commit(s) on %s that no live task branch holds (%s)\n' "$a" "$staging" "$b" ;;
+      conflicting)
+        printf 'staging: the promotion of %s conflicts with %s as of %s (run jig task promote %s again)\n' "$a" "$c" "$d" "$a" ;;
+    esac
+  done <<EOF
+$2
+EOF
 }
 
 # jig_staging_branch_problems <branch> <tip> <base> <staging> [<depth>] [<via>] —
@@ -5171,10 +5401,10 @@ jig_duration_seconds() {
   n=${d%[dhms]}; unit=${d#"$n"}
   case "$n" in ''|*[!0-9]*) jig_die "invalid duration: $d" ;; esac
   case "$unit" in
-    d|'') printf '%d\n' $((n * 86400)) ;;
-    h) printf '%d\n' $((n * 3600)) ;;
-    m) printf '%d\n' $((n * 60)) ;;
-    s) printf '%d\n' "$n" ;;
+    d|'') printf '%d\n' $((10#$n * 86400)) ;;
+    h) printf '%d\n' $((10#$n * 3600)) ;;
+    m) printf '%d\n' $((10#$n * 60)) ;;
+    s) printf '%d\n' $((10#$n)) ;;
   esac
 }
 

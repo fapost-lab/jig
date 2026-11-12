@@ -223,12 +223,14 @@ pull requests — two calls a run, whatever the number of tasks. One line per pu
 first as the forge lists them, written atomically, `#` lines are comments:
 
 ```
-<head>	<base>	<state>	<ci>	<fetched_at>	<head_commit>	<url>
+<head>	<base>	<state>	<ci>	<fetched_at>	<head_commit>	<url>	<mergeable>
 ```
 
 `<ci>` is `-` when it was not asked; `<head_commit>` and `<url>`, the pull request's head and its
-address, are `-` when the forge did not say. A line written before those two columns existed ends
-at `<fetched_at>` and reads as if both were `-`. A task's entry is the first line for its branch and base, the
+address, are `-` when the forge did not say. `<mergeable>` is `conflicting` or `mergeable` for an
+open pull request the forge has judged against its base (GitHub's `mergeable`, asked in the same
+second call; GitLab's `detailed_merge_status`, in its one list), `-` otherwise. A line written
+before a column existed ends before it and reads as if each missing one were `-`. A task's entry is the first line for its branch and base, the
 join housekeeping's own remote state uses. A run whose forge did not answer, or that has no forge,
 leaves the last cache as it is: an old entry says how old it is through `fetched_at`, and is never
 refreshed by a reader. The file lives in the checkout that owns the task workspaces; a worktree
@@ -421,8 +423,9 @@ An item:
 | `detail` | string or null | why, for a person: the stop reason with its age, the housekeeping run a fact was borrowed from, a count |
 | `todo` | string | what the person should do, in plain words |
 | `url` | string or null | the pull request's address, for the pull request kinds when jig knows it |
-| `pull_request` | object | only on the two `upgrade-pull-request-*` kinds: `{"branch", "base", "state", "fetched_at"}` — the upgrade's branch (`jig/upgrade-<to>` or `jig/upgrade-<to>-<n>`), the base it goes into (`git.base_branch`), `open` or `merged`, and when housekeeping heard it from the forge |
+| `pull_request` | object | on the two `upgrade-pull-request-*` kinds: `{"branch", "base", "state", "fetched_at"}` — the upgrade's branch (`jig/upgrade-<to>` or `jig/upgrade-<to>-<n>`), the base it goes into (`git.base_branch`), `open` or `merged`, and when housekeeping heard it from the forge. On `promotion-conflicting` the same four: the task's branch, its base, `open`, and when the forge called it conflicting |
 | `versions` | object | on `upgrade-available`, `{"from", "to"}`; on the two `upgrade-pull-request-*` kinds, `{"to"}`, the version the branch is named for (`null` when the name holds none) |
+| `staging` | object | on `staging-unpromoted`, `{"branch", "days"}` — the task's branch and the whole days since its work last landed on the staging branch; on `staging-unowned`, `{"commits"}` — how many |
 
 The kinds, in the order they are listed:
 
@@ -440,6 +443,9 @@ The kinds, in the order they are listed:
 | `pull-request-waiting` | task | `jig task ship` opened a pull request that waits for review or merge |
 | `pull-request-was-open` | task | the last housekeeping run saw a pull request open (it may have merged since) |
 | `pull-request-of-abandoned-task` | task | the task was abandoned, and its pull request was open at the last housekeeping run |
+| `promotion-conflicting` | task | on the staging flow, a promotion this checkout opened (`promote_url`) is open and the forge cache calls it conflicting with the base branch; `todo` says to run `jig task promote <id>` again, `url` is the promotion |
+| `staging-unpromoted` | task | on the staging flow, the task's work has been on origin's staging branch for `git.staging_stale_after` or longer and no promotion is open or merged for it; for a task with no workspace here, `todo` says its owner promotes it. Read from git by branch name: the task may be a colleague's, with no workspace here |
+| `staging-unowned` | project | on the staging flow, commits on origin's staging branch, merges left out, that the base branch does not have and no task branch here or on origin holds |
 | `needs-consolidation` | task | merged; the task can be closed |
 | `wrong-base` | task | the work landed on another branch than planned |
 | `closed-unmerged` | task | the pull request was closed without merging (housekeeping's `abandoned?`) |

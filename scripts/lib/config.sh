@@ -258,6 +258,7 @@ git.staging_branch||text||The branch a task lands on before the base branch, in 
 git.staging_land|pr|choice|pr,external|How a task lands on the staging branch: a pull request, or merged by CI.
 git.staging_review|ask|choice|ask,require,none|Whether an approval is needed before a task lands on the staging branch.
 git.promote_merge|human|choice|human,auto|Who merges the pull request into the base branch that prepare for prod opens.
+git.staging_stale_after|14d|duration||How long a task may wait on the staging branch with no promotion before jig status names it.
 worktree.carry|[]|list||Extra paths copied into a new task worktree.
 worktree.share|[]|list||Directories a new task worktree shares with this checkout.
 worktree.setup||text||A command run in a new task worktree after it is made.
@@ -792,6 +793,19 @@ jig_promote_merge() {
   case "$value" in human | auto) return 0 ;; *) return 1 ;; esac
 }
 
+# jig_staging_stale_after — how long a task may wait on the staging branch with
+# no promotion before the drift report names it, as given (`14d` by default);
+# exits 1 on a value that is not a duration (jig_duration_seconds' form).
+jig_staging_stale_after() {
+  local value
+  value=$(cfg git.staging_stale_after 14d)
+  printf '%s\n' "$value"
+  case "${value%[dhms]}" in
+    '' | *[!0-9]* | ?????????*) return 1 ;;
+  esac
+  return 0
+}
+
 # jig_git_flow_problems — one line per fault in the project's choice of flow,
 # nothing when it is sound. The bricks are looked at only in the staging flow:
 # the direct flow reads none of them.
@@ -941,7 +955,7 @@ jig_config_value_problem() {
       esac
       ;;
     housekeeping.trash_ttl | housekeeping.abandoned_ttl | housekeeping.stale_after \
-      | checkout.busy_ttl | verify.busy_ttl | worktree.setup_timeout)
+      | git.staging_stale_after | checkout.busy_ttl | verify.busy_ttl | worktree.setup_timeout)
       case "${value%[dhms]}" in
         '' | *[!0-9]* | ?????????*) printf 'not a duration (e.g. 7d, 12h, 30m, 90s)\n'; return 1 ;;
       esac

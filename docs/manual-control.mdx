@@ -332,6 +332,38 @@ as stale. With `git.staging_land: external`, where your CI merges tasks into the
 no pull request goes there, this is how you see what CI landed: the same words, read the same way. On
 the default `direct` flow none of this appears.
 
+### The staging drift report
+
+On the staging flow `jig status` and `jig housekeeping` also say where the staging branch drifts
+from the base branch, a `staging:` line each:
+
+```text
+staging: booking-form has waited on staging 20 day(s) with no promotion (jig task promote booking-form)
+staging: the promotion of booking-message conflicts with main as of 2026-11-12T09:00:00Z (run jig task promote booking-message again)
+staging: 2 commit(s) on staging that no live task branch holds (git log --no-merges origin/staging ^origin/main --not --branches='task/*' --remotes='origin/task/*')
+```
+
+- **Waiting with no promotion.** A task's work has been on the staging branch for
+  `git.staging_stale_after` (14 days unless you set it) and no pull request into the base branch is
+  open or merged for it. The days count from the commit that last brought its work onto the staging branch —
+  the landing merge — so shipping a fix QA asked for starts them again. Every task branch counts,
+  here or on origin, so a colleague's task is named too — with `(its owner runs jig task promote
+  <id>)`, since only the checkout that has its workspace can promote it.
+- **A promotion that conflicts.** A promotion this checkout opened (`jig task promote`) that the
+  forge, at the last housekeeping run, called conflicting with the base branch. Running the command
+  again names the files to resolve, and pushes the merge once you have resolved it.
+- **Work no task owns.** Commits on the staging branch that the base branch does not have and that
+  no task branch — yours or anyone's on origin — holds: something committed onto the staging branch
+  directly, or a task whose branch was deleted before its work reached the base branch. Only what the
+  staging branch has and the base branch does not counts, so a task whose promotion was merged with a
+  merge commit and whose branch was deleted leaves nothing here; a squash-merged one still does (see
+  [Known issues](/known-issues)). The command in brackets lists exactly the commits counted.
+
+All of it is read from git and from the forge cache housekeeping keeps, never from the forge
+directly; without a forge the line about conflicts does not appear. The status page and
+`jig status --json` show the same facts as items. Jig takes nothing off the staging branch: what to
+do with work on it stays your team's call.
+
 ## Inspect the change and its review
 
 ```bash
