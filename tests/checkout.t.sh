@@ -826,6 +826,38 @@ test_checkout_taken_record_is_not_written_by_reading_filing_or_ordering() {
   assert_no_file .ai/runtime/taken/T-1/session-a
 }
 
+# Writing the goal of a task nobody started is filing it: the session that
+# found the work — often busy with something else — does not hold it for the
+# next twelve hours. Reading a document is reading.
+test_checkout_taken_record_is_not_written_by_the_goal_of_a_task_not_started() {
+  checkout_setup
+  CLAUDE_CODE_SESSION_ID=session-a
+  export CLAUDE_CODE_SESSION_ID
+  jig task new T-1 >/dev/null
+  printf '## Goal\n\nDo it.\n' > "$JIG_TEST_TMP.goal.md"
+  run jig task artifact write T-1 task --from "$JIG_TEST_TMP.goal.md"
+  assert_eq 0 "$RC" "$OUT"
+  run jig task artifact append T-1 task --from "$JIG_TEST_TMP.goal.md"
+  assert_eq 0 "$RC" "$OUT"
+  run jig task artifact read T-1 task
+  assert_eq 0 "$RC" "$OUT"
+  assert_no_file .ai/runtime/taken/T-1/session-a
+}
+
+# Before `task start`, any other document is working the task (discovery comes
+# first for a T3); after it, the goal is too.
+test_checkout_taken_record_is_written_by_the_goal_of_a_started_task() {
+  checkout_setup
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null 2>&1
+  CLAUDE_CODE_SESSION_ID=session-a
+  export CLAUDE_CODE_SESSION_ID
+  printf '## Goal\n\nDo it.\n' > "$JIG_TEST_TMP.goal.md"
+  run jig task artifact append T-1 task --from "$JIG_TEST_TMP.goal.md"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/runtime/taken/T-1/session-a "command: task artifact append T-1 task"
+}
+
 # Closing a task is not taking it, and a close checked against the caller's
 # revision lands from a session (#389): the taken record's write used to raise
 # the revision before the command's own claim, refusing every such close.
