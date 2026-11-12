@@ -43,6 +43,7 @@ cmd_task() {
     receipt) task_receipt "$@" ;;
     ship) task_ship "$@" ;;
     land) task_land "$@" ;;
+    promote) task_promote "$@" ;;
     autopilot) task_autopilot "$@" ;;
     gate) task_gate "$@" ;;
     route) task_route "$@" ;;
@@ -59,7 +60,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|autopilot|gate|route ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
@@ -101,6 +102,7 @@ _task_usage() {
       printf '       jig task land <id> --resolved --note-file <file> [--without-review]\n'
       printf '       jig task land <id> --abort\n'
       ;;
+    promote) printf 'usage: jig task promote <id> [--commit <sha>] [--title <t>] [--body-file <file>]\n' ;;
     autopilot)
       printf 'usage: jig task autopilot <id> start [--phase <spec-id>/<n>]\n'
       printf '       jig task autopilot <id> stage <name>\n'
@@ -1790,7 +1792,7 @@ _task_set_body() {
       fi
       ;;
     task_id | issue | branch | base_commit | base_branch | created_at | updated_at | paused | paused_at | paused_reason | paused_stash | paused_stash_applied \
-      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url \
+      | autopilot | autopilot_repairs | autopilot_mode | autopilot_phase | autopilot_handover | gate | gate_design | gate_by | pr_url | promote_url \
       | archived_at | archived_reason | archived_from \
       | abandoned_at | abandoned_reason | moved_to | triage_task | triage_of \
       | absorbed_into | absorbs | partly_in | absorbs_partly \
@@ -6430,7 +6432,7 @@ Nothing was committed. Fetch it, or create it on origin, and run again."
   printf -v "$2" '%s' "$__tsf_land"
 }
 
-# _task_ship_flow_agrees <base> <flow> <staging-branch> — refuse, before the
+# _task_ship_flow_agrees <base> <flow> <staging-branch> [<who>] — refuse, before the
 # commit, when the tip of <base> (jig_base_ref: origin's, else the local
 # branch) names another flow or staging branch than this checkout does. The
 # flow is the team's and lives on the base branch: a task branch cut before
@@ -6440,7 +6442,7 @@ Nothing was committed. Fetch it, or create it on origin, and run again."
 # a copy in a temporary file. A base that is unknown here, or that has no
 # config, cannot disagree: the checkout decides, as before.
 _task_ship_flow_agrees() {
-  local base="$1" flow="$2" staging="$3" ref tmp base_flow="" base_staging=""
+  local base="$1" flow="$2" staging="$3" who="${4:-task ship}" ref tmp base_flow="" base_staging=""
   ref=$(jig_base_ref "$base")
   [ -n "$ref" ] || return 0
   tmp=$(mktemp "${TMPDIR:-/tmp}/jig-ship-flow.XXXXXX")
@@ -6452,7 +6454,7 @@ _task_ship_flow_agrees() {
   [ "$base_flow" = staging ] || base_staging=""
   [ "$flow" = staging ] || staging=""
   if [ "$base_flow" != "$flow" ] || [ "$base_staging" != "$staging" ]; then
-    jig_die "task ship: the git flow here is not the one $base has:
+    jig_die "$who: the git flow here is not the one $base has:
   here: git.flow: $flow${staging:+, git.staging_branch: $staging}
   $base: git.flow: $base_flow${base_staging:+, git.staging_branch: $base_staging}
 Nothing was committed. Merge $base into the task branch first (git merge ${ref#refs/remotes/}), then run again."
@@ -6491,6 +6493,55 @@ ROWS
   [ -z "$found" ] || jig_die "task ship: $branch already has an open pull request into another branch than $staging:$found
 In the staging flow its pull request goes into $staging. Close that pull request, or retarget it to $staging, and run again."
   return 0
+}
+
+# task_promote — `jig task promote <id> [--commit <sha>] [--title <t>]
+# [--body-file <file>]`: "prepare for prod" for a task tested on the staging
+# branch (scripts/lib/promote.sh;
+# adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone). Ids are
+# collected into a list and `--all` is read, so promoting several tasks
+# ("Promote from CI") keeps this syntax; until it is built, one task only.
+# Exit 0 when the pull request is open or the task is in the base already, 1
+# on a refusal, 3 when a person is needed.
+task_promote() {
+  jig_require_init
+  local commit="" title="" body_file="" all=0 rc=0
+  local -a ids=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --commit)
+        [ $# -ge 2 ] || jig_fail usage "task promote: --commit requires a value"
+        commit="$2"
+        shift 2 ;;
+      --title)
+        [ $# -ge 2 ] || jig_fail usage "task promote: --title requires a value"
+        title="$2"
+        shift 2 ;;
+      --body-file)
+        [ $# -ge 2 ] || jig_fail usage "task promote: --body-file requires a value"
+        body_file="$2"
+        shift 2 ;;
+      --all)
+        all=1
+        shift ;;
+      -*) jig_fail usage "task promote: unknown argument: $1" ;;
+      *)
+        ids+=("$1")
+        shift ;;
+    esac
+  done
+  if [ "$all" = 1 ] || [ ${#ids[@]} -gt 1 ]; then
+    jig_fail usage "task promote: promoting several tasks (several ids, --all) is not built yet; promote one task at a time"
+  fi
+  [ ${#ids[@]} -eq 1 ] || jig_fail usage "$(_task_usage promote)"
+  [ -z "$body_file" ] || [ -f "$body_file" ] || jig_fail usage "task promote: --body-file: no such file: $body_file"
+  # shellcheck source=lib/promote.sh
+  . "$JIG_LIB/promote.sh"
+  _promote_one "${ids[0]}" "$commit" "$title" "$body_file" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jig_status_page_flush
+    exit "$rc"
+  fi
 }
 
 # _task_triage_id <id> — the id of the triage task that takes <id>'s open

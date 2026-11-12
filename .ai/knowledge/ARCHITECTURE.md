@@ -47,7 +47,12 @@ the merge on the forge, the direct merge in a temporary tree, the unforced push
 (adr-20261111-a-task-lands-on-staging-through-its-pull-request), tested in `tests/task.t.sh` with the
 ship it ends. `lib/prgitlab.sh` is the same for `jig pr`: the GitLab half of it (glab and its
 account, the merge request, its diff, the read-back and the post) is sourced by `lib/pr.sh` alone
-and tested through `tests/pr.t.sh`.
+and tested through `tests/pr.t.sh`. `lib/promote.sh` ("prepare for prod": `jig task promote`, with
+`tests/promote.t.sh`) follows the same rule; it reads a task's staging state through common.sh's
+`jig_staging_branch_problems` and `jig_staging_states` and never recomputes them.
+`jig_staging_branch_problems` and `jig_branch_carries_staging` answer the same question — is this a
+clean task branch — for promote and for ship and land; until they are one walk (F15 of
+prepare-for-prod) a change to that rule goes into both.
 `lib/checkout.sh`, which the dispatcher sources for every command, holds one such answer of its
 own: `jig_checkout_occupants` ("who occupies this checkout's HEAD"), the one rule `task start` and
 `upgrade` both refuse on (adr-20260930-an-upgrade-is-a-unit-of-work, amended 2026-10-05), and

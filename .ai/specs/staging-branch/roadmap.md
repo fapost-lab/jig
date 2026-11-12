@@ -45,7 +45,7 @@ in that commit; a task waiting on staging is listed as parked and holds no slot.
   it frees the current-task slot and the queue; `jig task resume` brings the task back; autopilot
   stops there, never approves and never promotes. (after: Land a task on staging — parking starts
   and ends at its steps)
-- [ ] `prepare-for-prod` — Prepare a task for prod — refuses unless the task tip is in the tested staging commit;
+- [x] `prepare-for-prod` — Prepare a task for prod — refuses unless the task tip is in the tested staging commit;
   merges the base branch into the task branch on conflict; opens the pull request into the base branch; prints the
   link — run again on a task already promoted, it merges the base branch in afresh and prints the same
   link instead of opening a second one; needs only git and the forge, and where the checkout has a queue it warns — in the output

@@ -82,6 +82,10 @@ send the task into the base branch nor merge into staging past the review the fl
 - A task branch behind its base on the flow must merge the base branch in before it ships.
 - The existing-pull-request check in the staging flow costs one more forge query per ship.
 
+> **Amendment (2026-11-11, prepare for prod).** "Promotion will be" a release: `jig task promote`
+> says so when the task raises the version and leaves the merge to a person
+> (adr-20261111-prepare-for-prod-opens-the-promotion-from-git-alone).
+
 ## Amendment (2026-11-11): landing is built
 
 "Land a task on staging" is built
