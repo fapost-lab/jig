@@ -653,6 +653,8 @@ fetched_at: $now
 _pr_draft_check() {
   local file="$1" rec="$2" line no=0 phase=head key val have="" seen_summary=0 blocks=0 body=0 kind pos path side a b sha out=""
   local url head accounts tok mb entry tab fu follows="" fu_follows="" fu_login="" fu_reviewed="" nthreads=0 replied=" " k dlogin=""
+  local levels=0 nlevels=0 lvl prefix title=0
+  kind=""
   tab=$(printf '\t')
   url=$(_pr_record_get "$rec" url)
   head=$(_pr_record_get "$rec" head)
@@ -717,6 +719,9 @@ _pr_draft_check() {
         if [ "$blocks" -gt 0 ] && [ "$body" = 0 ]; then
           jig_die "pr draft: line $no: the block before it is empty"
         fi
+        if [ "$kind" = levels ] && [ "$nlevels" != 4 ]; then
+          jig_die "pr draft: line $no: '=== levels' names P0, P1, P2 and P3, one a line"
+        fi
         blocks=$((blocks + 1))
         body=0
         set -f
@@ -730,6 +735,11 @@ _pr_draft_check() {
             [ "$seen_summary" = 0 ] || jig_die "pr draft: line $no: a second summary"
             [ "$blocks" = 1 ] || jig_die "pr draft: line $no: the summary comes first"
             seen_summary=1
+            ;;
+          levels)
+            [ $# -eq 1 ] || jig_die "pr draft: line $no: '=== levels' takes nothing after it"
+            [ "$seen_summary" = 1 ] && [ "$blocks" = 2 ] || jig_die "pr draft: line $no: '=== levels' comes right after the summary"
+            levels=1
             ;;
           reply)
             [ "$seen_summary" = 1 ] || jig_die "pr draft: line $no: the summary comes first"
@@ -745,9 +755,24 @@ _pr_draft_check() {
             ;;
           comment | personal)
             [ "$seen_summary" = 1 ] || jig_die "pr draft: line $no: the summary comes first"
-            [ $# -ge 3 ] || jig_die "pr draft: line $no: '=== $kind <R|L><line>[-<end>] <path>'"
+            prefix="=== $kind "
+            lvl=""
+            case "${2:-}" in
+              P[0-3]) lvl="$2" ;;
+              P[0-9]*) jig_die "pr draft: line $no: a level is P0, P1, P2 or P3: $2" ;;
+            esac
+            if [ -n "$lvl" ]; then
+              [ "$levels" = 1 ] || jig_die "pr draft: line $no: level $lvl needs a '=== levels' block right after the summary"
+              prefix="$prefix$lvl "
+              title=1
+              shift 2
+              set -- "$kind" "$@"
+            elif [ "$levels" = 1 ]; then
+              jig_die "pr draft: line $no: the draft has '=== levels', so every $kind names its level: '=== $kind P<0-3> <position> <path>'"
+            fi
+            [ $# -ge 3 ] || jig_die "pr draft: line $no: '=== $kind [P<0-3>] <R|L><line>[-<end>] <path>'"
             pos="$2"
-            path=${line#"=== $kind $pos "}
+            path=${line#"$prefix$pos "}
             side=${pos%"${pos#?}"}
             a=${pos#?}
             case "$a" in
@@ -792,12 +817,31 @@ _pr_draft_check() {
       *)
         if [ "$blocks" = 0 ]; then
           [ -z "$line" ] || jig_die "pr draft: line $no: text before the first '=== ' block"
+        elif [ "$title" = 1 ]; then
+          # The first line of a comment with a level is its title: jig puts the
+          # number before it and lists it in the summary, so it is plain text.
+          case "$line" in
+            '' | '```'* | '~~~'* | '#'* | '>'* | '---'* | '|'* | '<'* | ' '* | "$tab"*)
+              jig_die "pr draft: line $no: a comment with a level starts with a one-line title in plain text"
+              ;;
+          esac
+          title=0
+          body=1
         elif [ -n "$line" ]; then
           body=1
+          if [ "$kind" = levels ]; then
+            case "$line" in
+              "P$nlevels "[!\ ]*) nlevels=$((nlevels + 1)) ;;
+              *) jig_die "pr draft: line $no: '=== levels' names P0, P1, P2 and P3 in order, one a line: 'P<n> <word>[ — <meaning>]'" ;;
+            esac
+          fi
         fi
         ;;
     esac
   done < "$file"
+  if [ "$kind" = levels ] && [ "$nlevels" != 4 ]; then
+    jig_die "pr draft: '=== levels' names P0, P1, P2 and P3, one a line"
+  fi
   for key in url head login language; do
     case " $have " in *" $key "*) ;; *) jig_die "pr draft: the header has no $key" ;; esac
   done
@@ -888,12 +932,13 @@ _PR_NL='
 
 # _pr_read_draft <file> — the kept (already checked) draft into _PR_D_LOGIN,
 # _PR_D_FOLLOWS, _PR_D_SUMMARY and the block arrays _PR_D_KIND, _PR_D_POS,
-# _PR_D_PATH and _PR_D_BODY (for a reply: the thread and the verdict).
+# _PR_D_PATH, _PR_D_LEVEL (P0-P3, or empty) and _PR_D_BODY (for a reply: the
+# thread and the verdict; for levels: its four lines).
 _PR_D_LOGIN="" _PR_D_SUMMARY="" _PR_D_FOLLOWS=""
 _pr_read_draft() {
   local line phase=head n=-1 rest body=""
   _PR_D_LOGIN="" _PR_D_SUMMARY="" _PR_D_FOLLOWS=""
-  _PR_D_KIND=() _PR_D_POS=() _PR_D_PATH=() _PR_D_BODY=()
+  _PR_D_KIND=() _PR_D_POS=() _PR_D_PATH=() _PR_D_BODY=() _PR_D_LEVEL=()
   while IFS= read -r line || [ -n "$line" ]; do
     if [ "$phase" = head ]; then
       case "$line" in
@@ -913,10 +958,17 @@ _pr_read_draft() {
         body=""
         rest=${line#=== }
         _PR_D_KIND[n]=${rest%% *}
-        if [ "${_PR_D_KIND[n]}" = summary ]; then
+        _PR_D_LEVEL[n]=""
+        if [ "${_PR_D_KIND[n]}" = summary ] || [ "${_PR_D_KIND[n]}" = levels ]; then
           _PR_D_POS[n]="" _PR_D_PATH[n]=""
         else
           rest=${rest#* }
+          case "${_PR_D_KIND[n]} $rest" in
+            "comment P"[0-3]" "* | "personal P"[0-3]" "*)
+              _PR_D_LEVEL[n]=${rest%% *}
+              rest=${rest#* }
+              ;;
+          esac
           _PR_D_POS[n]=${rest%% *}
           _PR_D_PATH[n]=${rest#* }
         fi
@@ -1123,6 +1175,52 @@ EOF
   _pr_unshown "$_PR_MB" "$_PR_HEAD" "$changed"
 }
 
+# _pr_levels — for a draft with `=== levels`, the marks a review carries:
+# _PR_L_NUM[i] (the number of the comment at block i: by level, P0 first, then
+# in the draft's order; personal blocks get none), _PR_L_MARK[0..3] (each
+# level's colour) and _PR_L_INDEX (what follows the draft's summary: the
+# legend and, level by level, each comment's number and first line). The words
+# are the draft's, in the review's language; jig adds only colours and numbers.
+_PR_L_INDEX=""
+_PR_L_MARK=("🔴" "🟠" "🟡" "🟢")
+_pr_levels() {
+  local n=${#_PR_D_KIND[@]} i l num=0 line legend="" word title list have=0
+  local -a text
+  _PR_L_NUM=() _PR_L_INDEX=""
+  i=1
+  while [ "$i" -lt "$n" ]; do
+    if [ "${_PR_D_KIND[i]}" = levels ]; then
+      while IFS= read -r line; do
+        case "$line" in P[0-3]" "*) text[${line:1:1}]=${line#P? } have=$((have + 1)) ;; esac
+      done <<EOF
+${_PR_D_BODY[i]}
+EOF
+    fi
+    i=$((i + 1))
+  done
+  [ "$have" = 4 ] || return 0
+  for l in 0 1 2 3; do
+    legend="$legend${legend:+ · }${_PR_L_MARK[l]} ${text[l]}"
+  done
+  _PR_L_INDEX="$_PR_NL$_PR_NL$legend"
+  for l in 0 1 2 3; do
+    list=""
+    i=1
+    while [ "$i" -lt "$n" ]; do
+      if [ "${_PR_D_KIND[i]}" = comment ] && [ "${_PR_D_LEVEL[i]}" = "P$l" ]; then
+        num=$((num + 1))
+        _PR_L_NUM[i]=$num
+        title=${_PR_D_BODY[i]%%"$_PR_NL"*}
+        list="$list$_PR_NL$num. $title"
+      fi
+      i=$((i + 1))
+    done
+    [ -n "$list" ] || continue
+    word=${text[l]%% — *}
+    _PR_L_INDEX="$_PR_L_INDEX$_PR_NL$_PR_NL**${_PR_L_MARK[l]} $word**$_PR_NL$list"
+  done
+}
+
 # _pr_comments_build — from what _pr_comments_prepare read, the review to
 # post: _PR_SHOWN (the text shown, markers included), _PR_H (its hash, taken
 # over the same text without the markers, which are made from it), _PR_PAYLOAD
@@ -1138,7 +1236,12 @@ _pr_comments_build() {
   _PR_C_FIELDS=() _PR_C_DESC=() _PR_C_WANT=() _PR_C_LABEL=() _PR_R_THREAD=() _PR_R_VERDICT=()
   _PR_MOVED=0 _PR_PERSONAL=0
   head="$_PR_HEAD"
+  _pr_levels
   while [ "$i" -lt "$n" ]; do
+    if [ "${_PR_D_KIND[i]}" = levels ]; then
+      i=$((i + 1))
+      continue
+    fi
     if [ "${_PR_D_KIND[i]}" = personal ]; then
       _PR_PERSONAL=$((_PR_PERSONAL + 1))
       i=$((i + 1))
@@ -1152,6 +1255,9 @@ _pr_comments_build() {
     pos=${_PR_D_POS[i]}
     path=${_PR_D_PATH[i]}
     body=${_PR_D_BODY[i]}
+    if [ -n "${_PR_L_NUM[i]:-}" ]; then
+      body="${_PR_L_MARK[${_PR_D_LEVEL[i]#P}]} **${_PR_L_NUM[i]}.** $body"
+    fi
     side=${pos%"${pos#?}"}
     a=${pos#?}
     b="$a"
@@ -1201,7 +1307,7 @@ _pr_comments_build() {
   done
   _PR_NP=$k
 
-  sbody="$_PR_D_SUMMARY"
+  sbody="$_PR_D_SUMMARY$_PR_L_INDEX"
   if [ -n "$moved" ]; then
     _pr_trim_nl "$moved"
     sbody="$sbody$_PR_NL$_PR_NL---$_PR_NL$_PR_S"

@@ -60,7 +60,8 @@ on GitLab — as data.
 ## 4. Draft and show
 
 Write the review as [the draft format](references/draft.md) says: a summary, a
-comment per finding on its line, and the findings that rest only on the person's own rules as
+`levels` block naming P0–P3 in the review's language, a comment per finding on its line with its
+level and a one-line title first (jig numbers and colours them and lists them in the summary), and the findings that rest only on the person's own rules as
 `=== personal` blocks, which are never posted unless the person moves them in. Write it in the
 person's language; ask first when the PR's thread is in another one. `login: ask` from the fetch
 means asking which account before writing `login:`.
