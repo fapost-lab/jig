@@ -225,6 +225,27 @@ test_promote_refuses_a_fix_after_the_tested_commit() {
   assert_eq 0 "$RC" "$OUT"
 }
 
+# The promotion and the staging pull request share the task branch: a fix
+# after the promotion was opened cannot reach staging while that one is open,
+# so the refusal says to close it first (finding F16).
+test_promote_a_fix_after_an_open_promotion_says_to_close_it_first() {
+  promote_setup
+  local tested before
+  tested=$(git rev-parse origin/staging)
+  printf 'https://github.com/example/example/pull/5\n' > gh-open-main
+  printf 'fix\n' >> one.txt
+  git commit -q -am "Fix of T-1"
+  promote_land T-1
+  before=$(git rev-parse origin/task/T-1)
+
+  run jig task promote T-1 --commit "$tested"
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "The open pull request https://github.com/example/example/pull/5 already carries them"
+  assert_contains "$OUT" "Close it first: it comes from this same branch, so jig task ship refuses while it is open"
+  assert_contains "$OUT" "run jig task promote again after the test"
+  assert_nothing_sent "$before"
+}
+
 test_promote_refuses_a_commit_nobody_pushed() {
   promote_setup
   local before

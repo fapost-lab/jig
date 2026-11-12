@@ -288,7 +288,8 @@ EOF
     open_url=$(_promote_open_url "$branch" "$base")
     _promote_refuse behind-staging "$who: $branch has commit(s) of its own that the tested commit $short does not have:$list
 A fix made after the test must be tested before it reaches $base: ship it to $staging and run again after the test.${open_url:+
-The open pull request $open_url already carries them: it must not be merged before they are tested.}"
+The open pull request $open_url already carries them: it must not be merged before they are tested.
+Close it first: it comes from this same branch, so jig task ship refuses while it is open, and every push reaches it. Then ship the fix to $staging, and run jig task promote again after the test.}"
   fi
 
   # 9. A conflict with the base is found here and resolved by whoever merges

@@ -114,7 +114,11 @@ person's checkout.
 - **Unshallow the clone silently.** A hidden fetch of the whole history on a large repository is a
   surprise; the refusal says how to fetch it.
 - **An escape flag for `carries-staging`.** The person who owns the flow decided the task branch is
-  never merged with staging; `task ship` and `task land` check the same earlier.
+  never merged with staging; `task ship` and `task land` check the same earlier, through
+  `jig_branch_carries_staging`. Until the two walks are one (finding F15 of this task), they differ
+  at the edges: land follows merged dependencies four deep and names task branches `task/<id>`,
+  promote five deep and by `git.branch_template`. Land is the stricter in both, so promote never
+  accepts a branch that could not have reached staging; F15 unifies depth and naming with the walk.
 
 ## Consequences
 
@@ -134,3 +138,13 @@ person's checkout.
   parent in the base, at every depth) would close it; left for a later change.
 - `_jig_staging_walk` is shared: a change to what counts as own work changes `jig status`,
   housekeeping and promotion together, which is the point.
+
+## Amendment (2026-11-12): a fix after the promotion was opened
+
+The promotion's pull request and the staging pull request come from the same task branch. Once
+`jig task promote` has opened the one into the base, a fix found by QA cannot reach staging without
+reaching that pull request too: every push to the branch updates both, and `jig task ship` refuses
+while a pull request into another branch than staging is open (adr-20261111-in-the-staging-flow-a-task-ships-into-the-staging-branch).
+So `behind-staging`, when a promotion is open, says to close it first, ship the fix to staging, and
+promote again after the test. The base-conflict refusal is told by exit 3 alone: promote has no
+`--json` yet, and `base-conflict` in schemas/json.md is reserved for it.
