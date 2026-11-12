@@ -50,7 +50,11 @@ if you want to inspect the script or see what it changes first.
     - clones Jig into `~/.local/share/jig`, at the newest release;
     - links `~/.local/bin/jig` to it;
     - only when `~/.local/bin` is not on your `PATH` yet, adds one marked line to `~/.zshrc`,
-      `~/.bashrc` or `~/.profile`.
+      `~/.bashrc` or `~/.profile`;
+    - links the `jig-pr-review` skill for you, so you can review a pull request from any folder:
+      to `~/.claude/skills/jig-pr-review` when you have Claude Code (`~/.claude`), and to
+      `~/.agents/skills/jig-pr-review` when you have Codex (`~/.codex`). A skill of your own under
+      that name is left alone. `jig self-update` keeps it current; to remove it, delete the link.
 
     It needs no `sudo` and does not touch the folder you ran it from. Open a new terminal
     afterwards so the new `PATH` is picked up. Running the line again is safe: it moves a clean
@@ -83,7 +87,9 @@ if you want to inspect the script or see what it changes first.
        the winget source and package agreements for you), or the official installer when winget
        is not there.
     2. **Jig** into `%USERPROFILE%\.local\share\jig`, at the newest release, with its `scripts`
-       folder added to your user `PATH`.
+       folder added to your user `PATH`, and a copy of the `jig-pr-review` skill for you in
+       `.claude\skills` (Claude Code) and `.agents\skills` (Codex), so you can review a pull
+       request from any folder. `jig self-update` refreshes that copy.
     3. **Your first project**, if you agree — at most four questions (with an unreleased Jig, such
        as `-Ref main`, it first asks whether to set the project up from it anyway; the default, and
        `-Yes`, skip the project): which folder, whether to make
@@ -112,8 +118,9 @@ if you want to inspect the script or see what it changes first.
     ```
 
     Other options: `-Project <folder>`, `-Yes` (no questions, defaults), `-GitName`, `-GitEmail`,
-    `-NoInit` (no project step), `-Ref vX.Y.Z` or `-Ref main`. `-Uninstall` removes the `PATH` entry
-    and the Jig folder only when it holds no local changes; Git for Windows stays.
+    `-NoInit` (no project step), `-Ref vX.Y.Z` or `-Ref main`. `-Uninstall` removes the `PATH` entry,
+    Jig's copy of the `jig-pr-review` skill, and the Jig folder only when it holds no local changes;
+    Git for Windows stays.
 
     Claude Code runs Jig through Git Bash; Codex, which runs PowerShell, calls
     `.ai\scripts\jig.cmd`, which hands the command to Git Bash.
@@ -287,8 +294,10 @@ epic branch (`jig spec epic`): its tasks are cut from the epic and their pull re
 into it.
 
 `jig-release` plans a release with a person: which filed tasks go in, in what order and at what
-version level. A release is a spec with an epic, so the same commands build it; `jig spec link`
-links a task filed earlier, and a started task stays out of the epic.
+version level. The release is its notes task, the last pull request, cut from the freshest default
+branch: it records the commit its notes describe (`jig task set <id> notes_through <sha>`), and
+`jig task ship` refuses the release while the default branch has moved past it. A release epic is
+built only when tasks must ship together; feature work never raises the version.
 
 `jig-autopilot` runs one task's route without waiting between stages and stops only where a
 human is needed; the route, the gates and `agent.git` stay what they are.

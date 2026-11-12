@@ -15,7 +15,7 @@ paths:
   - scripts/lib/config.sh
   - scripts/lib/common.sh
 summary: Why a write from outside a session is committed on spec/<id> or knowledge/decisions in a one-off tree under the git directory, what holds a concurrent write off, why a checkout on that branch is refused, and why agent.git none refuses and a write never merges
-reviewed_at: 2026-11-07
+reviewed_at: 2026-11-12
 ---
 # A write from outside a session is committed on a branch of its own, in a tree of Jig's own, and never moves a checkout
 
@@ -105,3 +105,21 @@ On Windows `git worktree remove` can drop the tree's registration and leave its 
 - **A new name is never another spec's.** `spec/x-2` is skipped, and `-3` taken, when `x-2` is a spec's id: its directory in this checkout, on the write's base or on the default branch, or its epic here or on origin. The suffix keeps its form. A spec created only after a write took its name is not caught: `spec new` refuses that branch loudly, and nothing is lost.
 - **`jig writes ship` ships from origin's tip when the local branch was deleted.** The ship steps send a local branch, so it is created again at the tip origin holds — created only, never moved — as a write cuts a branch only on origin. When origin's tip does not hold the commit the record names — an edit whose push failed, on the branch deleted — it is refused `write-still-waits`, naming that commit, and nothing is created: cut at origin's tip, the edit would be left out of sight. And it merges only once its ship steps reached the pull request: steps that stopped have said why in `note`, and a merge after them merged nothing of theirs and overwrote that note.
 - **Moving the only item of its own section within it changes nothing and commits nothing**; it used to gain a blank line on each move.
+
+## Amendment (2026-11-12): several kinds of knowledge decision are one write (knowledge-decide-batch)
+
+`jig knowledge decide [--accept <id>]... [--reject <id>]... [--reviewed <id>]...` is a writer of this
+mechanism, so that a page can queue what a person decided on several documents and send it at the
+revision they read. Sent one by one, each decision after the first met `stale-revision` — the page's own
+write had moved the revision — or the page had to read a new revision between writes and so stop
+noticing a change nobody saw; and each paid its own fetch, tree, push and question to the forge.
+
+- **One call, one write, one commit.** Every id is judged as the call decides it — `_km_refuse_what_is_only_here`
+  asks each with its own kind, since the row of a `reject` of a changed stub differs — then each kind's
+  checks run, and one refusal refuses the call before the claim. "Each commit is one decision" becomes
+  "each commit is one call's decisions": a call of one kind keeps that kind's subject, one of several
+  kinds says `Decide knowledge: <n> decisions` with a line per kind. Reverting it reverts the call.
+- **`decide` has no working-tree form**; `accept|reject|reviewed` keep theirs, and with `--json` or
+  `--revision` they are a `decide` of one kind, unchanged in answer and commit.
+- **An id given twice to `decide` is `usage`**: a person decided one document once. The one-way commands
+  still drop a repeat.

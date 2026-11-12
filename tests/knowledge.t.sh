@@ -4345,7 +4345,7 @@ test_sources_json_reports_every_state_and_the_counts() {
       '{"id":"convention-ok","state":"ok","status":"active","path":".ai/knowledge/sources/ok.md","source":"docs/ok.md","bytes":5,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},' \
       '{"id":"convention-unrecorded","state":"unrecorded","status":"active","path":".ai/knowledge/sources/unrecorded.md","source":"docs/unrecorded.md","bytes":9,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false},' \
       '{"id":"convention-waiting","state":"proposed","status":"proposed","path":".ai/knowledge/sources/waiting.md","source":"docs/waiting.md","bytes":8,"waiting":null,"decidable":false,"reason":"not-on-base","lossy":false}'
-  )],\"counts\":{\"linked\":5,\"changed\":1,\"unrecorded\":1,\"missing\":1},\"waiting\":null}" "$(_kmj_data)"
+  )],\"counts\":{\"linked\":5,\"changed\":1,\"unrecorded\":1,\"missing\":1,\"landed\":0},\"waiting\":null}" "$(_kmj_data)"
   _kmj_valid kmj.out
 
   # The text form counts the same.
@@ -4357,7 +4357,7 @@ test_sources_json_is_empty_without_stubs() {
   km_setup
   _kmj sources
   assert_eq 0 "$RC"
-  assert_eq '"data":{"sources":[],"counts":{"linked":0,"changed":0,"unrecorded":0,"missing":0},"waiting":null}' "$(_kmj_data)"
+  assert_eq '"data":{"sources":[],"counts":{"linked":0,"changed":0,"unrecorded":0,"missing":0,"landed":0},"waiting":null}' "$(_kmj_data)"
 }
 
 test_sources_json_refuses_bad_arguments_with_usage() {
@@ -5229,4 +5229,300 @@ test_knowledge_an_id_changed_only_here_at_a_path_the_tree_has_is_not_found() {
   assert_eq 1 "$RC"
   assert_contains "$OUT" '"code":"not-found"'
   own_tree_gone
+}
+
+# --- jig knowledge decide: several kinds of decision as one write -------------------
+#
+# A page queues what a person decided on several documents and sends it at the revision
+# they read (task knowledge-decide-batch): one fetch, one claim, one commit, one push.
+
+test_knowledge_decide_mixed_kinds_are_one_commit_in_the_order_given() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed"
+  git push -q origin main
+  local before
+  before=$(own_tree_snapshot)
+  run jig knowledge decide --reject feature-beta --accept feature-alpha --reviewed convention-stub \
+    --revision "$(_kd_rev)" --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" '"data":{"decisions":[{"id":"feature-beta","decision":"rejected","path":".ai/knowledge/features/beta.md"},{"id":"feature-alpha","decision":"accepted","path":".ai/knowledge/features/alpha.md"},{"id":"convention-stub","decision":"reviewed","path":".ai/knowledge/sources/stub.md"}],"write":{"target":"knowledge","branch":"knowledge/decisions"'
+  assert_contains "$OUT" '"commits":1'
+  assert_eq "$before" "$(own_tree_snapshot)"
+  assert_eq active "$(_kd_status alpha)"
+  assert_eq rejected "$(_kd_status beta)"
+  assert_contains "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md)" "reviewed_at: "
+  assert_eq "1" "$(git rev-list --count main..knowledge/decisions)"
+  assert_eq "Decide knowledge: 3 decisions" "$(git log -1 --format=%s knowledge/decisions)"
+  assert_eq "$(printf 'accept: feature-alpha\nreject: feature-beta\nreviewed: convention-stub')" \
+    "$(git log -1 --format=%b knowledge/decisions | sed '/^$/d')"
+  own_tree_gone
+}
+
+test_knowledge_decide_of_one_kind_keeps_that_kinds_subject() {
+  _kd_repo commit
+  run jig knowledge decide --accept feature-alpha --accept feature-beta --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "Accept knowledge: feature-alpha, feature-beta" "$(git log -1 --format=%s knowledge/decisions)"
+  own_tree_gone
+}
+
+test_knowledge_decide_with_a_reject_of_a_changed_stub_judges_its_own_row() {
+  _kd_repo commit
+  printf 'second text\n' > docs/x.md
+  git add docs
+  git commit -q -m "source changed, not pushed"
+  # The stub's change is only here: its drop is refused, and the accept with it.
+  run jig knowledge decide --accept feature-alpha --reject convention-stub --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-on-base"'
+  assert_contains "$OUT" 'convention-stub, as this checkout has it'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  git push -q origin main
+  run jig knowledge decide --accept feature-alpha --reject convention-stub --json
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq active "$(_kd_status alpha)"
+  assert_eq rejected "$(own_tree_show knowledge/decisions .ai/knowledge/sources/stub.md | sed -n 's/^status: //p')"
+  own_tree_gone
+}
+
+test_knowledge_decide_one_refusal_refuses_the_whole_call_and_claims_nothing() {
+  _kd_repo commit
+  local rev
+  rev=$(_kd_rev)
+  run jig knowledge decide --accept feature-alpha --reject nope --revision "$rev" --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-found"'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  # The revision was not claimed: the same one still writes.
+  run jig knowledge decide --accept feature-alpha --revision "$rev" --json
+  assert_eq 0 "$RC" "$OUT"
+  # Decided already on the branch: refused, and the other decision with it.
+  run jig knowledge decide --reject feature-beta --accept feature-alpha --json
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" '"code":"not-proposed"'
+  assert_eq proposed "$(_kd_status beta)"
+  own_tree_gone
+}
+
+test_knowledge_decide_usage_refusals() {
+  _kd_repo commit
+  run jig knowledge decide --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide --accept feature-alpha --reject feature-alpha --json
+  assert_contains "$OUT" '"code":"usage"'
+  assert_contains "$OUT" 'feature-alpha is given twice'
+  run jig knowledge decide --accept feature-alpha --accept feature-alpha --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide feature-alpha --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide --accept --json
+  assert_contains "$OUT" '"code":"usage"'
+  run jig knowledge decide --accept feature-alpha --date 2026-01-01 --json
+  assert_contains "$OUT" '"code":"usage"'
+  assert_contains "$OUT" '--date dates a --reviewed decision'
+  run jig knowledge decide --accept feature-alpha --revision 1 --json
+  assert_contains "$OUT" '"code":"stale-revision"'
+  run jig knowledge accept feature-alpha --reject feature-beta --json
+  assert_contains "$OUT" '"code":"usage"'
+  if git rev-parse --verify --quiet refs/heads/knowledge/decisions >/dev/null; then
+    fail "a refused decision cut a branch"
+  fi
+  own_tree_gone
+}
+
+test_knowledge_decide_text_form_writes_in_the_tree_and_names_each_kind() {
+  _kd_repo commit
+  run jig knowledge decide --accept feature-alpha --reject feature-beta
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "knowledge decide: accept feature-alpha; reject feature-beta"
+  assert_eq proposed "$(sed -n 's/^status: //p' .ai/knowledge/features/alpha.md)"
+  assert_eq active "$(_kd_status alpha)"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  own_tree_gone
+}
+
+# --- landed: a decision origin's base already holds -------------------------------
+#
+# This checkout is behind: the decision reached origin's base (by another clone, a merged
+# pull request) and is not here yet. A document that waits for it here is not waiting
+# (adr-20261112-refresh-brings-the-clone-up-to-origin). A decision made only here is.
+
+# _kl_repo — _kd_repo, plus a second proposed stub `stub2` on the base and a second clone
+# `other/` to move origin from.
+_kl_repo() {
+  _kd_repo commit
+  printf 'other/\n' >> .git/info/exclude
+  printf 'second source\n' > docs/y.md
+  git add docs
+  git commit -q -m "docs y"
+  jig knowledge new convention stub2 --source docs/y.md --proposed >/dev/null
+  git add -A .ai/knowledge
+  git commit -q -m "stub2"
+  git push -q origin main
+  git fetch -q origin
+  git clone -q origin.git other
+}
+
+# _kl_origin <message> <command...> — run a command in other/, commit what it changed and
+# push it to origin's main; fetch it here, without moving this checkout.
+_kl_origin() {
+  local msg="$1"
+  shift
+  (
+    cd other || exit 1
+    "$@"
+    git add -A >/dev/null
+    git -c user.name=t -c user.email=t@t commit -q -m "$msg"
+    git push -q origin HEAD:main
+  )
+  git fetch -q origin
+}
+
+_kl_accept_alpha() {
+  sed -i.bak 's/^status: proposed$/status: active/' .ai/knowledge/features/alpha.md
+  rm -f .ai/knowledge/features/alpha.md.bak
+}
+
+test_knowledge_a_proposal_origin_already_decided_is_landed() {
+  _kl_repo
+  _kl_origin "accept alpha" _kl_accept_alpha
+  assert_eq proposed "$(sed -n 's/^status: //p' .ai/knowledge/features/alpha.md)"
+  run jig knowledge proposed --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"id":"feature-alpha","type":"feature","domains":[],"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"landed","lossy":false}'
+  # The others still wait here, and are decided as before.
+  assert_contains "$OUT" '"id":"feature-beta","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
+}
+
+test_knowledge_a_proposal_origin_rejected_is_landed() {
+  _kl_repo
+  _kl_origin "reject beta" sed -i.bak 's/^status: proposed$/status: rejected/' .ai/knowledge/features/beta.md
+  run jig knowledge proposed --json
+  assert_contains "$OUT" '"id":"feature-beta","type":"feature","domains":[],"path":".ai/knowledge/features/beta.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":false,"reason":"landed","lossy":false}'
+}
+
+test_knowledge_a_proposal_that_origin_still_holds_proposed_is_not_landed() {
+  _kl_repo
+  _kl_origin "touch alpha" sh -c 'printf "\nmore\n" >> .ai/knowledge/features/alpha.md'
+  run jig knowledge proposed --json
+  assert_not_contains "$OUT" '"reason":"landed"'
+  assert_contains "$OUT" '"id":"feature-alpha","type":"feature","domains":[],"path":".ai/knowledge/features/alpha.md","paths":[],"summary":null,"source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false}'
+}
+
+test_knowledge_a_document_decided_only_here_is_not_landed() {
+  _kl_repo
+  # Decided in this checkout (text form writes the tree), nothing on origin's base yet.
+  _kl_accept_alpha
+  run jig knowledge accept convention-stub2
+  assert_eq 0 "$RC"
+  run jig knowledge sources --json
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" '"reason":"landed"'
+  assert_contains "$OUT" '"counts":{"linked":2,"changed":0,"unrecorded":0,"missing":0,"landed":0}'
+  run jig knowledge proposed --json
+  assert_not_contains "$OUT" '"reason":"landed"'
+  assert_not_contains "$OUT" 'feature-alpha'
+}
+
+test_knowledge_an_approved_stub_whose_source_origin_approved_is_landed() {
+  _kl_repo
+  # The source changes here, and the same text is approved on origin's base.
+  printf 'second text\n' > docs/x.md
+  # shellcheck disable=SC2016 # expanded by the sh that runs in other/
+  _kl_origin "approve the new text of x" sh -c '
+    printf "second text\n" > docs/x.md
+    h=$(git hash-object docs/x.md)
+    sed "s/^source_hash: .*/source_hash: $h/" .ai/knowledge/sources/stub.md > stub.new
+    mv stub.new .ai/knowledge/sources/stub.md'
+  run jig knowledge sources --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"id":"convention-stub","state":"changed","status":"active","path":".ai/knowledge/sources/stub.md","source":"docs/x.md","bytes":12,"waiting":null,"decidable":false,"reason":"landed","lossy":false}'
+  assert_contains "$OUT" '"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0,"landed":1}'
+}
+
+test_knowledge_a_branch_that_proposes_an_approved_document_again_is_not_landed() {
+  _kl_repo
+  # origin's base and the fork point both hold alpha accepted; this branch proposes it again.
+  sed -i.bak 's/^status: proposed$/status: active/' .ai/knowledge/features/alpha.md
+  rm -f .ai/knowledge/features/alpha.md.bak
+  git add -A .ai/knowledge
+  git commit -q -m "accept alpha"
+  git push -q origin main
+  git fetch -q origin
+  git checkout -q -b task/again
+  sed -i.bak 's/^status: active$/status: proposed/' .ai/knowledge/features/alpha.md
+  rm -f .ai/knowledge/features/alpha.md.bak
+  run jig knowledge proposed --json
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" '"id":"feature-alpha"'
+  assert_not_contains "$OUT" '"reason":"landed"'
+}
+
+test_knowledge_an_approved_stub_whose_text_here_is_not_the_one_origin_approved_is_not_landed() {
+  _kl_repo
+  # Origin's base approved one text; the source here holds another, which nobody decided.
+  printf 'local text\n' > docs/x.md
+  # shellcheck disable=SC2016 # expanded by the sh that runs in other/
+  _kl_origin "approve the new text of x" sh -c '
+    printf "second text\n" > docs/x.md
+    h=$(git hash-object docs/x.md)
+    sed "s/^source_hash: .*/source_hash: $h/" .ai/knowledge/sources/stub.md > stub.new
+    mv stub.new .ai/knowledge/sources/stub.md'
+  run jig knowledge sources --json
+  assert_eq 0 "$RC"
+  assert_not_contains "$OUT" '"reason":"landed"'
+  assert_contains "$OUT" '"landed":0}'
+}
+
+test_knowledge_an_approved_stub_whose_source_changed_on_origin_unapproved_is_not_landed() {
+  _kl_repo
+  # The source changes here and on origin's base, but nobody approved the text there:
+  # the stub's recorded hash on the base is still the old one.
+  printf 'second text\n' > docs/x.md
+  _kl_origin "change x, no approval" sh -c 'printf "third text\n" > docs/x.md'
+  run jig knowledge sources --json
+  assert_not_contains "$OUT" '"reason":"landed"'
+  assert_contains "$OUT" '"landed":0}'
+}
+
+test_knowledge_an_approved_stub_origin_rejected_is_landed() {
+  _kl_repo
+  printf 'second text\n' > docs/x.md
+  _kl_origin "reject the stub" sed -i.bak 's/^status: active$/status: rejected/' .ai/knowledge/sources/stub.md
+  run jig knowledge sources --json
+  assert_contains "$OUT" '"id":"convention-stub","state":"changed","status":"active"'
+  assert_contains "$OUT" '"decidable":false,"reason":"landed","lossy":false}'
+  assert_contains "$OUT" '"landed":1}'
+}
+
+test_knowledge_the_counts_of_status_leave_landed_documents_out() {
+  _kl_repo
+  run jig status
+  assert_contains "$OUT" "proposals: 3 awaiting decision"
+  # alpha is decided on origin's base, and the stub's text approved there.
+  printf 'second text\n' > docs/x.md
+  # shellcheck disable=SC2016 # expanded by the sh that runs in other/
+  _kl_origin "decide" sh -c '
+    sed -i.bak "s/^status: proposed$/status: active/" .ai/knowledge/features/alpha.md
+    rm -f .ai/knowledge/features/alpha.md.bak
+    printf "second text\n" > docs/x.md
+    h=$(git hash-object docs/x.md)
+    sed "s/^source_hash: .*/source_hash: $h/" .ai/knowledge/sources/stub.md > stub.new
+    mv stub.new .ai/knowledge/sources/stub.md'
+  run jig status
+  assert_contains "$OUT" "proposals: 2 awaiting decision"
+  assert_not_contains "$OUT" "sources changed:"
+}
+
+test_knowledge_the_counts_of_status_keep_a_source_changed_only_here() {
+  _kl_repo
+  printf 'second text\n' > docs/x.md
+  run jig status
+  assert_contains "$OUT" "sources changed: 1"
 }

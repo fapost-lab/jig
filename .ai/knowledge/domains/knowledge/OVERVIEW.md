@@ -50,7 +50,9 @@ them an agent has to read.
   `--json`): committed on `knowledge/decisions` in Jig's own tree, `waiting` on the reads until it
   lands; the plain text forms write the working tree (adr-20261104-a-write-goes-in-jigs-own-tree).
   What is only in the checkout reads `decidable: false` and is refused `not-on-base` or
-  `not-on-branch`, one predicate for both (`_km_ref_holds`).
+  `not-on-branch`, one predicate for both (`_km_ref_holds`). What `origin/<base>` decided already
+  and this checkout is only behind on reads `landed` (`_km_landed_paths`), and `jig status` counts
+  leave it out; `jig refresh` brings it here (adr-20261112-refresh-brings-the-clone-up-to-origin).
 - Which documents a task must read, how much of each, and the record that it did:
   resolution by selectors, the catalog, and the context ledger (ADR-0014, ADR-0015).
 - A task's links to a neighbouring repository's task or spec: the `linked:` lines of resolve

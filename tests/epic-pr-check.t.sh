@@ -78,7 +78,7 @@ test_epic_pr_check_no_specs_at_all_passes() {
 
   run ec_check "$repo" epic/epic-branches
   assert_eq 0 "$RC" "epic-pr-check should succeed when the spec was removed: $OUT"
-  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished"
 }
 
 # The final pull request may come from finish/<id>, the branch `jig spec ship`
@@ -91,7 +91,7 @@ test_epic_pr_check_finish_branch_passes_once_the_spec_is_gone() {
 
   run ec_check "$repo" finish/epic-branches
   assert_eq 0 "$RC" "a finish branch of a removed spec should pass: $OUT"
-  assert_contains "$OUT" "epic-pr-check: finish/epic-branches is finished and v0.5.0 is a new version"
+  assert_contains "$OUT" "epic-pr-check: finish/epic-branches is finished"
 }
 
 test_epic_pr_check_finish_branch_fails_while_the_roadmap_declares_the_epic() {
@@ -114,7 +114,7 @@ test_epic_pr_check_roadmap_with_no_epic_line_passes() {
 
   run ec_check "$repo" epic/epic-branches
   assert_eq 0 "$RC" "epic-pr-check should succeed when no roadmap declares the epic: $OUT"
-  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished"
 }
 
 test_epic_pr_check_line_for_another_epic_only_passes() {
@@ -125,7 +125,7 @@ test_epic_pr_check_line_for_another_epic_only_passes() {
 
   run ec_check "$repo" epic/epic-branches
   assert_eq 0 "$RC" "epic-pr-check should not care about another epic's line: $OUT"
-  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished and v0.5.0 is a new version"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished"
 }
 
 # --- fail: a roadmap still declares the epic, open or finished --------------
@@ -172,20 +172,20 @@ test_epic_pr_check_legacy_finished_dash_variants_and_whitespace_fail() {
     "epic-pr-check: error: .ai/specs/epic-branches/roadmap.md still declares epic/epic-branches; run 'jig spec epic epic-branches --finish' on the epic before merging"
 }
 
-# --- version already released -> exit 1 -------------------------------------
+# --- version already released -> exit 0 ------------------------------------
+# An epic's final pull request no longer raises the version (a release is made
+# apart from the features), so a released JIG_VERSION is the normal case.
 
-test_epic_pr_check_version_already_released_fails() {
+test_epic_pr_check_version_already_released_passes() {
   local repo="$PWD/repo" bare="$PWD/origin.git" c1
   ec_new_repo "$repo" 0.5.0
   c1=$(git -C "$repo" rev-parse HEAD)
   ec_tag "$repo" v0.5.0 "$c1" "Jig 0.5.0"
-  ec_write_roadmap "$repo" epic-branches "Epic: epic/epic-branches — finished"
   ec_build_origin "$repo" "$bare"
 
   run ec_check "$repo" epic/epic-branches
-  [ "$RC" != 0 ] || fail "epic-pr-check must refuse an already-released version: $OUT"
-  assert_contains "$OUT" \
-    "epic-pr-check: error: JIG_VERSION 0.5.0 is already released as v0.5.0; raise the version on epic/epic-branches before merging"
+  assert_eq 0 "$RC" "a released version must not stop an epic that leaves it alone: $OUT"
+  assert_contains "$OUT" "epic-pr-check: epic/epic-branches is finished"
 }
 
 # --- head ref is not an epic branch -> exit 1 -------------------------------
@@ -224,7 +224,7 @@ test_epic_pr_check_ref_matched_literally_not_as_pattern() {
 
   run ec_check "$repo" "epic/a.b"
   assert_eq 0 "$RC" "epic-pr-check must not treat . as a wildcard: $OUT"
-  assert_contains "$OUT" "epic-pr-check: epic/a.b is finished and v0.5.0 is a new version"
+  assert_contains "$OUT" "epic-pr-check: epic/a.b is finished"
 }
 
 # The same literal match must still refuse the merge when the ref really is
