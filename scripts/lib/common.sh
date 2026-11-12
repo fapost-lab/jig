@@ -1699,6 +1699,40 @@ jig_gh_require() {
   jig_gh_resolve || jig_die "$1: $_JIG_GH_WHY"
 }
 
+# jig_gh_asked_as — one sentence naming the account a GitHub call of this clone
+# went as and where Jig took it from, for the message of a call that failed: a
+# refusal such as "must be a collaborator" says nothing of who asked, and a
+# token inherited from the environment (a direnv .envrc, a service started from
+# one) wins over github.account without a word. Only on that path: the login
+# behind a token in the environment, or gh's active one, costs gh a call.
+jig_gh_asked_as() {
+  local vars var login="" accounts="" active="" tab
+  jig_gh_resolve || true
+  case "$_JIG_GH_HOW" in
+    config) printf 'It asked GitHub as %s (github.account).\n' "$_JIG_GH_LOGIN" ;;
+    detected)
+      printf 'It asked GitHub as %s (found: the gh account that may push here; jig config set --local github.account <login> names another).\n' "$_JIG_GH_LOGIN" ;;
+    only) printf 'It asked GitHub as %s (the only account gh holds).\n' "$_JIG_GH_LOGIN" ;;
+    env)
+      vars=$(jig_gh_token_env "$_JIG_GH_HOST")
+      var=${vars%% *}
+      login=$(jig_net jig_gh api --hostname "$_JIG_GH_HOST" user --jq .login 2>/dev/null | tr -d '\r' | head -n 1) || login=""
+      case "$login" in '' | -* | *[!A-Za-z0-9-]*) login="the account of that token" ;; esac
+      printf 'It asked GitHub as %s: %s is set in the environment Jig runs in, and a token there comes before github.account and the accounts gh holds. Remove %s from that environment (a shell, a direnv .envrc, a service started from one) to ask as this clone'"'"'s account.\n' \
+        "$login" "$var" "$var" ;;
+    *)
+      [ -n "$_JIG_GH_HOST" ] || return 0
+      tab=$(printf '\t')
+      IFS="$tab" read -r accounts active <<EOF
+$(jig_gh_accounts "$_JIG_GH_HOST")
+EOF
+      if [ -n "$active" ]; then
+        printf 'It asked GitHub as %s, gh'"'"'s active account: nothing names this clone'"'"'s (jig config set --local github.account <login>).\n' "$active"
+      fi
+      ;;
+  esac
+}
+
 # jig_ship_account <who> <level> — before a ship's push: when this ship will
 # open a pull request on GitHub (<level> pr or merge), name the account it is
 # opened as, or refuse with nothing sent
@@ -2268,7 +2302,8 @@ _jig_ship_pr_github() {
   # shellcheck disable=SC2086 # $extra is one flag or nothing
   out=$(jig_net jig_gh pr create --base "$base" --head "$head" --title "$title" --body-file "$body_file" $extra 2>&1) \
     || jig_die "$who: gh pr create failed:
-$out"
+$out
+$(jig_gh_asked_as)"
   url=$(printf '%s\n' "$out" | tail -n 1)
   JIG_SHIP_URL="$url"
   printf 'pr %s\n' "$url"

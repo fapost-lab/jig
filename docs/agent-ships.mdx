@@ -345,7 +345,11 @@ To ask GitHub something about the project yourself as that account, put `jig` in
 - Each `gh` call gets that account's stored token for the call only (`gh auth token --user`, gh
   2.40 or later). Nothing is written to gh's configuration.
 - A `GH_TOKEN` or `GITHUB_TOKEN` already in the environment wins over everything, as it does for
-  `gh` itself, so CI and a project `.envrc` keep working.
+  `gh` itself, so CI and a project `.envrc` keep working. It also wins when you did not mean it to:
+  a tool started from another project's directory inherits that directory's `GH_TOKEN`. When
+  GitHub refuses to open a pull request ("must be a collaborator"), the failure names the account
+  Jig asked as and where it came from — `github.account`, the one found, or a token in the
+  environment, with the variable to remove.
 - Pushing and fetching over HTTPS go as the same account — the one you named, the one Jig found
   among several, or the only one `gh` holds: for each of those `git` calls, Jig sets aside your
   credential helper for that host and has `git` ask `gh` for that account's token. Nothing is
