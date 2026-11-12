@@ -7,7 +7,6 @@ for prod" — said by a person or run by CI — while a project on the default `
 exactly as before.
 
 Epic: epic/staging-branch
-Release: minor
 
 ## Phase 1 — Ship to staging
 
