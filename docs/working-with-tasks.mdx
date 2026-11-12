@@ -99,6 +99,18 @@ Small work — a typo, a one-file fix that fits in one session — needs no work
 **Paused** is a mark on an active or ready task, not a state of its own: it says the work was
 set aside, with a reason, and it comes back where it was.
 
+**Parked** is what a shipped task is in a project on the staging flow while it waits at the staging
+branch: for a colleague's review of its pull request (`review`), or, once it is on the staging
+branch, for "prepare for prod" (`signal`). Nobody sets it: Jig reads it from git and from what the
+forge last said, every time. A parked task is not your current task, the queue does not offer it,
+and you can start another task in the same checkout. When QA or a reviewer asks for a fix, say so
+— *"QA found a bug in booking-form, fix it"* — and the agent runs `jig task resume <id>`: the task
+is active again, and stays out of parking through the fix and its verify until the next
+`jig task ship` — whatever your `agent.git`, also when the ship hands the commit or the push to you.
+After the ship it is parked again as soon as Jig sees a reason: at once while its new pull request into
+the staging branch waits, or, when your CI lands tasks itself (`git.staging_land: external`), only
+once a fetch shows its work on the staging branch.
+
 ## How a task ends
 
 Every task ends with the question *what should the project remember?* — a new decision record, an

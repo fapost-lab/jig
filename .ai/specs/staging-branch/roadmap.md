@@ -40,7 +40,7 @@ from a CI job. Done when: run on a runner with no Jig workspace and given a test
 it opens the pull request into the base branch and prints its link, and it refuses a task whose tip is not
 in that commit; a task waiting on staging is listed as parked and holds no slot.
 
-- [ ] `park-at-staging` — Park at the staging branch — one state, *parked*, with its reason derived from git and the forge
+- [x] `park-at-staging` — Park at the staging branch — one state, *parked*, with its reason derived from git and the forge
   (`review` while the staging pull request is open, `signal` once the task is on the staging branch; the owner's checkout adds `landing`);
   it frees the current-task slot and the queue; `jig task resume` brings the task back; autopilot
   stops there, never approves and never promotes. (after: Land a task on staging — parking starts

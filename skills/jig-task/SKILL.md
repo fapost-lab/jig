@@ -49,6 +49,10 @@ dormant. Treat a long pause or an overlap line as a reason to re-check the premi
 `design.md` before building on it; the stage skills can be re-run, and re-running
 `jig-analyze` is how research is restarted.
 
+A task listed with `parked=<reason>` waits at the staging branch — for review or for "prepare
+for prod" — and is not the current task. Take it back only for a fix someone asked for:
+`jig task resume <id>` makes it `active`; it ships again through verify and `jig task ship`.
+
 Then ask which merged tasks wait to be closed. The dry run changes nothing:
 
 ```

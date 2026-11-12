@@ -1068,6 +1068,79 @@ jig_staging_states() {
   _jig_staging_walk "$stip" "$rows" | awk -F '\t' '$1 == "state" { print $2 "\t" $3 }'
 }
 
+# jig_parked_states <staging-branch> <staging-land> <rows> <cache> [<states>]
+# — "<id><TAB>review|signal" for each task of <rows> that waits at the staging branch: it
+# is parked. Nothing for any other task. <rows> are "<id><TAB><branch><TAB>
+# <base><TAB><pr-url><TAB><promote-url>[<TAB><park-resumed-at>]" lines, `-`
+# for a value the caller does not know or have; a row whose
+# <park-resumed-at> is set is a task a person took back for a fix, and is not
+# parked whatever git and the forge say; <cache> is the forge cache's lines (forgecache_read), passed in so
+# this file needs no forge cache of its own; <states>, when given, is
+# jig_staging_states' answer for the same rows, already asked by the caller.
+# Derived on every call from git
+# (jig_staging_states) and the forge cache, written nowhere
+# (adr-20261112-a-task-waiting-at-staging-is-parked-and-resuming-it-is-its-status):
+#   1. a pull request from the branch into its base that is open or merged —
+#      the newest the cache has, or the one <promote-url> names, which counts
+#      as open until the cache has it — ends parking: the task left the
+#      staging side of the flow;
+#   2. its own work on origin's staging branch (`on`) is `signal`: it waits for
+#      "prepare for prod";
+#   3. an open pull request into the staging branch is `review`: the one
+#      <pr-url> names when it goes there (open until the cache has it, and only
+#      when <staging-land> is `pr`), else the newest the cache has;
+#   4. anything else — work after staging with no pull request open, nothing
+#      on staging — is not parked.
+# The links are the owner's (task state); a caller without a workspace passes
+# `-` and reads the cache alone. Status, `agent.git` and an autopilot run are
+# never asked here: they are the owner's, laid over this answer by the caller.
+# One jig_staging_states call and two awk passes, whatever the number of rows.
+jig_parked_states() {
+  local staging="$1" land="$2" rows="$3" cache="$4" states
+  [ -n "$staging" ] && [ -n "$rows" ] || return 0
+  if [ $# -ge 5 ]; then
+    states=$5
+  else
+    states=$(jig_staging_states "$staging" "$(printf '%s\n' "$rows" | cut -f1-3)")
+  fi
+  {
+    printf '%s\n' "$rows" | awk -F '\t' 'NF >= 3 && $1 != "" { print "Q\t" $0 }'
+    [ -z "$states" ] || printf '%s\n' "$states" | awk '{ print "S\t" $0 }'
+    [ -z "$cache" ] || printf '%s\n' "$cache" | awk '{ print "P\t" $0 }'
+  } | awk -F '\t' -v st="$staging" -v land="$land" '
+    $1 == "S" { on[$2] = ($3 == "on"); next }
+    $1 == "P" {
+      # <head> <base> <state> <ci> <fetched_at> <head-commit> <url> [<mergeable>],
+      # newest first (lib/forgecache.sh); a line may end before <url>.
+      key = $2 SUBSEP $3
+      if (!(key in first)) first[key] = $4
+      if ($8 != "" && $8 != "-" && !($8 in byurl)) { byurl[$8] = $4; urlbase[$8] = $3 }
+      next
+    }
+    $1 == "Q" { n++; id[n] = $2; br[n] = $3; bs[n] = $4; pr[n] = $5; pm[n] = $6; rs[n] = $7; next }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (rs[i] != "" && rs[i] != "-") continue
+        s = first[br[i] SUBSEP bs[i]]
+        if (s == "open" || s == "merged") continue
+        p = pm[i]
+        if (p != "" && p != "-") {
+          if (!(p in byurl)) continue
+          if (byurl[p] == "open" || byurl[p] == "merged") continue
+        }
+        if (on[id[i]]) { print id[i] "\tsignal"; continue }
+        u = pr[i]; s = ""
+        if (u != "" && u != "-" && (!(u in byurl) || urlbase[u] == st)) {
+          if (u in byurl) s = byurl[u]
+          else if (land == "pr") s = "open"
+        } else {
+          s = first[br[i] SUBSEP st]
+        }
+        if (s == "open") print id[i] "\treview"
+      }
+    }'
+}
+
 # _jig_staging_walk <staging-sha> <rows> — jig_staging_states' walk, judged
 # against the commit <staging-sha> rather than origin's staging branch: what
 # "prepare for prod" asks of the tested staging commit

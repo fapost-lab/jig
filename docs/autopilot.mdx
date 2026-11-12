@@ -129,6 +129,12 @@ the run a new direction. It carries your answer into the run's record word for w
 lists it under **Resumed on an answer** — if you see an answer there you never gave, the agent
 resumed itself.
 
+In a project on the staging flow, a run ends where the task lands on the staging branch, or where its
+pull request into the staging branch waits for a review: the task is then **parked**. The run does not
+approve that pull request, does not land it without a review unless you said so, and never prepares
+it for prod. It cannot start again on a parked task: when QA asks for a fix, you take the task back
+with `jig task resume <id>` (or tell the agent to), and a new run can do the fix.
+
 ### Taking a stopped run over
 
 You can finish a stopped task yourself, or tell the agent to go on with it without autopilot. Say so
