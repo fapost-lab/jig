@@ -277,7 +277,9 @@ git each time, by the task's branch, comparing it with origin's staging branch �
 what colleagues merged. When the flow cannot work, the line says so instead
 (`flow: staging, not usable: … (jig doctor)`). `jig housekeeping` puts the same word in its report
 (`on staging: …`, `behind staging: …`), and a task waiting on the staging branch is never archived
-as stale. On the default `direct` flow none of this appears.
+as stale. With `git.staging_land: external`, where your CI merges tasks into the staging branch and
+no pull request goes there, this is how you see what CI landed: the same words, read the same way. On
+the default `direct` flow none of this appears.
 
 ## Inspect the change and its review
 
@@ -372,6 +374,12 @@ Personal settings live in the ignored `.ai/config.local.yaml`.
 Ask the agent to verify the result and record what the project should remember before shipping it.
 `jig task ship` follows your personal permissions and checks the task's completion records.
 After the change lands, confirm whether the task can close.
+
+On the staging flow, `jig task land <id>` lands the task's open pull request on the staging branch
+when you allow `merge`: after an approval, on the forge, or by a direct merge when it conflicts
+([how a task ships](/agent-ships)). It exits 3 when you decide — no approval yet, or a push the
+staging branch refused — and 5 when a conflict waits in its temporary worktree for
+`jig task land <id> --resolved --note-file <file>`; `--abort` gives the landing up.
 
 <Tip>
   `jig help` lists the full command surface. Use [Skills](/skills) for the agent procedures,

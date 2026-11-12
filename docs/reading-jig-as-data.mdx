@@ -160,7 +160,8 @@ In a project on the staging flow (`git.flow: staging`), each task also carries `
 `base_branch`: `"on"` when its work is on the staging branch on origin, `"behind"` when it has commits
 of its own after that (a fix QA asked for, pushed or not), and `null` when none of its work is there.
 Merging the base branch into the task does not make it `behind`. Jig reads this from git every time and
-asks no forge. On any other flow the field is not there at all, so nothing changes for such a project.
+asks no forge, so a task your CI merged into the staging branch (`git.staging_land: external`) reads the
+same as one merged through a pull request. On any other flow the field is not there at all, so nothing changes for such a project.
 
 `pull_request` says whether the pull request is `open`, `merged` or `closed`, and how its checks
 went: `green`, `red`, `pending`, or `none` when no check ran. Both are what the last `jig
@@ -172,7 +173,7 @@ carries none, so there `ci` is `null`.
 ## What a person may do next
 
 `actions` lists what a person can do with the task right now, so a dashboard can show the right
-buttons without knowing Jig's rules. Every task carries the same fourteen actions, in the same order:
+buttons without knowing Jig's rules. Every task carries the same fifteen actions, in the same order:
 
 | `id` | What it does |
 |---|---|
@@ -183,6 +184,7 @@ buttons without knowing Jig's rules. Every task carries the same fourteen action
 | `answer-stop` | Answer an autopilot run that stopped to ask you something |
 | `set-class` | Change the task's class |
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
+| `land` | On the staging flow, land the task's open pull request on the staging branch: on the forge, or directly when it conflicts |
 | `close` | Close a task whose work has landed |
 | `abandon` | Give the task up; its `command` asks for `--reason <text>` when the task is linked to a spec |
 | `archive` | Put an active, ready or abandoned task away, without deleting it |

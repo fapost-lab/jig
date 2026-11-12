@@ -22,7 +22,8 @@ It prints `autopilot: on (unattended)` when this clone set `autopilot.unattended
 the run asks nothing, and §5 replaces §3. Say in one line what will happen: the class, the
 route and its depth as `jig task route <id>` names them, any stage its `delegate:` lines hand to
 a helper, and where the run will end by the `autopilot git:` line `start` printed — merged at
-`merge`, an open pull request at `pr`, or "ready for your commit" at `none`. Offer to
+`merge`, an open pull request at `pr`, pushed for CI to land at either under
+`git.staging_land: external`, or "ready for your commit" at `none`. Offer to
 open the status page with `.ai/scripts/jig status --open`, where the human can watch the run
 and sees first what it needs from them.
 
@@ -115,12 +116,13 @@ Finish with `jig-consolidate`: it records the knowledge decision and ships the c
 as the run's level allows. Then:
 
 ```
-.ai/scripts/jig task autopilot <id> end --reason "<how it ended: merged, not merged: <why>, ready for your commit>"
+.ai/scripts/jig task autopilot <id> end --reason "<how it ended: merged, not merged: <why>, pushed: CI lands it on <staging>, ready for your commit>"
 .ai/scripts/jig task autopilot <id> report
 ```
 
-Hand back the pull request link (or "ready for your commit") and the report, and put the report
-in the pull request body when you write it. Its **Changed linked sources — need your review** block,
+Hand back the pull request link (or "ready for your commit", or the pushed branch CI lands) and the
+report, and put the report in the pull request body when you write it — in the commit message when
+`external` leaves no pull request. Its **Changed linked sources — need your review** block,
 when there is one, goes into the body as it is: a file a stub links was edited, and only a human
 approves the new text (`jig-accept`). It never stops the run. Closing the task after the merge stays as
 `jig-consolidate` §6 says.
@@ -129,14 +131,16 @@ approves the new text (`jig-accept`). It never stops the run. Closing the task a
 
 The person who set `autopilot.unattended` cannot answer a stop. Each one becomes the safe
 default below, recorded so they read it in the pull request, in plain words, not in jargon —
-and on their phone as it happens, when they set up Telegram messages: one short sentence (§3):
+and on their phone as it happens, when they set up Telegram messages: one short sentence (§3).
+Under `git.staging_land: external` there is no pull request: wherever this section says the pull
+request or its body, write it in the commit message and the hand-back instead.
 
 | Stop | Instead |
 |---|---|
 | The gate of a T3/T4 task, or a re-classification into one | Write the design as usual, then `jig task gate <id> approved --by agent`, `jig task autopilot <id> approve --reason "<what was approved>"`, and in `task.md` (`jig task artifact append <id> task --from -`): "Human gate — approved by the agent (unattended)". Put `design.md` verbatim in the pull request under `## Design — approved by the agent, not a human` |
 | A decision nobody made | The most cautious option that is easiest to undo. `jig task autopilot <id> decide --reason "<what you chose, and why>"` |
 | A destructive operation | Never. Find another way or leave that part out, and say so with `decide --reason` |
-| `repair` exited 3 | The run ends unfinished: stage what there is and run `jig task ship <id> --message-file <file> --draft`. The body starts with `Not finished: <why>`. A draft is never merged; the run stays `stopped`, and the status page shows it waiting. `resume` is refused after the repair limit, including with `--by human` |
+| `repair` exited 3 | The run ends unfinished: stage what there is and run `jig task ship <id> --message-file <file> --draft`. The body starts with `Not finished: <why>`. A draft is never merged — under `git.staging_land: external` it is committed and not pushed, since CI lands whatever is pushed; the run stays `stopped`, and the status page shows it waiting. `resume` is refused after the repair limit, including with `--by human` |
 | The class turns out lower | Lower it with `jig task set <id> class <Tn> --reason "<why>"`, except out of T3/T4 below T3: the script refuses that unattended, so keep the route. `end` comes after the knowledge decision, never to start a fresh run |
 
 If a person independently answers a run that is already `stopped` in an unattended clone,
@@ -152,7 +156,13 @@ is merged but by `task ship`. Before shipping, put `jig task autopilot <id> repo
 **Decided without you**, **Approved by the agent, not a human** and **Changed linked sources —
 need your review** blocks in the pull request body as they are. At the run's level `merge`, `task ship` merges once CI passed or prints
 `not merged: <why>` — both are a finished run; say which. After `merged`, close the task
-(`jig-consolidate` §6) without asking, then `end`.
+(`jig-consolidate` §6) without asking, then `end`. On the staging flow the ship lands on the
+staging branch instead: exit 5 is a conflict you resolve as `jig-consolidate` §5 says, attended or
+not; exit 3 on review is a stop when attended, and an unattended run is told to wait. After
+`landed …` or `not landed: …`, `end --reason "<that line>"` and do not close the task: it waits on
+staging for "prepare for prod", and nothing in a run approves or promotes it. With
+`git.staging_land: external` it prints `stopped at push: … CI lands …` instead: also finished, with
+no pull request; end with `--reason "pushed: CI lands it on <staging>"`.
 
 ## 6. A roadmap phase
 

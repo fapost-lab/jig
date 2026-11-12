@@ -224,6 +224,24 @@ fixture_staging_repo() {
   done
 }
 
+# fixture_staging_ci_lands <id> — what CI does under `git.staging_land:
+# external`, after fixture_staging_repo: task/<id> is pushed, merged into
+# origin's staging branch from a clone of its own with no pull request, and
+# this checkout fetches.
+fixture_staging_ci_lands() {
+  local id="$1"
+  git push -q origin "task/$id"
+  if [ ! -d ci ]; then
+    git clone -q origin.git ci
+    printf 'ci/\n' >> .git/info/exclude
+  fi
+  git -C ci fetch -q origin
+  git -C ci checkout -q -B staging origin/staging
+  git -C ci merge -q --no-ff -m "CI lands $id" "origin/task/$id"
+  git -C ci push -q origin staging
+  git fetch -q origin
+}
+
 # Run jig from the framework source checkout.
 jig() { "$JIG_BIN" "$@"; }
 

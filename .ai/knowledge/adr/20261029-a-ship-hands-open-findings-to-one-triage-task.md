@@ -11,7 +11,7 @@ paths:
   - skills/jig-consolidate/SKILL.md
   - "skills/jig-review/**"
 summary: Why jig task ship hands a task's open P2/P3 findings to one not-started triage task when its pull request exists, why the source ledger stays untouched, and why knowledge gaps go to consolidation instead.
-reviewed_at: 2026-10-30
+reviewed_at: 2026-11-11
 ---
 # A ship hands the open P2 and P3 findings to one triage task, and leaves the ledger as it is
 
@@ -101,3 +101,10 @@ case the scrub missed (P3), and a new module written into RULES.md but not ARCHI
 - Undoing the close: revert. Triage tasks already closed stay ordinary consolidated tasks.
 - `triage_of` is written after `task new` returns; an interruption between the two leaves
   `<id>-findings` unlinked, and the next ship warns that the id is taken instead of naming it.
+
+## Amendment (2026-11-11): external landing on staging
+
+Under `git.staging_land: external` (the staging flow) `task ship` opens no pull request and CI lands
+whatever is pushed, so no pull request will ever list the open P2/P3: the triage task is filed at the
+push instead, its `Pull request:` line saying there is none. A draft is committed and not pushed
+there, and files none, as a draft never does (task staging-land-external).

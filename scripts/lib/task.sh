@@ -42,6 +42,7 @@ cmd_task() {
     findings) task_findings "$@" ;;
     receipt) task_receipt "$@" ;;
     ship) task_ship "$@" ;;
+    land) task_land "$@" ;;
     promote) task_promote "$@" ;;
     autopilot) task_autopilot "$@" ;;
     gate) task_gate "$@" ;;
@@ -59,7 +60,7 @@ cmd_task() {
 # one source for both `--help` and the usage errors the subcommands die with.
 _task_usage() {
   case "${1:-}" in
-    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|promote|autopilot|gate|route ...\n' ;;
+    '') printf 'usage: jig task new|start|bootstrap|set|abandon|archive|unarchive|merge|pause|resume|list|show|current|changes|artifacts|artifact|finding|findings|receipt|ship|land|promote|autopilot|gate|route ...\n' ;;
     new) printf 'usage: jig task new <id> [--class T0..T4] [--domains a,b] [--from <file> | --goal <text>] [--lean] [--json]\n' ;;
     start) printf 'usage: jig task start <id> [--worktree] [--no-bootstrap] [--share <dir>]...\n' ;;
     bootstrap) printf 'usage: jig task bootstrap <id> [--share <dir>]...\n' ;;
@@ -96,6 +97,11 @@ _task_usage() {
       printf '       jig task receipt <id> --since-review [--format report|paths]\n'
       ;;
     ship) printf 'usage: jig task ship <id> --message-file <file> [--title <t>] [--body-file <file>] [--draft] [--partial]\n' ;;
+    land)
+      printf 'usage: jig task land <id> [--without-review]\n'
+      printf '       jig task land <id> --resolved --note-file <file> [--without-review]\n'
+      printf '       jig task land <id> --abort\n'
+      ;;
     promote) printf 'usage: jig task promote <id> [--commit <sha>] [--title <t>] [--body-file <file>]\n' ;;
     autopilot)
       printf 'usage: jig task autopilot <id> start [--phase <spec-id>/<n>]\n'
@@ -5259,7 +5265,7 @@ EOF
 #
 # The rows, in their order; the ids are a contract. The pause request rows ask
 # the guards `jig queue request|cancel` asks (common.sh), which read the queue.
-_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop set-class ship close abandon archive unarchive reopen"
+_TASK_ACTIONS="start pause resume request-pause cancel-pause-request approve-gate answer-stop set-class ship land close abandon archive unarchive reopen"
 
 # _task_actions <id> <pr-state> — one line per row of the table:
 # `<action><TAB><true|false><TAB><command><TAB><reason>`, the reason empty
@@ -5299,6 +5305,7 @@ _task_actions_v() {
         fi ;;
       set-class) command="jig task set $id class <Tn>" ;;
       ship) command="jig task ship $id --message-file <file>" ;;
+      land) command="jig task land $id" ;;
       close) command="jig task set $id status consolidated" ;;
       abandon)
         # A spec-linked task is refused without a reason; the placeholder
@@ -5350,6 +5357,7 @@ _task_actions_v() {
           [ -n "$reason" ] || _task_actions_guard_v reason "$id" "$action" _task_ship_refusal "$id" 0
           [ -n "$reason" ] || _task_actions_ask_v reason "$id" "$action" _task_ship_branch_refusal "$id"
         fi ;;
+      *:land) _task_actions_ask_v reason "$id" "$action" _task_land_refusal "$id" "$pr_state" ;;
       *:close) _task_actions_ask_v reason "$id" "$action" _task_close_refusal "$id" "${pr_state:-unknown}" ;;
     esac
     if [ -n "$reason" ]; then
@@ -6457,6 +6465,118 @@ _task_triage_md() {
   printf '<!-- What was decided for each finding: the task filed for it, or why it was dismissed. -->\n'
 }
 
+# task_land <id> [--without-review] | --resolved --note-file <file> | --abort —
+# land the task's pull request on the staging branch (lib/land.sh,
+# adr-20261111-a-task-lands-on-staging-through-its-pull-request). Needs the git
+# level `merge`, as merging into a shared branch does; below it the person
+# lands it (exit 3). Exit 5: a conflict waits for the agent in the temporary
+# tree, and `--resolved` continues. `--abort` sends nothing at any level.
+task_land() {
+  jig_require_init
+  [ $# -ge 1 ] || jig_die "$(_task_usage land)"
+  local id="$1"
+  shift
+  local without=0 resolved=0 abort=0 note=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --without-review) without=1; shift ;;
+      --resolved) resolved=1; shift ;;
+      --abort) abort=1; shift ;;
+      --note-file)
+        [ $# -ge 2 ] || jig_die "task land: --note-file requires a value"
+        note="$2"
+        shift 2 ;;
+      *) jig_die "task land: unknown argument: $1" ;;
+    esac
+  done
+  [ -f "$(task_dir "$id")/state" ] || jig_die "task land: unknown task: $id"
+  _task_guard_write "$id" "task land"
+  if [ "$abort" -eq 1 ]; then
+    [ "$resolved" -eq 0 ] && [ "$without" -eq 0 ] && [ -z "$note" ] \
+      || jig_die "$(_task_usage land)"
+  fi
+  [ -z "$note" ] || [ "$resolved" -eq 1 ] || jig_die "task land: --note-file goes with --resolved"
+  [ -z "$note" ] || [ -f "$note" ] || jig_die "task land: --note-file: no such file: $note"
+  # shellcheck source=lib/land.sh
+  . "$JIG_LIB/land.sh"
+  if [ "$abort" -eq 1 ]; then
+    land_abort "task land" "$id"
+    return 0
+  fi
+  # What the actions table asks, in its order and words (_task_land_refusal);
+  # below `merge` it is the person's to land, exit 3 as for a ship at `none`.
+  local refusal pr
+  refusal=$(_task_land_refusal "$id" "") || exit 1
+  case "$refusal" in
+    '') ;;
+    "task land: landing "*" needs agent.git: merge "*)
+      pr=$(task_state_get "$id" pr_url)
+      printf '%s; %s stays open, the person lands it\n' "$refusal" "${pr:-its pull request}" >&2
+      jig_status_page_flush
+      exit 3 ;;
+    *) jig_die "$refusal" ;;
+  esac
+  land_task "task land" "$id" "$without" "$resolved" "$note"
+  if [ "$_LAND_RC" -ne 0 ]; then
+    jig_status_page_flush
+    exit "$_LAND_RC"
+  fi
+}
+
+# _task_land_refusal <id> <pr-state> — why `jig task land <id>` refuses this
+# task by its state, or nothing: the `land` row of the actions table. Local
+# reads only — the flow, the base, the git level, the pull request as the
+# reader knows it (<pr-state>, the forge cache's), and the ship gates; what
+# the forge, the network and the clean-branch walk answer is the command's.
+_task_land_refusal() {
+  local id="$1" pr_state="$2" flow staging base base_branch line level key rc=0 pr refusal
+  # The flow and the level first, read without a process: the table asks this
+  # of every task of a listing (task list --json starts none per task).
+  cfg_v flow git.flow direct
+  if [ "$flow" != staging ]; then
+    printf 'task land: %s is not on the staging flow; a task in this project lands with jig task ship\n' "$id"
+    return 0
+  fi
+  cfg_v staging git.staging_branch ""
+  _task_ship_git_v line "$id" || rc=$?
+  level=${line%%$'\t'*}
+  key=${line#*$'\t'}
+  if [ "$rc" -ne 0 ]; then
+    printf 'task land: invalid %s: %s (expected none|commit|push|pr|merge)\n' "$key" "$level"
+    return 0
+  fi
+  if [ "$level" != merge ]; then
+    printf 'task land: landing %s on %s needs agent.git: merge (git level %s (%s))\n' "$id" "${staging:-the staging branch}" "$level" "$key"
+    return 0
+  fi
+  if ! staging=$(jig_staging_in_use); then
+    printf 'task land: %s is not on the staging flow; a task in this project lands with jig task ship\n' "$id"
+    return 0
+  fi
+  base=$(jig_task_base "$id")
+  base_branch=$(cfg git.base_branch main)
+  if [ "$base" != "$base_branch" ]; then
+    printf 'task land: %s is cut from %s, not %s; the staging flow does not apply to it\n' "$id" "$base" "$base_branch"
+    return 0
+  fi
+  if [ "$(jig_staging_land || true)" = external ]; then
+    printf 'task land: git.staging_land is external, so CI lands %s on %s; Jig merges nothing there\n' "$id" "$staging"
+    return 0
+  fi
+  task_state_var pr "$id" pr_url
+  if [ -z "$pr" ]; then
+    printf 'task land: %s has no pull request into %s; run jig task ship %s first\n' "$id" "$staging" "$id"
+    return 0
+  fi
+  case "$pr_state" in
+    merged) printf 'task land: %s is already on %s (%s merged)\n' "$id" "$staging" "$pr"; return 0 ;;
+    closed) printf 'task land: %s is closed; ship %s again to open a new pull request into %s\n' "$pr" "$id" "$staging"; return 0 ;;
+  esac
+  refusal=$(_task_ship_refusal "$id" 0) || return 1
+  [ -z "$refusal" ] || printf 'task land: %s\n' "${refusal#task ship: }"
+  return 0
+}
+
 # The body file task_ship writes for a major release's draft; script-global
 # because the exit cleanup that removes it runs after the function returned
 # (conventions/shell.md).
@@ -6546,6 +6666,21 @@ EOF
   if [ -n "$staging" ] && [ "$land" = pr ]; then
     case "$level" in pr | merge) _task_ship_foreign_pr "$branch" "$staging" ;; esac
   fi
+  # The clean-branch rule, at every level and before the commit: a branch that
+  # carries the staging branch goes neither into a pull request nor to origin
+  # (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
+  # The staging branch as origin has it now, at every level and whoever lands:
+  # without it the rule cannot be judged, and a ship that cannot judge refuses.
+  if [ -n "$staging" ]; then
+    local failed
+    if ! failed=$(jig_fetch_fresh "$staging"); then
+      jig_die "task ship: could not fetch $failed from origin; whether $branch carries $staging cannot be told without it.
+Nothing was committed. Fetch it (or create it on origin) and run again."
+    fi
+    # shellcheck source=lib/land.sh
+    . "$JIG_LIB/land.sh"
+    land_clean_branch_refusal "task ship" "$id" HEAD "$base" "$staging"
+  fi
 
   # The tracker issue into the commit's first line and the pull request's
   # title, where trackers' VCS integrations look for it — written to a copy,
@@ -6621,15 +6756,30 @@ Nothing was committed. Stage what belongs to the task (git add -u, git add <path
     return 0
   fi
 
-  jig_ship_push "task ship" "$branch"
-
-  if [ "$level" = push ]; then
-    printf "stopped at push: the pull request is the human's\n"
+  # Under `external` CI lands whatever reaches origin, so a pushed draft would
+  # be merged into the staging branch: a draft is kept on this machine.
+  if [ "$draft" -eq 1 ] && [ -n "$staging" ] && [ "$land" = external ]; then
+    printf 'stopped at commit: a draft is not pushed, since git.staging_land is external and CI lands whatever is pushed to %s; push it once it is finished\n' "$branch"
     return 0
   fi
 
+  jig_ship_push "task ship" "$branch"
+
   if [ -n "$staging" ] && [ "$land" = external ]; then
     printf 'stopped at push: git.staging_land is external, so CI lands %s on %s; no pull request opened\n' "$branch" "$staging"
+    # No pull request will ever list the open P2/P3 here, and no person opens
+    # one later, at any level: they go to their triage task now, as at the
+    # other ends (adr-20261029-a-ship-hands-open-findings-to-one-triage-task).
+    # A draft's findings stay its own.
+    if [ "$draft" -eq 0 ] && [ -n "$(_task_open_minor_findings "$id")" ]; then
+      printf 'task ship: no pull request lists the open findings, so they go to their triage task\n'
+      _task_ship_triage "$id" "none: git.staging_land is external, so CI lands $branch on $staging"
+    fi
+    return 0
+  fi
+
+  if [ "$level" = push ]; then
+    printf "stopped at push: the pull request is the human's\n"
     return 0
   fi
 
@@ -6690,15 +6840,22 @@ EOF
       ;;
   esac
 
-  # Landing on the staging branch — the approval, the merge on the forge, the
-  # direct merge when it conflicts — is not built yet, so even at `merge` the
-  # ship stops at the open pull request: merging it here would skip the
-  # review the staging flow keeps (.ai/specs/staging-branch/).
+  # Landing on the staging branch: at `merge` the pull request just opened
+  # lands as `jig task land` lands it — the approval by git.staging_review,
+  # the merge on the forge, the direct merge when it conflicts — and its exit
+  # code is the ship's: 3 a person decides, 5 a conflict waits for the agent
+  # (adr-20261111-a-task-lands-on-staging-through-its-pull-request).
   if [ -n "$staging" ]; then
     if [ "$level" = merge ] && [ "$draft" -eq 1 ]; then
       printf 'not merged: a draft pull request is never merged\n'
+    elif [ "$level" = merge ] && [ -n "$JIG_SHIP_URL" ]; then
+      land_task "task ship" "$id" 0 0 ""
+      if [ "$_LAND_RC" -ne 0 ]; then
+        jig_status_page_flush
+        exit "$_LAND_RC"
+      fi
     elif [ "$level" = merge ]; then
-      printf 'not merged: landing a task on %s is not built yet; %s is not on %s until a person lands the pull request\n' "$staging" "$branch" "$staging"
+      printf "%s is not on %s yet: with no pull request to land, landing is the human's\n" "$branch" "$staging"
     else
       printf "%s is not on %s yet: landing the pull request is the human's\n" "$branch" "$staging"
     fi

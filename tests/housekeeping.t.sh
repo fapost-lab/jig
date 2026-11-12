@@ -4153,6 +4153,23 @@ test_housekeeping_a_pull_request_merged_into_staging_is_not_wrong_base() {
   assert_contains "$OUT" "on status=active remote=unknown via=forge action=preserve flags=wrong-base"
 }
 
+# With `git.staging_land: external` CI merges a task into the staging branch and
+# the forge knows no pull request of it: the run reads it on staging from git,
+# keeps it from the stale archive and flags nothing.
+test_housekeeping_reads_what_ci_landed_on_staging() {
+  hk_staging_setup
+  printf 'git.staging_land: external\n' >> .ai/config.yaml
+  hk_cfg forge github
+  hk_stub_gh ""
+  fixture_staging_ci_lands never
+  fixture_task never task/never active "updated_at:$(hk_days_ago 90)"
+  run jig housekeeping --verbose
+  assert_contains "$OUT" "never status=active remote=unknown via=none action=preserve flags=STALE_CANDIDATE staging=on"
+  assert_not_contains "$OUT" "wrong-base"
+  assert_not_contains "$OUT" "action=archive"
+  assert_contains "$(cat .ai/workspace/tasks/never/state)" "status: active"
+}
+
 # The pull request a staging `task ship` leaves is into the staging branch: while
 # it is open the task is kept as one with an open pull request into its base is,
 # never archived as stale.

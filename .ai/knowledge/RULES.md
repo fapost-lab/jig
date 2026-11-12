@@ -85,7 +85,7 @@
   the record judged gone, under which that record is removed only while it is still that record
   and its holder is still gone; the claim is removed, `rm -f`, by the call that made it, and one a
   stopped writer left is never removed by jig — the refusal names it for a person to delete.
-  Its tree is the seventh: git deletes it, with `git worktree remove --force`, the one `--force` on a
+  Its tree is the seventh: git deletes it, with `git worktree remove --force`, one of the two `--force`s on a
   removal anywhere in jig, and one function builds the only path it is given,
   `<git-common-dir>/jig/tree`. `--force` is what a refused write needs, and it is safe there because
   under that lock only Jig writes in the tree, nothing a person wrote is ever in it, and what was
@@ -96,7 +96,15 @@
   followed, then `rmdir`), and anything else that stands there and is no working tree stays for a
   person to delete, refused `tree-in-the-way`. The one ref it deletes is `refs/remotes/origin/<b>`, by `git update-ref
   -d`, at the commit, when `ls-remote` says origin has no such branch: what `git fetch --prune` does, and it holds
-  no work. (adr-20261104-a-write-goes-in-jigs-own-tree) The clone's revision is the
+  no work. (adr-20261104-a-write-goes-in-jigs-own-tree) The temporary tree a task is merged into the staging branch in
+  is the other `--force`, and the same shape: `_land_tree_remove` (land.sh) hands `git worktree remove
+  --force` only `<git.worktree_root>/.land-<id>`, the path `land_tree_path` builds from a validated id
+  and whose leading dot no task worktree can have; only Jig makes it, and what it holds worth keeping
+  is in git's rerere cache and the task's workspace. Once git no longer knows that path, what it left
+  goes as `jig_worktree_leftover` takes it, links and empty directories only. The three files a landing
+  keeps between runs, `land-note.md`, `land-conflicts` and `land-without-review` in the task's workspace,
+  are removed by `rm -f` at that path, built by `task_dir`, once the landing ended or was given up.
+  (adr-20261111-a-task-lands-on-staging-through-its-pull-request) The clone's revision is the
   same shape: under `<clone root>/.ai/runtime/revision/`, or `<git-common-dir>/jig/revision/` where
   that directory is not named `.git`, a raise removes only digits-only names more
   than 16 below its own claim (`rmdir`, or `rm -f` for a file), and a claim that turns out stale —
