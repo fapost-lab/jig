@@ -8,6 +8,183 @@ Update the tool with `jig self-update`, then run `jig upgrade` in each project a
 ([Install](/install#keep-jig-up-to-date)). Releases are tagged on
 [GitHub](https://github.com/fapost-lab/jig/tags).
 
+## 0.43.0 — 2026-11-11
+
+Jig's `git push` and fetch over HTTPS now go as the project's GitHub account, as its `gh` calls
+already did, so a machine with two accounts no longer pushes as the wrong one. Under
+`verify.full_run: ci`, a task cut from an epic is verified against the epic, not against `main`.
+Two refusals that read as failures now say what they are waiting for.
+
+- **A push over HTTPS goes as this project's GitHub account.** Jig's pushes, fetches and branch
+  deletions on your project's `origin` use the account its `gh` calls already use
+  (`github.account`, the one found among several, or the only one `gh` holds). For each call Jig
+  sets aside your credential helper for that host and has `git` ask `gh` for that account's token;
+  nothing is stored. When several accounts may push and none is named, a ship now stops before its
+  push at every `agent.git` level, `push` included, with nothing sent. If your helper held another
+  GitHub user's credentials, the push now goes as the `gh` account. `gh`'s token needs the
+  `workflow` scope for a change under `.github/workflows`; `gh auth refresh -s workflow` adds it to
+  the active account only, so switch to the clone's account first, or sign it in with that scope.
+  SSH, a `GH_TOKEN` in the environment, and `jig pr fetch` are left as they were. Proven by tests
+  with a stand-in `gh`; a real push as a second account has not been checked yet. See
+  [Two GitHub accounts](/agent-ships#two-github-accounts).
+- **`jig verify` measures a task from the branch it was cut from.** Under `verify.full_run: ci`, a
+  plain `jig verify` checks what changed since the current task's base, so a task of an epic no
+  longer re-checks the whole epic. Without a task, with tasks on the branch that disagree, or with
+  a base this clone cannot find, it measures from `git.base_branch` as before; the header names
+  the task ([Configure verification](/configuration#verification)).
+- **`jig upgrade` names the pull request it waits for.** When the upgrade to this version is
+  already on an unmerged `jig/upgrade-<version>` branch, Jig asks GitHub or GitLab once: an open
+  pull request is named with its URL and refused as `not-merged` instead of `failed`, so a program
+  shows the upgrade as waiting for its merge. A merged or closed one is named with its state.
+- **A refused close says why GitHub or GitLab could not be asked.** When
+  `jig task set <id> status consolidated` cannot learn whether the pull request merged — `gh` or
+  `glab` missing, not signed in, an error, no answer in time — the refusal names the cause and says
+  the pull request may already be merged: run the same command again once the forge answers.
+- **A stub costs no extra processes.** `jig status` and `jig context` read a knowledge document that
+  links a source file the way they read any other, without starting processes for it, unless a
+  directory on the way to that source is a symbolic link.
+- **Fixed:** the status page and `jig status --json` kept "A pull request was open at the last
+  housekeeping run" for a task closed after that run; a task with a pull request closes only once
+  it merged, so the item is gone.
+
+## 0.42.0 — 2026-11-10
+
+Jig can now review a colleague's pull request on GitHub or GitLab and post the review only as you
+saw it. It works as the right GitHub account for each project, whichever one `gh` has active. An
+idea being talked through is kept in a draft, so a cut-off session loses nothing. Commands start far
+fewer processes, which Windows feels most.
+
+- **If you have several GitHub accounts, name this project's once.** Every `gh` call Jig makes about
+  your project's repository, and `jig gh <args>` for your own, runs as the clone's account:
+  `github.account` in your `.ai/config.local.yaml`, otherwise the one account `gh` holds or the one
+  that may push here. `jig status` shows which it found. When several of yours may push and the
+  active one is not among them, `jig task ship` and `jig gh` refuse and say to run
+  `jig config set --local github.account <login>`; the agent asks you once. With several accounts
+  signed in it needs `gh` 2.40 or later, and it never runs `gh auth switch`. `git push` over HTTPS
+  still goes as `gh`'s active account ([Known issues](/known-issues)). See
+  [Two GitHub accounts](/agent-ships#two-github-accounts).
+- **Review a colleague's pull request.** Give the `jig-pr-review` skill the link of a GitHub pull
+  request or a GitLab merge request: it reviews it in a worktree of its own without touching your
+  checkout, shows the review word for word, and after your yes posts exactly that version
+  (`jig pr`). After the author's fixes, a follow-up answers each earlier thread "fixed" or "still
+  open". Posting to GitLab and the follow-up have not yet been checked on a live pull or merge
+  request. See [Skills](/skills#starting-and-shaping-work) and
+  [Review a colleague's pull request](/manual-control#review-a-colleagues-pull-request).
+- **An idea is talked through before it is written, and kept meanwhile.** `jig-idea` works in
+  circles of a few rounds, asks all of a round's questions at once, numbered, and writes the
+  specification only after your yes. The conversation lives in a draft git never sees
+  (`.ai/workspace/ideas/<id>/draft.md`, `jig spec draft list|write|rename|drop`), and `jig status`
+  shows a `drafts:` line while one exists
+  ([Keep an idea's draft](/manual-control#keep-an-ideas-draft)). `jig spec ship` puts the draft
+  away. A spec gains a "Set aside" section, and closing it lists what is still there.
+- **Commands start fewer processes.** Counted on a project with 144 knowledge documents and 47
+  tasks: `jig status` 2024 → 589, `jig task current` 196 → 46, `jig queue next` 287 → 108, and
+  `jig upgrade --dry-run` in link mode 473 → 89. These are process counts, not timings; a process
+  start costs about ten times more on Windows than on macOS. What each command prints is unchanged.
+- **`jig spec item file` refuses an already filed item with `already-filed`.** `already-exists` now
+  means only that the `--new` task id is taken; a program that read `already-exists` for the item
+  must read the new code. See [Reading Jig as data](/reading-jig-as-data).
+- **An autopilot pull request is short.** Its body no longer carries the design or the run's
+  journal: what and why, the review and verify results, and the report's blocks, in English. Stop
+  and end reasons stay in your language.
+- **Fixed:** Homebrew bash 5.3 on macOS could crash now and then with exit 139 (SIGSEGV) when Jig
+  restored the locale in a subshell; Jig no longer sets the locale in its own shell.
+  `jig task pause` and `jig task autopilot stage` no longer fail with "cannot take the pause request
+  … out of the queue" when `jig queue cancel` removed the request but exited non-zero. Under
+  `git.branch_template: {id}`, without a prefix, merged task branches are deleted again: a branch is
+  Jig's when a task record names it.
+
+## 0.41.0 — 2026-11-08
+
+Code that has not been released no longer reaches your project by accident. Until now a Jig
+installed from `main` showed the last release's number, and `jig upgrade` copied its unreleased
+code into a project under that number. `jig context` is about fifteen times faster, a knowledge link
+whose file changed can be dropped, finished tasks leave the queue, and writes on Jig's own branches
+stop bringing back what you rejected.
+
+- **A project in copy mode takes released Jig only.** `jig init` and `jig upgrade`, dry runs
+  included, refuse a Jig checkout that is not at the release tag of its version, or that has local
+  changes there, as `unreleased-source`. The message says where the checkout stands and gives two
+  ways out: return it to a release, or take that code on purpose with `--unreleased`. A project that
+  took it records `jig.version: 0.41.0+<sha>` (`+<sha>.dirty` from a checkout with local changes),
+  and an upgrade from a released Jig records the plain number again. Off a tag, `jig --version` and
+  `jig status` call the version `X.Y.Z+<sha>`, and `jig status` says when the global Jig is on the
+  development channel. `jig self-update` on a branch and `install.sh --ref <branch>` say the same,
+  and `install.ps1 -Ref <branch>` asks before it sets up a project from such a Jig (the answer
+  defaults to no). `jig verify` no longer asks for framework files from such a checkout, and
+  `jig doctor` warns instead of failing. Link mode is unchanged. How to develop Jig next to a
+  released install is in `CONTRIBUTING.md`. If your Jig was installed from `main`, or is a clone you
+  pull, see [When the source is not a release](/upgrading#when-the-source-is-not-a-release).
+- **`jig context` reads knowledge without a process per document.** On a repository with 139
+  documents it takes 0.6 s instead of 8–10 s, and `jig task list --json` gets faster with it. A
+  knowledge document saved with CRLF line endings is now read on macOS and Linux too.
+- **A knowledge link whose file changed can be dropped.** `jig knowledge reject <id>` takes an
+  accepted stub whose source is `changed`, `unrecorded` or `missing`, and retires it. In
+  `jig knowledge proposed --json` and `sources --json`, every entry carries `decidable` and a
+  `reason` (`not-on-base`, `not-on-branch`). A write that cannot be decided yet is refused with that
+  code before it writes anything. See [Reading Jig as data](/reading-jig-as-data).
+- **`jig knowledge read <id> --json`** gives one document's text, and for a stub the linked file as it
+  is now.
+- **Knowledge JSON keeps to what the files hold.** A file name with a byte that is not UTF-8 no
+  longer reads as another file: each proposal and source record carries `lossy`, and so do the
+  `--diff` and `read` answers. One character from U+100000 up no longer turns every non-ASCII letter
+  of an answer into `?`, and a proposed stub has the same state in `sources --json` and
+  `sources --diff --json`.
+- **Finished tasks leave the queue.** Closing, abandoning or archiving a task takes its queue entry
+  out, and so does every housekeeping run; `jig queue prune [--dry-run]` does it on demand. A wait on
+  a finished task is dropped as met, while a wait on abandoned or archived work still reads broken.
+  A task taken back is not queued again: `jig queue set` puts it back.
+- **`jig spec item file <spec> <item> --new <task>`** files the task and names it on the roadmap item
+  in one write. Filing first and naming after was always refused as `stale-revision`.
+- **Writes on Jig's own branches judge the branch by what origin answers.** A roadmap or knowledge
+  write, and `jig writes ship`, no longer carry a rejected edit into a new pull request, refuse with
+  `branch-has-other-commits` after a squash merge, trust a branch deleted on origin until you prune,
+  or push a dropped branch back after a prune and a failed push. An earlier edit that still waits
+  where this one cannot follow is refused as `write-still-waits`, and `jig writes` stops counting an
+  edit that is over. The lock a write holds is bounded: network calls under it have a deadline, a
+  dead holder's lock is taken back atomically, and the merged mark is written under the lock. On
+  Windows, what `git worktree remove` leaves of Jig's tree (links, empty folders) is cleared instead
+  of refusing every later write as `tree-in-the-way`. Moving the only item of a roadmap section
+  within it no longer adds a blank line and a commit each time; a write never takes another spec's
+  branch name (`spec/x-2` when `x-2` is a spec); a write without `--revision` is no longer refused as
+  `stale-revision` for a write that landed meanwhile; and `jig writes ship` no longer fails when you
+  deleted the local branch: it takes the branch back from origin.
+- **Context acknowledgements say what they stand for.** `jig context guard` names why each pending
+  document is required and at which stage the acknowledgements it accepted were made.
+  `jig context acknowledge` records the stage and takes `--revoke` to withdraw a claim (with
+  `--stage` it is refused). A refused acknowledgement now records nothing and leaves no temporary
+  file behind.
+- **A profile can take over a check of another.** `covers: [<profile>:<check>]` in a profile's
+  `profile.yaml` stands that check of the lower profile down when both run, and the run and
+  `--explain` say who covers it. `php`, `laravel`, `node` and `python` name their test check `tests`
+  (`checks: [tests]`), and `laravel` covers `php:tests`: a Laravel project runs its suite once, in
+  `php artisan test`, with `.ai/verify/php.map` read after `laravel.map`. A project profile over a
+  stock one takes its tests the same way. `jig upgrade` keeps a stock profile you edited, so such a
+  copy goes on as before until you add `checks` or `covers` to it yourself. See
+  [Verification profiles](/configuration#verification-profiles).
+- **A person can take a stopped autopilot run over.** `jig task autopilot <task-id> handover --by
+  human --answer "<your words>"` ends a stopped run, also one at the unattended repair limit, with
+  your words in its record and its report, and a Telegram message says so. The task no longer shows
+  as waiting in `jig status` and on the status page, its design approval is yours from then on, and
+  it never starts a new run. See
+  [Taking a stopped run over](/autopilot#taking-a-stopped-run-over).
+- **`jig` ends when it is told to.** `kill`, `pkill` or Ctrl-C now stop a jig command and every
+  process under it, also when it waits on a long command; what does not end on SIGTERM gets SIGKILL
+  after `JIG_TERM_GRACE` seconds (default 5). This holds on Git Bash too.
+- **A forge behind an SSH host alias is found.** With `origin` at `git@github-personal:owner/repo.git`
+  and the alias mapped in `~/.ssh/config`, `forge: auto` asks `ssh -G` for the real host, so
+  `jig task ship` and `jig spec ship` open pull requests again.
+- **An agent's wait on a check has an end.** The `jig-verify` skill forbids waiting on a run by
+  watching its output for a line, as it already forbade `pgrep -f`, and any wait loop an agent writes
+  has a time limit: one agent looped for 36 hours after its run had passed
+  ([#426](https://github.com/fapost-lab/jig/issues/426)).
+- **Fixed:** the session hook printed an `unbound variable` error and ran housekeeping daily whatever
+  `housekeeping.cadence` said. A task closed from an agent session with `--revision` was always
+  refused as `stale-revision`. Housekeeping no longer flags an archived task whose fate was already
+  decided (abandoned or absorbed) as needing consolidation. A spec whose id contains `.tmp.` is no
+  longer hidden from `jig writes`. `jig upgrade --land` no longer calls an upgrade that returns a
+  project to a release landed while `origin` still records the unreleased build.
+
 ## 0.40.0 — 2026-11-05
 
 A program can now close a task, read and change your settings, read the knowledge waiting for a
@@ -66,7 +243,8 @@ longer merges part of a change.
   change has overtaken is refused with `stale-revision`, and the answer is the closed task, or a
   refusal with its code — `not-closable` when the close is not offered (the knowledge decision is not
   recorded, or the pull request is not merged), `not-found` for an unknown task. The two flags are
-  refused on any other key. See [Closing a task](/reading-jig-as-data#closing-a-task).
+  refused on any other key. From an agent session, such a close was refused as `stale-revision` every
+  time until 0.41.0 fixed it. See [Closing a task](/reading-jig-as-data#closing-a-task).
 - **Knowledge waiting for a person, as JSON.** `jig knowledge proposed --json` lists each proposed
   document with its type, domains, path, `paths`, summary and, for a stub, the file it links;
   `jig knowledge sources --json` gives each linked source's state (`changed`, `unrecorded`, `missing`,
@@ -165,15 +343,15 @@ Jig was installed in on one person's machine stopped `jig upgrade` on everybody 
   separate measurement of CPU time on a real project, on a machine at a load average of 130–200,
   gave about 1.2 s now, against 8.4 s on 0.38.1 and 1.0 s on 0.37.0. `jig status` and
   `jig task list --json` now read only the newest housekeeping run too; that was not measured.
-- **The housekeeping log stops growing.** Every `jig housekeeping` run now trims
+- **The housekeeping log stops growing.** Every `jig housekeeping` run that is not a dry run now trims
   `.ai/runtime/housekeeping.log` to the last ten runs, each with every record and at most 200
   other lines of output, and of older runs keeps only the purge lines `jig measure` reads, so its
   history is unchanged. On a copy of a real project's log that took 8.8 MB down to 91 KB. The log
   is rewritten in place, and a trim that fails leaves it as it was. See
   [What a removed worktree takes with it](/working-with-tasks#what-a-removed-worktree-takes-with-it).
 - **A program sees the upgrade's pull request.** `jig status --json` has two new kinds,
-  `upgrade-pull-request-waiting` and `upgrade-pull-request-merged`, with `pull_request` and
-  `versions` fields, and holds back `upgrade-available` while one stands; `jig upgrade --land
+  `upgrade-pull-request-waiting` and `upgrade-pull-request-merged`, with `pull_request`
+  (`{branch, base, state, fetched_at}`) and `versions` (`{to}`), and holds back `upgrade-available` while one stands; `jig upgrade --land
   --json` reports `landed` or `nothing-to-do`, and refuses as `not-merged` or `upgrade-blocked`.
   `.ai/runtime/forge-cache` lines carry two more columns, the pull request's head commit and its
   address; a line written before reads as it did. See
@@ -236,8 +414,9 @@ while its tasks merged.
   autopilot's `end` message in Telegram names the count and the task. See
   [Review findings](/working-with-tasks#review-findings).
 - **Giving a task up records why, and its roadmap item follows.** `jig task abandon <id> --reason
-  "<why>"` stores the reason; `--moved-to <repo>#<task-id>` says where the work went and prints the
-  command that files it there. For a task from a spec, the new `jig spec drop <id>` checks its roadmap
+  "<why>"` stores the reason; `--moved-to <repo>#<task-id>` (or `<repo>#spec/<spec-id>`) says where the
+  work went and, when that task is not there yet, prints the command that files it — for a spec, it
+  says to add the item yourself. For a task from a spec, the new `jig spec drop <id>` checks its roadmap
   item and appends ` — moved to … (<date>): <why>` or ` — dropped (<date>): <why>` — in a checkout of
   the epic, or on `spec/<spec-id>` for a spec without one, which `jig task abandon` on your main
   branch switches your checkout to and leaves it on; the roadmap on your main branch is never

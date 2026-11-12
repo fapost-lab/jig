@@ -52,7 +52,11 @@ When the command refuses — an unknown flag, a project without Jig — it still
   is the same as on your last read, Jig changed nothing; if it differs, read again. It is `0` before
   Jig's first write, and only its changes mean anything: compare it, do not do arithmetic with it.
   A file changed by hand or by git — your `git pull`, or the branch Jig checks out after a merge —
-  does not change it: watch the files too if that matters to you.
+  does not change it: watch the files too if that matters to you. In a clone with no main checkout to
+  find — one made with `--separate-git-dir`, a submodule, or the worktrees of a bare repository —
+  the revision is kept under `<git-dir>/jig/` (the clone's git common directory) instead, where every
+  checkout of the clone finds it, and so are the lock and the records of
+  [a write on a branch of its own](#writes-on-a-branch-of-their-own).
 - `generated_at` is when the read started, in UTC.
 - `error.code` says why the command refused, in a word your program can act on (below).
   `error.message` is the same text the command prints after `jig: error:`, meant for a person.
@@ -71,9 +75,11 @@ be reworded.
 | `not-initialised` | the repository has no Jig yet; `jig init` sets it up |
 | `stale-revision` | a write carried a `revision` that is no longer current: something changed since your program read it. Nothing was written — read again, and show the person the conflict |
 | `not-found` | the task or epic named does not exist, is not in the queue where the command needs it, the task has no such document yet (`jig task artifact read`), or the knowledge document named does not exist (`jig knowledge read`) or links no source (`jig knowledge sources --diff`). For a roadmap edit: the spec it names is neither on its branch nor on the base, the phase or item is not in the roadmap on that branch, or the task it would file does not exist. Also `jig writes ship` with nothing waiting |
-| `already-exists` | what the command would create is already there: a task with that id, a roadmap item with that text, an item that names a task. Nothing was written |
+| `already-exists` | what the command would create is already there: a task with that id, a roadmap item with that text. Nothing was written — for a task id, choose another |
+| `already-filed` | the roadmap item you asked to file already names a task, filed earlier here or in another clone; the message names it. Nothing was written — another id does not help, read the roadmap again |
 | `git-not-allowed` | [a write on a branch of its own](#writes-on-a-branch-of-their-own) was asked for at `agent.git: none`, where Jig commits nothing. Nothing was written; the message names the setting |
-| `write-busy` | another such write is running in this project. Nothing was written — try again in a moment |
+| `write-busy` | another such write is running in this project. Nothing was written — try again in a moment; if it goes on, the message names a leftover claim of a stopped write to delete |
+| `unreleased-source` | copy-mode `jig init` or `jig upgrade` (dry run too) found the framework checkout off its release tag, or at it with uncommitted changes, and `--unreleased` was not given. Nothing was changed; the message names where the checkout stands and the ways out |
 | `branch-checked-out` | the write's branch is checked out somewhere, and Jig never moves a checkout. Nothing was written; the message names where |
 | `branch-diverged` | the write's branch and the one on the remote have diverged. Nothing was written, and nothing is forced |
 | `branch-has-other-commits` | the write's branch has commits here that no write made and the remote does not have: yours, and a write does not publish them. Nothing was written; the message names the branch |
@@ -92,6 +98,7 @@ be reworded.
 | `wrong-checkout` | the task's pause put work aside in a stash, and the stash can only be applied where the task's branch is checked out. Nothing was written — show the person the message, which names that place |
 | `stash-conflict` | the stash the pause put aside did not apply, or applied with conflicts that are not resolved yet. The task stays paused and the stash is kept — the person resolves it in the task's checkout and resumes again; a stash already applied with conflicts is not applied a second time |
 | `upgrade-blocked` | `jig upgrade` would not start here and changed nothing; the message names every reason and what to do |
+| `not-merged` | the upgrade is done and waits for its pull request to be merged: `jig upgrade --land` found it still open, or `jig upgrade` found this version already on an unmerged `jig/upgrade-<version>` branch whose pull request is open. Nothing was changed; the message names the pull request — merge it, then run `jig upgrade --land` |
 | `unknown-key`, `not-local`, `invalid-value`, `secret-key` | `jig config set --json` refused a key or value: a name Jig does not read, a key only the team's `.ai/config.yaml` answers for, a value the key does not accept, or a secret on a command line. Nothing was written |
 | `failed` | anything else: the message says what |
 
@@ -182,6 +189,7 @@ buttons without knowing Jig's rules. Every task carries the same fifteen actions
 | `request-pause`, `cancel-pause-request` | Ask a running task to pause when it finishes its current stage, and take the request back |
 | `approve-gate` | Approve the design of a T3 or T4 task waiting at its gate |
 | `answer-stop` | Answer an autopilot run that stopped to ask you something |
+| `handover` | Take a stopped autopilot run over and finish the task without autopilot; its `command` asks for your words as `<text>` |
 | `set-class` | Change the task's class |
 | `ship` | Commit, push and open the pull request, as far as your settings let the agent |
 | `land` | On the staging flow, land the task's open pull request on the staging branch: on the forge, or directly when it conflicts |
@@ -221,20 +229,27 @@ phases, the items of each phase, and how far it has come.
       "title": "Book a table",
       "done": 1, "total": 3, "filed": 1, "fog": 1,
       "items": [
-        {"text": "`booking-form` — the form", "checked": true, "done": true, "task": "booking-form", "fog": false},
-        {"text": "`booking-message` — the confirmation", "checked": false, "done": false, "task": "booking-message", "fog": false},
-        {"text": "fog: reminders by text message", "checked": false, "done": false, "task": null, "fog": true}
+        {"id": "i-3f9a1c5e02b7", "text": "`booking-form` — the form", "checked": true, "done": true, "task": "booking-form", "fog": false},
+        {"id": "i-91d4e7a60c38", "text": "`booking-message` — the confirmation", "checked": false, "done": false, "task": "booking-message", "fog": false},
+        {"id": "i-5b02c8d7e419", "text": "fog: reminders by text message", "checked": false, "done": false, "task": null, "fog": true}
       ]
     }
-  ]
+  ],
+  "waiting": null
 }
 ```
 
-`progress` is the same count `jig spec list` prints, and the sum of the phases. Each item says
-whether it is checked, whether it counts as done, which task it names, if any, and whether it is
+`progress` is the same count `jig spec list` prints, and the sum of the phases. Each item has an `id`,
+which a [roadmap write](#changing-a-roadmap) names it by, and says whether it is checked, whether it
+counts as done, which task it names, if any, and whether it is
 still fog. An item counts as done when it is checked, or when the task it names is known on this
 machine to have merged — closed, or seen merged by the last `jig housekeeping` — even before its
 checkbox reaches the branch you read.
+
+`waiting` is the edit of this spec that has not landed yet, or `null` when none waits. It is the
+write as [`jig writes`](#writes-on-a-branch-of-their-own) lists it (`target`, `branch`, `base`,
+`commit`, `commits`, `pushed`, `pr` and `merged`) with `progress` and `phases` beside it: the roadmap
+as it is on that branch, so a page can show the edit right after it was written.
 
 A spec built on an epic branch keeps its roadmap there. When you read it from another branch, the
 phases come from the epic's branch as your repository last fetched it — `epic.ref` names it — and
@@ -325,8 +340,10 @@ changes nothing:
 
 `next` is the task to take, or `null` with a `reason` (`waiting`, `taken`, `paused` or `empty`)
 when there is none. `taken` lists each candidate another session is working on, with the
-`checkout` it works in, `since` when and `idle_seconds` since it was last active; such a task is
-never advised. `waiting` lists each dependency that holds a candidate back, in `state` `open`, `broken`
+`checkout` it works in, `since` when, `idle_seconds` since it was last active and the `command`, the
+words of the Jig command it last ran; such a task is never advised. Each of `checkout`, `since` and
+`command` is `null` when the note of that session does not hold it. `waiting` lists each dependency
+that holds a candidate back, in `state` `open`, `broken`
 (it never ends; drop it with `jig queue undepend`) or `unknown`. `not_queued` counts the active
 tasks outside the queue. The fields are in [the schema](https://github.com/fapost-lab/jig/blob/main/schemas/json.md).
 
@@ -374,7 +391,8 @@ none`, the default, these writes are refused with `git-not-allowed`: Jig commits
 it may. **Edits in a row go on one branch and one pull request.** A write never merges, even at `merge`,
 because a merge waits for CI: `jig writes ship <target>` does that when the edits are done.
 
-Until the edit lands, it waits, and a read says where:
+Until the edit lands, it waits, and a read says where. `jig status` counts what waits on a line of
+its own, `writes: 1 waiting (jig writes)`, and prints it only when something does:
 
 ```bash
 jig writes --json
@@ -384,12 +402,25 @@ jig writes --json
 {"schema":1,"revision":1793825285,"generated_at":"2026-11-04T20:55:48Z","data":{"writes":[{"target":"spec:foo","branch":"spec/foo","base":"main","commit":"4354faecc647079ac9e77cc352e8d007374c250e","commits":1,"pushed":true,"pr":null,"merged":false}]}}
 ```
 
+`jig writes` without `--json` prints one line for each: the target, the branch and the base it goes into,
+the number of commits, and the pull request, or `pushed, no pull request` or `not pushed`. To carry
+a waiting write further than the write itself did, as far as `agent.git` allows, name its target,
+`spec:<id>` or `knowledge`:
+
+```bash
+jig writes ship spec:foo --json
+```
+
+It answers `{"write": {...}}` with the same fields as a write above. With nothing waiting under that
+target it is refused with `not-found`.
+
 `jig spec list --json` gives each spec `waiting`, with the roadmap as it is on that branch, and
 `jig knowledge proposed --json` gives each proposal one with what was decided. It stops waiting once
 the commits are on its base **as of the last fetch**, since a read never fetches.
 
 A branch left behind stays where it is: when it merged by squash, its pull request was closed or it
-was deleted on the remote, the next edit takes a new name such as `spec/foo-2`. A commit above what a merged pull request held
+was deleted on the remote, the next edit takes a new name such as `spec/foo-2`, never one that is
+another spec's id. A commit above what a merged pull request held
 keeps its name and waits for a new one. When you are on the
 branch yourself, or another worktree is, the write is refused with `branch-checked-out`, and the
 message says where: finish there or switch away. When the branch has commits of yours that the remote
@@ -608,7 +639,7 @@ jig knowledge read convention-coding-style --json
 (`null` for the rest):
 
 ```json
-{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null,"waiting":null},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md","waiting":null}],"waiting":null}}
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:41Z","data":{"proposals":[{"id":"feature-billing","type":"feature","domains":["billing"],"path":".ai/knowledge/features/billing.md","paths":["src/billing/**"],"summary":"How invoices are issued","source":null,"waiting":null,"decidable":true,"reason":null,"lossy":false},{"id":"convention-release","type":"convention","domains":["core"],"path":".ai/knowledge/sources/release.md","paths":[],"summary":null,"source":"docs/release.md","waiting":null,"decidable":true,"reason":null,"lossy":false}],"waiting":null}}
 ```
 
 `sources` lists each stub with the `state` of the file it links: `ok`, `changed` (the file is not
@@ -617,7 +648,7 @@ status while it is not accepted yet, with the file's size in `bytes` and the cou
 prints on its last line:
 
 ```json
-{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62,"waiting":null},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21,"waiting":null}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0},"waiting":null}}
+{"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:49Z","data":{"sources":[{"id":"convention-coding-style","state":"changed","status":"active","path":".ai/knowledge/sources/coding-style.md","source":"docs/coding-style.md","bytes":62,"waiting":null,"decidable":true,"reason":null,"lossy":false},{"id":"convention-release","state":"proposed","status":"proposed","path":".ai/knowledge/sources/release.md","source":"docs/release.md","bytes":21,"waiting":null,"decidable":true,"reason":null,"lossy":false}],"counts":{"linked":2,"changed":1,"unrecorded":0,"missing":0},"waiting":null}}
 ```
 
 `sources --diff <id>` answers for one stub and carries the difference between the approved text and
@@ -630,14 +661,21 @@ the file now in `diff`, a unified diff in one string:
 `diff` is `null` when there is nothing to compare: the file is `ok` or `missing`, was never approved
 (`unrecorded`), or is `changed` but git no longer has the approved text. In the last two cases the
 file is read whole. A source can hold anything, quotes and control characters
-included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff`, and
-`lossy` says so. An id no document has, or a document that links no source, is refused as
+included; the answer stays one valid JSON line. Bytes that are not UTF-8 are dropped from `diff` and
+from `source`, and `lossy` says so. A stub not accepted yet reads its status in `state`, as in
+`sources`. An id no document has, or a document that links no source, is refused as
 `not-found`. These reads write nothing: the `revision` stays where it was.
 
 `read <id>` gives the text being decided: the document's whole file, frontmatter included, whatever its
 status, and for a stub the file it links as it is now (`source` is `null` for any other document, and
-for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text and its `lossy` says
-so. An id no document has is refused as `not-found`. It has no text form.
+for a stub whose file is missing). Bytes that are not UTF-8 are dropped from a text or a file name and
+the `lossy` beside it says so. An id no document has is refused as `not-found`. It has no text form.
+
+Each proposal and each source carries `lossy` too: `true` when one of its strings held bytes that are
+not UTF-8 and they were dropped. A file name read without them may be another file's — `docs/w<FF>.md`
+reads `docs/w.md` — so do not open a `path` or `source` whose record says `lossy`. On a machine
+without `iconv`, every byte outside ASCII becomes `?` instead, one `?` per byte, and `lossy` says so
+too.
 
 ```json
 {"schema":1,"revision":1793805159,"generated_at":"2026-11-04T15:12:51Z","data":{"id":"convention-release","status":"proposed","path":".ai/knowledge/sources/release.md","bytes":261,"content":"---\nid: convention-release\n...","lossy":false,"source":{"path":"docs/release.md","bytes":21,"content":"# Release\n...","lossy":false}}}
@@ -670,7 +708,10 @@ can do those, a script cannot. `jig upgrade --dry-run --json` changes nothing an
 An upgrade at `agent.git: pr` ends with its pull request open and the project back on its base
 branch, still at the old Jig. `jig status --json` keeps saying so — `upgrade-pull-request-waiting`,
 then `upgrade-pull-request-merged` — so a program shows the state from the project, not from its
-own memory. Once it is merged, the program brings it in:
+own memory. Run again before the merge, `jig upgrade --json` is refused as `not-merged` when the
+forge reports that pull request open, with its URL in the message: the upgrade is done and waits for
+the merge, which a program shows as waiting, not as a failure. Once it is merged, the program brings
+it in:
 
 ```bash
 jig upgrade --land --json
@@ -727,7 +768,9 @@ jig config unset agent.git --local --json
 A write answers with the new state of each key it touched, as `keys` lists it, and `unset` also
 names in `removed` the keys it took out of the file. A key that cannot be written, or a value it
 does not accept, is refused with `unknown-key`, `not-local`, `invalid-value` or `secret-key`
-([Why a command refused](#why-a-command-refused)), and nothing is written. Both commands take
+([Why a command refused](#why-a-command-refused)), and nothing is written. `--dry-run` cannot be
+combined with `--json`: a dry run writes nothing and the answer is the state after a write, so the
+command is refused with `usage`. Both commands take
 `--revision <n>` like a queue write: another write in the project since your read is refused with
 `stale-revision`, so a page and `jig-setup` writing the same file cannot overwrite each other's
 change unseen. `.ai/config.yaml` is the team's; no command here writes it.

@@ -14,7 +14,7 @@ paths:
   - templates/task.md
   - scripts/lib/notify.sh
   - scripts/lib/hklog.sh
-reviewed_at: 2026-11-04
+reviewed_at: 2026-11-11
 ---
 # Task
 
@@ -233,7 +233,7 @@ lines `_task_blocking_findings` prints, the line `task_receipt_check` prints (`c
 `none`, `none (required for T4)`; the page asks it `cheap`, which does not resolve the knowledge, so it shows
 `not checked (…)` where the gates would say `current`), `_task_worktree_note` and the task base; an autopilot run as
 `_task_autopilot_facts` gives it (state, repairs, last stage and its time, last stop and its time,
-and the run's phase — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
+the run's phase, and when a person took it over — the same producer `autopilot report` summarises); and a T3/T4 design as `_task_gate_state` answers
 (`waiting`, `changed`, `approved`). Those strings are read by a person on the page as well as by the
 gates: change one and the page and its tests change with it. `status.sh` reads every `state` in one
 awk pass (`_status_task_rows`), so a renamed key empties a column there too. At a terminal
@@ -250,8 +250,11 @@ task answers `needs-consolidation`, abandoning one answers `abandoned?`, and rem
 answers `worktree-kept`, each with no housekeeping run in between. Those three, and no others.
 `wrong-base` fails the second half: only the forge and the history know where work landed, which
 costs a network request the page never makes on the write path. The pull-request cards fail the
-first: closing a task does not merge its pull request, so a `consolidated` task with
-`remote=open` is not a contradiction and "review and merge it" still stands. Both stay borrowed,
+first, with one exception: closing a task with a `pr_url` needs the forge to answer `merged`
+(`_task_close_refusal`), so a task the run saw unclosed and that is `consolidated` now has had its
+pull request merged, and its `remote=open` card is not built (`_status_attention`). A task the run
+already saw `status=consolidated remote=open`, or one without a `pr_url`, keeps the card: that
+close may predate the gate, and "review and merge it" may still stand. Both stay borrowed,
 past tense, marked "as of" the run that saw them. Read the two halves of `needs-consolidation`
 apart to see the shape: *merged* is borrowed, *nobody closed it yet* is asked again.
 
@@ -316,10 +319,14 @@ their diff follows the interdiff (adr-20261029-a-global-knowledge-edit-narrows-a
 `task changes`, because ADR-0022 keeps that one an inventory from an explicit `--base`.
 
 **An autopilot run is recorded here, but driven by a skill** (adr-20260921-autopilot-runs-a-task-to-its-stops).
-`jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode` and
-`autopilot_phase`, which `task set` refuses like every other script-owned key, and a journal file in
+`jig task autopilot` owns the state keys `autopilot`, `autopilot_repairs`, `autopilot_mode`,
+`autopilot_phase` and `autopilot_handover`, which `task set` refuses like every other script-owned key, and a journal file in
 the workspace. The only rule it enforces is the repair limit — two per run, a third refused with
-exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A run changes none of
+exit 3 and the run `stopped`; every other stop is `jig-autopilot`'s to take. A stopped run ends
+in a draft, a `resume`, or a `handover` — a person taking the task over: the run is `done`,
+`autopilot_handover` is recorded and `start` refuses from then on, so a handover buys no repairs
+(adr-20261108-a-person-takes-over-a-stopped-run). "At the limit" is one predicate,
+`_task_autopilot_at_limit`, which the commands and the status page's stop card ask. A run changes none of
 the completion gates: a task on autopilot meets the same findings and receipt checks as any other.
 `stage` is also where a person's pause request is honoured
 (adr-20261019-a-pause-request-is-honoured-at-the-stage-boundary): it takes the request out of the
@@ -338,7 +345,7 @@ same "one message for the wave" the coordinator gives in chat. The key is never 
 the run was.
 
 **A run's stops and ends leave the machine, but never through the journal**
-(adr-20261009-autopilot-stops-reach-telegram). `stop`, `end`, and an unattended run's `approve` and
+(adr-20261009-autopilot-stops-reach-telegram). `stop`, `end`, `handover`, and an unattended run's `approve` and
 `decide` call `_task_autopilot_notify` after their journal line, and `notify.sh` sends a Telegram
 message from a detached process when the person set the local keys. Two things here are easy to
 undo by accident: the sender records its outcome in the task's `notify` file, never in `autopilot`,

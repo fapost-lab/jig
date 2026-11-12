@@ -10,7 +10,7 @@ paths:
   - scripts/lib/task.sh
   - schemas/json.md
 summary: Why what a person may do next with a task is one table in task.sh whose rows ask the commands' own guards, why it is one-way (offered implies accepted), why close reads the forge cache, and where contract-queue's pause requests join.
-reviewed_at: 2026-10-16
+reviewed_at: 2026-11-08
 ---
 # What a person may do next with a task is one table in task.sh whose rows ask the commands' own guards
 
@@ -91,3 +91,5 @@ merged, and a `--json` read never touches the network (adr-20261015-a-read-is-on
   is not a session — for every caller of the check, `task ship` and `task receipt --check` included.
 - One order of refusals changed, where both apply at once: `task ship` on a branch equal to its base,
   run from another branch, now names the base before the current branch. It still refuses.
+
+> **Amendment (2026-11-08).** A row `handover` follows `answer-stop`: `jig task autopilot <id> handover --by human --answer <text>`, offered on a `stopped` run and asking `_task_autopilot_handover_refusal` (adr-20261108-a-person-takes-over-a-stopped-run).

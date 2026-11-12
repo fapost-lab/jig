@@ -646,6 +646,10 @@ case "\$1" in
         if [ "$state" = FAIL ]; then
           exit 1
         fi
+        if [ "$state" = DENIED ]; then
+          printf 'HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login\n' >&2
+          exit 1
+        fi
         printf '%s\n' "$state"
         ;;
     esac
@@ -693,7 +697,38 @@ test_task_set_status_consolidated_refuses_when_the_forge_cannot_confirm() {
 
   run jig task set T-1 status consolidated
   assert_eq 1 "$RC"
-  assert_contains "$OUT" "is unknown"
+  assert_contains "$OUT" "is unknown, the forge could not be asked (gh exited 1 with no message)"
+  assert_contains "$OUT" "it may already be merged: run this same command again once the forge answers"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+# The refusal names why the forge could not be asked: the first line of gh's
+# own error, never the lines after it.
+test_task_set_status_consolidated_names_the_forge_error() {
+  pr_check_ship_T1 DENIED
+
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "pull/99 is unknown, the forge could not be asked (gh: HTTP 401: Bad credentials (https://api.github.com/graphql)); it may already be merged"
+  assert_not_contains "$ERR" "Try authenticating"
+  assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
+}
+
+# Without a forge to ask, the refusal says which part is missing: the setting,
+# or the forge's CLI signed in.
+test_task_set_status_consolidated_names_a_missing_forge() {
+  pr_check_ship_T1 MERGED
+  ship_cfg forge none
+
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "is unknown, the forge could not be asked (no forge configured (forge: none)); it may already be merged"
+
+  ship_cfg forge github
+  printf '#!/bin/sh\nexit 1\n' > stub-bin/gh
+  run_split jig task set T-1 status consolidated
+  assert_eq 1 "$RC"
+  assert_contains "$ERR" "(gh is not signed in: gh auth status failed)"
   assert_not_contains "$(cat .ai/workspace/tasks/T-1/state)" "status: consolidated"
 }
 
@@ -4906,6 +4941,178 @@ test_task_ship_pr_level_creates_pr_into_base_branch() {
   assert_contains "$argv" "$(printf -- '--title\nShip T-1')"
 }
 
+# ship_stub_gh_accounts — ship_stub_gh's gh for a person who holds two
+# accounts, alice (active) and bob: `auth status` lists both, `auth token
+# --user <login>` gives `tok-<login>`, and every other call is logged to
+# gh-token.log as `<arguments> GH_TOKEN=<value>`, the token the call ran under.
+# `pr list` answers `null` (none open), `pr create` prints a made-up URL.
+ship_stub_gh_accounts() {
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "auth status")
+    printf 'github.com\n'
+    printf '  \342\234\223 Logged in to github.com account alice (keyring)\n  - Active account: true\n'
+    printf '  \342\234\223 Logged in to github.com account bob (keyring)\n  - Active account: false\n'
+    exit 0 ;;
+  "auth token")
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --user ]; then printf 'tok-%s\n' "$2"; exit 0; fi
+      shift
+    done
+    exit 1 ;;
+esac
+printf '%s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> gh-token.log
+case "$1 $2" in
+  "pr list") printf 'null\n' ;;
+  "pr create") printf 'https://github.com/example/example/pull/99\n' ;;
+esac
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# A clone that names its GitHub account opens the pull request as that
+# account, although another one is active in gh
+# (adr-20261110-a-clone-names-its-github-account).
+test_task_ship_pr_level_opens_the_pr_under_the_account_the_clone_names() {
+  ship_setup
+  ship_cfg forge github
+  # The remote reads as a GitHub repository (`git remote get-url` applies
+  # insteadOf, so a rewrite would show Jig the local path); pushes still go
+  # to the bare repository.
+  git remote set-url origin https://github.com/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  ship_stub_gh_accounts
+  ship_cfg_local agent.git pr
+  ship_cfg_local github.account bob
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
+  assert_contains "$(grep '^pr create' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_contains "$(grep '^pr list' gh-token.log)" "GH_TOKEN=tok-bob"
+  assert_not_contains "$OUT" "tok-"
+  assert_not_contains "$(cat gh-token.log)" "GH_TOKEN=tok-alice"
+}
+
+# ship_stub_gh_ambiguous — a gh that holds three accounts, alice (active), bob
+# and carol, of which bob and carol may push to the repository: the clone names
+# none, and the active one is not among the two. Every call but the account
+# questions is logged to gh-token.log; `pr create` prints a made-up URL.
+ship_stub_gh_ambiguous() {
+  mkdir -p stub-bin
+  cat > stub-bin/gh <<'STUB'
+#!/usr/bin/env bash
+printf '%s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> gh-token.log
+case "$1 $2" in
+  "auth status")
+    printf 'github.com\n'
+    printf '  Logged in to github.com account alice (keyring)\n  - Active account: true\n'
+    printf '  Logged in to github.com account bob (keyring)\n  - Active account: false\n'
+    printf '  Logged in to github.com account carol (keyring)\n  - Active account: false\n'
+    exit 0 ;;
+  "auth token")
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --user ]; then
+        case "$2" in alice | bob | carol) printf 'tok-%s\n' "$2"; exit 0 ;; esac
+      fi
+      shift
+    done
+    exit 1 ;;
+  "pr list") printf 'null\n' ;;
+  "pr create") printf 'https://github.com/example/example/pull/99\n' ;;
+esac
+if [ "$1" = api ]; then
+  case "${GH_TOKEN:-}" in
+    tok-bob | tok-carol) printf 'true false false\n' ;;
+    *) printf 'false false false\n' ;;
+  esac
+fi
+exit 0
+STUB
+  chmod +x stub-bin/gh
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+}
+
+# ship_ambiguous_setup <level> — a ship at agent.git <level> on a GitHub
+# remote, with ship_stub_gh_ambiguous standing in for gh.
+ship_ambiguous_setup() {
+  ship_setup
+  ship_cfg forge github
+  git remote set-url origin https://github.com/example/example.git
+  git remote set-url --push origin "$PWD/origin.git"
+  ship_stub_gh_ambiguous
+  ship_cfg_local agent.git "$1"
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+}
+
+# Several accounts may push and the active one is not among them: a ship that
+# would open a pull request refuses before the first commit
+# (adr-20260925-a-ship-refuses-before-it-sends).
+test_task_ship_pr_level_refuses_before_pushing_when_the_account_is_ambiguous() {
+  local head_before
+  ship_ambiguous_setup pr
+  head_before=$(git rev-parse HEAD)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "several gh accounts may push"
+  assert_contains "$OUT" "github.account"
+  assert_contains "$OUT" "Nothing was sent; the commit is on this machine"
+  # The commit stays local: a ship that refuses for its own reasons has not
+  # asked the forge anything yet, so the account is named after it.
+  assert_eq "$head_before" "$(git rev-parse HEAD~1)" "the refusal left more or less than the one local commit"
+  assert_eq "main" "$(git --git-dir=origin.git for-each-ref --format='%(refname:short)' refs/heads)" "origin got a new branch"
+  assert_eq "0" "$(grep -c '^pr create' gh-token.log || true)" "a pull request was opened"
+  # Naming the account is the way out.
+  ship_cfg_local github.account bob
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$(grep '^pr create' gh-token.log)" "GH_TOKEN=tok-bob"
+}
+
+test_task_ship_pr_level_refuses_before_pushing_when_github_account_is_not_held() {
+  local head_before
+  ship_ambiguous_setup pr
+  ship_cfg_local github.account dave
+  head_before=$(git rev-parse HEAD)
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "github.account is dave"
+  assert_contains "$OUT" "Nothing was sent; the commit is on this machine"
+  # The commit stays local: a ship that refuses for its own reasons has not
+  # asked the forge anything yet, so the account is named after it.
+  assert_eq "$head_before" "$(git rev-parse HEAD~1)" "the refusal left more or less than the one local commit"
+  assert_eq "0" "$(grep -c '^pr create' gh-token.log || true)"
+}
+
+# ship_level_ignores_accounts <level> — at a level below pr, accounts that
+# would be refused at pr do not stop the ship, and gh is not asked about them.
+ship_level_ignores_accounts() {
+  ship_ambiguous_setup "$1"
+  : > gh-token.log
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$1: $OUT"
+  assert_not_contains "$OUT" "several gh accounts"
+  assert_eq "0" "$(grep -c '^api\|^auth' gh-token.log || true)" "$1: gh's accounts were consulted"
+}
+
+test_task_ship_commit_level_does_not_consult_the_accounts() {
+  ship_level_ignores_accounts commit
+}
+
+test_task_ship_push_level_does_not_consult_the_accounts() {
+  ship_level_ignores_accounts push
+}
+
 test_task_ship_pr_level_does_not_duplicate_an_existing_open_pr() {
   ship_setup
   ship_cfg forge github
@@ -5215,6 +5422,37 @@ test_task_ship_merge_puts_the_checkout_back_on_main_and_deletes_the_branch() {
   assert_contains "$OUT" "task ship: deleted branch task/T-1 on origin"
   assert_eq main "$(git symbolic-ref --short HEAD)"
   assert_branch_gone task/T-1
+}
+
+# Under a template with nothing before {id} the branch name alone says nothing;
+# the task's record does, and a merged ship leaves the branch gone all the same.
+test_task_ship_merge_deletes_a_recorded_branch_under_a_bare_id_template() {
+  task_setup_clean
+  ship_cfg git.branch_template '{id}'
+  git add .ai/config.yaml
+  git commit -q -m "fixture: bare id branch template"
+  git clone -q --bare . origin.git
+  git remote add origin "$PWD/origin.git"
+  git fetch -q origin
+  jig task new T-1 >/dev/null
+  jig task start T-1 >/dev/null
+  assert_eq T-1 "$(git symbolic-ref --short HEAD)"
+  ship_exclude_fixture
+  printf 'Ship T-1\n\nBody line one.\nBody line two.\n' > msg.txt
+  ship_cfg forge github
+  mship_stub_gh
+  ship_cfg_local agent.git merge
+  ship_cfg_local agent.ci_timeout 0
+  task_route_done T-1
+  jig task set T-1 knowledge_consolidated true >/dev/null
+  ship_stage_change
+  git add .ai/config.yaml
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "task ship: deleted branch T-1"
+  assert_eq main "$(git symbolic-ref --short HEAD)"
+  assert_branch_gone T-1
 }
 
 # A squash leaves the branch's commits off main; `git branch -d` still takes
@@ -7353,6 +7591,26 @@ test_task_ship_an_unattended_stopped_run_ships_its_draft_at_autopilot_git() {
   assert_contains "$OUT" "pr https://github.com/example/example/pull/99"
 }
 
+# A person who took the run over ships at their own level, and the ship is
+# no longer a draft's: the completion gates decide it
+# (adr-20261108-a-person-takes-over-a-stopped-run).
+test_task_ship_a_handed_over_run_goes_by_agent_git() {
+  mship_setup github
+  ship_cfg_local agent.git merge
+  ship_cfg_local autopilot.git pr
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason r3 >/dev/null 2>&1 || true
+  jig task autopilot T-1 handover --by human --answer "I finish it" >/dev/null
+
+  run jig task ship T-1 --message-file msg.txt
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "task ship: git level merge (agent.git)"
+  assert_contains "$OUT" "merged https://github.com/example/example/pull/99"
+}
+
 test_task_ship_autopilot_git_pr_stops_a_run_at_the_pr_over_agent_git_merge() {
   mship_setup github
   ship_cfg_local autopilot.git pr
@@ -8754,6 +9012,77 @@ test_task_pause_takes_a_pending_pause_request_out() {
   assert_eq 0 "$RC" "$OUT"
   assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
   assert_eq "by hand" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+}
+
+# _tp_cancel_lands_then_fails <dir> — a PATH directory whose `mv` lands the
+# queue file and then fails: a `jig queue cancel` whose write landed but which
+# exited non-zero after it, and whose envelope is neither not-found nor
+# stale-revision. Every other `mv` is the real one.
+_tp_cancel_lands_then_fails() {
+  local real
+  real=$(command -v mv)
+  mkdir -p "$1"
+  cat > "$1/mv" <<EOF
+#!/bin/sh
+for last in "\$@"; do :; done
+case "\$last" in
+  */runtime/queue) "$real" "\$@" || exit \$?; echo "landed, then failed" >&2; exit 1 ;;
+esac
+exec "$real" "\$@"
+EOF
+  chmod +x "$1/mv"
+}
+
+# A cancel that took the request out and still failed does not stand in the
+# way of the pause: the queue is read again, the request is gone, and the
+# pause carries the request's time and reason, with a warning naming the
+# child's failure (pause-request-cancel-landed-but-failed).
+test_task_pause_if_requested_honours_a_cancel_that_landed_but_failed() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause --reason "need the laptop" >/dev/null
+  local at
+  at=$(awk -F '\t' '$1 == "request" { print $4 }' .ai/runtime/queue)
+  _tp_cancel_lands_then_fails "$PWD/shim"
+  run_split env PATH="$PWD/shim:$PATH" "$JIG_BIN" task pause T-1 --if-requested --stage implement
+  assert_eq 4 "$RC" "$OUT $ERR"
+  assert_eq "paused: T-1 (pause requested at $at: need the laptop); stage implement not entered" "$OUT"
+  assert_contains "$ERR" "the pause request of T-1 left the queue, but jig queue cancel failed: exit 1"
+  assert_contains "$ERR" "landed, then failed"
+  assert_eq true "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "pause requested at $at: need the laptop" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+}
+
+# The same for a pause made by hand: it is made, and the request is gone.
+test_task_pause_by_hand_honours_a_cancel_that_landed_but_failed() {
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  _tp_cancel_lands_then_fails "$PWD/shim"
+  run env PATH="$PWD/shim:$PATH" "$JIG_BIN" task pause T-1 --reason "by hand"
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "paused T-1"
+  assert_eq "by hand" "$(sed -n 's/^paused_reason: //p' .ai/workspace/tasks/T-1/state)"
+  assert_eq "" "$(grep '^request' .ai/runtime/queue || true)"
+}
+
+# A cancel that really was refused leaves the request standing and the task
+# unpaused, and the refusal says why, in the child's own words. Forced with a
+# read-only runtime directory: the queue's new copy cannot be written there.
+test_task_pause_if_requested_shows_why_the_cancel_was_refused() {
+  skip_unless_readonly_dirs
+  task_setup
+  task_started T-1
+  jig queue request T-1 pause >/dev/null
+  chmod 555 .ai/runtime
+  run jig task pause T-1 --if-requested --stage implement
+  chmod 755 .ai/runtime
+  assert_eq 1 "$RC" "$OUT"
+  assert_contains "$OUT" "cannot take the pause request of T-1 out of the queue: exit 1: "
+  assert_contains "$OUT" "queue: cannot read"
+  assert_contains "$(cat .ai/runtime/queue)" "$(printf 'request\ttask:T-1\tpause')"
+  assert_eq "" "$(sed -n 's/^paused: //p' .ai/workspace/tasks/T-1/state)"
 }
 
 # --if-requested: the pause a stage boundary makes when only a person's
@@ -10822,8 +11151,8 @@ test_task_list_json_pins_a_task_with_every_fact() {
   _tl_json
   assert_eq 0 "$RC" "$ERR"
   _tl_cut_actions
-  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
-  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\"},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
+  assert_eq '[{"id":"start","command":"jig task start SRD-9-full","offered":true,"reason":null},{"id":"pause","command":"jig task pause SRD-9-full","offered":false,"reason":"task pause: already paused: SRD-9-full"},{"id":"resume","command":"jig task resume SRD-9-full","offered":true,"reason":null},{"id":"request-pause","command":"jig queue request task:SRD-9-full pause","offered":false,"reason":"queue request: task SRD-9-full is already paused"},{"id":"cancel-pause-request","command":"jig queue cancel task:SRD-9-full pause","offered":false,"reason":"queue cancel: no pause of task:SRD-9-full is requested"},{"id":"approve-gate","command":"jig task gate SRD-9-full approved","offered":false,"reason":"task gate: SRD-9-full is stopped; if a human answered, run: jig task autopilot SRD-9-full resume --answer <text> --by human; then approve with --by agent; or, if a person takes the task on: jig task autopilot SRD-9-full handover --by human --answer <text>"},{"id":"answer-stop","command":"jig task autopilot SRD-9-full resume --answer <text> --by human","offered":true,"reason":null},{"id":"handover","command":"jig task autopilot SRD-9-full handover --by human --answer <text>","offered":true,"reason":null},{"id":"set-class","command":"jig task set SRD-9-full class <Tn>","offered":true,"reason":null},{"id":"ship","command":"jig task ship SRD-9-full --message-file <file>","offered":false,"reason":"task ship: agent.git is none in this clone; the human commits"},{"id":"land","command":"jig task land SRD-9-full","offered":false,"reason":"task land: SRD-9-full is not on the staging flow; a task in this project lands with jig task ship"},{"id":"close","command":"jig task set SRD-9-full status consolidated","offered":false,"reason":"task set: status consolidated requires knowledge_consolidated true; record the knowledge decision first: jig task set SRD-9-full knowledge_consolidated true"},{"id":"abandon","command":"jig task abandon SRD-9-full","offered":true,"reason":null},{"id":"archive","command":"jig task archive SRD-9-full","offered":true,"reason":null},{"id":"unarchive","command":"jig task unarchive SRD-9-full","offered":false,"reason":"task unarchive: task SRD-9-full is not archived"},{"id":"reopen","command":"jig task set SRD-9-full status active","offered":false,"reason":"task SRD-9-full is active, not abandoned"}]' "$ACTIONS"
+  assert_eq "{\"schema\":1,\"revision\":\"R\",\"generated_at\":\"T\",\"data\":{\"tasks\":[{\"id\":\"SRD-9-full\",\"class\":\"T3\",\"status\":\"active\",\"issue\":\"SRD-9\",\"goal\":\"Ship the list as \\\"data\\\".\",\"knowledge_consolidated\":false,\"paused\":true,\"pause_request\":null,\"created_at\":\"2026-10-01\",\"updated_at\":\"$upd\",\"archived_at\":null,\"archived_reason\":null,\"archived_from\":null,\"absorbed_into\":null,\"absorbs\":[],\"absorbs_partly\":[],\"partly_in\":[],\"branch\":\"task/SRD-9-full\",\"base_branch\":\"main\",\"worktree\":{\"path\":\"$wt\",\"uncommitted\":1},\"gate\":{\"state\":\"approved\",\"by\":\"human\"},\"autopilot\":{\"state\":\"stopped\",\"mode\":\"unattended\",\"repairs\":1,\"stage\":\"implement\",\"stage_at\":\"2026-10-02T10:00:00Z\",\"stop_reason\":\"Which \\\"name\\\"?\",\"stop_at\":\"2026-10-02T11:00:00Z\",\"phase\":\"spec-x/1\",\"handover_at\":null},\"pull_request\":{\"url\":\"https://github.com/example/example/pull/7\",\"state\":\"open\",\"ci\":\"red\",\"fetched_at\":\"2026-10-02T12:00:00Z\"},\"housekeeping_flags\":[\"wrong-base\",\"STALE_CANDIDATE\"]}],\"hidden\":0,\"archived\":0,\"housekeeping\":{\"ran_at\":\"2026-10-02T12:00:00Z\",\"forge\":\"github\"}}}" "$OUT"
 }
 
 test_task_list_json_says_null_for_every_fact_a_task_does_not_have() {
@@ -11209,7 +11538,7 @@ test_task_actions_at_a_gate_and_a_stop_agree_with_their_commands() {
 the design
 EOF
   printf 'autopilot: stopped\nautopilot_mode: attended\nautopilot_repairs: 1\npaused: true\n' >> .ai/workspace/tasks/big/state
-  _tl_agree big "resume approve-gate answer-stop set-class abandon archive"
+  _tl_agree big "resume approve-gate answer-stop handover set-class abandon archive"
 }
 
 # A pending pause request: it can be cancelled and not asked again; a direct
@@ -11243,9 +11572,10 @@ EOF
   sed 's/^knowledge_consolidated: false/knowledge_consolidated: true/' .ai/workspace/tasks/run/state > s.tmp
   mv s.tmp .ai/workspace/tasks/run/state
   printf 'autopilot: stopped\nautopilot_mode: unattended\nautopilot_repairs: 2\n' >> .ai/workspace/tasks/run/state
-  _tl_agree run "pause request-pause set-class close abandon archive"
+  _tl_agree run "pause request-pause handover set-class close abandon archive"
   _tl_json --all
-  assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft"'
+  assert_contains "$OUT" '"command":"jig task autopilot run resume --answer <text> --by human","offered":false,"reason":"task autopilot resume: run exhausted its unattended repair limit; ship a draft, or, if a person takes the task on: jig task autopilot run handover --by human --answer <text>"'
+  assert_contains "$OUT" '{"id":"handover","command":"jig task autopilot run handover --by human --answer <text>","offered":true,"reason":null}'
   assert_contains "$OUT" '"id":"ship","command":"jig task ship run --message-file <file>","offered":false,"reason":"task ship: the route of run (T3) is missing: '
 }
 
@@ -11361,7 +11691,7 @@ test_task_actions_close_reads_the_forge_cache_the_command_confirms() {
   assert_contains "$OUT" '"reason":"task set: status consolidated requires its pull request to be merged: https://github.com/example/example/pull/7 is unknown; merge it, then run this again"}'
   pr_check_stub_gh "" FAIL
   run_split jig task set T-1 status consolidated
-  assert_contains "$ERR" "is unknown; merge it, then run this again"
+  assert_contains "$ERR" "is unknown, the forge could not be asked (gh exited 1 with no message); it may already be merged"
 }
 
 # A ship the table offers is one `task ship` carries out.
@@ -12393,6 +12723,45 @@ test_context_starts_no_process_per_document_it_does_not_select() {
   [ $((ten - six)) -le 1 ] || fail "4 more documents started $((ten - six)) more processes (6: $six, 10: $ten)"
 }
 
+# `jig context` asks the same guard of every stub it selects or lists
+# (_ctx_read_path, _ctx_read_rows, the catalog line): it cost five subshells
+# and a `dirname` per stub. A stub now costs what any document selected or
+# listed costs, the guard adding nothing (stub-read-path-without-processes).
+test_context_starts_no_process_for_the_source_of_a_stub() {
+  task_setup
+  local j plain_sel plain_cat stub_sel stub_cat
+  mkdir -p .ai/knowledge/sources .ai/knowledge/features docs
+  for j in 1 2 3 4; do
+    printf -- '---\nid: feature-p%s\ntype: feature\nstatus: active\ndomains:\n  - listed\n---\n# P%s\n' "$j" "$j" \
+      > ".ai/knowledge/features/p$j.md"
+  done
+  # The first run saves what later runs find made.
+  _tl_forks context --no-task --domains listed --files README.md --format paths >/dev/null \
+    || fail "context failed under the probe"
+  plain_sel=$(_tl_forks context --no-task --domains listed --files README.md --format paths) \
+    || fail "context failed under the probe"
+  plain_cat=$(_tl_forks context resolve --no-task --catalog --domains listed --files README.md) \
+    || fail "context failed under the probe"
+  for j in 1 2 3 4; do
+    printf 'listed %s\n' "$j" > "docs/l$j.md"
+    printf -- '---\nid: convention-l%s\ntype: convention\nstatus: active\nsource: docs/l%s.md\ndomains:\n  - listed\n---\n' "$j" "$j" \
+      > ".ai/knowledge/sources/l$j.md"
+    rm ".ai/knowledge/features/p$j.md"
+  done
+  stub_sel=$(_tl_forks context --no-task --domains listed --files README.md --format paths) \
+    || fail "context failed under the probe"
+  stub_cat=$(_tl_forks context resolve --no-task --catalog --domains listed --files README.md) \
+    || fail "context failed under the probe"
+  [ $((stub_sel - plain_sel)) -le 1 ] \
+    || fail "4 selected stubs started $((stub_sel - plain_sel)) more processes than 4 documents ($plain_sel)"
+  [ $((stub_cat - plain_cat)) -le 1 ] \
+    || fail "4 stubs in the catalog started $((stub_cat - plain_cat)) more processes than 4 documents ($plain_cat)"
+  run jig context --no-task --domains listed --files README.md --format paths
+  assert_contains "$OUT" "docs/l4.md"
+  run jig context resolve --no-task --catalog --domains listed --files README.md
+  assert_contains "$OUT" "catalog:   docs/l4.md  [convention-l4] (no summary)"
+}
+
 test_status_json_starts_a_fixed_number_of_processes_per_task() {
   task_setup
   local two six ten few many
@@ -12412,6 +12781,169 @@ test_status_json_starts_a_fixed_number_of_processes_per_task() {
   # One per live task, the receipt line (task_receipt_check), and one more
   # allowed for a once-per-run record.
   [ "$few" -le 5 ] || fail "4 more tasks started $few more processes (2 tasks: $two, 6: $six)"
+}
+
+# `jig status` counts the documents awaiting a decision and the linked sources
+# that changed (km_proposed_count, km_changed_sources_count): four subshells
+# per document, each document read five times — 580 of the 2024 processes it
+# started on a project of 144 documents.
+test_status_starts_no_process_per_knowledge_document() {
+  task_setup
+  local i=1 two six ten
+  mkdir -p .ai/knowledge/features
+  _tl_status_docs() {
+    while [ "$i" -le "$1" ]; do
+      printf -- '---\nid: feature-s%s\ntype: feature\nstatus: active\n---\n# S%s\n' "$i" "$i" \
+        > ".ai/knowledge/features/s$i.md"
+      i=$((i + 1))
+    done
+  }
+  _tl_status_docs 2
+  # The first run saves what later runs find made (the counts, the records).
+  _tl_forks status >/dev/null || fail "status failed under the probe"
+  two=$(_tl_forks status) || fail "status failed under the probe"
+  _tl_status_docs 6
+  six=$(_tl_forks status) || fail "status failed under the probe"
+  _tl_status_docs 10
+  ten=$(_tl_forks status) || fail "status failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more documents started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more documents started $((ten - six)) more processes (6: $six, 10: $ten)"
+  # Stubs linking a source take the other road through km_source_states: the
+  # recorded source_hash read, every source hashed. Each batch holds one whose
+  # hash is recorded and current, one changed since and two never recorded;
+  # the first batch brings the one git process that hashes them all. The guard
+  # that keeps a source inside the repository (jig_knowledge_read_path) once
+  # started five subshells and a `dirname` per stub; it starts none now, so
+  # four more stubs may cost one process, a once-per-run record, and no more.
+  local four eight
+  mkdir -p .ai/knowledge/sources docs
+  _tl_status_stubs() {
+    while [ "$i" -le "$1" ]; do
+      printf 'source %s\n' "$i" > "docs/s$i.md"
+      {
+        printf -- '---\nid: convention-s%s\ntype: convention\nstatus: active\nsource: docs/s%s.md\n' "$i" "$i"
+        case $((i % 4)) in
+          1) printf 'source_hash: %s\n' "$(git hash-object "docs/s$i.md")" ;;
+          2) printf 'source_hash: 0000000000000000000000000000000000000000\n' ;;
+        esac
+        printf -- '---\n'
+      } > ".ai/knowledge/sources/s$i.md"
+      i=$((i + 1))
+    done
+  }
+  _tl_status_stubs 14
+  four=$(_tl_forks status) || fail "status failed under the probe"
+  _tl_status_stubs 18
+  eight=$(_tl_forks status) || fail "status failed under the probe"
+  run jig knowledge sources
+  assert_contains "$OUT" "ok          .ai/knowledge/sources/s17.md"
+  assert_contains "$OUT" "changed     .ai/knowledge/sources/s18.md"
+  assert_contains "$OUT" "unrecorded  .ai/knowledge/sources/s16.md"
+  [ $((eight - four)) -le 1 ] || fail "4 more stubs started $((eight - four)) more processes (4: $four, 8: $eight)"
+}
+
+# Nearly every `jig task` command asks which task is current, and the answer
+# walks every workspace (_task_candidates_for_branch): a `basename` and up to
+# three `$(task_state_get)` each — 143 of `task current`'s 196 processes on a
+# project of 47 tasks.
+test_task_current_starts_no_process_per_task() {
+  task_setup
+  local branch two six ten
+  branch=$(git symbolic-ref --short HEAD)
+  fixture_task here "$branch" active "class:T1"
+  _tl_live_tasks lean 2
+  _tl_forks task current >/dev/null || fail "task current failed under the probe"
+  two=$(_tl_forks task current) || fail "task current failed under the probe"
+  _tl_live_tasks more 4
+  six=$(_tl_forks task current) || fail "task current failed under the probe"
+  # Tasks whose branch is this one but which are closed or paused: read
+  # further than the others, and still none of them a process.
+  fixture_task done-1 "$branch" consolidated
+  fixture_task done-2 "$branch" abandoned
+  fixture_task held-1 "$branch" active "paused:true"
+  fixture_task held-2 "$branch" ready "paused:true"
+  ten=$(_tl_forks task current) || fail "task current failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more tasks started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more tasks on this branch started $((ten - six)) more processes (6: $six, 10: $ten)"
+  run jig task current
+  assert_eq 0 "$RC"
+  assert_eq here "$OUT"
+}
+
+# `jig queue next` counts the live tasks that are not queued, and asked each
+# of them with a `basename`, two `$(...)` and an awk over the queue.
+test_queue_next_starts_no_process_per_task_outside_the_queue() {
+  task_setup
+  local two six ten
+  _tl_live_tasks lean 2
+  _tl_forks queue next >/dev/null || fail "queue next failed under the probe"
+  two=$(_tl_forks queue next) || fail "queue next failed under the probe"
+  _tl_live_tasks more 4
+  six=$(_tl_forks queue next) || fail "queue next failed under the probe"
+  _tl_live_tasks rich 4 "paused:true" "issue:X-1" "route_depth:lean"
+  ten=$(_tl_forks queue next) || fail "queue next failed under the probe"
+  [ $((six - two)) -le 1 ] || fail "4 more tasks started $((six - two)) more processes (2: $two, 6: $six)"
+  [ $((ten - six)) -le 1 ] || fail "4 more paused tasks started $((ten - six)) more processes (6: $six, 10: $ten)"
+  # Counted as before: six live tasks outside the queue, the paused ones not.
+  run jig queue next
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "not queued: 6 tasks"
+}
+
+# In link mode `jig status` and `jig verify` ask `jig upgrade --dry-run` about
+# every link (upgrade_pending). A link in place used to cost a `dirname`, a
+# `readlink`, an awk and eight subshells; what is left per profile is
+# _upgrade_link naming its two directories, never the link itself.
+test_upgrade_dry_run_starts_no_process_per_link_in_place() {
+  skip_unless_symlinks
+  fixture_repo
+  jig init --from "$JIG_HOME" --link >/dev/null
+  local one five
+  _tl_link_profiles() {
+    sed "s|^profiles:.*|profiles: [$1]|" .ai/config.yaml > c.tmp
+    mv c.tmp .ai/config.yaml
+    jig upgrade >/dev/null || fail "upgrade failed for profiles: $1"
+  }
+  _tl_link_profiles "generic, shell"
+  _tl_forks upgrade --dry-run >/dev/null || fail "upgrade --dry-run failed under the probe"
+  one=$(_tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  _tl_link_profiles "generic, shell, php, node, python, go"
+  five=$(_tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  [ -L .ai/profiles/go ] || fail "the added profiles were not linked"
+  # Three per profile: its source directory, its place, and the source's
+  # physical path. One more for a once-per-run record.
+  [ $((five - one)) -le 13 ] || fail "4 more linked profiles started $((five - one)) more processes (2: $one, 6: $five)"
+}
+
+# Every skill of the framework is a link per adapter, and a link in place is
+# known by the file system alone (_init_place_symlink's `-ef`): more skills
+# start no more processes. The skills are grown in a copy of the framework,
+# run from that copy so a plain upgrade reads from it (upgrade_source).
+test_upgrade_dry_run_starts_no_process_per_skill_link_in_place() {
+  skip_unless_symlinks
+  mkdir src project
+  cp -R "$JIG_HOME"/. src/ || fail "could not copy the framework"
+  cd project || fail "no project directory"
+  fixture_repo
+  local bin="$PWD/../src/scripts/jig" n=0 four eight
+  "$bin" init --from "$PWD/../src" --link >/dev/null || fail "init --link failed"
+  _tl_link_skills() {
+    while [ "$n" -lt "$1" ]; do
+      n=$((n + 1))
+      mkdir -p "../src/skills/extra-$n"
+      printf -- '---\nname: extra-%s\ndescription: x\n---\n' "$n" > "../src/skills/extra-$n/SKILL.md"
+    done
+    "$bin" upgrade >/dev/null || fail "upgrade failed with $1 extra skills"
+  }
+  _tl_link_skills 4
+  JIG_BIN=$bin _tl_forks upgrade --dry-run >/dev/null || fail "upgrade --dry-run failed under the probe"
+  four=$(JIG_BIN=$bin _tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  _tl_link_skills 8
+  eight=$(JIG_BIN=$bin _tl_forks upgrade --dry-run) || fail "upgrade --dry-run failed under the probe"
+  [ -L .claude/skills/extra-8 ] || fail "the added skills were not linked"
+  # Four more skills are four more links per adapter; one more process is
+  # allowed for a once-per-run record.
+  [ $((eight - four)) -le 1 ] || fail "4 more skills started $((eight - four)) more processes (4: $four, 8: $eight)"
 }
 
 # _ts_lib — run the rest of the arguments as a script with the libraries a
@@ -12645,4 +13177,182 @@ test_task_ship_staging_finds_its_own_open_pull_request_into_staging() {
   assert_eq 0 "$RC" "$OUT"
   assert_contains "$OUT" "pr https://github.com/example/example/pull/8 (already open)"
   assert_no_file gh-create.argv
+}
+
+# --- a person takes a stopped run over (adr-20261108-a-person-takes-over-a-stopped-run)
+
+# The live case of 2026-11-07 (profile-covers-check): an unattended T3 run
+# approved its own gate, spent both repairs, stopped at the limit, and its
+# design changed afterwards. A person then answered and approved the current
+# design. Before the handover every road to record that was refused; each
+# refusal now names the handover, and after it the gate is the person's.
+_handover_live_case() {
+  route_task --class T3
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  route_design
+  jig task gate T-1 approved --by agent >/dev/null
+  jig task autopilot T-1 approve --reason "design approved by the agent" >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 repair --reason r2 >/dev/null
+  jig task autopilot T-1 repair --reason "verify red" >/dev/null || true
+  printf '# design\n\nthe answer, revised\n' > .ai/workspace/tasks/T-1/design.md
+}
+
+test_handover_the_refusals_at_the_limit_name_it() {
+  _handover_live_case
+  local road="ship a draft, or, if a person takes the task on: jig task autopilot T-1 handover --by human --answer <text>"
+  run jig task gate T-1 approved
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task gate: T-1 exhausted its unattended repair limit; $road"
+  run jig task autopilot T-1 resume --answer "approved, go on" --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot resume: T-1 exhausted its unattended repair limit; $road"
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot start: T-1 exhausted its unattended repair limit; $road"
+  run jig task autopilot T-1 end --reason "taken over"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot end: T-1 is stopped; if a person takes the task on: jig task autopilot T-1 handover --by human --answer <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+}
+
+test_handover_of_the_live_case_gives_the_gate_to_the_person() {
+  _handover_live_case
+  run jig task autopilot T-1 handover --by human --answer "I approve the revised design and finish it by hand"
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "autopilot: handed over; the task goes on without autopilot" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: done"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_handover: "
+  # What the run was stays: its mode and the repairs it spent.
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_mode: unattended"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+  assert_file_contains .ai/workspace/tasks/T-1/autopilot "$(printf '\thandover\thuman: I approve the revised design and finish it by hand')"
+
+  run jig task gate T-1 approved --by agent
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "--by agent is an unattended run's self-approval"
+  run jig task gate T-1 approved
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "gate_by: human"
+  jig task receipt T-1 --stage architecture-review >/dev/null
+  run jig task set T-1 status ready
+  assert_eq 0 "$RC" "$OUT"
+}
+
+test_handover_buys_no_fresh_run() {
+  _handover_live_case
+  jig task autopilot T-1 handover --by human --answer "mine now" >/dev/null
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot start: T-1 was handed over to a person; it finishes without autopilot"
+  # Not even where the clone no longer says unattended.
+  : > .ai/config.local.yaml
+  run jig task autopilot T-1 start
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "was handed over to a person"
+  run jig task autopilot T-1 repair --reason r3
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "no active autopilot run"
+  run jig task autopilot T-1 resume --answer "again" --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "not stopped"
+  run jig task autopilot T-1 handover --by human --answer "again"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: T-1 has no stopped autopilot run"
+  run jig task autopilot T-1 end --reason merged
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot end: T-1's run already ended when a person took it over; there is nothing to end"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 2"
+}
+
+test_handover_stops_waiting_in_jig_status_and_the_report() {
+  _handover_live_case
+  run jig status
+  assert_contains "$OUT" "autopilot=stopped"
+  jig task autopilot T-1 handover --by human --answer "mine now" >/dev/null
+  run jig status
+  assert_not_contains "$OUT" "autopilot=stopped"
+  assert_contains "$OUT" "autopilot=handed-over"
+  run jig task autopilot T-1 report
+  assert_contains "$OUT" "Taken over by a person (check it was yours):
+- human: mine now"
+  assert_contains "$OUT" "autopilot: done (handed over), repairs: 2/2, unattended"
+  run jig task list --json
+  local at
+  at=$(sed -n 's/^autopilot_handover: //p' .ai/workspace/tasks/T-1/state)
+  assert_contains "$OUT" "\"autopilot\":{\"state\":\"done\",\"mode\":\"unattended\",\"repairs\":2,"
+  assert_contains "$OUT" "\"phase\":null,\"handover_at\":\"$at\"}"
+}
+
+test_handover_takes_an_attended_stopped_run() {
+  route_task --class T1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "which API?" >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "I pick the API and write it myself"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: done"
+  run jig task autopilot T-1 report
+  assert_contains "$OUT" "autopilot: done (handed over), repairs: 0/2"
+}
+
+test_handover_takes_an_unattended_run_stopped_before_the_limit() {
+  route_task --class T1
+  unattended_local
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 repair --reason r1 >/dev/null
+  jig task autopilot T-1 stop --reason "ask the owner" >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "the owner takes it"
+  assert_eq 0 "$RC" "$OUT"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot_repairs: 1"
+}
+
+test_handover_refuses_a_run_that_is_not_stopped() {
+  route_task --class T1
+  run jig task autopilot T-1 handover --by human --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: T-1 has no stopped autopilot run"
+  jig task autopilot T-1 start >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: T-1 is running; ask the agent to stop it first: jig task autopilot T-1 stop --reason <text>"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: on"
+  jig task autopilot T-1 end >/dev/null
+  run jig task autopilot T-1 handover --by human --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "has no stopped autopilot run"
+}
+
+test_handover_needs_a_person_and_their_words() {
+  route_task --class T1
+  jig task autopilot T-1 start >/dev/null
+  jig task autopilot T-1 stop --reason "stuck" >/dev/null
+  run jig task autopilot T-1 handover --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --by human is required: only a person takes a run over, never the agent that ran it"
+  run jig task autopilot T-1 handover --by agent --answer "mine"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --by accepts human only"
+  run jig task autopilot T-1 handover --by
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --by requires human"
+  run jig task autopilot T-1 handover --by human
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer is required: the person's words"
+  run jig task autopilot T-1 handover --by human --answer
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer requires a value"
+  run jig task autopilot T-1 handover --by human --answer ""
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer must not be empty"
+  run jig task autopilot T-1 handover --by human --answer "$(printf 'a\tb')"
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: --answer must be a single line with no tab"
+  run jig task autopilot T-1 handover --by human --answer mine --what
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "task autopilot handover: unknown argument: --what"
+  assert_file_contains .ai/workspace/tasks/T-1/state "autopilot: stopped"
+  run jig task set T-1 autopilot_handover now
+  assert_eq 1 "$RC"
+  assert_contains "$OUT" "key is not writable: autopilot_handover"
 }

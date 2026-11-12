@@ -13,6 +13,7 @@ paths:
   - scripts/lib/status.sh
   - skills/jig-autopilot/SKILL.md
 summary: Why autopilot stops, ends and unattended choices send a Telegram message through an optional, detached curl that reads the token from stdin, why the token is local-only, masked and refused on a command line, and why a failed send is recorded beside the journal, never in it.
+reviewed_at: 2026-11-08
 ---
 # An autopilot run's stops and ends reach Telegram through an optional curl, detached, with the token kept off every command line and out of every output
 
@@ -88,3 +89,7 @@ secret — a Telegram bot token is a bot anyone can use once it leaks.
 - A secret now lives in `.ai/config.local.yaml`. Any new command that prints a local value goes
   through `_cfg_secret_key` / `JIG_CFG_MASK` (config.sh), the one place that names it.
 - `notify` is a new workspace file; it goes with the workspace like the journal does.
+
+> **Amendment (2026-11-08).** A fifth event is sent: `handover`, when a person takes a stopped run
+> over, marked `👤` and quoting their words, so a handover nobody asked for is seen as it happens
+> (adr-20261108-a-person-takes-over-a-stopped-run).

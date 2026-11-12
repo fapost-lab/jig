@@ -7,7 +7,7 @@ domains: [housekeeping, safety]
 paths:
   - "scripts/lib/housekeeping.sh"
 summary: Why workspace deletion happens in two stages and never on unknown remote state.
-reviewed_at: 2026-10-27
+reviewed_at: 2026-11-10
 ---
 # ADR-0006: Housekeeping purges in two stages via a local trash directory
 
@@ -55,3 +55,7 @@ framework.
 > **Amendment (2026-10-27).** Trash no longer receives abandoned tasks: they are archived in place
 > (adr-20261027-a-task-nobody-finished-is-archived-not-purged). Trash holds the workspaces of closed
 > tasks (`consolidated` and merged) and specifications removed by `jig spec remove`.
+
+> **Amendment (2026-11-10).** Trash also takes an idea draft, as `idea-<id>`: moved there by
+> `jig spec draft drop` or by the `jig spec ship` that committed its spec, and purged by the same
+> `trash_ttl` (adr-20261110-an-idea-draft-waits-outside-git).

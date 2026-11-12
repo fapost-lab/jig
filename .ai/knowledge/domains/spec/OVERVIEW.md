@@ -12,7 +12,7 @@ paths:
   - "templates/spec/**"
   - "skills/jig-idea/**"
   - "skills/jig-release/**"
-reviewed_at: 2026-11-06
+reviewed_at: 2026-11-10
 ---
 # Spec
 
@@ -31,8 +31,18 @@ them. Why they exist and why they are not knowledge is ADR-0035; the file format
   (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute).
 - Reporting specs and their progress (`jig spec list`) and counting them for `jig status`,
   derived from files alone — a spec has no status.
-- The `jig-idea` conversation: understand the idea, put weight on it, offer other shapes,
-  record decisions, build the roadmap, and file a phase's tasks when asked.
+- The `jig-idea` conversation: circles of a few rounds, sized by the depth. The first round of a
+  circle widens the idea with the agent's own proposals, the later ones put weight on it and
+  settle decisions; a circle ends in a summary — the idea, what would be written, the directions
+  left unopened — and the human chooses another circle or the write. Only after that yes are the
+  decisions recorded and the roadmap written, and the session ships once
+  (adr-20260930-a-spec-lives-on-its-own-branch-from-the-first-minute, amended 2026-11-10). What the
+  human put off and the directions nobody opened are kept in the spec's "Set aside" section, which
+  closing a spec lists as leftovers. It files a phase's tasks when asked.
+- The idea draft (adr-20261110-an-idea-draft-waits-outside-git): `jig spec draft write|rename|list|drop`
+  keep the conversation before the yes in `.ai/workspace/ideas/<id>/draft.md` of the main checkout
+  (`<git-common-dir>/jig/ideas/` where there is none), and `spec ship` in `declare` mode moves the
+  draft of its id to trash once its commit moved HEAD. `jig status` counts drafts on `drafts:`.
 - The epic branch of a spec released once (ADR-0040): the `Epic:` line, `jig spec epic` to declare,
   cut, finish and reopen it, and how `spec list` and `jig status` show it; the `Release:` line recorded
   at declaration (`spec_release_check`).
@@ -154,5 +164,5 @@ spec gone, no non-fog item unchecked (`spec_unchecked_items`) and no task cut fr
 - `skills/jig-autopilot/SKILL.md` §6 and `references/phase-run.md` — the coordinator's loop over a
   phase, the contract its task agents work under, and what it does when one fails.
 - `templates/spec/spec.md`, `templates/spec/roadmap.md` — installed as `.ai/templates/spec/`.
-- `skills/jig-idea/SKILL.md` and `references/pressure.md`.
+- `skills/jig-idea/SKILL.md`, `references/rounds.md` and `references/pressure.md`.
 - `schemas/spec.md` — the directory layout and the roadmap line grammar the script counts.

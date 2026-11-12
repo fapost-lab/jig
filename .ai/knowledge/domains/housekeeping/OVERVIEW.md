@@ -77,11 +77,17 @@ evidence it inferred itself.
   `base-unreleased` the workspace is kept anyway. When git succeeds but the directory remains —
   Windows leaves the Directory Links in it — only links and empty directories are removed
   there; anything else is reason `leftover` (ADR-0037).
+- Not a **Review Tree**'s: a detached `<git.worktree_root>/.pr-<n>` and `refs/jig/pr/<n>/*`, made
+  by `jig pr fetch`, are neither a task's worktree nor a branch, so housekeeping neither removes
+  nor reports them; `jig pr list` shows them and `jig pr cleanup` takes them back
+  (adr-20261109-a-pull-request-is-read-in-a-detached-tree-of-the-clone).
 - Deleting the **branches Jig made** once their work landed — the other deletion outside
   `.ai/`, and git performs it too (`_hk_branch_sweep`,
   adr-20261007-a-merged-branch-leaves-with-its-work). After the task loop, in the main checkout
-  only: a local branch or `origin/` ref that `jig_branch_is_jigs` calls Jig's (`jig/upgrade-*`,
-  `finish/<id>`, the task template's name), that no workspace left in place holds and no
+  only: a local branch or `origin/` ref that `jig_branch_deletable` calls Jig's (`jig/upgrade-*`,
+  `finish/<id>`, the task template's name; under a template with nothing before `{id}`, only a
+  branch a task record in the workspace or trash names — read afresh in the sweep, after this
+  run's purges moved records to trash), that no workspace left in place holds and no
   worktree has checked out, and that landed — a merged pull request, or ancestry into the
   default branch. `git branch -d` first, against the upstream still there, which is what lets a
   squash merge through (hence `fetch --no-prune`); when somebody else's prune took that upstream
@@ -179,6 +185,11 @@ Read these before changing anything here; each is a rule someone paid for.
   per-task stdout line keeps the task id first and the `flags=` field.
 
 ## Boundaries
+
+Outside: idea drafts. Housekeeping walks only `.ai/workspace/tasks/` and never touches
+`.ai/workspace/ideas/`; a draft leaves only by its spec's ship or a person's drop
+(adr-20261110-an-idea-draft-waits-outside-git). What lands in trash as `idea-<id>` is purged by
+`trash_ttl` like any entry.
 
 Outside: what a `status` value *means* and who may write it — that is the `task` domain
 (ADR-0005, ADR-0012). Housekeeping reads `state` and writes nothing into it, with one exception:

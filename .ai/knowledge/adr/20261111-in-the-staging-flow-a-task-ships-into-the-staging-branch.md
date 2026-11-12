@@ -38,7 +38,7 @@ send the task into the base branch nor merge into staging past the review the fl
   for open P2/P3 there, since no pull request will list them.
 - **A task of an epic ships into its epic**, as before, with a line saying the staging flow does not
   apply to it: whether an epic's tasks pass through staging is the spec's open question.
-- **The flow is read from the base branch too.** Before the commit, the base is fetched
+- **The flow is read from the base branch too.** Before the commit, at `pr` and `merge`, the base is fetched
   (`jig_fetch_branches`; a failed fetch only warns and the refs this checkout has are used, as in
   `task start`), and `git.flow` and
   `git.staging_branch` at the tip of `jig_base_ref <base>` are compared with the checkout's, read
@@ -94,3 +94,12 @@ nothing changes. One refusal is added before the commit, at every level: a task 
 commits of the staging branch its base did not bring (`jig_branch_carries_staging`) is not shipped. The
 consequence "until Land a task on staging lands, a person merges every staging pull request" no
 longer holds at `merge`.
+
+## Amendment (2026-11-12): the base is fetched only where a pull request is opened
+
+Merging main brought "a commit or a push asks GitHub nothing about accounts"
+(adr-20260925-a-ship-refuses-before-it-sends): the fetch of the base resolved the clone's GitHub
+account at every level and warned at `commit` and `push` when it was ambiguous. Below `pr` the flow
+decides nothing — no pull request is opened — so the base is fetched only at `pr` and `merge`; at the
+lower levels the comparison reads the refs this checkout has. Under `git.staging_land: external` no
+pull request is opened either, so the ship does not name the account of one (`jig_ship_account`).

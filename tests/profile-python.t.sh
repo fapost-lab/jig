@@ -1024,3 +1024,24 @@ test_profile_python_full_run_ci_explain_poetry_does_not_promise_a_full_set() {
   assert_contains "$OUT" "PLAN python: ruff: conditional (poetry environment needs a tool query)"
   assert_not_contains "$OUT" "full set possible"
 }
+
+# --- a covered test check (JIG_VERIFY_COVERED) --------------------------------
+
+test_profile_python_hands_pytest_over_when_its_tests_are_covered() {
+  fixture_repo
+  unset VIRTUAL_ENV
+  : > pyproject.toml
+  _py_stub .venv/bin/pytest "pytest 8.0.0"
+  JIG_VERIFY_COVERED="tests=upper"
+  export JIG_VERIFY_COVERED
+  _py_verify
+  assert_contains "$OUT" "python: pytest: skip (scope: covered by upper, python:tests)"
+  assert_no_file .venv/bin/pytest.log
+
+  JIG_VERIFY_EXPLAIN=1
+  export JIG_VERIFY_EXPLAIN
+  _py_verify
+  unset JIG_VERIFY_EXPLAIN JIG_VERIFY_COVERED
+  assert_contains "$OUT" "PLAN python: pytest: skip (scope: covered by upper, python:tests)"
+  assert_not_contains "$OUT" "PLAN python: pytest: full"
+}

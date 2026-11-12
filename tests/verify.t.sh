@@ -421,7 +421,7 @@ test_verify_runs_profiles_when_source_root_unknown() {
   local src
   src=$(mktemp -d "${TMPDIR:-/tmp}/jig-src-del.XXXXXX")
   cp -R "$JIG_HOME"/. "$src"/
-  rm -rf "$src/.git"
+  fixture_release_source "$src"
   jig init --from "$src" --profiles generic >/dev/null
   rm -rf "$src"
 
@@ -1315,7 +1315,8 @@ test_verify_survives_a_shellcheck_that_cannot_report_its_version() {
 # --- CI-backed projects: verify.full_run (ADR-0041) -------------------------
 # `verify.full_run: ci` in .ai/config.yaml is the project's claim that CI runs
 # the full set; a flag-less `jig verify` then narrows to what changed since
-# the merge base with git.base_branch, unless CI is set or --full is given.
+# the merge base with the current task's base, or git.base_branch without one,
+# unless CI is set or --full is given.
 
 test_verify_full_run_local_explicit_has_no_scope_text() {
   fixture_jig_repo
@@ -1415,6 +1416,118 @@ EOF
   assert_eq 0 "$RC"
   assert_contains "$OUT" \
     "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+}
+
+# A task cut from an epic is measured from the epic (ADR-0039), not from
+# git.base_branch: otherwise every task re-runs the whole epic's diff.
+# _verify_epic_fixture <task-id>... — main, epic/x with a sibling's file, and
+# task/kt cut from the epic with its own; each <task-id> is a live task on
+# task/kt whose recorded base is epic/x.
+_verify_epic_fixture() {
+  local id
+  fixture_jig_repo
+  _fixture_probe_profile probe "scope: [changed]"
+  cat >> .ai/config.yaml <<'EOF'
+verify.full_run: ci
+EOF
+  git add -A
+  git commit -q -m "add probe profile"
+  git checkout -q -b epic/x
+  echo sibling > sibling.txt
+  git add sibling.txt
+  git commit -q -m "a sibling task merged into the epic"
+  git checkout -q -b task/kt
+  echo own > own.txt
+  git add own.txt
+  git commit -q -m "the task's own work"
+  for id in "$@"; do
+    jig task new "$id" >/dev/null
+    printf 'branch: task/kt\nbase_branch: epic/x\n' >> ".ai/workspace/tasks/$id/state"
+  done
+}
+
+test_verify_ci_mode_scopes_from_the_current_tasks_base() {
+  _verify_epic_fixture T-1
+  local expect_sha
+  expect_sha=$(git rev-parse --short epic/x)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since epic/x@$expect_sha (base of task T-1; verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "own.txt"
+  assert_not_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_task_lookup_is_not_a_session_command() {
+  # The task lookup re-enters jig; it must leave the checkout record naming
+  # the command the session ran, not `task current`.
+  _verify_epic_fixture T-1
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_file_contains .ai/runtime/checkout "command: verify --profile probe"
+  assert_not_contains "$(cat .ai/runtime/checkout)" "command: task current"
+}
+
+test_verify_ci_mode_base_flag_wins_over_the_tasks_base() {
+  _verify_epic_fixture T-1
+  local base
+  base=$(git rev-parse main)
+
+  unset CI
+  run jig verify --base "$base" --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" "verify: scope changed since $base (--base)"
+  assert_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_tasks_that_agree_on_a_base_scope_from_it() {
+  _verify_epic_fixture T-1 T-2
+  local expect_sha
+  expect_sha=$(git rev-parse --short epic/x)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since epic/x@$expect_sha (base of tasks T-1, T-2; verify.full_run: ci, full set runs in CI)"
+  assert_not_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_tasks_that_disagree_use_the_configured_base() {
+  _verify_epic_fixture T-1 T-2
+  sed 's|^base_branch: epic/x|base_branch: epic/y|' .ai/workspace/tasks/T-2/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-2/state
+  local expect_sha
+  expect_sha=$(git rev-parse --short main)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "sibling.txt"
+}
+
+test_verify_ci_mode_an_unresolvable_task_base_falls_back_to_the_configured_one() {
+  # An epic deleted after its merge, or never fetched here: the run is
+  # measured from git.base_branch, never from the working tree alone.
+  _verify_epic_fixture T-1
+  sed 's|^base_branch: epic/x|base_branch: epic/gone|' .ai/workspace/tasks/T-1/state > s.tmp
+  mv s.tmp .ai/workspace/tasks/T-1/state
+  local expect_sha
+  expect_sha=$(git rev-parse --short main)
+
+  unset CI
+  run jig verify --profile probe
+  assert_eq 0 "$RC"
+  assert_contains "$OUT" \
+    "verify: scope changed since main@$expect_sha (verify.full_run: ci, full set runs in CI)"
+  assert_contains "$OUT" "own.txt"
+  assert_contains "$OUT" "sibling.txt"
 }
 
 test_verify_ci_mode_with_ci_env_set_runs_full_and_clears_scope() {
@@ -3002,71 +3115,178 @@ test_verify_shell_full_run_ci_explain_leaves_shellcheck_to_ci() {
   assert_contains "$OUT" "PLAN shell: shellcheck: skip (scope: .shellcheckrc changed; whole script set, full set left to CI)"
 }
 
-# --- the `profiles` capability (JIG_VERIFY_PROFILES) ---------------------------
-# A profile learns which profiles start in the same run only by declaring
-# `scope: [..., profiles]`; any other is run with the variable unset, even when
-# the caller's environment carries one (schemas/profile.md, Scope).
+# --- a profile covers a check of another (covers / checks) --------------------
+# A profile declares `covers: [<profile>:<check>]`; the covered profile names
+# the check (`checks: [<check>]`) and is handed `JIG_VERIFY_COVERED` only when
+# the cover holds in this run (adr-20261107-a-profile-covers-a-check-of-another).
 
-# _fixture_peer_profile <name> <scope-line> — a profile whose verify.sh prints
-# the JIG_VERIFY_PROFILES it observes.
-_fixture_peer_profile() {
-  local name="$1" scope_line="$2"
+# _fixture_cover_profile <name> [<line>...] — a project profile whose
+# verify.sh prints the JIG_VERIFY_COVERED it observes and passes; each <line>
+# is added to its profile.yaml.
+_fixture_cover_profile() {
+  local name="$1" line
+  shift
   mkdir -p ".ai/profiles/$name"
   {
     printf 'name: %s\n' "$name"
-    printf 'description: fixture profile reporting the profiles of its run.\n'
-    printf 'detect: always\n'
-    [ -z "$scope_line" ] || printf '%s\n' "$scope_line"
+    printf 'description: fixture profile reporting its covered checks.\n'
+    for line in "$@"; do printf '%s\n' "$line"; done
   } > ".ai/profiles/$name/profile.yaml"
   cat > ".ai/profiles/$name/verify.sh" <<EOS
 #!/usr/bin/env bash
-echo "$name: profiles=\${JIG_VERIFY_PROFILES-<unset>}"
+echo "$name: covered=\${JIG_VERIFY_COVERED-<unset>}"
+echo "$name: own: pass"
 exit 0
 EOS
 }
 
-test_verify_hands_the_run_s_profiles_only_to_a_profile_that_declared_it() {
+# _node_cover_project — a node project with a `test` script and an npm on
+# PATH that logs what it is asked to run, plus a project profile `upper`
+# declaring it runs node's tests itself.
+_node_cover_project() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles node >/dev/null
+  printf '{"scripts": {"test": "x"}}\n' > package.json
+  mkdir -p stub-bin
+  cat > stub-bin/npm <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then echo 10.0.0; exit 0; fi
+printf '%s\n' "\$*" >> "$PWD/npm.log"
+exit 0
+STUB
+  chmod +x stub-bin/npm
+  PATH="$PWD/stub-bin:$PATH"
+  export PATH
+  _fixture_cover_profile upper "covers: [node:tests]" "scope: [explain]"
+  printf 'profiles: [node, upper]\nadapters: [claude, codex]\n' > .ai/config.yaml
+}
+
+test_verify_a_project_profile_covers_a_stock_profile_s_tests() {
+  _node_cover_project
+  run jig verify
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: skip (scope: covered by upper, node:tests)"
+  assert_contains "$OUT" "upper: covered=<unset>"
+  assert_no_file npm.log
+}
+
+test_verify_explain_plans_a_covered_stock_check_as_a_skip() {
+  _node_cover_project
+  printf '#!/usr/bin/env bash\necho "PLAN upper: own: full (full scope)"\nexit 0\n' \
+    > .ai/profiles/upper/verify.sh
+  run jig verify --explain
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "PLAN node: npm test: skip (scope: covered by upper, node:tests)"
+}
+
+test_verify_a_stock_check_runs_when_its_cover_is_not_in_the_run() {
+  _node_cover_project
+  run jig verify --profile node
+  assert_eq 0 "$RC" "$OUT"
+  assert_contains "$OUT" "node: npm test: pass"
+  assert_file npm.log
+}
+
+test_verify_a_profile_that_never_starts_covers_nothing() {
+  _node_cover_project
+  rm .ai/profiles/upper/verify.sh
+  run jig verify
+  assert_contains "$OUT" "node: npm test: pass"
+  assert_file npm.log
+}
+
+test_verify_a_profile_covers_only_where_its_stack_is() {
+  _node_cover_project
+  printf 'detect: [manage.py]\n' >> .ai/profiles/upper/profile.yaml
+  run jig verify
+  assert_contains "$OUT" "node: npm test: pass"
+  : > manage.py
+  rm -f npm.log
+  run jig verify
+  assert_contains "$OUT" "node: npm test: skip (scope: covered by upper, node:tests)"
+  assert_no_file npm.log
+}
+
+test_verify_warns_of_a_cover_the_covered_profile_cannot_honour() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null
-  _fixture_peer_profile seer "scope: [profiles]"
-  _fixture_peer_profile blind ""
-  _fixture_peer_profile ghost ""
-  rm .ai/profiles/ghost/verify.sh
-  printf 'profiles: [generic, seer, blind, ghost]\nadapters: [claude, codex]\n' > .ai/config.yaml
-
-  JIG_VERIFY_PROFILES=leaked
-  export JIG_VERIFY_PROFILES
+  _fixture_cover_profile upper "covers: [lower:tests, lower, lower:Bad]"
+  _fixture_cover_profile lower
+  printf 'profiles: [generic, upper, lower]\nadapters: [claude, codex]\n' > .ai/config.yaml
   run jig verify
-  unset JIG_VERIFY_PROFILES
-  # A profile with no verify.sh starts nothing, so it is not in the list.
-  assert_contains "$OUT" "seer: profiles=generic seer blind"
-  assert_contains "$OUT" "blind: profiles=<unset>"
+  assert_contains "$OUT" "profile 'upper' covers 'lower:tests', but 'lower' names no check 'tests' (checks:), so it still runs"
+  assert_contains "$OUT" "profile 'upper' covers 'lower', which is not <profile>:<check>; ignored"
+  assert_contains "$OUT" "profile 'upper' covers 'lower:Bad', which is not <profile>:<check>; ignored"
+  assert_contains "$OUT" "lower: covered=<unset>"
+}
+
+test_verify_hands_the_cover_only_to_the_covered_profile() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  _fixture_cover_profile upper "covers: [lower:tests, lower:tests]"
+  _fixture_cover_profile second "covers: [lower:tests]"
+  _fixture_cover_profile lower "checks: [tests]"
+  _fixture_cover_profile bystander
+  printf 'profiles: [generic, upper, second, lower, bystander]\nadapters: [claude, codex]\n' > .ai/config.yaml
+  JIG_VERIFY_COVERED=tests=leaked
+  export JIG_VERIFY_COVERED
+  run jig verify
+  unset JIG_VERIFY_COVERED
+  # The first covering profile in run order takes the check, once.
+  assert_contains "$OUT" "lower: covered=tests=upper"
+  assert_contains "$OUT" "bystander: covered=<unset>"
+  assert_contains "$OUT" "upper: covered=<unset>"
   assert_not_contains "$OUT" "leaked"
 }
 
-test_verify_explain_hands_the_run_s_profiles_to_a_profile_that_declared_it() {
+test_verify_keeps_a_covered_map_with_a_profile_that_cannot_read_it() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null
-  _fixture_peer_profile seer "scope: [explain, profiles]"
-  printf '#!/usr/bin/env bash\nprintf "PLAN seer: peers: full (%%s)\\n" "${JIG_VERIFY_PROFILES-<unset>}"\nexit 0\n' \
-    > .ai/profiles/seer/verify.sh
-  printf 'profiles: [generic, seer]\nadapters: [claude, codex]\n' > .ai/config.yaml
-
-  run jig verify --explain --profile seer
-  assert_contains "$OUT" "PLAN seer: peers: full (seer)"
+  _fixture_cover_profile upper "covers: [lower:tests]" "scope: [changed]"
+  _fixture_cover_profile lower "checks: [tests]" "scope: [changed, map]"
+  printf 'profiles: [generic, upper, lower]\nadapters: [claude, codex]\n' > .ai/config.yaml
+  mkdir -p .ai/verify
+  printf 'src/** ALL\n' > .ai/verify/lower.map
+  git add -A >/dev/null 2>&1
+  git commit -qm base >/dev/null 2>&1
+  mkdir -p src
+  printf 'x\n' > src/a.txt
+  run jig verify --changed
+  # upper narrows without maps: lower.map's decisions would be dropped, so
+  # lower keeps its tests.
+  assert_contains "$OUT" "but reads no map, so .ai/verify/lower.map keeps 'lower' running it"
+  assert_contains "$OUT" "lower: covered=<unset>"
+  run jig verify
+  assert_contains "$OUT" "lower: covered=tests=upper"
 }
 
-test_verify_explain_leaves_out_of_the_run_s_profiles_one_it_will_not_ask() {
+test_verify_a_circle_of_covers_runs_every_check() {
   fixture_repo
   jig init --from "$JIG_HOME" --profiles generic >/dev/null
-  _fixture_peer_profile seer "scope: [explain, profiles]"
-  printf '#!/usr/bin/env bash\nprintf "PLAN seer: peers: full (%%s)\\n" "${JIG_VERIFY_PROFILES-<unset>}"\nexit 0\n' \
-    > .ai/profiles/seer/verify.sh
-  # mute has a verify.sh but no `explain`: a preview never starts it, so it
-  # covers nothing there.
-  _fixture_peer_profile mute ""
-  printf 'profiles: [generic, seer, mute]\nadapters: [claude, codex]\n' > .ai/config.yaml
+  _fixture_cover_profile left "covers: [right:tests]" "checks: [tests]"
+  _fixture_cover_profile right "covers: [left:tests]" "checks: [tests]"
+  printf 'profiles: [generic, left, right]\nadapters: [claude, codex]\n' > .ai/config.yaml
+  run jig verify
+  # Each would hand its tests to the other and none would run them.
+  assert_contains "$OUT" "in a circle of covers that runs it nowhere; ignored, so it still runs"
+  assert_contains "$OUT" "left: covered=<unset>"
+  assert_contains "$OUT" "right: covered=<unset>"
+}
 
-  run jig verify --explain --profile seer --profile mute
-  assert_contains "$OUT" "PLAN seer: peers: full (seer)"
+test_verify_hands_on_no_map_its_profile_never_reads() {
+  fixture_repo
+  jig init --from "$JIG_HOME" --profiles generic >/dev/null
+  _fixture_cover_profile upper "covers: [lower:tests]" "scope: [changed, map]"
+  # shellcheck disable=SC2016  # a script written for the stub to expand, not this shell
+  printf '#!/usr/bin/env bash\necho "upper: mapped=${JIG_VERIFY_MAPPED-<unset>}"\nexit 0\n' > .ai/profiles/upper/verify.sh
+  _fixture_cover_profile lower "checks: [tests]" "scope: [changed]"
+  printf 'profiles: [generic, upper, lower]\nadapters: [claude, codex]\n' > .ai/config.yaml
+  mkdir -p .ai/verify src
+  printf 'src/** ALL\n' > .ai/verify/lower.map
+  git add -A >/dev/null 2>&1
+  git commit -qm base >/dev/null 2>&1
+  printf 'x\n' > src/a.txt
+  run jig verify --changed
+  assert_contains "$OUT" "upper: mapped=<unset>"
+  assert_contains "$OUT" "lower: covered=tests=upper"
 }

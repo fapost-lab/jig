@@ -32,6 +32,7 @@ Absent keys take the default. Paths are not configurable.
 | `checkout.busy_ttl` | `12h` | yes | how long a checkout's record of work in progress still counts as a live session (adr-20260924-a-checkout-records-what-is-happening-in-it) |
 | `agent.git` | `none` | only | how far the agent takes a finished task (`jig task ship`) and a spec's declaration, epic branch and final pull request (`jig spec ship`): `none`, `commit`, `push`, `pr`, `merge` — `merge` also merges the pull request once CI passed, never past branch protection; an epic's only in an unattended run (ADR adr-20260921-agent-git-rights-are-a-local-setting, adr-20260922-spec-work-ships-by-the-agent-git-level, adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `agent.ci_timeout` | `30` | only | minutes `merge` waits for the pull request's checks before leaving it open; `0` looks once. Whole minutes |
+| `github.account` | - | only | the `gh` account this clone asks GitHub as, for a person who holds several: `jig task ship`, `jig spec ship`, housekeeping, `jig upgrade --land` and `jig gh` run `gh` with that account's stored token, for the call only; `gh auth switch` is never run. Not set: a token in the environment, else the one account `gh` holds, else the only one that may push to `origin` (remembered in `.ai/runtime/gh-account`), else the active one of several that may; a refusal when several may and the active one is not among them (adr-20261110-a-clone-names-its-github-account) |
 | `autopilot.git` | - | only | the git level of an autopilot run, same values as `agent.git`: `jig task ship` of a task whose run is `on` (or `stopped`, unattended), and `jig spec ship` when `autopilot.unattended` is `true`; not set, `agent.git` answers. `jig upgrade` and every other ship keep `agent.git`; `release.merge: human` still wins for an epic's final merge (adr-20260921-agent-git-rights-are-a-local-setting, amended 2026-10-08) |
 | `autopilot.unattended` | `false` | only | `true`: an autopilot run asks nothing — each stop becomes a safe default recorded in the pull request — and an epic's final pull request may be merged (adr-20260922-unattended-runs-ask-nothing-and-merge-on-green-ci) |
 | `autopilot.parallel` | `2` | only | how many tasks of a roadmap phase a phase run has agents building at once, 1 to 16; a task whose work is consolidated and waiting its turn to ship holds no slot, and the agents that repair the merge queue are outside the limit (adr-20260922-a-phase-run-is-coordinated) |
@@ -87,6 +88,7 @@ Values `set` accepts, per key:
 | `autopilot.parallel` | a whole number, 1 to 16 |
 | `route.depth` | `full` or `lean` |
 | `release.merge` | `agent` or `human` |
+| `github.account` | a GitHub login: letters, digits, `_` and single hyphens, at most 39 characters |
 | `git.worktree_root` | a path, unquoted |
 | `run.exec` | `auto`, `host`, or a command of plain words: no quote, `$`, backtick or backslash |
 | `run.path` | `auto` or the absolute path of a directory, unquoted; blanks inside it are kept |

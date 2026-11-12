@@ -695,9 +695,10 @@ _json_unrecorded_writers() {
 test_json_no_jig_writer_misses_the_revision() {
   local lib="$JIG_HOME/scripts/lib" found
   found=$(_json_unrecorded_writers "$lib/config.sh" "$lib/forgecache.sh" "$lib/frontmatter.sh" "$lib/task.sh" "$lib/spec.sh" "$lib/knowledge.sh" "$lib/queue.sh")
-  # The two that move something which is not a record yet: a partial restore
-  # going to trash, and the build file knowledge new publishes and records.
-  assert_eq "$(printf 'spec_trash_partial\nkm_source_link_body')" "$found" \
+  # The ones that move something which is not a record a read reports: a
+  # partial restore going to trash, the build file knowledge new publishes and
+  # records, and an idea draft (`jig spec draft`), which no `--json` read shows.
+  assert_eq "$(printf 'spec_trash_partial\nspec_draft_write\nspec_draft_rename\n_spec_draft_trash\nkm_source_link_body')" "$found" \
     "a writer that moves a record into place without jig_record_changed"
   # Housekeeping writes its log line by line; one raise when the run ends.
   assert_contains "$(cat "$lib/housekeeping.sh")" "jig_on_exit 'jig_revision_bump'"

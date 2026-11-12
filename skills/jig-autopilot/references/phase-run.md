@@ -102,8 +102,12 @@ Every end of the loop that waits for the person is such a stop: questions, a `pr
 forge unreachable, and — unattended — a draft ending the run.
 After an answer, resume an attended task with `jig task autopilot <id> resume --answer "<the person's answer>"`.
 For an already stopped unattended task with repairs still available, quote the actual answer and add
-`--by human`; a repair-limit stop remains a draft and cannot resume. Then tell an agent — the same
-one, or a new one — to continue task X from stage Y.
+`--by human`; a repair-limit stop remains a draft and cannot resume. When the person takes a stopped
+task on instead, at the repair limit too, quote their words with
+`jig task autopilot <id> handover --by human --answer "<their words>"`: its run ends, and the agent goes
+on without `stage`, `repair` or `end`, with the person's gate approval when the design changed. You
+still ship it, and the agent you start on it takes a slot of `autopilot.parallel` until it ships:
+`spec plan` no longer counts a run that ended, so count it yourself. Then tell an agent (the same one, or a new one) to continue task X from stage Y.
 
 **5. Ship, one at a time.** Tasks with `knowledge_consolidated: true` queue in the order they
 became ready. For the head of the queue, from its worktree:
@@ -114,13 +118,14 @@ became ready. For the head of the queue, from its worktree:
 
 Pass `--body-file` when the task agent wrote a `pr-body.md`; without it the body is the rest of the commit message.
 
-- level `pr` (the `task ship: git level` line) — the pull request is open. Wait for CI (`gh pr checks`) and only with it
+- level `pr` (the `task ship: git level` line) — the pull request is open. Wait for CI (`jig gh pr checks`) and only with it
   green tell the person it is ready. They merge, in any order; you see it by `git fetch`.
 - level `merge` — `ship` waits for CI and merges, or prints `not merged: <why>`; then see
   the table below.
 
 After each merge: `jig task set <id> status consolidated`, `jig spec done <id>` **in the epic
-checkout**, `jig task autopilot <id> end --reason merged`, and fast-forward the epic. A task of the
+checkout**, `jig task autopilot <id> end --reason merged` (not for a task that was handed over: its
+run already ended), and fast-forward the epic. A task of the
 wave that was abandoned instead (`spec plan` shows its item `abandoned`) gets `jig spec drop <id>`
 in the epic checkout in place of `spec done`: its branch could not close the item, and the edit is
 committed on the epic like a checkmark. Asking for a phase run is
@@ -191,7 +196,7 @@ rules verbatim:
 | The agent crashed | its process ended with no `stop` or `end` in the journal and no consolidated state | a new agent: "continue `<id>` from stage `<last stage>`". Repairs are not reset. A second crash on the same task is a stop (unattended: treat as an exhausted repair budget) |
 | A person paused the task | the agent reported exit 4 from `stage`; the task is `paused`, its run still `on` | nothing until they run `jig task resume <id>`; then a new agent: "continue `<id>` from stage `<the stage it did not enter>`". The wave waits for it like for a stop |
 | The agent hung | no new journal line for a long while, process still alive | attended: into the summary message. Unattended: stop the agent, then as for a crash |
-| CI is red | `gh pr checks`, or `not merged: a check failed` | an agent in that worktree: `repair --reason "CI red: …"` (the run is still `on`), fix, targeted tests, re-review, ship again. Exit 3 → a stop, or a draft when unattended |
+| CI is red | `jig gh pr checks`, or `not merged: a check failed` | an agent in that worktree: `repair --reason "CI red: …"` (the run is still `on`), fix, targeted tests, re-review, ship again. Exit 3 → a stop, or a draft when unattended |
 | A conflict updating the base | `git merge` stopped | an agent in that worktree resolves it keeping both intentions, runs the targeted tests, re-reviews and ships again. If the resolution needs a product decision: stop (unattended: `git merge --abort` and a draft naming the reason) |
 | CI or the forge is unreachable | `not merged: …` | attended: into the message. Unattended: the pull request stays open, the wave does not close, and the run ends with a report |
 | The epic diverged from origin | `jig task start` dies with "diverged" | `git merge origin/<epic>` into the local epic — never rebase — and carry on |

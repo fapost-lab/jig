@@ -35,7 +35,7 @@ selected.
 |---|---|---|
 | `git.base_branch` | detected by `jig init` | The main branch: where tasks branch from, and where Jig looks to see whether a task's work has landed. `jig init` reads it from the remote's default branch, else `main` or `master`. |
 | `git.branch_per_task` | `true` | Starting a task creates and switches to its own branch. With `false`, a task records the branch you are on instead — for projects that work on one branch by choice. |
-| `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id — the only placeholder there is. If your project prefixes branches with the kind of work (`feat/`, `fix/`, `docs/`), that stays in the pull request title and the commit message: Jig has nothing to fill it from, since a task's class is its risk (`T0`–`T4`), not its kind. |
+| `git.branch_template` | `task/{id}` | The name of a task's branch; `{id}` is the task's id — the only placeholder there is. If your project prefixes branches with the kind of work (`feat/`, `fix/`, `docs/`), that stays in the pull request title and the commit message: Jig has nothing to fill it from, since a task's class is its risk (`T0`–`T4`), not its kind. A template with nothing before `{id}` (`{id}`, as when branches are named after tracker tickets) works too: then a branch is Jig's to delete only when one of its tasks started it, so branches made before Jig or by hand are never touched, however much their names look like task ids. |
 | `git.worktree_root` | `../<project>.worktrees` | Where a task started in a separate worktree is placed ([several agents at once](/working-with-tasks#several-agents-at-once)). |
 | `git.delete_merged_branches` | `true` | A branch Jig made is deleted once its work has landed: right after a merge Jig made itself, which also puts you back on the base branch, and by housekeeping once a finished task is cleaned up. Only Jig's own branches, with `git branch -d` — or, when its remote copy is already gone, only if its last commit is the one the hosting site merged — and on the remote only at the commit that was merged — by housekeeping only when your `agent.git` is `push` or higher. `false` keeps every branch, and leaves you on it after a merge Jig made. |
 | `git.flow` | `direct` | How a task travels. `direct` takes it straight to the base branch. `staging` lands it on a staging branch first, for testing, and on to the base branch after: `jig task ship` opens the task's pull request into the staging branch ([how a task ships](/agent-ships)). |
@@ -95,11 +95,15 @@ Set it **only when your CI runs every check on every pull request**. Jig takes y
 does not check.
 
 With `ci`, a plain `jig verify` — the one the agent runs before declaring work done — checks only
-what changed since the branch left `git.base_branch`: committed, staged, unstaged and untracked
-changes. It prints why:
+what changed since the branch left its base: committed, staged, unstaged and untracked changes. The
+base is the one the task in this checkout was cut from — an epic for a task of an epic — and
+`git.base_branch` when there is no task, when several tasks on the branch were cut from different
+bases, or when the task's base cannot be found in this clone. `--base <ref>` names another. It
+prints why:
 
 ```text
 verify: scope changed since main@a1b2c3d (verify.full_run: ci, full set runs in CI)
+verify: scope changed since origin/epic/staging@e4f5a6b (base of task ship-to-staging; verify.full_run: ci, full set runs in CI)
 ```
 
 The full set still runs whenever it should:
@@ -164,7 +168,7 @@ round, about a line in `.ai/config.yaml` that sets a key Jig does not read at al
 or a setting a later version dropped.
 
 Personal settings are left out of both: Jig never reads `agent.git`, `autopilot.git`, `agent.ci_timeout`,
-`autopilot.unattended`, `autopilot.parallel`, `route.depth`, `release.merge`, `run.exec`, `run.path`,
+`autopilot.unattended`, `autopilot.parallel`, `route.depth`, `release.merge`, `github.account`, `run.exec`, `run.path`,
 `claude.implement_model`, `claude.review_model`, `codex.implement_model`,
 `codex.review_model`, or any `executor.*` key from the project's file, so naming them there
 would only invite you to write a line that does nothing.
@@ -204,6 +208,11 @@ Some settings are a matter of personal taste rather than project policy. Put the
   approval and architecture review of T3/T4 are never trimmed. Local only: it is your time you are
   trading. One task can differ: `jig task new <id> --lean`, or `jig task set <id> route_depth full`.
   See [A lighter route](/concepts#a-lighter-route).
+- `github.account` — which of your GitHub accounts this clone works as, when `gh` holds more
+  than one. You rarely need it: Jig finds the one account that may push to the repository and
+  uses it for every pull request, check, merge and push over HTTPS, whichever account `gh` has
+  active. Set it when several of your accounts may push here. See
+  [Two GitHub accounts](/agent-ships#two-github-accounts).
 - `release.merge` — who merges a release in an unattended run at `agent.git: merge`: `agent` (the
   default) merges it once CI passed, `human` opens the pull request and leaves the merge to you. A
   release is an epic's final pull request, or a task whose change raises the version into the
@@ -355,6 +364,30 @@ narrow runs in full, with the reason printed.
 Checks of your own belong in the project's installed profile under `.ai/profiles/`; `jig upgrade`
 keeps a profile you edited.
 
+A profile of your own can also replace one check of a stock profile, without editing it. Say it
+runs your test suite its own way: declare that in its `profile.yaml`, and the stock profile's
+tests stand down when both run.
+
+```yaml
+# .ai/profiles/myapp/profile.yaml
+scope: [changed, map, explain, environment]
+covers: [laravel:tests]
+```
+
+```text
+laravel: artisan test: skip (scope: covered by myapp, laravel:tests)
+```
+
+`laravel` does the same for `php` (`covers: [php:tests]`), so a Laravel project runs its suite
+once, in `php artisan test`. The check is named by its role, `tests`; `php`, `laravel`, `node` and
+`python` name theirs so far, and a cover of a check a profile does not name prints a warning and
+leaves the check running. A cover holds only where the covering profile applies — its `detect`
+matches, is `always`, or is absent. In a run narrowed to changed files, the covered profile's
+`.ai/verify/<profile>.map` goes with its tests, read after the covering profile's own map, so the
+covering profile declares `scope: [changed, map]` (as the example's would). One that narrows
+without reading maps does not take tests whose map would be dropped: Jig warns, and the stock
+profile keeps them.
+
 ### Where checks run
 
 A project that lives in a container — Laravel Sail, a `docker compose` service — must be checked
@@ -461,3 +494,11 @@ a scheduler of its own. Pick one, or both; running it twice is harmless.
   in `.ai/templates/scheduler/`; use the project's absolute path in them.
 
 `jig status` reports whether the session hook is installed.
+
+## Environment variables
+
+Settings live in the files above; this variable is read from the environment.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `JIG_TERM_GRACE` | `5` | Seconds. When a `jig` command is stopped (`kill`, `pkill`, Ctrl-C), it and every process under it are sent SIGTERM; whatever has not ended after this many seconds gets SIGKILL. A value that is not a whole number counts as 5. |

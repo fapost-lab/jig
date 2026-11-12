@@ -10,8 +10,9 @@
 #
 # CI-backed projects (ADR-0041): `verify.full_run: ci` in .ai/config.yaml is
 # the project's claim that its CI runs the full set. A flag-less `jig verify`
-# then narrows to what changed since the merge base with git.base_branch,
-# unless CI is set or --full is given. A project map
+# then narrows to what changed since the merge base with the base the current
+# task was cut from (jig_task_base, ADR-0039), or git.base_branch when there is
+# no current task, unless CI is set or --full is given. A project map
 # (.ai/verify/<profile>.map) is parsed here, never in a profile, and handed to
 # profiles declaring `scope: [changed, map]` as JIG_VERIFY_MAPPED.
 #
@@ -41,6 +42,69 @@ _verify_changed_files() {
       && git -C "$JIG_PROJECT" diff --name-only HEAD --
     git -C "$JIG_PROJECT" ls-files --others --exclude-standard
   } 2>/dev/null | sed '/^$/d' | LC_ALL=C sort -u
+}
+
+# _verify_task_base <base-var> <which-var> — the base the task in this
+# checkout was cut from into <base-var>, and which task into <which-var>
+# (`task <id>`); both empty when there is no task to ask. The answer is
+# jig_task_base's, the one `task ship`, housekeeping and context judge the
+# task by (ADR-0039). The current task comes from `jig task current` run as a
+# process, not from sourcing task.sh (ARCHITECTURE.md: one command library
+# never sources another). Several live tasks on one branch (exit 2, one
+# candidate per stderr line, id first) give their base only when they all
+# agree on it; tasks that disagree, or no task, leave the configured base to
+# the caller.
+_verify_task_base() {
+  local __vtb_cur __vtb_rc=0 __vtb_err __vtb_ids __vtb_id __vtb_b
+  local __vtb_agreed="" __vtb_which=""
+  printf -v "$1" '%s' ""
+  printf -v "$2" '%s' ""
+  __vtb_err=$(mktemp "${TMPDIR:-/tmp}/jig-verify-current.XXXXXX") || return 0
+  jig_cleanup_add "$__vtb_err"
+  # JIG_INTERNAL_REDRAW: a re-entry, not a session's command — it must neither
+  # rewrite the checkout record nor spend a pending HEAD-moved notice, whose
+  # stderr lines would also be read below as task ids.
+  __vtb_cur=$(JIG_INTERNAL_REDRAW=1 "$JIG_SELF" task current 2>"$__vtb_err") || __vtb_rc=$?
+  case "$__vtb_rc" in
+    0)
+      jig_task_base_v __vtb_agreed "$__vtb_cur"
+      __vtb_which="task $__vtb_cur"
+      ;;
+    2)
+      __vtb_ids=$(awk '{ print $1 }' "$__vtb_err")
+      for __vtb_id in $__vtb_ids; do
+        jig_task_base_v __vtb_b "$__vtb_id"
+        if [ -z "$__vtb_agreed" ]; then
+          __vtb_agreed="$__vtb_b"
+        elif [ "$__vtb_b" != "$__vtb_agreed" ]; then
+          __vtb_agreed=""
+          break
+        fi
+        __vtb_which="${__vtb_which:+$__vtb_which, }$__vtb_id"
+      done
+      __vtb_which="tasks $__vtb_which"
+      ;;
+  esac
+  rm -f "$__vtb_err"
+  if [ -n "$__vtb_agreed" ]; then
+    printf -v "$1" '%s' "$__vtb_agreed"
+    printf -v "$2" '%s' "$__vtb_which"
+  fi
+  return 0
+}
+
+# _verify_merge_base <base-branch> <ref-var> <mb-var> — the ref <base-branch>
+# is judged by (jig_base_ref) into <ref-var>, and its merge base with HEAD into
+# <mb-var>; <mb-var> is empty when either cannot be found.
+_verify_merge_base() {
+  local __vmb_ref __vmb_mb=""
+  __vmb_ref=$(jig_base_ref "$1")
+  if [ -n "$__vmb_ref" ]; then
+    __vmb_mb=$(git -C "$JIG_PROJECT" merge-base "$__vmb_ref" HEAD 2>/dev/null) || __vmb_mb=""
+  fi
+  printf -v "$2" '%s' "$__vmb_ref"
+  printf -v "$3" '%s' "$__vmb_mb"
+  return 0
 }
 
 # _verify_ref_label <ref> — how a base ref reads in the report:
@@ -311,11 +375,157 @@ _verify_cleanup() {
   if [ -n "${JIG_VERIFY_MAP_ALL_TMP:-}" ]; then
     rm -f "$JIG_VERIFY_MAP_ALL_TMP.list" 2>/dev/null || true
   fi
+  if [ -n "${JIG_VERIFY_MAP_TMP:-}" ]; then
+    rm -f "$JIG_VERIFY_MAP_TMP.src" 2>/dev/null || true
+  fi
   rm -f "${JIG_VERIFY_TMP:-}" "${JIG_VERIFY_MAP_TMP:-}" "${JIG_VERIFY_MAP_ALL_TMP:-}" 2>/dev/null || true
   if [ -n "${JIG_VERIFY_BUSY:-}" ]; then
     _verify_busy_release "$JIG_VERIFY_BUSY"
     JIG_VERIFY_BUSY=""
   fi
+  return 0
+}
+
+# --- a profile covers a check of another ------------------------------------
+#
+# A profile above another can run the same work one of its checks does —
+# laravel's `php artisan test` is php's PHPUnit/Pest suite — and a run with
+# both paid for it twice. The profile above says so, `covers: [php:tests]`;
+# the profile below names the check it can hand over, `checks: [tests]`, and
+# nothing about who takes it. Which covers hold in a run is decided here,
+# once, and handed down as JIG_VERIFY_COVERED; the profile's jp_covered prints
+# the skip (adr-20261107-a-profile-covers-a-check-of-another).
+
+# _verify_covers <installed-dir> <run-profiles> <narrowed> — the covers that
+# hold in this run, one line each as _verify_covers_resolve prints them, first
+# covering profile in run order kept. <run-profiles> are the
+# profiles the run will start: a profile that never starts covers nothing,
+# and a check of a profile that never starts needs no cover. A cover holds
+# only where the covering profile applies (profiles_applies), only for a
+# check the covered profile names (else a warning: the check still runs).
+_verify_covers() {
+  local dir="$1" run=" $2 " narrowed="$3" u udir item b check bdir seen="" raw=""
+  for u in $2; do
+    udir=$(profiles_dir "$dir" "$u")
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      b=${item%%:*}
+      check=${item#*:}
+      if [ "$b" = "$item" ] || [ -z "$check" ] || ! _profiles_valid_name "$b"; then
+        jig_warn "profile '$u' covers '$item', which is not <profile>:<check>; ignored"
+        continue
+      fi
+      # The letters are spelled out: a range such as a-z follows the locale,
+      # and under some (macOS en_US.UTF-8) it admits capitals.
+      case "$check" in
+        *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) jig_warn "profile '$u' covers '$item', which is not <profile>:<check>; ignored"; continue ;;
+      esac
+      [ "$b" != "$u" ] || continue
+      case "$run" in
+        *" $b "*) ;;
+        *) continue ;;
+      esac
+      case "$seen" in
+        *" $b:$check "*) continue ;;
+      esac
+      profiles_applies "$udir" || continue
+      bdir=$(profiles_dir "$dir" "$b")
+      if ! profiles_names_check "$bdir" "$check"; then
+        jig_warn "profile '$u' covers '$b:$check', but '$b' names no check '$check' (checks:), so it still runs"
+        continue
+      fi
+      seen="$seen $b:$check "
+      raw="${raw}$b	$check	$u
+"
+    done < <(_profiles_list_lines "$udir" covers)
+  done
+  _verify_covers_resolve "$dir" "$raw" "$narrowed"
+}
+
+# _verify_covers_resolve <installed-dir> <covers> <narrowed> — the covers of
+# _verify_covers, each followed to the profile that finally runs the check:
+# `myapp covers laravel:tests` and `laravel covers php:tests` make php's
+# tests myapp's, so php's skip names myapp and php.map reaches the
+# profile that runs them. Prints `<profile><TAB><check><TAB><runner><TAB><depth>`,
+# <depth> the number of covers between them. A chain that comes back to where
+# it started runs the check nowhere: those covers are dropped with a warning,
+# and every profile in it keeps its check. A cover whose map would be dropped
+# — a narrowed run, the covered profile reads a map of its own, the profile
+# that runs the check narrows without reading maps — is dropped with a warning
+# too, and the covered profile keeps its tests.
+_verify_covers_resolve() {
+  local dir="$1" all="$2" narrowed="$3" b check u final depth seen cycle nb nc nu found wdir bdir
+  while IFS=$'\t' read -r b check u; do
+    [ -n "$b" ] || continue
+    final="$u"
+    depth=1
+    seen=" $b $u "
+    cycle=0
+    while :; do
+      found=""
+      while IFS=$'\t' read -r nb nc nu; do
+        if [ "$nb" = "$final" ] && [ "$nc" = "$check" ]; then found="$nu"; break; fi
+      done <<EOF
+$all
+EOF
+      [ -n "$found" ] || break
+      case "$seen" in
+        *" $found "*) cycle=1; break ;;
+      esac
+      final="$found"
+      depth=$((depth + 1))
+      seen="$seen$found "
+    done
+    if [ "$cycle" = 1 ]; then
+      jig_warn "profile '$u' covers '$b:$check' in a circle of covers that runs it nowhere; ignored, so it still runs"
+      continue
+    fi
+    if [ "$narrowed" = 1 ] && [ "$check" = tests ] \
+       && [ -f "$JIG_PROJECT/$JIG_AI_DIR/verify/$b.map" ]; then
+      bdir=$(profiles_dir "$dir" "$b")
+      wdir=$(profiles_dir "$dir" "$final")
+      if profiles_supports "$bdir" map && profiles_supports "$wdir" changed \
+         && ! profiles_supports "$wdir" map; then
+        jig_warn "profile '$final' runs '$b:$check' but reads no map, so $JIG_AI_DIR/verify/$b.map keeps '$b' running it"
+        continue
+      fi
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$b" "$check" "$final" "$depth"
+  done <<EOF
+$all
+EOF
+  return 0
+}
+
+# _verify_covered_words <covers> <profile> — the JIG_VERIFY_COVERED words for
+# <profile>: `<check>=<covering profile>`, space-separated.
+_verify_covered_words() {
+  local b check u depth words=""
+  while IFS=$'\t' read -r b check u depth; do
+    [ "$b" = "$2" ] || continue
+    words="${words:+$words }$check=$u"
+  done <<EOF
+$1
+EOF
+  printf '%s\n' "$words"
+}
+
+# _verify_handed_maps <installed-dir> <covers> <profile> — the covered profiles whose map
+# follows their tests to <profile>, one `<depth><TAB><name>` line each. A map's decisions
+# narrow its profile's tests (schemas/verify-map.md), so the profile that
+# took the tests over reads them: without this, a project's php.map either
+# kept php running the suite beside laravel or was dropped in silence.
+_verify_handed_maps() {
+  local b check u depth
+  while IFS=$'\t' read -r b check u depth; do
+    [ "$u" = "$3" ] && [ "$check" = tests ] || continue
+    [ -f "$JIG_PROJECT/$JIG_AI_DIR/verify/$b.map" ] || continue
+    # A map its own profile never reads is not a decision anyone made for it.
+    profiles_supports "$(profiles_dir "$1" "$b")" map || continue
+    printf '%s\t%s\n' "$depth" "$b"
+  done <<EOF
+$2
+EOF
   return 0
 }
 
@@ -334,9 +544,9 @@ cmd_verify() {
   # one empty line, and would otherwise be dropped rather than rejected.
   local list_only=0 explain=0 profile_given=0 profiles_words="" p pdir raw tok
   local scope=0 base="" nfiles=0 scope_ok note full=0 explicit=0 full_run
-  local header="" base_branch base_ref mb map map_ok map_err
+  local header="" base_branch base_ref mb map map_ok map_err maps maps_listed map_bad b
   local incomplete=0 covered=0 explained=0 unknown=0 plan_output plan_bad hr_state hr_rt hr_text
-  local covered_needs_install=0 is_fallback=0 run_output ci_left=0
+  local covered_needs_install=0 is_fallback=0 run_output ci_left=0 task_base="" task_which="" task_note=""
   JIG_VERIFY_TMP=""
   JIG_VERIFY_MAP_TMP=""
   JIG_VERIFY_MAP_ALL_TMP=""
@@ -421,16 +631,28 @@ cmd_verify() {
       header="verify: full run (CI is set)"
     else
       scope=1
+      # The current task's own base first (ADR-0039): a task cut from an epic
+      # is measured from the epic, not from main, or every task re-runs the
+      # whole epic's diff. A recorded base this clone cannot resolve (an epic
+      # deleted after its merge, never fetched) falls back to the configured
+      # one, never to the working tree alone.
       base_branch=$(cfg git.base_branch main)
-      base_ref=$(jig_base_ref "$base_branch")
+      _verify_task_base task_base task_which
+      base_ref=""
       mb=""
-      if [ -n "$base_ref" ]; then
-        mb=$(git -C "$JIG_PROJECT" merge-base "$base_ref" HEAD 2>/dev/null) || mb=""
+      if [ -n "$task_base" ]; then
+        _verify_merge_base "$task_base" base_ref mb
+        if [ -n "$mb" ]; then
+          base_branch="$task_base"
+          task_note="base of $task_which; "
+        fi
       fi
+      [ -n "$mb" ] || _verify_merge_base "$base_branch" base_ref mb
       if [ -n "$mb" ]; then
         base="$mb"
-        header=$(printf 'verify: scope changed since %s@%s (verify.full_run: ci, full set runs in CI)' \
-          "$(_verify_ref_label "$base_ref")" "$(git -C "$JIG_PROJECT" rev-parse --short "$mb")")
+        header=$(printf 'verify: scope changed since %s@%s (%sverify.full_run: ci, full set runs in CI)' \
+          "$(_verify_ref_label "$base_ref")" "$(git -C "$JIG_PROJECT" rev-parse --short "$mb")" \
+          "$task_note")
       else
         header="verify: scope changed in the working tree only, no merge base with $base_branch (verify.full_run: ci, full set runs in CI)"
       fi
@@ -524,14 +746,12 @@ cmd_verify() {
 
   profiles_check_requires
 
-  # The profiles this run will actually start, for a profile that declared
-  # `scope: [..., profiles]` (JIG_VERIFY_PROFILES): one whose check another
-  # profile in the same run already covers can stand down instead of running
-  # the same suite twice (php leaves its tests to laravel's artisan test). A
-  # profile the loop below will not start covers nothing: no verify.sh, no
-  # `explain` in a preview, no `environment` under one — the same gates, in
-  # the same order, so a profile never stands down for one that never runs.
-  local run_profiles=""
+  # The profiles this run will actually start, and the covers that hold
+  # between them. A profile the loop below will not start covers nothing: no
+  # verify.sh, no `explain` in a preview, no `environment` under one — the
+  # same gates, in the same order, so a check never stands down for a profile
+  # that never runs.
+  local run_profiles="" covers
   for p in $profiles_words; do
     pdir=$(profiles_dir "$installed_dir" "$p")
     [ -f "$pdir/verify.sh" ] || continue
@@ -539,6 +759,7 @@ cmd_verify() {
     if [ -n "$RUNENV_EXEC" ] && ! profiles_supports "$pdir" environment; then continue; fi
     run_profiles="${run_profiles:+$run_profiles }$p"
   done
+  covers=$(_verify_covers "$installed_dir" "$run_profiles" "$scope")
 
   local total=0 pass=0 failn=0 skip=0 rc
   for p in $profiles_words; do
@@ -608,11 +829,13 @@ cmd_verify() {
     else
       unset JIG_RUN_EXEC
     fi
-    if profiles_supports "$pdir" profiles; then
-      JIG_VERIFY_PROFILES="$run_profiles"
-      export JIG_VERIFY_PROFILES
+    # Set for a profile whose check another covers, cleared for every other:
+    # a caller's own JIG_VERIFY_COVERED must never stand a check down.
+    JIG_VERIFY_COVERED=$(_verify_covered_words "$covers" "$p")
+    if [ -n "$JIG_VERIFY_COVERED" ]; then
+      export JIG_VERIFY_COVERED
     else
-      unset JIG_VERIFY_PROFILES
+      unset JIG_VERIFY_COVERED
     fi
 
     note=""
@@ -637,21 +860,39 @@ cmd_verify() {
     # — a line silently skipped would narrow the checks the wrong way.
     map_ok=0
     if [ "$scope_ok" = 1 ] && [ "$nfiles" -gt 0 ] && profiles_supports "$pdir" map; then
-      map="$JIG_AI_DIR/verify/$p.map"
-      if [ -f "$JIG_PROJECT/$map" ]; then
+      # The profile's own map first, then the map of every profile whose
+      # tests it covers: the decisions follow the tests (_verify_handed_maps),
+      # and with the own map's lines first, first match wins across both.
+      maps=""
+      [ ! -f "$JIG_PROJECT/$JIG_AI_DIR/verify/$p.map" ] || maps="$JIG_AI_DIR/verify/$p.map"
+      # Nearest first: laravel.map before php.map for a profile over both.
+      for b in $(_verify_handed_maps "$installed_dir" "$covers" "$p" | LC_ALL=C sort -n -k1,1 | cut -f2); do
+        maps="${maps:+$maps }$JIG_AI_DIR/verify/$b.map"
+      done
+      map_bad=0
+      for map in $maps; do
         if ! map_err=$(_verify_map_check "$JIG_PROJECT/$map"); then
+          failn=$((failn + 1))
           if [ "$explain" = 1 ]; then
-            failn=$((failn + 1))
             printf 'PLAN %s: error (map %s:%s)\n' "$p" "$map" "$map_err"
           else
-            failn=$((failn + 1))
             printf 'RESULT %s: fail (map %s:%s)\n' "$p" "$map" "$map_err"
           fi
-          continue
+          map_bad=1
+          break
         fi
+      done
+      [ "$map_bad" = 0 ] || continue
+      if [ -n "$maps" ]; then
         JIG_VERIFY_MAP_TMP=$(mktemp "${TMPDIR:-/tmp}/jig-verify-map.XXXXXX") \
           || jig_die "verify: cannot create temporary file"
-        _verify_map_apply "$JIG_PROJECT/$map" "$JIG_VERIFY_TMP" > "$JIG_VERIFY_MAP_TMP"
+        # One file of rules, each map ended by a newline of its own so a map
+        # without a final one cannot join its last rule to the next map's first.
+        for map in $maps; do
+          cat "$JIG_PROJECT/$map"
+          printf '\n'
+        done > "$JIG_VERIFY_MAP_TMP.src"
+        _verify_map_apply "$JIG_VERIFY_MAP_TMP.src" "$JIG_VERIFY_TMP" > "$JIG_VERIFY_MAP_TMP"
         # The same decisions for every tracked file that could call a changed
         # function: a profile that narrows by caller needs the map's answer for
         # a path the change did not touch, and must not parse the map itself.
@@ -660,11 +901,12 @@ cmd_verify() {
         { git -C "$JIG_PROJECT" ls-files -co --exclude-standard \
             | grep -v -e '^tests/' -e '^docs/' -e '\.mdx\{0,1\}$' || true; } \
           > "$JIG_VERIFY_MAP_ALL_TMP.list"
-        _verify_map_apply "$JIG_PROJECT/$map" "$JIG_VERIFY_MAP_ALL_TMP.list" \
+        _verify_map_apply "$JIG_VERIFY_MAP_TMP.src" "$JIG_VERIFY_MAP_ALL_TMP.list" \
           > "$JIG_VERIFY_MAP_ALL_TMP"
-        rm -f "$JIG_VERIFY_MAP_ALL_TMP.list"
+        rm -f "$JIG_VERIFY_MAP_ALL_TMP.list" "$JIG_VERIFY_MAP_TMP.src"
         map_ok=1
-        note=" (scope: changed, $nfiles files, map $map)"
+        _jig_replace_all_v maps_listed "$maps" ' ' ', '
+        note=" (scope: changed, $nfiles files, map $maps_listed)"
       fi
     fi
 
