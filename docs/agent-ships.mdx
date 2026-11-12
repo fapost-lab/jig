@@ -356,12 +356,15 @@ To ask GitHub something about the project yourself as that account, put `jig` in
   stored in your helper or in git's configuration. If your helper held another GitHub user's
   credentials, the push now goes as the `gh` account instead; a `GH_TOKEN` in the environment, or
   an SSH `origin`, leaves `git` as it was. Over SSH your key decides the account.
-- When several accounts may push and none is named, a ship stops before its push, at every
-  `agent.git` level, and says how to name one; nothing is sent.
+- When several accounts may push, the active one is not among them and none is named, a ship
+  stops before its push and says how to name one; nothing is sent. Over HTTPS that holds at every
+  `agent.git` level; over SSH only at `pr` and `merge`, where the pull request needs an account —
+  at `push` your key decides.
 - A push that changes a file under `.github/workflows` needs the `workflow` scope on that
   account's `gh` token. `gh auth refresh -s workflow` adds it to the active account only; for
   another one, make it active for that one command with `gh auth switch --user <login>`, then
-  switch back. Jig itself never switches.
+  switch back, while no other session is working — the active account is the whole machine's.
+  Jig itself never switches, and your agent never asks you to.
 - `jig pr fetch`, which reads a colleague's pull request, still fetches as your credential helper
   answers.
 - The choice is remembered in `.ai/runtime/gh-account`; delete the file to have Jig look again.

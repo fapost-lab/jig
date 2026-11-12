@@ -44,17 +44,12 @@ already did, so a machine with two accounts no longer pushes as the wrong one. U
 Two refusals that read as failures now say what they are waiting for.
 
 - **A push over HTTPS goes as this project's GitHub account.** Jig's pushes, fetches and branch
-  deletions on your project's `origin` use the account its `gh` calls already use
-  (`github.account`, the one found among several, or the only one `gh` holds). For each call Jig
-  sets aside your credential helper for that host and has `git` ask `gh` for that account's token;
-  nothing is stored. When several accounts may push and none is named, a ship now stops before its
-  push at every `agent.git` level, `push` included, with nothing sent. If your helper held another
-  GitHub user's credentials, the push now goes as the `gh` account. `gh`'s token needs the
-  `workflow` scope for a change under `.github/workflows`; `gh auth refresh -s workflow` adds it to
-  the active account only, so switch to the clone's account first, or sign it in with that scope.
-  SSH, a `GH_TOKEN` in the environment, and `jig pr fetch` are left as they were. Proven by tests
-  with a stand-in `gh`; a real push as a second account has not been checked yet. See
-  [Two GitHub accounts](/agent-ships#two-github-accounts).
+  deletions on an HTTPS `origin` use the account its `gh` calls already use, not your credential
+  helper's. When several of your accounts may push, the active one is not among them and none is
+  named, a push over HTTPS now stops with nothing sent, at `agent.git: push` too. A change under
+  `.github/workflows` needs the `workflow` scope on that account's `gh` token. SSH and a
+  `GH_TOKEN` in the environment are left as they were. A real push as a second account has not
+  been checked yet. See [Two GitHub accounts](/agent-ships#two-github-accounts).
 - **`jig verify` measures a task from the branch it was cut from.** Under `verify.full_run: ci`, a
   plain `jig verify` checks what changed since the current task's base, so a task of an epic no
   longer re-checks the whole epic. Without a task, with tasks on the branch that disagree, or with
@@ -63,7 +58,8 @@ Two refusals that read as failures now say what they are waiting for.
 - **`jig upgrade` names the pull request it waits for.** When the upgrade to this version is
   already on an unmerged `jig/upgrade-<version>` branch, Jig asks GitHub or GitLab once: an open
   pull request is named with its URL and refused as `not-merged` instead of `failed`, so a program
-  shows the upgrade as waiting for its merge. A merged or closed one is named with its state.
+  shows the upgrade as waiting for its merge. A merged or closed one is named with its state. See
+  [Reading Jig as data](/reading-jig-as-data#upgrading-a-project).
 - **A refused close says why GitHub or GitLab could not be asked.** When
   `jig task set <id> status consolidated` cannot learn whether the pull request merged — `gh` or
   `glab` missing, not signed in, an error, no answer in time — the refusal names the cause and says
